@@ -10,7 +10,8 @@ import importlib.resources
 import json
 from typing import TYPE_CHECKING, Any
 
-from vergil_tooling.lib.config import ConfigError, read_config
+from vergil_tooling.lib import gitignore
+from vergil_tooling.lib.config import ConfigError, declared_primary_language, read_config
 from vergil_tooling.lib.github_config import ConfigDiff, DiffItem
 from vergil_tooling.lib.update_deps.context import UpdateDepsError
 from vergil_tooling.lib.vergil_refs import (
@@ -69,8 +70,34 @@ def _gitignore_patterns(text: str) -> list[str]:
     return patterns
 
 
-def _check_gitignore(repo_root: Path, items: list[DiffItem]) -> None:
-    """Require the repo .gitignore to be a superset of the baseline.
+#: Transitional switch for the ``.gitignore`` audit (epic
+#: vergil-project/.github#325). While ``False`` a repo passes if it satisfies
+#: EITHER the legacy baseline-superset check OR the new fenced managed-block
+#: check, so the fleet can be migrated one repo at a time without breaking the
+#: audit. Task 10 flips this to ``True``, dropping the legacy acceptance so only
+#: a correct ``base + <language>`` fence passes. The fenced-only branch is
+#: implemented now, behind the flag, so Task 10 is a one-line flip.
+_GITIGNORE_FENCED_ONLY = False
+
+
+def _gitignore_language(repo_root: Path) -> str | None:
+    """Resolve the fence language for the ``.gitignore`` audit.
+
+    Uses the asserted ``[project].primary-language`` — the same source the rest
+    of the validation stack trusts — normalized to ``None`` (base-only) for any
+    language without a managed fragment or when the config is absent/unreadable.
+    A base-only fence is exactly what is expected there (e.g. ``.github`` is
+    ``shell`` and ``docs`` declares nothing — both take the base fragment only).
+    """
+    try:
+        lang = declared_primary_language(repo_root)
+    except ConfigError:
+        return None
+    return lang if lang in gitignore.FRAGMENT_LANGS else None
+
+
+def _legacy_gitignore_missing(text: str) -> list[str]:
+    """Return baseline pattern lines absent from ``text`` (the legacy check).
 
     Every baseline pattern line (`_gitignore_patterns`) must appear verbatim as a
     line in the repo's .gitignore (trailing whitespace trimmed on both sides).
@@ -79,14 +106,44 @@ def _check_gitignore(repo_root: Path, items: list[DiffItem]) -> None:
     to it (spec §2). (#311)
     """
     required = _gitignore_patterns(_load_gitignore_baseline())
-    gitignore = repo_root / ".gitignore"
-    if not gitignore.is_file():
-        present: set[str] = set()
-    else:
-        present = {line.rstrip() for line in gitignore.read_text(encoding="utf-8").splitlines()}
-    for pattern in required:
-        if pattern not in present:
+    present = {line.rstrip() for line in text.splitlines()}
+    return [pattern for pattern in required if pattern not in present]
+
+
+def _check_gitignore(repo_root: Path, items: list[DiffItem]) -> None:
+    """Assert the repo ``.gitignore`` is compliant (transitional; epic #325).
+
+    Acceptance depends on :data:`_GITIGNORE_FENCED_ONLY`:
+
+    * ``False`` (this task): the repo passes if it is EITHER the legacy baseline
+      superset OR a correct fenced managed block for its resolved language.
+    * ``True`` (Task 10): only the fenced managed block passes.
+
+    When neither accepted path holds, a ``DiffItem`` naming the drift is
+    appended. In the transitional mode the drift keeps the legacy per-pattern
+    ``missing`` reporting shape; in fenced-only mode it reports the fence
+    compliance reasons.
+    """
+    gitignore_path = repo_root / ".gitignore"
+    text = gitignore_path.read_text(encoding="utf-8") if gitignore_path.is_file() else ""
+
+    lang = _gitignore_language(repo_root)
+    compliance = gitignore.check(text, lang)
+    if compliance.compliant:
+        return
+
+    if not _GITIGNORE_FENCED_ONLY:
+        missing = _legacy_gitignore_missing(text)
+        if not missing:
+            return
+        for pattern in missing:
             items.append(DiffItem(field="local.gitignore", expected=pattern, actual="missing"))
+        return
+
+    for reason in compliance.reasons:
+        items.append(
+            DiffItem(field="local.gitignore", expected="vergil-managed fence", actual=reason)
+        )
 
 
 def _check_required_workflows(repo_root: Path, items: list[DiffItem]) -> None:
