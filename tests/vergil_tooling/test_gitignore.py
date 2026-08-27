@@ -199,3 +199,100 @@ def test_check_flags_stray_managed_line_outside_fence() -> None:
     result = gitignore.check(text, "python")
     assert result.compliant is False
     assert any("outside" in reason.lower() for reason in result.reasons)
+
+
+# --- sync() bootstrap/update (Task 3) ---------------------------------------
+
+
+def test_sync_bootstrap_filters_loose_and_foreign_lines() -> None:
+    """A loose python repo whose .gitignore also carries cpp (foreign) lines.
+
+    Bootstrap fences base+python, drops every managed line (python's own and the
+    foreign cpp lines) from the repo-local section, preserves the genuine
+    repo-local line, and reports the managed lines it removed.
+    """
+    base = gitignore.load_base()
+    python = gitignore.load_fragment("python")
+    cpp = gitignore.load_fragment("cpp")
+    text = "\n".join(base + python + cpp + ["secrets.json"]) + "\n"
+
+    result = gitignore.sync(text, "python")
+
+    assert result.changed is True
+    repo_local, fence = gitignore.parse(result.text)
+    assert fence == gitignore.render_block("python")
+    assert "secrets.json" in repo_local
+    # Every cpp (foreign-language) line was dropped and reported as removed.
+    for line in cpp:
+        assert line in result.removed
+    # The genuine repo-local line survives outside the fence.
+    assert "secrets.json" not in gitignore.managed_vocabulary()
+
+
+def test_sync_bootstrap_base_only_for_github_style_file() -> None:
+    """A `.github`-style file (lang None) holding the full monolith.
+
+    Bootstrap writes a base-only fence and reports every language-fragment line
+    as removed; nothing repo-local remains.
+    """
+    monolith = "\n".join(sorted(gitignore.managed_vocabulary())) + "\n"
+
+    result = gitignore.sync(monolith, None)
+
+    assert result.changed is True
+    repo_local, fence = gitignore.parse(result.text)
+    assert fence == gitignore.render_block(None)
+    assert "+" not in fence.splitlines()[0]  # base-only descriptor
+    assert repo_local == []
+    for lang in gitignore.FRAGMENT_LANGS:
+        for line in gitignore.load_fragment(lang):
+            assert line in result.removed
+
+
+def test_sync_is_idempotent() -> None:
+    """A second sync is a no-op: no change, identical text, nothing removed."""
+    base = gitignore.load_base()
+    python = gitignore.load_fragment("python")
+    cpp = gitignore.load_fragment("cpp")
+    text = "\n".join(base + python + cpp + ["secrets.json"]) + "\n"
+
+    first = gitignore.sync(text, "python")
+    second = gitignore.sync(first.text, "python")
+
+    assert second.changed is False
+    assert second.text == first.text
+    assert second.removed == []
+
+
+def test_sync_update_rewrites_stale_fence_body() -> None:
+    """An already-fenced file with a hand-added stale line inside the fence.
+
+    Update rewrites the fence to the canonical rendered block (dropping the
+    stale line) and leaves the repo-local section untouched.
+    """
+    block = gitignore.render_block("python")
+    stale = block.replace(
+        gitignore.MANAGED_END, "STALE_LINE\n" + gitignore.MANAGED_END
+    )
+    text = stale + "\nkeep-me/\n"
+
+    result = gitignore.sync(text, "python")
+
+    assert result.changed is True
+    assert "STALE_LINE" not in result.text
+    assert result.removed == []
+    repo_local, fence = gitignore.parse(result.text)
+    assert fence == gitignore.render_block("python")
+    assert "keep-me/" in repo_local
+
+
+def test_sync_update_preserves_repo_local_ordering() -> None:
+    """Update keeps the repo-local lines in their original order."""
+    block = gitignore.render_block("python")
+    text = block + "\nzeta/\nalpha/\nmiddle/\n"
+
+    result = gitignore.sync(text, "python")
+
+    assert result.changed is False  # already canonical
+    repo_local, _fence = gitignore.parse(result.text)
+    assert [line for line in repo_local if line] == ["zeta/", "alpha/", "middle/"]
