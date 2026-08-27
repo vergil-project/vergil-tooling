@@ -153,3 +153,64 @@ def check(text: str, lang: str | None) -> Compliance:
         reasons.append("managed patterns appear outside the fence: " + ", ".join(stray))
 
     return Compliance(compliant=not reasons, reasons=reasons)
+
+
+@dataclass
+class SyncResult:
+    """The result of syncing a ``.gitignore``'s managed block.
+
+    ``text`` is the new file content, ``changed`` is whether it differs from the
+    input, and ``removed`` lists the managed-vocabulary lines that a bootstrap
+    dropped from a loose monolith (always empty for an update).
+    """
+
+    text: str
+    changed: bool
+    removed: list[str]
+
+
+def _assemble(fence_block: str, repo_local: list[str]) -> str:
+    """Join a rendered fence block with its repo-local section, fence first.
+
+    With no repo-local lines the result is the bare fence block; otherwise the
+    fence is followed by the repo-local lines, each on its own line with a
+    trailing newline.
+    """
+    if not repo_local:
+        return fence_block
+    return fence_block + "\n".join(repo_local) + "\n"
+
+
+def sync(text: str, lang: str | None) -> SyncResult:
+    """Bring ``text`` into compliance with the managed block for ``lang``.
+
+    Two modes, selected by whether ``text`` already carries a well-formed fence:
+
+    * **Bootstrap** (no fence): the loose monolith is replaced by a fresh
+      ``render_block(lang)``, and the repo-local section keeps only lines that
+      are *not* in ``managed_vocabulary()``. This deliberately drops both the
+      language's own managed lines and any foreign-language managed lines,
+      leaving only genuinely repo-specific ignores below a blank separator (the
+      section is omitted entirely when nothing genuine remains). Every dropped
+      managed line is reported in ``removed``.
+    * **Update** (fence present): the fence is rewritten to the canonical
+      ``render_block(lang)`` and the parsed repo-local section is trusted as-is
+      (never re-filtered); ``removed`` is empty.
+
+    ``changed`` reports whether the new text differs from the input. ``sync`` is
+    idempotent: syncing its own output is always a no-op.
+    """
+    repo_local, fence = parse(text)
+    fence_block = render_block(lang)
+
+    if fence is None:
+        vocab = managed_vocabulary()
+        removed = [line for line in repo_local if line.rstrip() in vocab]
+        kept = [line for line in repo_local if line.rstrip() not in vocab]
+        section = ["", *kept] if kept else []
+        new_text = _assemble(fence_block, section)
+    else:
+        removed = []
+        new_text = _assemble(fence_block, repo_local)
+
+    return SyncResult(text=new_text, changed=new_text != text, removed=removed)
