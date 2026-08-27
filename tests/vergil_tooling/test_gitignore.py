@@ -295,3 +295,118 @@ def test_sync_update_preserves_repo_local_ordering() -> None:
     assert result.changed is False  # already canonical
     repo_local, _fence = gitignore.parse(result.text)
     assert [line for line in repo_local if line] == ["zeta/", "alpha/", "middle/"]
+
+
+# --- sync() bootstrap: stale baseline comment scaffolding (issue #2939) ------
+
+
+def test_managed_comments_covers_every_baseline_comment_line() -> None:
+    """Every comment line in the monolith baseline is a managed comment."""
+    baseline_comments = [
+        line.rstrip()
+        for line in repo_config._load_gitignore_baseline().splitlines()
+        if line.lstrip().startswith("#")
+    ]
+    assert baseline_comments  # the monolith has comment scaffolding
+    for comment in baseline_comments:
+        assert comment in gitignore._MANAGED_COMMENTS
+
+
+def test_managed_comments_includes_322_append_header() -> None:
+    """The #322 sweep append header is a managed comment too."""
+    header = (
+        "# --- Vergil baseline sync (vergil-project/.github#322): "
+        "lines added to match gitignore.baseline ---"
+    )
+    assert header in gitignore._MANAGED_COMMENTS
+
+
+def test_sync_bootstrap_strips_full_commented_baseline_scaffolding() -> None:
+    """A docs-style file = the FULL commented monolith baseline, no repo-local.
+
+    Bootstrap (lang None) must land JUST the base fence: every baseline comment
+    and pattern is dropped, with no orphaned section headers and no
+    'single source of truth' preamble surviving below the fence.
+    """
+    monolith = repo_config._load_gitignore_baseline()
+
+    result = gitignore.sync(monolith, None)
+
+    assert result.changed is True
+    assert result.text == gitignore.render_block(None)
+    repo_local, fence = gitignore.parse(result.text)
+    assert fence == gitignore.render_block(None)
+    # Nothing repo-local survives — no orphaned comments, no preamble.
+    assert repo_local == []
+    for comment in gitignore._MANAGED_COMMENTS:
+        assert comment not in result.text
+    assert "single source of truth" not in result.text
+
+
+def test_sync_bootstrap_keeps_genuine_repo_local_comment_and_pattern() -> None:
+    """A genuine repo-local comment + pattern mixed into the commented baseline.
+
+    The genuine comment and pattern survive outside the fence; the baseline
+    comment scaffolding and patterns do not.
+    """
+    monolith_lines = repo_config._load_gitignore_baseline().splitlines()
+    text = "\n".join([*monolith_lines, "# my project data", "data/big.bin"]) + "\n"
+
+    result = gitignore.sync(text, None)
+
+    assert result.changed is True
+    repo_local, fence = gitignore.parse(result.text)
+    assert fence == gitignore.render_block(None)
+    assert "# my project data" in repo_local
+    assert "data/big.bin" in repo_local
+    # Baseline scaffolding is gone.
+    assert "# Editors" not in repo_local
+    assert "single source of truth" not in result.text
+
+
+def test_sync_bootstrap_normalizes_blank_lines() -> None:
+    """Runs of blank lines around dropped content collapse and trim.
+
+    The surviving repo-local section has no leading, trailing, or consecutive
+    blank lines.
+    """
+    text = "\n\n# Editors\n*.swp\n\n\n\n# keep-a\n\n\nkeep-b/\n\n\n"
+
+    result = gitignore.sync(text, None)
+
+    repo_local, _fence = gitignore.parse(result.text)
+    # Drop the single blank separator the assembler inserts after the fence.
+    body = repo_local[1:] if repo_local and repo_local[0] == "" else repo_local
+    # Interior blank run collapses to a single blank; no leading/trailing blanks.
+    assert body == ["# keep-a", "", "keep-b/"]
+    assert body[0].strip()
+    assert body[-1].strip()
+    assert "\n\n\n" not in result.text
+
+
+def test_sync_bootstrap_strips_322_append_header() -> None:
+    """The #322 sweep append header is dropped on bootstrap."""
+    header = (
+        "# --- Vergil baseline sync (vergil-project/.github#322): "
+        "lines added to match gitignore.baseline ---"
+    )
+    text = "keep-me/\n" + header + "\nbuild/\n"
+
+    result = gitignore.sync(text, None)
+
+    repo_local, _fence = gitignore.parse(result.text)
+    assert header not in result.text
+    assert "keep-me/" in repo_local
+
+
+def test_sync_bootstrap_comment_strip_is_idempotent() -> None:
+    """A second sync on a scaffolding-stripped bootstrap is a no-op."""
+    monolith_lines = repo_config._load_gitignore_baseline().splitlines()
+    text = "\n".join([*monolith_lines, "# my project data", "data/big.bin"]) + "\n"
+
+    first = gitignore.sync(text, None)
+    second = gitignore.sync(first.text, None)
+
+    assert second.changed is False
+    assert second.text == first.text
+    assert second.removed == []
