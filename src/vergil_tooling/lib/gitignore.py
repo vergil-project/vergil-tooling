@@ -12,6 +12,15 @@ current baseline's pattern set (epic vergil-project/.github#325).
 from __future__ import annotations
 
 import importlib.resources
+from dataclasses import dataclass
+
+#: Prefix that opens a vergil-managed fence. The full begin marker embeds a
+#: human-readable descriptor and a trailing ``>>>``; only the prefix is stable
+#: enough to detect the marker.
+MANAGED_BEGIN_PREFIX = "# >>> vergil-managed:"
+
+#: Exact line that closes a vergil-managed fence.
+MANAGED_END = "# <<< vergil-managed <<<"
 
 FRAGMENT_LANGS: tuple[str, ...] = (
     "python",
@@ -72,3 +81,75 @@ def managed_vocabulary() -> set[str]:
     for lang in FRAGMENT_LANGS:
         vocab.update(load_fragment(lang))
     return vocab
+
+
+def render_block(lang: str | None) -> str:
+    """Render the full fenced managed block for ``lang``, with a trailing newline.
+
+    The block is a begin marker, the ``compose(lang)`` pattern lines (one per
+    line), and the end marker. The begin marker's descriptor is ``base + <lang>``
+    when the language contributes a fragment, or ``base`` for a base-only block
+    (``None``, empty, unknown, or a known-but-empty language such as ``rust``).
+    """
+    descriptor = f"base + {lang}" if load_fragment(lang) else "base"
+    begin = f"{MANAGED_BEGIN_PREFIX} {descriptor} (managed by vrg-gitignore-sync; do not edit) >>>"
+    return "\n".join([begin, *compose(lang), MANAGED_END]) + "\n"
+
+
+def parse(text: str) -> tuple[list[str], str | None]:
+    """Split ``text`` into repo-local lines and the managed fence (if any).
+
+    Returns ``(repo_local_lines, fence)`` where ``fence`` is the exact text from
+    the begin-marker line through the ``MANAGED_END`` line inclusive (with a
+    trailing newline), and ``repo_local_lines`` is every line outside that fence
+    in order. With no begin marker, or a begin marker that never closes
+    (malformed), the fence is ``None`` and every line is repo-local.
+    """
+    lines = text.splitlines()
+    begin_idx = next(
+        (i for i, line in enumerate(lines) if line.startswith(MANAGED_BEGIN_PREFIX)),
+        None,
+    )
+    if begin_idx is None:
+        return lines, None
+    end_idx = next(
+        (i for i in range(begin_idx + 1, len(lines)) if lines[i] == MANAGED_END),
+        None,
+    )
+    if end_idx is None:
+        return lines, None
+    fence = "\n".join(lines[begin_idx : end_idx + 1]) + "\n"
+    repo_local = lines[:begin_idx] + lines[end_idx + 1 :]
+    return repo_local, fence
+
+
+@dataclass
+class Compliance:
+    """The result of a managed-block compliance check."""
+
+    compliant: bool
+    reasons: list[str]
+
+
+def check(text: str, lang: str | None) -> Compliance:
+    """Check ``text`` against the managed block expected for ``lang``.
+
+    Compliant iff a well-formed fence is present, that fence equals
+    ``render_block(lang)`` (modulo a single trailing newline), and no
+    managed-vocabulary pattern appears among the repo-local (outside-fence)
+    lines. Each failed condition contributes a human-readable reason.
+    """
+    repo_local, fence = parse(text)
+    reasons: list[str] = []
+
+    if fence is None:
+        reasons.append("no well-formed vergil-managed fence found")
+    elif fence.rstrip("\n") != render_block(lang).rstrip("\n"):
+        reasons.append("the vergil-managed fence does not match the expected rendered block")
+
+    vocab = managed_vocabulary()
+    stray = [line for line in repo_local if line.rstrip() in vocab]
+    if stray:
+        reasons.append("managed patterns appear outside the fence: " + ", ".join(stray))
+
+    return Compliance(compliant=not reasons, reasons=reasons)

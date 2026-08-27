@@ -111,3 +111,91 @@ def test_managed_vocabulary_contains_known_lines() -> None:
 def test_managed_vocabulary_equals_baseline_set() -> None:
     baseline = set(repo_config._gitignore_patterns(repo_config._load_gitignore_baseline()))
     assert gitignore.managed_vocabulary() == baseline
+
+
+# --- Managed-block render/parse/check (Task 2) ------------------------------
+
+
+def test_render_block_python_shape() -> None:
+    block = gitignore.render_block("python")
+    lines = block.splitlines()
+    assert lines[0].startswith(gitignore.MANAGED_BEGIN_PREFIX)
+    assert "base + python" in lines[0]
+    assert lines[-1] == gitignore.MANAGED_END
+    assert block.endswith("\n")
+    assert "build/" in lines  # a base line
+    assert "__pycache__/" in lines  # a python line
+
+
+def test_render_block_none_is_base_descriptor() -> None:
+    block = gitignore.render_block(None)
+    lines = block.splitlines()
+    descriptor_line = lines[0]
+    assert descriptor_line.startswith(gitignore.MANAGED_BEGIN_PREFIX)
+    assert "+" not in descriptor_line
+    assert lines[-1] == gitignore.MANAGED_END
+    assert "build/" in lines  # base line present
+    assert "__pycache__/" not in lines  # no python fragment lines
+
+
+def test_render_block_empty_fragment_lang_is_base_descriptor() -> None:
+    """A known lang with an empty fragment (rust) renders a base-only block."""
+    block = gitignore.render_block("rust")
+    assert "+" not in block.splitlines()[0]
+
+
+def test_parse_round_trips_repo_local_around_fence() -> None:
+    fence_block = gitignore.render_block("python")
+    text = "repo-local-1\n" + fence_block + "repo-local-2\n"
+    repo_local, fence = gitignore.parse(text)
+    assert repo_local == ["repo-local-1", "repo-local-2"]
+    assert fence is not None
+    assert fence.rstrip("\n") == fence_block.rstrip("\n")
+
+
+def test_parse_no_fence_returns_all_lines_and_none() -> None:
+    text = "alpha\nbeta\n"
+    repo_local, fence = gitignore.parse(text)
+    assert repo_local == ["alpha", "beta"]
+    assert fence is None
+
+
+def test_parse_malformed_begin_without_end_is_treated_as_no_fence() -> None:
+    text = "alpha\n" + gitignore.MANAGED_BEGIN_PREFIX + " base (x) >>>\nbeta\n"
+    repo_local, fence = gitignore.parse(text)
+    assert fence is None
+    assert repo_local == text.splitlines()
+
+
+def test_check_compliant_for_rendered_python_block() -> None:
+    result = gitignore.check(gitignore.render_block("python"), "python")
+    assert result.compliant is True
+    assert result.reasons == []
+
+
+def test_check_compliant_for_base_only_block() -> None:
+    result = gitignore.check(gitignore.render_block(None), None)
+    assert result.compliant is True
+    assert result.reasons == []
+
+
+def test_check_flags_missing_fence() -> None:
+    result = gitignore.check("just-a-local-line\n", "python")
+    assert result.compliant is False
+    assert any("fence" in reason.lower() for reason in result.reasons)
+
+
+def test_check_flags_mangled_fence_body() -> None:
+    block = gitignore.render_block("python")
+    mangled = block.replace("__pycache__/", "__pycache__/EDITED")
+    result = gitignore.check(mangled, "python")
+    assert result.compliant is False
+    assert any("match" in reason.lower() for reason in result.reasons)
+
+
+def test_check_flags_stray_managed_line_outside_fence() -> None:
+    block = gitignore.render_block("python")
+    text = "my-local-thing/\n*.pyc\n" + block
+    result = gitignore.check(text, "python")
+    assert result.compliant is False
+    assert any("outside" in reason.lower() for reason in result.reasons)
