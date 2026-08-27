@@ -242,6 +242,7 @@ def test_sync_bootstrap_base_only_for_github_style_file() -> None:
     assert result.changed is True
     repo_local, fence = gitignore.parse(result.text)
     assert fence == gitignore.render_block(None)
+    assert fence is not None
     assert "+" not in fence.splitlines()[0]  # base-only descriptor
     assert repo_local == []
     for lang in gitignore.FRAGMENT_LANGS:
@@ -271,9 +272,7 @@ def test_sync_update_rewrites_stale_fence_body() -> None:
     stale line) and leaves the repo-local section untouched.
     """
     block = gitignore.render_block("python")
-    stale = block.replace(
-        gitignore.MANAGED_END, "STALE_LINE\n" + gitignore.MANAGED_END
-    )
+    stale = block.replace(gitignore.MANAGED_END, "STALE_LINE\n" + gitignore.MANAGED_END)
     text = stale + "\nkeep-me/\n"
 
     result = gitignore.sync(text, "python")
