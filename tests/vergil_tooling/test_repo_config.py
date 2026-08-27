@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import repo_config
+from vergil_tooling.lib import gitignore, repo_config
 from vergil_tooling.lib.repo_config import audit_local_config
 
 if TYPE_CHECKING:
@@ -642,6 +642,69 @@ class TestCheckGitignore:
         items: list = []
         repo_config._check_gitignore(tmp_path, items)
         assert items == []
+
+
+_VERGIL_TOML_NO_LANG = """\
+[project]
+repository-type = "library"
+versioning-scheme = "semver"
+branching-model = "library-release"
+release-model = "tagged-release"
+
+[project.co-authors]
+
+[ci]
+versions = ["3.12"]
+
+[dependencies]
+vergil = "v2.0.7"
+"""
+
+
+class TestCheckGitignoreTransitional:
+    """Transitional acceptance: legacy superset OR fenced block (epic #325)."""
+
+    def test_legacy_superset_still_passes(self, tmp_path: Path) -> None:
+        (tmp_path / "vergil.toml").write_text(_MINIMAL_VERGIL_TOML)
+        baseline = repo_config._load_gitignore_baseline()
+        _write_gitignore(tmp_path / ".gitignore", baseline + "\n# local\nmy-local-thing/\n")
+        items: list = []
+        repo_config._check_gitignore(tmp_path, items)
+        assert items == []
+
+    def test_fenced_python_block_passes(self, tmp_path: Path) -> None:
+        (tmp_path / "vergil.toml").write_text(_MINIMAL_VERGIL_TOML)
+        _write_gitignore(tmp_path / ".gitignore", gitignore.render_block("python"))
+        items: list = []
+        repo_config._check_gitignore(tmp_path, items)
+        assert items == []
+
+    def test_neither_form_fails(self, tmp_path: Path) -> None:
+        (tmp_path / "vergil.toml").write_text(_MINIMAL_VERGIL_TOML)
+        _write_gitignore(tmp_path / ".gitignore", "just-some-random-line/\nanother\n")
+        items: list = []
+        repo_config._check_gitignore(tmp_path, items)
+        assert items, "expected a DiffItem when neither legacy nor fenced form holds"
+        assert {i.field for i in items} == {"local.gitignore"}
+
+    def test_base_only_fence_on_no_language_repo_passes(self, tmp_path: Path) -> None:
+        (tmp_path / "vergil.toml").write_text(_VERGIL_TOML_NO_LANG)
+        _write_gitignore(tmp_path / ".gitignore", gitignore.render_block(None))
+        items: list = []
+        repo_config._check_gitignore(tmp_path, items)
+        assert items == []
+
+    def test_fenced_only_flag_rejects_legacy_superset(self, tmp_path: Path, monkeypatch) -> None:
+        # With the Task-10 flag flipped on, a legacy-superset-but-unfenced repo
+        # must FAIL — proving the tightening path works before the flip lands.
+        monkeypatch.setattr(repo_config, "_GITIGNORE_FENCED_ONLY", True)
+        (tmp_path / "vergil.toml").write_text(_MINIMAL_VERGIL_TOML)
+        baseline = repo_config._load_gitignore_baseline()
+        _write_gitignore(tmp_path / ".gitignore", baseline)
+        items: list = []
+        repo_config._check_gitignore(tmp_path, items)
+        assert items, "fenced-only mode must reject an unfenced legacy superset"
+        assert {i.field for i in items} == {"local.gitignore"}
 
 
 _WIRED = (
