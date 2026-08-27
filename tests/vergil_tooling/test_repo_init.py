@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from vergil_tooling.lib import repo_init
+from vergil_tooling.lib import gitignore, repo_init
 from vergil_tooling.lib.config import CiConfig, ProjectConfig, _parse_raw_config
 from vergil_tooling.lib.repo_init import (
     RepoInitContext,
@@ -437,54 +437,47 @@ class TestRenderReadme:
 
 class TestRenderGitignore:
     def test_contains_baseline_patterns(self) -> None:
-        content = render_gitignore()
+        content = render_gitignore("python")
+        # Base patterns live inside the composed managed block now.
         assert ".DS_Store" in content
         assert ".worktrees/" in content
         assert ".venv/" in content
         assert ".venv-host/" not in content
 
     def test_contains_vergil_workflow_patterns(self) -> None:
-        content = render_gitignore()
+        content = render_gitignore("python")
         assert ".vergil/" in content
         assert "build/" in content
         assert ".superpowers/" in content
 
-    def test_baseline_is_subset_of_flagship_gitignore(self) -> None:
-        """Drift guard: every baseline entry must exist in this repo's .gitignore.
+    def test_flagship_managed_block_matches_render_block(self) -> None:
+        """Drift guard: this repo's own managed fence equals ``render_block``.
 
-        The flagship repo carries repo-specific entries beyond the
-        baseline, but the baseline itself must never contain an entry
-        the flagship lacks (vergil-tooling#1425).
+        vergil-tooling is the first repo converted to the fenced form (dogfood,
+        epic vergil-project/.github#325). Its ``.gitignore`` managed block must be
+        exactly ``gitignore.render_block("python")`` — the composed base + python
+        fence — so the flagship never drifts from the source of truth it ships.
         """
         flagship = Path(__file__).resolve().parents[2] / ".gitignore"
-        flagship_entries = {
-            line.strip()
-            for line in flagship.read_text(encoding="utf-8").splitlines()
-            if line.strip() and not line.strip().startswith("#")
-        }
-        baseline_entries = [
-            line.strip()
-            for line in render_gitignore().splitlines()
-            if line.strip() and not line.strip().startswith("#")
-        ]
-        missing = [entry for entry in baseline_entries if entry not in flagship_entries]
-        assert not missing, f"baseline entries missing from flagship .gitignore: {missing}"
+        _repo_local, fence = gitignore.parse(flagship.read_text(encoding="utf-8"))
+        assert fence == gitignore.render_block("python")
 
-    def test_render_gitignore_returns_packaged_baseline(self) -> None:
-        import importlib.resources
-
-        rendered = render_gitignore()
-        # Reads the single source of truth, not a hardcoded string.
+    def test_render_gitignore_returns_render_block(self) -> None:
+        rendered = render_gitignore("python")
+        # Base + python patterns are present, inside the fence.
         assert ".venv/" in rendered
         assert "quality-ruff.json" in rendered
         assert "docs/site/site/" in rendered
-        # It IS the packaged asset, byte-for-byte.
-        packaged = (
-            importlib.resources.files("vergil_tooling.data")
-            .joinpath("gitignore.baseline")
-            .read_text(encoding="utf-8")
-        )
-        assert rendered == packaged
+        # It IS the composed managed block, byte-for-byte.
+        assert rendered == gitignore.render_block("python")
+
+    def test_render_gitignore_base_only_for_no_fragment(self) -> None:
+        # A language without a managed fragment (or None) yields a base-only
+        # block — no python-specific patterns, matching compose(None).
+        rendered = render_gitignore(None)
+        assert rendered == gitignore.render_block(None)
+        assert "quality-ruff.json" not in rendered
+        assert ".venv/" in rendered
 
 
 class TestRenderOpsWorkflow:
@@ -513,7 +506,9 @@ class TestRenderOpsWorkflow:
         """A freshly scaffolded repo passes both new audit checks (round-trip)."""
         from vergil_tooling.lib import repo_config
 
-        (tmp_path / ".gitignore").write_text(repo_init.render_gitignore(), encoding="utf-8")
+        # No vergil.toml here, so the audit resolves a base-only fence (None);
+        # scaffold a matching base-only .gitignore for the round-trip.
+        (tmp_path / ".gitignore").write_text(repo_init.render_gitignore(None), encoding="utf-8")
         ctx = RepoInitContext(org="vergil-project", name="demo")
         wf = tmp_path / ".github" / "workflows"
         wf.mkdir(parents=True, exist_ok=True)

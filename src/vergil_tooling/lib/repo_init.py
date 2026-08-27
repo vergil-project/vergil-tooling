@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
     from vergil_tooling.lib.github_config import DesiredState
 
-from vergil_tooling.lib import git, github, repo_config
+from vergil_tooling.lib import git, github, gitignore, repo_config
 from vergil_tooling.lib.config import _ENUMS
 from vergil_tooling.lib.vergil_refs import EXPECTED_MARKETPLACE_REF
 
@@ -432,14 +432,21 @@ def render_readme(ctx: RepoInitContext) -> str:
     return "".join(lines)
 
 
-def render_gitignore() -> str:
-    """Render the baseline .gitignore from the packaged single source of truth.
+def render_gitignore(lang: str | None) -> str:
+    """Render the composed base + language managed block for a scaffolded repo.
 
-    The baseline lives at ``vergil_tooling.data/gitignore.baseline`` so
-    scaffolding and the audit check (`repo_config._check_gitignore`) share one
-    definition and cannot diverge (epic vergil-project/.github#311).
+    Emits ``gitignore.render_block(lang)`` — the fenced ``base + <language>``
+    managed block (base-only when ``lang`` contributes no fragment). Scaffolding
+    and the audit check (`repo_config._check_gitignore`) both render through the
+    same ``gitignore`` module, so a freshly scaffolded ``.gitignore`` is
+    audit-clean by construction and the two can never diverge (epic
+    vergil-project/.github#325).
+
+    ``lang`` is the repo's resolved fragment language: the caller normalizes
+    ``[project].primary-language`` to ``None`` for any language without a managed
+    fragment, the same rule the audit uses (`repo_config._gitignore_language`).
     """
-    return _load_data_file("gitignore.baseline")
+    return gitignore.render_block(lang)
 
 
 def _cpp_family_and_version(versions: list[str] | None) -> tuple[str, str] | None:
@@ -1265,9 +1272,10 @@ def step_scaffold_config_files(ctx: RepoInitContext) -> None:
     readme = render_readme(ctx)
     (wd / "README.md").write_text(readme)
 
-    # .gitignore
-    gitignore = render_gitignore()
-    (wd / ".gitignore").write_text(gitignore)
+    # .gitignore — composed base + language managed block. Normalize the repo's
+    # primary language to a fragment (or None) with the same rule the audit uses.
+    lang = ctx.primary_language if ctx.primary_language in gitignore.FRAGMENT_LANGS else None
+    (wd / ".gitignore").write_text(render_gitignore(lang))
 
     # LICENSE
     if ctx.license_type != "none":

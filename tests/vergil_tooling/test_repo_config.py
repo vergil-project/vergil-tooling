@@ -604,9 +604,13 @@ class TestGitignorePatterns:
         assert repo_config._gitignore_patterns(text) == [".venv/", "build/"]
 
     def test_baseline_has_required_patterns(self) -> None:
-        patterns = repo_config._gitignore_patterns(repo_config._load_gitignore_baseline())
+        # The composed base + python set (and the fleet-wide managed vocabulary)
+        # must carry these canonical patterns (epic vergil-project/.github#325).
+        composed = gitignore.compose("python")
+        vocab = gitignore.managed_vocabulary()
         for required in (".venv/", ".worktrees/", "quality-ruff.json", "docs/site/site/"):
-            assert required in patterns
+            assert required in composed
+            assert required in vocab
 
 
 class TestCheckGitignore:
