@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.132/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.130/">
+        <link rel="next" href="../v2.1.207/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.131 - VERGIL Tooling</title>
+        <title>2.1.208 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-21131-2026-07-13" class="md-skip">
+        <a href="#release-21208-2026-08-27" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.131
+              2.1.208
             
           </span>
         </div>
@@ -1282,10 +1282,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.208/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.208
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1301,6 +1328,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -3438,37 +3496,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.131
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.131/" class="md-nav__link">
         
   
   
@@ -3484,37 +3515,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Features
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -13993,12 +13993,58 @@
 
 
 
-<h1 id="release-21131-2026-07-13">Release 2.1.131 (2026-07-13)<a class="headerlink" href="#release-21131-2026-07-13" title="Permanent link">&para;</a></h1>
+<h1 id="release-21208-2026-08-27">Release 2.1.208 (2026-08-27)<a class="headerlink" href="#release-21208-2026-08-27" title="Permanent link">&para;</a></h1>
 <h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>add GitHub harvest layer (PR resolve, run select, download) (#2302)</strong>
-Extend lib/ci_evidence.py with the GitHub I/O for the evidence bundle, all isolated behind mockable functions that route through lib.github (reusing its transient-retry wrapper): resolve_release_pr, select_ci_run (completed+success only, ignoring cancelled/in-progress per spec 5.2), download_evidence_artifacts (ci-evidence-* filter, staged under dest/<gate>/), and read_gate_conclusions. NoQualifyingRunError marks the one substantive-failure boundary. Relocate the merge/squash subject to PR-number extraction into lib.linkage as extract_merge_pr so vrg-resolve-tracking-issue and the harvester share one source of truth.</li>
+<li><strong>add composable base + language fragment data and compose() (#2929)</strong></li>
+<li>
+<p><strong>add managed-block render/parse/check (#2930)</strong>
+Add the vergil-managed fence markers and the block operations that build on Task 1's compose():</p>
+</li>
+<li>
+<p>MANAGED_BEGIN_PREFIX / MANAGED_END markers</p>
+</li>
+<li>render_block(lang) -&gt; full fenced block (descriptor is 'base + <lang>' when the language contributes a fragment, else 'base')</li>
+<li>parse(text) -&gt; (repo_local_lines, fence_or_None); a malformed (unterminated) fence is treated as absent</li>
+<li>Compliance dataclass and check(text, lang) -&gt; Compliance flagging a missing/mismatched fence and any managed pattern stranded outside it</li>
 </ul>
+<p>Task 2 of epic vergil-project/.github#325.</p>
+<ul>
+<li><strong>sync() with bootstrap/update semantics (#2931)</strong></li>
+<li>feat(gitignore): add sync() with bootstrap/update semantics</li>
+</ul>
+<p>Add sync(text, lang) -&gt; SyncResult to lib/gitignore.py. Bootstrap (no fence): replace the loose monolith with render_block(lang) and keep only repo-local lines absent from managed_vocabulary(), dropping the language's own managed lines and any foreign-language managed lines; report dropped managed lines in removed. Update (fence present): rewrite the fence to canonical render_block(lang) and trust the parsed repo-local section as-is. Idempotent by construction.</p>
+<p>Task 3 of epic vergil-project/.github#325.</p>
+<ul>
+<li>test(gitignore): satisfy formatter and type narrowing for sync tests</li>
+</ul>
+<p>Format the sync test additions with ruff and narrow the parsed fence to str before splitlines() in the base-only bootstrap test.</p>
+<p>Task 3 of epic vergil-project/.github#325.</p>
+<ul>
+<li><strong>accept fenced form in _check_gitignore (transitional) (#2932)</strong>
+Make the .gitignore audit transitional: a repo passes if it satisfies EITHER the legacy baseline-superset check OR a correct base+language fenced managed block (gitignore.check). Acceptance is gated by a new _GITIGNORE_FENCED_ONLY module flag, kept False here; Task 10 flips it to True to drop legacy acceptance so only a fence passes. The fenced-only failure-reporting branch is implemented now behind the flag.</li>
+</ul>
+<p>Repo language is resolved via declared_primary_language (the source the validation stack trusts), normalized to None for any language without a managed fragment or when the config is absent/unreadable, so shell/no-language repos expect a base-only fence.</p>
+<p>Task 5 of epic vergil-project/.github#325.</p>
+<ul>
+<li>
+<p><strong>add vrg-gitignore-sync applicator CLI (#2933)</strong>
+Add the one-repo applicator CLI (vrg-gitignore-sync) over lib.gitignore's sync/check. It resolves the repo's fence language from [project].primary-language via the same rule as the .gitignore audit (repo_config._gitignore_language, normalizing non-fragment languages and config errors to base-only), then --check (default) reports compliance and exits 1 on drift, while --write syncs the managed block and logs what it dropped. The CLI owns only the file change; the fleet driver (Task 7) shells out to it. Task 4 of epic vergil-project/.github#325.</p>
+</li>
+<li>
+<p><strong>compose repo-init .gitignore through render_block; fence the flagship (#2934)</strong>
+render_gitignore now emits gitignore.render_block(lang) — the composed base + language managed fence — instead of the loose monolith. Callers pass the repo's resolved fragment language (primary-language normalized to a fragment or None, the same rule the audit uses).</p>
+</li>
+</ul>
+<p>Convert vergil-tooling's own .gitignore to the fenced form (first repo converted, dogfood): the managed block equals render_block(python) and the repo-local extras section is preserved outside the fence.</p>
+<p>Update the monolith-coupled tests to the fenced form: TestRenderGitignore re-points at the composed fence and adds a flagship drift guard; test_baseline_has_required_patterns re-expressed against compose()/managed_vocabulary().</p>
+<p>Task 6 of epic vergil-project/.github#325. Needs Task 5's transitional audit (merged). No monolith deletion (Task 10).</p>
+<ul>
+<li><strong>add generic fleet-sweep driver + vrg-fleet-sync (#2935)</strong>
+Add lib/fleet_sweep.py: the generic per-repo work-chain driver (Applicator/SweepSpec/RepoResult + run_sweep). Per repo it creates a detached probe worktree, runs the applicator, and only when the change is real mints a tracking issue, names the feature/<issue>-<slug> branch, commits, and hands off via vrg-pr-workflow report-ready; an unchanged repo is skipped with no issue or branch, and one repo's failure is isolated so the sweep continues. dry-run reports intended actions touching no git/gh state.</li>
+</ul>
+<p>Add bin/vrg_fleet_sync.py wiring the gitignore applicator (shells out to vrg-gitignore-sync --write) as the sole consumer of the seam; a general change-script CLI is follow-on #328. The driver never runs vrg-submit-pr or merges.</p>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.208/v2.1.208-ci-evidence.tar.gz">Download →</a></p>
 
 
 
