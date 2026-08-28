@@ -215,10 +215,11 @@ Runs nightly from each repo's `ops.yml` via the reusable
 Interactive (or `--non-interactive`) wizard that bootstraps a new
 managed repository: creates and clones the repo, generates
 `vergil.toml`, scaffolds config files (`CLAUDE.md`, hook-guard shim,
-the baseline `.gitignore`), CI/CD/epic-rollup/`ops.yml` workflows, the
-docs site, branch structure, GitHub config, and Pages. The scaffolded
-`.gitignore` and staggered-cron `ops.yml` make a new repo pass the
-config audit's two baseline checks from day one.
+the managed `.gitignore` fence), CI/CD/epic-rollup/`ops.yml` workflows,
+the docs site, branch structure, GitHub config, and Pages. The
+scaffolded `base + <language>` `.gitignore` fence and staggered-cron
+`ops.yml` make a new repo pass the config audit's two local checks from
+day one.
 
 | Attribute | Value |
 |---|---|
@@ -227,6 +228,48 @@ config audit's two baseline checks from day one.
 | Preconditions | `gh` and `git` on PATH; run from the org-layout parent (or pass `--target-dir`) |
 | Failure mode | Loud refusal on a foreign-repo CWD, an occupied clone path, or missing required non-interactive values |
 | Exit codes | 0 success, 1 error |
+| Status | Active |
+
+### vrg-gitignore-sync
+
+Single-repo applicator for the vergil-managed `.gitignore` block. Reads
+`<repo>/.gitignore`, resolves the fence language from
+`[project].primary-language` (normalized to base-only for any language
+without a managed fragment), and either checks (default) or writes the
+composed `base + <language>` managed block through `lib/gitignore.py` —
+the same module the config audit renders through, so applicator and
+audit cannot diverge. It owns **only** the file change: it has no git or
+PR knowledge, and `--write` rewrites the fenced block in place while
+leaving genuinely repo-local lines outside the fence untouched. See the
+[GitHub Config Audit reference](config-audit.md#the-composed-managed-fence).
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_gitignore_sync` |
+| Args | `--repo PATH` (default: CWD); mutually exclusive `--check` (default) \| `--write` |
+| Preconditions | A repo whose language resolves from `[project].primary-language` (absent/unreadable config → base-only) |
+| Failure mode | `--check` prints each drift reason to stderr; `--write` always succeeds (prints `already in sync` or the synced path) |
+| Exit codes | 0 ok, 1 `--check` drift, 2 usage error |
+| Status | Active |
+
+### vrg-fleet-sync
+
+Propagate the vergil-managed `.gitignore` block across a fleet of
+repositories, opening **one PR per repo whose `.gitignore` drifts**. It
+drives the generic fleet-sweep driver (`lib/fleet_sweep.py`): per repo it
+creates a worktree, shells out to `vrg-gitignore-sync --write`, commits,
+and runs `report-ready`. Like every agent-run task it **never submits or
+merges** — it stops at `report-ready`, leaving submission and merge to the
+human. `--dry-run` reports the intended per-repo action without touching
+any git or GitHub state.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_fleet_sync` |
+| Args | `--repos PATH [PATH …]` (required, local clone paths); `--dry-run` |
+| Preconditions | `vrg-gitignore-sync` on PATH; each `--repos` path a local clone; git/`gh` credentials for the sweep |
+| Failure mode | Any repo that errors is recorded and reported in the per-repo status lines |
+| Exit codes | 0 all repos ok, 1 one or more repos errored |
 | Status | Active |
 
 ### vrg-container-run
