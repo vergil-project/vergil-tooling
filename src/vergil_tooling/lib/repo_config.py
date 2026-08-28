@@ -47,39 +47,6 @@ def _load_settings_template() -> dict[str, Any]:
     return template
 
 
-def _load_gitignore_baseline() -> str:
-    return (
-        importlib.resources.files("vergil_tooling.data")
-        .joinpath("gitignore.baseline")
-        .read_text(encoding="utf-8")
-    )
-
-
-def _gitignore_patterns(text: str) -> list[str]:
-    """Baseline pattern lines: non-comment, non-blank, trailing-ws trimmed.
-
-    Comments and blanks in the baseline are documentation, not requirements
-    (spec §2, resolved O2).
-    """
-    patterns: list[str] = []
-    for raw in text.splitlines():
-        line = raw.rstrip()
-        if not line or line.lstrip().startswith("#"):
-            continue
-        patterns.append(line)
-    return patterns
-
-
-#: Transitional switch for the ``.gitignore`` audit (epic
-#: vergil-project/.github#325). While ``False`` a repo passes if it satisfies
-#: EITHER the legacy baseline-superset check OR the new fenced managed-block
-#: check, so the fleet can be migrated one repo at a time without breaking the
-#: audit. Task 10 flips this to ``True``, dropping the legacy acceptance so only
-#: a correct ``base + <language>`` fence passes. The fenced-only branch is
-#: implemented now, behind the flag, so Task 10 is a one-line flip.
-_GITIGNORE_FENCED_ONLY = False
-
-
 def _gitignore_language(repo_root: Path) -> str | None:
     """Resolve the fence language for the ``.gitignore`` audit.
 
@@ -96,33 +63,14 @@ def _gitignore_language(repo_root: Path) -> str | None:
     return lang if lang in gitignore.FRAGMENT_LANGS else None
 
 
-def _legacy_gitignore_missing(text: str) -> list[str]:
-    """Return baseline pattern lines absent from ``text`` (the legacy check).
-
-    Every baseline pattern line (`_gitignore_patterns`) must appear verbatim as a
-    line in the repo's .gitignore (trailing whitespace trimmed on both sides).
-    Repos may add any extra lines. Matching is verbatim by design — the baseline
-    defines the one canonical spelling per pattern and the fleet is standardized
-    to it (spec §2). (#311)
-    """
-    required = _gitignore_patterns(_load_gitignore_baseline())
-    present = {line.rstrip() for line in text.splitlines()}
-    return [pattern for pattern in required if pattern not in present]
-
-
 def _check_gitignore(repo_root: Path, items: list[DiffItem]) -> None:
-    """Assert the repo ``.gitignore`` is compliant (transitional; epic #325).
+    """Assert the repo ``.gitignore`` is a correct vergil-managed fence (epic #325).
 
-    Acceptance depends on :data:`_GITIGNORE_FENCED_ONLY`:
-
-    * ``False`` (this task): the repo passes if it is EITHER the legacy baseline
-      superset OR a correct fenced managed block for its resolved language.
-    * ``True`` (Task 10): only the fenced managed block passes.
-
-    When neither accepted path holds, a ``DiffItem`` naming the drift is
-    appended. In the transitional mode the drift keeps the legacy per-pattern
-    ``missing`` reporting shape; in fenced-only mode it reports the fence
-    compliance reasons.
+    Only a correct fenced ``base + <language>`` managed block for the repo's
+    resolved language passes. The transitional legacy baseline-superset arm was
+    removed in Task 10 once the whole fleet was fenced, so ``base +
+    all-fragments`` (via :func:`gitignore.check`) is the single source of truth
+    for acceptance. Each fence-compliance failure is appended as a ``DiffItem``.
     """
     gitignore_path = repo_root / ".gitignore"
     text = gitignore_path.read_text(encoding="utf-8") if gitignore_path.is_file() else ""
@@ -130,14 +78,6 @@ def _check_gitignore(repo_root: Path, items: list[DiffItem]) -> None:
     lang = _gitignore_language(repo_root)
     compliance = gitignore.check(text, lang)
     if compliance.compliant:
-        return
-
-    if not _GITIGNORE_FENCED_ONLY:
-        missing = _legacy_gitignore_missing(text)
-        if not missing:
-            return
-        for pattern in missing:
-            items.append(DiffItem(field="local.gitignore", expected=pattern, actual="missing"))
         return
 
     for reason in compliance.reasons:

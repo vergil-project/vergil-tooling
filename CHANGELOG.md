@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.210] - 2026-08-28
+
+### Bug fixes
+
+- stage applicator changes before vrg-commit in run_sweep (#2946)
+
+### Features
+
+- tighten audit to fenced-only and delete the monolith (#2945)
+
 ## [2.1.209] - 2026-08-27
 
 ### Features

@@ -195,7 +195,7 @@ and project (discover repos via a GitHub Project and sync each).
 Audit a managed repo against the canonical Vergil configuration, and
 in `apply` mode reconcile the GitHub half. Combines local filesystem
 checks (`vergil.toml`, `CLAUDE.md`, `.claude/settings.json`, hook-guard
-shim, workflow pins, `.gitignore` baseline superset, `ops.yml` wiring)
+shim, workflow pins, `.gitignore` managed fence, `ops.yml` wiring)
 with GitHub-API checks (repo settings, rulesets, required-check set).
 Runs nightly from each repo's `ops.yml` via the reusable
 `ops-github-config.yml` workflow, where drift is fatal. See the

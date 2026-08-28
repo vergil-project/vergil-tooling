@@ -1,12 +1,15 @@
 """Composable .gitignore fragment data.
 
-The monolithic ``data/gitignore.baseline`` is split into a language-agnostic
+The fleet's ignore vocabulary lives as a language-agnostic
 ``data/gitignore/base`` fragment plus one per-language fragment under
 ``data/gitignore/<language>``. Each fragment file holds one ignore pattern per
 line with no comments or blank lines. ``compose()`` stitches ``base`` together
-with a language fragment into an order-stable, de-duplicated pattern list; the
-split is lossless — the union of ``base`` and every fragment reconstitutes the
-current baseline's pattern set (epic vergil-project/.github#325).
+with a language fragment into an order-stable, de-duplicated pattern list. The
+partitioned ``base + all-fragments`` is the single source of truth — it replaced
+the former monolithic ``data/gitignore.baseline`` (deleted in Task 10, epic
+vergil-project/.github#325); the lossless-split invariant test freezes the
+monolith's 62 patterns as a regression guard against a fragment edit silently
+dropping one.
 """
 
 from __future__ import annotations
@@ -23,9 +26,10 @@ MANAGED_BEGIN_PREFIX = "# >>> vergil-managed:"
 MANAGED_END = "# <<< vergil-managed <<<"
 
 #: The known baseline *comment* scaffolding a bootstrap must strip alongside the
-#: managed patterns. Frozen verbatim from ``data/gitignore.baseline`` (every
-#: comment line: the "single source of truth" preamble and every ``# section``
-#: header) so the set survives the monolith's eventual deletion, plus the header
+#: managed patterns. Frozen verbatim from the former ``data/gitignore.baseline``
+#: monolith (every comment line: the "single source of truth" preamble and every
+#: ``# section`` header) so the set outlived the monolith's deletion (Task 10),
+#: plus the header
 #: an earlier sweep appended to some repos (vergil-project/.github#322). A repo
 #: whose ``.gitignore`` *was* repo-init's fully-commented baseline would
 #: otherwise convert to a fence trailed by a now-false preamble and a stack of
