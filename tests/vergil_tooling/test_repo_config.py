@@ -453,11 +453,11 @@ def _write_compliant_repo(root: Path) -> None:
         "enabledPlugins": {"vergil@vergil-marketplace": True},
     }
     (root / ".claude" / "settings.json").write_text(json.dumps(compliant_settings))
-    # A fully compliant repo carries the baseline .gitignore and a wired,
-    # scheduled ops.yml (epic vergil-project/.github#311). The ops.yml ref is
-    # pinned to the repo's declared vergil version (v2.1) so _check_workflow_refs
-    # stays clean.
-    (root / ".gitignore").write_text(repo_config._load_gitignore_baseline(), encoding="utf-8")
+    # A fully compliant repo carries the fenced managed .gitignore for its
+    # declared language (python) and a wired, scheduled ops.yml (epic
+    # vergil-project/.github#311, #325). The ops.yml ref is pinned to the repo's
+    # declared vergil version (v2.1) so _check_workflow_refs stays clean.
+    (root / ".gitignore").write_text(gitignore.render_block("python"), encoding="utf-8")
     wf = root / ".github" / "workflows"
     wf.mkdir(parents=True, exist_ok=True)
     (wf / "ops.yml").write_text(_SCHED + "\njobs:\n" + _WIRED, encoding="utf-8")
@@ -599,10 +599,6 @@ def _write_gitignore(p: Path, text: str) -> None:
 
 
 class TestGitignorePatterns:
-    def test_strips_comments_blanks_and_trailing_ws(self) -> None:
-        text = "# comment\n\n.venv/  \n  # indented comment\nbuild/\n"
-        assert repo_config._gitignore_patterns(text) == [".venv/", "build/"]
-
     def test_baseline_has_required_patterns(self) -> None:
         # The composed base + python set (and the fleet-wide managed vocabulary)
         # must carry these canonical patterns (epic vergil-project/.github#325).
@@ -611,41 +607,6 @@ class TestGitignorePatterns:
         for required in (".venv/", ".worktrees/", "quality-ruff.json", "docs/site/site/"):
             assert required in composed
             assert required in vocab
-
-
-class TestCheckGitignore:
-    def test_superset_passes(self, tmp_path: Path) -> None:
-        baseline = repo_config._load_gitignore_baseline()
-        _write_gitignore(tmp_path / ".gitignore", baseline + "\n# local\nmy-local-thing/\n")
-        items: list = []
-        repo_config._check_gitignore(tmp_path, items)
-        assert items == []
-
-    def test_missing_pattern_fails(self, tmp_path: Path) -> None:
-        _write_gitignore(tmp_path / ".gitignore", ".venv/\n")  # missing almost everything
-        items: list = []
-        repo_config._check_gitignore(tmp_path, items)
-        fields = {i.field for i in items}
-        expecteds = {i.expected for i in items}
-        assert fields == {"local.gitignore"}
-        assert ".worktrees/" in expecteds
-        assert all(i.actual == "missing" for i in items)
-
-    def test_absent_file_reports_all(self, tmp_path: Path) -> None:
-        items: list = []
-        repo_config._check_gitignore(tmp_path, items)
-        required = repo_config._gitignore_patterns(repo_config._load_gitignore_baseline())
-        assert len(items) == len(required)
-
-    def test_trailing_whitespace_tolerated(self, tmp_path: Path) -> None:
-        baseline = repo_config._load_gitignore_baseline()
-        _write_gitignore(
-            tmp_path / ".gitignore",
-            "\n".join(line + "   " for line in baseline.splitlines()),
-        )
-        items: list = []
-        repo_config._check_gitignore(tmp_path, items)
-        assert items == []
 
 
 _VERGIL_TOML_NO_LANG = """\
@@ -665,20 +626,24 @@ vergil = "v2.0.7"
 """
 
 
-class TestCheckGitignoreTransitional:
-    """Transitional acceptance: legacy superset OR fenced block (epic #325)."""
+class TestCheckGitignore:
+    """Fenced-only acceptance: only a correct ``base + <language>`` fence passes.
 
-    def test_legacy_superset_still_passes(self, tmp_path: Path) -> None:
-        (tmp_path / "vergil.toml").write_text(_MINIMAL_VERGIL_TOML)
-        baseline = repo_config._load_gitignore_baseline()
-        _write_gitignore(tmp_path / ".gitignore", baseline + "\n# local\nmy-local-thing/\n")
-        items: list = []
-        repo_config._check_gitignore(tmp_path, items)
-        assert items == []
+    The transitional legacy-superset arm was removed in Task 10 (epic #325) once
+    the whole fleet was fenced; base + all-fragments is now the single source of
+    truth for what the audit accepts.
+    """
 
     def test_fenced_python_block_passes(self, tmp_path: Path) -> None:
         (tmp_path / "vergil.toml").write_text(_MINIMAL_VERGIL_TOML)
         _write_gitignore(tmp_path / ".gitignore", gitignore.render_block("python"))
+        items: list = []
+        repo_config._check_gitignore(tmp_path, items)
+        assert items == []
+
+    def test_base_only_fence_on_no_language_repo_passes(self, tmp_path: Path) -> None:
+        (tmp_path / "vergil.toml").write_text(_VERGIL_TOML_NO_LANG)
+        _write_gitignore(tmp_path / ".gitignore", gitignore.render_block(None))
         items: list = []
         repo_config._check_gitignore(tmp_path, items)
         assert items == []
@@ -688,26 +653,27 @@ class TestCheckGitignoreTransitional:
         _write_gitignore(tmp_path / ".gitignore", "just-some-random-line/\nanother\n")
         items: list = []
         repo_config._check_gitignore(tmp_path, items)
-        assert items, "expected a DiffItem when neither legacy nor fenced form holds"
+        assert items, "expected a DiffItem when the fence is absent"
         assert {i.field for i in items} == {"local.gitignore"}
 
-    def test_base_only_fence_on_no_language_repo_passes(self, tmp_path: Path) -> None:
-        (tmp_path / "vergil.toml").write_text(_VERGIL_TOML_NO_LANG)
-        _write_gitignore(tmp_path / ".gitignore", gitignore.render_block(None))
-        items: list = []
-        repo_config._check_gitignore(tmp_path, items)
-        assert items == []
-
-    def test_fenced_only_flag_rejects_legacy_superset(self, tmp_path: Path, monkeypatch) -> None:
-        # With the Task-10 flag flipped on, a legacy-superset-but-unfenced repo
-        # must FAIL — proving the tightening path works before the flip lands.
-        monkeypatch.setattr(repo_config, "_GITIGNORE_FENCED_ONLY", True)
+    def test_unfenced_managed_patterns_rejected(self, tmp_path: Path) -> None:
+        # The core of the Task-10 tightening: an unfenced file that carries the
+        # managed patterns loose (the old legacy-superset form) must now FAIL —
+        # a bare, comment-free superset no longer satisfies the audit.
         (tmp_path / "vergil.toml").write_text(_MINIMAL_VERGIL_TOML)
-        baseline = repo_config._load_gitignore_baseline()
-        _write_gitignore(tmp_path / ".gitignore", baseline)
+        loose = "\n".join(sorted(gitignore.managed_vocabulary())) + "\n"
+        _write_gitignore(tmp_path / ".gitignore", loose)
         items: list = []
         repo_config._check_gitignore(tmp_path, items)
-        assert items, "fenced-only mode must reject an unfenced legacy superset"
+        assert items, "fenced-only mode must reject an unfenced managed superset"
+        assert {i.field for i in items} == {"local.gitignore"}
+
+    def test_absent_gitignore_fails(self, tmp_path: Path) -> None:
+        # No .gitignore at all: the fence is missing, so the repo is non-compliant.
+        (tmp_path / "vergil.toml").write_text(_MINIMAL_VERGIL_TOML)
+        items: list = []
+        repo_config._check_gitignore(tmp_path, items)
+        assert items, "an absent .gitignore has no fence and must fail"
         assert {i.field for i in items} == {"local.gitignore"}
 
 

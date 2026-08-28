@@ -10,19 +10,103 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import gitignore, repo_config
+from vergil_tooling.lib import gitignore
 
 if TYPE_CHECKING:
     import pytest
 
 
+#: The 62 pattern lines of the pre-Task-10 monolith
+#: (``src/vergil_tooling/data/gitignore.baseline``), frozen verbatim before that
+#: file was deleted (epic vergil-project/.github#325, Task 10). The lossless-split
+#: invariant below proves ``base ∪ all-fragments`` still reconstitutes exactly
+#: this set, so a future fragment edit that silently drops or invents a pattern
+#: fails CI. This is the regression guard the monolith used to be.
+_LEGACY_GITIGNORE_PATTERNS: tuple[str, ...] = (
+    "*.swp",
+    "*.swo",
+    "*~",
+    "*.bak",
+    ".idea/",
+    ".vscode/",
+    ".DS_Store",
+    "Thumbs.db",
+    ".env",
+    ".env.*",
+    "*.log",
+    ".venv/",
+    ".worktrees/",
+    ".vergil/",
+    ".superpowers/",
+    ".claude/scheduled_tasks.lock",
+    ".claude/settings.local.json",
+    "build/",
+    "build-sanitize/",
+    "dist/",
+    "*.egg-info/",
+    "__pycache__/",
+    "*.pyc",
+    ".pytest_cache/",
+    ".mypy_cache/",
+    ".ruff_cache/",
+    ".coverage",
+    "coverage.xml",
+    "junit.xml",
+    "pip-audit.json",
+    "licenses.json",
+    "quality-ruff.json",
+    "quality-mypy.xml",
+    "docs/site/site/",
+    "node_modules/",
+    "*.tsbuildinfo",
+    "*.test",
+    "*.out",
+    ".bundle/",
+    "vendor/bundle/",
+    "*.o",
+    "*.obj",
+    "*.a",
+    "*.so",
+    "CMakePresets.json",
+    "CMakeUserPresets.json",
+    "cmakedeps_macros.cmake",
+    "conan_toolchain.cmake",
+    "conandeps_legacy.cmake",
+    "conanbuild*.sh",
+    "conanrun*.sh",
+    "conanbuildenv-*.sh",
+    "conanrunenv-*.sh",
+    "deactivate_conanbuild*.sh",
+    "deactivate_conanrun*.sh",
+    "Find*.cmake",
+    "*Config.cmake",
+    "*ConfigVersion.cmake",
+    "*Targets.cmake",
+    "*-Target-*.cmake",
+    "*-data.cmake",
+    "module-*.cmake",
+)
+
+
+def _legacy_commented_monolith(extra: list[str] | None = None) -> str:
+    """Reconstruct the pre-Task-10 fully-commented monolith from frozen data.
+
+    The monolith file was deleted in Task 10; sync's scaffolding-stripping
+    behavior (issue #2939) is still exercised by feeding an equivalent blob —
+    every managed comment plus every managed pattern — optionally with genuine
+    ``extra`` repo-local lines appended.
+    """
+    comments = sorted(gitignore._MANAGED_COMMENTS)
+    patterns = sorted(gitignore.managed_vocabulary())
+    return "\n".join([*comments, *patterns, *(extra or [])]) + "\n"
+
+
 def test_split_is_lossless_against_baseline() -> None:
-    """base ∪ all fragments == current baseline pattern set, exactly."""
-    baseline = set(repo_config._gitignore_patterns(repo_config._load_gitignore_baseline()))
+    """base ∪ all fragments == the frozen 62 legacy monolith patterns, exactly."""
     fragments = set(gitignore.load_base())
     for lang in gitignore.FRAGMENT_LANGS:
         fragments.update(gitignore.load_fragment(lang))
-    assert fragments == baseline
+    assert fragments == set(_LEGACY_GITIGNORE_PATTERNS)
 
 
 def test_fragment_langs_are_expected() -> None:
@@ -109,8 +193,7 @@ def test_managed_vocabulary_contains_known_lines() -> None:
 
 
 def test_managed_vocabulary_equals_baseline_set() -> None:
-    baseline = set(repo_config._gitignore_patterns(repo_config._load_gitignore_baseline()))
-    assert gitignore.managed_vocabulary() == baseline
+    assert gitignore.managed_vocabulary() == set(_LEGACY_GITIGNORE_PATTERNS)
 
 
 # --- Managed-block render/parse/check (Task 2) ------------------------------
@@ -300,18 +383,6 @@ def test_sync_update_preserves_repo_local_ordering() -> None:
 # --- sync() bootstrap: stale baseline comment scaffolding (issue #2939) ------
 
 
-def test_managed_comments_covers_every_baseline_comment_line() -> None:
-    """Every comment line in the monolith baseline is a managed comment."""
-    baseline_comments = [
-        line.rstrip()
-        for line in repo_config._load_gitignore_baseline().splitlines()
-        if line.lstrip().startswith("#")
-    ]
-    assert baseline_comments  # the monolith has comment scaffolding
-    for comment in baseline_comments:
-        assert comment in gitignore._MANAGED_COMMENTS
-
-
 def test_managed_comments_includes_322_append_header() -> None:
     """The #322 sweep append header is a managed comment too."""
     header = (
@@ -328,7 +399,7 @@ def test_sync_bootstrap_strips_full_commented_baseline_scaffolding() -> None:
     and pattern is dropped, with no orphaned section headers and no
     'single source of truth' preamble surviving below the fence.
     """
-    monolith = repo_config._load_gitignore_baseline()
+    monolith = _legacy_commented_monolith()
 
     result = gitignore.sync(monolith, None)
 
@@ -349,8 +420,7 @@ def test_sync_bootstrap_keeps_genuine_repo_local_comment_and_pattern() -> None:
     The genuine comment and pattern survive outside the fence; the baseline
     comment scaffolding and patterns do not.
     """
-    monolith_lines = repo_config._load_gitignore_baseline().splitlines()
-    text = "\n".join([*monolith_lines, "# my project data", "data/big.bin"]) + "\n"
+    text = _legacy_commented_monolith(["# my project data", "data/big.bin"])
 
     result = gitignore.sync(text, None)
 
@@ -401,8 +471,7 @@ def test_sync_bootstrap_strips_322_append_header() -> None:
 
 def test_sync_bootstrap_comment_strip_is_idempotent() -> None:
     """A second sync on a scaffolding-stripped bootstrap is a no-op."""
-    monolith_lines = repo_config._load_gitignore_baseline().splitlines()
-    text = "\n".join([*monolith_lines, "# my project data", "data/big.bin"]) + "\n"
+    text = _legacy_commented_monolith(["# my project data", "data/big.bin"])
 
     first = gitignore.sync(text, None)
     second = gitignore.sync(first.text, None)

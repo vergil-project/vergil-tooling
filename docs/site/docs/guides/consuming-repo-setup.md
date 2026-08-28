@@ -248,21 +248,21 @@ Every managed repo adopts the worktree convention so multiple
 Claude Code agents can work in parallel without colliding. Two
 tiny changes:
 
-Make sure `.worktrees/` is in your `.gitignore`. It is already one of
-the entries in the central baseline (see
-[Step 8: Baseline `.gitignore` and config audit](#step-8-baseline-gitignore-and-config-audit)),
-so a repo that carries the baseline superset already has it; the
-plugin's commit-block hook activates against its presence.
+Make sure `.worktrees/` is in your `.gitignore`. It is one of the `base`
+fragment's entries (see
+[Step 8: Managed `.gitignore` fence and config audit](#step-8-managed-gitignore-fence-and-config-audit)),
+so a repo that carries the managed fence already has it; the plugin's
+commit-block hook activates against its presence.
 
-!!! tip "The baseline already ignores your validation/build output"
+!!! tip "The managed fence already ignores your validation/build output"
     Validation and build artifacts (coverage reports, compiled output,
-    cache dirs, temporary venvs) are part of the central baseline your
-    `.gitignore` must be a superset of. Keeping them ignored matters:
-    un-gitignored output dirties a worktree, and a *merged* worktree left
-    dirty is one `vrg-finalize-pr` cannot auto-remove — it surfaces as
+    cache dirs, temporary venvs) are part of the composed managed block in
+    your `.gitignore`. Keeping them ignored matters: un-gitignored output
+    dirties a worktree, and a *merged* worktree left dirty is one
+    `vrg-finalize-pr` cannot auto-remove — it surfaces as
     **needs-attention** in `vrg-worktree-status` and requires the opt-in
-    `--clean-dirty` (or a manual clean) to clear. Carrying the full
-    baseline means merged worktrees sweep automatically.
+    `--clean-dirty` (or a manual clean) to clear. Carrying the managed
+    fence means merged worktrees sweep automatically.
 
 Add a `## Parallel AI agent development` section to your
 `CLAUDE.md`. Every managed repo has one you can copy — they differ
@@ -314,20 +314,24 @@ no further setup is needed in the workflow.
 See the [CI Architecture](ci-architecture.md) guide if you also want
 per-language test/lint/audit tiers.
 
-## Step 8: Baseline `.gitignore` and config audit
+## Step 8: Managed `.gitignore` fence and config audit
 
 Every managed repo owes two things to the fleet's self-policing config
 audit, and both are checked nightly:
 
-1. **Your `.gitignore` must be a superset of the central baseline.** The
-   baseline is a single source of truth owned by vergil-tooling
-   (`src/vergil_tooling/data/gitignore.baseline`) — the integral of the
-   fleet's ignores (editors, OS, secrets, Vergil internals, all
-   build/validation output, and every managed language's artifacts). Each
-   baseline pattern line must appear **verbatim** in your `.gitignore`;
-   matching is order-independent and you may add any number of local
-   entries below it. Matching is verbatim by design — `.venv/` and
-   `.venv` are not equivalent, so use the canonical baseline spelling.
+1. **Your `.gitignore` must carry the vergil-managed fence.** The fleet's
+   ignore vocabulary is *composed* — a language-agnostic `base` fragment
+   plus the fragment for your repo's `[project].primary-language` — into a
+   fenced **managed block**: a `# >>> vergil-managed: base + <language> …`
+   begin marker, the composed pattern lines (editors, OS, secrets, Vergil
+   internals, all build/validation output, and your language's artifacts),
+   and a `# <<< vergil-managed <<<` end marker. The audit requires that
+   block to be present and to match the composed block for your language
+   **exactly**, with no managed pattern left loose outside the fence. A
+   language with no fragment of its own — or a repo that declares none —
+   gets the base-only fence. Genuinely repo-local entries live outside the
+   fence and are never touched; run `vrg-gitignore-sync` to write or
+   refresh the block.
 
 2. **Your repo must carry a scheduled `ops.yml` wired to the config
    audit.** `.github/workflows/ops.yml` must call the reusable
@@ -336,13 +340,15 @@ audit, and both are checked nightly:
 
 Both are **fatal in the nightly audit**: any drift returns exit 1 and
 turns the scheduled `ops.yml` run red. A repo bootstrapped with
-`vrg-github-repo-init` is born conforming — it scaffolds the baseline
-`.gitignore` and a staggered-cron `ops.yml` for you. For an existing
-repo, reconcile `.gitignore` to the baseline superset and add `ops.yml`.
+`vrg-github-repo-init` is born conforming — it scaffolds the managed
+`.gitignore` fence and a staggered-cron `ops.yml` for you. For an
+existing repo, run `vrg-gitignore-sync` to install the fence and add
+`ops.yml`.
 
-You never bump a pin to receive baseline changes: every repo tracks the
-rolling `vergil-tooling@vX.Y` tag, so a new baseline released under that
-line is picked up automatically on the next nightly run.
+You never bump a pin to receive fragment changes: every repo tracks the
+rolling `vergil-tooling@vX.Y` tag, so an updated fragment released under
+that line is picked up on the next `vrg-gitignore-sync` run — and the
+nightly audit flags the drift until you run it.
 
 Check your repo locally before relying on the nightly run:
 
@@ -351,7 +357,7 @@ vrg-github-repo-config audit   # exit 0 compliant, 1 drift, 2 could-not-complete
 ```
 
 See the [GitHub Config Audit reference](../reference/config-audit.md)
-for the full check list and the baseline propagation model.
+for the full check list and the managed-fence propagation model.
 
 ## Step 9: Verify end-to-end
 
