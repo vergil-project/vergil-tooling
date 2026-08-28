@@ -58,23 +58,28 @@ divergence:
 | `_check_claude_md` | `CLAUDE.md` carries the canonical consumer template verbatim |
 | `_check_claude_settings` | `.claude/settings.json` marketplace + `enabledPlugins` match the template |
 | `_check_workflow_refs` | every `vergil-*` reusable-workflow pin matches the `vergil.toml` version |
-| `_check_gitignore` | `.gitignore` is a superset of the central baseline **(new, #311)** |
+| `_check_gitignore` | `.gitignore` carries the correct `base + <language>` vergil-managed fence **(#311, #325)** |
 | `_check_required_workflows` | `ops.yml` is present, wires the audit, and is scheduled **(new, #311)** |
 
-### `_check_gitignore` — baseline superset
+### `_check_gitignore` — managed fence
 
-Every non-comment, non-blank line of the central baseline (see
-[The baseline](#the-baseline)) must appear **verbatim** as a line in the
-repo's `.gitignore`. Matching is order-independent, and the repo may add
-any number of extra local lines. A missing baseline pattern is reported
-as `DiffItem(field="local.gitignore", expected=<pattern>,
-actual="missing")`; a repo with no `.gitignore` fails with every
-baseline pattern reported missing.
+The repo's `.gitignore` must carry the vergil-managed fence for its
+resolved language (see
+[The composed managed fence](#the-composed-managed-fence)). The check is
+**fenced-only**: a well-formed fence must be present, its body must equal
+`render_block(<language>)` **exactly**, and no managed-vocabulary pattern
+may appear loose outside the fence. Each failed condition is reported as
+`DiffItem(field="local.gitignore", expected="vergil-managed fence",
+actual=<reason>)`; a repo with no `.gitignore` fails because no fence is
+present. Genuinely repo-local lines outside the fence are never asserted
+against.
 
-Matching is deliberately verbatim — no pattern-equivalence
-normalization. `.venv/` and `.venv` (or a leading-slash variant) are
-**not** treated as equivalent: the baseline defines the one canonical
-spelling per pattern and the fleet is standardized to it.
+The resolved language is the repo's `[project].primary-language`,
+normalized to base-only for any language without a managed fragment — the
+same rule scaffolding uses, so a freshly inited repo is fenced-compliant
+by construction. The transitional legacy monolith-superset acceptance was
+removed in epic
+[#325](https://github.com/vergil-project/.github/issues/325), Task 10.
 
 ### `_check_required_workflows` — ops.yml wiring
 
@@ -95,58 +100,75 @@ run nightly, silently defeating the self-policing mechanism.
     the meantime, presence is established by `repo_init` scaffolding (new
     repos) and the one-time rollout (existing repos).
 
-## The baseline
+## The composed managed fence
 
-The single source of truth for the baseline `.gitignore` is a packaged
-data asset:
+The source of truth for the fleet's ignore vocabulary is a set of
+packaged data-asset **fragments**:
 
 ```text
-src/vergil_tooling/data/gitignore.baseline
+src/vergil_tooling/data/gitignore/base        # language-agnostic
+src/vergil_tooling/data/gitignore/<language>  # one per managed language
 ```
 
-It is loaded at runtime via `importlib.resources` — the same idiom used
-for the `CLAUDE.md` and `.claude/settings.json` templates — so
-scaffolding and the audit share one definition and cannot diverge.
+They are loaded at runtime via `importlib.resources` — the same idiom
+used for the `CLAUDE.md` and `.claude/settings.json` templates — and
+`lib/gitignore.py` *composes* `base + <language>` into an order-stable,
+de-duplicated pattern list. Scaffolding, the applicator
+(`vrg-gitignore-sync`), and the audit all render through that one module,
+so they cannot diverge.
 
-**The integral of the fleet's ignores.** The baseline is a single
-integrated file applied to *every* repo regardless of language — the
-union of universal categories (editors, OS, secrets, logs), Vergil
-internals (`.venv/`, `.worktrees/`, `.vergil/`, `.superpowers/`), all
-build/validation/CI-evidence output (including the mkdocs build path
-`docs/site/site/`), and the managed-language artifacts across Python,
-TypeScript/Node, Go, Ruby, and C++. There is **no per-language
-branching**: one file goes everywhere.
+**Composed per language.** A repo's block is the union of the
+language-agnostic `base` (editors, OS, secrets, logs, Vergil internals
+like `.venv/` / `.worktrees/` / `.vergil/` / `.superpowers/`, and all
+build/validation/CI-evidence output including the mkdocs build path
+`docs/site/site/`) plus the fragment for its `[project].primary-language`
+(Python, TypeScript/Node, Go, Ruby, C++; Rust and Java are managed with
+an empty fragment). A repo that declares no fragment language gets the
+base-only block.
 
-**Comments and blank lines are documentation, not requirements.** Only
-the pattern lines are matched; the baseline's comment blocks explain
-intent and never need to appear in a consuming repo.
+**The managed fence.** The composed block is written into `.gitignore`
+between a `# >>> vergil-managed: base + <language> …` begin marker and a
+`# <<< vergil-managed <<<` end marker. The audit
+(`lib/gitignore.py::check`) is **fenced-only**: it requires a well-formed
+fence whose body equals the composed block for the repo's language
+**exactly**, with no managed pattern left loose outside the fence. (The
+transitional legacy monolith-superset acceptance and the monolithic
+`gitignore.baseline` asset were removed in epic
+[#325](https://github.com/vergil-project/.github/issues/325), Task 10,
+once the whole fleet was fenced.)
 
-**Local additions are expected.** A repo `.gitignore` must be a
-*superset*, so a repo freely adds its own entries below the baseline
-patterns. The audit never asserts the file *equals* the baseline.
+**Local additions are expected.** Genuinely repo-local lines live
+*outside* the fence and are never asserted against or touched; a repo
+freely adds its own entries above or below the managed block.
 
 ### Propagation — the rolling `vX.Y` pin
 
 Every managed repo pins `vergil-tooling` to the **rolling major-minor
 tag** `vX.Y`, never a specific patch. The nightly `ops.yml` job installs
 `vergil-tooling@vX.Y`, which always resolves to the latest patch under
-that line — including its `gitignore.baseline`. So:
+that line — including its fragment set. So:
 
-> change the baseline → release a `vergil-tooling` patch under `vX.Y` →
-> **every repo picks it up on its next nightly run, automatically** — no
-> pin bump, no per-repo edit.
+> change a fragment → release a `vergil-tooling` patch under `vX.Y` →
+> **every repo's nightly audit flags the fence as drifted** until its
+> managed block is re-rendered.
 
-The rolling pin the fleet already uses *is* the propagation mechanism;
-there is no push-based renderer or separate sync engine.
+Because the fence must match the composed block *exactly* (not merely be
+a superset), a fragment change is applied — not auto-satisfied — by
+re-running `vrg-gitignore-sync`, which rewrites the managed block in
+place and leaves the repo-local section untouched. The fleet driver runs
+that applicator across every repo as reviewed per-repo PRs; the rolling
+pin delivers the new fragments to the tool, and the applicator writes the
+fence.
 
 ## New repos are born conforming
 
 `repo_init` (`vrg-github-repo-init`) scaffolds both halves of the
 contract, so a freshly created repo passes both new checks from day one:
 
-- **`.gitignore`** — `render_gitignore()` reads the baseline asset (it
-  no longer returns a hardcoded string), so a new repo starts as an exact
-  superset of the canonical baseline.
+- **`.gitignore`** — `render_gitignore()` renders through
+  `lib/gitignore.py` (the same module the audit uses), so a new repo is
+  born with a correct `base + <language>` managed fence and passes the
+  fenced-only audit by construction.
 - **`ops.yml`** — `render_ops_workflow()` writes
   `.github/workflows/ops.yml` calling `ops-github-config.yml@vX.Y` on a
   daily schedule. The scheduled **minute is staggered per repo** — a
@@ -157,7 +179,7 @@ contract, so a freshly created repo passes both new checks from day one:
 ## Related
 
 - [Consuming Repo Setup](../guides/consuming-repo-setup.md) — the
-  consuming-repo baseline + `ops.yml` contract
+  consuming-repo managed `.gitignore` fence + `ops.yml` contract
 - [CI Architecture](../guides/ci-architecture.md#every-gate-is-required-there-are-no-optional-pr-gates)
   — how the audit gates required-check drift and `vrg-release`
 - [CLI Tools Overview](cli-tools-overview.md#vrg-github-repo-config) —
