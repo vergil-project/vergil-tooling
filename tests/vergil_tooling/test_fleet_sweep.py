@@ -1,13 +1,20 @@
 """Tests for the generic fleet-sweep driver and the ``vrg-fleet-sync`` entry.
 
-Every external effect is mocked: :mod:`vergil_tooling.lib.git` (worktree
-add/remove/checkout), and ``subprocess.run`` (the ``vrg-issue-create`` /
-``vrg-commit`` / ``vrg-pr-workflow`` host-tool shell-outs). No git, gh, or
-filesystem state is touched.
+Most tests mock every external effect: :mod:`vergil_tooling.lib.git` (worktree
+add/move/remove/checkout) and ``subprocess.run`` (the ``vrg-issue-create`` /
+``vrg-commit`` / ``vrg-pr-workflow`` host-tool shell-outs), touching no git, gh,
+or filesystem state.
+
+The exception is ``test_run_sweep_commits_the_change_in_a_real_repo``, the
+regression guard for #2944: it drives the sweep against a **real** throwaway git
+repo (``tmp_path``) with ``git.run`` unmocked, faking only the ``vrg-*`` host
+tools, so a missing ``git add`` — invisible to the fully-mocked tests — makes the
+commit fail exactly as it did in production.
 """
 
 from __future__ import annotations
 
+import subprocess  # noqa: S404 - real git in the integration-style commit test
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -44,14 +51,21 @@ class _FakeProc:
 
 @pytest.fixture
 def calls(monkeypatch: pytest.MonkeyPatch) -> dict[str, list]:
-    """Record every git.run and subprocess.run invocation the driver makes."""
-    record: dict[str, list] = {"git": [], "proc": []}
+    """Record every git.run and subprocess.run invocation the driver makes.
+
+    ``seq`` is a single interleaved timeline of both — ``("git", args)`` and
+    ``("proc", args)`` in call order — so a test can assert one call *precedes*
+    another across the two mocks (e.g. staging before commit).
+    """
+    record: dict[str, list] = {"git": [], "proc": [], "seq": []}
 
     def fake_git_run(*args: str) -> None:
         record["git"].append(tuple(args))
+        record["seq"].append(("git", tuple(args)))
 
     def fake_proc_run(args, **kwargs):  # noqa: ANN001, ANN003
         record["proc"].append((tuple(args), kwargs.get("cwd")))
+        record["seq"].append(("proc", tuple(args)))
         if args[0] == "vrg-issue-create":
             return _FakeProc(
                 stdout="Created https://github.com/vergil-project/demo/issues/77, "
@@ -104,13 +118,39 @@ def test_changed_repo_runs_full_chain(calls: dict[str, list]) -> None:
     assert "report-ready" in ready
     assert "--issue" in ready and "77" in ready
     assert "chore(gitignore): sync managed .gitignore block" in ready
-    # commit + report-ready run inside the worktree.
+
+    # The probe worktree was renamed to the issue-<N>-<slug> convention, and
+    # commit + report-ready run inside that renamed worktree (not the probe).
+    issue_worktree = Path("/clones/demo/.worktrees/issue-77-gitignore-sync")
+    move = next(call for call in calls["git"] if len(call) >= 4 and call[3] == "move")
+    assert move == (
+        "-C",
+        "/clones/demo",
+        "worktree",
+        "move",
+        "/clones/demo/.worktrees/probe-gitignore-sync",
+        str(issue_worktree),
+    )
+    commit_cwd = next(cwd for args, cwd in calls["proc"] if args[0] == "vrg-commit")
     ready_cwd = next(cwd for args, cwd in calls["proc"] if args[0] == "vrg-pr-workflow")
-    assert ready_cwd == seen[0]
+    assert commit_cwd == issue_worktree
+    assert ready_cwd == issue_worktree
 
     # a named feature branch was created for the changed repo.
     git_flat = [tok for call in calls["git"] for tok in call]
     assert "feature/77-gitignore-sync" in git_flat
+
+    # The applicator's changes are STAGED before vrg-commit — the missing step
+    # that made every real sweep fail with "no staged changes" (#2944).
+    stage_call = ("git", ("-C", str(issue_worktree), "add", "-A"))
+    assert stage_call in calls["seq"]
+    stage_idx = calls["seq"].index(stage_call)
+    commit_idx = next(
+        i
+        for i, (kind, args) in enumerate(calls["seq"])
+        if kind == "proc" and args[0] == "vrg-commit"
+    )
+    assert stage_idx < commit_idx, "stage must precede commit"
 
 
 def test_epic_repo_links_issue_under_epic(calls: dict[str, list]) -> None:
@@ -142,6 +182,17 @@ def test_unchanged_repo_is_skipped_without_issue_or_branch(calls: dict[str, list
     # no named feature branch was created (the probe worktree is detached).
     git_flat = [tok for call in calls["git"] for tok in call]
     assert not any(tok.startswith("feature/") for tok in git_flat)
+    # the probe is torn down; nothing is moved to an issue-<N> name or staged.
+    assert (
+        "-C",
+        "/clones/demo",
+        "worktree",
+        "remove",
+        "--force",
+        "/clones/demo/.worktrees/probe-gitignore-sync",
+    ) in calls["git"]
+    assert not any(len(call) >= 4 and call[3] == "move" for call in calls["git"])
+    assert not any(len(call) >= 4 and call[2:4] == ("add", "-A") for call in calls["git"])
 
 
 def test_failure_is_isolated_and_sweep_continues(calls: dict[str, list]) -> None:
@@ -212,6 +263,98 @@ def test_unparseable_issue_url_is_an_error(monkeypatch: pytest.MonkeyPatch) -> N
     results = run_sweep(_spec(["/clones/demo"]), applicator, dry_run=False)
     assert results[0].status == "error"
     assert "could not parse issue number" in results[0].detail
+
+
+# --- integration-style: a real git repo proves the change is committed ----
+
+
+def _git(*args: str, cwd: Path | None = None) -> str:
+    """Run real git for the integration test's fixture setup and assertions."""
+    return subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+
+def test_run_sweep_commits_the_change_in_a_real_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end over a REAL git repo: the applicator's change lands in a commit.
+
+    This is the regression guard for #2944. The unit tests mock ``git.run``, so a
+    missing ``git add`` was invisible: nothing stages the applicator's edit, yet a
+    mocked ``vrg-commit`` "succeeds". Here ``git.run`` is real and the fake
+    ``vrg-commit`` mimics the real tool — it refuses when nothing is staged
+    (``git diff --cached --quiet``) — so an un-staged tree yields NO commit and
+    the sweep records ``error`` instead of ``ready``. The test therefore fails on
+    the pre-fix code and passes only once the driver stages before committing.
+    """
+    # Build an origin repo with a committed file on develop, then clone it so the
+    # clone carries an ``origin/develop`` remote-tracking ref for the probe.
+    origin = tmp_path / "origin"
+    clone = tmp_path / "clone"
+    origin.mkdir()
+    _git("init", "-q", "-b", "develop", str(origin))
+    _git("config", "user.email", "t@example.com", cwd=origin)
+    _git("config", "user.name", "Test", cwd=origin)
+    (origin / "existing.txt").write_text("original\n")
+    _git("add", "-A", cwd=origin)
+    _git("commit", "-qm", "init", cwd=origin)
+    _git("clone", "-q", str(origin), str(clone))
+    _git("config", "user.email", "t@example.com", cwd=clone)
+    _git("config", "user.name", "Test", cwd=clone)
+
+    def applicator(worktree: Path) -> AppResult:
+        (worktree / "managed.txt").write_text("propagated content\n")
+        return AppResult(changed=True, summary="added managed.txt")
+
+    def fake_run_tool(args: list[str], *, cwd: Path | str | None = None) -> str:
+        """Fake the host-tool seam so ``git.run`` stays REAL.
+
+        Faking ``_run_tool`` (not ``subprocess.run``) is deliberate: patching the
+        shared ``subprocess`` module would also intercept this test's own real
+        ``git`` calls. Here only the ``vrg-*`` shell-outs are simulated; every
+        ``git.run`` in the driver runs against the real repo.
+        """
+        prog = args[0]
+        if prog == "vrg-issue-create":
+            return "Created https://github.com/o/r/issues/42\n"
+        if prog == "vrg-commit":
+            # Mimic real vrg-commit: raise (as _run_tool would) when nothing is
+            # staged, else make a real commit so the change lands on the branch.
+            staged = subprocess.run(  # noqa: S603
+                ["git", "-C", str(cwd), "diff", "--cached", "--quiet"],  # noqa: S607
+                check=False,
+            )
+            if staged.returncode == 0:
+                msg = "vrg-commit failed (exit 1): ERROR: no staged changes"
+                raise RuntimeError(msg)
+            _git("-C", str(cwd), "commit", "-qm", "chore(gitignore): sync managed block")
+            return ""
+        # vrg-pr-workflow report-ready: no-op success (no relay ref in the test).
+        return ""
+
+    # git.run stays REAL; only the host-tool shell-outs (_run_tool) are faked.
+    monkeypatch.setattr(fleet_sweep, "_run_tool", fake_run_tool)
+
+    results = run_sweep(_spec([str(clone)]), applicator, dry_run=False)
+
+    assert results == [RepoResult(repo=str(clone), status="ready", detail="added managed.txt")], (
+        "sweep must succeed with the applicator's change committed"
+    )
+
+    # The worktree was renamed to the issue-<N>-<slug> convention...
+    worktree = clone / ".worktrees" / "issue-42-gitignore-sync"
+    assert worktree.is_dir()
+    # ...and its HEAD commit actually contains the applicator's new file.
+    committed = _git("-C", str(worktree), "show", "--stat", "--name-only", "HEAD")
+    assert "managed.txt" in committed
+    # the branch follows the convention too.
+    branch = _git("-C", str(worktree), "rev-parse", "--abbrev-ref", "HEAD").strip()
+    assert branch == "feature/42-gitignore-sync"
 
 
 # --- vrg_fleet_sync entry -------------------------------------------------
