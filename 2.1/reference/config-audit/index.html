@@ -1216,6 +1216,8 @@
       
         
       
+        
+      
     
     
     
@@ -1268,6 +1270,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.210/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.210
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -10801,10 +10831,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#_check_gitignore-baseline-superset" class="md-nav__link">
+  <a href="#_check_gitignore-managed-fence" class="md-nav__link">
     <span class="md-ellipsis">
       
-        _check_gitignore — baseline superset
+        _check_gitignore — managed fence
       
     </span>
   </a>
@@ -10828,15 +10858,15 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-baseline" class="md-nav__link">
+  <a href="#the-composed-managed-fence" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The baseline
+        The composed managed fence
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="The baseline">
+    <nav class="md-nav" aria-label="The composed managed fence">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -14146,10 +14176,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#_check_gitignore-baseline-superset" class="md-nav__link">
+  <a href="#_check_gitignore-managed-fence" class="md-nav__link">
     <span class="md-ellipsis">
       
-        _check_gitignore — baseline superset
+        _check_gitignore — managed fence
       
     </span>
   </a>
@@ -14173,15 +14203,15 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-baseline" class="md-nav__link">
+  <a href="#the-composed-managed-fence" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The baseline
+        The composed managed fence
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="The baseline">
+    <nav class="md-nav" aria-label="The composed managed fence">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -14337,7 +14367,7 @@ divergence:</p>
 </tr>
 <tr>
 <td><code>_check_gitignore</code></td>
-<td><code>.gitignore</code> is a superset of the central baseline <strong>(new, #311)</strong></td>
+<td><code>.gitignore</code> carries the correct <code>base + &lt;language&gt;</code> vergil-managed fence <strong>(#311, #325)</strong></td>
 </tr>
 <tr>
 <td><code>_check_required_workflows</code></td>
@@ -14345,18 +14375,23 @@ divergence:</p>
 </tr>
 </tbody>
 </table>
-<h3 id="_check_gitignore-baseline-superset"><code>_check_gitignore</code> — baseline superset<a class="headerlink" href="#_check_gitignore-baseline-superset" title="Permanent link">&para;</a></h3>
-<p>Every non-comment, non-blank line of the central baseline (see
-<a href="#the-baseline">The baseline</a>) must appear <strong>verbatim</strong> as a line in the
-repo's <code>.gitignore</code>. Matching is order-independent, and the repo may add
-any number of extra local lines. A missing baseline pattern is reported
-as <code>DiffItem(field="local.gitignore", expected=&lt;pattern&gt;,
-actual="missing")</code>; a repo with no <code>.gitignore</code> fails with every
-baseline pattern reported missing.</p>
-<p>Matching is deliberately verbatim — no pattern-equivalence
-normalization. <code>.venv/</code> and <code>.venv</code> (or a leading-slash variant) are
-<strong>not</strong> treated as equivalent: the baseline defines the one canonical
-spelling per pattern and the fleet is standardized to it.</p>
+<h3 id="_check_gitignore-managed-fence"><code>_check_gitignore</code> — managed fence<a class="headerlink" href="#_check_gitignore-managed-fence" title="Permanent link">&para;</a></h3>
+<p>The repo's <code>.gitignore</code> must carry the vergil-managed fence for its
+resolved language (see
+<a href="#the-composed-managed-fence">The composed managed fence</a>). The check is
+<strong>fenced-only</strong>: a well-formed fence must be present, its body must equal
+<code>render_block(&lt;language&gt;)</code> <strong>exactly</strong>, and no managed-vocabulary pattern
+may appear loose outside the fence. Each failed condition is reported as
+<code>DiffItem(field="local.gitignore", expected="vergil-managed fence",
+actual=&lt;reason&gt;)</code>; a repo with no <code>.gitignore</code> fails because no fence is
+present. Genuinely repo-local lines outside the fence are never asserted
+against.</p>
+<p>The resolved language is the repo's <code>[project].primary-language</code>,
+normalized to base-only for any language without a managed fragment — the
+same rule scaffolding uses, so a freshly inited repo is fenced-compliant
+by construction. The transitional legacy monolith-superset acceptance was
+removed in epic
+<a href="https://github.com/vergil-project/.github/issues/325">#325</a>, Task 10.</p>
 <h3 id="_check_required_workflows-opsyml-wiring"><code>_check_required_workflows</code> — ops.yml wiring<a class="headerlink" href="#_check_required_workflows-opsyml-wiring" title="Permanent link">&para;</a></h3>
 <p>A <strong>wiring validator</strong> for a <em>present</em> <code>ops.yml</code>. It asserts the file
 (a) exists, (b) references <code>ops-github-config.yml</code> (so a repo cannot
@@ -14375,47 +14410,64 @@ C (<a href="https://github.com/vergil-project/.github/issues/315">#315</a>). In
 the meantime, presence is established by <code>repo_init</code> scaffolding (new
 repos) and the one-time rollout (existing repos).</p>
 </div>
-<h2 id="the-baseline">The baseline<a class="headerlink" href="#the-baseline" title="Permanent link">&para;</a></h2>
-<p>The single source of truth for the baseline <code>.gitignore</code> is a packaged
-data asset:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>src/vergil_tooling/data/gitignore.baseline
+<h2 id="the-composed-managed-fence">The composed managed fence<a class="headerlink" href="#the-composed-managed-fence" title="Permanent link">&para;</a></h2>
+<p>The source of truth for the fleet's ignore vocabulary is a set of
+packaged data-asset <strong>fragments</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>src/vergil_tooling/data/gitignore/base        # language-agnostic
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>src/vergil_tooling/data/gitignore/&lt;language&gt;  # one per managed language
 </code></pre></div>
-<p>It is loaded at runtime via <code>importlib.resources</code> — the same idiom used
-for the <code>CLAUDE.md</code> and <code>.claude/settings.json</code> templates — so
-scaffolding and the audit share one definition and cannot diverge.</p>
-<p><strong>The integral of the fleet's ignores.</strong> The baseline is a single
-integrated file applied to <em>every</em> repo regardless of language — the
-union of universal categories (editors, OS, secrets, logs), Vergil
-internals (<code>.venv/</code>, <code>.worktrees/</code>, <code>.vergil/</code>, <code>.superpowers/</code>), all
-build/validation/CI-evidence output (including the mkdocs build path
-<code>docs/site/site/</code>), and the managed-language artifacts across Python,
-TypeScript/Node, Go, Ruby, and C++. There is <strong>no per-language
-branching</strong>: one file goes everywhere.</p>
-<p><strong>Comments and blank lines are documentation, not requirements.</strong> Only
-the pattern lines are matched; the baseline's comment blocks explain
-intent and never need to appear in a consuming repo.</p>
-<p><strong>Local additions are expected.</strong> A repo <code>.gitignore</code> must be a
-<em>superset</em>, so a repo freely adds its own entries below the baseline
-patterns. The audit never asserts the file <em>equals</em> the baseline.</p>
+<p>They are loaded at runtime via <code>importlib.resources</code> — the same idiom
+used for the <code>CLAUDE.md</code> and <code>.claude/settings.json</code> templates — and
+<code>lib/gitignore.py</code> <em>composes</em> <code>base + &lt;language&gt;</code> into an order-stable,
+de-duplicated pattern list. Scaffolding, the applicator
+(<code>vrg-gitignore-sync</code>), and the audit all render through that one module,
+so they cannot diverge.</p>
+<p><strong>Composed per language.</strong> A repo's block is the union of the
+language-agnostic <code>base</code> (editors, OS, secrets, logs, Vergil internals
+like <code>.venv/</code> / <code>.worktrees/</code> / <code>.vergil/</code> / <code>.superpowers/</code>, and all
+build/validation/CI-evidence output including the mkdocs build path
+<code>docs/site/site/</code>) plus the fragment for its <code>[project].primary-language</code>
+(Python, TypeScript/Node, Go, Ruby, C++; Rust and Java are managed with
+an empty fragment). A repo that declares no fragment language gets the
+base-only block.</p>
+<p><strong>The managed fence.</strong> The composed block is written into <code>.gitignore</code>
+between a <code># &gt;&gt;&gt; vergil-managed: base + &lt;language&gt; …</code> begin marker and a
+<code># &lt;&lt;&lt; vergil-managed &lt;&lt;&lt;</code> end marker. The audit
+(<code>lib/gitignore.py::check</code>) is <strong>fenced-only</strong>: it requires a well-formed
+fence whose body equals the composed block for the repo's language
+<strong>exactly</strong>, with no managed pattern left loose outside the fence. (The
+transitional legacy monolith-superset acceptance and the monolithic
+<code>gitignore.baseline</code> asset were removed in epic
+<a href="https://github.com/vergil-project/.github/issues/325">#325</a>, Task 10,
+once the whole fleet was fenced.)</p>
+<p><strong>Local additions are expected.</strong> Genuinely repo-local lines live
+<em>outside</em> the fence and are never asserted against or touched; a repo
+freely adds its own entries above or below the managed block.</p>
 <h3 id="propagation-the-rolling-vxy-pin">Propagation — the rolling <code>vX.Y</code> pin<a class="headerlink" href="#propagation-the-rolling-vxy-pin" title="Permanent link">&para;</a></h3>
 <p>Every managed repo pins <code>vergil-tooling</code> to the <strong>rolling major-minor
 tag</strong> <code>vX.Y</code>, never a specific patch. The nightly <code>ops.yml</code> job installs
 <code>vergil-tooling@vX.Y</code>, which always resolves to the latest patch under
-that line — including its <code>gitignore.baseline</code>. So:</p>
+that line — including its fragment set. So:</p>
 <blockquote>
-<p>change the baseline → release a <code>vergil-tooling</code> patch under <code>vX.Y</code> →
-<strong>every repo picks it up on its next nightly run, automatically</strong> — no
-pin bump, no per-repo edit.</p>
+<p>change a fragment → release a <code>vergil-tooling</code> patch under <code>vX.Y</code> →
+<strong>every repo's nightly audit flags the fence as drifted</strong> until its
+managed block is re-rendered.</p>
 </blockquote>
-<p>The rolling pin the fleet already uses <em>is</em> the propagation mechanism;
-there is no push-based renderer or separate sync engine.</p>
+<p>Because the fence must match the composed block <em>exactly</em> (not merely be
+a superset), a fragment change is applied — not auto-satisfied — by
+re-running <code>vrg-gitignore-sync</code>, which rewrites the managed block in
+place and leaves the repo-local section untouched. The fleet driver runs
+that applicator across every repo as reviewed per-repo PRs; the rolling
+pin delivers the new fragments to the tool, and the applicator writes the
+fence.</p>
 <h2 id="new-repos-are-born-conforming">New repos are born conforming<a class="headerlink" href="#new-repos-are-born-conforming" title="Permanent link">&para;</a></h2>
 <p><code>repo_init</code> (<code>vrg-github-repo-init</code>) scaffolds both halves of the
 contract, so a freshly created repo passes both new checks from day one:</p>
 <ul>
-<li><strong><code>.gitignore</code></strong> — <code>render_gitignore()</code> reads the baseline asset (it
-  no longer returns a hardcoded string), so a new repo starts as an exact
-  superset of the canonical baseline.</li>
+<li><strong><code>.gitignore</code></strong> — <code>render_gitignore()</code> renders through
+  <code>lib/gitignore.py</code> (the same module the audit uses), so a new repo is
+  born with a correct <code>base + &lt;language&gt;</code> managed fence and passes the
+  fenced-only audit by construction.</li>
 <li><strong><code>ops.yml</code></strong> — <code>render_ops_workflow()</code> writes
   <code>.github/workflows/ops.yml</code> calling <code>ops-github-config.yml@vX.Y</code> on a
   daily schedule. The scheduled <strong>minute is staggered per repo</strong> — a
@@ -14426,7 +14478,7 @@ contract, so a freshly created repo passes both new checks from day one:</p>
 <h2 id="related">Related<a class="headerlink" href="#related" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../../guides/consuming-repo-setup/">Consuming Repo Setup</a> — the
-  consuming-repo baseline + <code>ops.yml</code> contract</li>
+  consuming-repo managed <code>.gitignore</code> fence + <code>ops.yml</code> contract</li>
 <li><a href="../../guides/ci-architecture/#every-gate-is-required-there-are-no-optional-pr-gates">CI Architecture</a>
   — how the audit gates required-check drift and <code>vrg-release</code></li>
 <li><a href="../cli-tools-overview/#vrg-github-repo-config">CLI Tools Overview</a> —

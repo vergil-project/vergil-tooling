@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.53/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.51/">
+        <link rel="next" href="../v2.1.209/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.52 - VERGIL Tooling</title>
+        <title>2.1.210 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-2152-2026-06-22" class="md-skip">
+        <a href="#release-21210-2026-08-28" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.52
+              2.1.210
             
           </span>
         </div>
@@ -1286,10 +1286,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.210/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.210
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1305,6 +1332,48 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -5710,37 +5779,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.52
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.52/" class="md-nav__link">
         
   
   
@@ -5756,37 +5798,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -14036,6 +14047,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -14053,12 +14075,22 @@
 
 
 
-<h1 id="release-2152-2026-06-22">Release 2.1.52 (2026-06-22)<a class="headerlink" href="#release-2152-2026-06-22" title="Permanent link">&para;</a></h1>
+<h1 id="release-21210-2026-08-28">Release 2.1.210 (2026-08-28)<a class="headerlink" href="#release-21210-2026-08-28" title="Permanent link">&para;</a></h1>
 <h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>fetch opentofu modules from the v-tag git archive, not a release asset (#1755) (#1756)</strong>
-vrg-vm create off-platform 404d at fetch-modules: the URL embedded the version in both the release tag and the filename (from the v2.1 minor pin), but vergil-vm publishes per-patch release assets and v2.1 is only a git tag, not a release. Fetch GitHubs auto-generated source archive at the tag (archive/refs/tags/{tag}.tar.gz) instead — a single unauthenticated GET, no release asset to maintain; the moving v2.1 tag tracks the latest 2.1.x. The archive roots at vergil-vm-<ref>/, so locate modules via a */opentofu/modules glob. Companion: vergil-vm drops its now-unused publish-modules CD job.</li>
+<li><strong>stage applicator changes before vrg-commit in run_sweep (#2946)</strong>
+run_sweep ran the applicator then invoked vrg-commit without staging, so every real sweep failed with 'no staged changes' (the migration sweep hit this on all 12 repos). The mocked tests hid it because git.run was fully mocked.</li>
 </ul>
+<p>Stage the worktree changes with 'git add -A' before vrg-commit, and rename the probe worktree to the repo's issue-<N>-<slug> convention (via git worktree move once the issue number is known) instead of the fixed fleet-<slug> name.</p>
+<p>Add an integration-style test that drives run_sweep against a real throwaway git repo with git.run unmocked, faking only the vrg-* host tools, so the missing-stage regression reproduces the exact production failure and can't return.</p>
+<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>tighten audit to fenced-only and delete the monolith (#2945)</strong>
+Remove the transitional legacy-superset acceptance arm of _check_gitignore so only a correct base + <language> vergil-managed fence passes, and delete the monolithic src/vergil_tooling/data/gitignore.baseline asset along with its now-dead readers (_load_gitignore_baseline, _gitignore_patterns, _legacy_gitignore_missing, the _GITIGNORE_FENCED_ONLY switch, and the package-data manifest entry).</li>
+</ul>
+<p>Freeze the 62 legacy monolith patterns as a literal in the lossless-split invariant test so base + all-fragments is provably equivalent to the old monolith forever: a future fragment edit that drops or invents a pattern now fails CI. Rework the monolith-fixture sync tests to reconstruct an equivalent blob from the module's frozen managed comments and vocabulary, and replace the legacy per-pattern audit tests with fenced-only cases.</p>
+<p>Update the config-audit and consuming-repo docs to describe the composed managed fence and fenced-only audit instead of the deleted monolith superset.</p>
+<p>Task 10 (final code task) of epic vergil-project/.github#325.</p>
 
 
 
