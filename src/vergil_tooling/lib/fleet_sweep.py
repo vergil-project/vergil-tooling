@@ -16,15 +16,18 @@ non-goals here (follow-on #328): this is only the seam
 
 Per repo, :func:`run_sweep`:
 
-1. Creates a **detached** worktree at ``origin/develop`` — detached so a repo
-   the applicator leaves unchanged carries *no* branch and needs *no* issue.
+1. Creates a **detached** probe worktree at ``origin/develop`` — detached so a
+   repo the applicator leaves unchanged carries *no* branch and needs *no*
+   issue.
 2. Runs the applicator against that worktree.
 3. If nothing changed, removes the probe worktree and records ``"skipped"`` —
    no issue, no branch, no PR.
 4. If something changed, ensures a tracking issue (under ``spec.epic`` when set,
-   else the repo's ad-hoc epic), creates the ``feature/<issue>-<slug>`` branch
-   carrying the working-tree change, commits via ``vrg-commit``, and hands off
-   via ``vrg-pr-workflow report-ready`` — recording ``"ready"``.
+   else the repo's ad-hoc epic), renames the probe worktree to the repo's
+   ``.worktrees/issue-<N>-<slug>`` convention, creates the
+   ``feature/<issue>-<slug>`` branch carrying the working-tree change, **stages**
+   it, commits via ``vrg-commit``, and hands off via ``vrg-pr-workflow
+   report-ready`` — recording ``"ready"``.
 
 Each repo runs inside its own ``try``/``except`` so one repo's failure is
 recorded (``"error"``) and never aborts the sweep. The driver **never** runs
@@ -136,7 +139,12 @@ def _commit_subject(title: str) -> str:
 
 def _process_repo(spec: SweepSpec, applicator: Applicator, repo: str) -> RepoResult:
     """Run the full work-chain for one *repo*; the caller isolates failures."""
-    probe = Path(repo) / ".worktrees" / f"fleet-{spec.branch_slug}"
+    worktrees = Path(repo) / ".worktrees"
+    # The issue number is not known until *after* the applicator has run (an
+    # unchanged repo mints no issue), so the worktree starts under a probe name
+    # and is renamed to the ``issue-<N>-<slug>`` convention once the issue is
+    # minted.
+    probe = worktrees / f"probe-{spec.branch_slug}"
 
     # 1. Detached probe worktree at origin/develop: no branch, so an unchanged
     #    repo leaves nothing behind and never needs an issue.
@@ -150,14 +158,22 @@ def _process_repo(spec: SweepSpec, applicator: Applicator, repo: str) -> RepoRes
         git.run("-C", repo, "worktree", "remove", "--force", str(probe))
         return RepoResult(repo=repo, status="skipped", detail=result.summary)
 
-    # 2. There is a change worth a PR: mint the tracking issue, then name the
-    #    branch after it, carrying the working-tree change onto the branch.
+    # 2. There is a change worth a PR: mint the tracking issue, then rename the
+    #    worktree to the repo convention ``issue-<N>-<slug>`` and name the branch
+    #    after the issue, carrying the working-tree change (which moves with the
+    #    worktree) onto the branch.
     issue = _ensure_issue(spec, repo)
     branch = f"feature/{issue}-{spec.branch_slug}"
-    git.run("-C", str(probe), "checkout", "-b", branch)
+    worktree = worktrees / f"issue-{issue}-{spec.branch_slug}"
+    git.run("-C", repo, "worktree", "move", str(probe), str(worktree))
+    git.run("-C", str(worktree), "checkout", "-b", branch)
 
-    # 3. Commit and hand off. vrg-commit re-adds the type/scope prefix, so the
-    #    message is the bare subject recovered from the PR title.
+    # 3. Stage the applicator's working-tree changes, then commit and hand off.
+    #    Without this stage vrg-commit sees nothing staged and fails ("no staged
+    #    changes"), which broke every real sweep (#2944). vrg-commit re-adds the
+    #    type/scope prefix, so the message is the bare subject recovered from the
+    #    PR title.
+    git.run("-C", str(worktree), "add", "-A")
     _run_tool(
         [
             "vrg-commit",
@@ -168,7 +184,7 @@ def _process_repo(spec: SweepSpec, applicator: Applicator, repo: str) -> RepoRes
             "--message",
             _commit_subject(spec.title),
         ],
-        cwd=probe,
+        cwd=worktree,
     )
     _run_tool(
         [
@@ -183,7 +199,7 @@ def _process_repo(spec: SweepSpec, applicator: Applicator, repo: str) -> RepoRes
             "--notes",
             result.summary,
         ],
-        cwd=probe,
+        cwd=worktree,
     )
     return RepoResult(repo=repo, status="ready", detail=result.summary)
 
