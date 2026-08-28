@@ -18,6 +18,7 @@ from vergil_tooling.lib.config import (
     ContainerConfig,
     CppConfig,
     MarkdownlintConfig,
+    TestConfig,
     TypeScriptConfig,
     ValidationConfig,
     VmStanza,
@@ -1508,3 +1509,52 @@ def test_typescript_block_not_flagged_as_unrecognized_section(
     (tmp_path / "vergil.toml").write_text(toml)
     read_config(tmp_path)
     assert "unrecognized section [typescript]" not in capsys.readouterr().err
+
+
+# -- [test] section (epic vergil-project/.github#333, Task 5) ------------------
+
+
+def test_test_config_defaults_parallel_true_when_section_absent(tmp_path: Path) -> None:
+    """With no [test] block, parallel defaults on (no repo is left known-broken)."""
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    cfg = read_config(tmp_path)
+    assert cfg.test == TestConfig(parallel=True)
+    assert cfg.test.parallel is True
+
+
+def test_test_config_parallel_false_opt_out(tmp_path: Path) -> None:
+    toml = _VALID_TOML + "\n[test]\nparallel = false\n"
+    (tmp_path / "vergil.toml").write_text(toml)
+    cfg = read_config(tmp_path)
+    assert cfg.test == TestConfig(parallel=False)
+    assert cfg.test.parallel is False
+
+
+def test_test_config_parallel_true_explicit(tmp_path: Path) -> None:
+    toml = _VALID_TOML + "\n[test]\nparallel = true\n"
+    (tmp_path / "vergil.toml").write_text(toml)
+    cfg = read_config(tmp_path)
+    assert cfg.test.parallel is True
+
+
+def test_test_config_non_bool_parallel_raises_config_error(tmp_path: Path) -> None:
+    toml = _VALID_TOML + '\n[test]\nparallel = "yes"\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=r"\[test\]\.parallel must be a boolean"):
+        read_config(tmp_path)
+
+
+def test_warns_unrecognized_test_key(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    toml = _VALID_TOML + "\n[test]\nparallel = true\nworkers = 4\n"
+    (tmp_path / "vergil.toml").write_text(toml)
+    read_config(tmp_path)
+    assert "unrecognized key 'workers' in [test]" in capsys.readouterr().err
+
+
+def test_test_block_not_flagged_as_unrecognized_section(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    toml = _VALID_TOML + "\n[test]\nparallel = true\n"
+    (tmp_path / "vergil.toml").write_text(toml)
+    read_config(tmp_path)
+    assert "unrecognized section [test]" not in capsys.readouterr().err
