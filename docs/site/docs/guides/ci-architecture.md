@@ -78,6 +78,29 @@ common checks and per-language validation. The Claude Code hook guard
 ensures agents use `vrg-commit` (which runs validation) rather than raw
 `git commit`.
 
+!!! note "Python tests run in parallel by default"
+    For Python repos the validation gate's test stage runs in parallel via
+    pytest-xdist's work-stealing scheduler — the shared command appends
+    `-n auto --dist worksteal` to the coverage-gate argv. This is the
+    fleet-wide default (the Python dev image ships `pytest-xdist`, so the
+    flag resolves everywhere) and materially cuts test-stage wall-clock —
+    roughly 3.2× on this repo's own suite (epic
+    [vergil-project/.github#333](https://github.com/vergil-project/.github/issues/333)).
+    A repo with an order-dependent suite opts out with `[test].parallel =
+    false` in its `vergil.toml`; see
+    [Test Config (`[test]`)](../reference/test-config.md) for the knob and
+    how the flag is computed. Parallelism changes only *how fast* the suite
+    runs — the `--cov-branch --cov-fail-under=100` gate is present in every
+    computed command, serial or parallel, and measures the identical set.
+
+Two adjacent levers were evaluated for this epic and **dropped**: the
+`sys.monitoring` coverage backend (`COVERAGE_CORE=sysmon`) is inert under
+`--cov-branch` — coverage.py silently falls back to the C tracer — and
+`--import-mode=importlib` gave no measured speedup and was not fleet-safe.
+Neither ships; parallelism is the one universal win. See
+[`epics/333-python-test-perf/evidence/baseline.md`](https://github.com/vergil-project/vergil-tooling/blob/develop/epics/333-python-test-perf/evidence/baseline.md)
+for the measured evidence.
+
 ## Tier 2: PR CI
 
 Triggers on `pull_request` events. Runs the full validation suite.

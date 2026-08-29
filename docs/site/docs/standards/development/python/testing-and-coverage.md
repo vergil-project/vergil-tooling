@@ -69,6 +69,19 @@ Documentation format:
 Do not include specific line numbers in docstrings or comments explaining
 coverage exceptions. Describe the branch or condition conceptually instead.
 
+## Parallel Execution in the Validation Gate
+
+Under `vrg-validate`, the Python test stage runs **in parallel by default** via
+pytest-xdist's work-stealing scheduler (`-n auto --dist worksteal`). This is a
+fleet-wide default that cut this repo's test-stage wall-clock by roughly 3.2×;
+the coverage gate (`--cov-branch --cov-fail-under=100`) is unchanged by it —
+parallelism affects only speed, not what coverage measures.
+
+A repo whose suite is order-dependent opts out with `[test].parallel = false` in
+its `vergil.toml`. Prefer fixing the suite to run safely in parallel over opting
+out. See the [Test Config (`[test]`)](../../../reference/test-config.md)
+reference for the knob and the exact command-build rules.
+
 ## Coverage Reporting
 
 ```bash
