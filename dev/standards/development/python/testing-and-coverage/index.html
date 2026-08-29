@@ -10699,6 +10699,8 @@
       
         
       
+        
+      
     
     
     
@@ -10871,6 +10873,34 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="../../../../reference/test-config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Test Config ([test])
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
     
     
       
@@ -10889,10 +10919,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_6" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_7" >
         
           
-          <label class="md-nav__link" for="__nav_4_6" id="__nav_4_6_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_7" id="__nav_4_7_label" tabindex="0">
             
   
   
@@ -10910,8 +10940,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_6_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_6">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_7">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -10983,10 +11013,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_7" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_8" >
         
           
-          <label class="md-nav__link" for="__nav_4_7" id="__nav_4_7_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_8" id="__nav_4_8_label" tabindex="0">
             
   
   
@@ -11004,8 +11034,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_7_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_7">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_8">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -11111,10 +11141,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_8" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_9" >
         
           
-          <label class="md-nav__link" for="__nav_4_8" id="__nav_4_8_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_9" id="__nav_4_9_label" tabindex="0">
             
   
   
@@ -11132,8 +11162,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_8_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_8">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_9">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -12358,6 +12388,17 @@
     <span class="md-ellipsis">
       
         Untestable Code Documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#parallel-execution-in-the-validation-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parallel Execution in the Validation Gate
       
     </span>
   </a>
@@ -14234,6 +14275,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#parallel-execution-in-the-validation-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parallel Execution in the Validation Gate
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#coverage-reporting" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -14338,6 +14390,16 @@ during review and maintenance.</p>
 </code></pre></div>
 <p>Do not include specific line numbers in docstrings or comments explaining
 coverage exceptions. Describe the branch or condition conceptually instead.</p>
+<h2 id="parallel-execution-in-the-validation-gate">Parallel Execution in the Validation Gate<a class="headerlink" href="#parallel-execution-in-the-validation-gate" title="Permanent link">&para;</a></h2>
+<p>Under <code>vrg-validate</code>, the Python test stage runs <strong>in parallel by default</strong> via
+pytest-xdist's work-stealing scheduler (<code>-n auto --dist worksteal</code>). This is a
+fleet-wide default that cut this repo's test-stage wall-clock by roughly 3.2×;
+the coverage gate (<code>--cov-branch --cov-fail-under=100</code>) is unchanged by it —
+parallelism affects only speed, not what coverage measures.</p>
+<p>A repo whose suite is order-dependent opts out with <code>[test].parallel = false</code> in
+its <code>vergil.toml</code>. Prefer fixing the suite to run safely in parallel over opting
+out. See the <a href="../../../../reference/test-config/">Test Config (<code>[test]</code>)</a>
+reference for the knob and the exact command-build rules.</p>
 <h2 id="coverage-reporting">Coverage Reporting<a class="headerlink" href="#coverage-reporting" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>pytest<span class="w"> </span>--cov<span class="o">=</span>src<span class="w"> </span>--cov-report<span class="o">=</span>term-missing<span class="w"> </span>--cov-branch
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>pytest<span class="w"> </span>--cov<span class="o">=</span>src<span class="w"> </span>--cov-report<span class="o">=</span>html<span class="w"> </span>--cov-branch

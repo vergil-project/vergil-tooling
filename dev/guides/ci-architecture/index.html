@@ -10697,6 +10697,8 @@
       
         
       
+        
+      
     
     
     
@@ -10869,6 +10871,34 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="../../reference/test-config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Test Config ([test])
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
     
     
       
@@ -10887,10 +10917,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_6" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_7" >
         
           
-          <label class="md-nav__link" for="__nav_4_6" id="__nav_4_6_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_7" id="__nav_4_7_label" tabindex="0">
             
   
   
@@ -10908,8 +10938,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_6_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_6">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_7">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -10981,10 +11011,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_7" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_8" >
         
           
-          <label class="md-nav__link" for="__nav_4_7" id="__nav_4_7_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_8" id="__nav_4_8_label" tabindex="0">
             
   
   
@@ -11002,8 +11032,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_7_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_7">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_8">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -11109,10 +11139,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_8" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_9" >
         
           
-          <label class="md-nav__link" for="__nav_4_8" id="__nav_4_8_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_9" id="__nav_4_9_label" tabindex="0">
             
   
   
@@ -11130,8 +11160,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_8_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_8">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_9">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -14788,6 +14818,29 @@ host prerequisite.</p>
 common checks and per-language validation. The Claude Code hook guard
 ensures agents use <code>vrg-commit</code> (which runs validation) rather than raw
 <code>git commit</code>.</p>
+<div class="admonition note">
+<p class="admonition-title">Python tests run in parallel by default</p>
+<p>For Python repos the validation gate's test stage runs in parallel via
+pytest-xdist's work-stealing scheduler — the shared command appends
+<code>-n auto --dist worksteal</code> to the coverage-gate argv. This is the
+fleet-wide default (the Python dev image ships <code>pytest-xdist</code>, so the
+flag resolves everywhere) and materially cuts test-stage wall-clock —
+roughly 3.2× on this repo's own suite (epic
+<a href="https://github.com/vergil-project/.github/issues/333">vergil-project/.github#333</a>).
+A repo with an order-dependent suite opts out with <code>[test].parallel =
+false</code> in its <code>vergil.toml</code>; see
+<a href="../../reference/test-config/">Test Config (<code>[test]</code>)</a> for the knob and
+how the flag is computed. Parallelism changes only <em>how fast</em> the suite
+runs — the <code>--cov-branch --cov-fail-under=100</code> gate is present in every
+computed command, serial or parallel, and measures the identical set.</p>
+</div>
+<p>Two adjacent levers were evaluated for this epic and <strong>dropped</strong>: the
+<code>sys.monitoring</code> coverage backend (<code>COVERAGE_CORE=sysmon</code>) is inert under
+<code>--cov-branch</code> — coverage.py silently falls back to the C tracer — and
+<code>--import-mode=importlib</code> gave no measured speedup and was not fleet-safe.
+Neither ships; parallelism is the one universal win. See
+<a href="https://github.com/vergil-project/vergil-tooling/blob/develop/epics/333-python-test-perf/evidence/baseline.md"><code>epics/333-python-test-perf/evidence/baseline.md</code></a>
+for the measured evidence.</p>
 <h2 id="tier-2-pr-ci">Tier 2: PR CI<a class="headerlink" href="#tier-2-pr-ci" title="Permanent link">&para;</a></h2>
 <p>Triggers on <code>pull_request</code> events. Runs the full validation suite.</p>
 <p><strong>What runs:</strong></p>
