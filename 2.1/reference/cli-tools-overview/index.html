@@ -1218,6 +1218,8 @@
       
         
       
+        
+      
     
     
     
@@ -1270,6 +1272,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.211/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.211
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -10896,6 +10926,28 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-gitignore-sync" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-gitignore-sync
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vrg-fleet-sync" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-fleet-sync
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-container-run" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -14495,6 +14547,28 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-gitignore-sync" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-gitignore-sync
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vrg-fleet-sync" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-fleet-sync
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-container-run" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -15163,10 +15237,11 @@ Runs nightly from each repo's <code>ops.yml</code> via the reusable
 <p>Interactive (or <code>--non-interactive</code>) wizard that bootstraps a new
 managed repository: creates and clones the repo, generates
 <code>vergil.toml</code>, scaffolds config files (<code>CLAUDE.md</code>, hook-guard shim,
-the baseline <code>.gitignore</code>), CI/CD/epic-rollup/<code>ops.yml</code> workflows, the
-docs site, branch structure, GitHub config, and Pages. The scaffolded
-<code>.gitignore</code> and staggered-cron <code>ops.yml</code> make a new repo pass the
-config audit's two baseline checks from day one.</p>
+the managed <code>.gitignore</code> fence), CI/CD/epic-rollup/<code>ops.yml</code> workflows,
+the docs site, branch structure, GitHub config, and Pages. The
+scaffolded <code>base + &lt;language&gt;</code> <code>.gitignore</code> fence and staggered-cron
+<code>ops.yml</code> make a new repo pass the config audit's two local checks from
+day one.</p>
 <table>
 <thead>
 <tr>
@@ -15194,6 +15269,94 @@ config audit's two baseline checks from day one.</p>
 <tr>
 <td>Exit codes</td>
 <td>0 success, 1 error</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-gitignore-sync">vrg-gitignore-sync<a class="headerlink" href="#vrg-gitignore-sync" title="Permanent link">&para;</a></h3>
+<p>Single-repo applicator for the vergil-managed <code>.gitignore</code> block. Reads
+<code>&lt;repo&gt;/.gitignore</code>, resolves the fence language from
+<code>[project].primary-language</code> (normalized to base-only for any language
+without a managed fragment), and either checks (default) or writes the
+composed <code>base + &lt;language&gt;</code> managed block through <code>lib/gitignore.py</code> —
+the same module the config audit renders through, so applicator and
+audit cannot diverge. It owns <strong>only</strong> the file change: it has no git or
+PR knowledge, and <code>--write</code> rewrites the fenced block in place while
+leaving genuinely repo-local lines outside the fence untouched. See the
+<a href="../config-audit/#the-composed-managed-fence">GitHub Config Audit reference</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_gitignore_sync</code></td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>--repo PATH</code> (default: CWD); mutually exclusive <code>--check</code> (default) | <code>--write</code></td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>A repo whose language resolves from <code>[project].primary-language</code> (absent/unreadable config → base-only)</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td><code>--check</code> prints each drift reason to stderr; <code>--write</code> always succeeds (prints <code>already in sync</code> or the synced path)</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 ok, 1 <code>--check</code> drift, 2 usage error</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-fleet-sync">vrg-fleet-sync<a class="headerlink" href="#vrg-fleet-sync" title="Permanent link">&para;</a></h3>
+<p>Propagate the vergil-managed <code>.gitignore</code> block across a fleet of
+repositories, opening <strong>one PR per repo whose <code>.gitignore</code> drifts</strong>. It
+drives the generic fleet-sweep driver (<code>lib/fleet_sweep.py</code>): per repo it
+creates a worktree, shells out to <code>vrg-gitignore-sync --write</code>, commits,
+and runs <code>report-ready</code>. Like every agent-run task it <strong>never submits or
+merges</strong> — it stops at <code>report-ready</code>, leaving submission and merge to the
+human. <code>--dry-run</code> reports the intended per-repo action without touching
+any git or GitHub state.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_fleet_sync</code></td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>--repos PATH [PATH …]</code> (required, local clone paths); <code>--dry-run</code></td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td><code>vrg-gitignore-sync</code> on PATH; each <code>--repos</code> path a local clone; git/<code>gh</code> credentials for the sweep</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td>Any repo that errors is recorded and reported in the per-repo status lines</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 all repos ok, 1 one or more repos errored</td>
 </tr>
 <tr>
 <td>Status</td>
