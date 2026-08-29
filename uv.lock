@@ -895,6 +895,15 @@ wheels = [
 ]
 
 [[package]]
+name = "types-defusedxml"
+version = "0.7.0.20260504"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/da/d2/4553c8fa9cdebfe1e84b950cf790a4d2376a97fa016e43f7c65323fa6c7d/types_defusedxml-0.7.0.20260504.tar.gz", hash = "sha256:2ab2828a3f97111ba1c16cee273ad4124a831fc9198c41bf8368ff6ea48ad300", size = 10729, upload-time = "2026-05-04T05:22:50.192Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bf/2d/8a4b5ba1d732b8bc691f0efbb1c6f77cb5f6f473b2afe181d83d910773c5/types_defusedxml-0.7.0.20260504-py3-none-any.whl", hash = "sha256:a959e3a0a43b93e464bd625d91ec9193a2703ddc10443bdd627792485fae0b10", size = 13467, upload-time = "2026-05-04T05:22:49.319Z" },
+]
+
+[[package]]
 name = "types-pyyaml"
 version = "6.0.12.20260518"
 source = { registry = "https://pypi.org/simple" }
@@ -923,7 +932,7 @@ wheels = [
 
 [[package]]
 name = "vergil-tooling"
-version = "2.1.211"
+version = "2.1.212"
 source = { editable = "." }
 dependencies = [
     { name = "pyyaml" },
@@ -932,6 +941,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "defusedxml" },
     { name = "mypy" },
     { name = "pip-audit" },
     { name = "pip-licenses" },
@@ -940,6 +950,7 @@ dev = [
     { name = "pytest-xdist" },
     { name = "ruff" },
     { name = "ty" },
+    { name = "types-defusedxml" },
     { name = "types-pyyaml" },
 ]
 
@@ -951,6 +962,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "defusedxml" },
     { name = "mypy" },
     { name = "pip-audit" },
     { name = "pip-licenses" },
@@ -959,6 +971,7 @@ dev = [
     { name = "pytest-xdist" },
     { name = "ruff" },
     { name = "ty" },
+    { name = "types-defusedxml" },
     { name = "types-pyyaml" },
 ]
 

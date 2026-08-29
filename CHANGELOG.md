@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.212] - 2026-08-29
+
+### Features
+
+- add vrg-xdist-sync: shape-aware pytest-xdist fleet sweep (#333) (#2972)
+- compute Python TEST command: xdist worksteal gated on config + availability (#333) (#2973)
+
+### Refactoring
+
+- drop repo-local -n auto; shared command owns parallelism (#333) (#2974)
+
+### Testing
+
+- add coverage-equivalence proof (#333) (#2971)
+
 ## [2.1.211] - 2026-08-29
 
 ### Bug fixes

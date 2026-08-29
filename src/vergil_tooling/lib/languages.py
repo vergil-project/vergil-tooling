@@ -268,6 +268,54 @@ def parse_cpp_version_tag(tag: str) -> tuple[str, str] | None:
     return None
 
 
+# -- Python TEST command (epic vergil-project/.github#333, Task 6) -------------
+#
+# The Python TEST command is *computed* by ``build_python_test_argv`` rather than
+# stored as a fixed list: parallelism (pytest-xdist's work-stealing scheduler) is
+# appended at call time from (xdist availability, ``[test].parallel`` intent).
+# This constant is the single source of truth for the base gate argv — the flags
+# present in **every** invocation, serial or parallel. The coverage gate
+# (``--cov-branch --cov-fail-under=100``) is inviolate: it is here, so it is
+# present in every computed command.
+#
+# Two levers the epic originally planned for this command were dropped after the
+# Phase-0 evidence and must never appear here:
+#   * ``COVERAGE_CORE=sysmon`` (Task 4) — inert under ``--cov-branch`` (coverage.py
+#     silently falls back to the C tracer), so it was misleading, not a speedup.
+#   * ``--import-mode=importlib`` (Task 10) — no measured speedup and the suite is
+#     not importlib-safe.
+_PYTHON_TEST_BASE_ARGV: tuple[str, ...] = (
+    "pytest",
+    "--cov=src",
+    "--cov-branch",
+    "--cov-fail-under=100",
+    "--cov-report=term-missing",
+    f"--cov-report=xml:{COVERAGE_REPORT}",
+    f"--junitxml={JUNIT_REPORT}",
+)
+
+
+def build_python_test_argv(*, xdist_available: bool, parallel: bool) -> list[str]:
+    """Compute the Python ``pytest`` TEST argv.
+
+    Starts from :data:`_PYTHON_TEST_BASE_ARGV` (which always carries the
+    ``--cov-branch --cov-fail-under=100`` coverage gate) and appends
+    ``-n auto --dist worksteal`` — pytest-xdist's work-stealing distribution —
+    **iff** ``xdist_available and parallel``. When xdist is not installed, or the
+    repo opts out via ``[test].parallel = false``, the command runs serially with
+    no error.
+
+    Returns a plain ``list[str]`` — just the argv. No environment overlay is
+    returned: the ``COVERAGE_CORE=sysmon`` lever (Task 4) and the
+    ``--import-mode=importlib`` lever (Task 10) were both dropped, so neither a
+    sysmon env var nor an import-mode flag is ever emitted.
+    """
+    argv = list(_PYTHON_TEST_BASE_ARGV)
+    if xdist_available and parallel:
+        argv += ["-n", "auto", "--dist", "worksteal"]
+    return argv
+
+
 # -- Registry -----------------------------------------------------------------
 
 _REGISTRY: dict[str, Language] = {
@@ -291,17 +339,12 @@ _REGISTRY: dict[str, Language] = {
                 ["mypy", "src/", "--junit-xml", MYPY_REPORT],
                 ["ty", "check", "src", "tests"],
             ],
-            CheckKind.TEST: [
-                [
-                    "pytest",
-                    "--cov=src",
-                    "--cov-branch",
-                    "--cov-fail-under=100",
-                    "--cov-report=term-missing",
-                    f"--cov-report=xml:{COVERAGE_REPORT}",
-                    f"--junitxml={JUNIT_REPORT}",
-                ],
-            ],
+            # The declarative base gate argv. The command actually run is
+            # *computed* by ``build_python_test_argv`` (invoked from
+            # ``language_commands``), which appends xdist work-stealing when
+            # available and not opted out. Keeping the base here preserves the
+            # registry as the single source of the gate flags.
+            CheckKind.TEST: [list(_PYTHON_TEST_BASE_ARGV)],
             CheckKind.AUDIT: [
                 ["uv", "sync", "--check", "--frozen", "--group", "dev"],
                 ["uv", "lock", "--check"],
@@ -760,6 +803,8 @@ def language_commands(
     *,
     cpp_std: str | None = None,
     cpp_stdlib: str | None = None,
+    test_parallel: bool = True,
+    xdist_available: bool = False,
 ) -> list[list[str]]:
     """Return the canonical commands for a language and check kind.
 
@@ -773,12 +818,21 @@ def language_commands(
       threaded into the CMake cache vars. ``cpp_std`` / ``cpp_stdlib`` default to
       the v1 pins (``config.DEFAULT_CPP_STD`` / ``DEFAULT_CPP_STDLIB``) when not
       supplied, so the two-argument call still yields fully-resolved argv.
+
+    The Python ``TEST`` command is **computed**, not looked up: it is delegated
+    to :func:`build_python_test_argv`, which appends xdist work-stealing when
+    ``xdist_available and test_parallel`` (epic vergil-project/.github#333,
+    Task 6). ``test_parallel`` carries the ``[test].parallel`` intent (default on)
+    and ``xdist_available`` is a live probe supplied by the caller; both default
+    to a safe serial command for callers that only need the gate flags.
     """
     if language is None:
         return []
     entry = _REGISTRY.get(language)
     if entry is None:
         return []
+    if language == "python" and kind is CheckKind.TEST:
+        return [build_python_test_argv(xdist_available=xdist_available, parallel=test_parallel)]
     # Local import keeps this module a leaf in the import graph (the same
     # cycle-avoidance idiom used by github_config/repo_init for languages).
     from vergil_tooling.lib.config import DEFAULT_CPP_STD, DEFAULT_CPP_STDLIB
