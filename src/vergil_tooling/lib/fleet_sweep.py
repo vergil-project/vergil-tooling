@@ -52,10 +52,18 @@ _COMMIT_PREFIX_RE = re.compile(r"^[a-z]+(?:\([^)]*\))?!?:\s*")
 
 @dataclass
 class AppResult:
-    """Outcome of applying the bespoke change to one repo's worktree."""
+    """Outcome of applying the bespoke change to one repo's worktree.
+
+    ``needs_followup`` signals that the applicator recognized the repo but
+    could **not** safely make its change (e.g. an unclassifiable dev-dependency
+    shape), so it made *no* edit and the driver must surface it loudly and file
+    a follow-up rather than silently no-op (repo "no silent failures" policy).
+    It defaults ``False`` so applicators that never defer stay unaffected.
+    """
 
     changed: bool
     summary: str
+    needs_followup: bool = False
 
 
 # The bespoke file change for ONE repo's worktree. It receives the worktree
@@ -80,11 +88,19 @@ class SweepSpec:
 
 @dataclass
 class RepoResult:
-    """The terminal outcome for one repo in a sweep."""
+    """The terminal outcome for one repo in a sweep.
+
+    ``needs_followup`` propagates :attr:`AppResult.needs_followup` for a repo
+    the applicator recognized but could not safely change, so a consumer can
+    report those repos prominently and file follow-ups after the sweep. It
+    defaults ``False`` for the ``ready``/``error``/dry-run paths, where no
+    deferral is possible.
+    """
 
     repo: str
     status: str  # "ready" | "skipped" | "error"
     detail: str
+    needs_followup: bool = False
 
 
 def _run_tool(args: list[str], *, cwd: str | Path | None = None) -> str:
@@ -156,7 +172,12 @@ def _process_repo(spec: SweepSpec, applicator: Applicator, repo: str) -> RepoRes
         # Nothing to propagate: tear down the probe and skip. No issue, no
         # branch, no PR.
         git.run("-C", repo, "worktree", "remove", "--force", str(probe))
-        return RepoResult(repo=repo, status="skipped", detail=result.summary)
+        return RepoResult(
+            repo=repo,
+            status="skipped",
+            detail=result.summary,
+            needs_followup=result.needs_followup,
+        )
 
     # 2. There is a change worth a PR: mint the tracking issue, then rename the
     #    worktree to the repo convention ``issue-<N>-<slug>`` and name the branch

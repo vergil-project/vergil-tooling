@@ -73,6 +73,7 @@ vrg-version-divergence = "vergil_tooling.bin.vrg_version_divergence:main"
 vrg-wait-until-green = "vergil_tooling.bin.vrg_wait_until_green:main"
 vrg-whoami = "vergil_tooling.bin.vrg_whoami:main"
 vrg-worktree-status = "vergil_tooling.bin.vrg_worktree_status:main"
+vrg-xdist-sync = "vergil_tooling.bin.vrg_xdist_sync:main"
 
 [dependency-groups]
 dev = ["ruff", "mypy", "ty", "pytest", "pytest-cov", "pytest-xdist", "pip-audit", "pip-licenses", "types-pyyaml", "defusedxml", "types-defusedxml"]
