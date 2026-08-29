@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from vergil_tooling.lib.languages import (
     _TYPESCRIPT_LICENSES_ALLOWLIST,
     COVERAGE_REPORT,
@@ -18,6 +20,7 @@ from vergil_tooling.lib.languages import (
     CheckKind,
     EcosystemInfo,
     Language,
+    build_python_test_argv,
     check_cardinality,
     ecosystem_metadata,
     language_commands,
@@ -98,6 +101,90 @@ def test_python_test_emits_junit_xml() -> None:
     cmds = language_commands("python", CheckKind.TEST)
     pytest_cmd = [c for c in cmds if c[0] == "pytest"][0]
     assert f"--junitxml={JUNIT_REPORT}" in pytest_cmd
+
+
+# -- build_python_test_argv (epic vergil-project/.github#333, Task 6) ----------
+#
+# The computed Python TEST command. ``-n auto --dist worksteal`` (pytest-xdist
+# work-stealing scheduler) is appended IFF xdist is available AND parallelism is
+# not opted out via ``[test].parallel = false``; the coverage gate flags are
+# present in every case. Task 4 (COVERAGE_CORE=sysmon) and Task 10
+# (--import-mode=importlib) were both dropped, so neither may ever appear here.
+
+
+@pytest.mark.parametrize(
+    ("xdist_available", "parallel", "expect_xdist"),
+    [
+        (True, True, True),  # both true → work-stealing xdist
+        (True, False, False),  # opt-out honored → serial
+        (False, True, False),  # xdist missing → serial, no error
+        (False, False, False),  # neither → serial
+    ],
+)
+def test_build_python_test_argv_truth_table(
+    *, xdist_available: bool, parallel: bool, expect_xdist: bool
+) -> None:
+    argv = build_python_test_argv(xdist_available=xdist_available, parallel=parallel)
+
+    # A plain pytest argv (list[str]), never an (argv, env) tuple.
+    assert isinstance(argv, list)
+    assert all(isinstance(a, str) for a in argv)
+    assert argv[0] == "pytest"
+
+    has_xdist = "-n" in argv and "auto" in argv and "--dist" in argv and "worksteal" in argv
+    assert has_xdist is expect_xdist
+
+    # The coverage gate is present in every case.
+    assert "--cov=src" in argv
+    assert "--cov-branch" in argv
+    assert "--cov-fail-under=100" in argv
+
+    # Dropped levers must never appear: no import-mode (Task 10), no
+    # sysmon/COVERAGE_CORE overlay (Task 4).
+    assert "--import-mode=importlib" not in argv
+    joined = " ".join(argv)
+    assert "COVERAGE_CORE" not in joined
+    assert "sysmon" not in joined
+    assert "--import-mode" not in joined
+
+
+def test_build_python_test_argv_xdist_flags_order() -> None:
+    """When enabled, the four xdist tokens are appended as ``-n auto --dist worksteal``."""
+    argv = build_python_test_argv(xdist_available=True, parallel=True)
+    assert argv[-4:] == ["-n", "auto", "--dist", "worksteal"]
+
+
+def test_build_python_test_argv_serial_equals_base() -> None:
+    """Serial output is exactly the base gate argv with nothing appended."""
+    serial = build_python_test_argv(xdist_available=False, parallel=True)
+    assert serial[-1] == f"--junitxml={JUNIT_REPORT}"  # last base flag, no xdist tail
+
+
+def test_language_commands_python_test_is_computed_parallel() -> None:
+    """(python, TEST) routes through build_python_test_argv; xdist+parallel → work-steal."""
+    cmds = language_commands("python", CheckKind.TEST, test_parallel=True, xdist_available=True)
+    assert cmds == [build_python_test_argv(xdist_available=True, parallel=True)]
+    assert cmds[0][-4:] == ["-n", "auto", "--dist", "worksteal"]
+
+
+def test_language_commands_python_test_serial_when_xdist_missing() -> None:
+    cmds = language_commands("python", CheckKind.TEST, test_parallel=True, xdist_available=False)
+    assert "-n" not in cmds[0]
+    assert "--cov-fail-under=100" in cmds[0]
+
+
+def test_language_commands_python_test_serial_when_opted_out() -> None:
+    cmds = language_commands("python", CheckKind.TEST, test_parallel=False, xdist_available=True)
+    assert "-n" not in cmds[0]
+    assert "--cov-fail-under=100" in cmds[0]
+
+
+def test_language_commands_python_test_defaults_serial() -> None:
+    """A bare call (no probes) is serial and still carries the coverage gate."""
+    cmds = language_commands("python", CheckKind.TEST)
+    assert "-n" not in cmds[0]
+    assert "--cov-fail-under=100" in cmds[0]
+    assert "--import-mode=importlib" not in cmds[0]
 
 
 def test_python_audit_commands() -> None:
