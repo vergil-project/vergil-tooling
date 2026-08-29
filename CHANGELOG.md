@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.211] - 2026-08-29
+
+### Bug fixes
+
+- scope stray-check to the repo's own composed fence (#2967)
+
+### Documentation
+
+- document vrg-gitignore-sync and vrg-fleet-sync in the CLI overview (#2950)
+
+### Features
+
+- add test-layout + dev-dep classifiers and fleet survey (#333) (#2964)
+- add [test].parallel opt-out knob (#333) (#2965)
+
+### Testing
+
+- add test-stage measurement harness + baseline (#333) (#2963)
+
 ## [2.1.210] - 2026-08-28
 
 ### Bug fixes

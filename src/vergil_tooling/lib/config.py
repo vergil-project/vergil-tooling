@@ -52,6 +52,13 @@ DEFAULT_TYPESCRIPT_TARGET = "es2022"
 _TYPESCRIPT_MODULE_VALUES = frozenset({"esm"})
 _TYPESCRIPT_TARGET_VALUES = frozenset({"es2022"})
 
+# The [test] block (epic vergil-project/.github#333, Phase 2). `parallel` is the
+# per-repo opt-out for gate parallelism (pytest-xdist). It is on by default so no
+# repo is ever left known-broken; a repo whose suite is order-dependent sets
+# `parallel = false`. Task 6 consumes cfg.test.parallel to compute the Python
+# TEST command; this task adds only the config knob.
+DEFAULT_TEST_PARALLEL = True
+
 _REQUIRED_PROJECT_FIELDS = (
     "repository-type",
     "versioning-scheme",
@@ -73,6 +80,7 @@ _KNOWN_SECTIONS = frozenset(
         "actions",
         "cpp",
         "typescript",
+        "test",
         "vm",
     },
 )
@@ -90,6 +98,7 @@ _KNOWN_KEYS: dict[str, frozenset[str]] = {
     "actions": frozenset({"extra-allowed-patterns"}),
     "cpp": frozenset({"std", "stdlib"}),
     "typescript": frozenset({"module", "target"}),
+    "test": frozenset({"parallel"}),
 }
 
 
@@ -170,6 +179,19 @@ class TypeScriptConfig:
 
 
 @dataclass
+class TestConfig:
+    # The single in-config test axis (epic vergil-project/.github#333, Phase 2):
+    # ``parallel`` is the per-repo opt-out for gate parallelism. Defaults to True
+    # so parallelism is on-by-default fleet-wide; a repo with an order-dependent
+    # suite opts out with ``parallel = false``. Task 6 reads cfg.test.parallel.
+    #
+    # ``__test__ = False`` (an unannotated attribute, so not a dataclass field)
+    # tells pytest this ``Test*``-named class is not a test collection target.
+    __test__ = False
+    parallel: bool = DEFAULT_TEST_PARALLEL
+
+
+@dataclass
 class ActionsConfig:
     # Extra allowed-action patterns unioned into the repo's GitHub Actions
     # allowed-actions policy, on top of the base + per-language defaults in
@@ -196,6 +218,7 @@ class VergilConfig:
             module=DEFAULT_TYPESCRIPT_MODULE, target=DEFAULT_TYPESCRIPT_TARGET
         )
     )
+    test: TestConfig = field(default_factory=TestConfig)
     vm: VmStanza | None = None
 
 
@@ -482,6 +505,21 @@ def _parse_typescript_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> 
     )
 
 
+def _parse_test_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> TestConfig:
+    """Parse the ``[test]`` block, defaulting ``parallel`` on when it is absent.
+
+    ``parallel`` must be a boolean; a non-bool value is rejected rather than
+    silently coerced, so a mistyped opt-out (e.g. ``parallel = "no"``) surfaces
+    loudly instead of quietly leaving parallelism on.
+    """
+    test_raw = raw.get("test", {})
+    parallel = test_raw.get("parallel", DEFAULT_TEST_PARALLEL)
+    if not isinstance(parallel, bool):
+        msg = f"{source}: [test].parallel must be a boolean (got {parallel!r})"
+        raise ConfigError(msg)
+    return TestConfig(parallel=parallel)
+
+
 def _warn_unrecognized_keys(raw: dict[str, Any], source: str = CONFIG_FILE) -> None:
     for section in raw:
         if section not in _KNOWN_SECTIONS:
@@ -652,6 +690,7 @@ def _parse_raw_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> VergilC
         actions=actions,
         cpp=_parse_cpp_config(raw, source),
         typescript=_parse_typescript_config(raw, source),
+        test=_parse_test_config(raw, source),
         vm=parse_vm_stanza(raw, source),
     )
 
