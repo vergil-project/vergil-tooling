@@ -68,6 +68,7 @@ nav:
       - GitHub Config Audit: reference/config-audit.md
       - VM Spec ([vm]): reference/vm-spec.md
       - Container Config ([container]): reference/container-config.md
+      - Test Config ([test]): reference/test-config.md
       - Hook Guard:
           - Claude Code Hook Guard: reference/hooks/pre-commit.md
       - Validators:
