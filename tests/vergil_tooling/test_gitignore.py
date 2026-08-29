@@ -284,6 +284,20 @@ def test_check_flags_stray_managed_line_outside_fence() -> None:
     assert any("outside" in reason.lower() for reason in result.reasons)
 
 
+def test_check_allows_foreign_language_pattern_outside_base_only_fence() -> None:
+    """A base-only repo may keep a foreign-language managed pattern repo-local.
+
+    ``__pycache__/`` belongs to the Python fragment, not this base-only repo's
+    own composed fence, so it is legitimately repo-local and must not be flagged
+    as stray (issue #2966: vergil-containers' Python build tooling needs it).
+    """
+    block = gitignore.render_block(None)
+    text = block + "\n# python build tooling writes bytecode here\n__pycache__/\n"
+    result = gitignore.check(text, None)
+    assert result.compliant is True
+    assert result.reasons == []
+
+
 # --- sync() bootstrap/update (Task 3) ---------------------------------------
 
 

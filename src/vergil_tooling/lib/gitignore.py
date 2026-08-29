@@ -185,9 +185,17 @@ def check(text: str, lang: str | None) -> Compliance:
     """Check ``text`` against the managed block expected for ``lang``.
 
     Compliant iff a well-formed fence is present, that fence equals
-    ``render_block(lang)`` (modulo a single trailing newline), and no
-    managed-vocabulary pattern appears among the repo-local (outside-fence)
-    lines. Each failed condition contributes a human-readable reason.
+    ``render_block(lang)`` (modulo a single trailing newline), and no pattern
+    from *this repo's own* composed fence (``compose(lang)`` — base ∪ the
+    declared language) appears among the repo-local (outside-fence) lines. Each
+    failed condition contributes a human-readable reason.
+
+    The stray-check is scoped to ``compose(lang)`` rather than the global
+    ``managed_vocabulary()`` deliberately: a foreign-language managed pattern
+    (e.g. ``__pycache__/`` in a base-only repo whose Python build tooling needs
+    it) is not part of this repo's fence, so it is legitimately repo-local and
+    must not be flagged — while a genuine leak of one of this repo's own managed
+    patterns out of the fence is still caught (issue #2966).
     """
     repo_local, fence = parse(text)
     reasons: list[str] = []
@@ -197,7 +205,7 @@ def check(text: str, lang: str | None) -> Compliance:
     elif fence.rstrip("\n") != render_block(lang).rstrip("\n"):
         reasons.append("the vergil-managed fence does not match the expected rendered block")
 
-    vocab = managed_vocabulary()
+    vocab = set(compose(lang))
     stray = [line for line in repo_local if line.rstrip() in vocab]
     if stray:
         reasons.append("managed patterns appear outside the fence: " + ", ".join(stray))
