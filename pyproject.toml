@@ -75,7 +75,7 @@ vrg-whoami = "vergil_tooling.bin.vrg_whoami:main"
 vrg-worktree-status = "vergil_tooling.bin.vrg_worktree_status:main"
 
 [dependency-groups]
-dev = ["ruff", "mypy", "ty", "pytest", "pytest-cov", "pytest-xdist", "pip-audit", "pip-licenses", "types-pyyaml"]
+dev = ["ruff", "mypy", "ty", "pytest", "pytest-cov", "pytest-xdist", "pip-audit", "pip-licenses", "types-pyyaml", "defusedxml", "types-defusedxml"]
 
 [tool.uv]
 # Security floors for TRANSITIVE dependencies. These are not direct dependencies —

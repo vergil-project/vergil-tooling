@@ -57,7 +57,10 @@ import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from xml.etree import ElementTree as ET
+# defusedxml hardens XML parsing against entity-expansion / external-entity
+# attacks (the Semgrep security gate rejects stdlib xml.etree). Its parse()
+# returns standard ElementTree objects, so downstream navigation is unchanged.
+import defusedxml.ElementTree as ET
 
 # --------------------------------------------------------------------------- #
 # Pure logic (the only unit-tested surface).
