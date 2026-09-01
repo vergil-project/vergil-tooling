@@ -11,6 +11,7 @@ import pytest
 
 from vergil_tooling.lib import gitignore, repo_init
 from vergil_tooling.lib.config import CiConfig, ProjectConfig, _parse_raw_config
+from vergil_tooling.lib.github_config import ClassicProtectionReport
 from vergil_tooling.lib.repo_init import (
     RepoInitContext,
     _assert_ci_gates_producible,
@@ -1839,12 +1840,18 @@ class TestStepBranchStructureExtended:
 
 
 class TestStepGithubConfigExtended:
-    def test_legacy_protection_removed(self, tmp_path: Path) -> None:
+    def test_classic_protection_cleanup_reported(self, tmp_path: Path) -> None:
         ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
         ctx.work_dir = tmp_path
 
-        def mock_apply(*a: Any, **kw: Any) -> list[str]:
-            return ["develop", "main"]
+        def mock_apply(*a: Any, **kw: Any) -> list[ClassicProtectionReport]:
+            return [
+                ClassicProtectionReport(
+                    branch="develop",
+                    removed_contexts=["audit / dependencies / 3.12"],
+                    preserved_settings=["required_pull_request_reviews"],
+                ),
+            ]
 
         with (
             patch("vergil_tooling.lib.github_config.fetch_actual_state") as mock_fetch,
