@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 import tomllib
 from dataclasses import dataclass, field
@@ -89,7 +90,7 @@ _KNOWN_KEYS: dict[str, frozenset[str]] = {
     "project": frozenset(_PROJECT_FIELDS),
     "dependencies": frozenset({"vergil"}),
     "markdownlint": frozenset({"ignore"}),
-    "ci": frozenset({"versions", "integration-tests"}),
+    "ci": frozenset({"versions", "integration-tests", "primary-version"}),
     "publish": frozenset({"release", "docs", "consumer-refresh"}),
     "container": frozenset(
         {"env-prefixes", "system-packages", "build-command", "build-cache-files"}
@@ -121,10 +122,35 @@ class MarkdownlintConfig:
     ignore: list[str]
 
 
+def _version_sort_key(version: str) -> tuple[int, ...]:
+    """Return a numeric sort key for a ``[ci].versions`` entry.
+
+    Extracts the runs of digits into an int tuple so ``"3.14"`` sorts above
+    ``"3.13"`` and a family-prefixed entry like ``"node-24"`` sorts above
+    ``"node-22"``. Prefixes (``clang-``/``gcc-``/``node-``) are ignored — a
+    version's numeric components decide its order — so this handles the
+    non-Python matrices as well as the Python ``3.x`` one. Not
+    ``packaging.version.Version``: that rejects a prefixed string as invalid,
+    which the compiler/Node matrices would trip over.
+    """
+    return tuple(int(n) for n in re.findall(r"\d+", version))
+
+
 @dataclass
 class CiConfig:
     versions: list[str]
     integration_tests: bool
+    # The version the single-container CI jobs (security, version-bump, docs)
+    # run on, and the local dev/validate image tag (epic
+    # vergil-project/.github#338, Task 5). Defaults to the numerically highest
+    # entry of ``versions``; a repo overrides it with an explicit
+    # ``[ci].primary-version``. Stored as "" when unset and derived in
+    # ``__post_init__`` so a hand-built CiConfig and a parsed one agree.
+    primary_version: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.primary_version:
+            self.primary_version = max(self.versions, key=_version_sort_key)
 
 
 @dataclass
@@ -600,9 +626,15 @@ def _parse_raw_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> VergilC
     if not all(isinstance(v, str) for v in versions):
         msg = f"{source}: [ci].versions entries must be strings"
         raise ConfigError(msg)
+    primary_version = ci_raw.get("primary-version")
+    if primary_version is not None and not isinstance(primary_version, str):
+        got = type(primary_version).__name__
+        msg = f"{source}: [ci].primary-version must be a string (got {got})"
+        raise ConfigError(msg)
     ci = CiConfig(
         versions=versions,
         integration_tests=bool(ci_raw.get("integration-tests", False)),
+        primary_version=primary_version or "",
     )
 
     publish_raw = raw.get("publish", {})
