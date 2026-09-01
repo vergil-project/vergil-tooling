@@ -89,12 +89,22 @@ def _check_gitignore(repo_root: Path, items: list[DiffItem]) -> None:
 def _check_required_workflows(repo_root: Path, items: list[DiffItem]) -> None:
     """Assert .github/workflows/ops.yml exists, wires the audit, and is scheduled.
 
-    A WIRING validator: it verifies a *present* ops.yml (a) calls the reusable
-    ops-github-config workflow and (b) carries a scheduled (cron) trigger, so a
-    wired-but-unscheduled ops.yml can't silently never run nightly. It cannot
-    detect a repo missing ops.yml entirely (no workflow -> no nightly run ->
-    this check never fires there); that from-outside guarantee is deferred to
-    follow-on C (#315). (#311)
+    Three first-class non-compliances, each surfaced by
+    :func:`audit_local_config` (the aggregate the fleet audits through), so a
+    governance gap can't stay silent (epic #338, Task 12):
+
+    1. A **missing** ops.yml — the nightly caller of ``vrg-github-repo-config
+       apply`` is absent, so the repo never self-canonicalizes.
+    2. A **present but unwired** ops.yml — it does not call the reusable
+       ops-github-config workflow, so the nightly run audits nothing.
+    3. A **present but un-scheduled** ops.yml — no ``cron`` trigger, so it can
+       silently never run nightly.
+
+    The remaining limitation is operational, not a detection gap: a repo
+    *missing* ops.yml has no nightly workflow to run this check on itself, so
+    for those repos the missing signal surfaces only when the audit is driven
+    centrally (a manual run or a fleet sweep) — which is exactly what the
+    Task 13 backfill uses to close the gap fleet-wide. (#311, #338)
     """
     ops = repo_root / ".github" / "workflows" / "ops.yml"
     if not ops.is_file():

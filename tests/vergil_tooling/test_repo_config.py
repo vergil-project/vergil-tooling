@@ -478,6 +478,31 @@ class TestIntegration:
         diff = audit_local_config(tmp_path)
         assert diff.is_compliant(), [f"{i.field}: {i.actual}" for i in diff.items]
 
+    def test_missing_ops_yml_makes_repo_non_compliant(self, tmp_path: Path) -> None:
+        # Fleet-visible signal (epic #338, Task 12): a missing ops.yml is a
+        # first-class non-compliance surfaced by the top-level audit the fleet
+        # runs — not only by the private helper. Start from an otherwise
+        # compliant repo and delete ops.yml so nothing else fails.
+        _write_compliant_repo(tmp_path)
+        (tmp_path / ".github" / "workflows" / "ops.yml").unlink()
+        diff = audit_local_config(tmp_path)
+        assert not diff.is_compliant()
+        ops = [i for i in diff.items if i.field == "local.ops_workflow"]
+        assert len(ops) == 1
+        assert ops[0].actual == "missing"
+
+    def test_cronless_ops_yml_makes_repo_non_compliant(self, tmp_path: Path) -> None:
+        # A present, wired, but un-scheduled ops.yml never runs nightly, so it is
+        # a first-class non-compliance in the aggregate audit too (epic #338).
+        _write_compliant_repo(tmp_path)
+        (tmp_path / ".github" / "workflows" / "ops.yml").write_text(
+            "on:\n  workflow_dispatch:\n\njobs:\n" + _WIRED, encoding="utf-8"
+        )
+        diff = audit_local_config(tmp_path)
+        assert not diff.is_compliant()
+        ops = [i for i in diff.items if i.field == "local.ops_workflow"]
+        assert any("no schedule" in str(i.actual) for i in ops)
+
 
 class TestMarketplaceRef:
     def _write(
