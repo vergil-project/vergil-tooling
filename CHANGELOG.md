@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.216] - 2026-09-01
+
+### Features
+
+- add vrg-ci-sync: strip hardcoded matrix from ci.yml (#338) (#3011)
+
+### Refactoring
+
+- render ci.yml as thin caller; matrix from vergil.toml (#338) (#3010)
+
 ## [2.1.215] - 2026-09-01
 
 ### Features
