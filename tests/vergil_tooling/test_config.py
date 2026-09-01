@@ -395,6 +395,37 @@ def test_read_config_ci_section(tmp_path: Path) -> None:
     assert cfg.ci == CiConfig(versions=["3.12", "3.13", "3.14"], integration_tests=True)
 
 
+def test_primary_version_defaults_to_highest(tmp_path: Path) -> None:
+    # With no explicit [ci].primary-version, the primary is the numerically
+    # highest declared version, regardless of list order.
+    toml = _BASE_TOML + '[ci]\nversions = ["3.12", "3.14", "3.13"]\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    assert read_config(tmp_path).ci.primary_version == "3.14"
+
+
+def test_primary_version_explicit_override(tmp_path: Path) -> None:
+    # An explicit [ci].primary-version wins over the highest-version default.
+    toml = _BASE_TOML + '[ci]\nversions = ["3.12", "3.14"]\nprimary-version = "3.12"\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    assert read_config(tmp_path).ci.primary_version == "3.12"
+
+
+def test_primary_version_non_string_raises(tmp_path: Path) -> None:
+    # A non-string [ci].primary-version is rejected, not silently coerced.
+    toml = _BASE_TOML + '[ci]\nversions = ["3.14"]\nprimary-version = 314\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=r"\[ci\]\.primary-version must be a string"):
+        read_config(tmp_path)
+
+
+def test_primary_version_defaults_to_highest_prefixed(tmp_path: Path) -> None:
+    # Non-Python versions carry a family prefix (clang-/gcc-/node-); the default
+    # still picks the numerically-highest entry, ignoring the prefix.
+    toml = _BASE_TOML + '[ci]\nversions = ["node-22", "node-24"]\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    assert read_config(tmp_path).ci.primary_version == "node-24"
+
+
 def test_read_config_ci_no_integration_tests(tmp_path: Path) -> None:
     toml = _BASE_TOML + '[ci]\nversions = ["3.14"]\n'
     (tmp_path / "vergil.toml").write_text(toml)
