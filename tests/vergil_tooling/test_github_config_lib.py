@@ -21,6 +21,7 @@ from vergil_tooling.lib.config import (
 )
 from vergil_tooling.lib.github import GitHubAPIError
 from vergil_tooling.lib.github_config import (
+    _PRODUCIBLE_GATE_CATALOG,
     DesiredRuleset,
     EvidenceGate,
     FetchResult,
@@ -49,6 +50,7 @@ from vergil_tooling.lib.github_config import (
     ghas_available,
     required_evidence_gates,
     required_status_contexts,
+    unproducible_ci_yaml_contexts,
     unproducible_required_contexts,
 )
 
@@ -459,7 +461,7 @@ def test_lang_has_check_returns_false_for_unknown_check() -> None:
 
 
 # ---------------------------------------------------------------------------
-# CI-gate producibility cross-check tests (issue #2720)
+# CI-gate producibility cross-check tests — ci.yml parsing path (issue #2720)
 # ---------------------------------------------------------------------------
 
 
@@ -502,7 +504,7 @@ def test_producible_when_all_required_contexts_have_a_pr_job() -> None:
     ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=True, docs=True)
     ci_yaml = _ci_yaml(jobs=_FULL_CI_JOBS)
     assert (
-        unproducible_required_contexts(ci_yaml, required_status_contexts(ruleset), ghas=True) == []
+        unproducible_ci_yaml_contexts(ci_yaml, required_status_contexts(ruleset), ghas=True) == []
     )
 
 
@@ -513,7 +515,7 @@ def test_integration_context_is_flagged_unproducible() -> None:
         _project(), _ci(integration_tests=True), ghas=True, docs=True
     )
     ci_yaml = _ci_yaml(jobs=_FULL_CI_JOBS)
-    missing = unproducible_required_contexts(ci_yaml, required_status_contexts(ruleset), ghas=True)
+    missing = unproducible_ci_yaml_contexts(ci_yaml, required_status_contexts(ruleset), ghas=True)
     assert missing == ["test / integration / 3.14"]
 
 
@@ -523,7 +525,7 @@ def test_docs_context_flagged_when_ci_lacks_docs_job() -> None:
     ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=True, docs=True)
     jobs_without_docs = {k: v for k, v in _FULL_CI_JOBS.items() if k != "docs"}
     ci_yaml = _ci_yaml(jobs=jobs_without_docs)
-    missing = unproducible_required_contexts(ci_yaml, required_status_contexts(ruleset), ghas=True)
+    missing = unproducible_ci_yaml_contexts(ci_yaml, required_status_contexts(ruleset), ghas=True)
     assert missing == ["docs / docs"]
 
 
@@ -535,7 +537,7 @@ def test_ghas_literal_contexts_producible_only_with_ghas() -> None:
     for ghas in (True, False):
         ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=ghas, docs=True)
         assert (
-            unproducible_required_contexts(ci_yaml, required_status_contexts(ruleset), ghas=ghas)
+            unproducible_ci_yaml_contexts(ci_yaml, required_status_contexts(ruleset), ghas=ghas)
             == []
         )
 
@@ -548,7 +550,7 @@ def test_evidence_gates_are_producible() -> None:
     )
     ci_yaml = _ci_yaml(jobs=_FULL_CI_JOBS)
     assert (
-        unproducible_required_contexts(ci_yaml, required_status_contexts(ruleset), ghas=True) == []
+        unproducible_ci_yaml_contexts(ci_yaml, required_status_contexts(ruleset), ghas=True) == []
     )
 
 
@@ -563,16 +565,107 @@ def test_per_version_legs_remain_producible_via_prefix() -> None:
         "test / unit / 3.13",
         "audit / dependencies / 3.14",
     ]
-    assert unproducible_required_contexts(ci_yaml, legs, ghas=True) == []
+    assert unproducible_ci_yaml_contexts(ci_yaml, legs, ghas=True) == []
 
 
 def test_unrecognized_reusable_workflow_produces_no_contexts() -> None:
     """A job wired to an unknown reusable workflow contributes nothing to the
     producible set, so any required context is flagged (the safe default)."""
     ci_yaml = _ci_yaml(jobs={"mystery": "ci-mystery.yml"})
-    assert unproducible_required_contexts(ci_yaml, ["quality / common"], ghas=True) == [
+    assert unproducible_ci_yaml_contexts(ci_yaml, ["quality / common"], ghas=True) == [
         "quality / common"
     ]
+
+
+# ---------------------------------------------------------------------------
+# Producibility cross-check in the live audit — set-based path
+# (epic vergil-project/.github#338, Task 2)
+# ---------------------------------------------------------------------------
+
+
+def test_unproducible_required_contexts_returns_required_minus_produced() -> None:
+    """The audit helper is a plain set difference: required contexts that no
+    known workflow gate produces."""
+    required = {"audit / evidence", "audit / dependencies / 3.12"}
+    produced = {"audit / evidence", "quality / evidence"}
+    assert unproducible_required_contexts(required, produced) == {"audit / dependencies / 3.12"}
+
+
+def test_unproducible_required_contexts_empty_when_all_produced() -> None:
+    """Nothing is flagged when every required context is in the produced set."""
+    required = {"audit / evidence", "quality / evidence"}
+    produced = {"audit / evidence", "quality / evidence", "test / evidence"}
+    assert unproducible_required_contexts(required, produced) == set()
+
+
+def test_producible_gate_catalog_covers_desired_stable_gates() -> None:
+    """Drift guard: every stable (non-per-version) gate a fully-enabled desired
+    ruleset requires must be in the produced catalog, so the catalog can never
+    silently fall behind ``desired_ci_gates_ruleset``."""
+    ruleset = desired_ci_gates_ruleset(
+        _project(), _ci(integration_tests=True), ghas=True, docs=True
+    )
+    stable = {
+        c for c in required_status_contexts(ruleset) if not c.startswith("test / integration / ")
+    }
+    assert stable <= _PRODUCIBLE_GATE_CATALOG
+
+
+def test_audit_flags_stale_per_version_required_context() -> None:
+    """A live CI-gates ruleset still requiring a per-version leg the evidence
+    model dropped (e.g. ``audit / dependencies / 3.12``) is flagged as an
+    unproducible required context — a check no workflow produces as a durable
+    gate, deadlocking every merge with green checks (epic #338)."""
+    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    actual = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    actual_gates = next(r for r in actual.rulesets if r.name == "CI gates")
+    _checks(actual_gates).append(
+        {"context": "audit / dependencies / 3.12", "integration_id": 15368}
+    )
+
+    diff = compute_diff(desired=desired, actual=actual)
+
+    assert not diff.is_compliant()
+    unproducible = [
+        item
+        for item in diff.items
+        if item.field == "rulesets.CI gates.unproducible_required_context"
+    ]
+    assert [item.actual for item in unproducible] == ["audit / dependencies / 3.12"]
+
+
+def test_audit_compliant_when_required_are_evidence_gates() -> None:
+    """When the live ruleset requires exactly the ``<kind> / evidence`` gates the
+    reusable workflows produce, nothing is unproducible and the audit is clean."""
+    state = compute_desired_state(
+        _vergil_config(versions=["3.12", "3.13", "3.14"]), visibility="public", is_org=True
+    )
+    diff = compute_diff(desired=state, actual=state)
+    assert diff.is_compliant()
+    assert not any(
+        item.field == "rulesets.CI gates.unproducible_required_context" for item in diff.items
+    )
+
+
+def test_audit_does_not_mislabel_producible_gate_as_unproducible() -> None:
+    """A gate the workflows genuinely emit (``version / version-bump``) that the
+    repo simply does not desire is drift, not an *unproducible* context — the
+    producibility check must not mislabel it (only the ruleset diff flags it)."""
+    desired = compute_desired_state(
+        _vergil_config(release_model="none"), visibility="public", is_org=True
+    )
+    actual = compute_desired_state(
+        _vergil_config(release_model="none"), visibility="public", is_org=True
+    )
+    actual_gates = next(r for r in actual.rulesets if r.name == "CI gates")
+    _checks(actual_gates).append({"context": "version / version-bump", "integration_id": 15368})
+
+    diff = compute_diff(desired=desired, actual=actual)
+
+    assert not diff.is_compliant()  # still drift, via the ruleset diff
+    assert not any(
+        item.field == "rulesets.CI gates.unproducible_required_context" for item in diff.items
+    )
 
 
 # ---------------------------------------------------------------------------

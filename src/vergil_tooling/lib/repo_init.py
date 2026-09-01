@@ -1421,7 +1421,7 @@ def _assert_ci_gates_producible(ctx: RepoInitContext, desired: DesiredState, *, 
     """
     from vergil_tooling.lib.github_config import (
         required_status_contexts,
-        unproducible_required_contexts,
+        unproducible_ci_yaml_contexts,
     )
 
     if ctx.work_dir is None:  # pragma: no cover
@@ -1431,7 +1431,7 @@ def _assert_ci_gates_producible(ctx: RepoInitContext, desired: DesiredState, *, 
         return
 
     ci_yaml = (ctx.work_dir / ".github" / "workflows" / "ci.yml").read_text()
-    unproducible = unproducible_required_contexts(
+    unproducible = unproducible_ci_yaml_contexts(
         ci_yaml, required_status_contexts(ci_gates), ghas=ghas
     )
     if unproducible:
