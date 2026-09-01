@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.215] - 2026-09-01
+
+### Features
+
+- audit flags unproducible required contexts (#338) (#3003)
+- read + scoped-clean classic branch protection (#338) (#3004)
+- render ci.yml as a thin caller (no versions/container-tag) (#338) (#3005)
+
 ## [2.1.214] - 2026-09-01
 
 ### Bug fixes
