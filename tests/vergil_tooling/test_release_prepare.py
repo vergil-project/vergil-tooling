@@ -32,6 +32,7 @@ def test_prepare_pushes_branch_and_opens_pr() -> None:
     with (
         patch(_MOD + ".create_tracking_issue"),
         patch(_MOD + ".github.pr_for_branch", return_value=None),
+        patch(_MOD + ".github.closed_pr_for_branch", return_value=None),
         patch(_MOD + ".git.run"),
         patch(_MOD + "._generate_changelog"),
         patch(
@@ -67,6 +68,7 @@ def test_prepare_never_switches_head() -> None:
     with (
         patch(_MOD + ".create_tracking_issue"),
         patch(_MOD + ".github.pr_for_branch", return_value=None),
+        patch(_MOD + ".github.closed_pr_for_branch", return_value=None),
         patch(_MOD + ".git.run", side_effect=capture_git_run),
         patch(_MOD + "._generate_changelog"),
         patch(
@@ -93,6 +95,7 @@ def test_prepare_with_version_override() -> None:
     with (
         patch(_MOD + ".create_tracking_issue"),
         patch(_MOD + ".github.pr_for_branch", return_value=None),
+        patch(_MOD + ".github.closed_pr_for_branch", return_value=None),
         patch(_MOD + ".git.run", side_effect=capture_git_run),
         patch(_MOD + ".version.bump", return_value="2.1.0"),
         patch(_MOD + "._generate_changelog"),
@@ -113,6 +116,7 @@ def test_prepare_without_version_override_skips_bump() -> None:
     with (
         patch(_MOD + ".create_tracking_issue"),
         patch(_MOD + ".github.pr_for_branch", return_value=None),
+        patch(_MOD + ".github.closed_pr_for_branch", return_value=None),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".version.bump") as mock_bump,
         patch(_MOD + "._generate_changelog"),
@@ -131,6 +135,7 @@ def test_prepare_creates_issue_when_not_yet_adopted() -> None:
     with (
         patch(_MOD + ".create_tracking_issue") as m_create,
         patch(_MOD + ".github.pr_for_branch", return_value=None),
+        patch(_MOD + ".github.closed_pr_for_branch", return_value=None),
         patch(_MOD + ".git.run"),
         patch(_MOD + "._generate_changelog"),
         patch(_MOD + ".github.create_pr", return_value="https://github.com/o/r/pull/1"),
@@ -156,6 +161,95 @@ def test_prepare_skips_when_release_pr_already_exists() -> None:
     m_changelog.assert_not_called()
     m_create_pr.assert_not_called()
     m_run.assert_not_called()
+
+
+def test_prepare_adopts_already_merged_release_pr() -> None:
+    """Resume-safe: an already-merged release PR is adopted, not recreated (#2998).
+
+    A failure at/after ``merge-release`` leaves the release PR merged. On resume
+    ``pr_for_branch`` (open only) returns None, so without this guard ``prepare``
+    would re-push and ``gh pr create`` would fail ("No commits between ..."). The
+    merged PR is adopted so ``merge_release``'s MERGED-skip carries the pipeline
+    forward.
+    """
+    ctx = _ctx()
+    with (
+        patch(_MOD + ".create_tracking_issue"),
+        patch(_MOD + ".github.pr_for_branch", return_value=None),
+        patch(
+            _MOD + ".github.closed_pr_for_branch",
+            return_value={
+                "url": "https://github.com/owner/repo/pull/880",
+                "headRefOid": "abc123",
+            },
+        ),
+        patch(_MOD + ".github.pr_state", return_value="MERGED"),
+        patch(_MOD + ".git.read_output", return_value="abc123"),
+        patch(_MOD + ".git.run") as m_run,
+        patch(_MOD + "._generate_changelog") as m_changelog,
+        patch(_MOD + ".github.create_pr") as m_create_pr,
+    ):
+        prepare(ctx)
+    assert ctx.release_pr_url == "https://github.com/owner/repo/pull/880"
+    m_changelog.assert_not_called()
+    m_create_pr.assert_not_called()
+    m_run.assert_not_called()
+
+
+def test_prepare_ignores_closed_unmerged_release_pr() -> None:
+    """A closed-but-unmerged PR for the branch is not adopted (#2998)."""
+    ctx = _ctx()
+    with (
+        patch(_MOD + ".create_tracking_issue"),
+        patch(_MOD + ".github.pr_for_branch", return_value=None),
+        patch(
+            _MOD + ".github.closed_pr_for_branch",
+            return_value={
+                "url": "https://github.com/owner/repo/pull/880",
+                "headRefOid": "abc123",
+            },
+        ),
+        patch(_MOD + ".github.pr_state", return_value="CLOSED"),
+        patch(_MOD + ".git.read_output", return_value="abc123"),
+        patch(_MOD + ".git.run"),
+        patch(_MOD + "._generate_changelog"),
+        patch(
+            _MOD + ".github.create_pr",
+            return_value="https://github.com/owner/repo/pull/101",
+        ),
+    ):
+        prepare(ctx)
+    assert ctx.release_pr_url == "https://github.com/owner/repo/pull/101"
+
+
+def test_prepare_ignores_merged_pr_with_mismatched_tip() -> None:
+    """A merged PR whose head no longer matches the branch tip is not adopted.
+
+    Guards the #1719 reused-branch-name straggler: a same-named branch reused
+    after an earlier merge matches by name but not by tip.
+    """
+    ctx = _ctx()
+    with (
+        patch(_MOD + ".create_tracking_issue"),
+        patch(_MOD + ".github.pr_for_branch", return_value=None),
+        patch(
+            _MOD + ".github.closed_pr_for_branch",
+            return_value={
+                "url": "https://github.com/owner/repo/pull/880",
+                "headRefOid": "oldsha",
+            },
+        ),
+        patch(_MOD + ".github.pr_state", return_value="MERGED"),
+        patch(_MOD + ".git.read_output", return_value="newsha"),
+        patch(_MOD + ".git.run"),
+        patch(_MOD + "._generate_changelog"),
+        patch(
+            _MOD + ".github.create_pr",
+            return_value="https://github.com/owner/repo/pull/102",
+        ),
+    ):
+        prepare(ctx)
+    assert ctx.release_pr_url == "https://github.com/owner/repo/pull/102"
 
 
 def test_generate_changelog_skips_when_prepare_commit_present() -> None:
