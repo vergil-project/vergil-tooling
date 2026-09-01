@@ -592,9 +592,11 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
     # `language: {empty}` leaves a trailing space that fails yamllint
     # trailing-spaces (issue #1993).
     lang_line = f"      language: {lang_yaml}\n" if lang_yaml else "      language:\n"
+    # ci.yml is a thin caller: it passes only ``language:`` and
+    # ``container-suffix:``. The reusable workflows resolve ``versions`` and the
+    # container tag from ``vergil.toml`` themselves, so the caller no longer
+    # emits ``versions:``/``container-tag:`` (epic vergil-project/.github#338).
     suffix = _container_suffix(ctx.primary_language, ctx.ci_versions)
-    tag = _container_tag(ctx.primary_language, ctx.ci_versions)
-    versions_json = json.dumps(ctx.ci_versions)
 
     has_audit = len(language_commands(ctx.primary_language, CheckKind.AUDIT)) > 0
     has_test = (
@@ -632,8 +634,6 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
                 "    uses: vergil-project/vergil-actions/.github/workflows/ci-audit.yml@v2.1\n",
                 "    with:\n",
                 lang_line,
-                f"      versions: '{versions_json}'\n",
-                f"      container-tag: '{tag}'\n",
                 f"      container-suffix: {suffix}\n",
                 "\n",
             ]
@@ -645,8 +645,6 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
             "    uses: vergil-project/vergil-actions/.github/workflows/ci-quality.yml@v2.1\n",
             "    with:\n",
             lang_line,
-            f"      versions: '{versions_json}'\n",
-            f"      container-tag: '{tag}'\n",
             f"      container-suffix: {suffix}\n",
             "\n",
             "  security:\n",
@@ -677,7 +675,6 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
 
     lines.extend(
         [
-            f"      container-tag: '{tag}'\n",
             f"      container-suffix: {suffix}\n",
         ]
     )
@@ -707,8 +704,6 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
                 "    uses: vergil-project/vergil-actions/.github/workflows/ci-test.yml@v2.1\n",
                 "    with:\n",
                 lang_line,
-                f"      versions: '{versions_json}'\n",
-                f"      container-tag: '{tag}'\n",
                 f"      container-suffix: {suffix}\n",
             ]
         )
@@ -723,7 +718,6 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
                 "    with:\n",
                 lang_line,
                 "      run-release: ${{ inputs.run-release != 'false' }}\n",
-                f"      container-tag: '{tag}'\n",
                 f"      container-suffix: {suffix}\n",
             ]
         )
