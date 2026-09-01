@@ -540,9 +540,11 @@ class TestRenderCiWorkflow:
         ctx.ci_versions = ["clang-20", "clang-19"]
         ctx.release_model = "tagged-release"
         content = render_ci_workflow(ctx)
-        # Compiler-family-aware suffix + numeric tag → prod-cpp-clang:20.
+        # Compiler-family-aware suffix → prod-cpp-clang image family. The tag
+        # is resolved by the reusable workflow from vergil.toml, not passed by
+        # the thin caller (epic vergil-project/.github#338, Task 10).
         assert "container-suffix: cpp-clang" in content
-        assert "container-tag: '20'" in content
+        assert "container-tag:" not in content
         # cpp is CodeQL-supported, so run-codeql must NOT be disabled.
         assert "run-codeql: false" not in content
 
@@ -556,9 +558,10 @@ class TestRenderCiWorkflow:
         # resolution — NOT the CodeQL identifier `javascript-typescript` (that
         # mapping is the reusable Action's job, epic vergil-project/.github#284 T7).
         assert "language: typescript" in content
-        # Node-family suffix + numeric major tag → prod-ts-node:24.
+        # Node-family suffix → prod-ts-node image family. The tag is resolved
+        # by the reusable workflow from vergil.toml, not passed by the caller.
         assert "container-suffix: ts-node" in content
-        assert "container-tag: '24'" in content
+        assert "container-tag:" not in content
         # typescript is CodeQL-supported, so run-codeql must NOT be disabled.
         assert "run-codeql: false" not in content
 
@@ -575,7 +578,7 @@ class TestRenderCiWorkflow:
         assert "ci-security.yml@v2.1" in content
         assert "ci-version-bump.yml@v2.1" in content
         assert content.count("container-suffix: base") == 3
-        assert content.count("container-tag: 'latest'") == 3
+        assert "container-tag:" not in content
 
     def test_no_language_omits_trailing_space(self) -> None:
         """A no-primary-language repo must not scaffold `language: ` with a
@@ -599,7 +602,7 @@ class TestRenderCiWorkflow:
         assert "ci-test.yml" not in content
         assert "version-bump" not in content
         assert content.count("container-suffix: base") == 2
-        assert content.count("container-tag: 'latest'") == 2
+        assert "container-tag:" not in content
 
     def test_no_language_skips_audit_and_test(self) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test")
@@ -670,6 +673,25 @@ class TestRenderCiWorkflow:
         ctx.publish_docs = False
         content = render_ci_workflow(ctx)
         assert "ci-docs.yml" not in content
+
+    def test_thin_caller_omits_versions_and_container_tag(self) -> None:
+        """The rendered ci.yml is a thin caller: it passes no ``versions:`` or
+        ``container-tag:`` input under any reusable-workflow call. Both now
+        resolve from ``vergil.toml`` inside the reusable workflows, so the
+        caller just ``uses:`` the workflow at the pinned tag (epic
+        vergil-project/.github#338, Task 10). Exercised across every job the
+        renderer can emit — audit, quality, security, docs, test, version."""
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.primary_language = "python"
+        ctx.ci_versions = ["3.12", "3.13", "3.14"]
+        ctx.release_model = "tagged-release"
+        ctx.integration_tests = True
+        ctx.publish_docs = True
+        content = render_ci_workflow(ctx)
+        assert "versions:" not in content
+        assert "container-tag:" not in content
+        # container-suffix still selects the image family and stays emitted.
+        assert "container-suffix: python" in content
 
 
 class TestCiGatesProducibility:
