@@ -381,11 +381,16 @@ def desired_ci_gates_ruleset(
 # this: ``integration-tests`` (no producing job at all) and ``publish-docs``
 # (the docs job ran on push, not on ``pull_request``). See issue #2720.
 #
-# ``unproducible_required_contexts`` reads the generated ci.yml, derives the set
+# ``unproducible_ci_yaml_contexts`` reads the generated ci.yml, derives the set
 # of contexts each reusable workflow it invokes actually emits on a PR, and
 # returns any required context that set cannot produce. repo-init fails loudly on
 # a non-empty result instead of shipping a repository that cannot merge its first
-# PR with every check green.
+# PR with every check green. The ongoing audit uses a complementary, set-based
+# check (``unproducible_required_contexts``, below): it does not re-parse ci.yml
+# but cross-checks the *live* required contexts against the stable gate names the
+# reusable workflows produce — catching a repo whose branch protection still
+# requires a per-version leg the evidence-gate model dropped (epic
+# vergil-project/.github#338).
 
 _CI_JOB_RE = re.compile(r"^ {2}([a-z][a-z0-9_-]*):\s*$")
 _CI_USES_RE = re.compile(r"^ {4}uses:\s+\S+/([a-z0-9-]+\.yml)@")
@@ -458,7 +463,7 @@ def required_status_contexts(ruleset: DesiredRuleset) -> list[str]:
     return [str(c.get("context", "")) for c in checks if c.get("context")]
 
 
-def unproducible_required_contexts(
+def unproducible_ci_yaml_contexts(
     ci_workflow_yaml: str, required_contexts: Iterable[str], *, ghas: bool
 ) -> list[str]:
     """Required status-check contexts the generated ci.yml cannot emit on a PR.
@@ -483,6 +488,50 @@ def unproducible_required_contexts(
             continue
         missing.add(ctx)
     return sorted(missing)
+
+
+# The stable status-check contexts the vergil-actions reusable workflows emit as
+# *required* gates — the evidence-gate model (epic vergil-project/.github#338).
+# The ongoing audit treats a live required context outside this catalog (and
+# outside the repo's own desired ruleset, which additionally carries the
+# per-version ``test / integration / <version>`` family when integration tests
+# are enabled) as unproducible: no workflow emits it as a durable gate, so
+# requiring it deadlocks every merge with each check that does run green.
+# Per-version legs of the matrixed kinds (``audit / dependencies / <version>``,
+# ``quality / lint / <version>``, ``test / unit / <version>``, ...) are
+# deliberately absent — the workflows emit them only as *non-required* PR check
+# runs, so a ruleset still requiring one is exactly the stale-gate drift this
+# check surfaces. ``test_producible_gate_catalog_covers_desired_stable_gates``
+# guards the catalog against drift from ``desired_ci_gates_ruleset``.
+_PRODUCIBLE_GATE_CATALOG: frozenset[str] = frozenset(
+    {
+        "quality / common",
+        "quality / evidence",
+        "audit / evidence",
+        "test / evidence",
+        "security / trivy",
+        "security / semgrep",
+        "security / codeql",
+        "docs / docs",
+        "version / version-bump",
+        "Trivy",
+        "Semgrep OSS",
+        "CodeQL",
+    }
+)
+
+
+def unproducible_required_contexts(required: set[str], produced: set[str]) -> set[str]:
+    """Required status-check contexts that no known workflow gate can produce.
+
+    The set-based cross-check the live audit runs: ``required`` is the contexts
+    the *actual* branch-protection ruleset demands, ``produced`` is the gate
+    names the reusable workflows are known to emit. A non-empty result is a
+    reported non-compliance — a required check that never reports on a PR, so
+    every merge is blocked with each check that does run green (epic
+    vergil-project/.github#338, following issue #2720).
+    """
+    return required - produced
 
 
 # ---------------------------------------------------------------------------
@@ -1009,6 +1058,41 @@ def _diff_rulesets(
             )
 
 
+_CI_GATES_RULESET_NAME = "CI gates"
+
+
+def _diff_producibility(
+    desired: list[DesiredRuleset],
+    actual: list[DesiredRuleset],
+    items: list[DiffItem],
+) -> None:
+    """Flag every live required CI context no workflow can produce (epic #338).
+
+    Promotes the repo-init producibility cross-check into the ongoing audit: the
+    stable gate names the reusable workflows emit (``_PRODUCIBLE_GATE_CATALOG``),
+    extended by the repo's own desired ruleset (which carries the still
+    per-version ``test / integration / <version>`` family it legitimately
+    requires), form the produced set. Any context the *actual* CI-gates ruleset
+    requires outside that set is unproducible — a required check that never
+    reports, deadlocking every merge with green checks — and is reported as its
+    own diff item so the non-compliance names the exact offending context.
+    """
+    desired_gates = next((r for r in desired if r.name == _CI_GATES_RULESET_NAME), None)
+    actual_gates = next((r for r in actual if r.name == _CI_GATES_RULESET_NAME), None)
+    if desired_gates is None or actual_gates is None:
+        return
+    produced = set(required_status_contexts(desired_gates)) | _PRODUCIBLE_GATE_CATALOG
+    required = set(required_status_contexts(actual_gates))
+    for ctx in sorted(unproducible_required_contexts(required, produced)):
+        items.append(
+            DiffItem(
+                field=f"rulesets.{_CI_GATES_RULESET_NAME}.unproducible_required_context",
+                expected="a status check the repo's workflows produce",
+                actual=ctx,
+            )
+        )
+
+
 def compute_diff(*, desired: DesiredState, actual: DesiredState) -> ConfigDiff:
     """Compare desired vs actual state and return structured diff."""
     items: list[DiffItem] = []
@@ -1023,6 +1107,7 @@ def compute_diff(*, desired: DesiredState, actual: DesiredState) -> ConfigDiff:
         skipped,
     )
     _diff_rulesets(desired.rulesets, actual.rulesets, items, skipped)
+    _diff_producibility(desired.rulesets, actual.rulesets, items)
     return ConfigDiff(items=items, skipped=skipped)
 
 
