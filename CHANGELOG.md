@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.214] - 2026-09-01
+
+### Bug fixes
+
+- make prepare resume-safe against an already-merged release PR (#2998) (#2999)
+
 ## [2.1.213] - 2026-09-01
 
 ### Documentation
