@@ -33,7 +33,7 @@ from vergil_tooling.lib.config import (
     VergilConfig,
 )
 from vergil_tooling.lib.github import GitHubAPIError
-from vergil_tooling.lib.github_config import ConfigDiff, DiffItem
+from vergil_tooling.lib.github_config import ClassicProtectionReport, ConfigDiff, DiffItem
 
 # -- Argument parsing ---------------------------------------------------------
 
@@ -329,18 +329,27 @@ def test_apply_returns_one_when_local_issues_remain() -> None:
     assert result == 1
 
 
-def test_apply_reports_legacy_protection_removed(capsys: pytest.CaptureFixture[str]) -> None:
+def test_apply_reports_classic_protection_cleanup(capsys: pytest.CaptureFixture[str]) -> None:
+    reports = [
+        ClassicProtectionReport(
+            branch="develop",
+            removed_contexts=["audit / dependencies / 3.12"],
+            preserved_settings=["required_pull_request_reviews"],
+        ),
+    ]
     with (
         patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
         patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
         patch(f"{_MODULE}._audit_repo", return_value=_mock_github_noncompliant()),
         patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
         patch(f"{_MODULE}._resolve_config"),
-        patch(f"{_MODULE}._apply_repo", return_value=["main", "develop"]),
+        patch(f"{_MODULE}._apply_repo", return_value=reports),
     ):
         main(["apply", "--repo", "o/r"])
     output = capsys.readouterr().out
-    assert "legacy protection removed" in output
+    assert "classic protection on develop" in output
+    assert "audit / dependencies / 3.12" in output
+    assert "required_pull_request_reviews" in output
 
 
 def test_audit_prints_skipped_fields(capsys: pytest.CaptureFixture[str]) -> None:

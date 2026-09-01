@@ -1475,9 +1475,13 @@ def step_github_config(ctx: RepoInitContext) -> None:
     _assert_ci_gates_producible(
         ctx, desired, ghas=ghas_available(cfg, visibility=result.visibility)
     )
-    removed = apply_desired_state(ctx.repo, desired)
-    if removed:
-        print(f"  Legacy protection removed: {', '.join(removed)}")
+    cleanup_reports = apply_desired_state(ctx.repo, desired)
+    for report in cleanup_reports:
+        preserved = ", ".join(report.preserved_settings) or "none"
+        print(
+            f"  Classic protection on {report.branch}: removed stale CI contexts "
+            f"[{', '.join(report.removed_contexts)}]; preserved [{preserved}]"
+        )
     print("  GitHub config applied.")
 
     print("  Syncing labels...")

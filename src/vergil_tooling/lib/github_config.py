@@ -696,6 +696,190 @@ def _normalize_rules(rules: Sequence[object]) -> list[dict[str, object]]:
     return normalized
 
 
+# ---------------------------------------------------------------------------
+# Classic branch protection (legacy) — read + scoped cleanup (#338)
+# ---------------------------------------------------------------------------
+#
+# Rulesets superseded classic branch protection, but a repo mid-migration can
+# still carry a classic ``branches/<b>/protection`` object. Its stale artefact
+# is the per-version CI leg — ``audit / dependencies / 3.12`` and friends — that
+# Task 1 folded into the stable ``<kind> / evidence`` gate. Those version-
+# suffixed legs are the only thing this module owns and removes; every other
+# classic setting (review requirements, admin enforcement, the evidence gates
+# themselves) is read, reported, and left untouched.
+
+# A required check ends in ``/ <version>`` (e.g. ``audit / dependencies / 3.12``).
+_VERSION_SUFFIX_RE = re.compile(r" / \d+(?:\.\d+)+$")
+
+# The matrixed evidence kinds whose per-version legs the ruleset now aggregates.
+# ``security`` is an evidence gate too, but its checks are never version-suffixed
+# (``security / codeql``, ``Trivy``), so it never contributes a stale leg.
+_MATRIXED_EVIDENCE_GATES = frozenset({"audit", "quality", "test"})
+
+
+def _is_stale_ci_context(context: str) -> bool:
+    """True for a version-suffixed CI leg the evidence ruleset now aggregates.
+
+    Task 1 (#338) replaced the per-version legs ``<kind> / <sub> / <version>``
+    with a single stable ``<kind> / evidence`` gate for the matrixed kinds. A
+    classic protection still requiring such a leg is stale drift this cleanup
+    removes; ``<kind> / evidence`` itself, the GHAS security literals, and any
+    non-CI context are left alone.
+    """
+    if not _VERSION_SUFFIX_RE.search(context):
+        return False
+    return classify_evidence_gate(context) in _MATRIXED_EVIDENCE_GATES
+
+
+def _classic_required_contexts(protection: dict[str, object]) -> list[str]:
+    """The required status-check contexts declared by a classic protection object.
+
+    Unions the legacy ``contexts`` (list of names) with the newer
+    ``checks`` (``[{context, app_id}]``) shape, de-duplicated by name and in
+    first-seen order.
+    """
+    rsc_raw = protection.get("required_status_checks")
+    if not isinstance(rsc_raw, dict):
+        return []
+    rsc = cast("dict[str, object]", rsc_raw)
+    contexts: list[str] = []
+    raw_contexts = rsc.get("contexts")
+    if isinstance(raw_contexts, list):
+        contexts.extend(str(c) for c in raw_contexts)
+    raw_checks = rsc.get("checks")
+    if isinstance(raw_checks, list):
+        for chk in raw_checks:
+            if isinstance(chk, dict):
+                ctx = cast("dict[str, object]", chk).get("context")
+                if isinstance(ctx, str) and ctx not in contexts:
+                    contexts.append(ctx)
+    return contexts
+
+
+def _setting_is_active(value: object) -> bool:
+    """True when a classic-protection sub-setting is actually enabled/present."""
+    if isinstance(value, dict):
+        d = cast("dict[str, object]", value)
+        if "enabled" in d:
+            return bool(d["enabled"])
+        return len(d) > 0
+    return bool(value)
+
+
+def _preserved_classic_settings(protection: dict[str, object]) -> list[str]:
+    """Names of the classic-protection settings this cleanup leaves untouched.
+
+    The scoped cleanup only rewrites ``required_status_checks``; every other
+    active top-level setting (a review requirement, admin enforcement, signature
+    requirement, …) is preserved and reported here. ``url`` is API metadata, not
+    a setting, so it is never reported.
+    """
+    return [
+        key
+        for key in sorted(protection)
+        if key not in {"required_status_checks", "url"} and _setting_is_active(protection[key])
+    ]
+
+
+def _classic_protection_absent_or_forbidden(exc: github.GitHubAPIError) -> bool:
+    """True when a classic-protection read failed with 404 (none) or 403 (perm).
+
+    Both mean "nothing to read here", not a tooling fault: a branch with no
+    classic protection returns 404, and a token without admin scope returns 403.
+    Any other status is a real failure that must propagate — a fail-soft that
+    swallowed it would let genuine drift go unseen.
+    """
+    stderr = exc.stderr or ""
+    return "HTTP 404" in stderr or "HTTP 403" in stderr
+
+
+def _read_classic_protection(repo: str, branch: str) -> dict[str, object] | None:
+    """Read a branch's classic protection, fail-soft on 404/permission.
+
+    Returns the protection object, or ``None`` when the branch has no classic
+    protection or the token cannot read it. Any other API error propagates.
+    """
+    endpoint = f"repos/{repo}/branches/{branch}/protection"
+    try:
+        data = github.read_json("api", endpoint)
+    except github.GitHubAPIError as exc:
+        if _classic_protection_absent_or_forbidden(exc):
+            return None
+        raise
+    return data if isinstance(data, dict) else None
+
+
+def _branch_from_ref(ref: str) -> str | None:
+    """The branch name of a ``refs/heads/<b>`` include, or ``None`` otherwise."""
+    if ref.startswith("refs/heads/"):
+        return ref.removeprefix("refs/heads/")
+    return None
+
+
+def _ruleset_branches(rulesets: list[DesiredRuleset]) -> set[str]:
+    """The set of branches covered by the branch-target rulesets."""
+    branches: set[str] = set()
+    for ruleset in rulesets:
+        if ruleset.target != "branch":
+            continue
+        for ref in ruleset.ref_include:
+            branch = _branch_from_ref(ref)
+            if branch is not None:
+                branches.add(branch)
+    return branches
+
+
+def _stale_classic_ruleset(branch: str, stale_contexts: list[str]) -> DesiredRuleset:
+    """A synthetic actual-state ruleset carrying a branch's stale CI legs.
+
+    ``fetch_actual_state`` folds classic protection's stale version-suffixed CI
+    legs into the actual state as an unexpected ruleset. Since the desired state
+    has no counterpart, :func:`compute_diff` reports it as drift, and the stale
+    contexts ride along in its ``required_status_checks`` rule.
+    """
+    return DesiredRuleset(
+        name=f"classic branch protection: {branch}",
+        target="branch",
+        enforcement="active",
+        ref_include=[f"refs/heads/{branch}"],
+        bypass_actors=[],
+        rules=[
+            {
+                "type": "required_status_checks",
+                "parameters": {
+                    "strict_required_status_checks_policy": True,
+                    "required_status_checks": [{"context": c} for c in stale_contexts],
+                },
+            }
+        ],
+    )
+
+
+def _classic_protection_drift(
+    repo: str, default_branch: str, rulesets: list[DesiredRuleset]
+) -> list[DesiredRuleset]:
+    """Synthetic rulesets surfacing stale classic-protection CI legs as drift.
+
+    Inspects the default branch plus every branch covered by an actual
+    branch-target ruleset. For each that still enforces a stale version-suffixed
+    CI leg via classic protection, emits a synthetic ruleset so the audit flags
+    it. Fail-soft: a branch with no classic protection contributes nothing.
+    """
+    inspect: set[str] = set(_ruleset_branches(rulesets))
+    if default_branch:
+        inspect.add(default_branch)
+
+    synthetic: list[DesiredRuleset] = []
+    for branch in sorted(inspect):
+        protection = _read_classic_protection(repo, branch)
+        if protection is None:
+            continue
+        stale = [c for c in _classic_required_contexts(protection) if _is_stale_ci_context(c)]
+        if stale:
+            synthetic.append(_stale_classic_ruleset(branch, stale))
+    return synthetic
+
+
 def fetch_actual_state(repo: str) -> FetchResult:
     """Fetch the current GitHub configuration for a repo via gh api."""
     repo_data = github.read_json("api", f"repos/{repo}")
@@ -850,6 +1034,10 @@ def fetch_actual_state(repo: str) -> FetchResult:
                     rules=rules,
                 )
             )
+
+    # Fold any stale version-suffixed CI legs still enforced via classic branch
+    # protection into the actual state so the audit flags them as drift (#338).
+    rulesets.extend(_classic_protection_drift(repo, repo_settings.default_branch, rulesets))
 
     return FetchResult(
         state=DesiredState(
@@ -1255,31 +1443,63 @@ def _apply_rulesets(repo: str, desired: list[DesiredRuleset]) -> None:
             github.delete(f"repos/{repo}/rulesets/{rs_id}")
 
 
-def _cleanup_classic_branch_protection(repo: str, rulesets: list[DesiredRuleset]) -> list[str]:
-    """Remove legacy branch protection for branches covered by rulesets.
+@dataclass
+class ClassicProtectionReport:
+    """The outcome of scoped classic-protection cleanup for one branch.
 
-    Returns list of branches where legacy protection was removed.
+    ``removed_contexts`` are the stale version-suffixed CI legs stripped from the
+    branch's required status checks; ``preserved_settings`` names every other
+    classic setting the cleanup left untouched.
     """
-    branches: set[str] = set()
-    for ruleset in rulesets:
-        if ruleset.target != "branch":
+
+    branch: str
+    removed_contexts: list[str]
+    preserved_settings: list[str]
+
+
+def _cleanup_classic_branch_protection(
+    repo: str, rulesets: list[DesiredRuleset]
+) -> list[ClassicProtectionReport]:
+    """Strip stale CI legs from classic protection on ruleset-covered branches.
+
+    For each branch a branch-target ruleset now owns, reads the classic
+    ``branches/<b>/protection`` object (fail-soft on 404/permission) and removes
+    **only** the stale version-suffixed CI contexts the evidence ruleset now
+    aggregates — via a scoped PATCH of ``required_status_checks``. The whole
+    protection object is never deleted: every other setting is preserved and
+    returned in the per-branch report. Branches with no classic protection, or
+    none carrying a stale leg, are left entirely untouched and unreported.
+    """
+    reports: list[ClassicProtectionReport] = []
+    for branch in sorted(_ruleset_branches(rulesets)):
+        protection = _read_classic_protection(repo, branch)
+        if protection is None:
             continue
-        for ref in ruleset.ref_include:
-            if ref.startswith("refs/heads/"):
-                branches.add(ref.removeprefix("refs/heads/"))
+        contexts = _classic_required_contexts(protection)
+        stale = [c for c in contexts if _is_stale_ci_context(c)]
+        if not stale:
+            continue
+        kept = [c for c in contexts if c not in stale]
+        github.write_json(
+            "PATCH",
+            f"repos/{repo}/branches/{branch}/protection/required_status_checks",
+            {"contexts": kept},
+        )
+        reports.append(
+            ClassicProtectionReport(
+                branch=branch,
+                removed_contexts=stale,
+                preserved_settings=_preserved_classic_settings(protection),
+            )
+        )
+    return reports
 
-    removed: list[str] = []
-    for branch in sorted(branches):
-        endpoint = f"repos/{repo}/branches/{branch}/protection"
-        if github.delete_if_exists(endpoint):
-            removed.append(branch)
-    return removed
 
-
-def apply_desired_state(repo: str, desired: DesiredState) -> list[str]:
+def apply_desired_state(repo: str, desired: DesiredState) -> list[ClassicProtectionReport]:
     """Apply the desired configuration to a GitHub repo via the API.
 
-    Returns list of branches where legacy branch protection was removed.
+    Returns a per-branch report of the scoped classic-protection cleanup (stale
+    CI legs removed, other settings preserved).
     """
     _apply_repo_settings(repo, desired.repo_settings)
     _apply_security_settings(repo, desired.security)
