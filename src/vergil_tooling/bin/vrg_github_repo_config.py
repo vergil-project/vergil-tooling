@@ -16,6 +16,7 @@ from pathlib import Path
 from vergil_tooling.lib import github
 from vergil_tooling.lib.config import VergilConfig, _parse_raw_config
 from vergil_tooling.lib.github_config import (
+    ClassicProtectionReport,
     ConfigDiff,
     DiffItem,
     apply_desired_state,
@@ -214,8 +215,8 @@ def _print_diff(repo: str, diff: ConfigDiff) -> None:
     _print_warnings(diff)
 
 
-def _apply_repo(repo: str, config: VergilConfig) -> list[str]:
-    """Apply desired state to a repo. Returns branches with legacy protection removed."""
+def _apply_repo(repo: str, config: VergilConfig) -> list[ClassicProtectionReport]:
+    """Apply desired state to a repo. Returns the classic-protection cleanup report."""
     result = fetch_actual_state(repo)
     is_org = result.owner_type == "Organization"
     desired = compute_desired_state(config, visibility=result.visibility, is_org=is_org)
@@ -284,14 +285,17 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(f"  Applying to {repo}...")
         try:
-            removed = _apply_repo(repo, config)
+            reports = _apply_repo(repo, config)
         except RuntimeError as exc:
             emit_error(str(exc))
             return 1
-        if removed:
-            print(f"  {repo}: applied (legacy protection removed: {', '.join(removed)})")
-        else:
-            print(f"  {repo}: applied")
+        print(f"  {repo}: applied")
+        for report in reports:
+            preserved = ", ".join(report.preserved_settings) or "none"
+            print(
+                f"  {repo}: classic protection on {report.branch} — removed stale CI "
+                f"contexts [{', '.join(report.removed_contexts)}]; preserved [{preserved}]"
+            )
 
     if not local_compliant:
         return 1

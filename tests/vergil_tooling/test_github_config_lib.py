@@ -21,6 +21,7 @@ from vergil_tooling.lib.config import (
 )
 from vergil_tooling.lib.github import GitHubAPIError
 from vergil_tooling.lib.github_config import (
+    _PRODUCIBLE_GATE_CATALOG,
     DesiredRuleset,
     EvidenceGate,
     FetchResult,
@@ -29,10 +30,14 @@ from vergil_tooling.lib.github_config import (
     _apply_rulesets,
     _apply_security_settings,
     _canonicalize_rules,
+    _classic_required_contexts,
     _cleanup_classic_branch_protection,
     _fetch_vulnerability_alerts,
+    _is_stale_ci_context,
     _lang_has_check,
     _normalize_rules,
+    _preserved_classic_settings,
+    _read_classic_protection,
     _ruleset_body,
     apply_desired_state,
     classify_evidence_gate,
@@ -49,6 +54,7 @@ from vergil_tooling.lib.github_config import (
     ghas_available,
     required_evidence_gates,
     required_status_contexts,
+    unproducible_ci_yaml_contexts,
     unproducible_required_contexts,
 )
 
@@ -459,7 +465,7 @@ def test_lang_has_check_returns_false_for_unknown_check() -> None:
 
 
 # ---------------------------------------------------------------------------
-# CI-gate producibility cross-check tests (issue #2720)
+# CI-gate producibility cross-check tests — ci.yml parsing path (issue #2720)
 # ---------------------------------------------------------------------------
 
 
@@ -502,7 +508,7 @@ def test_producible_when_all_required_contexts_have_a_pr_job() -> None:
     ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=True, docs=True)
     ci_yaml = _ci_yaml(jobs=_FULL_CI_JOBS)
     assert (
-        unproducible_required_contexts(ci_yaml, required_status_contexts(ruleset), ghas=True) == []
+        unproducible_ci_yaml_contexts(ci_yaml, required_status_contexts(ruleset), ghas=True) == []
     )
 
 
@@ -513,7 +519,7 @@ def test_integration_context_is_flagged_unproducible() -> None:
         _project(), _ci(integration_tests=True), ghas=True, docs=True
     )
     ci_yaml = _ci_yaml(jobs=_FULL_CI_JOBS)
-    missing = unproducible_required_contexts(ci_yaml, required_status_contexts(ruleset), ghas=True)
+    missing = unproducible_ci_yaml_contexts(ci_yaml, required_status_contexts(ruleset), ghas=True)
     assert missing == ["test / integration / 3.14"]
 
 
@@ -523,7 +529,7 @@ def test_docs_context_flagged_when_ci_lacks_docs_job() -> None:
     ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=True, docs=True)
     jobs_without_docs = {k: v for k, v in _FULL_CI_JOBS.items() if k != "docs"}
     ci_yaml = _ci_yaml(jobs=jobs_without_docs)
-    missing = unproducible_required_contexts(ci_yaml, required_status_contexts(ruleset), ghas=True)
+    missing = unproducible_ci_yaml_contexts(ci_yaml, required_status_contexts(ruleset), ghas=True)
     assert missing == ["docs / docs"]
 
 
@@ -535,7 +541,7 @@ def test_ghas_literal_contexts_producible_only_with_ghas() -> None:
     for ghas in (True, False):
         ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=ghas, docs=True)
         assert (
-            unproducible_required_contexts(ci_yaml, required_status_contexts(ruleset), ghas=ghas)
+            unproducible_ci_yaml_contexts(ci_yaml, required_status_contexts(ruleset), ghas=ghas)
             == []
         )
 
@@ -548,7 +554,7 @@ def test_evidence_gates_are_producible() -> None:
     )
     ci_yaml = _ci_yaml(jobs=_FULL_CI_JOBS)
     assert (
-        unproducible_required_contexts(ci_yaml, required_status_contexts(ruleset), ghas=True) == []
+        unproducible_ci_yaml_contexts(ci_yaml, required_status_contexts(ruleset), ghas=True) == []
     )
 
 
@@ -563,16 +569,107 @@ def test_per_version_legs_remain_producible_via_prefix() -> None:
         "test / unit / 3.13",
         "audit / dependencies / 3.14",
     ]
-    assert unproducible_required_contexts(ci_yaml, legs, ghas=True) == []
+    assert unproducible_ci_yaml_contexts(ci_yaml, legs, ghas=True) == []
 
 
 def test_unrecognized_reusable_workflow_produces_no_contexts() -> None:
     """A job wired to an unknown reusable workflow contributes nothing to the
     producible set, so any required context is flagged (the safe default)."""
     ci_yaml = _ci_yaml(jobs={"mystery": "ci-mystery.yml"})
-    assert unproducible_required_contexts(ci_yaml, ["quality / common"], ghas=True) == [
+    assert unproducible_ci_yaml_contexts(ci_yaml, ["quality / common"], ghas=True) == [
         "quality / common"
     ]
+
+
+# ---------------------------------------------------------------------------
+# Producibility cross-check in the live audit — set-based path
+# (epic vergil-project/.github#338, Task 2)
+# ---------------------------------------------------------------------------
+
+
+def test_unproducible_required_contexts_returns_required_minus_produced() -> None:
+    """The audit helper is a plain set difference: required contexts that no
+    known workflow gate produces."""
+    required = {"audit / evidence", "audit / dependencies / 3.12"}
+    produced = {"audit / evidence", "quality / evidence"}
+    assert unproducible_required_contexts(required, produced) == {"audit / dependencies / 3.12"}
+
+
+def test_unproducible_required_contexts_empty_when_all_produced() -> None:
+    """Nothing is flagged when every required context is in the produced set."""
+    required = {"audit / evidence", "quality / evidence"}
+    produced = {"audit / evidence", "quality / evidence", "test / evidence"}
+    assert unproducible_required_contexts(required, produced) == set()
+
+
+def test_producible_gate_catalog_covers_desired_stable_gates() -> None:
+    """Drift guard: every stable (non-per-version) gate a fully-enabled desired
+    ruleset requires must be in the produced catalog, so the catalog can never
+    silently fall behind ``desired_ci_gates_ruleset``."""
+    ruleset = desired_ci_gates_ruleset(
+        _project(), _ci(integration_tests=True), ghas=True, docs=True
+    )
+    stable = {
+        c for c in required_status_contexts(ruleset) if not c.startswith("test / integration / ")
+    }
+    assert stable <= _PRODUCIBLE_GATE_CATALOG
+
+
+def test_audit_flags_stale_per_version_required_context() -> None:
+    """A live CI-gates ruleset still requiring a per-version leg the evidence
+    model dropped (e.g. ``audit / dependencies / 3.12``) is flagged as an
+    unproducible required context — a check no workflow produces as a durable
+    gate, deadlocking every merge with green checks (epic #338)."""
+    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    actual = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    actual_gates = next(r for r in actual.rulesets if r.name == "CI gates")
+    _checks(actual_gates).append(
+        {"context": "audit / dependencies / 3.12", "integration_id": 15368}
+    )
+
+    diff = compute_diff(desired=desired, actual=actual)
+
+    assert not diff.is_compliant()
+    unproducible = [
+        item
+        for item in diff.items
+        if item.field == "rulesets.CI gates.unproducible_required_context"
+    ]
+    assert [item.actual for item in unproducible] == ["audit / dependencies / 3.12"]
+
+
+def test_audit_compliant_when_required_are_evidence_gates() -> None:
+    """When the live ruleset requires exactly the ``<kind> / evidence`` gates the
+    reusable workflows produce, nothing is unproducible and the audit is clean."""
+    state = compute_desired_state(
+        _vergil_config(versions=["3.12", "3.13", "3.14"]), visibility="public", is_org=True
+    )
+    diff = compute_diff(desired=state, actual=state)
+    assert diff.is_compliant()
+    assert not any(
+        item.field == "rulesets.CI gates.unproducible_required_context" for item in diff.items
+    )
+
+
+def test_audit_does_not_mislabel_producible_gate_as_unproducible() -> None:
+    """A gate the workflows genuinely emit (``version / version-bump``) that the
+    repo simply does not desire is drift, not an *unproducible* context — the
+    producibility check must not mislabel it (only the ruleset diff flags it)."""
+    desired = compute_desired_state(
+        _vergil_config(release_model="none"), visibility="public", is_org=True
+    )
+    actual = compute_desired_state(
+        _vergil_config(release_model="none"), visibility="public", is_org=True
+    )
+    actual_gates = next(r for r in actual.rulesets if r.name == "CI gates")
+    _checks(actual_gates).append({"context": "version / version-bump", "integration_id": 15368})
+
+    diff = compute_diff(desired=desired, actual=actual)
+
+    assert not diff.is_compliant()  # still drift, via the ruleset diff
+    assert not any(
+        item.field == "rulesets.CI gates.unproducible_required_context" for item in diff.items
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1654,44 +1751,285 @@ def test_apply_desired_state_orchestrates_all() -> None:
 
 
 # ---------------------------------------------------------------------------
+# fetch_actual_state: classic branch protection
+# ---------------------------------------------------------------------------
+
+
+def _fetch_with_classic_protection(
+    protection_by_branch: dict[str, object],
+    *,
+    default_branch: str = "develop",
+    rulesets_summary: list[object] | None = None,
+    ruleset_details: dict[str, object] | None = None,
+) -> FetchResult:
+    """Run ``fetch_actual_state`` with mocked classic protection per branch.
+
+    ``protection_by_branch`` maps a branch name to the object returned for its
+    ``branches/<b>/protection`` read; a branch absent from the map raises a 404
+    (no classic protection), the real-world default.
+    """
+    repo_json: dict[str, object] = {
+        "default_branch": default_branch,
+        "security_and_analysis": {},
+    }
+    ruleset_details = ruleset_details or {}
+
+    def mock_read_json(*args: str) -> dict[str, object] | list[object]:
+        endpoint = args[1] if len(args) > 1 else ""
+        if endpoint == "repos/o/r":
+            return repo_json
+        if endpoint == "repos/o/r/rulesets":
+            return rulesets_summary or []
+        if endpoint.startswith("repos/o/r/rulesets/"):
+            return cast("dict[str, object]", ruleset_details.get(endpoint.rsplit("/", 1)[-1], {}))
+        if endpoint == "repos/o/r/actions/permissions":
+            return {"allowed_actions": "all"}
+        if endpoint == "repos/o/r/actions/permissions/workflow":
+            return {
+                "default_workflow_permissions": "read",
+                "can_approve_pull_request_reviews": False,
+            }
+        if endpoint.startswith("repos/o/r/branches/") and endpoint.endswith("/protection"):
+            branch = endpoint[len("repos/o/r/branches/") : -len("/protection")]
+            if branch in protection_by_branch:
+                return cast("dict[str, object]", protection_by_branch[branch])
+            raise GitHubAPIError(1, ("gh", "api", endpoint), "", "gh: (HTTP 404)")
+        return {}
+
+    with (
+        patch(
+            "vergil_tooling.lib.github_config.github.read_json",
+            side_effect=mock_read_json,
+        ),
+        patch(
+            "vergil_tooling.lib.github_config._fetch_vulnerability_alerts",
+            return_value=False,
+        ),
+    ):
+        return fetch_actual_state("o/r")
+
+
+def test_fetch_actual_state_flags_stale_classic_ci_context_as_drift() -> None:
+    protection: dict[str, object] = {
+        "required_status_checks": {
+            "strict": True,
+            "contexts": ["audit / dependencies / 3.12"],
+        },
+        "required_pull_request_reviews": {"required_approving_review_count": 1},
+    }
+    result = _fetch_with_classic_protection({"develop": protection})
+
+    # The stale version-suffixed leg is surfaced in the fetched actual state.
+    stale = [
+        rs
+        for rs in result.state.rulesets
+        if "audit / dependencies / 3.12" in required_status_contexts(rs)
+    ]
+    assert stale, "classic stale CI context must be included in the fetched state"
+    assert stale[0].ref_include == ["refs/heads/develop"]
+
+    # And it shows up as drift against the evidence-only desired ruleset.
+    desired = compute_desired_state(
+        _vergil_config(versions=["3.12", "3.13", "3.14"]),
+        visibility="public",
+        is_org=True,
+    )
+    diff = compute_diff(desired=desired, actual=result.state)
+    assert not diff.is_compliant()
+    assert any("classic branch protection" in item.field for item in diff.items)
+
+
+def test_fetch_actual_state_ignores_non_stale_classic_protection() -> None:
+    protection: dict[str, object] = {
+        # No version-suffixed CI leg — only the stable gate and a review rule.
+        "required_status_checks": {"strict": True, "contexts": ["audit / evidence"]},
+        "required_pull_request_reviews": {"required_approving_review_count": 2},
+    }
+    result = _fetch_with_classic_protection({"develop": protection})
+    assert not any(rs.name.startswith("classic branch protection") for rs in result.state.rulesets)
+
+
+def test_fetch_actual_state_fail_soft_when_no_classic_protection() -> None:
+    # No branch mapped → every protection read 404s; fetch must not raise.
+    result = _fetch_with_classic_protection({})
+    assert not any(rs.name.startswith("classic branch protection") for rs in result.state.rulesets)
+
+
+def test_fetch_actual_state_classic_drift_without_default_branch() -> None:
+    # A repo with no reported default branch still inspects ruleset-covered
+    # branches for stale classic legs.
+    summary: list[object] = [{"id": 3}]
+    detail: dict[str, object] = {
+        "name": "Branch protection",
+        "target": "branch",
+        "enforcement": "active",
+        "conditions": {"ref_name": {"include": ["refs/heads/main"]}},
+        "bypass_actors": [],
+        "rules": [{"type": "deletion"}],
+    }
+    protection: dict[str, object] = {
+        "required_status_checks": {"strict": True, "contexts": ["audit / dependencies / 3.12"]},
+    }
+    result = _fetch_with_classic_protection(
+        {"main": protection},
+        default_branch="",
+        rulesets_summary=summary,
+        ruleset_details={"3": detail},
+    )
+    synthetic = [
+        rs for rs in result.state.rulesets if rs.name.startswith("classic branch protection")
+    ]
+    assert [rs.ref_include for rs in synthetic] == [["refs/heads/main"]]
+
+
+def test_fetch_actual_state_inspects_ruleset_covered_branches() -> None:
+    # A branch-target ruleset covering main pulls main into the inspected set,
+    # even though the default branch is develop.
+    summary: list[object] = [{"id": 7}]
+    detail: dict[str, object] = {
+        "name": "Branch protection",
+        "target": "branch",
+        "enforcement": "active",
+        "conditions": {"ref_name": {"include": ["refs/heads/main"]}},
+        "bypass_actors": [],
+        "rules": [{"type": "deletion"}],
+    }
+    protection: dict[str, object] = {
+        "required_status_checks": {"strict": True, "contexts": ["test / unit / 3.12"]},
+    }
+    result = _fetch_with_classic_protection(
+        {"main": protection},
+        rulesets_summary=summary,
+        ruleset_details={"7": detail},
+    )
+    synthetic = [
+        rs for rs in result.state.rulesets if rs.name.startswith("classic branch protection")
+    ]
+    assert len(synthetic) == 1
+    assert synthetic[0].ref_include == ["refs/heads/main"]
+    assert required_status_contexts(synthetic[0]) == ["test / unit / 3.12"]
+
+
+# ---------------------------------------------------------------------------
 # Classic branch protection cleanup tests
 # ---------------------------------------------------------------------------
 
 
-def test_cleanup_removes_legacy_protection_for_covered_branches() -> None:
-    rulesets = [desired_branch_protection_ruleset()]
-    with patch(
-        "vergil_tooling.lib.github_config.github.delete_if_exists",
-        return_value=True,
-    ) as mock_del:
-        removed = _cleanup_classic_branch_protection("o/r", rulesets)
-    assert sorted(removed) == ["develop", "main"]
-    assert mock_del.call_count == 2
-    endpoints = sorted(c[0][0] for c in mock_del.call_args_list)
-    assert endpoints == [
-        "repos/o/r/branches/develop/protection",
-        "repos/o/r/branches/main/protection",
-    ]
+def _classic_protection_with_stale_leg() -> dict[str, object]:
+    """A classic protection carrying a stale version-suffixed CI leg plus an
+    unrelated setting the scoped cleanup must preserve."""
+    return {
+        "required_status_checks": {
+            "strict": True,
+            "contexts": ["audit / dependencies / 3.12", "audit / evidence"],
+        },
+        "required_pull_request_reviews": {"required_approving_review_count": 1},
+        "enforce_admins": {"enabled": True},
+    }
 
 
-def test_cleanup_returns_empty_when_no_legacy_protection() -> None:
-    rulesets = [desired_branch_protection_ruleset()]
-    with patch(
-        "vergil_tooling.lib.github_config.github.delete_if_exists",
-        return_value=False,
+def test_cleanup_removes_only_stale_ci_contexts_and_preserves_the_rest() -> None:
+    rulesets = [desired_branch_protection_ruleset()]  # covers main + develop
+    with (
+        patch(
+            "vergil_tooling.lib.github_config.github.read_json",
+            return_value=_classic_protection_with_stale_leg(),
+        ),
+        patch("vergil_tooling.lib.github_config.github.write_json") as mock_write,
+        patch("vergil_tooling.lib.github_config.github.delete") as mock_delete,
     ):
-        removed = _cleanup_classic_branch_protection("o/r", rulesets)
-    assert removed == []
+        reports = _cleanup_classic_branch_protection("o/r", rulesets)
+
+    # Never deletes the whole protection object — scoped writes only.
+    mock_delete.assert_not_called()
+    assert sorted(r.branch for r in reports) == ["develop", "main"]
+    for r in reports:
+        assert r.removed_contexts == ["audit / dependencies / 3.12"]
+        assert "required_pull_request_reviews" in r.preserved_settings
+        assert "enforce_admins" in r.preserved_settings
+
+    # Each branch is PATCHed on the required-status-checks sub-resource with only
+    # the surviving (non-stale) contexts — the evidence gate stays required.
+    assert mock_write.call_count == 2
+    for call in mock_write.call_args_list:
+        method, endpoint, body = call[0][0], call[0][1], call[0][2]
+        assert method == "PATCH"
+        assert endpoint.endswith("/protection/required_status_checks")
+        assert body == {"contexts": ["audit / evidence"]}
+
+
+def test_cleanup_empties_contexts_when_every_leg_is_stale() -> None:
+    rulesets = [
+        DesiredRuleset(
+            name="CI gates",
+            target="branch",
+            enforcement="active",
+            ref_include=["refs/heads/main"],
+            bypass_actors=[],
+            rules=[],
+        ),
+    ]
+    protection: dict[str, object] = {
+        "required_status_checks": {
+            "strict": True,
+            "contexts": ["test / unit / 3.12", "test / unit / 3.13"],
+        },
+    }
+    with (
+        patch("vergil_tooling.lib.github_config.github.read_json", return_value=protection),
+        patch("vergil_tooling.lib.github_config.github.write_json") as mock_write,
+    ):
+        reports = _cleanup_classic_branch_protection("o/r", rulesets)
+    assert [r.branch for r in reports] == ["main"]
+    assert reports[0].removed_contexts == ["test / unit / 3.12", "test / unit / 3.13"]
+    assert mock_write.call_args[0][2] == {"contexts": []}
+
+
+def test_cleanup_leaves_branch_untouched_when_no_stale_contexts() -> None:
+    rulesets = [desired_branch_protection_ruleset()]
+    protection: dict[str, object] = {
+        "required_status_checks": {"strict": True, "contexts": ["audit / evidence"]},
+        "required_pull_request_reviews": {"required_approving_review_count": 1},
+    }
+    with (
+        patch("vergil_tooling.lib.github_config.github.read_json", return_value=protection),
+        patch("vergil_tooling.lib.github_config.github.write_json") as mock_write,
+    ):
+        reports = _cleanup_classic_branch_protection("o/r", rulesets)
+    assert reports == []
+    mock_write.assert_not_called()
+
+
+def test_cleanup_skips_branch_without_classic_protection() -> None:
+    rulesets = [desired_branch_protection_ruleset()]
+    not_found = GitHubAPIError(
+        1,
+        ("gh", "api", "repos/o/r/branches/develop/protection"),
+        "",
+        "gh: Branch not protected (HTTP 404)",
+    )
+    with (
+        patch(
+            "vergil_tooling.lib.github_config.github.read_json",
+            side_effect=not_found,
+        ),
+        patch("vergil_tooling.lib.github_config.github.write_json") as mock_write,
+    ):
+        reports = _cleanup_classic_branch_protection("o/r", rulesets)
+    assert reports == []
+    mock_write.assert_not_called()
 
 
 def test_cleanup_skips_tag_rulesets() -> None:
     rulesets = [desired_tag_protection_ruleset()]
-    with patch(
-        "vergil_tooling.lib.github_config.github.delete_if_exists",
-    ) as mock_del:
-        removed = _cleanup_classic_branch_protection("o/r", rulesets)
-    mock_del.assert_not_called()
-    assert removed == []
+    with (
+        patch("vergil_tooling.lib.github_config.github.read_json") as mock_read,
+        patch("vergil_tooling.lib.github_config.github.write_json") as mock_write,
+    ):
+        reports = _cleanup_classic_branch_protection("o/r", rulesets)
+    mock_read.assert_not_called()
+    mock_write.assert_not_called()
+    assert reports == []
 
 
 def test_cleanup_ignores_non_heads_refs() -> None:
@@ -1705,13 +2043,20 @@ def test_cleanup_ignores_non_heads_refs() -> None:
             rules=[],
         ),
     ]
-    with patch(
-        "vergil_tooling.lib.github_config.github.delete_if_exists",
-        return_value=True,
-    ) as mock_del:
-        removed = _cleanup_classic_branch_protection("o/r", rulesets)
-    mock_del.assert_called_once_with("repos/o/r/branches/main/protection")
-    assert removed == ["main"]
+    protection: dict[str, object] = {
+        "required_status_checks": {"strict": True, "contexts": ["quality / lint / 3.14"]},
+    }
+    with (
+        patch(
+            "vergil_tooling.lib.github_config.github.read_json",
+            return_value=protection,
+        ) as mock_read,
+        patch("vergil_tooling.lib.github_config.github.write_json"),
+    ):
+        reports = _cleanup_classic_branch_protection("o/r", rulesets)
+    mock_read.assert_called_once_with("api", "repos/o/r/branches/main/protection")
+    assert [r.branch for r in reports] == ["main"]
+    assert reports[0].removed_contexts == ["quality / lint / 3.14"]
 
 
 def test_cleanup_deduplicates_branches_across_rulesets() -> None:
@@ -1726,14 +2071,144 @@ def test_cleanup_deduplicates_branches_across_rulesets() -> None:
             rules=[],
         ),
     ]
-    with patch(
-        "vergil_tooling.lib.github_config.github.delete_if_exists",
-        return_value=True,
-    ) as mock_del:
-        removed = _cleanup_classic_branch_protection("o/r", rulesets)
-    # Should only call once per unique branch
-    assert mock_del.call_count == 2
-    assert sorted(removed) == ["develop", "main"]
+    with (
+        patch(
+            "vergil_tooling.lib.github_config.github.read_json",
+            return_value=_classic_protection_with_stale_leg(),
+        ) as mock_read,
+        patch("vergil_tooling.lib.github_config.github.write_json"),
+    ):
+        reports = _cleanup_classic_branch_protection("o/r", rulesets)
+    # Each unique branch is inspected exactly once.
+    assert mock_read.call_count == 2
+    assert sorted(r.branch for r in reports) == ["develop", "main"]
+
+
+# ---------------------------------------------------------------------------
+# Classic-protection helpers
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "context",
+    [
+        "audit / dependencies / 3.12",
+        "test / unit / 3.13",
+        "quality / lint / 3.14",
+        "quality / typecheck / 3.12",
+    ],
+)
+def test_is_stale_ci_context_true_for_version_suffixed_matrixed_legs(context: str) -> None:
+    assert _is_stale_ci_context(context) is True
+
+
+@pytest.mark.parametrize(
+    "context",
+    [
+        "audit / evidence",  # the stable gate the ruleset now owns
+        "quality / evidence",
+        "security / codeql",  # not version-suffixed
+        "CodeQL",  # GHAS literal
+        "version / version-bump",  # non-evidence
+        "deploy / prod / 3.12",  # version-suffixed but not a CI evidence kind
+    ],
+)
+def test_is_stale_ci_context_false_for_everything_else(context: str) -> None:
+    assert _is_stale_ci_context(context) is False
+
+
+def test_classic_required_contexts_unions_contexts_and_checks() -> None:
+    protection: dict[str, object] = {
+        "required_status_checks": {
+            "contexts": ["audit / dependencies / 3.12"],
+            "checks": [
+                {"context": "audit / dependencies / 3.12", "app_id": 1},  # dup by name
+                {"context": "test / unit / 3.13", "app_id": 2},
+                {"not_a_context": True},  # ignored
+                "not-a-dict-check",  # ignored (non-dict entry)
+            ],
+        },
+    }
+    assert _classic_required_contexts(protection) == [
+        "audit / dependencies / 3.12",
+        "test / unit / 3.13",
+    ]
+
+
+def test_classic_required_contexts_from_checks_only() -> None:
+    # Newer API shape: only ``checks`` present, no legacy ``contexts`` list.
+    protection: dict[str, object] = {
+        "required_status_checks": {
+            "checks": [{"context": "quality / typecheck / 3.14", "app_id": 9}],
+        },
+    }
+    assert _classic_required_contexts(protection) == ["quality / typecheck / 3.14"]
+
+
+def test_classic_required_contexts_empty_without_status_checks() -> None:
+    assert _classic_required_contexts({"required_pull_request_reviews": {}}) == []
+    assert _classic_required_contexts({"required_status_checks": "nope"}) == []
+
+
+def test_setting_is_active_for_non_dict_values() -> None:
+    from vergil_tooling.lib.github_config import _setting_is_active
+
+    assert _setting_is_active(True) is True
+    assert _setting_is_active(0) is False
+    assert _setting_is_active("x") is True
+
+
+def test_preserved_classic_settings_lists_active_non_status_check_keys() -> None:
+    protection: dict[str, object] = {
+        "url": "https://api.github.com/...",  # metadata, never reported
+        "required_status_checks": {"contexts": []},  # the modified resource
+        "required_pull_request_reviews": {"required_approving_review_count": 2},
+        "enforce_admins": {"enabled": True},
+        "required_linear_history": {"enabled": False},  # inactive → dropped
+        "required_signatures": {"enabled": True},
+    }
+    assert _preserved_classic_settings(protection) == [
+        "enforce_admins",
+        "required_pull_request_reviews",
+        "required_signatures",
+    ]
+
+
+def test_read_classic_protection_returns_dict() -> None:
+    protection: dict[str, object] = {"required_status_checks": {"contexts": []}}
+    with patch("vergil_tooling.lib.github_config.github.read_json", return_value=protection):
+        assert _read_classic_protection("o/r", "develop") == protection
+
+
+def test_read_classic_protection_none_on_non_dict() -> None:
+    with patch("vergil_tooling.lib.github_config.github.read_json", return_value=[]):
+        assert _read_classic_protection("o/r", "develop") is None
+
+
+@pytest.mark.parametrize("status", ["404", "403"])
+def test_read_classic_protection_fail_soft_on_absent_or_forbidden(status: str) -> None:
+    err = GitHubAPIError(
+        1,
+        ("gh", "api", "repos/o/r/branches/develop/protection"),
+        "",
+        f"gh: message (HTTP {status})",
+    )
+    with patch("vergil_tooling.lib.github_config.github.read_json", side_effect=err):
+        assert _read_classic_protection("o/r", "develop") is None
+
+
+def test_read_classic_protection_reraises_unrelated_error() -> None:
+    err = GitHubAPIError(
+        1,
+        ("gh", "api", "repos/o/r/branches/develop/protection"),
+        "",
+        "gh: Server Error (HTTP 500)",
+    )
+    with (
+        patch("vergil_tooling.lib.github_config.github.read_json", side_effect=err),
+        pytest.raises(GitHubAPIError),
+    ):
+        _read_classic_protection("o/r", "develop")
 
 
 def test_normalize_rules_strips_default_params() -> None:

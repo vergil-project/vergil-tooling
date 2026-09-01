@@ -11,6 +11,7 @@ import pytest
 
 from vergil_tooling.lib import gitignore, repo_init
 from vergil_tooling.lib.config import CiConfig, ProjectConfig, _parse_raw_config
+from vergil_tooling.lib.github_config import ClassicProtectionReport
 from vergil_tooling.lib.repo_init import (
     RepoInitContext,
     _assert_ci_gates_producible,
@@ -539,9 +540,11 @@ class TestRenderCiWorkflow:
         ctx.ci_versions = ["clang-20", "clang-19"]
         ctx.release_model = "tagged-release"
         content = render_ci_workflow(ctx)
-        # Compiler-family-aware suffix + numeric tag → prod-cpp-clang:20.
+        # Compiler-family-aware suffix → prod-cpp-clang image family. The tag
+        # is resolved by the reusable workflow from vergil.toml, not passed by
+        # the thin caller (epic vergil-project/.github#338, Task 10).
         assert "container-suffix: cpp-clang" in content
-        assert "container-tag: '20'" in content
+        assert "container-tag:" not in content
         # cpp is CodeQL-supported, so run-codeql must NOT be disabled.
         assert "run-codeql: false" not in content
 
@@ -555,9 +558,10 @@ class TestRenderCiWorkflow:
         # resolution — NOT the CodeQL identifier `javascript-typescript` (that
         # mapping is the reusable Action's job, epic vergil-project/.github#284 T7).
         assert "language: typescript" in content
-        # Node-family suffix + numeric major tag → prod-ts-node:24.
+        # Node-family suffix → prod-ts-node image family. The tag is resolved
+        # by the reusable workflow from vergil.toml, not passed by the caller.
         assert "container-suffix: ts-node" in content
-        assert "container-tag: '24'" in content
+        assert "container-tag:" not in content
         # typescript is CodeQL-supported, so run-codeql must NOT be disabled.
         assert "run-codeql: false" not in content
 
@@ -574,7 +578,7 @@ class TestRenderCiWorkflow:
         assert "ci-security.yml@v2.1" in content
         assert "ci-version-bump.yml@v2.1" in content
         assert content.count("container-suffix: base") == 3
-        assert content.count("container-tag: 'latest'") == 3
+        assert "container-tag:" not in content
 
     def test_no_language_omits_trailing_space(self) -> None:
         """A no-primary-language repo must not scaffold `language: ` with a
@@ -598,7 +602,7 @@ class TestRenderCiWorkflow:
         assert "ci-test.yml" not in content
         assert "version-bump" not in content
         assert content.count("container-suffix: base") == 2
-        assert content.count("container-tag: 'latest'") == 2
+        assert "container-tag:" not in content
 
     def test_no_language_skips_audit_and_test(self) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test")
@@ -670,6 +674,25 @@ class TestRenderCiWorkflow:
         content = render_ci_workflow(ctx)
         assert "ci-docs.yml" not in content
 
+    def test_thin_caller_omits_versions_and_container_tag(self) -> None:
+        """The rendered ci.yml is a thin caller: it passes no ``versions:`` or
+        ``container-tag:`` input under any reusable-workflow call. Both now
+        resolve from ``vergil.toml`` inside the reusable workflows, so the
+        caller just ``uses:`` the workflow at the pinned tag (epic
+        vergil-project/.github#338, Task 10). Exercised across every job the
+        renderer can emit — audit, quality, security, docs, test, version."""
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.primary_language = "python"
+        ctx.ci_versions = ["3.12", "3.13", "3.14"]
+        ctx.release_model = "tagged-release"
+        ctx.integration_tests = True
+        ctx.publish_docs = True
+        content = render_ci_workflow(ctx)
+        assert "versions:" not in content
+        assert "container-tag:" not in content
+        # container-suffix still selects the image family and stays emitted.
+        assert "container-suffix: python" in content
+
 
 class TestCiGatesProducibility:
     """The generated ci.yml must emit every context the CI-gates ruleset
@@ -680,7 +703,7 @@ class TestCiGatesProducibility:
         from vergil_tooling.lib.github_config import (
             desired_ci_gates_ruleset,
             required_status_contexts,
-            unproducible_required_contexts,
+            unproducible_ci_yaml_contexts,
         )
 
         project = ProjectConfig(
@@ -692,7 +715,7 @@ class TestCiGatesProducibility:
         )
         ci = CiConfig(versions=ctx.ci_versions, integration_tests=ctx.integration_tests)
         ruleset = desired_ci_gates_ruleset(project, ci, ghas=ghas, docs=docs)
-        result: list[str] = unproducible_required_contexts(
+        result: list[str] = unproducible_ci_yaml_contexts(
             render_ci_workflow(ctx), required_status_contexts(ruleset), ghas=ghas
         )
         return result
@@ -1839,12 +1862,18 @@ class TestStepBranchStructureExtended:
 
 
 class TestStepGithubConfigExtended:
-    def test_legacy_protection_removed(self, tmp_path: Path) -> None:
+    def test_classic_protection_cleanup_reported(self, tmp_path: Path) -> None:
         ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
         ctx.work_dir = tmp_path
 
-        def mock_apply(*a: Any, **kw: Any) -> list[str]:
-            return ["develop", "main"]
+        def mock_apply(*a: Any, **kw: Any) -> list[ClassicProtectionReport]:
+            return [
+                ClassicProtectionReport(
+                    branch="develop",
+                    removed_contexts=["audit / dependencies / 3.12"],
+                    preserved_settings=["required_pull_request_reviews"],
+                ),
+            ]
 
         with (
             patch("vergil_tooling.lib.github_config.fetch_actual_state") as mock_fetch,
