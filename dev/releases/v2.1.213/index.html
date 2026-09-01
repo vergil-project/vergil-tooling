@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.183/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.181/">
+        <link rel="next" href="../v2.1.212/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.182 - VERGIL Tooling</title>
+        <title>2.1.213 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-21182-2026-08-08" class="md-skip">
+        <a href="#release-21213-2026-09-01" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.182
+              2.1.213
             
           </span>
         </div>
@@ -1292,10 +1292,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.213/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.213
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1311,6 +1338,48 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -2160,37 +2229,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.182
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.182/" class="md-nav__link">
         
   
   
@@ -2206,37 +2248,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -14146,10 +14157,21 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
+  <a href="#documentation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Bug fixes
+        Documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
       
     </span>
   </a>
@@ -14173,14 +14195,18 @@
 
 
 
-<h1 id="release-21182-2026-08-08">Release 2.1.182 (2026-08-08)<a class="headerlink" href="#release-21182-2026-08-08" title="Permanent link">&para;</a></h1>
-<h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
+<h1 id="release-21213-2026-09-01">Release 2.1.213 (2026-09-01)<a class="headerlink" href="#release-21213-2026-09-01" title="Permanent link">&para;</a></h1>
+<h2 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>atomically re-parent ad-hoc children via replaceParent (#2692)</strong>
-The ad-hoc drain re-parented a closed child from the live ad-hoc epic into its close-quarter archive with add-before-remove (add_child then remove_child). GitHub's native sub-issues enforce a single parent, so addSubIssue was rejected while the child was still linked to the live epic, deadlocking the drain against real GitHub. Proven live by #2677.</li>
+<li><strong>document [test].parallel and the fleet-wide parallel test default (#2951) (#2978)</strong></li>
 </ul>
-<p>Add reparent_child() using addSubIssue with replaceParent: true, which moves a child to a new parent in one atomic call (no orphan window, no separate remove). Replace the add-before-remove pair in both apply_adhoc_drain and the rollup() ad-hoc event-path branch. add_child/remove_child are left intact for their other callers.</p>
-<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.182/v2.1.182-ci-evidence.tar.gz">Download →</a></p>
+<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>require <kind>/evidence gates, not per-version checks (#338) (#2992)</strong></li>
+<li><strong>add [ci].primary-version (default = highest) (#338) (#2993)</strong></li>
+<li><strong>flag missing/cronless ops.yml as non-compliant (#338) (#2994)</strong></li>
+</ul>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.213/v2.1.213-ci-evidence.tar.gz">Download →</a></p>
 
 
 
