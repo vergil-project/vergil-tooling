@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.213] - 2026-09-01
+
+### Documentation
+
+- document [test].parallel and the fleet-wide parallel test default (#2951) (#2978)
+
+### Features
+
+- require <kind>/evidence gates, not per-version checks (#338) (#2992)
+- add [ci].primary-version (default = highest) (#338) (#2993)
+- flag missing/cronless ops.yml as non-compliant (#338) (#2994)
+
 ## [2.1.212] - 2026-08-29
 
 ### Features
