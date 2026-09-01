@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 from typing import cast
 from unittest.mock import patch
@@ -398,16 +399,26 @@ def test_ci_gates_without_ghas_has_no_ghas_integration_checks() -> None:
     assert all(c["integration_id"] != 57789 for c in _checks(r))
 
 
-def test_ci_gates_versioned_checks_per_version() -> None:
-    ci = _ci(versions=["3.12", "3.13", "3.14"])
-    r = desired_ci_gates_ruleset(_project(), ci, ghas=True)
-    names = _check_names(r)
-    assert "quality / lint / 3.12" in names
-    assert "quality / lint / 3.13" in names
-    assert "quality / lint / 3.14" in names
-    assert "quality / typecheck / 3.12" in names
-    assert "test / unit / 3.12" in names
-    assert "audit / dependencies / 3.12" in names
+def test_ci_gates_require_evidence_not_per_version() -> None:
+    """The matrixed kinds (audit/lint/typecheck/unit) are gated on the stable,
+    version-agnostic ``<kind> / evidence`` aggregate each reusable workflow
+    emits — one per workflow — never per-version check names. A matrix change
+    (including a reduction) then merges through the same gate instead of
+    deadlocking on a per-version check the reduced matrix can never report
+    (epic vergil-project/.github#338)."""
+    cfg = _ci(versions=["3.12", "3.13", "3.14"])
+    ruleset = desired_ci_gates_ruleset(_project(), cfg, ghas=True)
+    checks = {str(c["context"]) for c in _checks(ruleset)}
+    assert {"audit / evidence", "quality / evidence", "test / evidence"} <= checks
+    assert not any(re.search(r"/ 3\.\d+$", c) for c in checks)
+    # The retired per-version names are gone entirely.
+    retired = (
+        "quality / lint /",
+        "quality / typecheck /",
+        "test / unit /",
+        "audit / dependencies /",
+    )
+    assert not any(c.startswith(retired) for c in checks)
 
 
 def test_ci_gates_integration_tests_when_enabled() -> None:
@@ -480,7 +491,7 @@ def test_required_status_contexts_extracts_names() -> None:
     ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=True)
     contexts = required_status_contexts(ruleset)
     assert "quality / common" in contexts
-    assert "test / unit / 3.14" in contexts
+    assert "test / evidence" in contexts
     # No empty strings from malformed entries.
     assert all(contexts)
 
@@ -529,7 +540,9 @@ def test_ghas_literal_contexts_producible_only_with_ghas() -> None:
         )
 
 
-def test_versioned_contexts_producible_across_all_versions() -> None:
+def test_evidence_gates_are_producible() -> None:
+    """The stable ``<kind> / evidence`` gates branch protection now requires are
+    each emitted by their reusable workflow, so nothing is unproducible."""
     ruleset = desired_ci_gates_ruleset(
         _project(), _ci(versions=["3.12", "3.13", "3.14"]), ghas=True, docs=True
     )
@@ -537,6 +550,20 @@ def test_versioned_contexts_producible_across_all_versions() -> None:
     assert (
         unproducible_required_contexts(ci_yaml, required_status_contexts(ruleset), ghas=True) == []
     )
+
+
+def test_per_version_legs_remain_producible_via_prefix() -> None:
+    """The matrixed workflows still emit their per-version legs as (non-required)
+    PR check runs, so a per-version context is producible via the version-family
+    prefixes even though the ruleset no longer *requires* them."""
+    ci_yaml = _ci_yaml(jobs=_FULL_CI_JOBS)
+    legs = [
+        "quality / lint / 3.14",
+        "quality / typecheck / 3.12",
+        "test / unit / 3.13",
+        "audit / dependencies / 3.14",
+    ]
+    assert unproducible_required_contexts(ci_yaml, legs, ghas=True) == []
 
 
 def test_unrecognized_reusable_workflow_produces_no_contexts() -> None:
@@ -549,65 +576,41 @@ def test_unrecognized_reusable_workflow_produces_no_contexts() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Per-kind cardinality tests (issue #2552)
+# Version-agnostic matrixed gates (epic vergil-project/.github#338)
 # ---------------------------------------------------------------------------
 
 
-def test_ci_gates_per_version_kind_emits_one_gate_per_version() -> None:
-    """A per-version kind (the default) yields N gates across N versions."""
+def test_ci_gates_matrixed_kinds_emit_one_evidence_gate_each() -> None:
+    """Each matrixed reusable workflow contributes exactly one stable evidence
+    gate: quality (lint + typecheck), test (unit), audit (dependencies)."""
     ci = _ci(versions=["3.12", "3.13", "3.14"])
-    r = desired_ci_gates_ruleset(_project(), ci, ghas=True)
-    lint = [n for n in _check_names(r) if n.startswith("quality / lint")]
-    assert lint == [
-        "quality / lint / 3.12",
-        "quality / lint / 3.13",
-        "quality / lint / 3.14",
+    names = _check_names(desired_ci_gates_ruleset(_project(), ci, ghas=True))
+    assert [n for n in names if n.endswith("/ evidence")] == [
+        "audit / evidence",
+        "quality / evidence",
+        "test / evidence",
     ]
 
 
-def test_ci_gates_once_kind_emits_single_gate_keyed_to_primary_version(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A run-once kind yields exactly one gate, keyed to the primary version.
-
-    Cardinality is language-agnostic infra: no shipping language declares a
-    ``once`` kind yet (that arrives with the C++ registry entry), so the
-    behavior is exercised by declaring LINT run-once for the duration of the
-    test. TYPECHECK stays per-version to prove the two coexist.
-    """
-    from vergil_tooling.lib import languages
-
-    def fake_cardinality(language: str | None, kind: languages.CheckKind) -> languages.Cardinality:
-        if kind is languages.CheckKind.LINT:
-            return languages.Cardinality.ONCE
-        return languages.Cardinality.PER_VERSION
-
-    monkeypatch.setattr(languages, "check_cardinality", fake_cardinality)
-
-    ci = _ci(versions=["3.12", "3.13", "3.14"])
-    r = desired_ci_gates_ruleset(_project(), ci, ghas=True)
-    names = _check_names(r)
-
-    lint = [n for n in names if n.startswith("quality / lint")]
-    assert lint == ["quality / lint / 3.12"]  # single gate, keyed to versions[0]
-
-    typecheck = [n for n in names if n.startswith("quality / typecheck")]
-    assert typecheck == [
-        "quality / typecheck / 3.12",
-        "quality / typecheck / 3.13",
-        "quality / typecheck / 3.14",
-    ]
+def test_ci_gates_matrixed_gates_are_independent_of_version_count() -> None:
+    """The required set does not churn when ``[ci].versions`` changes — the whole
+    point of requiring the evidence aggregate instead of per-version legs."""
+    one = _check_names(desired_ci_gates_ruleset(_project(), _ci(versions=["3.14"]), ghas=True))
+    three = _check_names(
+        desired_ci_gates_ruleset(_project(), _ci(versions=["3.12", "3.13", "3.14"]), ghas=True)
+    )
+    assert one == three
 
 
 # ---------------------------------------------------------------------------
-# Regression snapshot — existing languages' gates must stay byte-identical
+# Regression snapshot — existing languages' gates must stay identical
 # ---------------------------------------------------------------------------
 #
-# The cardinality refactor (issue #2552) restructured the versioned-gate loop.
-# Every existing language defaults to per-version cardinality, so its generated
-# gates must be byte-identical to the pre-refactor output. This snapshot pins
-# the exact ordered check list for each of the five languages; any drift in the
-# order, naming, or count of the existing languages' gates fails here.
+# Every existing library language emits lint/typecheck/unit/dependencies checks
+# and is CodeQL-supported, so its required gates collapse to the same
+# version-agnostic list. This snapshot pins the exact ordered check list; any
+# drift in the order, naming, or count of the existing languages' gates fails
+# here.
 
 _EXPECTED_GATES_TWO_VERSIONS = [
     "quality / common",
@@ -618,14 +621,9 @@ _EXPECTED_GATES_TWO_VERSIONS = [
     "Semgrep OSS",
     "security / codeql",
     "CodeQL",
-    "quality / lint / v1",
-    "quality / typecheck / v1",
-    "test / unit / v1",
-    "audit / dependencies / v1",
-    "quality / lint / v2",
-    "quality / typecheck / v2",
-    "test / unit / v2",
-    "audit / dependencies / v2",
+    "audit / evidence",
+    "quality / evidence",
+    "test / evidence",
     "version / version-bump",
 ]
 
@@ -2208,9 +2206,10 @@ class TestRequiredEvidenceGates:
 
     def test_gate_carries_its_classified_checks(self) -> None:
         gates = {g.name: g for g in required_evidence_gates(_project(), _ci(), ghas=True)}
-        assert "test / unit / 3.14" in gates["test"].checks
-        assert "audit / dependencies / 3.14" in gates["audit"].checks
+        assert "test / evidence" in gates["test"].checks
+        assert "audit / evidence" in gates["audit"].checks
         assert "quality / common" in gates["quality"].checks
+        assert "quality / evidence" in gates["quality"].checks
         assert "security / trivy" in gates["security"].checks
 
     def test_no_ghas_drops_codeql_from_security(self) -> None:
