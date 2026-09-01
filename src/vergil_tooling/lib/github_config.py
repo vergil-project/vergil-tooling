@@ -320,30 +320,27 @@ def desired_ci_gates_ruleset(
         checks.append(_make_check("security / codeql"))
         checks.append(_make_ghas_check("CodeQL"))
 
-    # Versioned checks — only emitted when the language has a command registry
-    # entry for the check. Each kind's cardinality decides how many gates it
-    # yields: a ``per-version`` kind emits one gate per configured version,
-    # while a ``once`` kind emits a single gate keyed to the primary version
-    # (``ci.versions[0]``) — so a matrix language's run-once stages become one
-    # required check instead of N redundant, merge-blocking ones. Existing
-    # single-image languages declare no ``once`` kinds, so their emitted gates
-    # are byte-identical to the pre-cardinality behavior.
-    from vergil_tooling.lib.languages import Cardinality, CheckKind, check_cardinality
-
-    primary_version = ci.versions[0] if ci.versions else None
-    versioned_kinds: tuple[tuple[str, CheckKind, str], ...] = (
-        ("lint", CheckKind.LINT, "quality / lint / {version}"),
-        ("typecheck", CheckKind.TYPECHECK, "quality / typecheck / {version}"),
-        ("unit", CheckKind.TEST, "test / unit / {version}"),
-        ("dependencies", CheckKind.AUDIT, "audit / dependencies / {version}"),
-    )
-    for version in ci.versions:
-        for check_key, kind, template in versioned_kinds:
-            if not _lang_has_check(lang, check_key):
-                continue
-            if check_cardinality(lang, kind) is Cardinality.ONCE and version != primary_version:
-                continue
-            checks.append(_make_check(template.format(version=version)))
+    # Matrixed CI kinds are gated on the *stable*, version-agnostic
+    # ``<kind> / evidence`` aggregate each reusable workflow emits — one per
+    # workflow — not per-version check names. Each ``evidence`` job ``needs`` the
+    # whole version matrix, so a single required context covers every version: a
+    # matrix change (including a *reduction*) merges through the same gate,
+    # instead of pinning a per-version check that the reduced matrix can never
+    # report ("expected, never reported" — a permanently blocked PR with no
+    # ``--admin`` escape). Epic vergil-project/.github#338.
+    #
+    # A gate is emitted only when the language's command registry has the
+    # underlying check, so the required set stays aligned with what CI can
+    # produce: ``quality / evidence`` covers lint + typecheck (both live in the
+    # ci-quality workflow), ``test / evidence`` covers unit, ``audit / evidence``
+    # covers dependencies. This is version-independent, so the ruleset stops
+    # churning when ``[ci].versions`` changes.
+    if _lang_has_check(lang, "dependencies"):
+        checks.append(_make_check("audit / evidence"))
+    if _lang_has_check(lang, "lint") or _lang_has_check(lang, "typecheck"):
+        checks.append(_make_check("quality / evidence"))
+    if _lang_has_check(lang, "unit"):
+        checks.append(_make_check("test / evidence"))
 
     # Integration tests per version (when enabled)
     if ci.integration_tests:
@@ -430,12 +427,16 @@ def _reusable_pr_contexts(
     ``test / integration / <v>`` with no producing job (issue #2720).
     """
     j = caller_job
+    # The matrixed workflows each end in a stable ``<job> / evidence`` aggregate
+    # gate (what branch protection now requires — epic vergil-project/.github#338)
+    # while still emitting their per-version legs as (non-required) PR check runs;
+    # both are producible, so both appear here.
     if reusable_file == "ci-quality.yml":
-        return ({f"{j} / common"}, {f"{j} / lint / ", f"{j} / typecheck / "})
+        return ({f"{j} / common", f"{j} / evidence"}, {f"{j} / lint / ", f"{j} / typecheck / "})
     if reusable_file == "ci-audit.yml":
-        return (set(), {f"{j} / dependencies / "})
+        return ({f"{j} / evidence"}, {f"{j} / dependencies / "})
     if reusable_file == "ci-test.yml":
-        return (set(), {f"{j} / unit / "})
+        return ({f"{j} / evidence"}, {f"{j} / unit / "})
     if reusable_file == "ci-docs.yml":
         return ({f"{j} / docs"}, set())
     if reusable_file == "ci-security.yml":
