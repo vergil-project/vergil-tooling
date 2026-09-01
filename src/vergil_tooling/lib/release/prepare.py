@@ -44,6 +44,24 @@ def prepare(ctx: ReleaseContext) -> None:
         print(f"Release PR already exists: {ctx.release_pr_url}")
         return
 
+    # Resume-safe against an already-merged release PR (#2998). `pr_for_branch`
+    # returns open PRs only, so a failure at/after merge-release (e.g. a
+    # confirm-main failure) leaves the merged release PR invisible to the check
+    # above — without this, prepare would re-push and `gh pr create` would fail
+    # ("No commits between main and <branch>"). Adopt the merged PR so
+    # `merge_release`'s MERGED-skip carries the pipeline forward. The head-tip
+    # match guards the #1719 reused-branch-name straggler (a same-named branch
+    # reused after an earlier merge matches by name but not by tip).
+    merged = github.closed_pr_for_branch(branch)
+    if (
+        merged is not None
+        and github.pr_state(str(merged["url"])) == "MERGED"
+        and merged.get("headRefOid") == git.read_output("rev-parse", branch)
+    ):
+        ctx.release_pr_url = str(merged["url"])
+        print(f"Release PR already merged — adopting for resume: {ctx.release_pr_url}")
+        return
+
     if ctx.version_override is not None:
         print(f"Applying version override: {ctx.version_override}")
         version.bump(ctx.work_root, ctx.version_override)
