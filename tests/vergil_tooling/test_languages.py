@@ -401,13 +401,15 @@ def test_cpp_is_supported() -> None:
 
 def test_cpp_install_commands() -> None:
     joined = _joined(language_commands("cpp", CheckKind.INSTALL))
-    # A conan.lock is produced to pin the dependency graph for the Debug builds.
-    assert any("conan lock create" in c for c in joined)
+    # conan.lock is a COMMITTED input consumed via --lockfile, not regenerated
+    # on every run — validation must never regenerate the lock (it dirtied the
+    # tree and defeated reproducibility). (#3021)
+    assert not any("conan lock create" in c for c in joined)
     # Conan resolves deps in the same build_type (Debug) as the CMake
     # coverage/sanitizer builds — a Release/Debug mismatch broke the cold
     # rebuild in T11 (#2558): fmt/format.h not found. (#2572)
-    assert "conan install . -s build_type=Debug --build=missing" in joined
-    # Both conan steps pin build_type=Debug to stay consistent with the build.
+    assert "conan install . -s build_type=Debug --build=missing --lockfile=conan.lock" in joined
+    # The conan step pins build_type=Debug to stay consistent with the build.
     for cmd in language_commands("cpp", CheckKind.INSTALL):
         if cmd and cmd[0] == "conan":
             assert "build_type=Debug" in cmd
@@ -535,7 +537,9 @@ def test_cpp_audit_commands() -> None:
     # OSV-Scanner is retired here.
     assert not any("osv-scanner" in c for c in joined)
     # Best-effort license-metadata surfacing (hardened gating deferred, §9 #7).
-    assert any("conan graph info" in c for c in joined)
+    # The graph is resolved against the COMMITTED conan.lock via --lockfile so
+    # the audit reflects the pinned graph, not a fresh re-resolution. (#3021)
+    assert "conan graph info . --format=json --lockfile=conan.lock" in joined
 
 
 def test_cpp_ecosystem_metadata() -> None:

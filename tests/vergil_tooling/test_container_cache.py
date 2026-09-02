@@ -1438,7 +1438,10 @@ def test_warmup_command_skipped_when_manifests_absent(tmp_path: Path) -> None:
 def test_warmup_command_runs_when_manifests_present(tmp_path: Path) -> None:
     _bootstrap_cpp(tmp_path)
     warmup = _warmup_command("cpp", tmp_path)
-    assert "conan lock create" in warmup
+    # Warmup consumes the committed conan.lock via --lockfile — it never
+    # regenerates it with `conan lock create` (#3021).
+    assert "conan lock create" not in warmup
+    assert "conan install . -s build_type=Debug --build=missing --lockfile=conan.lock" in warmup
     assert "cmake -S . -B build" in warmup
 
 
@@ -1450,7 +1453,8 @@ def test_compose_setup_omits_warmup_on_unbootstrapped_repo(tmp_path: Path) -> No
     # An unbootstrapped repo still yields a usable setup string: install only.
     (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     setup = _compose_setup(tmp_path, "cpp")
-    assert "conan lock create" not in setup
+    # No warmup on an unbootstrapped repo: the conan install step is absent.
+    assert "--lockfile=conan.lock" not in setup
     assert "uv tool install" in setup
 
 

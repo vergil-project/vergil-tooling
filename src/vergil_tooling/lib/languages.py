@@ -471,17 +471,30 @@ _REGISTRY: dict[str, Language] = {
     "cpp": Language(
         name="cpp",
         checks={
-            # ``conan lock create`` resolves the dependency graph and writes a
-            # ``conan.lock`` that pins it for the Debug builds; ``conan install``
-            # then materializes the binaries. Both pin ``build_type=Debug`` so
-            # Conan builds deps in the *same* configuration as the CMake
-            # coverage/sanitizer builds — the container image only bakes a
-            # default profile (build_type=Release), and that mismatch broke the
-            # T11 cold rebuild (#2558): ``fmt/format.h`` not found because the
-            # Debug config had no matching Conan binary. (#2572, image side #487)
+            # ``conan.lock`` is a COMMITTED input consumed via ``--lockfile``,
+            # never regenerated here. Regenerating it on every run (the old
+            # ``conan lock create`` step) dirtied the working tree — the lock is
+            # committed, not gitignored, like ``uv.lock`` (gitignore.py) — and
+            # defeated reproducibility by re-resolving the graph against current
+            # remote state each run. Developers refresh the lock deliberately
+            # with ``conan lock create . -s build_type=Debug`` (like ``uv lock``);
+            # validation only consumes it. ``-s build_type=Debug`` stays on
+            # ``conan install`` so Conan builds deps in the *same* configuration
+            # as the CMake coverage/sanitizer builds — the container image only
+            # bakes a default profile (build_type=Release), and that mismatch
+            # broke the T11 cold rebuild (#2558): ``fmt/format.h`` not found
+            # because the Debug config had no matching Conan binary. (#3021;
+            # #2572, image side #487)
             CheckKind.INSTALL: [
-                ["conan", "lock", "create", ".", "-s", "build_type=Debug"],
-                ["conan", "install", ".", "-s", "build_type=Debug", "--build=missing"],
+                [
+                    "conan",
+                    "install",
+                    ".",
+                    "-s",
+                    "build_type=Debug",
+                    "--build=missing",
+                    "--lockfile=conan.lock",
+                ],
                 [
                     "cmake",
                     "-S",
@@ -644,7 +657,9 @@ _REGISTRY: dict[str, Language] = {
             # hardened gating against ``_CPP_LICENSES_ALLOWLIST`` is ledger #7.
             CheckKind.AUDIT: [
                 ["conan", "audit", "scan", "."],
-                ["conan", "graph", "info", ".", "--format=json"],
+                # Resolve the graph against the COMMITTED conan.lock so the audit
+                # reflects the pinned graph, not a fresh re-resolution. (#3021)
+                ["conan", "graph", "info", ".", "--format=json", "--lockfile=conan.lock"],
             ],
         },
         ecosystem=EcosystemInfo(
