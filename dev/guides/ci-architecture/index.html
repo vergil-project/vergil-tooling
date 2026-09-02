@@ -14240,10 +14240,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#reusable-workflow-pattern" class="md-nav__link">
+  <a href="#thin-caller-pattern" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Reusable workflow pattern
+        Thin-caller pattern
       
     </span>
   </a>
@@ -14290,10 +14290,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#default-matrix-pattern" class="md-nav__link">
+  <a href="#dynamic-matrix-from-vergiltoml" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Default matrix pattern
+        Dynamic matrix from vergil.toml
       
     </span>
   </a>
@@ -14671,10 +14671,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#reusable-workflow-pattern" class="md-nav__link">
+  <a href="#thin-caller-pattern" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Reusable workflow pattern
+        Thin-caller pattern
       
     </span>
   </a>
@@ -14721,10 +14721,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#default-matrix-pattern" class="md-nav__link">
+  <a href="#dynamic-matrix-from-vergiltoml" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Default matrix pattern
+        Dynamic matrix from vergil.toml
       
     </span>
   </a>
@@ -15083,49 +15083,22 @@ matrix locally, which Tier 1's one-container model deliberately trades
 away for speed.</p>
 </div>
 <h2 id="architecture">Architecture<a class="headerlink" href="#architecture" title="Permanent link">&para;</a></h2>
-<h3 id="reusable-workflow-pattern">Reusable workflow pattern<a class="headerlink" href="#reusable-workflow-pattern" title="Permanent link">&para;</a></h3>
-<p><code>ci.yml</code> accepts <code>workflow_call</code> with inputs that control scope:</p>
-<table>
-<thead>
-<tr>
-<th>Input</th>
-<th>Type</th>
-<th>Default</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>versions</code></td>
-<td>string (JSON)</td>
-<td>Full matrix</td>
-</tr>
-<tr>
-<td><code>integration-matrix</code></td>
-<td>string (JSON)</td>
-<td>Full matrix</td>
-</tr>
-<tr>
-<td><code>run-security</code></td>
-<td>string</td>
-<td><code>"true"</code></td>
-</tr>
-<tr>
-<td><code>run-release-gates</code></td>
-<td>string</td>
-<td><code>"true"</code></td>
-</tr>
-</tbody>
-</table>
-<ul>
-<li><code>versions</code> — language versions to test</li>
-<li><code>integration-matrix</code> — test entries with ports</li>
-<li><code>run-security</code> — enable security scanners</li>
-<li><code>run-release-gates</code> — enable release gate checks</li>
-</ul>
-<p>When triggered directly by <code>pull_request</code>, all inputs are empty and
-defaults produce the full Tier 2 behavior. The inputs remain in place so
-specialized callers (e.g., release pipelines) can constrain scope when
-needed.</p>
+<h3 id="thin-caller-pattern">Thin-caller pattern<a class="headerlink" href="#thin-caller-pattern" title="Permanent link">&para;</a></h3>
+<p>A consuming repo's <code>ci.yml</code> is a <strong>thin caller</strong>: each job simply <code>uses:</code> a
+<code>vergil-actions</code> reusable workflow (<code>ci-audit</code>, <code>ci-quality</code>, <code>ci-security</code>,
+<code>ci-test</code>, <code>ci-version-bump</code>, <code>ci-docs</code>) at the pinned <code>@v2.1</code> tag and passes
+only <code>language:</code> and <code>container-suffix:</code>. It does <strong>not</strong> pass a version matrix
+or a container tag — the reusable workflows read <code>[ci].versions</code> from the repo's
+<code>vergil.toml</code> at run time and derive both the matrix and the primary-version
+container themselves (epic
+<a href="https://github.com/vergil-project/.github/issues/338">vergil-project/.github#338</a>).
+A <code>[ci].versions</code> change therefore takes effect fleet-wide with no edit to
+<code>ci.yml</code>.</p>
+<p><code>ci.yml</code> still exposes <code>workflow_call</code> with two scope inputs so specialized
+callers (e.g. release pipelines) can constrain it — <code>run-security</code> (enable the
+security scanners) and <code>run-release</code> (enable the release/version gates). When
+triggered directly by <code>pull_request</code> both default on, producing the full
+Tier 2 behavior.</p>
 <div class="admonition warning">
 <p class="admonition-title">String inputs, not booleans</p>
 <p>Use <code>type: string</code> for gate inputs, not <code>type: boolean</code>. Boolean
@@ -15219,15 +15192,16 @@ publisher reads:</p>
 language) gets <strong>no <code>secrets:</code> block at all</strong>, not <code>secrets: inherit</code>.
 References to our own <code>vergil-actions@v2.1</code> reusable workflows are
 unaffected — they are trusted first-party refs.</p>
-<h3 id="default-matrix-pattern">Default matrix pattern<a class="headerlink" href="#default-matrix-pattern" title="Permanent link">&para;</a></h3>
-<p>Use <code>fromJSON()</code> with a fallback to embed the full default matrix
-directly in the workflow:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">strategy</span><span class="p">:</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">fail-fast</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span><span class="nt">matrix</span><span class="p">:</span>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">    </span><span class="nt">version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${{ fromJSON(inputs.versions || '["3.2", "3.3", "3.4"]') }}</span>
-</code></pre></div>
-<p>This avoids needing a separate job to compute the matrix.</p>
+<h3 id="dynamic-matrix-from-vergiltoml">Dynamic matrix from <code>vergil.toml</code><a class="headerlink" href="#dynamic-matrix-from-vergiltoml" title="Permanent link">&para;</a></h3>
+<p>The matrix is <strong>not</strong> embedded in the workflow or passed as an input. Each
+matrixed reusable workflow (<code>ci-audit</code>, <code>ci-quality</code>, <code>ci-test</code>) reads
+<code>[ci].versions</code> from the consuming repo's <code>vergil.toml</code> at run time and fans its
+matrix out over that list. Single-container jobs (<code>ci-security</code>,
+<code>ci-version-bump</code>, <code>ci-docs</code>) run on the <strong>primary version</strong> —
+<code>[ci].primary-version</code> if it is set, otherwise the highest entry of
+<code>[ci].versions</code> (so <code>3.14</code> for <code>["3.12", "3.13", "3.14"]</code>). <code>vergil.toml</code> is the
+single stored source of the version set; nothing is hand-maintained in <code>ci.yml</code>,
+so the matrix cannot drift from <code>[ci].versions</code>.</p>
 <h2 id="implementation-guide">Implementation guide<a class="headerlink" href="#implementation-guide" title="Permanent link">&para;</a></h2>
 <h3 id="step-1-define-ciyml">Step 1: Define ci.yml<a class="headerlink" href="#step-1-define-ciyml" title="Permanent link">&para;</a></h3>
 <p>Trigger on <code>pull_request</code> and (optionally) expose <code>workflow_call</code>
@@ -15249,7 +15223,7 @@ with a single call to <code>ci-security.yml</code>.</p>
 <li>Replace <code>security: *</code> with <code>security-and-standards / security: *</code></li>
 </ul>
 <p>Use the GitHub API to update rulesets:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>gh<span class="w"> </span>api<span class="w"> </span>repos/OWNER/REPO/rulesets/RULESET_ID<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>--input<span class="w"> </span>gates.json
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>gh<span class="w"> </span>api<span class="w"> </span>repos/OWNER/REPO/rulesets/RULESET_ID<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>--input<span class="w"> </span>gates.json
 </code></pre></div>
 <h3 id="step-5-update-claudemd">Step 5: Update CLAUDE.md<a class="headerlink" href="#step-5-update-claudemd" title="Permanent link">&para;</a></h3>
 <p>Add the two-tier CI model and Docker-first testing sections to the
@@ -15282,9 +15256,22 @@ managed repo with no <code>if:</code> guard, so it always runs and surfaces the
 <p>Every check that can gate a PR is configured as a <strong>required status
 check</strong> on the target branch; there is no tier of checks that runs but
 does not block. <code>docs / docs</code> is required alongside the tests, audit,
-release gates, and the <code>security-and-standards /</code> checks — the desired
-required-check set is complete, and it is pinned by a test so it cannot
-silently drift.</p>
+release gates, and the security checks — the desired required-check set is
+complete, and it is pinned by a test so it cannot silently drift.</p>
+<p>For the matrixed kinds — audit, quality (lint + typecheck), and unit tests —
+the required check is the <strong>stable, version-agnostic <code>&lt;kind&gt; / evidence</code>
+aggregate</strong> each reusable workflow emits (<code>audit / evidence</code>,
+<code>quality / evidence</code>, <code>test / evidence</code>), <strong>not</strong> the per-version legs
+(<code>audit / dependencies / 3.12</code>, <code>quality / lint / 3.13</code>, …). Each <code>evidence</code>
+job <code>needs</code> the whole version matrix, so a single required context covers every
+version. Because the required-check <em>names</em> no longer carry a version, a matrix
+change — including a <em>reduction</em> — merges through the same gate. This closes the
+old deadlock, where branch protection required a per-version leg that a reduced
+matrix could never produce, leaving the PR "expected, never reported" and
+permanently blocked with no <code>--admin</code> escape (epic
+<a href="https://github.com/vergil-project/.github/issues/338">vergil-project/.github#338</a>).
+Non-matrixed checks (the security scanners, <code>quality / common</code>, the version-bump
+gate, <code>docs / docs</code>) keep their fixed, version-free names.</p>
 <p><code>vrg-github-repo-config audit</code> <strong>hard-fails on required-set drift</strong>: if a
 repo's configured required checks diverge from the desired set, the audit
 fails rather than reporting a warning. <code>vrg-release</code> gates on that audit,
@@ -15325,11 +15312,11 @@ image families (<code>dev-cpp-clang</code> / <code>dev-cpp-gcc</code>, and match
 images) so TYPECHECK and TEST run per compiler and per version. The
 family rides the <code>[ci].versions</code> tag prefix (<code>clang-20</code>, <code>gcc-14</code>).</p>
 <h3 id="building-locally">Building locally<a class="headerlink" href="#building-locally" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nb">cd</span><span class="w"> </span>../vergil-containers
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>docker/build.sh
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nb">cd</span><span class="w"> </span>../vergil-containers
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>docker/build.sh
 </code></pre></div>
 <p>This builds all images. Individual images can be built with:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>docker<span class="w"> </span>build<span class="w"> </span>--build-arg<span class="w"> </span><span class="nv">RUBY_VERSION</span><span class="o">=</span><span class="m">3</span>.4<span class="w"> </span>-t<span class="w"> </span>dev-ruby:3.4<span class="w"> </span>docker/ruby/
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>docker<span class="w"> </span>build<span class="w"> </span>--build-arg<span class="w"> </span><span class="nv">RUBY_VERSION</span><span class="o">=</span><span class="m">3</span>.4<span class="w"> </span>-t<span class="w"> </span>dev-ruby:3.4<span class="w"> </span>docker/ruby/
 </code></pre></div>
 <h3 id="publishing">Publishing<a class="headerlink" href="#publishing" title="Permanent link">&para;</a></h3>
 <p>Images are published automatically on push to <code>develop</code> or <code>main</code> in
@@ -15349,8 +15336,8 @@ treated as a property of the <strong>language</strong>, not the repo, which is w
 image cache sound. A repo that genuinely needs a Debian binary its language image
 does not carry (for example a repo whose render/e2e tests shell out to LilyPond)
 declares it once in <code>vergil.toml</code>, <strong>without</strong> touching the shared base image:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="k">[container]</span>
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="n">system-packages</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"lilypond"</span><span class="p">]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">[container]</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">system-packages</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"lilypond"</span><span class="p">]</span>
 </code></pre></div>
 <p>The full key reference — trust model, the names-only surface, cache-key
 behaviour, and the fail-closed error — lives in
@@ -15377,9 +15364,9 @@ Two things matter for the CI/container model here:</p>
 <p>For a dependency that is <strong>not</strong> an apt package — a JS library a test driver
 consumes at runtime, say — a repo declares a <code>build-command</code> (with optional
 <code>build-cache-files</code>) instead of <code>system-packages</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="k">[container]</span>
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">build-command</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"npm install -g @coderline/alphatab"</span>
-<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">build-cache-files</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"package-lock.json"</span><span class="p">]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="k">[container]</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="n">build-command</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"npm install -g @coderline/alphatab"</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">build-cache-files</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"package-lock.json"</span><span class="p">]</span>
 </code></pre></div>
 <p>The full key reference — the out-of-workspace contract, the <code>NODE_PATH</code> handling
 for baked npm libraries, the trust model, and the cache-key behaviour — lives in

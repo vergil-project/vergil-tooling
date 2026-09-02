@@ -11169,6 +11169,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#github-checks-the-required-status-check-set" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GitHub checks — the required-status-check set
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#related" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -14542,6 +14553,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#github-checks-the-required-status-check-set" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GitHub checks — the required-status-check set
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#related" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -14774,6 +14796,31 @@ contract, so a freshly created repo passes both new checks from day one:</p>
   deterministic hash of <code>&lt;org&gt;/&lt;repo&gt;</code> maps to a minute in <code>[0,59]</code> — so
   the fleet does not stampede a single minute as it grows. The hour stays
   in the early-UTC window; only the minute varies.</li>
+</ul>
+<h2 id="github-checks-the-required-status-check-set">GitHub checks — the required-status-check set<a class="headerlink" href="#github-checks-the-required-status-check-set" title="Permanent link">&para;</a></h2>
+<p>The GitHub half compares the repo's live branch-protection configuration
+against the canonical CI-gates ruleset that
+<a href="../../guides/ci-evidence-convention/#the-evidence-producing-gate-set"><code>desired_ci_gates_ruleset()</code></a>
+computes from <code>vergil.toml</code>. Three properties matter for the dynamic,
+version-agnostic CI model (epic
+<a href="https://github.com/vergil-project/.github/issues/338">vergil-project/.github#338</a>):</p>
+<ul>
+<li><strong>Version-agnostic required checks.</strong> For the matrixed kinds the desired set
+  requires the stable <code>audit / evidence</code>, <code>quality / evidence</code>, and
+  <code>test / evidence</code> aggregates — never per-version legs such as
+  <code>audit / dependencies / 3.12</code>. A <code>[ci].versions</code> change no longer churns the
+  required-check set, so the ruleset stops drifting when the matrix changes.</li>
+<li><strong>Unproducible-context check.</strong> The audit asserts every required context is
+  one the repo's workflows can actually produce. A leftover required leg that no
+  workflow emits — for example a stale per-version check surviving a matrix
+  reduction — is reported as drift rather than silently sitting "expected, never
+  reported" and blocking every PR.</li>
+<li><strong>Classic branch-protection read + scoped cleanup.</strong> The audit reads legacy
+  <em>classic</em> branch protection in addition to the rulesets API. When it
+  reconciles, it removes <strong>only</strong> the stale version-suffixed CI contexts the
+  evidence ruleset now owns; every other classic setting (review requirements,
+  push restrictions) is <strong>reported, not touched</strong>. The blast radius is minimal
+  and intentional protections are preserved.</li>
 </ul>
 <h2 id="related">Related<a class="headerlink" href="#related" title="Permanent link">&para;</a></h2>
 <ul>
