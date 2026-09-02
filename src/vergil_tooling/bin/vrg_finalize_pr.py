@@ -997,6 +997,68 @@ def _stage_provision(ctx: FinalizeContext) -> None:
         print(f"  Image ready: {image}")
 
 
+# Signatures of a container that never started (as opposed to a command that
+# ran and failed). Matched case-insensitively against the runtime's stderr so a
+# runtime that does not use the reserved exit 125 is still classified from its
+# diagnostic text — the orphaned image-cache snapshot is the common cause.
+_LAUNCH_FAILURE_SIGNATURES = (
+    "parent snapshot",
+    "failed to prepare",
+    "no such image",
+    "does not exist: not found",
+)
+
+
+def _is_container_launch_failure(exc: subprocess.CalledProcessError) -> bool:
+    """Return True when *exc* is the runtime failing to start the container.
+
+    ``vrg-container-run`` execs the container runtime, so its exit code is the
+    runtime's. Exit 125 is the runtime's reserved "could not create/start the
+    container" code — distinct from the containerized command's own exit codes
+    (``vrg-validate`` exits 1 on a real validation failure). A stale image-cache
+    snapshot is the common cause; match its signature too (issue #3016).
+    """
+    if exc.returncode == 125:
+        return True
+    text = f"{exc.stderr or ''}\n{exc.output or ''}".lower()
+    return any(sig in text for sig in _LAUNCH_FAILURE_SIGNATURES)
+
+
+def _validation_failure_msg(branch: str, exc: subprocess.CalledProcessError) -> str:
+    """The message for a genuine validation failure — the target branch is broken."""
+    return (
+        f"post-finalization validation failed (exit {exc.returncode}) — "
+        f"fix {branch} before creating the next PR"
+    )
+
+
+def _launch_failure_msg(branch: str, exc: subprocess.CalledProcessError) -> str:
+    """The message for a container that would not launch even after a rebuild.
+
+    Explicitly *not* a target-branch regression: validation never ran. Surfaces
+    the runtime's own stderr so the operator sees the actual cause.
+    """
+    detail = (exc.stderr or exc.output or "").strip() or "(no runtime diagnostic captured)"
+    return (
+        f"post-finalization validation could not run: the dev container failed to "
+        f"launch (exit {exc.returncode}) even after rebuilding the image. This is a "
+        f"stale image-cache / container-runtime problem, not a {branch} regression.\n"
+        f"{detail}"
+    )
+
+
+def _reprovision_target_image(ctx: FinalizeContext) -> None:
+    """Force a clean rebuild of the target-branch dev image (issue #3016).
+
+    Drop any cached image for the target branch so the rebuild cannot reuse a
+    corrupt one, then provision fresh. Used to recover from a container-launch
+    failure discovered during validation.
+    """
+    clean_branch_images(ctx.args.target_branch)
+    lang = resolve_language(ctx.root)
+    provision_dev_image(ctx.root, lang, quiet_warmup=True)
+
+
 def _stage_validation(ctx: FinalizeContext) -> None:
     """Run canonical validation to catch problems on the target branch
     before the next PR is created.
@@ -1004,6 +1066,12 @@ def _stage_validation(ctx: FinalizeContext) -> None:
     Streams through ``progress.run`` — a bare ``subprocess.run`` with
     inherited stdout would write raw lines under the live display and
     strand stale frames (issue #1470).
+
+    A non-zero exit is not automatically a target-branch regression: exit 125
+    (or a runtime snapshot error) means the container never started, so
+    validation never ran. That is usually a stale image-cache snapshot whose
+    parent layer was orphaned; rebuild the dev image and retry once before
+    concluding anything about the branch (issue #3016).
     """
     args = ctx.args
     if args.dry_run:
@@ -1016,12 +1084,25 @@ def _stage_validation(ctx: FinalizeContext) -> None:
         cmd = ("vrg-container-run", "--", "vrg-validate")
     try:
         progress.run(cmd)
+        return
     except subprocess.CalledProcessError as exc:
-        msg = (
-            f"post-finalization validation failed (exit {exc.returncode}) — "
-            f"fix {args.target_branch} before creating the next PR"
-        )
-        raise FinalizeError(msg) from exc
+        if not _is_container_launch_failure(exc):
+            raise FinalizeError(_validation_failure_msg(args.target_branch, exc)) from exc
+
+    # The container never launched — validation did not run. Rebuild the dev
+    # image (self-healing the orphaned cache) and retry the validation once.
+    print(
+        "  WARNING: the validation container failed to launch (stale image cache); "
+        "rebuilding the dev image and retrying once...",
+        file=sys.stderr,
+    )
+    _reprovision_target_image(ctx)
+    try:
+        progress.run(cmd)
+    except subprocess.CalledProcessError as exc:
+        if _is_container_launch_failure(exc):
+            raise FinalizeError(_launch_failure_msg(args.target_branch, exc)) from exc
+        raise FinalizeError(_validation_failure_msg(args.target_branch, exc)) from exc
 
 
 def _stage_cd_check(ctx: FinalizeContext) -> None:
