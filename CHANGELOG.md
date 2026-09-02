@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.218] - 2026-09-02
+
+### Bug fixes
+
+- consume committed conan.lock in validation instead of regenerating it (#3021) (#3022)
+
 ## [2.1.217] - 2026-09-02
 
 ### Bug fixes
