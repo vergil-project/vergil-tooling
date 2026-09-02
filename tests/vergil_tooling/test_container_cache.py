@@ -13,6 +13,7 @@ from vergil_tooling.lib.container_cache import (
     _allow_stale_base,
     _build_cached_image,
     _compose_setup,
+    _image_is_launchable,
     _is_self_repo,
     _sanitize_branch,
     _warmup_command,
@@ -199,7 +200,7 @@ def test_ensure_returns_base_when_no_files(tmp_path: Path) -> None:
         assert ensure_cached_image(tmp_path, "go", "img:1", runtime="docker") == "img:1"
 
 
-def test_ensure_returns_existing_cache_on_hash_match(tmp_path: Path) -> None:
+def test_ensure_reuses_cache_when_hash_matches_and_launchable(tmp_path: Path) -> None:
     (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     cached_tag = "ghcr.io/r/dev-go:1.26--feature-42--"
     files = cache_sensitive_files(tmp_path, "go")
@@ -207,7 +208,7 @@ def test_ensure_returns_existing_cache_on_hash_match(tmp_path: Path) -> None:
     full_tag = cached_tag + expected_hash
 
     with (
-        patch("vergil_tooling.lib.git.current_branch") as mock_branch,
+        patch("vergil_tooling.lib.git.current_branch", return_value="feature/42"),
         patch(
             "vergil_tooling.lib.container_cache.resolve_base_digest",
             return_value=("sha256:abc", True),
@@ -216,10 +217,85 @@ def test_ensure_returns_existing_cache_on_hash_match(tmp_path: Path) -> None:
             "vergil_tooling.lib.container_cache.find_cached_image",
             return_value=(full_tag, expected_hash),
         ),
+        patch(
+            "vergil_tooling.lib.container_cache._image_is_launchable",
+            return_value=True,
+        ) as probe,
+        patch("vergil_tooling.lib.container_cache._build_cached_image") as build,
     ):
-        mock_branch.return_value = "feature/42"
         result = ensure_cached_image(tmp_path, "go", "ghcr.io/r/dev-go:1.26", runtime="docker")
     assert result == full_tag
+    # A metadata hit is reused only after the image is confirmed launchable.
+    probe.assert_called_once()
+    build.assert_not_called()
+
+
+def test_ensure_rebuilds_when_cached_image_unlaunchable(tmp_path: Path) -> None:
+    # A metadata cache hit whose underlying snapshot is orphaned: docker lists
+    # the tag and the hash matches, but the image can no longer start a
+    # container. The launch probe must catch it, force-remove the tag, and
+    # rebuild rather than hand back an image that fails at run (issue #3016).
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    cached_tag = "ghcr.io/r/dev-go:1.26--feature-42--"
+    files = cache_sensitive_files(tmp_path, "go")
+    expected_hash = compute_cache_hash(files, base_digest="sha256:abc", salt=tmp_path.name)
+    full_tag = cached_tag + expected_hash
+
+    with (
+        patch("vergil_tooling.lib.git.current_branch", return_value="feature/42"),
+        patch(
+            "vergil_tooling.lib.container_cache.resolve_base_digest",
+            return_value=("sha256:abc", True),
+        ),
+        patch(
+            "vergil_tooling.lib.container_cache.find_cached_image",
+            return_value=(full_tag, expected_hash),
+        ),
+        patch(
+            "vergil_tooling.lib.container_cache._image_is_launchable",
+            return_value=False,
+        ),
+        patch(
+            "vergil_tooling.lib.container_cache.subprocess.run",
+            return_value=_completed(0),
+        ) as mock_run,
+        patch(
+            "vergil_tooling.lib.container_cache._build_cached_image",
+            return_value="rebuilt:tag",
+        ) as build,
+    ):
+        result = ensure_cached_image(tmp_path, "go", "ghcr.io/r/dev-go:1.26", runtime="docker")
+    assert result == "rebuilt:tag"
+    build.assert_called_once()
+    # The unlaunchable image was force-removed before rebuilding.
+    assert mock_run.call_count == 1
+    rmi_cmd = mock_run.call_args[0][0]
+    assert rmi_cmd[:3] == ["docker", "rmi", "-f"]
+    assert full_tag in rmi_cmd
+
+
+def test_image_is_launchable_true_when_create_succeeds() -> None:
+    created = _completed(0, stdout="cid123\n")
+    removed = _completed(0)
+    with patch(
+        "vergil_tooling.lib.container_cache.subprocess.run",
+        side_effect=[created, removed],
+    ) as mock_run:
+        assert _image_is_launchable("img:tag", runtime="docker") is True
+    # Probes by *creating* (not running) a throwaway container, then removes it.
+    assert mock_run.call_args_list[0][0][0][:2] == ["docker", "create"]
+    assert mock_run.call_args_list[1][0][0][:3] == ["docker", "rm", "-f"]
+
+
+def test_image_is_launchable_false_when_create_fails() -> None:
+    failed = _completed(125, stderr="parent snapshot sha256:abc does not exist: not found")
+    with patch(
+        "vergil_tooling.lib.container_cache.subprocess.run",
+        side_effect=[failed],
+    ) as mock_run:
+        assert _image_is_launchable("img:tag", runtime="docker") is False
+    # Nothing to remove when creation itself failed.
+    assert mock_run.call_count == 1
 
 
 def test_ensure_rebuilds_on_hash_mismatch(tmp_path: Path) -> None:

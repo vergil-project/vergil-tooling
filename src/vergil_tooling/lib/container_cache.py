@@ -472,6 +472,34 @@ def _build_cached_image(
     return target_tag
 
 
+def _image_is_launchable(image: str, *, runtime: str = "") -> bool:
+    """Return True if *image* can instantiate a container right now.
+
+    ``docker images`` can list a cached image whose underlying snapshot layers
+    have been orphaned in the container store: the image record survives, but a
+    parent snapshot is gone, so the next ``docker run`` fails at container
+    creation ("parent snapshot … does not exist: not found", exit 125).
+    ``image inspect`` does not detect this — only preparing a container rootfs
+    does. Probe by *creating* (not starting) a throwaway container from the
+    image and removing it: creation exercises snapshot preparation without
+    executing anything in the image (issue #3016). ``--pull=never`` keeps the
+    probe purely local — it must never mask a corrupt cache by fetching.
+    """
+    rt = runtime or detect_runtime()
+    create = subprocess.run(  # noqa: S603
+        [rt, "create", f"--platform={container_platform()}", "--pull=never", image, "true"],  # noqa: S607
+        capture_output=True,
+        text=True,
+    )
+    container_id = create.stdout.strip()
+    if container_id:
+        subprocess.run(  # noqa: S603
+            [rt, "rm", "-f", container_id],  # noqa: S607
+            capture_output=True,
+        )
+    return create.returncode == 0
+
+
 def ensure_cached_image(
     repo_root: Path,
     lang: str,
@@ -499,13 +527,26 @@ def ensure_cached_image(
 
     if existing is not None:
         existing_tag, existing_hash = existing
-        if existing_hash == current_hash:
+        if existing_hash == current_hash and _image_is_launchable(existing_tag, runtime=rt):
             return existing_tag
-        # Stale cache — remove it.
-        subprocess.run(  # noqa: S603
-            [rt, "rmi", existing_tag],  # noqa: S607
+        # Either the cache key moved (stale hash) or the listed image can no
+        # longer launch — its snapshot layers were orphaned in the container
+        # store (issue #3016). A metadata match is not proof the image will run,
+        # so in both cases drop the old tag and rebuild rather than hand back an
+        # image that fails at container creation. Force removal and surface a
+        # non-zero result instead of swallowing it: the rebuild still proceeds
+        # (commit reassigns the tag), but a genuine removal error should be seen.
+        rmi = subprocess.run(  # noqa: S603
+            [rt, "rmi", "-f", existing_tag],  # noqa: S607
             capture_output=True,
+            text=True,
         )
+        if rmi.returncode != 0:
+            print(
+                f"warning: could not remove stale cached image '{existing_tag}': "
+                f"{rmi.stderr.strip()}; rebuilding anyway",
+                file=sys.stderr,
+            )
 
     target_tag = cache_image_tag(base_image, branch, current_hash)
     return _build_cached_image(
