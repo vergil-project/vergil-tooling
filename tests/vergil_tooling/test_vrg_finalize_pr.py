@@ -1746,6 +1746,85 @@ def test_stage_validation_failure_raises(tmp_path: Path) -> None:
         _stage_validation(ctx)
 
 
+def _launch_err(
+    returncode: int = 125,
+    stderr: str = "docker: parent snapshot sha256:x does not exist: not found",
+) -> subprocess.CalledProcessError:
+    return subprocess.CalledProcessError(
+        returncode, ("vrg-container-run",), output="", stderr=stderr
+    )
+
+
+def test_stage_validation_launch_failure_reprovisions_and_retries(tmp_path: Path) -> None:
+    # Exit 125 means the container never started — validation did not run, so it
+    # is not a develop regression. Rebuild the dev image and retry once (#3016).
+    ctx = _stage_ctx([], root=tmp_path)
+    with (
+        patch(_MOD + ".progress.run", side_effect=[_launch_err(), 0]) as run,
+        patch(_MOD + ".resolve_language", return_value="python"),
+        patch(_MOD + ".clean_branch_images") as clean,
+        patch(_MOD + ".provision_dev_image", return_value=("img", "cached")) as prov,
+    ):
+        _stage_validation(ctx)  # must not raise
+    assert run.call_count == 2
+    clean.assert_called_once_with("develop")
+    prov.assert_called_once()
+
+
+def test_stage_validation_snapshot_signature_without_125_reprovisions(tmp_path: Path) -> None:
+    # A runtime that reports the orphaned-snapshot failure with a non-125 exit is
+    # still a launch failure, classified from its diagnostic text.
+    ctx = _stage_ctx([], root=tmp_path)
+    sig_err = subprocess.CalledProcessError(
+        1, ("vrg-container-run",), output="", stderr="failed to prepare extraction snapshot"
+    )
+    with (
+        patch(_MOD + ".progress.run", side_effect=[sig_err, 0]) as run,
+        patch(_MOD + ".resolve_language", return_value="python"),
+        patch(_MOD + ".clean_branch_images"),
+        patch(_MOD + ".provision_dev_image", return_value=("img", "cached")),
+    ):
+        _stage_validation(ctx)  # must not raise
+    assert run.call_count == 2
+
+
+def test_stage_validation_launch_failure_persists_raises_distinct_error(tmp_path: Path) -> None:
+    ctx = _stage_ctx([], root=tmp_path)
+    snapshot = "parent snapshot sha256:d798 does not exist: not found"
+    with (
+        patch(
+            _MOD + ".progress.run",
+            side_effect=[_launch_err(), _launch_err(stderr=snapshot)],
+        ),
+        patch(_MOD + ".resolve_language", return_value="python"),
+        patch(_MOD + ".clean_branch_images"),
+        patch(_MOD + ".provision_dev_image", return_value=("img", "cached")),
+        pytest.raises(FinalizeError) as excinfo,
+    ):
+        _stage_validation(ctx)
+    msg = str(excinfo.value)
+    assert "failed to launch" in msg
+    assert "fix develop" not in msg  # not misattributed to a develop regression
+    assert snapshot in msg  # surfaces the runtime stderr
+
+
+def test_stage_validation_reprovision_then_real_failure_raises_fix_branch(tmp_path: Path) -> None:
+    # If the retry reaches a genuine validation failure (the container launched
+    # this time), report it as a develop problem, not a launch failure.
+    ctx = _stage_ctx([], root=tmp_path)
+    real_failure = subprocess.CalledProcessError(
+        1, ("vrg-container-run",), output="", stderr="lint failed"
+    )
+    with (
+        patch(_MOD + ".progress.run", side_effect=[_launch_err(), real_failure]),
+        patch(_MOD + ".resolve_language", return_value="python"),
+        patch(_MOD + ".clean_branch_images"),
+        patch(_MOD + ".provision_dev_image", return_value=("img", "cached")),
+        pytest.raises(FinalizeError, match="fix develop"),
+    ):
+        _stage_validation(ctx)
+
+
 def test_stage_validation_dry_run_skips(tmp_path: Path) -> None:
     ctx = _stage_ctx(["--dry-run"], root=tmp_path)
     with patch(_MOD + ".progress.run") as run:
