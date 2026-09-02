@@ -136,26 +136,24 @@ The workflow file is `.github/workflows/ci.yml`, which runs directly on
 
 ## Architecture
 
-### Reusable workflow pattern
+### Thin-caller pattern
 
-`ci.yml` accepts `workflow_call` with inputs that control scope:
+A consuming repo's `ci.yml` is a **thin caller**: each job simply `uses:` a
+`vergil-actions` reusable workflow (`ci-audit`, `ci-quality`, `ci-security`,
+`ci-test`, `ci-version-bump`, `ci-docs`) at the pinned `@v2.1` tag and passes
+only `language:` and `container-suffix:`. It does **not** pass a version matrix
+or a container tag — the reusable workflows read `[ci].versions` from the repo's
+`vergil.toml` at run time and derive both the matrix and the primary-version
+container themselves (epic
+[vergil-project/.github#338](https://github.com/vergil-project/.github/issues/338)).
+A `[ci].versions` change therefore takes effect fleet-wide with no edit to
+`ci.yml`.
 
-| Input | Type | Default |
-| ----- | ---- | ------- |
-| `versions` | string (JSON) | Full matrix |
-| `integration-matrix` | string (JSON) | Full matrix |
-| `run-security` | string | `"true"` |
-| `run-release-gates` | string | `"true"` |
-
-- `versions` — language versions to test
-- `integration-matrix` — test entries with ports
-- `run-security` — enable security scanners
-- `run-release-gates` — enable release gate checks
-
-When triggered directly by `pull_request`, all inputs are empty and
-defaults produce the full Tier 2 behavior. The inputs remain in place so
-specialized callers (e.g., release pipelines) can constrain scope when
-needed.
+`ci.yml` still exposes `workflow_call` with two scope inputs so specialized
+callers (e.g. release pipelines) can constrain it — `run-security` (enable the
+security scanners) and `run-release` (enable the release/version gates). When
+triggered directly by `pull_request` both default on, producing the full
+Tier 2 behavior.
 
 !!! warning "String inputs, not booleans"
     Use `type: string` for gate inputs, not `type: boolean`. Boolean
@@ -237,19 +235,17 @@ language) gets **no `secrets:` block at all**, not `secrets: inherit`.
 References to our own `vergil-actions@v2.1` reusable workflows are
 unaffected — they are trusted first-party refs.
 
-### Default matrix pattern
+### Dynamic matrix from `vergil.toml`
 
-Use `fromJSON()` with a fallback to embed the full default matrix
-directly in the workflow:
-
-```yaml
-strategy:
-  fail-fast: false
-  matrix:
-    version: ${{ fromJSON(inputs.versions || '["3.2", "3.3", "3.4"]') }}
-```
-
-This avoids needing a separate job to compute the matrix.
+The matrix is **not** embedded in the workflow or passed as an input. Each
+matrixed reusable workflow (`ci-audit`, `ci-quality`, `ci-test`) reads
+`[ci].versions` from the consuming repo's `vergil.toml` at run time and fans its
+matrix out over that list. Single-container jobs (`ci-security`,
+`ci-version-bump`, `ci-docs`) run on the **primary version** —
+`[ci].primary-version` if it is set, otherwise the highest entry of
+`[ci].versions` (so `3.14` for `["3.12", "3.13", "3.14"]`). `vergil.toml` is the
+single stored source of the version set; nothing is hand-maintained in `ci.yml`,
+so the matrix cannot drift from `[ci].versions`.
 
 ## Implementation guide
 
@@ -322,9 +318,23 @@ managed repo with no `if:` guard, so it always runs and surfaces the
 Every check that can gate a PR is configured as a **required status
 check** on the target branch; there is no tier of checks that runs but
 does not block. `docs / docs` is required alongside the tests, audit,
-release gates, and the `security-and-standards /` checks — the desired
-required-check set is complete, and it is pinned by a test so it cannot
-silently drift.
+release gates, and the security checks — the desired required-check set is
+complete, and it is pinned by a test so it cannot silently drift.
+
+For the matrixed kinds — audit, quality (lint + typecheck), and unit tests —
+the required check is the **stable, version-agnostic `<kind> / evidence`
+aggregate** each reusable workflow emits (`audit / evidence`,
+`quality / evidence`, `test / evidence`), **not** the per-version legs
+(`audit / dependencies / 3.12`, `quality / lint / 3.13`, …). Each `evidence`
+job `needs` the whole version matrix, so a single required context covers every
+version. Because the required-check *names* no longer carry a version, a matrix
+change — including a *reduction* — merges through the same gate. This closes the
+old deadlock, where branch protection required a per-version leg that a reduced
+matrix could never produce, leaving the PR "expected, never reported" and
+permanently blocked with no `--admin` escape (epic
+[vergil-project/.github#338](https://github.com/vergil-project/.github/issues/338)).
+Non-matrixed checks (the security scanners, `quality / common`, the version-bump
+gate, `docs / docs`) keep their fixed, version-free names.
 
 `vrg-github-repo-config audit` **hard-fails on required-set drift**: if a
 repo's configured required checks diverge from the desired set, the audit

@@ -176,6 +176,32 @@ contract, so a freshly created repo passes both new checks from day one:
   the fleet does not stampede a single minute as it grows. The hour stays
   in the early-UTC window; only the minute varies.
 
+## GitHub checks — the required-status-check set
+
+The GitHub half compares the repo's live branch-protection configuration
+against the canonical CI-gates ruleset that
+[`desired_ci_gates_ruleset()`](../guides/ci-evidence-convention.md#the-evidence-producing-gate-set)
+computes from `vergil.toml`. Three properties matter for the dynamic,
+version-agnostic CI model (epic
+[vergil-project/.github#338](https://github.com/vergil-project/.github/issues/338)):
+
+- **Version-agnostic required checks.** For the matrixed kinds the desired set
+  requires the stable `audit / evidence`, `quality / evidence`, and
+  `test / evidence` aggregates — never per-version legs such as
+  `audit / dependencies / 3.12`. A `[ci].versions` change no longer churns the
+  required-check set, so the ruleset stops drifting when the matrix changes.
+- **Unproducible-context check.** The audit asserts every required context is
+  one the repo's workflows can actually produce. A leftover required leg that no
+  workflow emits — for example a stale per-version check surviving a matrix
+  reduction — is reported as drift rather than silently sitting "expected, never
+  reported" and blocking every PR.
+- **Classic branch-protection read + scoped cleanup.** The audit reads legacy
+  *classic* branch protection in addition to the rulesets API. When it
+  reconciles, it removes **only** the stale version-suffixed CI contexts the
+  evidence ruleset now owns; every other classic setting (review requirements,
+  push restrictions) is **reported, not touched**. The blast radius is minimal
+  and intentional protections are preserved.
+
 ## Related
 
 - [Consuming Repo Setup](../guides/consuming-repo-setup.md) — the
