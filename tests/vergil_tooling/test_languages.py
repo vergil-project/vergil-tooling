@@ -527,6 +527,42 @@ def test_cpp_test_commands_coverage_ctest_and_sanitizers() -> None:
     assert any("ctest --test-dir build-sanitize" in c for c in joined)
 
 
+def _cpp_config_path(name: str) -> Path:
+    """Resolve a packaged ``configs/cpp/<name>`` path.
+
+    Derives the packaged ``cpp/`` config directory from the gcovr ``--config``
+    argument in the TEST commands, then joins *name* — so it resolves the
+    packaged config file's content without hard-coding the package layout.
+    """
+    for cmd in language_commands("cpp", CheckKind.TEST):
+        for arg in cmd:
+            if arg.endswith("/cpp/gcovr.cfg"):
+                return Path(arg).parent / name
+    msg = "no TEST arg references the cpp configs dir"
+    raise AssertionError(msg)
+
+
+def test_cpp_gcovr_config_ignores_source_not_found() -> None:
+    """The packaged gcovr config ignores gcov ``source_not_found`` so third-party
+    (Conan) dependency headers (e.g. gtest under ``/opt/conan2``) that gcov
+    cannot resolve to a source file do not abort the coverage gate. Only
+    ``source_not_found`` is ignored — real gcov errors still fail the gate — and
+    the config still carries no ``root``/``filter`` settings (those stay on the
+    command line so they resolve against the repo root, #2572). (#3026)
+    """
+    text = _cpp_config_path("gcovr.cfg").read_text()
+    assert "gcov-ignore-errors = source_not_found" in text
+    # The path-anchoring ``root``/``filter`` stay on the command line, never as
+    # config settings here — assert on actual setting keys, not comment prose.
+    setting_keys = {
+        line.split("=", 1)[0].strip()
+        for line in text.splitlines()
+        if "=" in line and not line.lstrip().startswith("#")
+    }
+    assert "root" not in setting_keys
+    assert "filter" not in setting_keys
+
+
 def test_cpp_audit_commands() -> None:
     joined = _joined(language_commands("cpp", CheckKind.AUDIT))
     # conan audit is the CVE scan — it reads ConanCenter advisories using the
