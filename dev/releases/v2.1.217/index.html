@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.198/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.196/">
+        <link rel="next" href="../v2.1.216/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.197 - VERGIL Tooling</title>
+        <title>2.1.217 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-21197-2026-08-19" class="md-skip">
+        <a href="#release-21217-2026-09-02" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.197
+              2.1.217
             
           </span>
         </div>
@@ -1300,10 +1300,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.217/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.217
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1319,6 +1346,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1860,37 +1918,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.197
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.197/" class="md-nav__link">
         
   
   
@@ -1906,48 +1937,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#documentation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Documentation
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -14287,17 +14276,6 @@
   
 </li>
       
-        <li class="md-nav__item">
-  <a href="#documentation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Documentation
-      
-    </span>
-  </a>
-  
-</li>
-      
     </ul>
   
 </nav>
@@ -14315,19 +14293,14 @@
 
 
 
-<h1 id="release-21197-2026-08-19">Release 2.1.197 (2026-08-19)<a class="headerlink" href="#release-21197-2026-08-19" title="Permanent link">&para;</a></h1>
+<h1 id="release-21217-2026-09-02">Release 2.1.217 (2026-09-02)<a class="headerlink" href="#release-21217-2026-09-02" title="Permanent link">&para;</a></h1>
 <h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>check out and home on the borrower for shared_from cloud sessions (#2844)</strong>
-A [vm] shared_from cloud session shelled into the lender's box but homed on the lender's checkout, and the borrower repo was never present: shared_from was built on the Lima mount model (the whole projects dir is mounted, so both checkouts are siblings), which does not hold for off-platform boxes with no host mount.</li>
+<li><strong>self-heal orphaned dev-image cache and classify container-launch failures (#3017)</strong></li>
+<li>fix(container-cache): rebuild cached dev image when its snapshot is orphaned</li>
 </ul>
-<p>_cloud_session now derives the session home from the borrower (args.workspace), matching the Lima path's contract, and clone-or-fetches the borrower onto the persistent volume via bootstrap_volume before homing on it. The checkout is lazy and idempotent (self-healing, no rebuild), and a repo that owns its VM is not re-bootstrapped, so the common non-borrow path takes no new per-session fetch. The lender's checkout and running services are untouched.</p>
-<h2 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>document gitignore baseline + self-policing ops audit (#2833) (#2841)</strong>
-Add a GitHub Config Audit reference page documenting vrg-github-repo-config audit, the local audit_local_config checks (including the two new #311 checks: .gitignore baseline superset and ops.yml wiring), the central gitignore.baseline single source of truth (integral, superset/verbatim matching, canonical spelling, local additions, rolling vX.Y propagation), and repo_init scaffolding of the baseline .gitignore and staggered-cron ops.yml. Wire the page into mkdocs nav; add vrg-github-repo-config and vrg-github-repo-init entries to the CLI overview and reference index. Update consuming-repo-setup.md with the consuming-repo contract: your .gitignore must be a superset of the central baseline and your repo must carry a scheduled ops.yml wired to the config audit, with drift fatal in the nightly run.</li>
-</ul>
-<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.197/v2.1.197-ci-evidence.tar.gz">Download →</a></p>
+<p>find_cached_image + a matching cache hash proved only that docker LISTS the tag, not that the image can still launch: if an underlying snapshot layer is orphaned in the container store, the record survives but 'docker run' fails at container creation (exit 125, 'parent snapshot ... does not exist'). ensure_cached_image now launch-probes a metadata hit with a throwaway 'create' (no start, no exec) and, on failure, force-removes the tag and rebuilds instead of returning an unrunnable image. Because both vrg-container-run and the finalize provision warmup call ensure_cached_image, the self-heal covers every caller with no manual cleanup. The recovery rmi now surfaces a non-zero result rather than swallowing it. Refs vergil-project/vergil-tooling#3016.</p>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.217/v2.1.217-ci-evidence.tar.gz">Download →</a></p>
 
 
 
