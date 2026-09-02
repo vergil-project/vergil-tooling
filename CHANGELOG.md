@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.219] - 2026-09-02
+
+### Bug fixes
+
+- ignore gcov source_not_found on third-party dep headers in coverage gate (#3026) (#3027)
+
 ## [2.1.218] - 2026-09-02
 
 ### Bug fixes
