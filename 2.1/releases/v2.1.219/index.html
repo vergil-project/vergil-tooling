@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.31/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.27/">
+        <link rel="next" href="../v2.1.218/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.30 - VERGIL Tooling</title>
+        <title>2.1.219 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-2130-2026-06-11" class="md-skip">
+        <a href="#release-21219-2026-09-02" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.30
+              2.1.219
             
           </span>
         </div>
@@ -1304,10 +1304,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.219/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.219
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1323,6 +1350,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -6596,37 +6654,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.30
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.30/" class="md-nav__link">
         
   
   
@@ -6642,37 +6673,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -14353,17 +14353,11 @@
 
 
 
-<h1 id="release-2130-2026-06-11">Release 2.1.30 (2026-06-11)<a class="headerlink" href="#release-2130-2026-06-11" title="Permanent link">&para;</a></h1>
+<h1 id="release-21219-2026-09-02">Release 2.1.219 (2026-09-02)<a class="headerlink" href="#release-21219-2026-09-02" title="Permanent link">&para;</a></h1>
 <h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>honor oracle-recorded base; drop legacy release/ inference (#1610)</strong></li>
-<li>fix(submit-pr): honor oracle-recorded base; drop legacy release/ inference</li>
+<li><strong>ignore gcov source_not_found on third-party dep headers in coverage gate (#3026) (#3027)</strong></li>
 </ul>
-<p>vrg-submit-pr re-inferred the PR base from the branch name and ignored the base the pr-workflow oracle recorded. The legacy 'release/' -&gt; main rule predated submit-pr becoming human-only and silently retargeted a back-merge PR to main, cutting an unintended release. _target_branch now uses explicit --base, then the oracle base (origin/ stripped), then develop; read_pr_fields surfaces the recorded base.</p>
-<ul>
-<li>chore(release): bump version to 2.1.29</li>
-</ul>
-<p>Roll develop forward past the inert 2.1.28 release that was cut accidentally when the back-merge PR mis-targeted main (issue #1609). 2.1.28 is left published but unpromoted; the rolling v2.1 tag stays at 2.1.27.</p>
 
 
 
