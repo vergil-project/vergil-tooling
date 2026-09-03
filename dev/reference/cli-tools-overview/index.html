@@ -10795,7 +10795,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../releases/v1.2.1/" class="md-nav__link">
+      <a href="../../releases/v1.2.0/" class="md-nav__link">
         
   
   
@@ -10823,7 +10823,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../releases/v1.2.0/" class="md-nav__link">
+      <a href="../../releases/v1.2.1/" class="md-nav__link">
         
   
   
@@ -15597,11 +15597,32 @@ Runs nightly from each repo's <code>ops.yml</code> via the reusable
 <p>Interactive (or <code>--non-interactive</code>) wizard that bootstraps a new
 managed repository: creates and clones the repo, generates
 <code>vergil.toml</code>, scaffolds config files (<code>CLAUDE.md</code>, hook-guard shim,
-the managed <code>.gitignore</code> fence), CI/CD/epic-rollup/<code>ops.yml</code> workflows,
-the docs site, branch structure, GitHub config, and Pages. The
-scaffolded <code>base + &lt;language&gt;</code> <code>.gitignore</code> fence and staggered-cron
-<code>ops.yml</code> make a new repo pass the config audit's two local checks from
-day one.</p>
+the managed <code>.gitignore</code> fence), scaffolds the language skeleton
+(born-green — see below), generates
+CI/CD/epic-rollup/<code>ops.yml</code> workflows, the docs site, branch structure,
+GitHub config, and Pages. The scaffolded <code>base + &lt;language&gt;</code>
+<code>.gitignore</code> fence and staggered-cron <code>ops.yml</code> make a new repo pass the
+config audit's two local checks from day one.</p>
+<p><strong>Born-green language skeleton.</strong> A dedicated scaffolding step (step 5,
+<code>lib/lang_scaffold.py</code>) renders the language's packaged skeleton
+templates (<code>src/vergil_tooling/data/skeletons/&lt;lang&gt;/</code>) into the fresh
+checkout, stamping only files that are missing so it never clobbers
+existing content. For a language that resolves a committed lockfile
+(cpp), it then runs that language's lock command
+(<code>conan lock create . -s build_type=Debug</code>) and one full <code>vrg-validate</code>
+inside the dev container, so the new repo is <em>born green</em> — it passes
+validation from its first commit. The container is a fail-fast
+precondition for a lock-resolving language: if no runtime is available
+the step refuses <strong>before writing anything</strong>, so such a repo is born
+green or not born at all, never half-created. The step writes no commit
+of its own; its host-rendered skeleton and container-resolved lock ride
+into the next step's commit. Because the container warmup for cpp
+requires a <code>conan.lock</code> and one does not yet exist during this window,
+the warmup deliberately <strong>skips</strong> until the scaffold's
+<code>conan lock create</code> produces the lock — the skeleton resolves in an
+unwarmed-but-usable container, and the warmup runs normally on every
+later build once the lock is committed
+(<a href="https://github.com/vergil-project/.github/issues/342">epic vergil-project/.github#342</a>).</p>
 <table>
 <thead>
 <tr>

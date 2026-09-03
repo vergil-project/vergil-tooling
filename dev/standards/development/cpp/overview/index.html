@@ -10797,7 +10797,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.2.1/" class="md-nav__link">
+      <a href="../../../../releases/v1.2.0/" class="md-nav__link">
         
   
   
@@ -10825,7 +10825,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.2.0/" class="md-nav__link">
+      <a href="../../../../releases/v1.2.1/" class="md-nav__link">
         
   
   
@@ -14688,6 +14688,18 @@ manager.</p>
   Debug build so dependency binaries share the same configuration). INSTALL also
   writes a <code>conan.lock</code> (<code>conan lock create</code>) that pins the graph for the Debug
   builds.</li>
+<li><strong>Conan's generator output lands under <code>build/</code>, not the source root.</strong> INSTALL
+  passes <code>--output-folder=build</code>, so the toolchain file and CMakeDeps <code>Find*.cmake</code>
+  modules are written under <code>build/</code> and the working tree stays clean after a
+  build. Every CMake <em>configure</em> then points at the relocated toolchain with
+  <code>-DCMAKE_TOOLCHAIN_FILE=build/conan_toolchain.cmake</code> so <code>find_package</code> resolves
+  from <code>build/</code>. This retired the old source-root <code>CMAKE_PREFIX_PATH</code> hack — and
+  the gitignore whack-a-mole that chased Conan's root-dropped
+  <code>conan_toolchain.cmake</code> / CMakeDeps modules — because those artifacts no longer
+  touch the source root. The one file Conan still writes to the source root
+  regardless of <code>--output-folder</code> is <code>CMakeUserPresets.json</code>, which the managed
+  cpp <code>.gitignore</code> fragment therefore keeps
+  (<a href="https://github.com/vergil-project/vergil-tooling/issues/2912">#2912</a>).</li>
 <li>The AUDIT stage runs <strong><code>conan audit scan .</code></strong>, which scans the resolved
   dependency graph against ConanCenter's advisory database for known CVEs, then
   <code>conan graph info . --format=json</code> to surface dependency licenses (best-effort
