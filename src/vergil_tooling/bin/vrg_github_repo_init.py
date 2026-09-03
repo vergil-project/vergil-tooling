@@ -6,8 +6,9 @@ import argparse
 import sys
 from pathlib import Path
 
-from vergil_tooling.lib import identity_mode
+from vergil_tooling.lib import identity_mode, lang_scaffold
 from vergil_tooling.lib.config import _ENUMS
+from vergil_tooling.lib.languages import language_lock_command
 from vergil_tooling.lib.repo_init import (
     RepoInitContext,
     foreign_repo_refusal,
@@ -253,6 +254,28 @@ def main(argv: list[str] | None = None) -> int:
     refusal = foreign_repo_refusal(ctx)
     if refusal is not None:
         print(refusal, file=sys.stderr)
+        return 1
+
+    # Fail-fast container precondition (epic vergil-project/.github#342). A
+    # language whose init resolves locks (cpp) can only be born green inside a
+    # container; without a runtime the skeleton phase would refuse mid-init,
+    # after the remote already exists. Check up front — before run_wizard's
+    # step 1 creates the repo — so the refusal leaves nothing behind. Only an
+    # explicitly-named lock-resolving language is checked here; an interactive
+    # or adopt run whose language is not yet known still fail-fasts in the
+    # scaffold step before writing anything.
+    if (
+        args.language is not None
+        and language_lock_command(args.language) is not None
+        and not lang_scaffold.container_runtime_available()
+    ):
+        print(
+            f"Refusing to create {ctx.repo}: --language {args.language} resolves "
+            "locks and must be born green inside a container, but no container "
+            "runtime (docker/nerdctl) is available. Nothing was created. "
+            "Remedy: run vrg-github-repo-init where a container runtime is present.",
+            file=sys.stderr,
+        )
         return 1
 
     run_wizard(ctx)

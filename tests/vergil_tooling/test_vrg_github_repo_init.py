@@ -208,6 +208,77 @@ class TestMain:
         mock_current_repo.assert_not_called()
         mock_wizard.assert_not_called()
 
+    def test_refuses_cpp_new_repo_without_container(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # A lock-resolving language (cpp) is born green or not born at all: with
+        # no container runtime, refuse before any side effect — before the remote
+        # is created (epic vergil-project/.github#342).
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_github_repo_init.prompt_free_text",
+                return_value="desc",
+            ),
+            patch(
+                "vergil_tooling.bin.vrg_github_repo_init.foreign_repo_refusal",
+                return_value=None,
+            ),
+            patch(
+                "vergil_tooling.bin.vrg_github_repo_init.lang_scaffold.container_runtime_available",
+                return_value=False,
+            ),
+            patch("vergil_tooling.bin.vrg_github_repo_init.run_wizard") as mock_wizard,
+        ):
+            result = main(["org/repo", "--visibility", "public", "--language", "cpp"])
+
+        assert result == 1
+        mock_wizard.assert_not_called()
+        assert "container runtime" in capsys.readouterr().err.lower()
+
+    def test_allows_cpp_new_repo_with_container(self) -> None:
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_github_repo_init.prompt_free_text",
+                return_value="desc",
+            ),
+            patch(
+                "vergil_tooling.bin.vrg_github_repo_init.foreign_repo_refusal",
+                return_value=None,
+            ),
+            patch(
+                "vergil_tooling.bin.vrg_github_repo_init.lang_scaffold.container_runtime_available",
+                return_value=True,
+            ),
+            patch("vergil_tooling.bin.vrg_github_repo_init.run_wizard") as mock_wizard,
+        ):
+            result = main(["org/repo", "--visibility", "public", "--language", "cpp"])
+
+        assert result == 0
+        mock_wizard.assert_called_once()
+
+    def test_language_less_new_repo_skips_container_precondition(self) -> None:
+        # A lockless / language-less repo never needs a container to be born
+        # green, so the runtime is not probed at all.
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_github_repo_init.prompt_free_text",
+                return_value="desc",
+            ),
+            patch(
+                "vergil_tooling.bin.vrg_github_repo_init.foreign_repo_refusal",
+                return_value=None,
+            ),
+            patch(
+                "vergil_tooling.bin.vrg_github_repo_init.lang_scaffold.container_runtime_available",
+                side_effect=AssertionError("must not probe the runtime"),
+            ),
+            patch("vergil_tooling.bin.vrg_github_repo_init.run_wizard") as mock_wizard,
+        ):
+            result = main(["org/repo", "--visibility", "public"])
+
+        assert result == 0
+        mock_wizard.assert_called_once()
+
     def test_adopt_mode_success(self) -> None:
         with (
             patch("vergil_tooling.lib.github.current_repo", return_value="org/repo"),

@@ -52,6 +52,7 @@ from vergil_tooling.lib.repo_init import (
     step_github_config,
     step_github_pages,
     step_scaffold_config_files,
+    step_scaffold_language,
 )
 
 
@@ -1580,6 +1581,75 @@ class TestStepScaffoldConfigFiles:
         assert not (tmp_path / ".githooks").exists()
 
 
+class TestStepScaffoldLanguage:
+    def test_invokes_scaffold_language(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ctx = RepoInitContext(org="acme", name="demo")
+        ctx.work_dir = tmp_path
+        ctx.primary_language = "cpp"
+        called: dict[str, Any] = {}
+        monkeypatch.setattr(
+            repo_init.lang_scaffold,
+            "scaffold_language",
+            lambda c: called.setdefault("ctx", c),
+        )
+        step_scaffold_language(ctx)
+        assert called["ctx"] is ctx
+
+    def test_runs_between_config_and_ci_in_wizard(self) -> None:
+        # The scaffold phase is sequenced after config files and before CI/CD,
+        # so its host-written skeleton + resolved lock ride into the next step's
+        # ``git add -A`` commit (epic vergil-project/.github#342).
+        ctx = RepoInitContext(org="acme", name="demo")
+        steps_run: list[str] = []
+
+        def mock_step(label: str) -> Any:
+            def inner(*a: Any, **kw: Any) -> None:
+                steps_run.append(label)
+
+            return inner
+
+        with (
+            patch("vergil_tooling.lib.repo_init.step_create_repo", side_effect=mock_step("create")),
+            patch("vergil_tooling.lib.repo_init.step_clone", side_effect=mock_step("clone")),
+            patch(
+                "vergil_tooling.lib.repo_init.step_generate_config",
+                side_effect=mock_step("config-toml"),
+            ),
+            patch(
+                "vergil_tooling.lib.repo_init.step_scaffold_config_files",
+                side_effect=mock_step("config-files"),
+            ),
+            patch(
+                "vergil_tooling.lib.repo_init.step_scaffold_language",
+                side_effect=mock_step("scaffold"),
+            ),
+            patch(
+                "vergil_tooling.lib.repo_init.step_ci_cd_workflows",
+                side_effect=mock_step("ci-cd"),
+            ),
+            patch("vergil_tooling.lib.repo_init.step_docs_site", side_effect=mock_step("docs")),
+            patch(
+                "vergil_tooling.lib.repo_init.step_branch_structure",
+                side_effect=mock_step("branch"),
+            ),
+            patch(
+                "vergil_tooling.lib.repo_init.step_github_config",
+                side_effect=mock_step("gh-config"),
+            ),
+            patch(
+                "vergil_tooling.lib.repo_init.step_github_pages", side_effect=mock_step("gh-pages")
+            ),
+            patch("vergil_tooling.lib.repo_init._check_remote_steps", return_value=set()),
+            patch("vergil_tooling.lib.repo_init.cwd_repo_slug", return_value=None),
+        ):
+            run_wizard(ctx)
+
+        assert steps_run.index("config-files") < steps_run.index("scaffold")
+        assert steps_run.index("scaffold") < steps_run.index("ci-cd")
+
+
 class TestStepCiCdWorkflows:
     def test_creates_ci_yml(self, tmp_path: Path) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test")
@@ -1803,7 +1873,9 @@ class TestCheckRemoteSteps:
         ):
             result = _check_remote_steps(ctx)
 
-        assert result == {1, 7}
+        # Branch structure is step 8 after the language-skeleton step was
+        # inserted at 5 (epic vergil-project/.github#342).
+        assert result == {1, 8}
 
     def test_nothing_exists(self) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test")
@@ -1922,11 +1994,15 @@ class TestRunWizard:
                 "vergil_tooling.lib.repo_init.step_scaffold_config_files",
                 side_effect=mock_step(4),
             ),
-            patch("vergil_tooling.lib.repo_init.step_ci_cd_workflows", side_effect=mock_step(5)),
-            patch("vergil_tooling.lib.repo_init.step_docs_site", side_effect=mock_step(6)),
-            patch("vergil_tooling.lib.repo_init.step_branch_structure", side_effect=mock_step(7)),
-            patch("vergil_tooling.lib.repo_init.step_github_config", side_effect=mock_step(8)),
-            patch("vergil_tooling.lib.repo_init.step_github_pages", side_effect=mock_step(9)),
+            patch(
+                "vergil_tooling.lib.repo_init.step_scaffold_language",
+                side_effect=mock_step(5),
+            ),
+            patch("vergil_tooling.lib.repo_init.step_ci_cd_workflows", side_effect=mock_step(6)),
+            patch("vergil_tooling.lib.repo_init.step_docs_site", side_effect=mock_step(7)),
+            patch("vergil_tooling.lib.repo_init.step_branch_structure", side_effect=mock_step(8)),
+            patch("vergil_tooling.lib.repo_init.step_github_config", side_effect=mock_step(9)),
+            patch("vergil_tooling.lib.repo_init.step_github_pages", side_effect=mock_step(10)),
             patch("vergil_tooling.lib.repo_init._check_remote_steps", return_value=set()),
             # Local resume state is trusted only when CWD is the target's own
             # clone (#2717); here it is, so the step 3/4 markers apply.
@@ -1953,7 +2029,7 @@ class TestRunWizard:
         # canonical" run. A previously-init'd repo carries permanent
         # `chore(init): step N -` markers for every generation step; adopt must
         # NOT read them as completed progress, or it skips regenerating managed
-        # files (notably ci.yml at step 5), defeating adopt's own contract.
+        # files (notably ci.yml at step 6), defeating adopt's own contract.
         ctx = RepoInitContext(org="mnemosys-project", name="docs", adopt=True)
 
         steps_run: list[int] = []
@@ -1972,11 +2048,15 @@ class TestRunWizard:
                 "vergil_tooling.lib.repo_init.step_scaffold_config_files",
                 side_effect=mock_step(4),
             ),
-            patch("vergil_tooling.lib.repo_init.step_ci_cd_workflows", side_effect=mock_step(5)),
-            patch("vergil_tooling.lib.repo_init.step_docs_site", side_effect=mock_step(6)),
-            patch("vergil_tooling.lib.repo_init.step_branch_structure", side_effect=mock_step(7)),
-            patch("vergil_tooling.lib.repo_init.step_github_config", side_effect=mock_step(8)),
-            patch("vergil_tooling.lib.repo_init.step_github_pages", side_effect=mock_step(9)),
+            patch(
+                "vergil_tooling.lib.repo_init.step_scaffold_language",
+                side_effect=mock_step(5),
+            ),
+            patch("vergil_tooling.lib.repo_init.step_ci_cd_workflows", side_effect=mock_step(6)),
+            patch("vergil_tooling.lib.repo_init.step_docs_site", side_effect=mock_step(7)),
+            patch("vergil_tooling.lib.repo_init.step_branch_structure", side_effect=mock_step(8)),
+            patch("vergil_tooling.lib.repo_init.step_github_config", side_effect=mock_step(9)),
+            patch("vergil_tooling.lib.repo_init.step_github_pages", side_effect=mock_step(10)),
             patch("vergil_tooling.lib.repo_init._check_remote_steps", return_value=set()),
             # Adopt runs in the target's own clone, whose log carries markers for
             # every past init step — the exact history that must be ignored.
@@ -1996,7 +2076,7 @@ class TestRunWizard:
         ):
             run_wizard(ctx)
 
-        # Every generation step re-runs; step 5 (ci.yml) is the load-bearing one.
+        # Every generation step re-runs; step 6 (ci.yml) is the load-bearing one.
         assert {3, 4, 5, 6}.issubset(steps_run)
         # On adopt the checkpoint log is not even consulted.
         mock_log.assert_not_called()
@@ -2022,11 +2102,15 @@ class TestRunWizard:
                 "vergil_tooling.lib.repo_init.step_scaffold_config_files",
                 side_effect=mock_step(4),
             ),
-            patch("vergil_tooling.lib.repo_init.step_ci_cd_workflows", side_effect=mock_step(5)),
-            patch("vergil_tooling.lib.repo_init.step_docs_site", side_effect=mock_step(6)),
-            patch("vergil_tooling.lib.repo_init.step_branch_structure", side_effect=mock_step(7)),
-            patch("vergil_tooling.lib.repo_init.step_github_config", side_effect=mock_step(8)),
-            patch("vergil_tooling.lib.repo_init.step_github_pages", side_effect=mock_step(9)),
+            patch(
+                "vergil_tooling.lib.repo_init.step_scaffold_language",
+                side_effect=mock_step(5),
+            ),
+            patch("vergil_tooling.lib.repo_init.step_ci_cd_workflows", side_effect=mock_step(6)),
+            patch("vergil_tooling.lib.repo_init.step_docs_site", side_effect=mock_step(7)),
+            patch("vergil_tooling.lib.repo_init.step_branch_structure", side_effect=mock_step(8)),
+            patch("vergil_tooling.lib.repo_init.step_github_config", side_effect=mock_step(9)),
+            patch("vergil_tooling.lib.repo_init.step_github_pages", side_effect=mock_step(10)),
             patch("vergil_tooling.lib.repo_init._check_remote_steps", return_value=set()),
             # Standing inside the `.github` repo, whose log carries step 3/4/5
             # markers that must be ignored for the unrelated `docs` target.
@@ -2067,11 +2151,15 @@ class TestRunWizard:
                 "vergil_tooling.lib.repo_init.step_scaffold_config_files",
                 side_effect=mock_step(4),
             ),
-            patch("vergil_tooling.lib.repo_init.step_ci_cd_workflows", side_effect=mock_step(5)),
-            patch("vergil_tooling.lib.repo_init.step_docs_site", side_effect=mock_step(6)),
-            patch("vergil_tooling.lib.repo_init.step_branch_structure", side_effect=mock_step(7)),
-            patch("vergil_tooling.lib.repo_init.step_github_config", side_effect=mock_step(8)),
-            patch("vergil_tooling.lib.repo_init.step_github_pages", side_effect=mock_step(9)),
+            patch(
+                "vergil_tooling.lib.repo_init.step_scaffold_language",
+                side_effect=mock_step(5),
+            ),
+            patch("vergil_tooling.lib.repo_init.step_ci_cd_workflows", side_effect=mock_step(6)),
+            patch("vergil_tooling.lib.repo_init.step_docs_site", side_effect=mock_step(7)),
+            patch("vergil_tooling.lib.repo_init.step_branch_structure", side_effect=mock_step(8)),
+            patch("vergil_tooling.lib.repo_init.step_github_config", side_effect=mock_step(9)),
+            patch("vergil_tooling.lib.repo_init.step_github_pages", side_effect=mock_step(10)),
             patch("vergil_tooling.lib.repo_init._check_remote_steps", return_value=set()),
             # CWD is the target's own clone, so the log is read — and its failure
             # degrades to "no local completions" rather than raising.
@@ -2106,11 +2194,15 @@ class TestRunWizard:
                 "vergil_tooling.lib.repo_init.step_scaffold_config_files",
                 side_effect=mock_step(4),
             ),
-            patch("vergil_tooling.lib.repo_init.step_ci_cd_workflows", side_effect=mock_step(5)),
-            patch("vergil_tooling.lib.repo_init.step_docs_site", side_effect=mock_step(6)),
-            patch("vergil_tooling.lib.repo_init.step_branch_structure", side_effect=mock_step(7)),
-            patch("vergil_tooling.lib.repo_init.step_github_config", side_effect=mock_step(8)),
-            patch("vergil_tooling.lib.repo_init.step_github_pages", side_effect=mock_step(9)),
+            patch(
+                "vergil_tooling.lib.repo_init.step_scaffold_language",
+                side_effect=mock_step(5),
+            ),
+            patch("vergil_tooling.lib.repo_init.step_ci_cd_workflows", side_effect=mock_step(6)),
+            patch("vergil_tooling.lib.repo_init.step_docs_site", side_effect=mock_step(7)),
+            patch("vergil_tooling.lib.repo_init.step_branch_structure", side_effect=mock_step(8)),
+            patch("vergil_tooling.lib.repo_init.step_github_config", side_effect=mock_step(9)),
+            patch("vergil_tooling.lib.repo_init.step_github_pages", side_effect=mock_step(10)),
             patch("vergil_tooling.lib.repo_init._check_remote_steps", return_value=set()),
             # CWD is not the target's clone, so local resume state is not trusted
             # and the git log is not even read.
