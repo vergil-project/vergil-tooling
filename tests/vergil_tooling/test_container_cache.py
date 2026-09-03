@@ -1401,28 +1401,31 @@ def test_cache_hash_changes_when_build_cache_file_changes(tmp_path: Path) -> Non
 # -- conditional warmup (issue #2881) -----------------------------------------
 
 
+def test_cpp_has_no_warmup_skip_entry(tmp_path: Path) -> None:
+    # cpp is born-green (epic #342): repo-init scaffolds a complete cpp
+    # skeleton, so there is no half-bootstrapped state to skip warmup for.
+    # cpp therefore has no _WARMUP_REQUIRES entry — missing_warmup_files
+    # returns [] for any tree, exactly like an unlisted language.
+    assert missing_warmup_files("cpp", tmp_path) == []  # empty tree
+    (tmp_path / "conanfile.txt").write_text("[generators]\n")
+    assert missing_warmup_files("cpp", tmp_path) == []  # partial tree, still no skip
+
+
 def test_missing_warmup_files_empty_when_bootstrapped(tmp_path: Path) -> None:
-    _bootstrap_cpp(tmp_path)
-    assert missing_warmup_files("cpp", tmp_path) == []
+    _bootstrap_python(tmp_path)
+    assert missing_warmup_files("python", tmp_path) == []
 
 
 def test_missing_warmup_files_reports_each_unsatisfied_group(tmp_path: Path) -> None:
-    assert missing_warmup_files("cpp", tmp_path) == [
-        "conanfile.txt or conanfile.py",
-        "CMakeLists.txt",
+    assert missing_warmup_files("python", tmp_path) == [
+        "pyproject.toml",
+        "uv.lock",
     ]
 
 
-def test_missing_warmup_files_accepts_either_conanfile_spelling(tmp_path: Path) -> None:
-    # conanfile.py satisfies the same group as conanfile.txt.
-    (tmp_path / "conanfile.py").write_text("from conan import ConanFile\n")
-    (tmp_path / "CMakeLists.txt").write_text("cmake_minimum_required(VERSION 3.20)\n")
-    assert missing_warmup_files("cpp", tmp_path) == []
-
-
 def test_missing_warmup_files_partial_bootstrap_reports_only_the_gap(tmp_path: Path) -> None:
-    (tmp_path / "conanfile.txt").write_text("[generators]\n")
-    assert missing_warmup_files("cpp", tmp_path) == ["CMakeLists.txt"]
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "x"\n')
+    assert missing_warmup_files("python", tmp_path) == ["uv.lock"]
 
 
 def test_missing_warmup_files_unknown_language_has_no_requirements(tmp_path: Path) -> None:
@@ -1430,9 +1433,9 @@ def test_missing_warmup_files_unknown_language_has_no_requirements(tmp_path: Pat
 
 
 def test_warmup_command_skipped_when_manifests_absent(tmp_path: Path) -> None:
-    # The bootstrap case: no conanfile means no warmup, rather than a command
+    # The bootstrap case: no go.mod means no warmup, rather than a command
     # guaranteed to fail and abort the image build (issue #2871).
-    assert _warmup_command("cpp", tmp_path) == ""
+    assert _warmup_command("go", tmp_path) == ""
 
 
 def test_warmup_command_runs_when_manifests_present(tmp_path: Path) -> None:
@@ -1452,9 +1455,9 @@ def test_warmup_command_empty_for_language_without_install_commands(tmp_path: Pa
 def test_compose_setup_omits_warmup_on_unbootstrapped_repo(tmp_path: Path) -> None:
     # An unbootstrapped repo still yields a usable setup string: install only.
     (tmp_path / "vergil.toml").write_text(_VALID_TOML)
-    setup = _compose_setup(tmp_path, "cpp")
-    # No warmup on an unbootstrapped repo: the conan install step is absent.
-    assert "--lockfile=conan.lock" not in setup
+    setup = _compose_setup(tmp_path, "go")
+    # No warmup on an unbootstrapped repo: nothing is appended after the install.
+    assert " && " not in setup
     assert "uv tool install" in setup
 
 
@@ -1466,11 +1469,10 @@ def test_build_cached_image_reports_skipped_warmup(
     (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     ok = MagicMock(returncode=0, stdout="abc123\n")
     with patch("vergil_tooling.lib.container_cache.subprocess.run", return_value=ok):
-        _build_cached_image(tmp_path, "cpp", "img:1", "img:1--branch--hash", runtime="docker")
+        _build_cached_image(tmp_path, "go", "img:1", "img:1--branch--hash", runtime="docker")
     out = capsys.readouterr().out
     assert "Warmup:  skipped" in out
-    assert "conanfile.txt or conanfile.py" in out
-    assert "CMakeLists.txt" in out
+    assert "go.mod" in out
 
 
 def test_cache_files_cpp_tracks_conan_and_cmake_manifests(tmp_path: Path) -> None:
@@ -1491,8 +1493,8 @@ def test_cache_files_typescript_tracks_lockfile(tmp_path: Path) -> None:
 
 
 def test_cpp_cache_hash_changes_when_conanfile_appears(tmp_path: Path) -> None:
-    # This is what makes a skipped warmup self-healing: bootstrapping the repo
-    # changes the cache key, forcing a rebuild that warms properly.
+    # The conanfile is part of the cpp cache key: adding it changes the hash,
+    # so a dependency change forces a rebuild rather than reusing a stale image.
     (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     before = compute_cache_hash(cache_sensitive_files(tmp_path, "cpp"))
     _bootstrap_cpp(tmp_path)
