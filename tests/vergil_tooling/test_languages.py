@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from vergil_tooling.lib import languages
 from vergil_tooling.lib.languages import (
     _TYPESCRIPT_LICENSES_ALLOWLIST,
     COVERAGE_REPORT,
@@ -982,3 +983,29 @@ def test_parse_cpp_version_tag_unrecognized_prefix_returns_none() -> None:
 
 def test_parse_cpp_version_tag_empty_returns_none() -> None:
     assert parse_cpp_version_tag("") is None
+
+
+# -- Per-language lock command (epic vergil-project/.github#342, T2) -----------
+
+
+def test_cpp_lock_command() -> None:
+    assert languages.language_lock_command("cpp") == [
+        "conan",
+        "lock",
+        "create",
+        ".",
+        "-s",
+        "build_type=Debug",
+    ]
+
+
+def test_lockless_language_has_no_lock_command() -> None:
+    assert languages.language_lock_command("go") is None
+
+
+def test_unknown_language_has_no_lock_command() -> None:
+    assert languages.language_lock_command("cobol") is None
+
+
+def test_none_language_has_no_lock_command() -> None:
+    assert languages.language_lock_command(None) is None

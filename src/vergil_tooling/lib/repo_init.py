@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
     from vergil_tooling.lib.github_config import DesiredState
 
-from vergil_tooling.lib import git, github, gitignore, repo_config
+from vergil_tooling.lib import git, github, gitignore, lang_scaffold, repo_config
 from vergil_tooling.lib.config import _ENUMS
 from vergil_tooling.lib.vergil_refs import EXPECTED_MARKETPLACE_REF
 
@@ -1284,9 +1284,27 @@ def step_scaffold_config_files(ctx: RepoInitContext) -> None:
     print("  Config files committed.")
 
 
+def step_scaffold_language(ctx: RepoInitContext) -> None:
+    """Step 5: Render + resolve + verify the language skeleton (born-green).
+
+    Delegates to :func:`lang_scaffold.scaffold_language`, which renders the
+    per-language skeleton, stamps the missing files, and — for a lock-resolving
+    language (cpp) — runs the lock command and one ``vrg-validate`` in the
+    container. A no-op for a language with no skeleton and no lock command.
+
+    Deliberately writes **no commit of its own**: it is sequenced right after
+    the config-files step and before the CI/CD step, so its host-written
+    skeleton and container-resolved lock ride into the next step's
+    ``git add -A`` commit (epic vergil-project/.github#342).
+    """
+    print("Step 5: Scaffolding language skeleton...")
+    lang_scaffold.scaffold_language(ctx)
+    print("  Language skeleton scaffolded.")
+
+
 def step_ci_cd_workflows(ctx: RepoInitContext) -> None:
-    """Step 5: Generate CI and CD workflow files."""
-    print("Step 5: Generating CI/CD workflows...")
+    """Step 6: Generate CI and CD workflow files."""
+    print("Step 6: Generating CI/CD workflows...")
     if ctx.work_dir is None:  # pragma: no cover
         raise RuntimeError("work_dir not set")
     wd = ctx.work_dir
@@ -1312,17 +1330,17 @@ def step_ci_cd_workflows(ctx: RepoInitContext) -> None:
         (workflows_dir / "cd.yml").write_text(cd_content)
 
     git.run("add", "-A")
-    git.run("commit", "-m", "chore(init): step 5 - CI/CD workflows")
+    git.run("commit", "-m", "chore(init): step 6 - CI/CD workflows")
     print("  Workflows committed.")
 
 
 def step_docs_site(ctx: RepoInitContext) -> None:
-    """Step 6: Scaffold the docs site."""
+    """Step 7: Scaffold the docs site."""
     if not ctx.publish_docs:
-        print("Step 6: Docs disabled, skipping.")
+        print("Step 7: Docs disabled, skipping.")
         return
 
-    print("Step 6: Scaffolding docs site...")
+    print("Step 7: Scaffolding docs site...")
     if ctx.work_dir is None:  # pragma: no cover
         raise RuntimeError("work_dir not set")
     wd = ctx.work_dir
@@ -1341,7 +1359,7 @@ def step_docs_site(ctx: RepoInitContext) -> None:
     )
 
     git.run("add", "-A")
-    git.run("commit", "-m", "chore(init): step 6 - docs site")
+    git.run("commit", "-m", "chore(init): step 7 - docs site")
     print("  Docs site committed.")
 
 
@@ -1360,8 +1378,8 @@ def _remote_branch_exists(repo: str, branch: str) -> bool:
 
 
 def step_branch_structure(ctx: RepoInitContext) -> None:
-    """Step 7: Set up develop + main branches."""
-    print("Step 7: Setting up branch structure...")
+    """Step 8: Set up develop + main branches."""
+    print("Step 8: Setting up branch structure...")
 
     develop_exists = _remote_branch_exists(ctx.repo, "develop")
     main_exists = _remote_branch_exists(ctx.repo, "main")
@@ -1444,7 +1462,7 @@ def _assert_ci_gates_producible(ctx: RepoInitContext, desired: DesiredState, *, 
 
 
 def step_github_config(ctx: RepoInitContext) -> None:
-    """Step 8: Apply GitHub config and labels."""
+    """Step 9: Apply GitHub config and labels."""
     from vergil_tooling.lib import config as config_module
     from vergil_tooling.lib.github_config import (
         apply_desired_state,
@@ -1453,7 +1471,7 @@ def step_github_config(ctx: RepoInitContext) -> None:
         ghas_available,
     )
 
-    print("Step 8: Applying GitHub config...")
+    print("Step 9: Applying GitHub config...")
 
     if ctx.work_dir is None:  # pragma: no cover
         raise RuntimeError("work_dir not set")
@@ -1484,12 +1502,12 @@ def step_github_config(ctx: RepoInitContext) -> None:
 
 
 def step_github_pages(ctx: RepoInitContext) -> None:
-    """Step 9: Configure GitHub Pages."""
+    """Step 10: Configure GitHub Pages."""
     if not ctx.publish_docs:
-        print("Step 9: Docs disabled, skipping Pages.")
+        print("Step 10: Docs disabled, skipping Pages.")
         return
 
-    print("Step 9: Configuring GitHub Pages...")
+    print("Step 10: Configuring GitHub Pages...")
 
     if not _remote_branch_exists(ctx.repo, "gh-pages"):
         git.run("checkout", "--orphan", "gh-pages")
@@ -1526,7 +1544,7 @@ def _check_remote_steps(ctx: RepoInitContext) -> set[int]:
         pass
 
     if _remote_branch_exists(ctx.repo, "develop") and _remote_branch_exists(ctx.repo, "main"):
-        completed.add(7)
+        completed.add(8)
 
     return completed
 
@@ -1570,11 +1588,12 @@ def run_wizard(ctx: RepoInitContext) -> None:
         (2, "Clone", lambda: step_clone(ctx)),
         (3, "vergil.toml", lambda: step_generate_config(ctx)),
         (4, "Config files", lambda: step_scaffold_config_files(ctx)),
-        (5, "CI/CD workflows", lambda: step_ci_cd_workflows(ctx)),
-        (6, "Docs site", lambda: step_docs_site(ctx)),
-        (7, "Branch structure", lambda: step_branch_structure(ctx)),
-        (8, "GitHub config", lambda: step_github_config(ctx)),
-        (9, "GitHub Pages", lambda: step_github_pages(ctx)),
+        (5, "Language skeleton", lambda: step_scaffold_language(ctx)),
+        (6, "CI/CD workflows", lambda: step_ci_cd_workflows(ctx)),
+        (7, "Docs site", lambda: step_docs_site(ctx)),
+        (8, "Branch structure", lambda: step_branch_structure(ctx)),
+        (9, "GitHub config", lambda: step_github_config(ctx)),
+        (10, "GitHub Pages", lambda: step_github_pages(ctx)),
     ]
 
     for step_num, desc, func in steps:

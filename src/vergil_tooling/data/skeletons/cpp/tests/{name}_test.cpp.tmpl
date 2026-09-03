@@ -1,0 +1,11 @@
+#include "{name}.hpp"
+
+#include <gtest/gtest.h>
+
+namespace {
+
+TEST({namespace}_toolchain, ReadyReturnsTrue) {
+    EXPECT_TRUE({namespace}::toolchain_ready());
+}
+
+} // namespace
