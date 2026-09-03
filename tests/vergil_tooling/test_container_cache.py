@@ -66,9 +66,14 @@ def _bootstrap_python(root: Path) -> None:
 
 
 def _bootstrap_cpp(root: Path) -> None:
-    """Create the manifests the cpp warmup requires."""
+    """Create the manifests the cpp warmup requires.
+
+    Includes conan.lock: the cpp warmup runs `conan install --lockfile=conan.lock`
+    (#3021), so the lock is a warmup prerequisite exactly like python's uv.lock.
+    """
     (root / "conanfile.txt").write_text("[generators]\nCMakeToolchain\n")
     (root / "CMakeLists.txt").write_text("cmake_minimum_required(VERSION 3.20)\n")
+    (root / "conan.lock").write_text("{}")
 
 
 # -- cache_sensitive_files ----------------------------------------------------
@@ -1401,14 +1406,36 @@ def test_cache_hash_changes_when_build_cache_file_changes(tmp_path: Path) -> Non
 # -- conditional warmup (issue #2881) -----------------------------------------
 
 
-def test_cpp_has_no_warmup_skip_entry(tmp_path: Path) -> None:
-    # cpp is born-green (epic #342): repo-init scaffolds a complete cpp
-    # skeleton, so there is no half-bootstrapped state to skip warmup for.
-    # cpp therefore has no _WARMUP_REQUIRES entry — missing_warmup_files
-    # returns [] for any tree, exactly like an unlisted language.
-    assert missing_warmup_files("cpp", tmp_path) == []  # empty tree
+def test_cpp_warmup_skips_during_born_green_window(tmp_path: Path) -> None:
+    # Born-green scaffolding (epic #342) renders the cpp skeleton
+    # (conanfile.txt + CMakeLists.txt) but NOT conan.lock — the lock is
+    # produced by the scaffold's own `conan lock create` step. During that
+    # transient no-lock window the cpp warmup, which runs
+    # `conan install --lockfile=conan.lock` (#3021), would fail on the missing
+    # lock (issue #3049). missing_warmup_files must therefore report conan.lock
+    # so warmup SKIPS, leaving an unwarmed-but-usable container for the scaffold
+    # step to create the lock in.
     (tmp_path / "conanfile.txt").write_text("[generators]\n")
-    assert missing_warmup_files("cpp", tmp_path) == []  # partial tree, still no skip
+    (tmp_path / "CMakeLists.txt").write_text("cmake_minimum_required(VERSION 3.20)\n")
+    assert missing_warmup_files("cpp", tmp_path) == ["conan.lock"]
+
+
+def test_cpp_warmup_runs_when_lock_present(tmp_path: Path) -> None:
+    # Once conan.lock is resolved and committed the cpp repo is fully
+    # bootstrapped, so every warmup prerequisite is satisfied and warmup runs.
+    _bootstrap_cpp(tmp_path)
+    assert missing_warmup_files("cpp", tmp_path) == []
+
+
+def test_cpp_warmup_reports_each_unsatisfied_group(tmp_path: Path) -> None:
+    # An empty tree is missing every cpp prerequisite group: the conanfile
+    # alternation renders as "conanfile.txt or conanfile.py", plus the two
+    # single-name groups.
+    assert missing_warmup_files("cpp", tmp_path) == [
+        "conanfile.txt or conanfile.py",
+        "CMakeLists.txt",
+        "conan.lock",
+    ]
 
 
 def test_missing_warmup_files_empty_when_bootstrapped(tmp_path: Path) -> None:

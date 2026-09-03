@@ -59,15 +59,25 @@ _DEFAULT_CACHE_FILES = ["vergil.toml"]
 # (issue #2871). Each entry is a list of groups; a group is satisfied when ANY
 # of its names is present, and every group must be satisfied for the warmup to
 # run. The group form — a group satisfied by any of several names — is retained
-# for languages that accept alternative manifest spellings. cpp has no entry:
-# repo-init scaffolds a complete cpp skeleton (born-green, epic #342), so there
-# is no half-bootstrapped cpp state to skip warmup for.
+# for languages that accept alternative manifest spellings.
+#
+# cpp's warmup requires conan.lock, because it runs
+# `conan install --lockfile=conan.lock` (#3021), exactly as python's warmup
+# requires uv.lock. Born-green scaffolding (epic #342) does NOT eliminate a
+# half-bootstrapped window — it *creates* one: `scaffold_language` renders the
+# cpp skeleton (conanfile.txt, CMakeLists.txt) and then runs `conan lock create`
+# to produce the lock. Between those two steps the lock does not yet exist, so a
+# warmup that assumed it would fail (`Lockfile doesn't exist`, issue #3049). The
+# conan.lock group makes warmup skip during that transient no-lock window, so the
+# scaffold's `conan lock create` runs in an unwarmed-but-usable container; the
+# later vrg-validate runs with the lock present and warms normally.
 _WARMUP_REQUIRES: dict[str, list[list[str]]] = {
     "python": [["pyproject.toml"], ["uv.lock"]],
     "ruby": [["Gemfile"]],
     "rust": [["Cargo.toml"]],
     "go": [["go.mod"]],
     "java": [["pom.xml"], ["mvnw"]],
+    "cpp": [["conanfile.txt", "conanfile.py"], ["CMakeLists.txt"], ["conan.lock"]],
     "typescript": [["package.json"], ["package-lock.json"]],
 }
 
