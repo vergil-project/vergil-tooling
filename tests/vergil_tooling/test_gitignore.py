@@ -23,7 +23,13 @@ if TYPE_CHECKING:
 #: (#3034) then removed the 18 dead Conan generator/CMakeDeps globs from the cpp
 #: fragment — with #2912 landed, Conan writes them under the already-ignored
 #: ``build/`` — so this frozen set drops them too, an *intentional, diffed* edit
-#: (the guard exists to catch *silent* drift, not a reviewed removal). The
+#: (the guard exists to catch *silent* drift, not a reviewed removal). Task 4's
+#: sweep over-pruned by one: ``CMakeUserPresets.json`` is written to the *source
+#: root* even with ``--output-folder=build`` (by-design Conan 2 ``CMakeToolchain``
+#: behavior — the user-presets pointer stub always lands beside the conanfile), so
+#: #3044 re-ignored it, restoring it to the cpp fragment and to this set (the
+#: sibling ``CMakePresets.json`` genuinely lives under ``build/`` and stays
+#: pruned). The
 #: lossless-split invariant below proves ``base ∪ all-fragments`` still
 #: reconstitutes exactly this set, so a future fragment edit that silently drops
 #: or invents a pattern fails CI. This is the regression guard the monolith used
@@ -73,6 +79,7 @@ _LEGACY_GITIGNORE_PATTERNS: tuple[str, ...] = (
     "*.obj",
     "*.a",
     "*.so",
+    "CMakeUserPresets.json",
 )
 
 
@@ -135,10 +142,12 @@ def test_compose_python_contains_base_and_python_lines() -> None:
 #: (#3034, epic #342 Task 4). With #2912 landed, Conan writes all of these under
 #: ``build/`` (already ignored via the base fragment), so the source-root globs
 #: are dead. Frozen here so the removal is asserted by shape, not by absence of a
-#: single sentinel.
+#: single sentinel. ``CMakeUserPresets.json`` was in this set until #3044 found it
+#: leaks to the source root even with ``--output-folder=build`` (see the
+#: ``_LEGACY_GITIGNORE_PATTERNS`` note); it is now *kept*, not dropped, so it is
+#: absent here.
 _DROPPED_CONAN_PATTERNS: tuple[str, ...] = (
     "CMakePresets.json",
-    "CMakeUserPresets.json",
     "cmakedeps_macros.cmake",
     "conan_toolchain.cmake",
     "conandeps_legacy.cmake",
@@ -178,6 +187,20 @@ def test_compose_cpp_drops_conan_generator_patterns() -> None:
     composed = gitignore.compose("cpp")
     for pattern in _DROPPED_CONAN_PATTERNS:
         assert pattern not in composed
+
+
+def test_compose_cpp_keeps_cmake_user_presets() -> None:
+    """``CMakeUserPresets.json`` stays ignored — it leaks to the source root (#3044).
+
+    Task 4 (#3034) over-pruned this file: Conan 2's ``CMakeToolchain`` always
+    writes the *user* presets pointer stub beside the conanfile (the source
+    root), regardless of ``--output-folder=build``, so a real ``conan install``
+    leaves it untracked at the root. Both the composed cpp set and the fleet
+    vocabulary must keep ignoring it (sibling ``CMakePresets.json`` genuinely
+    lives under ``build/`` and stays pruned).
+    """
+    assert "CMakeUserPresets.json" in gitignore.compose("cpp")
+    assert "CMakeUserPresets.json" in gitignore.managed_vocabulary()
 
 
 def test_compose_none_is_base_only() -> None:
