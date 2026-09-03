@@ -215,11 +215,33 @@ Runs nightly from each repo's `ops.yml` via the reusable
 Interactive (or `--non-interactive`) wizard that bootstraps a new
 managed repository: creates and clones the repo, generates
 `vergil.toml`, scaffolds config files (`CLAUDE.md`, hook-guard shim,
-the managed `.gitignore` fence), CI/CD/epic-rollup/`ops.yml` workflows,
-the docs site, branch structure, GitHub config, and Pages. The
-scaffolded `base + <language>` `.gitignore` fence and staggered-cron
-`ops.yml` make a new repo pass the config audit's two local checks from
-day one.
+the managed `.gitignore` fence), scaffolds the language skeleton
+(born-green — see below), generates
+CI/CD/epic-rollup/`ops.yml` workflows, the docs site, branch structure,
+GitHub config, and Pages. The scaffolded `base + <language>`
+`.gitignore` fence and staggered-cron `ops.yml` make a new repo pass the
+config audit's two local checks from day one.
+
+**Born-green language skeleton.** A dedicated scaffolding step (step 5,
+`lib/lang_scaffold.py`) renders the language's packaged skeleton
+templates (`src/vergil_tooling/data/skeletons/<lang>/`) into the fresh
+checkout, stamping only files that are missing so it never clobbers
+existing content. For a language that resolves a committed lockfile
+(cpp), it then runs that language's lock command
+(`conan lock create . -s build_type=Debug`) and one full `vrg-validate`
+inside the dev container, so the new repo is *born green* — it passes
+validation from its first commit. The container is a fail-fast
+precondition for a lock-resolving language: if no runtime is available
+the step refuses **before writing anything**, so such a repo is born
+green or not born at all, never half-created. The step writes no commit
+of its own; its host-rendered skeleton and container-resolved lock ride
+into the next step's commit. Because the container warmup for cpp
+requires a `conan.lock` and one does not yet exist during this window,
+the warmup deliberately **skips** until the scaffold's
+`conan lock create` produces the lock — the skeleton resolves in an
+unwarmed-but-usable container, and the warmup runs normally on every
+later build once the lock is committed
+([epic vergil-project/.github#342](https://github.com/vergil-project/.github/issues/342)).
 
 | Attribute | Value |
 |---|---|
