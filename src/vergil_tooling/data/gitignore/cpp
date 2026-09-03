@@ -3,3 +3,4 @@ build-sanitize/
 *.obj
 *.a
 *.so
+CMakeUserPresets.json
