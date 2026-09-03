@@ -50,6 +50,14 @@ class Language:
     name: str
     checks: dict[CheckKind, list[list[str]]]
     ecosystem: EcosystemInfo
+    # The per-language *lock* command — the one a scaffold (or a deliberate
+    # re-lock) runs to resolve and write the committed lockfile the pipeline
+    # then consumes. ``None`` for a language that commits no resolved lock.
+    # Kept on the registry entry (the single source of truth that already owns
+    # INSTALL/LINT/TEST) rather than a new hardcoded spot; #3021 removed
+    # ``conan lock create`` from INSTALL and this gives it a proper home (epic
+    # vergil-project/.github#342).
+    lock: list[str] | None = None
     # Per-kind gate cardinality. A kind absent from this mapping defaults to
     # ``PER_VERSION`` — so the existing single-image languages, which declare
     # nothing here, keep emitting one gate per version exactly as before. A
@@ -693,6 +701,13 @@ _REGISTRY: dict[str, Language] = {
             publish_cmd=None,
             publish_env_var=None,
         ),
+        # The committed ``conan.lock`` is resolved with this command — the same
+        # one a developer runs to refresh the lock deliberately (like ``uv
+        # lock``), and the one the born-green scaffold runs once at repo
+        # creation to produce the lock #3021 requires (epic
+        # vergil-project/.github#342). ``-s build_type=Debug`` matches the
+        # build_type the INSTALL/coverage/sanitizer builds resolve against.
+        lock=["conan", "lock", "create", ".", "-s", "build_type=Debug"],
         # LINT + AUDIT are compiler-agnostic → one gate each (§3.6). TYPECHECK
         # and TEST are the two-diagnostics engine → per compiler×version, which
         # is the PER_VERSION default, so they are intentionally omitted here.
@@ -890,6 +905,27 @@ def language_commands(
         return arg
 
     return [[_expand(arg) for arg in cmd] for cmd in entry.checks.get(kind, [])]
+
+
+def language_lock_command(language: str | None) -> list[str] | None:
+    """Return the lock-resolve command for a language, or ``None``.
+
+    The lock command resolves and writes the committed lockfile the validation
+    pipeline consumes (cpp → ``conan lock create . -s build_type=Debug``). A
+    language that commits no resolved lock — and any unknown/``None`` language —
+    yields ``None``. This is the single source of truth shared by the born-green
+    scaffold (``lang_scaffold``) and any future deliberate re-lock (epic
+    vergil-project/.github#342).
+
+    A fresh ``list`` copy is returned so a caller cannot mutate the registry's
+    stored command in place.
+    """
+    if language is None:
+        return None
+    entry = _REGISTRY.get(language)
+    if entry is None or entry.lock is None:
+        return None
+    return list(entry.lock)
 
 
 def check_cardinality(language: str | None, kind: CheckKind) -> Cardinality:
