@@ -237,6 +237,19 @@ _CPP_WARNINGS_CXX_FLAGS = " ".join(_CPP_WARNING_FLAGS)
 _CPP_BUILD_DIR = "build"
 _CPP_SANITIZE_BUILD_DIR = "build-sanitize"
 
+# Conan's generator output is written under ``build/`` (via ``conan install
+# --output-folder=build``), not the source root, so the working tree stays clean
+# after a build — retiring the gitignore whack-a-mole that chased Conan's
+# root-dropped ``conan_toolchain.cmake`` / CMakeDeps ``Find*.cmake`` /
+# ``*Config.cmake`` files (#2878, #2908). With the output relocated, every cmake
+# *configure* must point at the relocated toolchain file so ``find_package``
+# resolves from ``build/`` instead of the old source-root ``CMAKE_PREFIX_PATH``
+# hack. A plain ``--output-folder=build`` writes ``conan_toolchain.cmake``
+# directly under ``build/``, so the path is ``build/conan_toolchain.cmake``. The
+# sanitizer configure (``-B build-sanitize``) intentionally references this same
+# shared file — INSTALL runs ``conan install`` once and creates it first. (#2912)
+_CPP_TOOLCHAIN_FILE = "build/conan_toolchain.cmake"
+
 # The canonical parallel-worktree container (``<root>/.worktrees/``). cpp LINT
 # runs from the repo root, so both file-walking linters (clang-format's find
 # driver, cppcheck) must exclude it — a validation of one worktree must never
@@ -494,6 +507,11 @@ _REGISTRY: dict[str, Language] = {
                     "build_type=Debug",
                     "--build=missing",
                     "--lockfile=conan.lock",
+                    # Write Conan's generator output (toolchain file, CMakeDeps
+                    # config files, env scripts, CMakePresets.json) under the
+                    # already-ignored ``build/`` instead of the source root, so
+                    # the working tree stays clean after a build. (#2912)
+                    f"--output-folder={_CPP_BUILD_DIR}",
                 ],
                 [
                     "cmake",
@@ -505,6 +523,7 @@ _REGISTRY: dict[str, Language] = {
                     "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
                     "-DVERGIL_CPP_STD={std}",
                     "-DVERGIL_CPP_STDLIB={stdlib}",
+                    f"-DCMAKE_TOOLCHAIN_FILE={_CPP_TOOLCHAIN_FILE}",
                 ],
             ],
             # LINT runs *once* on the primary Clang image (§3.6). No shell is
@@ -592,6 +611,7 @@ _REGISTRY: dict[str, Language] = {
                     "-DVERGIL_CPP_STD={std}",
                     "-DVERGIL_CPP_STDLIB={stdlib}",
                     f"-DCMAKE_CXX_FLAGS={_CPP_WARNINGS_CXX_FLAGS}",
+                    f"-DCMAKE_TOOLCHAIN_FILE={_CPP_TOOLCHAIN_FILE}",
                 ],
                 ["cmake", "--build", _CPP_BUILD_DIR, "--parallel"],
             ],
@@ -611,6 +631,7 @@ _REGISTRY: dict[str, Language] = {
                     "-DVERGIL_CPP_STD={std}",
                     "-DVERGIL_CPP_STDLIB={stdlib}",
                     "-DVERGIL_CPP_COVERAGE=ON",
+                    f"-DCMAKE_TOOLCHAIN_FILE={_CPP_TOOLCHAIN_FILE}",
                 ],
                 ["cmake", "--build", _CPP_BUILD_DIR, "--parallel"],
                 ["ctest", "--test-dir", _CPP_BUILD_DIR, "--output-on-failure"],
@@ -641,6 +662,11 @@ _REGISTRY: dict[str, Language] = {
                     "-DVERGIL_CPP_STD={std}",
                     "-DVERGIL_CPP_STDLIB={stdlib}",
                     "-DVERGIL_CPP_SANITIZE=address,undefined",
+                    # The sanitizer build reads the shared toolchain file that
+                    # INSTALL's single ``conan install`` wrote under ``build/`` —
+                    # a plain file reference, so pointing the ``build-sanitize``
+                    # configure at ``build/conan_toolchain.cmake`` is fine. (#2912)
+                    f"-DCMAKE_TOOLCHAIN_FILE={_CPP_TOOLCHAIN_FILE}",
                 ],
                 ["cmake", "--build", _CPP_SANITIZE_BUILD_DIR, "--parallel"],
                 ["ctest", "--test-dir", _CPP_SANITIZE_BUILD_DIR, "--output-on-failure"],

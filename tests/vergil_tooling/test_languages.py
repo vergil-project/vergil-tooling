@@ -408,7 +408,13 @@ def test_cpp_install_commands() -> None:
     # Conan resolves deps in the same build_type (Debug) as the CMake
     # coverage/sanitizer builds — a Release/Debug mismatch broke the cold
     # rebuild in T11 (#2558): fmt/format.h not found. (#2572)
-    assert "conan install . -s build_type=Debug --build=missing --lockfile=conan.lock" in joined
+    # Conan writes its generator output under the already-ignored ``build/``
+    # (``--output-folder=build``), not the source root — retiring the gitignore
+    # whack-a-mole for Conan's root-dropped files (#2878/#2908). (#2912)
+    assert (
+        "conan install . -s build_type=Debug --build=missing "
+        "--lockfile=conan.lock --output-folder=build" in joined
+    )
     # The conan step pins build_type=Debug to stay consistent with the build.
     for cmd in language_commands("cpp", CheckKind.INSTALL):
         if cmd and cmd[0] == "conan":
@@ -613,6 +619,20 @@ def test_cpp_std_stdlib_are_threaded_from_config() -> None:
     lint = language_commands("cpp", CheckKind.LINT, cpp_std="c++17")
     cppcheck_cmd = [c for c in lint if c[0] == "cppcheck"][0]
     assert "--std=c++17" in cppcheck_cmd
+
+
+def test_cpp_install_writes_conan_output_to_build() -> None:
+    cmds = language_commands("cpp", CheckKind.INSTALL, cpp_std="c++20", cpp_stdlib="libstdc++")
+    conan_install = next(c for c in cmds if c[:2] == ["conan", "install"])
+    assert "--output-folder=build" in conan_install
+
+
+def test_cpp_cmake_configures_use_conan_toolchain() -> None:
+    for kind in (CheckKind.INSTALL, CheckKind.TYPECHECK, CheckKind.TEST):
+        cmds = language_commands("cpp", kind, cpp_std="c++20", cpp_stdlib="libstdc++")
+        for c in cmds:
+            if c[:1] == ["cmake"] and "-S" in c:  # a configure, not a --build
+                assert "-DCMAKE_TOOLCHAIN_FILE=build/conan_toolchain.cmake" in c, (kind, c)
 
 
 # -- TypeScript (epic vergil-project/.github#284, T4) -------------------------
