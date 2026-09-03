@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.220] - 2026-09-03
+
+### Bug fixes
+
+- write Conan output under build/, cmake via toolchain file (#2912) (#3037)
+
+### Documentation
+
+- reflect evidence-gate + dynamic-matrix model in CI docs (#338) (#3031)
+
+### Features
+
+- born-green language-skeleton scaffold with cpp templates + lock command (#3033) (#3038)
+
+### Refactoring
+
+- drop dead Conan generator .gitignore blocks (#3034) (#3039)
+- drop dead _WARMUP_REQUIRES cpp entry under born-green (#3035) (#3040)
+
 ## [2.1.219] - 2026-09-02
 
 ### Bug fixes
