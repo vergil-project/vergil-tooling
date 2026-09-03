@@ -290,7 +290,14 @@ via the `[validation]` override in `vergil.toml` — see
 **Tier 2 — PR CI (~5-8 min):** Triggers on `pull_request`. Runs every
 quality check across the full Python version matrix (3.12, 3.13, 3.14),
 security scanners (CodeQL, Trivy, Semgrep), standards compliance, and
-release gates. Workflow: `.github/workflows/ci.yml`.
+release gates. Workflow: `.github/workflows/ci.yml`. `ci.yml` is a **thin
+caller** of the `vergil-actions` reusable workflows, passing only
+`language:`/`container-suffix:`; the matrix is read from `[ci].versions` in
+`vergil.toml` at run time, and branch protection requires the stable,
+version-agnostic `audit / evidence`, `quality / evidence`, and
+`test / evidence` gates rather than per-version checks — so a `[ci].versions`
+change needs no edit to `ci.yml` or the ruleset (epic
+vergil-project/.github#338).
 
 Push-CI was retired once `vrg-validate` matched the checks push-CI ran.
 Note one deliberate gap in the "parity with PR-CI" framing: local

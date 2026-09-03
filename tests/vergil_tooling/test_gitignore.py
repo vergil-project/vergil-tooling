@@ -16,12 +16,18 @@ if TYPE_CHECKING:
     import pytest
 
 
-#: The 62 pattern lines of the pre-Task-10 monolith
-#: (``src/vergil_tooling/data/gitignore.baseline``), frozen verbatim before that
-#: file was deleted (epic vergil-project/.github#325, Task 10). The lossless-split
-#: invariant below proves ``base ∪ all-fragments`` still reconstitutes exactly
-#: this set, so a future fragment edit that silently drops or invents a pattern
-#: fails CI. This is the regression guard the monolith used to be.
+#: The managed pattern set, frozen verbatim as the lossless-split regression
+#: guard. It began as the 62 pattern lines of the pre-Task-10 monolith
+#: (``src/vergil_tooling/data/gitignore.baseline``), captured before that file
+#: was deleted (epic vergil-project/.github#325, Task 10). Epic #342 Task 4
+#: (#3034) then removed the 18 dead Conan generator/CMakeDeps globs from the cpp
+#: fragment — with #2912 landed, Conan writes them under the already-ignored
+#: ``build/`` — so this frozen set drops them too, an *intentional, diffed* edit
+#: (the guard exists to catch *silent* drift, not a reviewed removal). The
+#: lossless-split invariant below proves ``base ∪ all-fragments`` still
+#: reconstitutes exactly this set, so a future fragment edit that silently drops
+#: or invents a pattern fails CI. This is the regression guard the monolith used
+#: to be.
 _LEGACY_GITIGNORE_PATTERNS: tuple[str, ...] = (
     "*.swp",
     "*.swo",
@@ -67,24 +73,6 @@ _LEGACY_GITIGNORE_PATTERNS: tuple[str, ...] = (
     "*.obj",
     "*.a",
     "*.so",
-    "CMakePresets.json",
-    "CMakeUserPresets.json",
-    "cmakedeps_macros.cmake",
-    "conan_toolchain.cmake",
-    "conandeps_legacy.cmake",
-    "conanbuild*.sh",
-    "conanrun*.sh",
-    "conanbuildenv-*.sh",
-    "conanrunenv-*.sh",
-    "deactivate_conanbuild*.sh",
-    "deactivate_conanrun*.sh",
-    "Find*.cmake",
-    "*Config.cmake",
-    "*ConfigVersion.cmake",
-    "*Targets.cmake",
-    "*-Target-*.cmake",
-    "*-data.cmake",
-    "module-*.cmake",
 )
 
 
@@ -102,7 +90,7 @@ def _legacy_commented_monolith(extra: list[str] | None = None) -> str:
 
 
 def test_split_is_lossless_against_baseline() -> None:
-    """base ∪ all fragments == the frozen 62 legacy monolith patterns, exactly."""
+    """base ∪ all fragments == the frozen managed pattern set, exactly."""
     fragments = set(gitignore.load_base())
     for lang in gitignore.FRAGMENT_LANGS:
         fragments.update(gitignore.load_fragment(lang))
@@ -143,9 +131,53 @@ def test_compose_python_contains_base_and_python_lines() -> None:
     assert "build/" in composed  # a base line
 
 
-def test_compose_cpp_contains_cmakedeps_line() -> None:
+#: The Conan generator + CMakeDeps output patterns removed from the cpp fragment
+#: (#3034, epic #342 Task 4). With #2912 landed, Conan writes all of these under
+#: ``build/`` (already ignored via the base fragment), so the source-root globs
+#: are dead. Frozen here so the removal is asserted by shape, not by absence of a
+#: single sentinel.
+_DROPPED_CONAN_PATTERNS: tuple[str, ...] = (
+    "CMakePresets.json",
+    "CMakeUserPresets.json",
+    "cmakedeps_macros.cmake",
+    "conan_toolchain.cmake",
+    "conandeps_legacy.cmake",
+    "conanbuild*.sh",
+    "conanrun*.sh",
+    "conanbuildenv-*.sh",
+    "conanrunenv-*.sh",
+    "deactivate_conanbuild*.sh",
+    "deactivate_conanrun*.sh",
+    "Find*.cmake",
+    "*Config.cmake",
+    "*ConfigVersion.cmake",
+    "*Targets.cmake",
+    "*-Target-*.cmake",
+    "*-data.cmake",
+    "module-*.cmake",
+)
+
+
+def test_baseline_drops_conan_generator_blocks() -> None:
+    """The cpp compose no longer carries the dead Conan generator/CMakeDeps globs.
+
+    Adapted from the epic-#342 Task-4 plan test (which named the pre-#325
+    monolith API ``repo_config._load_gitignore_baseline()``) onto the live
+    fragment model: ``gitignore.compose("cpp")`` is the current base ∪ cpp set.
+    """
+    patterns = gitignore.compose("cpp")
+    for gone in ("conan_toolchain.cmake", "Find*.cmake", "module-*.cmake", "CMakePresets.json"):
+        assert gone not in patterns
+    assert "build/" in patterns  # still ignored (base fragment)
+    for kept in ("build-sanitize/", "*.o", "*.obj", "*.a", "*.so"):
+        assert kept in patterns  # compiled-artifact patterns stay
+
+
+def test_compose_cpp_drops_conan_generator_patterns() -> None:
+    """No dropped Conan pattern survives in the composed cpp set (#3034)."""
     composed = gitignore.compose("cpp")
-    assert "Find*.cmake" in composed  # a #2908 CMakeDeps line, cpp-only
+    for pattern in _DROPPED_CONAN_PATTERNS:
+        assert pattern not in composed
 
 
 def test_compose_none_is_base_only() -> None:
@@ -187,9 +219,16 @@ def test_compose_dedupes_overlap_between_base_and_fragment(
 
 def test_managed_vocabulary_contains_known_lines() -> None:
     vocab = gitignore.managed_vocabulary()
-    assert "conan_toolchain.cmake" in vocab  # cpp
+    assert "*.o" in vocab  # cpp (compiled-artifact pattern; the Conan globs left in #3034)
     assert ".mypy_cache/" in vocab  # python
     assert "build/" in vocab  # base
+
+
+def test_managed_vocabulary_excludes_dropped_conan_patterns() -> None:
+    """The dead Conan globs left the fleet vocabulary entirely (#3034)."""
+    vocab = gitignore.managed_vocabulary()
+    for pattern in _DROPPED_CONAN_PATTERNS:
+        assert pattern not in vocab
 
 
 def test_managed_vocabulary_equals_baseline_set() -> None:
