@@ -58,14 +58,16 @@ _DEFAULT_CACHE_FILES = ["vergil.toml"]
 # bootstrap case, where the container is the natural place to author them
 # (issue #2871). Each entry is a list of groups; a group is satisfied when ANY
 # of its names is present, and every group must be satisfied for the warmup to
-# run. The group form exists for cpp, which accepts either conanfile spelling.
+# run. The group form — a group satisfied by any of several names — is retained
+# for languages that accept alternative manifest spellings. cpp has no entry:
+# repo-init scaffolds a complete cpp skeleton (born-green, epic #342), so there
+# is no half-bootstrapped cpp state to skip warmup for.
 _WARMUP_REQUIRES: dict[str, list[list[str]]] = {
     "python": [["pyproject.toml"], ["uv.lock"]],
     "ruby": [["Gemfile"]],
     "rust": [["Cargo.toml"]],
     "go": [["go.mod"]],
     "java": [["pom.xml"], ["mvnw"]],
-    "cpp": [["conanfile.txt", "conanfile.py"], ["CMakeLists.txt"]],
     "typescript": [["package.json"], ["package-lock.json"]],
 }
 
