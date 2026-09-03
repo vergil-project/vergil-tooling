@@ -8,8 +8,10 @@ with a language fragment into an order-stable, de-duplicated pattern list. The
 partitioned ``base + all-fragments`` is the single source of truth — it replaced
 the former monolithic ``data/gitignore.baseline`` (deleted in Task 10, epic
 vergil-project/.github#325); the lossless-split invariant test freezes the
-monolith's 62 patterns as a regression guard against a fragment edit silently
-dropping one.
+managed pattern set as a regression guard against a fragment edit silently
+dropping one. The frozen set began as the monolith's 62 patterns and lost the
+18 dead Conan generator globs in epic #342 Task 4 (#3034), once #2912 relocated
+Conan output under the already-ignored ``build/``.
 """
 
 from __future__ import annotations
