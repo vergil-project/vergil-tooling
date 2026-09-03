@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.222/">
       
       
         <link rel="next" href="../v2.1.220/">
@@ -1247,6 +1247,8 @@
       
         
       
+        
+      
     
     
     
@@ -1302,6 +1304,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.222/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.222
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -14420,6 +14450,7 @@
 Task 4 (#3034) over-pruned the cpp gitignore fragment: it removed both CMakePresets.json and CMakeUserPresets.json on the premise that conan install --output-folder=build relocates all Conan output under the already-ignored build/. That holds for CMakePresets.json but not for CMakeUserPresets.json — Conan 2's CMakeToolchain always writes the user-presets pointer stub to the source root beside the conanfile, regardless of --output-folder, so a real conan install leaves it untracked at the root and dirties the tree.</li>
 </ul>
 <p>Re-add CMakeUserPresets.json to the cpp fragment and to the frozen _LEGACY_GITIGNORE_PATTERNS set (44-&gt;45), drop it from _DROPPED_CONAN_PATTERNS, and assert compose(cpp) and managed_vocabulary() keep ignoring it. CMakePresets.json stays pruned (it genuinely lives under build/).</p>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.221/v2.1.221-ci-evidence.tar.gz">Download →</a></p>
 
 
 
