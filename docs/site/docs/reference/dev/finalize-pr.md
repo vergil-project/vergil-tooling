@@ -66,6 +66,24 @@ still-running checks are waited on as normal; if the deadline elapses
 with nothing orphaned (for example an app-posted status that is legitimately
 slow), finalize fails with a plain timeout error instead.
 
+**Required checks.** "Green" includes the target branch's *required*
+status checks, read from both classic branch protection
+(`GET /repos/{owner}/{repo}/branches/{branch}`) and repository rulesets
+(`GET /repos/{owner}/{repo}/rules/branches/{branch}`). CI aggregator jobs
+such as `test / evidence` only register as checks once their dependencies
+finish, so every *registered* check can be done while a required one does
+not exist yet. Finalize keeps waiting until each required check is
+registered and terminal, printing what it awaits (for example
+`Awaiting required checks: test / evidence (not registered)`). If the
+merge is still refused with "the base branch policy prohibits the merge"
+and no check has failed, finalize treats it as *not ready*: it polls and
+re-attempts within the same deadline, then fails naming the outstanding
+required checks. A policy block that waiting cannot clear, such as a
+required review (`reviewDecision=REVIEW_REQUIRED`), aborts at once. If the
+required checks cannot be read (permissions or an API error), finalize
+prints a warning and falls back to waiting on registered checks only
+(issue #3061).
+
 After the merge, the PR's own branch and worktree are cleaned up
 explicitly (a squash merge hides them from `git branch --merged`),
 followed by the usual sweep, pull, and prune.
