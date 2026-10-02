@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.223/">
       
       
         <link rel="next" href="../v2.1.221/">
@@ -1249,6 +1249,8 @@
       
         
       
+        
+      
     
     
     
@@ -1304,6 +1306,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.223/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.223
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -14451,6 +14481,7 @@ The cpp warmup runs <code>conan install --lockfile=conan.lock</code> (#3021), bu
 </ul>
 <p>Restore a cpp entry mirroring python's manifest+lock pattern, with a <code>conan.lock</code> group. During the born-green no-lock window (skeleton rendered, lock not yet resolved) missing_warmup_files reports conan.lock so warmup skips, leaving an unwarmed-but-usable container for <code>conan lock create</code>; the later vrg-validate runs with the lock present and warms normally.</p>
 <p>Replace the stale test_cpp_has_no_warmup_skip_entry (asserting no skip) with tests of the restored behavior, and fold conan.lock into the _bootstrap_cpp helper since it is now a warmup prerequisite.</p>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.222/v2.1.222-ci-evidence.tar.gz">Download →</a></p>
 
 
 
