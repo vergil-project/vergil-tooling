@@ -4066,6 +4066,72 @@ class TestCloudRebuild:
         m["apply_volume"].assert_called_once()
         m["apply_vm"].assert_called_once()
 
+    def test_cloud_rebuild_incompatible_module_aborts_before_destroy(
+        self, _typed_cloud_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # The compat check runs BEFORE the destroy half, so an old module tag never
+        # tears down a working box it then could not recreate with the asked-for type.
+        with _CloudPatches(tmp_path / "state", status="Running") as m:
+            result = main(["rebuild", "lmf/cloud", "--config", str(_typed_cloud_repo)])
+        assert result == 1
+        m["destroy_vm"].assert_not_called()
+        m["apply_vm"].assert_not_called()
+        assert "boot_disk_type is set" in capsys.readouterr().err
+
+
+# --- boot_disk_type module-tag compatibility (#3056) -------------------------
+
+_TYPED_OFF_PLATFORM_VM = _OFF_PLATFORM_VM + 'boot_disk_type = "pd-ssd"\n'
+
+
+@pytest.fixture()
+def _typed_cloud_repo(tmp_path: Path) -> Path:
+    """Like ``_cloud_repo`` but the off-platform [vm] also sets ``boot_disk_type``."""
+    projects = tmp_path / "projects"
+    _make_repo(projects, "lmf", "cloud", _TYPED_OFF_PLATFORM_VM)
+    return _identities(tmp_path, projects)
+
+
+def _declare_boot_disk_type(modules_root: Path) -> None:
+    vm = modules_root / "gcp" / "vm"
+    vm.mkdir(parents=True)
+    (vm / "variables.tf").write_text(
+        'variable "boot_disk_type" {\n  type    = string\n  default = null\n}\n',
+        encoding="utf-8",
+    )
+
+
+class TestCloudBootDiskTypeCompat:
+    def test_create_with_compatible_module_threads_type(
+        self, _typed_cloud_repo: Path, tmp_path: Path
+    ) -> None:
+        state = tmp_path / "state"
+        with _CloudPatches(state) as m:
+            _declare_boot_disk_type(state / "modules")
+            result = main(
+                ["create", "lmf/cloud", "--config", str(_typed_cloud_repo)]
+                + ["--output-format", "plain"]
+            )
+        assert result == 0
+        assert m["apply_vm"].call_args.kwargs["boot_disk_type"] == "pd-ssd"
+
+    def test_create_with_old_module_fails_before_any_apply(
+        self, _typed_cloud_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with _CloudPatches(tmp_path / "state") as m:
+            result = main(
+                ["create", "lmf/cloud", "--config", str(_typed_cloud_repo)]
+                + ["--output-format", "plain"]
+            )
+        assert result == 1
+        m["apply_volume"].assert_not_called()
+        m["apply_vm"].assert_not_called()
+        # The remedy rides the exception text, so the pipeline's failure summary shows it.
+        out = capsys.readouterr().out
+        assert "fetch-modules" in out
+        assert "ModuleCompatError" in out
+        assert "v2.1.42" in out
+
 
 class TestCloudSession:
     def test_cloud_session_uses_iap_transport(self, _cloud_repo: Path, tmp_path: Path) -> None:

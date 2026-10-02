@@ -272,6 +272,10 @@ class RoleOverlay:
     # Optional even off-platform: unset -> the vergil-vm module's boot_disk_gib
     # default (unchanged behaviour). Format-checked (`<N>GiB`) at composition.
     boot_disk: str | None = None
+    # Ephemeral boot/root-disk TYPE when off-platform (vergil-tooling #3056), e.g.
+    # "pd-ssd" on GCP. Optional: unset -> the vergil-vm module's own default. Checked
+    # against the provider's allowed set at composition.
+    boot_disk_type: str | None = None
     zone: str | None = None
     # Named-instance overlays (vergil-tooling #1831). Each value is itself a
     # RoleOverlay parsed from [vm.<identity>.instances.<name>]; an instance overlay
@@ -299,6 +303,7 @@ class VmStanza:
     instance: str | None = None
     volume: str | None = None
     boot_disk: str | None = None
+    boot_disk_type: str | None = None
     zone: str | None = None
 
 
@@ -327,6 +332,7 @@ _VM_KEYS = frozenset(
         "instance",
         "volume",
         "boot_disk",
+        "boot_disk_type",
         "zone",
     }
 )
@@ -335,7 +341,16 @@ _VM_KEYS = frozenset(
 # string when present); the *required-when-off-platform* contract and the value
 # enums/formats are enforced at composition (compose_vm_spec), where the cascade
 # is resolved to one effective value per key.
-_VM_STR_SCALARS = ("backend", "provider", "region", "instance", "volume", "boot_disk", "zone")
+_VM_STR_SCALARS = (
+    "backend",
+    "provider",
+    "region",
+    "instance",
+    "volume",
+    "boot_disk",
+    "boot_disk_type",
+    "zone",
+)
 
 
 def _vm_str_scalar(raw: dict[str, Any], key: str, ctx: str, source: str) -> str | None:

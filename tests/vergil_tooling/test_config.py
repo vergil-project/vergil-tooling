@@ -1228,6 +1228,43 @@ class TestParseVmStanza:
         with pytest.raises(ConfigError, match="'boot_disk' must be a string"):
             parse_vm_stanza({"vm": {"boot_disk": 100}})
 
+    # -- boot_disk_type (ephemeral root-disk type) — vergil-tooling #3056 -----
+
+    def test_boot_disk_type_parsed_at_vm_tier(self) -> None:
+        stanza = parse_vm_stanza({"vm": {"boot_disk_type": "pd-ssd"}})
+        assert stanza is not None
+        assert stanza.boot_disk_type == "pd-ssd"
+
+    def test_boot_disk_type_parsed_at_role_tier(self) -> None:
+        stanza = parse_vm_stanza({"vm": {"vergil-user": {"boot_disk_type": "pd-balanced"}}})
+        assert stanza is not None
+        assert stanza.roles["vergil-user"].boot_disk_type == "pd-balanced"
+        assert stanza.boot_disk_type is None  # only the role tier declared it
+
+    def test_boot_disk_type_parsed_at_instance_tier(self) -> None:
+        stanza = parse_vm_stanza(
+            {"vm": {"vergil-user": {"instances": {"cloud": {"boot_disk_type": "pd-ssd"}}}}}
+        )
+        assert stanza is not None
+        overlay = stanza.roles["vergil-user"]
+        assert overlay.instances["cloud"].boot_disk_type == "pd-ssd"
+        assert overlay.boot_disk_type is None
+
+    def test_boot_disk_type_absent_is_none(self) -> None:
+        stanza = parse_vm_stanza({"vm": {"packages": []}})
+        assert stanza is not None
+        assert stanza.boot_disk_type is None
+
+    def test_boot_disk_type_not_flagged_unrecognized(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        parse_vm_stanza({"vm": {"vergil-user": {"boot_disk_type": "pd-ssd"}}})
+        assert "unrecognized" not in capsys.readouterr().err
+
+    def test_boot_disk_type_non_string_rejected(self) -> None:
+        with pytest.raises(ConfigError, match="'boot_disk_type' must be a string"):
+            parse_vm_stanza({"vm": {"boot_disk_type": True}})
+
 
 # -- [project] ghas key -------------------------------------------------------
 

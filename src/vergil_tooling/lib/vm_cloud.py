@@ -105,6 +105,47 @@ def fetch_modules(tag: str) -> Path:
     return matches[0]
 
 
+# Optional spec fields threaded to the VM module as a tofu variable of the same name,
+# mapped to the first vergil-vm release whose modules declare it. A host may still
+# resolve an older module tag, and tofu only WARNS about an undeclared variable in a
+# -var-file, so passing one to an older module would silently drop it (e.g. create
+# the default disk despite boot_disk_type = "pd-ssd") — hence the explicit check.
+_OPTIONAL_VM_VARS = {"boot_disk_type": "v2.1.42"}  # vergil-vm#312 / vergil-tooling #3056
+
+
+def _module_declares(module_dir: Path, variable: str) -> bool:
+    """True when any ``*.tf`` file in *module_dir* declares ``variable "<variable>"``."""
+    pattern = re.compile(rf'^\s*variable\s+"{re.escape(variable)}"', re.MULTILINE)
+    return any(pattern.search(tf.read_text(encoding="utf-8")) for tf in module_dir.glob("*.tf"))
+
+
+class ModuleCompatError(RuntimeError):
+    """The fetched vergil-vm modules cannot honour a field the composed spec sets."""
+
+
+def require_module_support(modules_root: Path, spec: ComposedSpec, tag: str) -> None:
+    """Raise :class:`ModuleCompatError` when the fetched ``vm`` module lacks an optional var.
+
+    The module tag comes from ``identities.toml`` (``vergil-vm``, else ``vergil``) or
+    ``--tag``, independently of this tooling release, so a spec can set a field (e.g.
+    ``boot_disk_type``) that the resolved vergil-vm tag predates. Checking the fetched
+    module's own variable declarations — rather than comparing version numbers — stays
+    correct for moving tags (``v2.1``) and pinned ones alike. The message is the
+    exception text, so a pipeline stage's failure summary carries the remedy.
+    """
+    module_dir = modules_root / spec.provider / "vm"
+    for variable, since in _OPTIONAL_VM_VARS.items():
+        if getattr(spec, variable) and not _module_declares(module_dir, variable):
+            msg = (
+                f"[vm] {variable} is set, but the vergil-vm modules at tag '{tag}' predate "
+                f"it (the {spec.provider}/vm module declares no '{variable}' variable; it "
+                f"first ships in vergil-vm {since}). Point the module tag at that release "
+                "or later ('vergil-vm' in identities.toml, or --tag), or remove "
+                f"{variable} from the profile."
+            )
+            raise ModuleCompatError(msg)
+
+
 def provision_params(
     *,
     packages: list[str] | None = None,
@@ -745,6 +786,7 @@ def apply_vm(
     provision_env: str,
     labels: dict[str, str],
     boot_disk_gib: int | None = None,
+    boot_disk_type: str | None = None,
     provider: str = "gcp",
 ) -> dict[str, str]:
     """Apply the VM module against the existing volume; return its outputs (host, ssh_user).
@@ -776,6 +818,9 @@ def apply_vm(
     # composed — omitting the var keeps the unchanged-default behaviour (#1907).
     if boot_disk_gib is not None:
         tofu_vars["boot_disk_gib"] = boot_disk_gib
+    # Same rule for the boot-disk type (#3056): omitted -> the module's default type.
+    if boot_disk_type is not None:
+        tofu_vars["boot_disk_type"] = boot_disk_type
     try:
         _run_tofu(module_dir, state, "apply", tofu_vars, strategy=strategy)
     except subprocess.CalledProcessError:
@@ -1385,6 +1430,11 @@ class OffPlatformBackend:
         # spec declares one, so an unset profile rides the module default (#1907).
         if self.spec.boot_disk:
             result["boot_disk_gib"] = int(self.spec.boot_disk.removesuffix("GiB"))
+        # boot_disk_type likewise rides only when declared (#3056); compose_vm_spec has
+        # already checked it against the provider's allowed set, and the fetched module
+        # was checked to declare the variable (require_module_support).
+        if self.spec.boot_disk_type:
+            result["boot_disk_type"] = self.spec.boot_disk_type
         # Azure: generate/persist an ed25519 keypair and pass the public key to the
         # module so it can install it in cloud-init's authorized_keys. GCP uses IAP
         # (OS Login / metadata keys managed by gcloud) so it needs no injected key —
