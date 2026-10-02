@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.223] - 2026-10-02
+
+### Documentation
+
+- reflect born-green scaffolding and clean Conan-output path in site docs (#3054)
+
+### Features
+
+- boot_disk_type in the VM spec, threaded to the vergil-vm module (#3057)
+
 ## [2.1.222] - 2026-09-03
 
 ### Bug fixes
