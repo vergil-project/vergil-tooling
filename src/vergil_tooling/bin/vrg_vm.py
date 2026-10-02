@@ -851,6 +851,9 @@ def _require_transport(state: _CloudState) -> Transport:
 def _cs_fetch_modules(state: _CloudState) -> None:
     print(f"Fetching OpenTofu modules ({state.tag})...")
     state.modules_root = vm_cloud.fetch_modules(state.tag)
+    # Before any apply: a spec field the resolved module tag predates fails here, loudly,
+    # rather than being silently ignored by tofu (#3056).
+    vm_cloud.require_module_support(state.modules_root, state.backend.spec, state.tag)
 
 
 def _candidate_zones(backend: OffPlatformBackend) -> list[str]:
@@ -1040,6 +1043,13 @@ def _cloud_create(
     if destroy_first:
         modules_root = vm_cloud.fetch_modules(tag)
         try:
+            # Check module compatibility BEFORE the destroy half, so an incompatible tag
+            # never tears down a working box it then cannot recreate (#3056).
+            try:
+                vm_cloud.require_module_support(modules_root, backend.spec, tag)
+            except vm_cloud.ModuleCompatError as exc:
+                print(f"ERROR: {exc}", file=sys.stderr)
+                return 1
             print(f"Destroying disposable VM '{backend.name}' before rebuild...")
             vm_cloud.destroy_vm(modules_root, backend.state_dir(), provider=backend.provider_label)
         finally:

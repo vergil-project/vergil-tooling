@@ -69,6 +69,7 @@ any `[vm]` key marks the spec customized, which gives the repo a dedicated VM.
 | `instance` | string | *(none)* | Provider-native, nested-virt-capable instance type when off-platform (e.g. `"n2-standard-16"`) |
 | `volume` | string `"<N>GiB"` | *(none)* | **Persistent** block-volume size when off-platform — created once, reused, outlives the VM. Does **not** fall back to `disk` |
 | `boot_disk` | string `"<N>GiB"` | *(module default, ~30 GiB)* | **Ephemeral** boot/root-disk size when off-platform. Optional — unset keeps the image default. Sizes the disk that holds scratch data living outside `volume` |
+| `boot_disk_type` | string | *(module default)* | **Ephemeral** boot/root-disk type when off-platform, provider-native (GCP `"pd-ssd"`, Azure `"Premium_LRS"`). Optional; checked against the provider's allowed set (see below) |
 
 The vergil-vm template owns *how* declarative installs happen — repos
 never supply scripts.
@@ -122,7 +123,7 @@ lender's checkout and running services are untouched).
   which owns the box.
 - One hop only — the lender may not itself declare `shared_from`.
 
-## Off-platform (cloud) backend (`backend`, `provider`, `region`, `instance`, `volume`, `boot_disk`)
+## Off-platform (cloud) backend
 
 By default a repo's VM is a local macOS Lima box (`backend = "local"`).
 Setting `backend = "off-platform"` switches it to a **remote
@@ -141,6 +142,7 @@ region    = "us-central1"      # provider-native region
 instance  = "n2-standard-16"   # provider-native, nested-virt-capable
 volume    = "300GiB"           # PERSISTENT volume — outlives the VM
 boot_disk = "100GiB"           # EPHEMERAL boot disk — optional; dies with the VM
+boot_disk_type = "pd-ssd"      # its disk type — optional; provider-native
 nested    = true               # /dev/kvm in the cloud box too
 cpus      = 12                 # request / under-provision intent (see below)
 memory    = "64GiB"
@@ -168,6 +170,37 @@ memory    = "64GiB"
   qcow2 overlays, which belong on the wipe-on-rebuild boot disk rather
   than the never-wiped `volume`. Unlike `volume` it is **not required**
   off-platform, and it never enters the local (Lima) spec.
+- **`boot_disk_type` picks the ephemeral boot disk's type** (optional).
+  Unset, the key is not passed and the vergil-vm module default holds:
+  on GCP, GCE picks the default type for the machine series; on Azure,
+  `StandardSSD_LRS`. Set it when the boot disk
+  carries I/O-heavy scratch data (e.g. a nested-virt image pool). Unlike
+  `provider`/`region`/`instance`, the value is **checked at
+  composition**, before any cloud call, against the provider's allowed
+  set. That set mirrors the vergil-vm `vm` module's own validation
+  ([vergil-vm#312](https://github.com/vergil-project/vergil-vm/issues/312)):
+
+  | `provider` | Allowed `boot_disk_type` |
+  |---|---|
+  | `gcp` | `pd-standard`, `pd-balanced`, `pd-ssd`, `hyperdisk-balanced` |
+  | `azure` | `Standard_LRS`, `StandardSSD_LRS`, `Premium_LRS`, `StandardSSD_ZRS`, `Premium_ZRS` |
+
+  An unknown value is a loud config error. Values are **never mapped
+  across providers**: `pd-ssd` on an Azure profile is rejected, not
+  translated to a SKU. Like `boot_disk`, it is ignored on a local
+  (Lima) profile, so it can sit on a named cloud instance
+  (`[vm.<role>.instances.<name>]`) or on the role with the instance
+  inheriting it.
+- **`boot_disk_type` needs vergil-vm v2.1.42 or later.** The modules
+  are fetched by the host's module tag (`vergil-vm` in
+  `identities.toml`, else `vergil`, or `--tag`), not by this
+  tooling's version. OpenTofu only *warns* about an undeclared variable
+  in a var file, so an older module would silently build the default
+  disk type. `vrg-vm create`/`rebuild` therefore check that the
+  fetched module declares `boot_disk_type` and fail loudly, naming the
+  tag, if it does not. `rebuild` runs this check before it destroys
+  the old VM. The moving `v2.1` tag picks up v2.1.42 once it is
+  released; a host pinned to an older exact tag must move the pin.
 - **`instance` is authoritative over `cpus`/`memory` on cloud.** They
   stay in the spec as human-readable intent; a session-time
   under-provisioning warning (instance smaller than the declared
@@ -190,7 +223,10 @@ The same `vrg-vm` verbs work, dispatched on the resolved `backend`:
   volume (the repo checkout and `.claude` session history) survives.
   This is the routine end-of-day teardown.
 - `rebuild` — `destroy` + recreate the VM against the **existing**
-  volume; the data reattaches intact.
+  volume; the data reattaches intact. This is the path for changing
+  `boot_disk` or `boot_disk_type` on an existing box: either change
+  replaces the ephemeral boot disk, which means a new instance. `list`
+  flags the box `NEEDS-REBUILD` until you do.
 - `destroy-volume` — the **only** command that deletes the persistent
   volume. Guarded: retype `org/repo` to confirm, or pass `--yes`.
 - `update` — refreshes vergil-tooling and Claude plugins **in place**
@@ -259,4 +295,5 @@ Lima→cloud, or resizing the `instance`/`volume`, trips `NEEDS-REBUILD`
 as expected. `boot_disk` enters the off-platform payload **only when
 set**, so cloud VMs created before the knob existed keep their
 fingerprints; declaring or resizing it trips `NEEDS-REBUILD` like
-`volume`.
+`volume`. `boot_disk_type` follows the same rule: it enters the payload
+only when set, and declaring or changing it trips `NEEDS-REBUILD`.

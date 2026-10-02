@@ -62,6 +62,18 @@ manager.
   Debug build so dependency binaries share the same configuration). INSTALL also
   writes a `conan.lock` (`conan lock create`) that pins the graph for the Debug
   builds.
+- **Conan's generator output lands under `build/`, not the source root.** INSTALL
+  passes `--output-folder=build`, so the toolchain file and CMakeDeps `Find*.cmake`
+  modules are written under `build/` and the working tree stays clean after a
+  build. Every CMake *configure* then points at the relocated toolchain with
+  `-DCMAKE_TOOLCHAIN_FILE=build/conan_toolchain.cmake` so `find_package` resolves
+  from `build/`. This retired the old source-root `CMAKE_PREFIX_PATH` hack — and
+  the gitignore whack-a-mole that chased Conan's root-dropped
+  `conan_toolchain.cmake` / CMakeDeps modules — because those artifacts no longer
+  touch the source root. The one file Conan still writes to the source root
+  regardless of `--output-folder` is `CMakeUserPresets.json`, which the managed
+  cpp `.gitignore` fragment therefore keeps
+  ([#2912](https://github.com/vergil-project/vergil-tooling/issues/2912)).
 - The AUDIT stage runs **`conan audit scan .`**, which scans the resolved
   dependency graph against ConanCenter's advisory database for known CVEs, then
   `conan graph info . --format=json` to surface dependency licenses (best-effort
