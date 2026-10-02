@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.224] - 2026-10-02
+
+### Bug fixes
+
+- wait on the base branch's required checks and retry policy blocks (#3061) (#3062)
+
 ## [2.1.223] - 2026-10-02
 
 ### Documentation

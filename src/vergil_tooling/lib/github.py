@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any, cast
 from vergil_tooling.lib import retry
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Collection, Iterator
 
 log = logging.getLogger(__name__)
 
@@ -664,8 +664,17 @@ def run_completed(run_id: str) -> bool:
     return isinstance(data, dict) and data.get("status") == "completed"
 
 
-def all_checks_terminal(pr: str) -> bool:
-    """True when *pr* has at least one check and none is still ``pending``.
+def _checks_terminal(checks: list[dict[str, str]], required: Collection[str]) -> bool:
+    """True when *checks* is non-empty, none is pending, and no required check is outstanding."""
+    return (
+        bool(checks)
+        and all(c.get("bucket") != "pending" for c in checks)
+        and not outstanding_required_checks(checks, required)
+    )
+
+
+def all_checks_terminal(pr: str, required: Collection[str] = ()) -> bool:
+    """True when *pr* has a check, none is ``pending``, and every *required* check is in.
 
     An empty check set is deliberately **not** terminal. Zero registered checks
     means CI has not registered yet — transient right after PR creation or a head
@@ -675,9 +684,140 @@ def all_checks_terminal(pr: str) -> bool:
     registration-race crash (#2623): GitHub's post-outage timing widened the
     window where a freshly-created PR briefly has no checks, and the old
     ``all([]) is True`` made ``wait_for_checks`` return immediately.
+
+    *required* names the base branch's required status checks (see
+    :func:`required_check_names`). Each must be **registered** and non-pending:
+    CI aggregator jobs (``test / evidence`` …) are not registered as checks until
+    their dependencies finish, so "every registered check is terminal" can hold
+    while a required check does not exist yet — and the merge is then refused by
+    branch policy (#3061).
     """
-    checks = pr_checks(pr)
-    return bool(checks) and all(c.get("bucket") != "pending" for c in checks)
+    return _checks_terminal(pr_checks(pr), required)
+
+
+def outstanding_required_checks(
+    checks: list[dict[str, str]], required: Collection[str]
+) -> dict[str, str]:
+    """Map each *required* check not yet terminal to why: ``not registered`` or ``pending``.
+
+    A required check counts as terminal once *some* registered check of that
+    name is non-pending (its pass/fail verdict is ``failed_check_names``' job).
+    The result is ordered by name so progress output is stable.
+    """
+    buckets: dict[str, list[str]] = {}
+    for check in checks:
+        buckets.setdefault(str(check.get("name")), []).append(str(check.get("bucket")))
+    outstanding: dict[str, str] = {}
+    for name in sorted(required):
+        seen = buckets.get(name)
+        if not seen:
+            outstanding[name] = "not registered"
+        elif all(b == "pending" for b in seen):
+            outstanding[name] = "pending"
+    return outstanding
+
+
+def describe_outstanding(outstanding: dict[str, str]) -> str:
+    """Render :func:`outstanding_required_checks` output as ``name (reason), ...``."""
+    return ", ".join(f"{name} ({reason})" for name, reason in outstanding.items())
+
+
+def required_checks_outstanding(pr: str, required: Collection[str]) -> dict[str, str]:
+    """:func:`outstanding_required_checks` for *pr*'s current checks (no call if none required)."""
+    if not required:
+        return {}
+    return outstanding_required_checks(pr_checks(pr), required)
+
+
+_PR_URL_REPO_RE = re.compile(r"github\.com/([^/]+/[^/]+)/pull/\d+")
+
+
+def _as_obj(value: object) -> dict[str, Any]:
+    """*value* as a JSON object, or an empty one when it is not a dict."""
+    return cast("dict[str, Any]", value) if isinstance(value, dict) else {}
+
+
+def _check_contexts(checks: object) -> set[str]:
+    """The context of each {context, ...} object in a JSON list."""
+    items: list[object] = cast("list[object]", checks) if isinstance(checks, list) else []
+    return {str(c["context"]) for c in map(_as_obj, items) if c.get("context")}
+
+
+def _protection_required_checks(repo: str, branch: str) -> set[str]:
+    """Required check contexts from classic branch protection on *branch*.
+
+    Reads ``GET /repos/{repo}/branches/{branch}``, whose ``protection`` summary is
+    visible with plain read access (the dedicated ``/protection`` endpoint needs
+    admin). Both the legacy ``contexts`` list and the newer ``checks`` objects
+    are honoured; an ``enforcement_level`` of ``off`` contributes nothing.
+    """
+    endpoint = f"repos/{repo}/branches/{branch}"
+    data = read_json("api", endpoint)
+    if not isinstance(data, dict):
+        raise GitHubAPIError(1, ("gh", "api", endpoint), stderr="unexpected response shape")
+    rsc = _as_obj(_as_obj(data.get("protection")).get("required_status_checks"))
+    if rsc.get("enforcement_level") == "off":
+        return set()
+    contexts = rsc.get("contexts")
+    names = {str(c) for c in contexts} if isinstance(contexts, list) else set()
+    return names | _check_contexts(rsc.get("checks"))
+
+
+def _ruleset_required_checks(repo: str, branch: str) -> set[str]:
+    """Required check contexts from repository rulesets that apply to *branch*.
+
+    Reads ``GET /repos/{repo}/rules/branches/{branch}`` — the rules in effect for
+    the branch across every active ruleset (repo- and org-level) — and collects
+    the ``context`` of each ``required_status_checks`` rule's checks.
+    """
+    endpoint = f"repos/{repo}/rules/branches/{branch}"
+    data = read_json("api", endpoint)
+    if not isinstance(data, list):
+        raise GitHubAPIError(1, ("gh", "api", endpoint), stderr="unexpected response shape")
+    names: set[str] = set()
+    for rule in map(_as_obj, data):
+        if rule.get("type") == "required_status_checks":
+            params = _as_obj(rule.get("parameters"))
+            names |= _check_contexts(params.get("required_status_checks"))
+    return names
+
+
+def required_check_names(pr: str) -> frozenset[str] | None:
+    """Return the required status checks of *pr*'s base branch, or ``None`` if unreadable.
+
+    The union of classic branch protection (:func:`_protection_required_checks`)
+    and repository rulesets (:func:`_ruleset_required_checks`) — repos may use
+    either or both. The repo is taken from the PR's own URL, falling back to the
+    current directory's remote.
+
+    A lookup failure (permissions, API error, unexpected payload) is **not**
+    fatal: it prints a visible warning and returns ``None`` so callers fall back
+    to waiting on registered checks only (the pre-#3061 behaviour). A missing
+    auth token is a configuration error and propagates.
+    """
+    try:
+        info = read_json("pr", "view", pr, "--json", "baseRefName,url")
+        if not isinstance(info, dict) or not info.get("baseRefName"):
+            raise GitHubAPIError(
+                1, ("gh", "pr", "view", pr), stderr="no baseRefName in pr view response"
+            )
+        branch = str(info["baseRefName"])
+        match = _PR_URL_REPO_RE.search(str(info.get("url") or ""))
+        repo = match.group(1) if match else current_repo()
+        names = _protection_required_checks(repo, branch) | _ruleset_required_checks(repo, branch)
+    except MissingGitHubTokenError:
+        raise
+    except (subprocess.CalledProcessError, json.JSONDecodeError) as exc:
+        lines = str(exc).strip().splitlines()
+        detail = lines[-1] if lines else type(exc).__name__
+        print(
+            f"Warning: could not read the base branch's required status checks for PR {pr} "
+            f"({detail}). Falling back to waiting on registered checks only — a required "
+            "check that has not registered yet will not be waited for.",
+            file=sys.stderr,
+        )
+        return None
+    return frozenset(names)
 
 
 def orphaned_check_names(pr: str) -> list[str]:
@@ -705,11 +845,18 @@ def wait_for_checks(
     *,
     poll_interval: int = _POLL_INTERVAL_SECS,
     poll_timeout: int = _POLL_TIMEOUT_SECS,
+    required: Collection[str] | None = None,
 ) -> None:
     """Block until all checks on *pr* reach a terminal state, bounded by a deadline.
 
-    Polls ``gh pr checks`` until every check is terminal, then returns — leaving
-    ``pr_merge``'s ``failed_check_names`` gate to catch any failure. If the
+    Polls ``gh pr checks`` until every check is terminal **and** every required
+    status check of the base branch is registered and non-pending (#3061), then
+    returns — leaving ``pr_merge``'s ``failed_check_names`` gate to catch any
+    failure. *required* defaults to :func:`required_check_names` resolved once at
+    entry; pass an explicit collection (empty to disable) when the caller has
+    already resolved it. When the lookup fails, the waiter warns and falls back
+    to registered checks only. While required checks are outstanding the waiter
+    prints what it is awaiting whenever that set changes. If the
     deadline elapses with checks still pending, each still-pending check is
     cross-checked against its backing workflow run via ``gh run view``: a
     non-terminal check over a *completed* run is a GitHub orphan and raises
@@ -720,10 +867,18 @@ def wait_for_checks(
     Transient GitHub API errors (401/502/503/504/429) are retried
     automatically via the library-level retry wrapper.
     """
+    if required is None:
+        required = required_check_names(pr) or frozenset()
     deadline = time.monotonic() + poll_timeout
+    announced: dict[str, str] = {}
     while True:
-        if all_checks_terminal(pr):
+        checks = pr_checks(pr)
+        if _checks_terminal(checks, required):
             return  # let pr_merge.failed_check_names catch any failure
+        outstanding = outstanding_required_checks(checks, required)
+        if outstanding and outstanding != announced:
+            print(f"Awaiting required checks: {describe_outstanding(outstanding)}")
+        announced = outstanding
         if time.monotonic() >= deadline:
             orphans = orphaned_check_names(pr)
             if orphans:
@@ -737,11 +892,10 @@ def wait_for_checks(
                     "and reopen the PR to re-run the gate, then re-run "
                     "vrg-finalize-pr."
                 )
-            raise GitHubAPIError(
-                1,
-                ("gh", "pr", "checks", pr),
-                stderr=f"checks still pending after {poll_timeout}s",
-            )
+            detail = f"checks still pending after {poll_timeout}s"
+            if outstanding:
+                detail += f"; outstanding required checks: {describe_outstanding(outstanding)}"
+            raise GitHubAPIError(1, ("gh", "pr", "checks", pr), stderr=detail)
         time.sleep(poll_interval)
 
 
