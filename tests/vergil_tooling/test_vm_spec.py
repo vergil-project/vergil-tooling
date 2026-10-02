@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import re
 from typing import Any
@@ -393,6 +394,97 @@ class TestOffPlatformCompose:
                 override=None,
             )
 
+    # -- boot_disk_type — vergil-tooling #3056 ---------------------------------
+
+    def test_boot_disk_type_defaults_empty_and_is_not_required(self) -> None:
+        spec = compose_vm_spec(
+            identity="vergil-user", base=BASE, stanza=_off_platform_stanza(), override=None
+        )
+        assert spec.boot_disk_type == ""
+
+    @pytest.mark.parametrize(
+        "disk_type", ["pd-standard", "pd-balanced", "pd-ssd", "hyperdisk-balanced"]
+    )
+    def test_boot_disk_type_accepts_every_gcp_type(self, disk_type: str) -> None:
+        spec = compose_vm_spec(
+            identity="vergil-user",
+            base=BASE,
+            stanza=_off_platform_stanza(boot_disk_type=disk_type),
+            override=None,
+        )
+        assert spec.boot_disk_type == disk_type
+
+    @pytest.mark.parametrize(
+        "disk_type",
+        ["Standard_LRS", "StandardSSD_LRS", "Premium_LRS", "StandardSSD_ZRS", "Premium_ZRS"],
+    )
+    def test_boot_disk_type_accepts_every_azure_sku(self, disk_type: str) -> None:
+        spec = compose_vm_spec(
+            identity="vergil-user",
+            base=BASE,
+            stanza=_off_platform_stanza(
+                provider="azure", region="eastus", boot_disk_type=disk_type
+            ),
+            override=None,
+        )
+        assert spec.boot_disk_type == disk_type
+
+    @pytest.mark.parametrize("disk_type", ["pd-extreme", "hyperdisk-extreme", "ssd", "PD-SSD"])
+    def test_unknown_gcp_boot_disk_type_raises(self, disk_type: str) -> None:
+        with pytest.raises(SpecError, match="boot_disk_type for provider 'gcp' must be one of"):
+            compose_vm_spec(
+                identity="vergil-user",
+                base=BASE,
+                stanza=_off_platform_stanza(boot_disk_type=disk_type),
+                override=None,
+            )
+
+    def test_boot_disk_type_is_not_mapped_across_providers(self) -> None:
+        # A GCP type on an Azure profile is a mistake, never translated to a SKU.
+        with pytest.raises(SpecError, match="boot_disk_type for provider 'azure' must be"):
+            compose_vm_spec(
+                identity="vergil-user",
+                base=BASE,
+                stanza=_off_platform_stanza(provider="azure", boot_disk_type="pd-ssd"),
+                override=None,
+            )
+
+    def test_boot_disk_type_on_unsupported_provider_raises(self) -> None:
+        with pytest.raises(SpecError, match="not supported for provider 'aws'"):
+            compose_vm_spec(
+                identity="vergil-user",
+                base=BASE,
+                stanza=_off_platform_stanza(provider="aws", boot_disk_type="gp3"),
+                override=None,
+            )
+
+    def test_boot_disk_type_host_override_wins(self) -> None:
+        spec = compose_vm_spec(
+            identity="vergil-user",
+            base=BASE,
+            stanza=_off_platform_stanza(boot_disk_type="pd-balanced"),
+            override={"boot_disk_type": "pd-ssd"},
+        )
+        assert spec.boot_disk_type == "pd-ssd"
+
+    def test_boot_disk_type_host_override_is_validated(self) -> None:
+        with pytest.raises(SpecError, match="must be one of"):
+            compose_vm_spec(
+                identity="vergil-user",
+                base=BASE,
+                stanza=_off_platform_stanza(),
+                override={"boot_disk_type": "nvme"},
+            )
+
+    def test_boot_disk_type_ignored_on_local_backend(self) -> None:
+        # Cloud-only knob, like boot_disk: a local profile composes without validating it.
+        stanza = dataclasses.replace(
+            _off_platform_stanza(), backend="local", boot_disk_type="anything"
+        )
+        spec = compose_vm_spec(identity="vergil-user", base=BASE, stanza=stanza, override=None)
+        assert spec.off_platform is False
+        assert spec.boot_disk_type == "anything"
+
     def test_audit_role_without_keys_does_not_satisfy_required(self) -> None:
         # backend is all-identity ([vm] tier) but the cloud keys live only in the
         # vergil-user role; vergil-audit therefore composes off-platform WITHOUT them
@@ -780,6 +872,28 @@ class TestFingerprint:
             self._spec(boot_disk="200GiB")
         )
 
+    def test_boot_disk_type_set_changes_fingerprint(self) -> None:
+        # Declaring a type replaces the boot disk (the instance) -> NEEDS-REBUILD.
+        assert spec_fingerprint(self._op_spec()) != spec_fingerprint(
+            self._op_spec(boot_disk_type="pd-ssd")
+        )
+
+    def test_boot_disk_type_change_changes_fingerprint(self) -> None:
+        assert spec_fingerprint(self._op_spec(boot_disk_type="pd-balanced")) != spec_fingerprint(
+            self._op_spec(boot_disk_type="pd-ssd")
+        )
+
+    def test_boot_disk_type_unset_keeps_legacy_fingerprint(self) -> None:
+        # Unset enters no payload field, so pre-#3056 cloud boxes keep their hash.
+        assert spec_fingerprint(self._op_spec(boot_disk_type="")) == spec_fingerprint(
+            self._op_spec()
+        )
+
+    def test_boot_disk_type_ignored_on_local_fingerprint(self) -> None:
+        assert spec_fingerprint(self._spec(boot_disk_type="pd-ssd")) == spec_fingerprint(
+            self._spec()
+        )
+
 
 # ---------------------------------------------------------------------------
 # Task 2: Naming validators + tier-5 composition
@@ -849,6 +963,55 @@ def test_compose_named_instance_overlays_tier5() -> None:
     assert spec.memory == "32GiB"
     assert spec.off_platform
     assert spec.instance == "n2-standard-8"
+
+
+def _role_with_cloud_instance(*, role_type: str | None, instance_type: str | None) -> VmStanza:
+    """A role declaring ``boot_disk_type`` at the role tier and/or a ``cloud`` instance."""
+    empty: dict[str, Any] = {
+        "packages": [],
+        "cpus": None,
+        "memory": None,
+        "disk": None,
+        "stale_days": None,
+        "apt_repos": [],
+        "vagrant_plugins": [],
+        "port_forwards": [],
+    }
+    cloud = RoleOverlay(
+        **empty,
+        backend="off-platform",
+        provider="gcp",
+        region="us-central1",
+        instance="n2-standard-16",
+        volume="300GiB",
+        boot_disk_type=instance_type,
+    )
+    role = RoleOverlay(**empty, boot_disk_type=role_type, instances={"cloud": cloud})
+    return VmStanza(**empty, roles={"vergil-user": role})
+
+
+def test_boot_disk_type_instance_overlay_overrides_role() -> None:
+    stanza = _role_with_cloud_instance(role_type="pd-balanced", instance_type="pd-ssd")
+    spec = compose_vm_spec(
+        identity="vergil-user", base=BASE, stanza=stanza, override=None, instance="cloud"
+    )
+    assert spec.boot_disk_type == "pd-ssd"
+
+
+def test_boot_disk_type_role_value_inherited_by_instance() -> None:
+    stanza = _role_with_cloud_instance(role_type="pd-balanced", instance_type=None)
+    spec = compose_vm_spec(
+        identity="vergil-user", base=BASE, stanza=stanza, override=None, instance="cloud"
+    )
+    assert spec.boot_disk_type == "pd-balanced"
+
+
+def test_boot_disk_type_on_instance_only_leaves_default_spec_unset() -> None:
+    # The unnamed (local) spec never sees the cloud instance's type.
+    stanza = _role_with_cloud_instance(role_type=None, instance_type="pd-ssd")
+    spec = compose_vm_spec(identity="vergil-user", base=BASE, stanza=stanza, override=None)
+    assert spec.boot_disk_type == ""
+    assert spec.off_platform is False
 
 
 def test_compose_default_instance_unchanged_when_none() -> None:

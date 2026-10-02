@@ -15,6 +15,7 @@ from vergil_tooling.lib import vm_cloud
 from vergil_tooling.lib.vm_cloud import (
     FALLBACK_SHAPES,
     NESTED_VIRT_FAMILIES,
+    ModuleCompatError,
     OffPlatformBackend,
     _azure_resource_group_from_volume_id,
     apply_vm,
@@ -42,6 +43,7 @@ from vergil_tooling.lib.vm_cloud import (
     read_zone,
     region_zones,
     render_provision_env,
+    require_module_support,
     tofu_state_dir,
     zone_to_region,
 )
@@ -195,6 +197,62 @@ class TestFetchModules:
         mock_taropen.return_value = _EmptyTar()
         with pytest.raises(SystemExit):
             fetch_modules("v2.1.50")
+
+
+def _module_tree(root: Path, provider: str, variables_tf: str) -> Path:
+    """Lay out <root>/<provider>/vm/variables.tf like a fetched modules root."""
+    vm = root / provider / "vm"
+    vm.mkdir(parents=True)
+    (vm / "variables.tf").write_text(variables_tf, encoding="utf-8")
+    (vm / "main.tf").write_text('resource "x" "y" {}\n', encoding="utf-8")
+    return root
+
+
+_OLD_VARS_TF = 'variable "boot_disk_gib" {\n  type    = number\n  default = 30\n}\n'
+_NEW_VARS_TF = (
+    _OLD_VARS_TF + 'variable "boot_disk_type" {\n  type    = string\n  default = null\n}\n'
+)
+
+
+class TestRequireModuleSupport:
+    """The fetched module must declare every optional var the spec sets (#3056)."""
+
+    def test_unset_field_passes_against_old_module(self, tmp_path: Path) -> None:
+        root = _module_tree(tmp_path, "gcp", _OLD_VARS_TF)
+        require_module_support(root, _off_spec(), "v2.1.41")  # no raise
+
+    def test_set_field_passes_against_new_module(self, tmp_path: Path) -> None:
+        root = _module_tree(tmp_path, "gcp", _NEW_VARS_TF)
+        require_module_support(root, _off_spec(boot_disk_type="pd-ssd"), "v2.1")
+
+    def test_set_field_fails_loudly_against_old_module(self, tmp_path: Path) -> None:
+        root = _module_tree(tmp_path, "gcp", _OLD_VARS_TF)
+        with pytest.raises(ModuleCompatError) as exc:
+            require_module_support(root, _off_spec(boot_disk_type="pd-ssd"), "v2.1.41")
+        msg = str(exc.value)
+        assert "boot_disk_type is set" in msg
+        assert "'v2.1.41'" in msg
+        assert "vergil-vm v2.1.42" in msg
+
+    def test_checks_the_spec_providers_module(self, tmp_path: Path) -> None:
+        # GCP declares it but the Azure module (the spec's provider) does not -> fail.
+        _module_tree(tmp_path, "gcp", _NEW_VARS_TF)
+        root = _module_tree(tmp_path, "azure", _OLD_VARS_TF)
+        spec = _off_spec(provider="azure", boot_disk_type="Premium_LRS")
+        with pytest.raises(ModuleCompatError):
+            require_module_support(root, spec, "v2.1.41")
+
+    def test_declaration_in_any_tf_file_counts(self, tmp_path: Path) -> None:
+        root = _module_tree(tmp_path, "gcp", _OLD_VARS_TF)
+        (root / "gcp" / "vm" / "extra.tf").write_text(
+            '  variable "boot_disk_type" { type = string }\n', encoding="utf-8"
+        )
+        require_module_support(root, _off_spec(boot_disk_type="pd-ssd"), "v2.1.42")
+
+    def test_reference_without_declaration_does_not_count(self, tmp_path: Path) -> None:
+        root = _module_tree(tmp_path, "gcp", _OLD_VARS_TF + "# var.boot_disk_type\n")
+        with pytest.raises(ModuleCompatError):
+            require_module_support(root, _off_spec(boot_disk_type="pd-ssd"), "v2.1.41")
 
 
 class TestProvisionParams:
@@ -953,7 +1011,11 @@ class TestRunTofu:
         assert "boot_disk_gib" not in data
 
     def _run_apply_vm(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, boot_disk_gib: int | None
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        boot_disk_gib: int | None = None,
+        boot_disk_type: str | None = None,
     ) -> dict[str, object]:
         """Run apply_vm with stub tofu and return the written vm tfvars dict."""
         monkeypatch.setenv("HOME", str(tmp_path))
@@ -979,6 +1041,7 @@ class TestRunTofu:
             provision_env="VERGIL_USER=ubuntu",
             labels={},
             boot_disk_gib=boot_disk_gib,
+            boot_disk_type=boot_disk_type,
         )
         tfvars = (state_dir / "vm.tfstate.tfvars.json").read_text()
         return cast("dict[str, object]", json.loads(tfvars))
@@ -994,6 +1057,19 @@ class TestRunTofu:
     ) -> None:
         data = self._run_apply_vm(tmp_path, monkeypatch, boot_disk_gib=None)
         assert "boot_disk_gib" not in data
+
+    def test_apply_vm_threads_boot_disk_type_into_tfvars(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        data = self._run_apply_vm(tmp_path, monkeypatch, boot_disk_type="pd-ssd")
+        assert data["boot_disk_type"] == "pd-ssd"
+
+    def test_apply_vm_omits_boot_disk_type_when_none(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Omitted, not null: the module default (GCP: the machine series' default) holds.
+        data = self._run_apply_vm(tmp_path, monkeypatch)
+        assert "boot_disk_type" not in data
 
     def test_apply_vm_rolls_back_on_failure(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1961,6 +2037,16 @@ class TestOffPlatformBackend:
         b = OffPlatformBackend(_off_spec(boot_disk="100GiB"), "vergil-user", "o", "r")
         vars_ = b.vm_vars(zone="us-central1-b", volume_id="vol-1")
         assert vars_["boot_disk_gib"] == 100
+
+    def test_vm_vars_omits_boot_disk_type_when_unset(self) -> None:
+        b = OffPlatformBackend(_off_spec(), "vergil-user", "o", "r")
+        vars_ = b.vm_vars(zone="us-central1-b", volume_id="vol-1")
+        assert "boot_disk_type" not in vars_
+
+    def test_vm_vars_threads_boot_disk_type_when_set(self) -> None:
+        b = OffPlatformBackend(_off_spec(boot_disk_type="pd-ssd"), "vergil-user", "o", "r")
+        vars_ = b.vm_vars(zone="us-central1-b", volume_id="vol-1")
+        assert vars_["boot_disk_type"] == "pd-ssd"
 
     def test_vm_vars_includes_ssh_public_key_for_azure_and_absent_for_gcp(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

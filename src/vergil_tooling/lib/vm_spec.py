@@ -31,6 +31,19 @@ _OFF_PLATFORM_REQUIRED = ("provider", "region", "instance", "volume")
 
 _SIZE_RE = re.compile(r"^\d+GiB$")
 
+# Allowed `boot_disk_type` values per provider (vergil-tooling #3056). Like
+# `instance`, the values are provider-native (GCP disk types, Azure storage SKUs), but
+# unlike `instance` the set is small and closed, so it is checked here, before any
+# cloud call: an unknown value would otherwise reach tofu and fail only at plan. Each
+# set mirrors the `validation` block on that provider's vergil-vm `vm` module
+# `boot_disk_type` variable (vergil-vm#312, first released in vergil-vm v2.1.42) and
+# must be kept in step with it. Values are never mapped across providers. A provider
+# with no entry here rejects the knob loudly.
+_BOOT_DISK_TYPES: dict[str, tuple[str, ...]] = {
+    "gcp": ("pd-standard", "pd-balanced", "pd-ssd", "hyperdisk-balanced"),
+    "azure": ("Standard_LRS", "StandardSSD_LRS", "Premium_LRS", "StandardSSD_ZRS", "Premium_ZRS"),
+}
+
 
 class SpecError(Exception):
     """A composed VM spec is internally invalid (e.g. a misconfigured off-platform profile).
@@ -80,6 +93,11 @@ class ComposedSpec:
     # default (~30 GiB), so unset behaviour is unchanged. Set it (`<N>GiB`) to grow the
     # ephemeral disk for workloads whose scratch data lives on the boot disk.
     boot_disk: str = ""
+    # Optional ephemeral boot/root-disk TYPE (vergil-tooling #3056), e.g. "pd-ssd".
+    # Empty -> the vergil-vm module's own default (GCP: the machine series' default;
+    # Azure: StandardSSD_LRS), so unset behaviour is unchanged. Provider-native and
+    # validated against _BOOT_DISK_TYPES at composition.
+    boot_disk_type: str = ""
     # Optional explicit zone (vergil-tooling #1797). Empty -> the volume module's
     # ${region}-b default; set it to dodge a per-zone capacity stockout in the region.
     zone: str = ""
@@ -112,6 +130,7 @@ class _Acc:
     instance: str
     volume: str
     boot_disk: str
+    boot_disk_type: str
     zone: str
     # Repo-declared footprint (tiers 3+4 only) — the floor an override is measured
     # against. None means the repo never declared that scalar, so no floor applies.
@@ -170,6 +189,9 @@ def _apply_overlay(acc: _Acc, overlay: VmStanza | RoleOverlay) -> None:
     if overlay.boot_disk is not None:
         acc.boot_disk = overlay.boot_disk
         acc.customized = True
+    if overlay.boot_disk_type is not None:
+        acc.boot_disk_type = overlay.boot_disk_type
+        acc.customized = True
     if overlay.zone is not None:
         acc.zone = overlay.zone
         acc.customized = True
@@ -202,6 +224,7 @@ def compose_vm_spec(
         instance="",
         volume="",
         boot_disk="",
+        boot_disk_type="",
         zone="",
         declared_cpus=None,
         declared_mem=None,
@@ -248,7 +271,16 @@ def compose_vm_spec(
             acc.stale_days = cast("int", override["stale_days"])
         # The off-platform scalars also cascade through the host-override tier
         # (built-in → identity → [vm] → [vm.<identity>] → identities.toml override).
-        for key in ("backend", "provider", "region", "instance", "volume", "boot_disk", "zone"):
+        for key in (
+            "backend",
+            "provider",
+            "region",
+            "instance",
+            "volume",
+            "boot_disk",
+            "boot_disk_type",
+            "zone",
+        ):
             if key in override:
                 setattr(acc, key, str(override[key]))
 
@@ -272,6 +304,7 @@ def compose_vm_spec(
         instance=acc.instance,
         volume=acc.volume,
         boot_disk=acc.boot_disk,
+        boot_disk_type=acc.boot_disk_type,
         zone=acc.zone,
     )
 
@@ -311,6 +344,25 @@ def _validate_backend(identity: str, acc: _Acc) -> None:
             f'(e.g. "100GiB"), got {acc.boot_disk!r}'
         )
         raise SpecError(msg)
+    # boot_disk_type is optional (unset -> the module's default type), but when declared
+    # it must be a type the provider's module accepts — fail loudly on a typo or on a
+    # provider that has no such knob, never pass it through to tofu.
+    if acc.boot_disk_type:
+        allowed = _BOOT_DISK_TYPES.get(acc.provider)
+        if allowed is None:
+            supported = ", ".join(repr(p) for p in _BOOT_DISK_TYPES)
+            msg = (
+                f"identity {identity!r}: [vm] boot_disk_type is not supported for "
+                f"provider {acc.provider!r} (supported providers: {supported})"
+            )
+            raise SpecError(msg)
+        if acc.boot_disk_type not in allowed:
+            valid = ", ".join(repr(t) for t in allowed)
+            msg = (
+                f"identity {identity!r}: [vm] boot_disk_type for provider "
+                f"{acc.provider!r} must be one of {valid}, got {acc.boot_disk_type!r}"
+            )
+            raise SpecError(msg)
 
 
 # Lima instance names must match ^[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)*$ — single
@@ -510,5 +562,10 @@ def spec_fingerprint(spec: ComposedSpec) -> str:
         # introduced); setting or resizing it flips the hash and triggers a rebuild.
         if spec.boot_disk:
             fields.append(f"boot_disk={spec.boot_disk}")
+        # boot_disk_type likewise enters only when set: existing cloud boxes keep their
+        # fingerprint, while declaring or changing the type trips NEEDS-REBUILD — a type
+        # change replaces the boot disk, i.e. the instance (vrg-vm rebuild).
+        if spec.boot_disk_type:
+            fields.append(f"boot_disk_type={spec.boot_disk_type}")
     payload = "\n".join(fields)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
