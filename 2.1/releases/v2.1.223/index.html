@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.224/">
       
       
         <link rel="next" href="../v2.1.222/">
@@ -1251,6 +1251,8 @@
       
         
       
+        
+      
     
     
     
@@ -1306,6 +1308,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.224/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.224
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -14513,6 +14543,7 @@ Document the epic #342 changes in the versioned site docs. The vrg-github-repo-i
 <p>Add an optional off-platform boot_disk_type scalar next to boot_disk, with the same last-wins cascade ([vm], [vm.<role>], named instance, host override). It is validated at composition against a per-provider allowed set mirroring the vergil-vm vm module's validation (vergil-vm#312): GCP pd-standard, pd-balanced, pd-ssd, hyperdisk-balanced; Azure Standard_LRS, StandardSSD_LRS, Premium_LRS, StandardSSD_ZRS, Premium_ZRS. Values are never mapped across providers, and an unknown value or provider fails loudly.</p>
 <p>The value is passed as the tofu variable boot_disk_type only when set, so unset profiles keep the module default. It enters the spec fingerprint only when set, so existing cloud boxes keep their hash while declaring or changing the type trips NEEDS-REBUILD (the boot disk, and so the instance, is replaced).</p>
 <p>Because tofu only warns about an undeclared variable in a var file, an older module tag would silently build the default disk type. require_module_support checks that the fetched vm module declares boot_disk_type (first shipped in vergil-vm v2.1.42) and raises ModuleCompatError naming the tag otherwise. It runs in the fetch-modules stage, before any apply, and on rebuild before the destroy half.</p>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.223/v2.1.223-ci-evidence.tar.gz">Download →</a></p>
 
 
 

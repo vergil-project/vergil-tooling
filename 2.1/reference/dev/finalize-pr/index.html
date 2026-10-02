@@ -1244,6 +1244,8 @@
       
         
       
+        
+      
     
     
     
@@ -1296,6 +1298,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.224/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.224
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -14938,6 +14968,23 @@ gate, then re-run <code>vrg-finalize-pr</code> — rather than hanging. Genuinel
 still-running checks are waited on as normal; if the deadline elapses
 with nothing orphaned (for example an app-posted status that is legitimately
 slow), finalize fails with a plain timeout error instead.</p>
+<p><strong>Required checks.</strong> "Green" includes the target branch's <em>required</em>
+status checks, read from both classic branch protection
+(<code>GET /repos/{owner}/{repo}/branches/{branch}</code>) and repository rulesets
+(<code>GET /repos/{owner}/{repo}/rules/branches/{branch}</code>). CI aggregator jobs
+such as <code>test / evidence</code> only register as checks once their dependencies
+finish, so every <em>registered</em> check can be done while a required one does
+not exist yet. Finalize keeps waiting until each required check is
+registered and terminal, printing what it awaits (for example
+<code>Awaiting required checks: test / evidence (not registered)</code>). If the
+merge is still refused with "the base branch policy prohibits the merge"
+and no check has failed, finalize treats it as <em>not ready</em>: it polls and
+re-attempts within the same deadline, then fails naming the outstanding
+required checks. A policy block that waiting cannot clear, such as a
+required review (<code>reviewDecision=REVIEW_REQUIRED</code>), aborts at once. If the
+required checks cannot be read (permissions or an API error), finalize
+prints a warning and falls back to waiting on registered checks only
+(issue #3061).</p>
 <p>After the merge, the PR's own branch and worktree are cleaned up
 explicitly (a squash merge hides them from <code>git branch --merged</code>),
 followed by the usual sweep, pull, and prune.</p>
