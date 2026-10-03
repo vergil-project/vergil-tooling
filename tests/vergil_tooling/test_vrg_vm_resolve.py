@@ -396,6 +396,7 @@ def _resolve(
     path: str,
     resume_name: str | None = None,
     label: str | None = None,
+    instance: str | None = None,
     **kw: object,
 ) -> int:
     defaults: dict[str, object] = {
@@ -404,7 +405,7 @@ def _resolve(
     }
     defaults.update(kw)
     return r.resolve(  # type: ignore[arg-type]
-        identity, path, resume_name=resume_name, label=label, **defaults
+        identity, path, resume_name=resume_name, label=label, instance=instance, **defaults
     )
 
 
@@ -1181,19 +1182,19 @@ def test_main_dispatches_resolve(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(r, "resolve", fake_resolve)
     code = r.main(["--identity", "id", "--path", "p", "--fresh", "x"])
     assert code == 0
-    # args order: identity, path, fresh, extra, resume_name, label
-    assert seen["args"] == ("id", "p", True, ["x"], None, None)
+    # args order: identity, path, fresh, extra, resume_name, label, instance
+    assert seen["args"] == ("id", "p", True, ["x"], None, None, None)
 
 
 def test_main_passes_resume_name(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: dict[str, object] = {}
     monkeypatch.setattr(r, "resolve", lambda *args: seen.update(args=args) or 0)
     r.main(["--identity", "id", "--path", "p", "--resume-name", "epic-85-adhoc"])
-    # resume_name is the penultimate positional arg (label is last).
+    # resume_name precedes label and instance (the final two positional args).
     passed = seen["args"]
     assert isinstance(passed, tuple)
-    assert passed[-2] == "epic-85-adhoc"
-    assert passed[-1] is None  # label unset
+    assert passed[-3] == "epic-85-adhoc"
+    assert passed[-2] is None  # label unset
 
 
 def test_main_passes_label(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1202,7 +1203,7 @@ def test_main_passes_label(monkeypatch: pytest.MonkeyPatch) -> None:
     r.main(["--identity", "id", "--path", "p", "--label", "epic-1"])
     passed = seen["args"]
     assert isinstance(passed, tuple)
-    assert passed[-1] == "epic-1"  # label is the final positional arg
+    assert passed[-2] == "epic-1"  # label precedes instance
 
 
 def test_main_strips_leading_double_dash(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1418,3 +1419,233 @@ def test_resolve_target_name_without_workspace_raises(named_instance_config: Pat
     )
     with pytest.raises(SpecError, match="--name requires"):
         _resolve_target(args)
+
+
+# --- named-instance session names (issue #3066) ---
+
+
+def test_compose_resume_name_bare_label_with_instance() -> None:
+    assert r._compose_resume_name("epic-1", "o/r", "cloud") == "epic-1:o/r:cloud"
+
+
+def test_compose_resume_name_two_field_full_name_gains_instance() -> None:
+    # A pre-instance full name given with --name targets the three-field name
+    # (adopt_legacy then renames the old session to it).
+    assert r._compose_resume_name("epic-1:o/r", "o/r", "cloud") == "epic-1:o/r:cloud"
+
+
+def test_compose_resume_name_three_field_matching() -> None:
+    assert r._compose_resume_name("epic-1:o/r:cloud", "o/r", "cloud") == "epic-1:o/r:cloud"
+
+
+def test_compose_resume_name_rejects_mismatched_instance(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit):
+        r._compose_resume_name("epic-1:o/r:local", "o/r", "cloud")
+    err = capsys.readouterr().err
+    assert "instance 'local'" in err
+    assert "instance 'cloud'" in err
+
+
+def test_compose_resume_name_rejects_instance_without_name_flag(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A three-field name with no --name on the command line is a mismatch too.
+    with pytest.raises(SystemExit):
+        r._compose_resume_name("epic-1:o/r:cloud", "o/r")
+    assert "must match" in capsys.readouterr().err
+
+
+def test_compose_resume_name_three_field_mismatched_workspace(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit):
+        r._compose_resume_name("epic-1:other:cloud", "o/r", "cloud")
+    assert "workspace 'other'" in capsys.readouterr().err
+
+
+def test_compose_resume_name_legacy_slot_name_unchanged_with_instance() -> None:
+    # A legacy '<identity>:<NN>:<path>' slot name keeps the old rule.
+    name = "vergil-user:02:o/r"
+    assert r._compose_resume_name(name, "o/r", "cloud") == name
+
+
+def test_compose_resume_name_opaque_multicolon_keeps_old_rule(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    name = "archived@2026-05-30T14:23:07Z@vergil:01:o/r"
+    assert r._compose_resume_name(name, "o/r") == name
+    with pytest.raises(SystemExit):
+        r._compose_resume_name(name, "other")
+    assert "must match" in capsys.readouterr().err
+
+
+def test_legacy_name_strips_instance_field() -> None:
+    assert r._legacy_name("epic-1:o/r:cloud", "cloud") == "epic-1:o/r"
+
+
+def test_legacy_name_none_without_instance_or_suffix() -> None:
+    assert r._legacy_name("epic-1:o/r", None) is None
+    assert r._legacy_name("vergil-user:02:o/r", "cloud") is None
+
+
+def test_adopt_legacy_renames_materialized_session(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    store = _RenameStore([_info("old", "epic-1:o/r", False, 5.0)])
+    info = r.adopt_legacy(store, "epic-1:o/r:cloud", "epic-1:o/r")
+    assert info is not None
+    assert info.session_id == "old"
+    # A supported rename (history kept), never a deletion.
+    assert store.renames == [("old", "epic-1:o/r:cloud")]
+    assert "Renamed legacy session epic-1:o/r -> epic-1:o/r:cloud" in capsys.readouterr().err
+
+
+def test_adopt_legacy_reservation_only_session_not_renamed_in_store() -> None:
+    # No transcript to rename: the -n launch names it instead.
+    store = _RenameStore([_info("old", "epic-1:o/r", False, 5.0, materialized=False)])
+    info = r.adopt_legacy(store, "epic-1:o/r:cloud", "epic-1:o/r")
+    assert info is not None
+    assert store.renames == []
+
+
+def test_adopt_legacy_new_name_wins() -> None:
+    store = _RenameStore(
+        [_info("new", "epic-1:o/r:cloud", False, 9.0), _info("old", "epic-1:o/r", False, 5.0)]
+    )
+    assert r.adopt_legacy(store, "epic-1:o/r:cloud", "epic-1:o/r") is None
+    assert store.renames == []
+
+
+def test_adopt_legacy_nothing_to_adopt() -> None:
+    store = _RenameStore([_info("x", "other:o/r", False, 5.0)])
+    assert r.adopt_legacy(store, "epic-1:o/r:cloud", "epic-1:o/r") is None
+    assert store.renames == []
+
+
+def test_adopt_legacy_fails_loud_on_ambiguous_legacy(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    store = _RenameStore(
+        [_info("a", "epic-1:o/r", True, 10.0), _info("b", "epic-1:o/r", True, 20.0)]
+    )
+    with pytest.raises(SystemExit):
+        r.adopt_legacy(store, "epic-1:o/r:cloud", "epic-1:o/r")
+    assert store.renames == []
+    assert "live sessions" in capsys.readouterr().err
+
+
+def test_resume_with_instance_adopts_legacy_and_attaches(
+    monkeypatch: pytest.MonkeyPatch,
+    capture_exec: list[list[str]],
+) -> None:
+    store = _RenameStore([_info("old", "epic-1:o/r", False, 5.0, cwd="/work/repo")])
+    monkeypatch.setattr(r, "ScrapeStore", lambda *_a, **_k: store)
+    monkeypatch.setattr(os, "chdir", lambda _p: None)
+    assert _resolve("id", "o/r", resume_name="epic-1", instance="cloud") == 0
+    assert store.renames == [("old", "epic-1:o/r:cloud")]
+    # Attached under the new three-field name.
+    assert capture_exec == [["claude", "--resume", "old", "-n", "epic-1:o/r:cloud"]]
+
+
+def test_resume_with_instance_prefers_existing_three_field_name(
+    monkeypatch: pytest.MonkeyPatch,
+    capture_exec: list[list[str]],
+) -> None:
+    store = _RenameStore(
+        [_info("new", "epic-1:o/r:cloud", False, 9.0), _info("old", "epic-1:o/r", False, 5.0)]
+    )
+    monkeypatch.setattr(r, "ScrapeStore", lambda *_a, **_k: store)
+    monkeypatch.setattr(os, "chdir", lambda _p: None)
+    assert _resolve("id", "o/r", resume_name="epic-1", instance="cloud") == 0
+    assert store.renames == []
+    assert capture_exec == [["claude", "--resume", "new", "-n", "epic-1:o/r:cloud"]]
+
+
+def test_resume_with_instance_absent_everywhere_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    capture_exec: list[list[str]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    store = _RenameStore([])
+    monkeypatch.setattr(r, "ScrapeStore", lambda *_a, **_k: store)
+    with pytest.raises(SystemExit):
+        _resolve("id", "o/r", resume_name="epic-1", instance="cloud")
+    assert capture_exec == []
+    assert "no session named 'epic-1:o/r:cloud'" in capsys.readouterr().err
+
+
+def test_resolve_label_with_instance_creates_three_field_name(
+    monkeypatch: pytest.MonkeyPatch,
+    capture_exec: list[list[str]],
+) -> None:
+    store = _RenameStore([])
+    monkeypatch.setattr(r, "_store", lambda *_a: store)
+    monkeypatch.setattr(r, "_new_session_id", lambda: "SID")
+    assert _resolve("id", "o/r", label="epic-1", instance="cloud") == 0
+    assert capture_exec == [["claude", "--session-id", "SID", "-n", "epic-1:o/r:cloud"]]
+    assert store.reserved == [("SID", "epic-1:o/r:cloud")]
+
+
+def test_resolve_label_with_instance_refuses_beside_legacy_session(
+    monkeypatch: pytest.MonkeyPatch,
+    capture_exec: list[list[str]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    store = _RenameStore([_info("old", "epic-1:o/r", False, 5.0)])
+    monkeypatch.setattr(r, "_store", lambda *_a: store)
+    assert _resolve("id", "o/r", label="epic-1", instance="cloud") == 1
+    assert capture_exec == []
+    assert store.reserved == []
+    err = capsys.readouterr().err
+    assert "pre-instance session named 'epic-1:o/r'" in err
+    assert "--resume epic-1" in err
+
+
+def test_resolve_label_with_instance_rejects_existing_three_field_name(
+    monkeypatch: pytest.MonkeyPatch,
+    capture_exec: list[list[str]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    store = _RenameStore([_info("new", "epic-1:o/r:cloud", False, 5.0)])
+    monkeypatch.setattr(r, "_store", lambda *_a: store)
+    assert _resolve("id", "o/r", label="epic-1", instance="cloud") == 1
+    assert capture_exec == []
+    assert "'epic-1:o/r:cloud' already exists" in capsys.readouterr().err
+
+
+def test_resolve_fresh_label_with_instance_retires_three_field_name(
+    monkeypatch: pytest.MonkeyPatch,
+    capture_exec: list[list[str]],
+) -> None:
+    store = _RenameStore([_info("prior", "epic-1:o/r:cloud", False, 5.0)])
+    monkeypatch.setattr(r, "_store", lambda *_a: store)
+    monkeypatch.setattr(r, "_new_session_id", lambda: "SID")
+    monkeypatch.setattr(r, "_now_stamp", lambda: "STAMP")
+    assert _resolve("id", "o/r", label="epic-1", instance="cloud", fresh=True) == 0
+    assert store.renames == [("prior", "epic-1:o/r:cloud~STAMP")]
+    assert capture_exec == [["claude", "--session-id", "SID", "-n", "epic-1:o/r:cloud"]]
+
+
+def test_resolve_rejects_malformed_instance(
+    monkeypatch: pytest.MonkeyPatch,
+    capture_exec: list[list[str]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def _boom(*_a: object, **_k: object) -> object:
+        raise AssertionError("store must not be consulted for a malformed instance")
+
+    monkeypatch.setattr(r, "_store", _boom)
+    assert _resolve("id", "o/r", label="epic-1", instance="a:b") == 1
+    assert capture_exec == []
+    assert "instance must not contain ':'" in capsys.readouterr().err
+
+
+def test_main_passes_instance(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(r, "resolve", lambda *args: seen.update(args=args) or 0)
+    r.main(["--identity", "id", "--path", "p", "--label", "epic-1", "--instance", "cloud"])
+    passed = seen["args"]
+    assert isinstance(passed, tuple)
+    assert passed[-1] == "cloud"  # instance is the final positional arg

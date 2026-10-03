@@ -28,7 +28,9 @@ from vergil_tooling.lib.session import (
     Refuse,
     build_slots,
     make_label_name,
+    parse_name,
     plan_session,
+    validate_instance,
     validate_label,
 )
 from vergil_tooling.lib.session_store import (
@@ -386,6 +388,15 @@ def _execute(action: Decision, extra: list[str], session_id: str | None = None) 
     raise RuntimeError(f"unexpected session action {type(action).__name__}")  # pragma: no cover
 
 
+def _resolve_or_exit(store: SessionStore, name: str) -> SessionInfo | None:
+    """Resolve ``name`` through the seam, aborting loudly on ambiguity."""
+    try:
+        return store.resolve_name(name)
+    except AmbiguousSessionError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+
 def plan_resume(store: SessionStore, name: str) -> SessionInfo:
     """Resolve an exact session name to the session to resume, via the seam.
 
@@ -396,43 +407,90 @@ def plan_resume(store: SessionStore, name: str) -> SessionInfo:
     session the caller meant. On success the resolved :class:`SessionInfo` carries
     both the session id (for ``--resume``) and the cwd (for memory-slug parity).
     """
-    try:
-        info = store.resolve_name(name)
-    except AmbiguousSessionError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        raise SystemExit(1) from exc
+    info = _resolve_or_exit(store, name)
     if info is None:
         print(f"ERROR: no session named {name!r} — create it with --label", file=sys.stderr)
         raise SystemExit(1)
     return info
 
 
-def _compose_resume_name(resume_name: str, path: str) -> str:
+def adopt_legacy(store: SessionStore, name: str, legacy_name: str) -> SessionInfo | None:
+    """Rename a pre-instance ``label:workspace`` session to its instance-qualified name.
+
+    Sessions created before named instances carried a ``:<instance>`` field
+    (#3066) still hold the two-field ``legacy_name``. When ``name`` (the
+    three-field form) resolves to nothing but ``legacy_name`` does, that session is
+    renamed to ``name`` through the supported ``store.rename`` (history kept) and
+    returned so the caller attaches to it. ``None`` means there is nothing to adopt:
+    either ``name`` already exists (it wins; the legacy session is left untouched)
+    or no legacy session exists either. Ambiguity on either name fails loud.
+
+    A reservation-only legacy session (never materialized) has no transcript to
+    rename; its launch at ``--session-id <id> -n <name>`` names it instead.
+    """
+    if _resolve_or_exit(store, name) is not None:
+        return None
+    legacy = _resolve_or_exit(store, legacy_name)
+    if legacy is None:
+        return None
+    if legacy.materialized:
+        store.rename(legacy.session_id, name)
+    _note(f"Renamed legacy session {legacy_name} -> {name}")
+    return legacy
+
+
+def _name_mismatch(resume_name: str, field: str, named: str | None, wanted: str | None) -> None:
+    """Abort when a full ``--resume`` name disagrees with the command line."""
+    print(
+        f"ERROR: --resume {resume_name!r} targets {field} {named!r}, but the command "
+        f"line names {field} {wanted!r}; they must match. Pass just the bare label to "
+        f"compose the name from the command line.",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+
+
+def _compose_resume_name(resume_name: str, path: str, instance: str | None = None) -> str:
     """Resolve a ``--resume`` argument to the exact session name to attach to.
 
     ``--resume`` is symmetric with ``--label``: it accepts a **bare** ``<label>``
-    and composes ``<label>:<workspace>`` from the required workspace positional
-    (``path``). A **full** ``label:workspace`` name is still accepted for
-    back-compat, but its workspace segment (everything after the final ``:``, so
-    a legacy ``<identity>:<NN>:<path>`` name resolves correctly too) MUST equal
-    the command-line workspace positional. On a mismatch this fails loud rather
-    than silently preferring either the name's workspace or the positional.
+    and composes ``<label>:<workspace>[:<instance>]`` from the required workspace
+    positional (``path``) and the named instance, if any. A **full**
+    ``label:workspace[:instance]`` name is still accepted, but its workspace (and
+    instance, when present) MUST equal the command line's; on a mismatch this
+    fails loud rather than silently preferring either side. A full name is then
+    recomposed with the command line's instance, so a two-field legacy name given
+    with ``--name`` targets the three-field name (and is adopted by
+    :func:`adopt_legacy`). A legacy ``<identity>:<NN>:<path>`` slot name (or any
+    other opaque multi-colon name) keeps the old rule — its final segment is the
+    workspace — and is returned unchanged.
     """
     if ":" not in resume_name:
-        return make_label_name(resume_name, path)
-    _label, workspace = resume_name.rsplit(":", 1)
+        return make_label_name(resume_name, path, instance)
+    fields = resume_name.split(":")
+    if len(fields) > 3 or parse_name(resume_name) is not None:  # noqa: PLR2004
+        workspace = fields[-1]
+        if workspace != path:
+            _name_mismatch(resume_name, "workspace", workspace, path)
+        return resume_name
+    label, workspace = fields[0], fields[1]
+    named = fields[2] if len(fields) == 3 else None  # noqa: PLR2004
     if workspace != path:
-        print(
-            f"ERROR: --resume {resume_name!r} targets workspace {workspace!r}, but the "
-            f"command line names workspace {path!r}; they must match. Pass just the bare "
-            f"label to compose the name from the workspace positional.",
-            file=sys.stderr,
-        )
-        raise SystemExit(1)
-    return resume_name
+        _name_mismatch(resume_name, "workspace", workspace, path)
+    if named is not None and named != instance:
+        _name_mismatch(resume_name, "instance", named, instance)
+    return make_label_name(label, path, instance)
 
 
-def _resume_by_name(name: str, extra: list[str]) -> int:
+def _legacy_name(name: str, instance: str | None) -> str | None:
+    """The pre-instance two-field form of an instance-qualified ``name``, if any."""
+    suffix = f":{instance}"
+    if instance is None or not name.endswith(suffix):
+        return None
+    return name.removesuffix(suffix)
+
+
+def _resume_by_name(name: str, extra: list[str], legacy_name: str | None = None) -> int:
     """Attach to the session named ``name`` exactly, deriving cwd from it.
 
     The store is unscoped (every slug) so the name resolves globally; the bootstrap
@@ -450,8 +508,14 @@ def _resume_by_name(name: str, extra: list[str]) -> int:
     materializes the conversation under the same id and name, keeping the
     name→id binding stable, instead of failing with 'No conversation found with
     session ID: <id>' (#2669).
+
+    ``legacy_name`` (set when resuming on a named instance) is the pre-instance
+    two-field form of ``name``; when only it exists, :func:`adopt_legacy` renames
+    that session to ``name`` and it is attached under the new name (#3066).
     """
-    info = plan_resume(ScrapeStore(_claude_dir()), name)
+    store = ScrapeStore(_claude_dir())
+    adopted = adopt_legacy(store, name, legacy_name) if legacy_name is not None else None
+    info = adopted if adopted is not None else plan_resume(store, name)
     if info.cwd:
         os.chdir(info.cwd)
     if info.materialized:
@@ -480,14 +544,26 @@ def _list_and_guide(slug: str) -> int:
         print("No sessions yet for this workspace.", file=sys.stderr)
     print(
         "\nName the session you want — choose one verb:\n"
-        "  --label <label>   start a new session named <label>:<workspace>\n"
+        "  --label <label>   start a new session named <label>:<workspace>[:<instance>]\n"
         "  --resume <name>   attach to an existing session by its exact name",
         file=sys.stderr,
     )
     return 1
 
 
-def _resolve_label(path: str, label: str, extra: list[str]) -> int:
+def _name_taken(store: SessionStore, name: str) -> bool:
+    """Whether a visible session holds ``name``.
+
+    A single match, or ambiguously many (the seam fails loud), both mean the name
+    is taken — creation must never silently shadow an existing session.
+    """
+    try:
+        return store.resolve_name(name) is not None
+    except AmbiguousSessionError:
+        return True
+
+
+def _resolve_label(path: str, label: str, extra: list[str], instance: str | None = None) -> int:
     """Create a purpose-named ``label:workspace`` session, enforcing uniqueness.
 
     The named-creation path (``--label``): validate the label slug (soft-warning
@@ -503,6 +579,11 @@ def _resolve_label(path: str, label: str, extra: list[str]) -> int:
     ``--label`` for the same name sees the reservation and refuses, rather than
     racily creating a duplicate while claude has yet to write the first session's
     transcript ``custom-title`` / roster ``name``.
+
+    On a named ``instance`` the name gains a ``:<instance>`` field, and a
+    pre-instance ``label:workspace`` session also counts as a collision: creating
+    beside it would leave two sessions for one purpose, so the user is directed to
+    ``--resume`` it, which renames it to the instance-qualified name (#3066).
     """
     try:
         warnings = validate_label(label)
@@ -511,17 +592,19 @@ def _resolve_label(path: str, label: str, extra: list[str]) -> int:
         return 1
     for warning in warnings:
         print(f"WARNING: {warning}", file=sys.stderr)
-    name = make_label_name(label, path)
+    name = make_label_name(label, path, instance)
     store = _store(_project_slug(str(Path.cwd())))
-    try:
-        # A single match, or ambiguously many (the seam fails loud), both mean the
-        # name is taken — creation must never silently shadow an existing session.
-        collision = store.resolve_name(name) is not None
-    except AmbiguousSessionError:
-        collision = True
-    if collision:
+    if _name_taken(store, name):
         print(
             f"ERROR: a session named {name!r} already exists; --resume it or pick another label",
+            file=sys.stderr,
+        )
+        return 1
+    legacy_name = _legacy_name(name, instance)
+    if legacy_name is not None and _name_taken(store, legacy_name):
+        print(
+            f"ERROR: a pre-instance session named {legacy_name!r} already exists; "
+            f"--resume {label} to rename it to {name!r}, or pick another label",
             file=sys.stderr,
         )
         return 1
@@ -582,7 +665,9 @@ def plan_fresh(store: SessionStore, name: str, stamp: str) -> FreshPlan:
     return FreshPlan(name=name, retire=(existing.session_id, retired_name(name, stamp)))
 
 
-def _resolve_fresh(path: str, label: str, stamp: str, extra: list[str]) -> int:
+def _resolve_fresh(
+    path: str, label: str, stamp: str, extra: list[str], instance: str | None = None
+) -> int:
     """Create a fresh ``label:workspace`` session, retiring any prior one by name.
 
     The ``--fresh --label`` path: validate the label (soft-warn an off-convention
@@ -600,7 +685,7 @@ def _resolve_fresh(path: str, label: str, stamp: str, extra: list[str]) -> int:
         return 1
     for warning in warnings:
         print(f"WARNING: {warning}", file=sys.stderr)
-    name = make_label_name(label, path)
+    name = make_label_name(label, path, instance)
     store = _store(_project_slug(str(Path.cwd())))
     try:
         plan = plan_fresh(store, name, stamp)
@@ -623,8 +708,15 @@ def resolve(
     extra: list[str],
     resume_name: str | None = None,
     label: str | None = None,
+    instance: str | None = None,
 ) -> int:
     """Attach a named session, or (no verb) list this workspace and guide.
+
+    ``instance`` is the named VM instance (``vrg-vm session --name``). When set,
+    every composed name gains a ``:<instance>`` field (``label:workspace:instance``)
+    so the session title says which instance it runs on, and ``--resume`` renames a
+    pre-instance ``label:workspace`` session to that name (#3066). A structurally
+    invalid instance fails loud before anything is read or launched.
 
     ``label`` short-circuits into the named-creation path (``--label``): it
     composes and uniqueness-checks ``label:workspace`` and creates that session
@@ -643,12 +735,19 @@ def resolve(
     auto-create default and no ``--slot``. ``fresh`` (without a ``label``) retains
     the legacy slot machinery; auto-archive and the staleness sweep are gone (#2608).
     """
+    if instance is not None:
+        try:
+            validate_instance(instance)
+        except ValueError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 1
     if label is not None:
         if fresh:
-            return _resolve_fresh(path, label, _now_stamp(), extra)
-        return _resolve_label(path, label, extra)
+            return _resolve_fresh(path, label, _now_stamp(), extra, instance)
+        return _resolve_label(path, label, extra, instance)
     if resume_name is not None:
-        return _resume_by_name(_compose_resume_name(resume_name, path), extra)
+        name = _compose_resume_name(resume_name, path, instance)
+        return _resume_by_name(name, extra, _legacy_name(name, instance))
     slug = _project_slug(str(Path.cwd()))
     if not fresh:
         return _list_and_guide(slug)
@@ -688,6 +787,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--fresh", action="store_true")
     parser.add_argument("--resume-name", dest="resume_name", default=None)
     parser.add_argument("--label", dest="label", default=None)
+    parser.add_argument("--instance", dest="instance", default=None)
     parser.add_argument("--list-json", action="store_true", dest="list_json")
     parser.add_argument("extra", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
@@ -709,6 +809,7 @@ def main(argv: list[str] | None = None) -> int:
         extra,
         args.resume_name,
         args.label,
+        args.instance,
     )
 
 

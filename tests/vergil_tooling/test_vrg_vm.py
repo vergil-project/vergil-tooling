@@ -2399,6 +2399,28 @@ def test_session_inner_fresh_with_label() -> None:
     assert "--fresh" in inner
 
 
+def test_session_inner_passes_named_instance() -> None:
+    # --name reaches the resolver as --instance, so the session name gains a
+    # ':<instance>' field (#3066).
+    import argparse
+
+    from vergil_tooling.bin.vrg_vm import _session_inner
+
+    ns = argparse.Namespace(cmd=[], fresh=False, resume=None, label="epic-1", name="cloud")
+    inner = _session_inner(ns, "vergil", "o/r", "")
+    assert "--instance cloud" in inner
+
+
+def test_session_inner_omits_instance_for_default() -> None:
+    import argparse
+
+    from vergil_tooling.bin.vrg_vm import _session_inner
+
+    ns = argparse.Namespace(cmd=[], fresh=False, resume=None, label="epic-1", name=None)
+    inner = _session_inner(ns, "vergil", "o/r", "")
+    assert "--instance" not in inner
+
+
 def test_cmd_session_rejects_label_with_resume() -> None:
     import argparse
 

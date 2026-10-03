@@ -34,16 +34,41 @@ def make_name(identity: str, slot: int, path: str) -> str:
 _LABEL_CONVENTION_PREFIXES = ("epic-", "adhoc-")
 
 
-def make_label_name(label: str, workspace: str) -> str:
-    """Compose a purpose-named session name ``<label>:<workspace>``.
+def make_label_name(label: str, workspace: str, instance: str | None = None) -> str:
+    """Compose a purpose-named session name ``<label>:<workspace>[:<instance>]``.
 
     The name drops identity entirely — a session is named by *what it is for*
     (its ``label``) scoped to *where it runs* (its ``workspace`` path), joined by
     the same unambiguous colon delimiter the slot scheme used. ``label`` is a
     clean slug (validated by :func:`validate_label`); ``workspace`` is the
     workspace-relative path, e.g. ``vergil-project/vergil-tooling``.
+
+    ``instance`` is the named VM instance (``vrg-vm session --name``), appended as
+    a third field so a session's title says *which* instance it runs on (e.g.
+    ``…:cloud`` vs ``…:local``). The default (unnamed) instance adds no field, so
+    its names are unchanged (#3066).
     """
-    return f"{label}:{workspace}"
+    if instance is None:
+        return f"{label}:{workspace}"
+    return f"{label}:{workspace}:{instance}"
+
+
+def validate_instance(instance: str) -> None:
+    """Validate a named-instance session-name field, raising :class:`ValueError`.
+
+    The instance becomes the third ``:``-delimited field of a session name, so a
+    ``:`` would break the delimiter and whitespace or an empty value is never a
+    valid name. Both fail loud — the name cannot be formed.
+    """
+    if not instance or not instance.strip():
+        msg = "instance must not be empty"
+        raise ValueError(msg)
+    if ":" in instance:
+        msg = "instance must not contain ':' (the session-name delimiter)"
+        raise ValueError(msg)
+    if any(ch.isspace() for ch in instance):
+        msg = "instance must not contain whitespace"
+        raise ValueError(msg)
 
 
 def validate_label(label: str) -> list[str]:

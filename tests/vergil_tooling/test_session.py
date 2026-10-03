@@ -18,6 +18,7 @@ from vergil_tooling.lib.session import (
     plan_session,
     select,
     select_by_name,
+    validate_instance,
     validate_label,
 )
 from vergil_tooling.lib.session_store import SessionInfo
@@ -42,6 +43,28 @@ def test_make_label_name_composes() -> None:
 def test_make_label_name_drops_identity() -> None:
     # The name is purpose:workspace only — no identity segment.
     assert make_label_name("adhoc-spike", ".") == "adhoc-spike:."
+
+
+def test_make_label_name_appends_instance() -> None:
+    # A named VM instance becomes the third field (#3066).
+    assert (
+        make_label_name("adhoc-x", "vergil-project/vergil-tooling", "cloud")
+        == "adhoc-x:vergil-project/vergil-tooling:cloud"
+    )
+
+
+def test_make_label_name_default_instance_unchanged() -> None:
+    assert make_label_name("adhoc-x", "o/r", None) == "adhoc-x:o/r"
+
+
+def test_validate_instance_accepts_clean_name() -> None:
+    validate_instance("local")
+
+
+@pytest.mark.parametrize("bad", ["", "   ", "a:b", "a b"])
+def test_validate_instance_rejects_malformed(bad: str) -> None:
+    with pytest.raises(ValueError, match="instance must not"):
+        validate_instance(bad)
 
 
 def test_validate_label_clean_epic() -> None:
