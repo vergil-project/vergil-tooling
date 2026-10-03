@@ -2471,6 +2471,11 @@ def _session_inner(
         resolve_cmd += ["--resume-name", args.resume]
     if getattr(args, "label", None) is not None:
         resolve_cmd += ["--label", args.label]
+    # A named instance becomes the session name's third field (#3066), so the
+    # title shows which instance (e.g. local vs cloud) the session runs on.
+    instance = _requested_name(args)
+    if instance is not None:
+        resolve_cmd += ["--instance", instance]
     if args.fresh:
         resolve_cmd += ["--fresh"]
     if extra:
@@ -2947,7 +2952,10 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help=(
             "Named VM instance for this repo (default: the unnamed default instance). "
-            "Must be declared under [vm.<identity>.instances.<name>]."
+            "Must be declared under [vm.<identity>.instances.<name>]. The instance is "
+            "appended to the session name ('<label>:<workspace>:<name>') so the title "
+            "shows which instance the session runs on; --resume renames a session "
+            "created before instance names to that form."
         ),
     )
     p_session.add_argument(
@@ -2962,8 +2970,9 @@ def main(argv: list[str] | None = None) -> int:
         help=(
             "Attach to a session by name. Accepts a bare label (e.g. "
             "'epic-85-centralize-epics'), composed with the workspace positional into "
-            "'<label>:<workspace>' — symmetric with --label. A full 'label:workspace' is "
-            "also accepted, but its workspace segment must match the workspace positional. "
+            "'<label>:<workspace>' (plus ':<name>' with --name) — symmetric with --label. "
+            "A full 'label:workspace[:name]' is also accepted, but its workspace (and "
+            "instance) must match the command line. "
             "Resolves the name to one session and derives its working directory from that "
             "session. With no verb, the workspace's sessions are listed and --label/--resume "
             "are named. Mutually exclusive with --fresh."
@@ -2974,7 +2983,8 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         metavar="LABEL",
         help=(
-            "Create a new purpose-named session named '<label>:<workspace>' (e.g. "
+            "Create a new purpose-named session named '<label>:<workspace>' (plus "
+            "':<name>' with --name) (e.g. "
             "--label epic-213-x). The label is a clean slug; an epic-/adhoc- prefix "
             "is the convention (off-convention warns, never blocks). Errors if a "
             "session of that name already exists (add --fresh to retire that prior "
