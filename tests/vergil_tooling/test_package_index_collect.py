@@ -3,17 +3,17 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import re
 import subprocess
-import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from vergil_tooling.lib.config import PackageConfig, PackagePythonConfig
-from vergil_tooling.lib.package import PackageError, matrix
+from vergil_tooling.lib.package import PackageError, matrix, repo_setup
 from vergil_tooling.lib.package.index import collect
 from vergil_tooling.lib.package.index.collect import Artifact
 from vergil_tooling.lib.package.index.config import IndexConfig
@@ -137,14 +137,22 @@ def _a(product: str, tag: str, name: str, version: str, fmt: str = "deb") -> Art
     return Artifact(product, tag, path, fmt, name, version, "1", "amd64", (), "s")
 
 
-# --- local_run -------------------------------------------------------------
+# --- default runner ------------------------------------------------------------
 
 
-def test_local_run_captures_text_and_raises_on_failure() -> None:
-    ok = collect.local_run(sys.executable, "-c", "print('hi')")
-    assert ok.stdout == "hi\n"
-    with pytest.raises(subprocess.CalledProcessError):
-        collect.local_run(sys.executable, "-c", "raise SystemExit(3)")
+@pytest.mark.parametrize(
+    "fn",
+    [
+        collect.stable_tags,
+        collect.deb_metadata,
+        collect.rpm_metadata,
+        collect.collect,
+        collect.verify,
+    ],
+)
+def test_default_runner_is_repo_setup_local_run(fn: Any) -> None:
+    # Run/local_run live in repo_setup (the canonical home); collect only uses them.
+    assert inspect.signature(fn).parameters["gh"].default is repo_setup.local_run
 
 
 # --- collect -----------------------------------------------------------------
@@ -419,14 +427,14 @@ def test_download_without_a_file_is_fatal(tmp_path: Path) -> None:
 # --- release listing -----------------------------------------------------------
 
 
-def _stdout(out: str) -> collect.Run:
+def _stdout(out: str) -> repo_setup.Run:
     def run(*argv: str) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(argv, 0, out, "")
 
     return run
 
 
-def _failing(stdout: str = "", stderr: str = "", code: int = 1) -> collect.Run:
+def _failing(stdout: str = "", stderr: str = "", code: int = 1) -> repo_setup.Run:
     def run(*argv: str) -> subprocess.CompletedProcess[str]:
         raise subprocess.CalledProcessError(code, argv, stdout, stderr)
 
@@ -577,7 +585,7 @@ def test_verify_failure_is_fatal(tmp_path: Path) -> None:
         collect.verify([_a("o/t", "v2.1.0", "t", "2.1.0")], tmp_path / "k.asc", gh=gh)
 
 
-def _rpm_gh(checksig: subprocess.CompletedProcess[str] | Exception) -> collect.Run:
+def _rpm_gh(checksig: subprocess.CompletedProcess[str] | Exception) -> repo_setup.Run:
     def gh(*a: str) -> subprocess.CompletedProcess[str]:
         if a[:2] == ("rpmkeys", "--checksig"):
             if isinstance(checksig, Exception):
