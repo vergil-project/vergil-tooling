@@ -14989,7 +14989,9 @@ version-agnostic CI model (epic
   requires the stable <code>audit / evidence</code>, <code>quality / evidence</code>, and
   <code>test / evidence</code> aggregates — never per-version legs such as
   <code>audit / dependencies / 3.12</code>. A <code>[ci].versions</code> change no longer churns the
-  required-check set, so the ruleset stops drifting when the matrix changes.</li>
+  required-check set, so the ruleset stops drifting when the matrix changes. A
+  repo with a <code>[package]</code> section additionally requires <code>package / evidence</code>,
+  the single aggregate over its binary-package target matrix.</li>
 <li><strong>Unproducible-context check.</strong> The audit asserts every required context is
   one the repo's workflows can actually produce. A leftover required leg that no
   workflow emits — for example a stale per-version check surviving a matrix

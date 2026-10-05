@@ -14909,7 +14909,8 @@ every repository.</p>
 <p>Each evidence-producing gate uploads exactly one workflow-run artifact:</p>
 <ul>
 <li><strong>Artifact name:</strong> <code>ci-evidence-&lt;gate&gt;</code> — for example <code>ci-evidence-security</code>,
-  <code>ci-evidence-test</code>, <code>ci-evidence-audit</code>, <code>ci-evidence-quality</code>.</li>
+  <code>ci-evidence-test</code>, <code>ci-evidence-audit</code>, <code>ci-evidence-quality</code>,
+  <code>ci-evidence-package</code>.</li>
 <li><strong>Contents:</strong> the gate's full report files (SARIF, coverage XML, JUnit
   XML, audit/license JSON, SBOM, …), plus an <code>evidence.json</code> fragment at the
   artifact root describing what the gate ran and found.</li>
@@ -14993,9 +14994,10 @@ evidence, so it does not satisfy the gate.</p>
 is <strong>derived from the same source of truth that drives branch protection</strong>:
 <code>lib/github_config.py:desired_ci_gates_ruleset()</code> computes a repo's required
 status checks from its <code>VergilConfig</code> (language, <code>[ci]</code> versions, GHAS
-availability). The evidence layer consumes that <em>same</em> computation, so the gates
-that are <strong>enforced to merge</strong> and the gates that are <strong>required to have
-evidence</strong> are provably the same set, with no drift.</p>
+availability, and whether a <code>[package]</code> section is present). The evidence
+layer consumes that <em>same</em> computation, so the gates that are <strong>enforced to
+merge</strong> and the gates that are <strong>required to have evidence</strong> are provably the
+same set, with no drift.</p>
 <p>This is the load-bearing invariant: management of the required gates and
 collection of their auditing evidence come from <strong>common configuration code</strong>.</p>
 <h3 id="classification-by-check-name-prefix">Classification by check-name prefix<a class="headerlink" href="#classification-by-check-name-prefix" title="Permanent link">&para;</a></h3>
@@ -15031,6 +15033,11 @@ prefix:</p>
 <td>Yes</td>
 </tr>
 <tr>
+<td><code>package / …</code> (only with <code>[package]</code>)</td>
+<td><code>package</code></td>
+<td>Yes</td>
+</tr>
+<tr>
 <td><code>version / …</code></td>
 <td>—</td>
 <td>No (non-blocking)</td>
@@ -15044,9 +15051,12 @@ prefix:</p>
 </table>
 <p>The guiding principle: <strong>any gate that can block the build is evidence worth
 keeping.</strong> Quality (lint/typecheck) sits alongside security, test, and audit as
-first-class evidence. <code>version/</code> is a sanity check on version state, not
-substantive evidence, and <code>docs</code> is low-signal; the absence of either does not
-fail the release.</p>
+first-class evidence. A repo whose <code>vergil.toml</code> has a <code>[package]</code> section also
+requires the <code>package / evidence</code> gate (the <code>ci-package.yml</code> aggregate over its
+whole target matrix), so the harvest pulls <code>ci-evidence-package</code> for it; a repo
+without <code>[package]</code> never calls <code>ci-package.yml</code> and is never asked for it.
+<code>version/</code> is a sanity check on version state, not substantive evidence, and
+<code>docs</code> is low-signal; the absence of either does not fail the release.</p>
 <h3 id="per-repo-correctness-for-free">Per-repo correctness for free<a class="headerlink" href="#per-repo-correctness-for-free" title="Permanent link">&para;</a></h3>
 <p>Because the set is <em>derived</em>, a repo with a different real profile — no GHAS
 (CodeQL not required), a non-Python stack, or a gate legitimately disabled —
