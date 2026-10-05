@@ -383,7 +383,9 @@ def test_resolve_required_gates_wires_config_ghas_and_derivation(
 
     from vergil_tooling.lib.github_config import EvidenceGate
 
-    cfg = SimpleNamespace(project="PROJECT", ci="CI", publish=SimpleNamespace(docs=False))
+    cfg = SimpleNamespace(
+        project="PROJECT", ci="CI", publish=SimpleNamespace(docs=False), package=None
+    )
     monkeypatch.setattr(ci_evidence, "read_config", lambda _root: cfg)
     monkeypatch.setattr(github, "repo_visibility", lambda _repo: "public")
 
@@ -398,8 +400,8 @@ def test_resolve_required_gates_wires_config_ghas_and_derivation(
 
     sentinel = (EvidenceGate(name="test", checks=("test / unit",)),)
 
-    def fake_required(project: Any, ci: Any, *, ghas: bool, docs: bool) -> Any:
-        captured["derivation_args"] = (project, ci, ghas, docs)
+    def fake_required(project: Any, ci: Any, *, ghas: bool, docs: bool, package: bool) -> Any:
+        captured["derivation_args"] = (project, ci, ghas, docs, package)
         return sentinel
 
     monkeypatch.setattr(ci_evidence, "required_evidence_gates", fake_required)
@@ -409,8 +411,58 @@ def test_resolve_required_gates_wires_config_ghas_and_derivation(
     assert result is sentinel
     assert captured["ghas_config"] is cfg
     assert captured["visibility"] == "public"
-    # docs is wired from config.publish.docs (here False) alongside ghas.
-    assert captured["derivation_args"] == ("PROJECT", "CI", True, False)
+    # docs is wired from config.publish.docs (here False) alongside ghas, and
+    # package from the presence of a [package] section (here absent).
+    assert captured["derivation_args"] == ("PROJECT", "CI", True, False, False)
+
+
+def test_package_section_makes_harvest_download_ci_evidence_package(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A ``[package]`` repo requires the ``package`` gate, so the harvest pulls
+    ``ci-evidence-package`` (epic vergil-project/.github#356, spec 8.1).
+
+    Runs the real derivation (no stub of ``required_evidence_gates``) so the
+    config -> required-gate -> artifact-name chain is exercised end to end.
+    """
+    from types import SimpleNamespace
+
+    from vergil_tooling.lib.config import CiConfig, ProjectConfig
+
+    project = ProjectConfig(
+        repository_type="library",
+        versioning_scheme="semver",
+        branching_model="library-release",
+        release_model="tagged-release",
+        primary_language="python",
+    )
+    cfg = SimpleNamespace(
+        project=project,
+        ci=CiConfig(versions=["3.14"], integration_tests=False),
+        publish=SimpleNamespace(docs=True),
+        package=SimpleNamespace(builder="python"),
+    )
+    monkeypatch.setattr(ci_evidence, "read_config", lambda _root: cfg)
+    monkeypatch.setattr(github, "repo_visibility", lambda _repo: "public")
+    monkeypatch.setattr(ci_evidence, "ghas_available", lambda _c, *, visibility: True)
+
+    required = ci_evidence.resolve_required_gates("o/r", tmp_path)
+    assert "package" in {g.name for g in required}
+
+    monkeypatch.setattr(
+        github,
+        "read_json",
+        lambda *a, **k: [{"name": f"ci-evidence-{g.name}"} for g in required],
+    )
+    calls: list[tuple[str, ...]] = []
+    monkeypatch.setattr(github, "run", lambda *a: calls.append(a))
+
+    dest = tmp_path / "artifacts"
+    result = download_evidence_artifacts("o/r", 7, dest, required)
+
+    assert dest / "package" in result
+    downloaded_names = {a[a.index("--name") + 1] for a in calls}
+    assert "ci-evidence-package" in downloaded_names
 
 
 # --- _gate_conclusion ---------------------------------------------------
