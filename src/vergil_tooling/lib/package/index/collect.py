@@ -329,8 +329,15 @@ def collect(cfg: IndexConfig, workdir: Path, gh: Run = local_run) -> list[Artifa
     return out
 
 
-def verify(artifacts: list[Artifact], keyfile: Path, gh: Run = local_run) -> None:
-    """Verify every artifact's build provenance, and every ``.rpm``'s org signature."""
+def verify(
+    artifacts: list[Artifact], keyfile: Path, gh: Run = local_run, *, rpmdb: Path | None = None
+) -> None:
+    """Verify every artifact's build provenance, and every ``.rpm``'s org signature.
+
+    With ``rpmdb``, the org key is imported into, and signatures are checked
+    against, a private rpm database in that directory rather than the system
+    one (which needs root to write).
+    """
     for a in artifacts:
         try:
             gh(
@@ -354,11 +361,16 @@ def verify(artifacts: list[Artifact], keyfile: Path, gh: Run = local_run) -> Non
     rpms = [a for a in artifacts if a.fmt == "rpm"]
     if not rpms:
         return
-    _call(gh, f"importing {keyfile} into the rpm keyring", "rpmkeys", "--import", str(keyfile))
+    db: tuple[str, ...] = ()
+    if rpmdb is not None:
+        rpmdb.mkdir(parents=True, exist_ok=True)
+        db = ("--dbpath", str(rpmdb.resolve()))
+    what = f"importing {keyfile} into the rpm keyring"
+    _call(gh, what, "rpmkeys", *db, "--import", str(keyfile))
     for a in rpms:
         what = f"rpm signature check failed for {a.path.name} ({a.product}@{a.tag})"
         try:
-            out = gh("rpmkeys", "--checksig", str(a.path)).stdout
+            out = gh("rpmkeys", *db, "--checksig", str(a.path)).stdout
         except subprocess.CalledProcessError as exc:
             msg = f"{what}: {_detail(exc)}"
             raise PackageError(msg) from exc

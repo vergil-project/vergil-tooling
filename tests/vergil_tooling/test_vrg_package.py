@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from vergil_tooling.bin import vrg_package
+from vergil_tooling.lib.package import PackageError
+from vergil_tooling.lib.package.index import site
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -196,3 +198,68 @@ def test_build_requires_cell_and_version(capsys: pytest.CaptureFixture[str]) -> 
         vrg_package.main(["build", "--version", "1"])
     assert exc.value.code == 2
     assert "--cell" in capsys.readouterr().err
+
+
+# --- index ---------------------------------------------------------------------
+
+
+def _record_build_site(monkeypatch: pytest.MonkeyPatch) -> list[tuple[Any, ...]]:
+    calls: list[tuple[Any, ...]] = []
+
+    def fake(config: Path, keys: Path, out: Path, work: Path, *, base_url: str) -> None:
+        calls.append((str(config), str(keys), str(out), str(work), base_url))
+
+    monkeypatch.setattr(site, "build_site", fake)
+    return calls
+
+
+def test_index_builds_the_site(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls = _record_build_site(monkeypatch)
+    argv = ["index", "--config", "packages.toml", "--keys", "keys", "--out", "_site"]
+    assert vrg_package.main([*argv, "--base-url", "https://v.example/p"]) == 0
+    assert calls == [
+        ("packages.toml", "keys", "_site", ".vergil/index-work", "https://v.example/p")
+    ]
+    assert "package site written to _site" in capsys.readouterr().out
+
+
+def test_index_base_url_defaults_from_github_repository(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _record_build_site(monkeypatch)
+    monkeypatch.setenv("GITHUB_REPOSITORY", "vergil-project/packages")
+    argv = ["index", "--config", "c", "--keys", "k", "--out", "o", "--work", "w"]
+    assert vrg_package.main(argv) == 0
+    assert calls == [("c", "k", "o", "w", "https://vergil-project.github.io/packages")]
+
+
+def test_index_without_base_url_fails_before_building(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls = _record_build_site(monkeypatch)
+    monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
+    assert vrg_package.main(["index", "--config", "c", "--keys", "k", "--out", "o"]) == 1
+    assert calls == []
+    assert "pass --base-url or set GITHUB_REPOSITORY" in capsys.readouterr().err
+
+
+def test_index_size_guard_failure_exits_nonzero(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def too_big(*_a: object, **_k: object) -> None:
+        msg = "package site is 950000000 bytes, over the 900000000-byte limit"
+        raise PackageError(msg)
+
+    monkeypatch.setattr(site, "build_site", too_big)
+    argv = ["index", "--config", "c", "--keys", "k", "--out", "o", "--base-url", "u"]
+    assert vrg_package.main(argv) == 1
+    assert "ERROR: package site is 950000000 bytes" in capsys.readouterr().err
+
+
+def test_index_requires_config_keys_and_out(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc:
+        vrg_package.main(["index"])
+    assert exc.value.code == 2
+    assert "--config" in capsys.readouterr().err
