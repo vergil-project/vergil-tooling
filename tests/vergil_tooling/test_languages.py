@@ -211,6 +211,15 @@ def test_python_audit_pip_licenses_allowlist_intact() -> None:
     assert any(arg.startswith("--allow-only=") for arg in pip_licenses_cmd[0])
 
 
+def test_python_audit_pip_licenses_allowlist_accepts_public_domain() -> None:
+    """Public Domain is allowed fleet-wide (issue #3088; e.g. pyelftools)."""
+    cmds = language_commands("python", CheckKind.AUDIT)
+    pip_licenses_cmd = [c for c in cmds if c[0] == "pip-licenses"][0]
+    allow_only = next(a for a in pip_licenses_cmd if a.startswith("--allow-only="))
+    allowed = allow_only.removeprefix("--allow-only=").split(";")
+    assert "Public Domain" in allowed
+
+
 def test_python_audit_pip_licenses_emits_json_report() -> None:
     cmds = language_commands("python", CheckKind.AUDIT)
     pip_licenses_cmd = [c for c in cmds if c[0] == "pip-licenses"][0]
