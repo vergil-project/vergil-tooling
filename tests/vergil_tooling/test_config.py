@@ -1626,3 +1626,290 @@ def test_test_block_not_flagged_as_unrecognized_section(
     (tmp_path / "vergil.toml").write_text(toml)
     read_config(tmp_path)
     assert "unrecognized section [test]" not in capsys.readouterr().err
+
+
+# -- [package] (epic vergil-project/.github#356, spec §5.2/§5.4) -------------
+
+_PKG_PY = (
+    _VALID_TOML
+    + """
+[package]
+builder = "python"
+vendor = "vergil"
+summary = "Shared tooling"
+smoke = "vrg-whoami --mode"
+
+[package.python]
+runtime = "3.14.4"
+"""
+)
+
+_PKG_STAGED = (
+    _VALID_TOML
+    + """
+[package]
+builder = "staged"
+vendor = "vergil"
+name = "vergil-archive-keyring"
+summary = "Keyring"
+smoke = "true"
+noarch = true
+"""
+)
+
+_KEYRING_OVERLAY = (
+    "contents:\n  - src: keys/vergil.asc\n    dst: /usr/share/keyrings/vergil-archive-keyring.asc\n"
+)
+
+
+def _with_pkg_line(body: str, line: str) -> str:
+    return body.replace("[package]\n", f"[package]\n{line}\n", 1)
+
+
+def test_package_python_parses(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    (tmp_path / "vergil.toml").write_text(_PKG_PY)
+    pkg = read_config(tmp_path).package
+    assert pkg is not None
+    assert pkg.python is not None
+    assert (pkg.builder, pkg.vendor, pkg.python.runtime) == ("python", "vergil", "3.14.4")
+    assert (pkg.summary, pkg.smoke) == ("Shared tooling", "vrg-whoami --mode")
+    assert (pkg.exclude, pkg.targets, pkg.native, pkg.noarch) == ([], None, [], False)
+    assert (pkg.name, pkg.version, pkg.python.commands, pkg.staged) == (None, None, None, None)
+    err = capsys.readouterr().err
+    assert "unrecognized section [package]" not in err
+    assert "unrecognized key" not in err
+
+
+def test_package_python_full_parse(tmp_path: Path) -> None:
+    body = (
+        _PKG_PY.replace(
+            "[package]\n",
+            '[package]\nname = "vt"\nversion = "3.14.4+20261001"\nexclude = ["rhel/*/arm64"]\n'
+            'native = ["ubuntu/26.04/*"]\n',
+        )
+        + 'commands = ["vrg-git"]\n'
+    )
+    (tmp_path / "vergil.toml").write_text(body)
+    pkg = read_config(tmp_path).package
+    assert pkg is not None
+    assert pkg.python is not None
+    assert (pkg.name, pkg.version) == ("vt", "3.14.4+20261001")
+    assert (pkg.exclude, pkg.native, pkg.python.commands) == (
+        ["rhel/*/arm64"],
+        ["ubuntu/26.04/*"],
+        ["vrg-git"],
+    )
+
+
+def test_package_targets_subset_parses(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_with_pkg_line(_PKG_PY, 'targets = ["ubuntu/*/*"]'))
+    pkg = read_config(tmp_path).package
+    assert pkg is not None
+    assert pkg.targets == ["ubuntu/*/*"]
+
+
+def test_no_package_section_is_none(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    assert read_config(tmp_path).package is None
+
+
+@pytest.mark.parametrize(
+    ("extra", "match"),
+    [
+        ('exclude = ["x/y/z"]', r"\[package\]\.exclude pattern 'x/y/z' matches no target"),
+        ('targets = ["x/y/z"]', r"\[package\]\.targets pattern 'x/y/z' matches no target"),
+        ('exclude = ["*/*/*"]', r"\[package\] selects no targets"),
+        ("targets = []", r"\[package\] selects no targets"),
+        (
+            'targets = ["ubuntu/*/*"]\nexclude = ["rhel/*/*"]',
+            r"\[package\]: set at most one of exclude, targets",
+        ),
+        (
+            'native = ["rhel/*/*"]\ntargets = ["ubuntu/*/*"]',
+            r"\[package\]\.native pattern 'rhel/\*/\*' matches no selected target",
+        ),
+        ('builder = "cmake"', r"\[package\]\.builder must be one of python, staged"),
+        ('exclude = "rhel/*/*"', r"\[package\]\.exclude must be a list of strings"),
+        ("targets = [1]", r"\[package\]\.targets must be a list of strings"),
+        ('noarch = "yes"', r"\[package\]\.noarch must be a boolean"),
+        ('version = "v1"', r"\[package\]\.version must match"),
+        ("version = 1", r"\[package\]\.version must match"),
+        ("name = 5", r"\[package\]\.name must be a non-empty string"),
+        ('name = ""', r"\[package\]\.name must be a non-empty string"),
+        ('native = ["*/*/*"]\nnoarch = true', r"\[package\]\.native cannot be combined with"),
+    ],
+)
+def test_package_errors(tmp_path: Path, extra: str, match: str) -> None:
+    body = _PKG_PY.replace('builder = "python"\n', "") if extra.startswith("builder") else _PKG_PY
+    (tmp_path / "vergil.toml").write_text(_with_pkg_line(body, extra))
+    with pytest.raises(ConfigError, match=match):
+        read_config(tmp_path)
+
+
+@pytest.mark.parametrize("key", ["vendor", "summary", "smoke"])
+def test_package_required_strings(tmp_path: Path, key: str) -> None:
+    lines = [ln for ln in _PKG_PY.splitlines(keepends=True) if not ln.startswith(f"{key} =")]
+    (tmp_path / "vergil.toml").write_text("".join(lines))
+    with pytest.raises(ConfigError, match=rf"\[package\]\.{key} is required"):
+        read_config(tmp_path)
+
+
+def test_package_must_be_a_table(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text('package = "yes"\n' + _VALID_TOML)
+    with pytest.raises(ConfigError, match=r"\[package\] must be a table"):
+        read_config(tmp_path)
+
+
+def test_exclude_everything_is_an_error(tmp_path: Path) -> None:  # Review Focus 4
+    (tmp_path / "vergil.toml").write_text(_with_pkg_line(_PKG_PY, 'exclude = ["*/*/*"]'))
+    with pytest.raises(ConfigError, match=r"selects no targets"):
+        read_config(tmp_path)
+
+
+def test_error_names_the_config_path(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_with_pkg_line(_PKG_PY, 'exclude = ["*/*/*"]'))
+    with pytest.raises(ConfigError, match=str(tmp_path / "vergil.toml")):
+        read_config(tmp_path)
+
+
+def test_python_builder_requires_runtime(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(
+        _PKG_PY.replace('\n[package.python]\nruntime = "3.14.4"\n', "")
+    )
+    with pytest.raises(ConfigError, match=r"\[package\.python\]\.runtime is required"):
+        read_config(tmp_path)
+
+
+@pytest.mark.parametrize("runtime", ['"3.14"', '"3.14.4rc1"', "3", '"3.14.4\\n"'])
+def test_runtime_must_be_exact_patch(tmp_path: Path, runtime: str) -> None:
+    (tmp_path / "vergil.toml").write_text(_PKG_PY.replace('"3.14.4"', runtime))
+    with pytest.raises(ConfigError, match=r"runtime must be an exact CPython patch"):
+        read_config(tmp_path)
+
+
+def test_python_commands_must_be_strings(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_PKG_PY + "commands = [1]\n")
+    with pytest.raises(ConfigError, match=r"\[package\.python\]\.commands must be a list"):
+        read_config(tmp_path)
+
+
+def test_python_subtable_must_be_a_table(tmp_path: Path) -> None:
+    body = _PKG_PY.replace('\n[package.python]\nruntime = "3.14.4"\n', "")
+    (tmp_path / "vergil.toml").write_text(_with_pkg_line(body, 'python = "3.14.4"'))
+    with pytest.raises(ConfigError, match=r"\[package\.python\] must be a table"):
+        read_config(tmp_path)
+
+
+def test_unknown_subtable_keys_warn(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    (tmp_path / "vergil.toml").write_text(_PKG_PY + 'comands = ["x"]\n')
+    read_config(tmp_path)
+    assert "unrecognized key 'comands' in [package.python]" in capsys.readouterr().err
+
+
+def test_cross_builder_subtable_is_an_error(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_PKG_PY + '\n[package.staged]\nbuild-command = "x"\n')
+    with pytest.raises(
+        ConfigError, match=r"\[package\.staged\] is only valid with builder = \"staged\""
+    ):
+        read_config(tmp_path)
+
+
+def test_python_subtable_with_staged_builder_is_an_error(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_PKG_STAGED + '\n[package.python]\nruntime = "3.14.4"\n')
+    with pytest.raises(
+        ConfigError, match=r"\[package\.python\] is only valid with builder = \"python\""
+    ):
+        read_config(tmp_path)
+
+
+def test_staged_needs_command_or_overlay_files(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_PKG_STAGED)
+    with pytest.raises(
+        ConfigError,
+        match=r"builder = \"staged\" needs \[package\.staged\]\.build-command or overlay contents",
+    ):
+        read_config(tmp_path)
+
+
+def test_staged_overlay_without_contents_is_not_enough(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_PKG_STAGED)
+    (tmp_path / "packaging").mkdir()
+    (tmp_path / "packaging" / "nfpm.overlay.yaml").write_text("provides: [x]\n")
+    with pytest.raises(ConfigError, match=r"needs \[package\.staged\]\.build-command"):
+        read_config(tmp_path)
+
+
+def test_staged_with_overlay_contents_is_valid(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_PKG_STAGED)
+    (tmp_path / "packaging").mkdir()
+    (tmp_path / "packaging" / "nfpm.overlay.yaml").write_text(_KEYRING_OVERLAY)
+    pkg = read_config(tmp_path).package
+    assert pkg is not None
+    assert pkg.name == "vergil-archive-keyring"
+    assert pkg.noarch
+    assert pkg.staged is not None
+    assert pkg.staged.build_command is None
+    assert pkg.python is None
+
+
+def test_staged_with_build_command_is_valid(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(
+        _PKG_STAGED + '\n[package.staged]\nbuild-command = "packaging/build.sh"\n'
+    )
+    pkg = read_config(tmp_path).package
+    assert pkg is not None
+    assert pkg.staged is not None
+    assert pkg.staged.build_command == "packaging/build.sh"
+
+
+def test_staged_build_command_must_be_a_string(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_PKG_STAGED + "\n[package.staged]\nbuild-command = 1\n")
+    with pytest.raises(ConfigError, match=r"\[package\.staged\]\.build-command must be a string"):
+        read_config(tmp_path)
+
+
+def test_staged_requires_name(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(
+        _PKG_STAGED.replace('name = "vergil-archive-keyring"\n', "")
+        + '\n[package.staged]\nbuild-command = "x"\n'
+    )
+    with pytest.raises(ConfigError, match=r"\[package\]\.name is required for builder = .staged."):
+        read_config(tmp_path)
+
+
+def test_overlay_must_be_a_mapping(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_PKG_PY)
+    (tmp_path / "packaging").mkdir()
+    (tmp_path / "packaging" / "nfpm.overlay.yaml").write_text("- not a mapping\n")
+    with pytest.raises(ConfigError, match=r"nfpm.overlay.yaml must be a YAML mapping"):
+        read_config(tmp_path)
+
+
+def test_overlay_must_be_valid_yaml(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_PKG_PY)
+    (tmp_path / "packaging").mkdir()
+    (tmp_path / "packaging" / "nfpm.overlay.yaml").write_text("contents: [unclosed\n")
+    with pytest.raises(ConfigError, match=r"nfpm.overlay.yaml is not valid YAML"):
+        read_config(tmp_path)
+
+
+def test_empty_overlay_is_allowed(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_PKG_PY)
+    (tmp_path / "packaging").mkdir()
+    (tmp_path / "packaging" / "nfpm.overlay.yaml").write_text("")
+    assert read_config(tmp_path).package is not None
+
+
+def test_overlay_may_not_set_identity_keys(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_PKG_PY)
+    (tmp_path / "packaging").mkdir()
+    (tmp_path / "packaging" / "nfpm.overlay.yaml").write_text("name: other\n")
+    with pytest.raises(ConfigError, match=r"overlay may not set 'name'"):
+        read_config(tmp_path)
+
+
+def test_overlay_is_ignored_without_package_section(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    (tmp_path / "packaging").mkdir()
+    (tmp_path / "packaging" / "nfpm.overlay.yaml").write_text("name: other\n")
+    assert read_config(tmp_path).package is None
