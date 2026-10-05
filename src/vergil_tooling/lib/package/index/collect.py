@@ -17,25 +17,16 @@ import hashlib
 import json
 import re
 import subprocess
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from vergil_tooling.lib.package import PackageError
+from vergil_tooling.lib.package.repo_setup import Run, local_run
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from vergil_tooling.lib.package.index.config import IndexConfig
-
-# Same convention as T3's ``repo_setup.Run``/``local_run`` (not merged yet): called as
-# ``run(*argv)``, raising ``CalledProcessError`` on a nonzero exit. Unify once T3 lands.
-Run = Callable[..., subprocess.CompletedProcess[str]]
-
-
-def local_run(*argv: str) -> subprocess.CompletedProcess[str]:
-    """Run ``argv`` on this host, capturing text output; raise on a nonzero exit."""
-    return subprocess.run(list(argv), check=True, capture_output=True, text=True)  # noqa: S603
 
 
 MANIFEST = "packages-manifest.json"
