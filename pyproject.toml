@@ -9,7 +9,7 @@ description = "VERGIL — Validation Engine for Repository Governance, Integrati
 requires-python = ">=3.12,<4.0"
 license = "MIT"
 license-files = ["LICENSE"]
-dependencies = ["rich>=13.0", "pyyaml>=6.0"]
+dependencies = ["rich>=13.0", "pyyaml>=6.0", "pyelftools>=0.31"]
 
 [project.scripts]
 vrg-activity-log = "vergil_tooling.bin.vrg_activity_log:main"

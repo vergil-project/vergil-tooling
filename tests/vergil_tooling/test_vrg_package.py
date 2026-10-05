@@ -130,3 +130,69 @@ def test_subcommand_is_required(capsys: pytest.CaptureFixture[str]) -> None:
         vrg_package.main([])
     assert exc.value.code == 2
     assert "matrix" in capsys.readouterr().err
+
+
+def test_build_subcommand_wires_run_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    seen: dict[str, object] = {}
+
+    def fake(
+        repo_root: Path, cell_id: str, version: str, out_dir: Path, staging_root: Path
+    ) -> list[Path]:
+        seen.update(
+            root=repo_root, cell=cell_id, version=version, out=out_dir, staging=staging_root
+        )
+        return [out_dir / "a.deb", out_dir / "a.rpm"]
+
+    monkeypatch.setattr(vrg_package.build, "run_build", fake)
+    monkeypatch.chdir(tmp_path)
+    argv = ["build", "--cell", "shared-amd64", "--version", "2.1.240", "--out", "dist"]
+    assert vrg_package.main(argv) == 0
+    assert seen == {
+        "root": tmp_path,
+        "cell": "shared-amd64",
+        "version": "2.1.240",
+        "out": tmp_path / "dist",
+        "staging": tmp_path / ".vergil/package-staging",
+    }
+    out = capsys.readouterr().out.splitlines()
+    assert out == [str(tmp_path / "dist/a.deb"), str(tmp_path / "dist/a.rpm")]
+
+
+def test_build_defaults_and_absolute_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, object] = {}
+
+    def fake(
+        repo_root: Path, cell_id: str, version: str, out_dir: Path, staging_root: Path
+    ) -> list[Path]:
+        seen.update(out=out_dir, staging=staging_root)
+        return []
+
+    monkeypatch.setattr(vrg_package.build, "run_build", fake)
+    monkeypatch.chdir(tmp_path)
+    assert vrg_package.main(["build", "--cell", "c", "--version", "1"]) == 0
+    assert seen == {
+        "out": tmp_path / "dist/packages",
+        "staging": tmp_path / ".vergil/package-staging",
+    }
+    stage = tmp_path / "elsewhere"
+    argv = ["build", "--cell", "c", "--version", "1", "--staging", str(stage)]
+    assert vrg_package.main(argv) == 0
+    assert seen["staging"] == stage
+
+
+def test_build_package_error_returns_1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML_TEXT)
+    monkeypatch.chdir(tmp_path)
+    assert vrg_package.main(["build", "--cell", "shared-amd64", "--version", "1.0.0"]) == 1
+    assert "no [package] section" in capsys.readouterr().err
+
+
+def test_build_requires_cell_and_version(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc:
+        vrg_package.main(["build", "--version", "1"])
+    assert exc.value.code == 2
+    assert "--cell" in capsys.readouterr().err

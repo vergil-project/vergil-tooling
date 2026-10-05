@@ -9,6 +9,11 @@ Subcommands:
           ``build`` and ``test`` to $GITHUB_OUTPUT instead of printing. With
           --manifest PATH, also write the release artifact manifest to PATH.
           A repo without [package] reports ``enabled: false`` and empty lists.
+
+  build   Build every package format of one build cell (--cell, from the
+          matrix) at --version (overridden by [package].version when set).
+          Stages into --staging (wiped first) and writes the .deb/.rpm
+          artifacts to --out, printing each artifact path. Needs nfpm on PATH.
 """
 
 from __future__ import annotations
@@ -20,7 +25,8 @@ import sys
 from pathlib import Path
 
 from vergil_tooling.lib import config
-from vergil_tooling.lib.package import PackageError, matrix
+from vergil_tooling.lib.package import PackageError, build, matrix
+from vergil_tooling.lib.package import staged as _staged  # noqa: F401  (registers the builder)
 
 
 def _cmd_matrix(args: argparse.Namespace) -> int:
@@ -55,6 +61,20 @@ def _cmd_matrix(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_build(args: argparse.Namespace) -> int:
+    cwd = Path.cwd()
+    artifacts = build.run_build(
+        repo_root=cwd,
+        cell_id=args.cell,
+        version=args.version,
+        out_dir=cwd / args.out,
+        staging_root=cwd / args.staging,
+    )
+    for path in artifacts:
+        print(path)
+    return 0
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="vrg-package",
@@ -79,6 +99,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Also write the release artifact manifest to PATH",
     )
     p.set_defaults(func=_cmd_matrix)
+    b = sub.add_parser(
+        "build",
+        help="Build one build cell's .deb/.rpm packages (needs nfpm)",
+        description="Build every package format of one build cell (spec §6).",
+    )
+    b.add_argument("--cell", required=True, help="Build cell id from `vrg-package matrix`")
+    b.add_argument("--version", required=True, help="Repo version (e.g. 2.1.240)")
+    b.add_argument(
+        "--out",
+        default="dist/packages",
+        metavar="DIR",
+        help="Artifact directory (default: dist/packages)",
+    )
+    b.add_argument(
+        "--staging",
+        default=".vergil/package-staging",
+        metavar="DIR",
+        help="Staging root, wiped before the build (default: .vergil/package-staging)",
+    )
+    b.set_defaults(func=_cmd_build)
     return parser.parse_args(argv)
 
 
