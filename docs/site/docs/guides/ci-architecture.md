@@ -334,7 +334,10 @@ matrix could never produce, leaving the PR "expected, never reported" and
 permanently blocked with no `--admin` escape (epic
 [vergil-project/.github#338](https://github.com/vergil-project/.github/issues/338)).
 Non-matrixed checks (the security scanners, `quality / common`, the version-bump
-gate, `docs / docs`) keep their fixed, version-free names.
+gate, `docs / docs`) keep their fixed, version-free names. A repo whose
+`vergil.toml` has a `[package]` section also requires `package / evidence`, the
+one stable gate `ci-package.yml` emits over its whole target matrix; repos
+without `[package]` neither call `ci-package.yml` nor require the gate.
 
 `vrg-github-repo-config audit` **hard-fails on required-set drift**: if a
 repo's configured required checks diverge from the desired set, the audit

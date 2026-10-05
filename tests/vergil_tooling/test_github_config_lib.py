@@ -14,6 +14,8 @@ from vergil_tooling.lib.config import (
     CiConfig,
     ContainerConfig,
     MarkdownlintConfig,
+    PackageConfig,
+    PackagePythonConfig,
     ProjectConfig,
     PublishConfig,
     ValidationConfig,
@@ -301,6 +303,23 @@ def test_ci_gates_omits_docs_check_when_not_publishing_docs() -> None:
     assert "docs / docs" not in _check_names(ruleset)
 
 
+def test_ci_gates_requires_package_evidence_when_package_section_present() -> None:
+    """A repo whose `vergil.toml` has `[package]` calls `ci-package.yml`, which
+    emits the stable `package / evidence` gate, so it is a required PR check
+    (epic vergil-project/.github#356, spec section 8.1)."""
+    ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=False, package=True)
+    assert "package / evidence" in _check_names(ruleset)
+
+
+def test_ci_gates_omits_package_evidence_without_package_section() -> None:
+    """A repo without `[package]` never calls `ci-package.yml`; requiring
+    `package / evidence` there would pin a never-reported status."""
+    ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=False)
+    assert "package / evidence" not in _check_names(ruleset)
+    ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=False, package=False)
+    assert "package / evidence" not in _check_names(ruleset)
+
+
 # `docs / docs` is deliberately absent here — it is conditional on
 # `[publish].docs` (see the two tests above), not universal.
 UNIVERSAL_REUSABLE_CI_CHECKS = frozenset(
@@ -492,6 +511,8 @@ _FULL_CI_JOBS = {
     "version": "ci-version-bump.yml",
 }
 
+_PACKAGE_CI_JOBS = {**_FULL_CI_JOBS, "package": "ci-package.yml"}
+
 
 def test_required_status_contexts_extracts_names() -> None:
     ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=True)
@@ -572,6 +593,24 @@ def test_per_version_legs_remain_producible_via_prefix() -> None:
     assert unproducible_ci_yaml_contexts(ci_yaml, legs, ghas=True) == []
 
 
+def test_package_evidence_producible_when_ci_calls_ci_package() -> None:
+    """`ci-package.yml` under a caller job keyed `package` emits the
+    `package / evidence` gate on a PR, so a `[package]` repo is fully
+    producible (epic #356, task A1's interface)."""
+    ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=True, docs=True, package=True)
+    ci_yaml = _ci_yaml(jobs=_PACKAGE_CI_JOBS)
+    assert (
+        unproducible_ci_yaml_contexts(ci_yaml, required_status_contexts(ruleset), ghas=True) == []
+    )
+
+
+def test_package_evidence_flagged_when_ci_lacks_package_job() -> None:
+    ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=True, docs=True, package=True)
+    ci_yaml = _ci_yaml(jobs=_FULL_CI_JOBS)
+    missing = unproducible_ci_yaml_contexts(ci_yaml, required_status_contexts(ruleset), ghas=True)
+    assert missing == ["package / evidence"]
+
+
 def test_unrecognized_reusable_workflow_produces_no_contexts() -> None:
     """A job wired to an unknown reusable workflow contributes nothing to the
     producible set, so any required context is flagged (the safe default)."""
@@ -607,7 +646,7 @@ def test_producible_gate_catalog_covers_desired_stable_gates() -> None:
     ruleset requires must be in the produced catalog, so the catalog can never
     silently fall behind ``desired_ci_gates_ruleset``."""
     ruleset = desired_ci_gates_ruleset(
-        _project(), _ci(integration_tests=True), ghas=True, docs=True
+        _project(), _ci(integration_tests=True), ghas=True, docs=True, package=True
     )
     stable = {
         c for c in required_status_contexts(ruleset) if not c.startswith("test / integration / ")
@@ -744,6 +783,7 @@ def _vergil_config(
     versions: list[str] | None = None,
     integration_tests: bool = False,
     docs: bool = True,
+    package: PackageConfig | None = None,
 ) -> VergilConfig:
     return VergilConfig(
         project=_project(language=language, release_model=release_model),
@@ -753,6 +793,17 @@ def _vergil_config(
         publish=PublishConfig(release=False, docs=docs, consumer_refresh=None),
         container=ContainerConfig(env_prefixes=[], system_packages=[]),
         validation=ValidationConfig(container_command=DEFAULT_VALIDATION_COMMAND),
+        package=package,
+    )
+
+
+def _package_config() -> PackageConfig:
+    return PackageConfig(
+        builder="python",
+        vendor="vergil",
+        summary="s",
+        smoke="true",
+        python=PackagePythonConfig(runtime="3.14.4"),
     )
 
 
@@ -792,6 +843,21 @@ def test_compute_desired_state_keeps_docs_gate_when_publish_docs_true() -> None:
     state = compute_desired_state(_vergil_config(docs=True), visibility="public", is_org=True)
     gates = next(r for r in state.rulesets if r.name == "CI gates")
     assert "docs / docs" in _check_names(gates)
+
+
+def test_compute_desired_state_requires_package_gate_with_package_section() -> None:
+    """`[package]` in `vergil.toml` must flow through to the CI-gates ruleset so
+    branch protection requires `package / evidence` (epic #356, spec 8.1)."""
+    cfg = _vergil_config(package=_package_config())
+    state = compute_desired_state(cfg, visibility="public", is_org=True)
+    gates = next(r for r in state.rulesets if r.name == "CI gates")
+    assert "package / evidence" in _check_names(gates)
+
+
+def test_compute_desired_state_omits_package_gate_without_package_section() -> None:
+    state = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    gates = next(r for r in state.rulesets if r.name == "CI gates")
+    assert "package / evidence" not in _check_names(gates)
 
 
 def test_compute_desired_state_private_without_ghas_drops_alert_checks() -> None:
@@ -2666,6 +2732,9 @@ class TestClassifyEvidenceGate:
         assert classify_evidence_gate("Trivy") == "security"
         assert classify_evidence_gate("Semgrep OSS") == "security"
 
+    def test_package_prefix(self) -> None:
+        assert classify_evidence_gate("package / evidence") == "package"
+
     def test_version_is_non_evidence(self) -> None:
         assert classify_evidence_gate("version / version-bump") is None
 
@@ -2690,6 +2759,20 @@ class TestRequiredEvidenceGates:
     def test_no_ghas_drops_codeql_from_security(self) -> None:
         gates = {g.name: g for g in required_evidence_gates(_project(), _ci(), ghas=False)}
         assert not any("CodeQL" in c for c in gates["security"].checks)
+
+    def test_package_gate_required_with_package_section(self) -> None:
+        gates = {
+            g.name: g for g in required_evidence_gates(_project(), _ci(), ghas=True, package=True)
+        }
+        assert gates["package"].checks == ("package / evidence",)
+
+    def test_package_gate_absent_without_package_section(self) -> None:
+        gates = {g.name for g in required_evidence_gates(_project(), _ci(), ghas=True)}
+        assert "package" not in gates
+
+    def test_package_gate_ordered_after_quality(self) -> None:
+        gates = required_evidence_gates(_project(), _ci(), ghas=True, package=True)
+        assert [g.name for g in gates] == ["security", "test", "audit", "quality", "package"]
 
     def test_version_check_is_never_an_evidence_gate(self) -> None:
         gates = {g.name for g in required_evidence_gates(_project(), _ci(), ghas=True)}

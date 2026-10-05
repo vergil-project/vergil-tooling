@@ -283,6 +283,7 @@ def desired_ci_gates_ruleset(
     *,
     ghas: bool,
     docs: bool = True,
+    package: bool = False,
 ) -> DesiredRuleset:
     """Derive the CI gates ruleset from project identity and CI config.
 
@@ -292,6 +293,12 @@ def desired_ci_gates_ruleset(
     ``.github`` repo with ``[publish].docs = false``) pins a status that never
     reports, permanently blocking every merge with "the base branch policy
     prohibits the merge" (vergil-project/vergil-tooling#2647).
+
+    ``package`` is true when ``vergil.toml`` has a ``[package]`` section. Only
+    such a repo calls ``ci-package.yml``, whose stable ``package / evidence``
+    aggregate is then required; any other repo never reports it, so requiring it
+    there would block every merge for the same reason (epic
+    vergil-project/.github#356, spec section 8.1).
     """
     checks: list[dict[str, object]] = []
     lang = project.primary_language
@@ -341,6 +348,11 @@ def desired_ci_gates_ruleset(
         checks.append(_make_check("quality / evidence"))
     if _lang_has_check(lang, "unit"):
         checks.append(_make_check("test / evidence"))
+
+    # Binary packaging: one stable, version-agnostic gate aggregating the whole
+    # target matrix, required exactly when the repo declares ``[package]``.
+    if package:
+        checks.append(_make_check("package / evidence"))
 
     # Integration tests per version (when enabled)
     if ci.integration_tests:
@@ -444,6 +456,8 @@ def _reusable_pr_contexts(
         return ({f"{j} / evidence"}, {f"{j} / unit / "})
     if reusable_file == "ci-docs.yml":
         return ({f"{j} / docs"}, set())
+    if reusable_file == "ci-package.yml":
+        return ({f"{j} / evidence"}, set())
     if reusable_file == "ci-security.yml":
         exact = {f"{j} / trivy", f"{j} / semgrep", f"{j} / codeql"}
         if ghas:
@@ -509,6 +523,7 @@ _PRODUCIBLE_GATE_CATALOG: frozenset[str] = frozenset(
         "quality / evidence",
         "audit / evidence",
         "test / evidence",
+        "package / evidence",
         "security / trivy",
         "security / semgrep",
         "security / codeql",
@@ -548,7 +563,7 @@ def unproducible_required_contexts(required: set[str], produced: set[str]) -> se
 class EvidenceGate:
     """An evidence-producing gate and the required checks classified under it."""
 
-    name: str  # "security" | "test" | "audit" | "quality"
+    name: str  # "security" | "test" | "audit" | "quality" | "package"
     checks: tuple[str, ...]  # required check names classified under this gate
 
 
@@ -568,17 +583,19 @@ _EVIDENCE_GATE_PREFIXES: tuple[tuple[str, str | None], ...] = (
     ("test /", "test"),
     ("audit /", "audit"),
     ("quality /", "quality"),
+    ("package /", "package"),
     ("version /", None),
 )
 
 # Canonical output order for grouped evidence gates (deterministic tuple order).
-_EVIDENCE_GATE_ORDER: tuple[str, ...] = ("security", "test", "audit", "quality")
+_EVIDENCE_GATE_ORDER: tuple[str, ...] = ("security", "test", "audit", "quality", "package")
 
 
 def classify_evidence_gate(check_name: str) -> str | None:
     """Map a required status-check name to its evidence gate.
 
-    Returns the gate name (``security``/``test``/``audit``/``quality``) or
+    Returns the gate name (``security``/``test``/``audit``/``quality``/
+    ``package``) or
     ``None`` when the check is non-evidence-producing (e.g. ``version /
     version-bump``, or any name matching no known prefix/literal).
     """
@@ -597,15 +614,16 @@ def required_evidence_gates(
     *,
     ghas: bool,
     docs: bool = True,
+    package: bool = False,
 ) -> tuple[EvidenceGate, ...]:
     """The evidence-producing gates this repo MUST emit.
 
     Derived from the same required-status-check computation that drives branch
     protection (:func:`desired_ci_gates_ruleset`), so the enforced gates and the
-    evidence-required gates cannot drift apart. ``docs`` is threaded through
-    identically for the same reason.
+    evidence-required gates cannot drift apart. ``docs`` and ``package`` are
+    threaded through identically for the same reason.
     """
-    ruleset = desired_ci_gates_ruleset(project, ci, ghas=ghas, docs=docs)
+    ruleset = desired_ci_gates_ruleset(project, ci, ghas=ghas, docs=docs, package=package)
     checks = _extract_status_checks(ruleset.rules) or []
 
     grouped: dict[str, list[str]] = {}
@@ -633,7 +651,13 @@ def compute_desired_state(
     rulesets.append(desired_branch_protection_ruleset())
     rulesets.append(desired_tag_protection_ruleset())
     rulesets.append(
-        desired_ci_gates_ruleset(config.project, config.ci, ghas=ghas, docs=config.publish.docs)
+        desired_ci_gates_ruleset(
+            config.project,
+            config.ci,
+            ghas=ghas,
+            docs=config.publish.docs,
+            package=config.package is not None,
+        )
     )
 
     if app_mode:
