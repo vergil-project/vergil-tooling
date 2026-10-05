@@ -119,6 +119,7 @@ _PIP_LICENSES_ALLOWLIST = ";".join(
         "Mozilla Public License 2.0 (MPL 2.0)",
         "MPL-1.1 OR GPL-2.0-only OR LGPL-2.1-or-later",
         "PSF-2.0",
+        "Public Domain",
         "Python Software Foundation License",
     ]
 )
