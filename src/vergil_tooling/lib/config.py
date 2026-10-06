@@ -9,6 +9,8 @@ import tomllib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+import yaml
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -83,6 +85,7 @@ _KNOWN_SECTIONS = frozenset(
         "typescript",
         "test",
         "vm",
+        "package",
     },
 )
 
@@ -100,7 +103,47 @@ _KNOWN_KEYS: dict[str, frozenset[str]] = {
     "cpp": frozenset({"std", "stdlib"}),
     "typescript": frozenset({"module", "target"}),
     "test": frozenset({"parallel"}),
+    "package": frozenset(
+        {
+            "builder",
+            "vendor",
+            "name",
+            "version",
+            "summary",
+            "smoke",
+            "exclude",
+            "targets",
+            "native",
+            "noarch",
+            "python",
+            "staged",
+        }
+    ),
 }
+
+# The [package] block (epic vergil-project/.github#356, spec §5.2/§5.4).
+_PACKAGE_BUILDERS = ("python", "staged")
+_PACKAGE_SUBTABLE_KEYS: dict[str, frozenset[str]] = {
+    "python": frozenset({"runtime", "commands"}),
+    "staged": frozenset({"build-command"}),
+}
+_RUNTIME_RE = re.compile(r"3\.\d+\.\d+")
+_PACKAGE_VERSION_RE = re.compile(r"[0-9][0-9A-Za-z.+~]*")
+PACKAGE_OVERLAY_PATH = "packaging/nfpm.overlay.yaml"
+# Keys an overlay may set. Identity keys (name, version, arch, ...) belong to the
+# tooling; the overlay only contributes files, scripts and relationships.
+_OVERLAY_ALLOWED = frozenset(
+    {
+        "contents",
+        "scripts",
+        "overrides",
+        "provides",
+        "conflicts",
+        "replaces",
+        "recommends",
+        "suggests",
+    }
+)
 
 
 class ConfigError(Exception):
@@ -218,6 +261,40 @@ class TestConfig:
 
 
 @dataclass
+class PackagePythonConfig:
+    # Exact vergil-python CPython patch to build against and depend on.
+    runtime: str
+    # Optional subset of [project.scripts] to shim; None means all of them.
+    commands: list[str] | None = None
+
+
+@dataclass
+class PackageStagedConfig:
+    # Optional command that populates $VRG_STAGING_ROOT for $VRG_TARGET_ARCH.
+    build_command: str | None = None
+
+
+@dataclass
+class PackageConfig:
+    # The [package] block (epic vergil-project/.github#356, spec §5.2). Exactly
+    # one of ``python``/``staged`` is set, matching ``builder``. ``targets`` is
+    # None when unset (the default target set applies); at most one of
+    # ``exclude``/``targets`` is in effect.
+    builder: str
+    vendor: str
+    summary: str
+    smoke: str
+    name: str | None = None
+    version: str | None = None
+    exclude: list[str] = field(default_factory=list)
+    targets: list[str] | None = None
+    native: list[str] = field(default_factory=list)
+    noarch: bool = False
+    python: PackagePythonConfig | None = None
+    staged: PackageStagedConfig | None = None
+
+
+@dataclass
 class ActionsConfig:
     # Extra allowed-action patterns unioned into the repo's GitHub Actions
     # allowed-actions policy, on top of the base + per-language defaults in
@@ -246,6 +323,7 @@ class VergilConfig:
     )
     test: TestConfig = field(default_factory=TestConfig)
     vm: VmStanza | None = None
+    package: PackageConfig | None = None
 
 
 @dataclass
@@ -561,6 +639,193 @@ def _parse_test_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> TestCo
     return TestConfig(parallel=parallel)
 
 
+def _pkg_str_list(value: Any, where: str, source: str) -> list[str]:
+    """Return ``value`` as a list of strings, or raise naming ``where``."""
+    items = value if isinstance(value, list) else [value]
+    strings = [v for v in items if isinstance(v, str)]
+    if not isinstance(value, list) or len(strings) != len(items):
+        msg = f"{source}: {where} must be a list of strings (got {value!r})"
+        raise ConfigError(msg)
+    return strings
+
+
+def _pkg_req_str(raw: dict[str, Any], key: str, source: str) -> str:
+    value = raw.get(key)
+    if not isinstance(value, str) or not value:
+        msg = f"{source}: [package].{key} is required and must be a non-empty string"
+        raise ConfigError(msg)
+    return value
+
+
+def _pkg_subtable(raw: dict[str, Any], key: str, source: str) -> dict[str, Any] | None:
+    """Return the ``[package.<key>]`` subtable (None when absent), warning on unknown keys."""
+    if key not in raw:
+        return None
+    table = raw[key]
+    if not isinstance(table, dict):
+        msg = f"{source}: [package.{key}] must be a table (got {table!r})"
+        raise ConfigError(msg)
+    for sub_key in table:
+        if sub_key not in _PACKAGE_SUBTABLE_KEYS[key]:
+            print(f"{source}: unrecognized key '{sub_key}' in [package.{key}]", file=sys.stderr)
+    return table
+
+
+def _parse_package_python(py: dict[str, Any] | None, source: str) -> PackagePythonConfig:
+    if py is None or "runtime" not in py:
+        msg = f'{source}: [package.python].runtime is required for builder = "python"'
+        raise ConfigError(msg)
+    runtime = py["runtime"]
+    if not isinstance(runtime, str) or not _RUNTIME_RE.fullmatch(runtime):
+        msg = (
+            f"{source}: [package.python].runtime must be an exact CPython patch "
+            f"like 3.14.4 (got {runtime!r})"
+        )
+        raise ConfigError(msg)
+    commands = py.get("commands")
+    return PackagePythonConfig(
+        runtime=runtime,
+        commands=(
+            _pkg_str_list(commands, "[package.python].commands", source)
+            if commands is not None
+            else None
+        ),
+    )
+
+
+def _parse_package_staged(st: dict[str, Any] | None, source: str) -> PackageStagedConfig:
+    cmd = (st or {}).get("build-command")
+    if cmd is not None and not isinstance(cmd, str):
+        msg = f"{source}: [package.staged].build-command must be a string (got {cmd!r})"
+        raise ConfigError(msg)
+    return PackageStagedConfig(build_command=cmd)
+
+
+def _parse_package_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> PackageConfig | None:
+    """Parse and validate ``[package]`` (spec §5.4). Returns None when absent.
+
+    Every §5.4 condition that can be decided from ``vergil.toml`` alone is a
+    hard ``ConfigError`` here, including a target selection that resolves to
+    zero targets. The overlay file's shape is checked by
+    :func:`_check_package_overlay`, which needs the repo root.
+    """
+    p = raw.get("package")
+    if p is None:
+        return None
+    if not isinstance(p, dict):
+        msg = f"{source}: [package] must be a table (got {p!r})"
+        raise ConfigError(msg)
+    builder = p.get("builder")
+    if builder not in _PACKAGE_BUILDERS:
+        msg = (
+            f"{source}: [package].builder must be one of {', '.join(_PACKAGE_BUILDERS)} "
+            f"(got {builder!r})"
+        )
+        raise ConfigError(msg)
+    name = p.get("name")
+    if name is not None and (not isinstance(name, str) or not name):
+        msg = f"{source}: [package].name must be a non-empty string (got {name!r})"
+        raise ConfigError(msg)
+    version = p.get("version")
+    if version is not None and (
+        not isinstance(version, str) or not _PACKAGE_VERSION_RE.fullmatch(version)
+    ):
+        msg = (
+            f"{source}: [package].version must match {_PACKAGE_VERSION_RE.pattern} "
+            f"(got {version!r})"
+        )
+        raise ConfigError(msg)
+    noarch = p.get("noarch", False)
+    if not isinstance(noarch, bool):
+        msg = f"{source}: [package].noarch must be a boolean (got {noarch!r})"
+        raise ConfigError(msg)
+    pkg = PackageConfig(
+        builder=builder,
+        vendor=_pkg_req_str(p, "vendor", source),
+        summary=_pkg_req_str(p, "summary", source),
+        smoke=_pkg_req_str(p, "smoke", source),
+        name=name,
+        version=version,
+        exclude=_pkg_str_list(p.get("exclude", []), "[package].exclude", source),
+        targets=(
+            _pkg_str_list(p["targets"], "[package].targets", source) if "targets" in p else None
+        ),
+        native=_pkg_str_list(p.get("native", []), "[package].native", source),
+        noarch=noarch,
+    )
+    if pkg.noarch and pkg.native:
+        msg = (
+            f"{source}: [package].native cannot be combined with noarch = true "
+            "(an architecture-independent package is built once, never per-OS)"
+        )
+        raise ConfigError(msg)
+    python_raw = _pkg_subtable(p, "python", source)
+    staged_raw = _pkg_subtable(p, "staged", source)
+    if python_raw is not None and builder != "python":
+        msg = f'{source}: [package.python] is only valid with builder = "python"'
+        raise ConfigError(msg)
+    if staged_raw is not None and builder != "staged":
+        msg = f'{source}: [package.staged] is only valid with builder = "staged"'
+        raise ConfigError(msg)
+    if builder == "python":
+        pkg.python = _parse_package_python(python_raw, source)
+    else:
+        if pkg.name is None:
+            msg = f'{source}: [package].name is required for builder = "staged"'
+            raise ConfigError(msg)
+        pkg.staged = _parse_package_staged(staged_raw, source)
+    # Late import: lib.package.matrix imports this module (ConfigError,
+    # PackageConfig), so a module-level import here would be circular.
+    from vergil_tooling.lib.package import matrix
+
+    matrix.select_targets(pkg, source=source)  # raises ConfigError
+    return pkg
+
+
+def _check_package_overlay(repo_root: Path, pkg: PackageConfig, source: str) -> None:
+    """Check the optional nFPM overlay's *shape* (spec §5.4).
+
+    nFPM is not in the dev container, so this checks only that the overlay is a
+    YAML mapping restricted to the non-identity keys; nFPM's own config check
+    runs at build time. A ``staged`` package must get files from somewhere:
+    either its build-command or the overlay's ``contents``.
+    """
+    path = repo_root / PACKAGE_OVERLAY_PATH
+    overlay: dict[str, Any] = {}
+    if path.is_file():
+        try:
+            loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except yaml.YAMLError as exc:
+            msg = f"{source}: {PACKAGE_OVERLAY_PATH} is not valid YAML: {exc}"
+            raise ConfigError(msg) from exc
+        if loaded is None:
+            loaded = {}
+        if not isinstance(loaded, dict):
+            msg = f"{source}: {PACKAGE_OVERLAY_PATH} must be a YAML mapping"
+            raise ConfigError(msg)
+        for key in loaded:
+            if key not in _OVERLAY_ALLOWED:
+                msg = (
+                    f"{source}: {PACKAGE_OVERLAY_PATH}: overlay may not set {key!r} "
+                    f"(allowed: {', '.join(sorted(_OVERLAY_ALLOWED))})"
+                )
+                raise ConfigError(msg)
+        overlay = loaded
+    if pkg.staged is not None and pkg.staged.build_command is None and not overlay.get("contents"):
+        msg = (
+            f'{source}: builder = "staged" needs [package.staged].build-command '
+            f"or overlay contents in {PACKAGE_OVERLAY_PATH}"
+        )
+        raise ConfigError(msg)
+
+
+def _check_package_python_lock(repo_root: Path, pkg: PackageConfig, source: str) -> None:
+    """The Python builder installs from ``uv.lock`` only, so it must exist (spec §5.4)."""
+    if pkg.builder == "python" and not (repo_root / "uv.lock").is_file():
+        msg = f'{source}: builder = "python" requires a uv.lock next to {CONFIG_FILE}'
+        raise ConfigError(msg)
+
+
 def _warn_unrecognized_keys(raw: dict[str, Any], source: str = CONFIG_FILE) -> None:
     for section in raw:
         if section not in _KNOWN_SECTIONS:
@@ -739,6 +1004,7 @@ def _parse_raw_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> VergilC
         typescript=_parse_typescript_config(raw, source),
         test=_parse_test_config(raw, source),
         vm=parse_vm_stanza(raw, source),
+        package=_parse_package_config(raw, source),
     )
 
 
@@ -756,7 +1022,11 @@ def read_config(repo_root: Path) -> VergilConfig:
         msg = f"{config_path} is not valid TOML: {exc}"
         raise ConfigError(msg) from exc
 
-    return _parse_raw_config(raw, source=str(config_path))
+    cfg = _parse_raw_config(raw, source=str(config_path))
+    if cfg.package is not None:
+        _check_package_overlay(repo_root, cfg.package, str(config_path))
+        _check_package_python_lock(repo_root, cfg.package, str(config_path))
+    return cfg
 
 
 def vrg_install_tag(repo_root: Path) -> str:

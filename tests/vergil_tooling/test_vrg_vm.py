@@ -97,6 +97,7 @@ def _stub_guest_transport() -> Iterator[None]:
         patch(mod + "install_tooling"),
         patch(mod + "update_tooling"),
         patch(mod + "update_plugins"),
+        patch("vergil_tooling.lib.vm_packages.dev_ref", return_value=None),
     ):
         yield
 
@@ -1968,6 +1969,21 @@ class TestOffPlatformFallback:
 
 
 class TestSessionStaleness:
+    @patch("vergil_tooling.bin.vrg_vm.os.execvp")
+    @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=1.0)
+    def test_session_prints_dev_banner_before_exec(
+        self,
+        _age: MagicMock,
+        mock_exec: MagicMock,
+        config_file: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        mock_exec.side_effect = lambda *_a: print("EXEC")
+        with patch("vergil_tooling.lib.vm_packages.dev_ref", return_value="develop"):
+            main(["session", "--config", str(config_file), "."])
+        out = capsys.readouterr().out
+        assert "DEV tooling (ref develop) — not the packaged install\nEXEC" in out
+
     @patch("vergil_tooling.bin.vrg_vm.os.execvp")
     @patch("vergil_tooling.bin.vrg_vm.link_claude_dirs")
     @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
@@ -4156,6 +4172,21 @@ class TestCloudBootDiskTypeCompat:
 
 
 class TestCloudSession:
+    def test_cloud_session_prints_dev_banner_before_exec(
+        self, _cloud_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        transport = MagicMock()
+        transport.exec_session.side_effect = lambda **_k: print("EXEC")
+        with (
+            _CloudPatches(tmp_path / "state") as m,
+            patch("vergil_tooling.lib.vm_packages.dev_ref", return_value="develop") as ref,
+        ):
+            m["transport"].return_value = transport
+            main(["session", "lmf/cloud", "--config", str(_cloud_repo)])
+        out = capsys.readouterr().out
+        assert "DEV tooling (ref develop) — not the packaged install\nEXEC" in out
+        ref.assert_called_once_with(transport)
+
     def test_cloud_session_uses_iap_transport(self, _cloud_repo: Path, tmp_path: Path) -> None:
         transport = MagicMock()
         with _CloudPatches(tmp_path / "state") as m:
@@ -6443,3 +6474,98 @@ class TestCmdCp:
         rc = vrg_vm.main(["cp", "acme/widgets", "/h/a.pdf", ":b", "/h/dest"])
         assert rc == 1
         assert "one host side" in capsys.readouterr().err
+
+
+class TestDevToolingBanner:
+    """Every vrg-vm command that touches a box says so when it runs a dev install."""
+
+    _BANNER = "DEV tooling (ref develop) — not the packaged install"
+
+    @pytest.fixture
+    def dev_ref(self) -> Iterator[MagicMock]:
+        with patch("vergil_tooling.lib.vm_packages.dev_ref", return_value="develop") as m:
+            yield m
+
+    def test_update_over_transport_prints_banner_for_dev_install(
+        self, dev_ref: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from vergil_tooling.bin import vrg_vm  # noqa: PLC0415
+
+        transport = MagicMock()
+        with patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None):
+            vrg_vm._update_over_transport(transport, "VM 'x'", "develop", "v2.1")
+        assert self._BANNER in capsys.readouterr().out
+        dev_ref.assert_called_once_with(transport)
+
+    def test_update_over_transport_no_banner_for_packaged_install(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from vergil_tooling.bin import vrg_vm  # noqa: PLC0415
+
+        with patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value="2.1.240-1"):
+            vrg_vm._update_over_transport(MagicMock(), "VM 'x'", None, "v2.1")
+        out = capsys.readouterr().out
+        assert "DEV tooling" not in out
+        assert "vergil-tooling: 2.1.240-1 (already up to date)" in out
+
+    def test_banner_follows_the_update(self, capsys: pytest.CaptureFixture[str]) -> None:
+        # The banner reflects the state *after* the update: a plain update that
+        # returned the box to the packaged install prints no banner.
+        from vergil_tooling.bin import vrg_vm  # noqa: PLC0415
+
+        order: list[str] = []
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_vm.update_tooling",
+                side_effect=lambda *_a, **_k: order.append("update"),
+            ),
+            patch(
+                "vergil_tooling.lib.vm_packages.dev_ref",
+                side_effect=lambda _t: order.append("dev_ref"),
+            ),
+            patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None),
+        ):
+            vrg_vm._update_over_transport(MagicMock(), "VM 'x'", None, "v2.1")
+        assert order == ["update", "dev_ref"]
+        assert "DEV tooling" not in capsys.readouterr().out
+
+    def test_lifecycle_install_prints_banner(
+        self, dev_ref: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from vergil_tooling.bin import vrg_vm  # noqa: PLC0415
+
+        state = MagicMock()
+        state.vergil_version = "develop"
+        vrg_vm._st_install_tooling(state)
+        assert self._BANNER in capsys.readouterr().out
+        assert dev_ref.called
+
+    def test_lifecycle_update_prints_banner(
+        self, dev_ref: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from vergil_tooling.bin import vrg_vm  # noqa: PLC0415
+
+        state = MagicMock()
+        with patch("vergil_tooling.bin.vrg_vm.resolve_vergil_version", return_value="v2.1"):
+            vrg_vm._st_update_tooling(state)
+        assert self._BANNER in capsys.readouterr().out
+        assert dev_ref.called
+
+    def test_cloud_install_prints_banner(
+        self, dev_ref: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from vergil_tooling.bin import vrg_vm  # noqa: PLC0415
+
+        state = MagicMock()
+        state.vergil_version = "develop"
+        vrg_vm._cs_tooling(state)
+        assert self._BANNER in capsys.readouterr().out
+        dev_ref.assert_called_once_with(state.transport)
+
+    def test_cloud_install_no_banner_for_packaged(self, capsys: pytest.CaptureFixture[str]) -> None:
+        from vergil_tooling.bin import vrg_vm  # noqa: PLC0415
+
+        state = MagicMock()
+        state.vergil_version = "v2.1"
+        vrg_vm._cs_tooling(state)
+        assert "DEV tooling" not in capsys.readouterr().out

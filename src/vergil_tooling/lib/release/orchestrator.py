@@ -14,6 +14,7 @@ from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.finalize import close_and_finalize, teardown_worktree
 from vergil_tooling.lib.release.handoff import consumer_refresh
 from vergil_tooling.lib.release.merge import wait_and_merge
+from vergil_tooling.lib.release.package_index import wait_for_index
 from vergil_tooling.lib.release.preflight import preflight, run_audit
 from vergil_tooling.lib.release.prepare import prepare
 from vergil_tooling.lib.release.tracking import (
@@ -135,6 +136,9 @@ def build_stages() -> list[Stage]:
             _tracked("close-finalize", close_and_finalize),
             mode="fail_defer",
         ),
+        # Waits for the published package index before the consumer refresh,
+        # which holds on the deferred publish failure a miss records.
+        Stage("package-index", _tracked("package-index", wait_for_index), mode="fail_defer"),
         Stage(
             "consumer-refresh",
             _tracked("consumer-refresh", consumer_refresh),
@@ -231,6 +235,11 @@ def _phase_details(ctx: ReleaseContext, phase: str) -> str:
             lines.append("Promote skipped (--no-promote).")
     elif phase == "close-finalize":
         lines.append("Tracking issue closed. Repository finalized.")
+    elif phase == "package-index":
+        if ctx.package_index_url:
+            lines.append(f"Package visible in index: {ctx.package_index_url}")
+        else:
+            lines.append("No [package] block; no package index to wait for.")
     elif phase == "consumer-refresh":
         lines.append("Consumer refresh instructions displayed.")
     return "\n".join(lines)

@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from vergil_tooling.lib import vm_packages
 from vergil_tooling.lib.identity import Identity
 from vergil_tooling.lib.vm_guest import (
     VmUnreachableError,
@@ -388,92 +389,126 @@ class TestInjectHostGitIdentity:
         assert "user.name" in transport.run.call_args[0]
 
 
+@pytest.fixture
+def installs(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
+    """Record the packaged/dev install dispatch instead of running it."""
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        vm_packages, "packaged_install", lambda _t, ref: calls.append(("packaged", ref))
+    )
+    monkeypatch.setattr(vm_packages, "dev_install", lambda _t, ref: calls.append(("dev", ref)))
+    return calls
+
+
 class TestInstallTooling:
-    def test_installs_with_tag(self) -> None:
-        transport = _transport()
-        install_tooling(transport, "v2.0")
-        assert transport.run.call_count == 2
-        install_args = transport.run.call_args_list[0][0]
-        cmd_str = " ".join(str(a) for a in install_args)
-        assert "uv tool install" in cmd_str
-        assert "v2.0" in cmd_str
+    @pytest.mark.parametrize("tag", ["v2.0", "v2.1.226"])
+    def test_release_tag_installs_packaged(self, installs: list[tuple[str, str]], tag: str) -> None:
+        install_tooling(_transport(), tag)
+        assert installs == [("packaged", tag)]
 
-    def test_creates_tag_dir_before_write(self) -> None:
+    def test_dev_ref_installs_with_uv(self, installs: list[tuple[str, str]]) -> None:
+        install_tooling(_transport(), "develop")
+        assert installs == [("dev", "develop")]
+
+    def test_creates_tag_dir_before_write(self, installs: list[tuple[str, str]]) -> None:
         transport = _transport()
         install_tooling(transport, "v2.0")
-        assert transport.run.call_count == 2
-        mkdir_args = transport.run.call_args_list[1][0]
-        cmd_str = " ".join(str(a) for a in mkdir_args)
+        assert transport.run.call_count == 1
+        cmd_str = " ".join(str(a) for a in transport.run.call_args_list[0][0])
         assert "mkdir -p" in cmd_str
+        assert installs
 
-    def test_writes_tag_marker(self) -> None:
+    @pytest.mark.parametrize("tag", ["v2.0", "develop"])
+    def test_writes_tag_marker(self, installs: list[tuple[str, str]], tag: str) -> None:
         transport = _transport()
-        install_tooling(transport, "v2.0")
+        install_tooling(transport, tag)
         transport.pipe.assert_called_once()
         assert "tooling-tag" in transport.pipe.call_args[0][0]
-        assert "v2.0" in transport.pipe.call_args[0][1]
+        assert transport.pipe.call_args[0][1] == f"{tag}\n"
+        assert installs
+
+    def test_failed_install_records_no_tag(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def fail(_t: object, _ref: str) -> None:
+            raise SystemExit(1)
+
+        monkeypatch.setattr(vm_packages, "packaged_install", fail)
+        transport = _transport()
+        with pytest.raises(SystemExit):
+            install_tooling(transport, "v2.2")
+        transport.pipe.assert_not_called()
 
 
 class TestUpdateTooling:
-    def test_updates_with_explicit_tag(self) -> None:
+    def test_updates_with_explicit_tag(self, installs: list[tuple[str, str]]) -> None:
         transport = _transport()
         update_tooling(transport, "v2.0")
-        transport.run.assert_called_once()
-        cmd_str = " ".join(str(a) for a in transport.run.call_args[0])
-        assert "uv tool install --reinstall" in cmd_str
-        assert "v2.0" in cmd_str
+        assert installs == [("packaged", "v2.0")]
+        transport.run.assert_not_called()
 
-    def test_reads_tag_from_marker(self) -> None:
+    def test_explicit_dev_tag_installs_with_uv(self, installs: list[tuple[str, str]]) -> None:
+        update_tooling(_transport(), "feature/1-x")
+        assert installs == [("dev", "feature/1-x")]
+
+    def test_reads_tag_from_marker(self, installs: list[tuple[str, str]]) -> None:
         transport = _transport()
-        transport.run.side_effect = [_ok("v2.0\n"), _ok(), _ok()]
+        transport.run.side_effect = [_ok("v2.0\n"), _ok()]
         update_tooling(transport)
-        assert transport.run.call_count == 3
-        cmd_str = " ".join(str(a) for a in transport.run.call_args_list[1][0])
-        assert "uv tool install --reinstall" in cmd_str
-        assert "v2.0" in cmd_str
+        assert installs == [("packaged", "v2.0")]
+        assert transport.run.call_count == 2
 
-    def test_explicit_tag_does_not_persist_marker(self) -> None:
+    def test_explicit_tag_does_not_persist_marker(self, installs: list[tuple[str, str]]) -> None:
         transport = _transport()
-        update_tooling(transport, "v2.1")
+        update_tooling(transport, "develop")
         transport.pipe.assert_not_called()
+        assert installs == [("dev", "develop")]
 
-    def test_resolved_tag_persists_marker(self) -> None:
+    def test_plain_update_after_dev_returns_to_packaged(
+        self, installs: list[tuple[str, str]]
+    ) -> None:
+        # The dev ref was explicit, so never persisted: the marker still holds the
+        # identity version, and a plain update goes back to the packaged install.
         transport = _transport()
-        transport.run.side_effect = [_ok("v2.1\n"), _ok(), _ok()]
+        transport.run.side_effect = [_ok("v2.1\n"), _ok()]
+        update_tooling(transport, fallback_tag="v2.1")
+        assert installs == [("packaged", "v2.1")]
+
+    def test_resolved_tag_persists_marker(self, installs: list[tuple[str, str]]) -> None:
+        transport = _transport()
+        transport.run.side_effect = [_ok("v2.1\n"), _ok()]
         update_tooling(transport)
         transport.pipe.assert_called_once()
         assert "tooling-tag" in transport.pipe.call_args[0][0]
         assert "v2.1" in transport.pipe.call_args[0][1]
+        assert installs
 
-    def test_fallback_tag_persists_marker(self) -> None:
+    def test_fallback_tag_persists_marker(self, installs: list[tuple[str, str]]) -> None:
         transport = _transport()
-        transport.run.side_effect = [_ok(), _ok(), _ok()]
+        transport.run.side_effect = [_ok(), _ok()]
         update_tooling(transport, fallback_tag="v2.1")
         transport.pipe.assert_called_once()
         assert "tooling-tag" in transport.pipe.call_args[0][0]
         assert "v2.1" in transport.pipe.call_args[0][1]
+        assert installs == [("packaged", "v2.1")]
 
-    def test_uses_fallback_when_no_marker(self) -> None:
+    def test_uses_fallback_when_no_marker(self, installs: list[tuple[str, str]]) -> None:
         transport = _transport()
-        transport.run.side_effect = [_ok(), _ok(), _ok()]
+        transport.run.side_effect = [_ok(), _ok()]
         update_tooling(transport, fallback_tag="v2.0")
-        assert transport.run.call_count == 3
-        cmd_str = " ".join(str(a) for a in transport.run.call_args_list[1][0])
-        assert "uv tool install --reinstall" in cmd_str
-        assert "v2.0" in cmd_str
+        assert installs == [("packaged", "v2.0")]
 
-    def test_creates_tag_dir_before_write(self) -> None:
+    def test_creates_tag_dir_before_write(self, installs: list[tuple[str, str]]) -> None:
         transport = _transport()
-        transport.run.side_effect = [_ok("v2.0\n"), _ok(), _ok()]
+        transport.run.side_effect = [_ok("v2.0\n"), _ok()]
         update_tooling(transport)
-        mkdir_args = transport.run.call_args_list[2][0]
-        cmd_str = " ".join(str(a) for a in mkdir_args)
+        cmd_str = " ".join(str(a) for a in transport.run.call_args_list[1][0])
         assert "mkdir -p" in cmd_str
+        assert installs
 
-    def test_exits_if_no_tag_and_no_fallback(self) -> None:
+    def test_exits_if_no_tag_and_no_fallback(self, installs: list[tuple[str, str]]) -> None:
         transport = _transport()
         with pytest.raises(SystemExit):
             update_tooling(transport)
+        assert installs == []
 
 
 class TestGetToolingVersion:
@@ -481,19 +516,27 @@ class TestGetToolingVersion:
         uv_output = "vergil-tooling v2.0.63\n    - vrg-commit\n"
         transport = _transport(uv_output)
         assert get_tooling_version(transport) == "v2.0.63"
+        assert transport.run.call_count == 1
+
+    def test_falls_back_to_installed_package(self) -> None:
+        transport = _transport()
+        transport.run.side_effect = [_ok("some-other-tool v1.0\n"), _ok("2.1.240-1")]
+        assert get_tooling_version(transport) == "2.1.240-1"
+        assert "dpkg-query" in " ".join(transport.run.call_args_list[1][0])
 
     def test_returns_none_when_not_installed(self) -> None:
-        transport = _transport("some-other-tool v1.0\n")
+        transport = _transport()
+        transport.run.side_effect = [_ok("some-other-tool v1.0\n"), _ok("")]
         assert get_tooling_version(transport) is None
 
     def test_returns_none_on_empty_output(self) -> None:
         transport = _transport("")
         assert get_tooling_version(transport) is None
 
-    def test_returns_none_on_command_failure(self) -> None:
+    def test_uv_failure_falls_back_to_package(self) -> None:
         transport = _transport()
-        transport.run.side_effect = subprocess.CalledProcessError(1, "uv")
-        assert get_tooling_version(transport) is None
+        transport.run.side_effect = [subprocess.CalledProcessError(1, "uv"), _ok("2.1.240-1\n")]
+        assert get_tooling_version(transport) == "2.1.240-1"
 
 
 class TestCopyClaudeConfig:
@@ -602,61 +645,6 @@ class TestLinkClaudeDirs:
         link_claude_dirs(transport, claude_dir)
 
         transport.run.assert_not_called()
-
-
-class TestToolingInstallSelfHeal:
-    """A corrupt uv cache must not permanently brick the install: on failure
-    the VM's uv cache is cleared and the install is retried once."""
-
-    @staticmethod
-    def _cmds(transport: MagicMock) -> list[str]:
-        return [" ".join(str(a) for a in call[0]) for call in transport.run.call_args_list]
-
-    def test_update_clears_cache_and_retries_on_failure(self) -> None:
-        transport = _transport()
-        transport.run.side_effect = [subprocess.CalledProcessError(1, "uv"), _ok(), _ok()]
-        update_tooling(transport, "v2.0")
-        cmds = self._cmds(transport)
-        assert any("uv cache clean" in c for c in cmds)
-        assert sum("uv tool install" in c for c in cmds) == 2
-
-    def test_retry_forces_over_orphaned_executables(self) -> None:
-        # A poisoned cache + invalid receipt leaves orphaned `vrg-*` executables
-        # in ~/.local/bin. Clearing the cache fixes the wheel, but the retry then
-        # dies on "Executable already exists" unless it forces. So the retry must
-        # escalate to --force; the first attempt must not (a healthy version bump
-        # should not force-replace entry points).
-        transport = _transport()
-        transport.run.side_effect = [subprocess.CalledProcessError(1, "uv"), _ok(), _ok()]
-        update_tooling(transport, "v2.0")
-        installs = [c for c in self._cmds(transport) if "uv tool install" in c]
-        assert len(installs) == 2
-        first_attempt, retry = installs
-        assert "--force" not in first_attempt
-        assert "--force" in retry
-
-    def test_update_propagates_when_retry_also_fails(self) -> None:
-        transport = _transport()
-        transport.run.side_effect = [
-            subprocess.CalledProcessError(1, "uv"),
-            _ok(),
-            subprocess.CalledProcessError(1, "uv"),
-        ]
-        with pytest.raises(subprocess.CalledProcessError):
-            update_tooling(transport, "v2.0")
-
-    def test_install_clears_cache_and_retries_on_failure(self) -> None:
-        transport = _transport()
-        transport.run.side_effect = [
-            subprocess.CalledProcessError(1, "uv"),
-            _ok(),
-            _ok(),
-            _ok(),
-        ]
-        install_tooling(transport, "v2.0")
-        cmds = self._cmds(transport)
-        assert any("uv cache clean" in c for c in cmds)
-        assert sum("uv tool install" in c for c in cmds) == 2
 
 
 class TestFingerprintHelpers:

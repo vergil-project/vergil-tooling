@@ -42,6 +42,7 @@ def test_build_stages_order_and_modes() -> None:
         "confirm-develop",
         "promote",
         "close-finalize",
+        "package-index",
         "consumer-refresh",
         "publish-status",
     ]
@@ -285,6 +286,41 @@ def test_phase_details_consumer_refresh() -> None:
     ctx = _ctx()
     details = _phase_details(ctx, "consumer-refresh")
     assert "Consumer refresh" in details
+
+
+def test_package_index_stage_directly_before_consumer_refresh() -> None:
+    """package-index is a fail_defer stage immediately before consumer-refresh,
+    so the refresh holds on a deferred index miss (epic .github#356, §8.3)."""
+    from vergil_tooling.lib.release.orchestrator import _stage_names
+
+    names = _stage_names()
+    assert names[names.index("package-index") + 1] == "consumer-refresh"
+    stage = build_stages()[names.index("package-index")]
+    assert stage.mode == "fail_defer"
+
+
+def test_package_index_stage_runs_wait_for_index_tracked() -> None:
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
+    state.ctx = _ctx()
+    with (
+        patch(_MOD + ".wait_for_index") as m_wait,
+        patch(_MOD + ".comment_phase_complete"),
+        patch(_MOD + ".ensure_checklist"),
+        patch(_MOD + ".tick_stage"),
+    ):
+        stages = build_stages()
+        stages[[s.name for s in stages].index("package-index")].fn(state)
+    m_wait.assert_called_once_with(state.ctx)
+
+
+def test_phase_details_package_index() -> None:
+    from vergil_tooling.lib.release.orchestrator import _phase_details
+
+    ctx = _ctx()
+    assert "No [package]" in _phase_details(ctx, "package-index")
+    ctx.package_index_url = "https://b/deb/dists/noble/main/binary-amd64/Packages"
+    details = _phase_details(ctx, "package-index")
+    assert "https://b/deb/dists/noble/main/binary-amd64/Packages" in details
 
 
 def test_phase_details_unknown_phase() -> None:

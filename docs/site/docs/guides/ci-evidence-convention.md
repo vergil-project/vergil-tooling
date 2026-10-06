@@ -64,7 +64,8 @@ no harvester change: it emits the convention and is picked up automatically.
 Each evidence-producing gate uploads exactly one workflow-run artifact:
 
 - **Artifact name:** `ci-evidence-<gate>` — for example `ci-evidence-security`,
-  `ci-evidence-test`, `ci-evidence-audit`, `ci-evidence-quality`.
+  `ci-evidence-test`, `ci-evidence-audit`, `ci-evidence-quality`,
+  `ci-evidence-package`.
 - **Contents:** the gate's full report files (SARIF, coverage XML, JUnit
   XML, audit/license JSON, SBOM, …), plus an `evidence.json` fragment at the
   artifact root describing what the gate ran and found.
@@ -135,9 +136,10 @@ The set of gates that MUST emit evidence is **not a hand-maintained list.** It
 is **derived from the same source of truth that drives branch protection**:
 `lib/github_config.py:desired_ci_gates_ruleset()` computes a repo's required
 status checks from its `VergilConfig` (language, `[ci]` versions, GHAS
-availability). The evidence layer consumes that *same* computation, so the gates
-that are **enforced to merge** and the gates that are **required to have
-evidence** are provably the same set, with no drift.
+availability, and whether a `[package]` section is present). The evidence
+layer consumes that *same* computation, so the gates that are **enforced to
+merge** and the gates that are **required to have evidence** are provably the
+same set, with no drift.
 
 This is the load-bearing invariant: management of the required gates and
 collection of their auditing evidence come from **common configuration code**.
@@ -153,14 +155,18 @@ prefix:
 | `test / …`                                         | `test`        | Yes                 |
 | `audit / …`                                        | `audit`       | Yes                 |
 | `quality / …` (lint, typecheck)                    | `quality`     | Yes                 |
+| `package / …` (only with `[package]`)              | `package`     | Yes                 |
 | `version / …`                                      | —             | No (non-blocking)   |
 | `docs`                                             | —             | No (low-signal)     |
 
 The guiding principle: **any gate that can block the build is evidence worth
 keeping.** Quality (lint/typecheck) sits alongside security, test, and audit as
-first-class evidence. `version/` is a sanity check on version state, not
-substantive evidence, and `docs` is low-signal; the absence of either does not
-fail the release.
+first-class evidence. A repo whose `vergil.toml` has a `[package]` section also
+requires the `package / evidence` gate (the `ci-package.yml` aggregate over its
+whole target matrix), so the harvest pulls `ci-evidence-package` for it; a repo
+without `[package]` never calls `ci-package.yml` and is never asked for it.
+`version/` is a sanity check on version state, not substantive evidence, and
+`docs` is low-signal; the absence of either does not fail the release.
 
 ### Per-repo correctness for free
 
