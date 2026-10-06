@@ -559,6 +559,24 @@ def test_verify_pins_signer_workflow_and_ref(tmp_path: Path) -> None:
     ]
 
 
+def test_verify_uses_a_private_rpmdb_when_given(tmp_path: Path) -> None:
+    """The publish-index runner is not root: the key goes into a private rpm DB."""
+    calls: list[str] = []
+
+    def gh(*a: str) -> subprocess.CompletedProcess[str]:
+        calls.append(" ".join(a))
+        return subprocess.CompletedProcess(a, 0, "digests signatures OK", "")
+
+    db = tmp_path / "work" / "rpmdb"
+    art = _a("o/t", "v2.1.0", "t", "2.1.0", fmt="rpm")
+    collect.verify([art], tmp_path / "k.asc", gh=gh, rpmdb=db)
+    assert db.is_dir()
+    assert calls[1:] == [
+        f"rpmkeys --dbpath {db.resolve()} --import {tmp_path / 'k.asc'}",
+        f"rpmkeys --dbpath {db.resolve()} --checksig {art.path}",
+    ]
+
+
 def test_verify_debs_only_never_touches_rpmkeys(tmp_path: Path) -> None:
     calls: list[str] = []
 

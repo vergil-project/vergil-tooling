@@ -14,6 +14,11 @@ Subcommands:
           matrix) at --version (overridden by [package].version when set).
           Stages into --staging (wiped first) and writes the .deb/.rpm
           artifacts to --out, printing each artifact path. Needs nfpm on PATH.
+
+  indexBuild the signed apt/dnf package-repository site (spec §7.2): collect
+          and verify the stable releases of every product in --config, apply
+          retention, write and sign the metadata, and size-check the result in
+          --out. Needs PACKAGE_SIGNING_KEY and PACKAGE_SIGNING_PASSPHRASE.
 """
 
 from __future__ import annotations
@@ -27,6 +32,7 @@ from pathlib import Path
 from vergil_tooling.lib import config
 from vergil_tooling.lib.package import PackageError, build, matrix
 from vergil_tooling.lib.package import staged as _staged  # noqa: F401  (registers the builder)
+from vergil_tooling.lib.package.index import site
 
 
 def _cmd_matrix(args: argparse.Namespace) -> int:
@@ -75,6 +81,18 @@ def _cmd_build(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_index(args: argparse.Namespace) -> int:
+    site.build_site(
+        Path(args.config),
+        Path(args.keys),
+        Path(args.out),
+        Path(args.work),
+        base_url=args.base_url or site.default_base_url(),
+    )
+    print(f"vrg-package: package site written to {args.out}")
+    return 0
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="vrg-package",
@@ -119,6 +137,28 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Staging root, wiped before the build (default: .vergil/package-staging)",
     )
     b.set_defaults(func=_cmd_build)
+    p = sub.add_parser(
+        "index",
+        help="Build the signed apt/dnf package-repository site",
+        description="Collect, verify, retain, index, sign and size-check (spec §7.2).",
+    )
+    p.add_argument("--config", required=True, metavar="PATH", help="packages.toml")
+    p.add_argument("--keys", required=True, metavar="DIR", help="Directory holding <vendor>.asc")
+    p.add_argument("--out", required=True, metavar="DIR", help="Site output (wiped first)")
+    p.add_argument(
+        "--work",
+        default=".vergil/index-work",
+        metavar="DIR",
+        help="Download and scratch directory (default: .vergil/index-work)",
+    )
+    p.add_argument(
+        "--base-url",
+        default="",
+        metavar="URL",
+        help="Public URL of the site (default: https://<owner>.github.io/<repo> "
+        "from GITHUB_REPOSITORY)",
+    )
+    p.set_defaults(func=_cmd_index)
     return parser.parse_args(argv)
 
 
