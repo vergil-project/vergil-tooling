@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from vergil_tooling.lib import git, github, progress
@@ -28,7 +29,7 @@ def confirm_main(ctx: ReleaseContext) -> None:
     ctx.cd_run_id = run_id
     ctx.cd_run_url = run_url
 
-    jobs = _settled_run_jobs(ctx, run_id, ("release",))
+    jobs = _settled_run_jobs(ctx, run_id, (_is_release_job,))
     _verify_release_job(jobs)
 
     deferred = _collect_deferred_publish(jobs)
@@ -51,7 +52,7 @@ def confirm_develop(ctx: ReleaseContext) -> None:
     ctx.develop_cd_run_id = run_id
     ctx.develop_cd_run_url = run_url
 
-    jobs = _settled_run_jobs(ctx, run_id, ("docs",))
+    jobs = _settled_run_jobs(ctx, run_id, (_name_contains("docs"),))
     deferred = _collect_deferred_publish(jobs)
     if deferred:
         ctx.deferred_publish_failures.extend(
@@ -130,22 +131,30 @@ def _fetch_run_jobs(ctx: ReleaseContext, run_id: str) -> list[dict[str, Any]]:
     return jobs
 
 
-def _find_job(jobs: list[dict[str, Any]], job_name: str) -> dict[str, Any] | None:
-    """First job whose name *contains* ``job_name``.
+JobMatcher = Callable[[str], bool]
+
+
+def _name_contains(fragment: str) -> JobMatcher:
+    """Matcher for a job whose name *contains* ``fragment``.
 
     Reusable-workflow leaf jobs are surfaced as ``<caller> / <job>`` (e.g.
-    ``docs / docs``), so we substring-match rather than compare exactly.
+    ``docs / docs``), so this substring-matches rather than compares exactly.
     """
+    return lambda name: fragment in name
+
+
+def _find_job(jobs: list[dict[str, Any]], matches: JobMatcher) -> dict[str, Any] | None:
+    """First job whose name satisfies ``matches``."""
     for job in jobs:
-        if job_name in job.get("name", ""):
+        if matches(job.get("name", "")):
             return job
     return None
 
 
 def _settled_run_jobs(
-    ctx: ReleaseContext, run_id: str, expected: tuple[str, ...]
+    ctx: ReleaseContext, run_id: str, expected: tuple[JobMatcher, ...]
 ) -> list[dict[str, Any]]:
-    """Poll until every *expected* job is present and ``completed``.
+    """Poll until a job satisfying every *expected* matcher is ``completed``.
 
     ``gh run watch`` returns when the run-level status is terminal, but a
     reusable-workflow leaf job's ``conclusion`` can still be ``null`` in the
@@ -153,13 +162,18 @@ def _settled_run_jobs(
     and aborted an already-succeeded release. Polling for ``completed`` closes
     the race; a genuinely absent job never settles and the final snapshot lets
     the caller report it as not found.
+
+    Each matcher must identify the exact job the caller then verifies: the
+    release settle uses ``_is_release_job`` (the leaf segment), because
+    cd-release also runs ``release / package-*`` jobs that finish first and
+    would end the wait early under a substring match (#3102).
     """
     jobs: list[dict[str, Any]] = []
     for attempt in range(_JOB_SETTLE_ATTEMPTS):
         jobs = _fetch_run_jobs(ctx, run_id)
         if all(
-            (job := _find_job(jobs, name)) is not None and job.get("status") == "completed"
-            for name in expected
+            (job := _find_job(jobs, matches)) is not None and job.get("status") == "completed"
+            for matches in expected
         ):
             return jobs
         if attempt < _JOB_SETTLE_ATTEMPTS - 1:
