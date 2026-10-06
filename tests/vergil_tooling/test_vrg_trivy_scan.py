@@ -131,6 +131,7 @@ def test_no_sarif_file(tmp_path: Path) -> None:
     assert rc == 0
     calls = {c[0][0]: c[0][1] for c in mock_out.call_args_list}
     assert calls["finding_count"] == "0"
+    assert calls["suppressed_count"] == "0"
 
 
 def test_sbom_generation(tmp_path: Path) -> None:
@@ -268,3 +269,49 @@ def test_default_severity_forwarded(tmp_path: Path) -> None:
     _, kwargs = mock_scan.call_args
     assert kwargs["severity"] == "MEDIUM,HIGH,CRITICAL"
     assert kwargs["trivyignore"] is None
+
+
+_SUPPRESSED_SARIF = {
+    "version": "2.1.0",
+    "runs": [
+        {
+            "tool": {"driver": {"name": "trivy"}},
+            "results": [
+                {
+                    "ruleId": "CVE-2024-9999",
+                    "level": "error",
+                    "message": {"text": "accepted risk"},
+                    "locations": [],
+                    "suppressions": [{"kind": "external", "status": "accepted"}],
+                }
+            ],
+        }
+    ],
+}
+
+
+def test_suppressed_finding_passes_and_is_reported(tmp_path: Path) -> None:
+    result = _make_scan_result(tmp_path, _SUPPRESSED_SARIF)
+    with (
+        patch(f"{_MOD}.run_scan", return_value=result),
+        patch(f"{_MOD}.emit_error") as mock_err,
+        patch(f"{_MOD}.write_output") as mock_out,
+        patch(f"{_MOD}.write_summary") as mock_sum,
+    ):
+        rc = main(
+            [
+                "--type",
+                "filesystem",
+                "--target",
+                "/project",
+                "--output-dir",
+                str(tmp_path),
+            ]
+        )
+    assert rc == 0
+    mock_err.assert_not_called()
+    calls = {c[0][0]: c[0][1] for c in mock_out.call_args_list}
+    assert calls["finding_count"] == "0"
+    assert calls["suppressed_count"] == "1"
+    mock_sum.assert_called_once()
+    assert "CVE-2024-9999" in mock_sum.call_args[0][0]

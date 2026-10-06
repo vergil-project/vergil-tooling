@@ -78,15 +78,19 @@ def main(argv: list[str] | None = None) -> int:
             )
 
         write_output("finding_count", str(len(result.findings)))
+        write_output("suppressed_count", str(len(result.suppressed)))
+
+        if not result.passed or result.suppressed:
+            write_summary(format_summary(result))
 
         if not result.passed:
-            write_summary(format_summary(result))
             if args.sbom:
                 generate_sbom(args.target, args.sbom)
                 write_output("sbom_path", str(args.sbom))
             return 1
     else:
         write_output("finding_count", "0")
+        write_output("suppressed_count", "0")
 
     if args.sbom:
         generate_sbom(args.target, args.sbom)
