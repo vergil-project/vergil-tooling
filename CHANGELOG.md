@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.228] - 2026-10-06
+
+### Bug fixes
+
+- honor SARIF result suppressions in the security gate (#3108)
+
 ## [2.1.227] - 2026-10-06
 
 ### Bug fixes
