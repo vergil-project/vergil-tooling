@@ -243,19 +243,23 @@ def test_fetch_run_jobs_empty_output_returns_empty() -> None:
 
 
 def test_find_job_substring_matches_reusable_leaf() -> None:
-    from vergil_tooling.lib.release.confirm import _find_job
+    from vergil_tooling.lib.release.confirm import _find_job, _name_contains
 
     jobs = [_job("docs / docs"), _job("release / release")]
-    matched = _find_job(jobs, "docs")
+    matched = _find_job(jobs, _name_contains("docs"))
     assert matched is not None
     assert matched["name"] == "docs / docs"
-    assert _find_job(jobs, "missing") is None
+    assert _find_job(jobs, _name_contains("missing")) is None
 
 
 def test_settled_run_jobs_polls_until_leaf_conclusion_settles() -> None:
     """Regression #1611: a reusable-workflow leaf whose conclusion lags the
     run-level status is polled until it settles, not read once."""
-    from vergil_tooling.lib.release.confirm import _settled_run_jobs
+    from vergil_tooling.lib.release.confirm import (
+        _is_release_job,
+        _name_contains,
+        _settled_run_jobs,
+    )
 
     ctx = _ctx()
     lagging = [
@@ -267,7 +271,7 @@ def test_settled_run_jobs_polls_until_leaf_conclusion_settles() -> None:
         patch(_MOD + "._fetch_run_jobs", side_effect=[lagging, settled]),
         patch(_MOD + ".time.sleep") as sleep,
     ):
-        jobs = _settled_run_jobs(ctx, "12345", ("docs", "release"))
+        jobs = _settled_run_jobs(ctx, "12345", (_name_contains("docs"), _is_release_job))
     assert jobs == settled
     sleep.assert_called_once()
 
@@ -548,7 +552,11 @@ def test_confirm_develop_clean_run_does_not_mark_warn() -> None:
 def test_settled_run_jobs_exhaust_returns_last_snapshot() -> None:
     """When no expected job ever settles, _settled_run_jobs exhausts all
     attempts and returns the final (unsettled) jobs snapshot."""
-    from vergil_tooling.lib.release.confirm import _JOB_SETTLE_ATTEMPTS, _settled_run_jobs
+    from vergil_tooling.lib.release.confirm import (
+        _JOB_SETTLE_ATTEMPTS,
+        _is_release_job,
+        _settled_run_jobs,
+    )
 
     ctx = _ctx()
     # Jobs that never contain the expected "release" job.
@@ -560,9 +568,83 @@ def test_settled_run_jobs_exhaust_returns_last_snapshot() -> None:
         ) as mock_fetch,
         patch(_MOD + ".time.sleep") as mock_sleep,
     ):
-        result = _settled_run_jobs(ctx, "runid", ("release",))
+        result = _settled_run_jobs(ctx, "runid", (_is_release_job,))
 
     assert result == unsettled
     assert mock_fetch.call_count == _JOB_SETTLE_ATTEMPTS
     # sleep is called between attempts (not after the last one)
     assert mock_sleep.call_count == _JOB_SETTLE_ATTEMPTS - 1
+
+
+def test_confirm_main_settles_on_release_leaf_not_first_release_job() -> None:
+    """Regression #3102: cd-release's package jobs (vergil-actions#905) surface
+    as ``release / package-matrix`` etc. and finish before ``release / release``.
+    The settle wait must key on the release leaf, not the first job whose name
+    contains "release", or the #1611 race returns."""
+    ctx = _ctx()
+    lagging = [
+        _job("release / package-matrix"),
+        _job("release / release", status="in_progress", conclusion=None),
+    ]
+    settled = [_job("release / package-matrix"), _job("release / release")]
+    with (
+        patch(_MOD + "._watch_cd", return_value=("123", "https://run/123")),
+        patch(_MOD + "._fetch_run_jobs", side_effect=[lagging, settled]) as fetch,
+        patch(_MOD + ".time.sleep") as sleep,
+        patch(_MOD + "._verify_artifacts"),
+    ):
+        confirm_main(ctx)
+    assert fetch.call_count == 2
+    sleep.assert_called_once()
+    assert ctx.deferred_publish_failures == []
+
+
+def test_confirm_main_release_skipped_after_package_sign_failure_raises() -> None:
+    """#3102: when ``release / package-sign`` fails, ``release / release`` is
+    skipped; the settled release job did not succeed, so confirm fails."""
+    ctx = _ctx()
+    jobs = [
+        _job("release / package-matrix"),
+        _job("release / package-build / linux-amd64"),
+        _job("release / package-sign", conclusion="failure"),
+        _job("release / release", conclusion="skipped"),
+    ]
+    with (
+        patch(_MOD + "._watch_cd", return_value=("123", "https://run/123")),
+        patch(_MOD + "._fetch_run_jobs", return_value=jobs) as fetch,
+        patch(_MOD + ".time.sleep") as sleep,
+        patch(_MOD + "._verify_artifacts"),
+        pytest.raises(ReleaseError, match="did not succeed"),
+    ):
+        confirm_main(ctx)
+    fetch.assert_called_once()
+    sleep.assert_not_called()
+
+
+def test_confirm_main_settles_on_inline_release_job() -> None:
+    """#2001 + #3102: vergil-actions' own inline ``cd / release`` job is the
+    release leaf the settle wait keys on."""
+    ctx = _ctx()
+    lagging = [_job("cd / release", status="queued", conclusion=None)]
+    settled = [_job("cd / release")]
+    with (
+        patch(_MOD + "._watch_cd", return_value=("123", "https://run/123")),
+        patch(_MOD + "._fetch_run_jobs", side_effect=[lagging, settled]) as fetch,
+        patch(_MOD + ".time.sleep"),
+        patch(_MOD + "._verify_artifacts"),
+    ):
+        confirm_main(ctx)
+    assert fetch.call_count == 2
+
+
+def test_confirm_develop_still_settles_on_docs_substring() -> None:
+    """The docs settle keeps its substring match (``docs / docs``)."""
+    ctx = _ctx()
+    lagging = [_job("docs / docs", status="in_progress", conclusion=None)]
+    with (
+        patch(_MOD + "._watch_cd", return_value=("9", "https://run/9")),
+        patch(_MOD + "._fetch_run_jobs", side_effect=[lagging, _DEVELOP_JOBS_OK]) as fetch,
+        patch(_MOD + ".time.sleep"),
+    ):
+        confirm_develop(ctx)
+    assert fetch.call_count == 2
