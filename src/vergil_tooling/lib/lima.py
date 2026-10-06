@@ -411,7 +411,7 @@ def stop_vm(instance: str) -> None:
     # truncate files written just before the stop — notably the uv cache and
     # tool receipt that `install_tooling` writes immediately before the
     # rebuild's terminal `cycle-ssh` stop — which then poisons the next
-    # `vrg-vm session` update (see `_uv_tool_install`). Best-effort: a failed
+    # `vrg-vm session` update (see `vm_packages._uv_tool_install`). Best-effort: a failed
     # sync must never block the stop, but surface it rather than swallow it.
     try:
         shell_run(instance, "sync")
