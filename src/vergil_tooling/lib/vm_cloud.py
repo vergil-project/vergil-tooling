@@ -270,7 +270,7 @@ def preflight(provider: str = "gcp") -> None:
 # PATH is the system default (no ~/.local/bin) and which sources no shell config.
 # So a bare `vrg-git` resolves to nothing → exit 127. Every other in-guest tool
 # call prepends ~/.local/bin for exactly this reason (see vm_guest's
-# _PLUGIN_PATH_EXPORT / _uv_tool_install); bootstrap_volume must too, or its
+# _PLUGIN_PATH_EXPORT / vm_packages._uv_tool_install); bootstrap_volume must too, or its
 # vrg-git clone/fetch 127s (#2145, a regression from the git→vrg-git switch #1791).
 _GIT_PATH_EXPORT = 'export PATH="$HOME/.local/bin:$PATH"'
 

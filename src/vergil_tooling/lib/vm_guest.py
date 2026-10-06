@@ -17,11 +17,12 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from vergil_tooling.lib import vm_packages
+
 if TYPE_CHECKING:
     from vergil_tooling.lib.identity import Identity
     from vergil_tooling.lib.vm_transport import Transport
 
-_TOOLING_INSTALL = "vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@{tag}"
 _TOOLING_TAG_FILE = "~/.config/vergil/tooling-tag"
 
 
@@ -205,7 +206,12 @@ def _inject_conan_token(transport: Transport, token_path: str) -> None:
 
 
 def get_tooling_version(transport: Transport) -> str | None:
-    """Return the installed vergil-tooling version string, or None."""
+    """Return the vergil-tooling version on the VM's PATH, or None.
+
+    A uv-installed copy (a dev install, or a legacy pre-package install) sits in
+    ``~/.local/bin`` and shadows the packaged ``/usr/bin`` one, so it is reported
+    first; otherwise the installed deb's version is reported.
+    """
     try:
         result = transport.run(
             "bash",
@@ -217,67 +223,45 @@ def get_tooling_version(transport: Transport) -> str | None:
                 return line.split()[1]
     except subprocess.CalledProcessError:
         pass
-    return None
-
-
-def _uv_tool_install(transport: Transport, install_spec: str, *, reinstall: bool) -> None:
-    """Run ``uv tool install`` inside the VM, self-healing a poisoned uv cache.
-
-    A corrupt cache entry — e.g. a zero-byte wheel ``METADATA`` left behind by
-    an unclean VM stop — makes ``uv tool install`` fail with "wheel is invalid".
-    On the reinstall path uv removes the existing tool *before* it fails, so a
-    poisoned cache leaves the VM with no tooling at all and bricks every future
-    ``vrg-vm session`` until the cache is cleared by hand. So on failure, clear
-    the VM's uv cache and retry the install once.
-
-    The retry escalates to ``--force``. The same unclean stop also corrupts the
-    tool *receipt*: uv removes the entry but, unable to read the receipt, cannot
-    enumerate the tool's entry points, so the ``vrg-*`` executables orphan in
-    ``~/.local/bin``. Clearing the cache fixes the wheel, but the retry would
-    then die with "Executable already exists" — only ``--force`` replaces
-    existing entry points (``--reinstall`` alone does not), so the retry must
-    force to fully recover.
-    """
-    flag = "--reinstall " if reinstall else ""
-    install_cmd = f'export PATH="$HOME/.local/bin:$PATH" && uv tool install {flag}"{install_spec}"'
-    retry_cmd = (
-        'export PATH="$HOME/.local/bin:$PATH" && '
-        f'uv tool install --force --reinstall "{install_spec}"'
+    result = transport.run(
+        "bash",
+        "-c",
+        "dpkg-query -W -f='${Version}' vergil-tooling 2>/dev/null || true",
     )
-    try:
-        transport.run("bash", "-c", install_cmd)
-        return
-    except subprocess.CalledProcessError:
-        print(
-            "  uv tool install failed — clearing the VM uv cache and retrying once...",
-            file=sys.stderr,
-        )
-        transport.run(
-            "bash",
-            "-c",
-            'export PATH="$HOME/.local/bin:$PATH" && uv cache clean',
-        )
-        transport.run("bash", "-c", retry_cmd)
+    return result.stdout.strip() or None
 
 
-def install_tooling(transport: Transport, tag: str) -> None:
-    """Install vergil-tooling inside the VM and record the tag."""
-    install_spec = _TOOLING_INSTALL.format(tag=tag)
-    print(f"  Installing vergil-tooling ({tag})...")
-    _uv_tool_install(transport, install_spec, reinstall=False)
+def _install(transport: Transport, tag: str) -> None:
+    """Install vergil-tooling for *tag*: packaged for a release, uv for a dev ref."""
+    if vm_packages.classify_ref(tag) == "dev":
+        vm_packages.dev_install(transport, tag)
+    else:
+        vm_packages.packaged_install(transport, tag)
+
+
+def _write_tag_file(transport: Transport, tag: str) -> None:
     transport.run("bash", "-c", f"mkdir -p $(dirname {_TOOLING_TAG_FILE})")
     transport.pipe(f"cat > {_TOOLING_TAG_FILE}", f"{tag}\n")
 
 
+def install_tooling(transport: Transport, tag: str) -> None:
+    """Install vergil-tooling inside the VM and record the tag."""
+    print(f"  Installing vergil-tooling ({tag})...")
+    _install(transport, tag)
+    _write_tag_file(transport, tag)
+
+
 def update_tooling(transport: Transport, tag: str | None = None, *, fallback_tag: str = "") -> None:
-    """Reinstall vergil-tooling inside the VM.
+    """Reinstall or upgrade vergil-tooling inside the VM.
 
     Uses *tag* if given, otherwise reads the tag from the marker file
     written by ``install_tooling``.  Falls back to *fallback_tag* when
     no marker exists (pre-existing VMs created before marker support).
 
     An explicit *tag* is treated as a temporary override and is not
-    persisted to the marker file.
+    persisted to the marker file, so a later plain update returns to the
+    persisted (identity) version — which, for a release version, is the
+    packaged install and removes any dev install.
     """
     explicit = tag is not None
     if tag is None:
@@ -286,12 +270,10 @@ def update_tooling(transport: Transport, tag: str | None = None, *, fallback_tag
     if not tag:
         print("ERROR: no tooling tag found — run 'vrg-vm create' first", file=sys.stderr)
         raise SystemExit(1)
-    install_spec = _TOOLING_INSTALL.format(tag=tag)
     print(f"  Updating vergil-tooling ({tag})...")
-    _uv_tool_install(transport, install_spec, reinstall=True)
+    _install(transport, tag)
     if not explicit:
-        transport.run("bash", "-c", f"mkdir -p $(dirname {_TOOLING_TAG_FILE})")
-        transport.pipe(f"cat > {_TOOLING_TAG_FILE}", f"{tag}\n")
+        _write_tag_file(transport, tag)
 
 
 # Prepended to every in-guest `claude` invocation. claude itself is on the base

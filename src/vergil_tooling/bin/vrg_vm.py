@@ -30,7 +30,7 @@ from vergil_tooling.bin.vrg_vm_resolve import (
     name_by_session,
     projects_glob,
 )
-from vergil_tooling.lib import progress, vm_cloud, vm_memory
+from vergil_tooling.lib import progress, vm_cloud, vm_memory, vm_packages
 from vergil_tooling.lib.config import ConfigError, VmStanza, read_config
 from vergil_tooling.lib.identity import (
     Identity,
@@ -614,6 +614,13 @@ def _st_spec_check(state: _LifecycleState) -> None:
     raise SpecDriftError(msg)
 
 
+def _report_dev_tooling(transport: Transport) -> None:
+    """Say so when the box runs a dev install of vergil-tooling, not the packaged one."""
+    ref = vm_packages.dev_ref(transport)
+    if ref:
+        print(vm_packages.DEV_BANNER.format(ref=ref))
+
+
 def _st_link_config(state: _LifecycleState) -> None:
     transport = state.target.backend.transport(state.target.instance)
     link_claude_dirs(transport, Path.home() / ".claude")
@@ -627,6 +634,7 @@ def _st_credentials(state: _LifecycleState) -> None:
 def _st_install_tooling(state: _LifecycleState) -> None:
     transport = state.target.backend.transport(state.target.instance)
     install_tooling(transport, state.vergil_version)
+    _report_dev_tooling(transport)
 
 
 def _st_copy_config(state: _LifecycleState) -> None:
@@ -642,6 +650,7 @@ def _st_update_tooling(state: _LifecycleState) -> None:
     fallback = resolve_vergil_version(state.target.config, state.target.identity)
     transport = state.target.backend.transport(state.target.instance)
     update_tooling(transport, fallback_tag=fallback)
+    _report_dev_tooling(transport)
 
 
 def _st_update_plugins(state: _LifecycleState) -> None:
@@ -928,7 +937,9 @@ def _cs_credentials(state: _CloudState) -> None:
 
 
 def _cs_tooling(state: _CloudState) -> None:
-    install_tooling(_require_transport(state), state.vergil_version)
+    transport = _require_transport(state)
+    install_tooling(transport, state.vergil_version)
+    _report_dev_tooling(transport)
 
 
 def _cs_bootstrap_volume(state: _CloudState) -> None:
@@ -1206,6 +1217,7 @@ def _update_over_transport(
             print(f"  vergil-tooling: {before} → {after}")
     elif after:
         print(f"  vergil-tooling: {after}")
+    _report_dev_tooling(transport)
 
     update_plugins(transport)
 
@@ -2550,6 +2562,7 @@ def _cloud_session(target: Target, args: argparse.Namespace) -> int:
         rel_path,
         resolve_model(config, identity, args.model),
     )
+    _report_dev_tooling(transport)
     transport.exec_session(workdir=workdir, inner=inner)
     return 0  # unreachable, keeps the type checker happy
 
@@ -2601,6 +2614,7 @@ def _cmd_session(args: argparse.Namespace) -> int:
     claude_dir = Path.home() / ".claude"
     copy_claude_config(transport, claude_dir)
     link_claude_dirs(transport, claude_dir)
+    _report_dev_tooling(transport)
 
     workspace_abs = os.path.normpath(resolve_workspace(args.workspace, identity.projects_dir))
     rel_path = os.path.relpath(workspace_abs, identity.projects_dir)
