@@ -1668,6 +1668,7 @@ def _with_pkg_line(body: str, line: str) -> str:
 
 def test_package_python_parses(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     (tmp_path / "vergil.toml").write_text(_PKG_PY)
+    (tmp_path / "uv.lock").write_text("version = 1\n")
     pkg = read_config(tmp_path).package
     assert pkg is not None
     assert pkg.python is not None
@@ -1690,6 +1691,7 @@ def test_package_python_full_parse(tmp_path: Path) -> None:
         + 'commands = ["vrg-git"]\n'
     )
     (tmp_path / "vergil.toml").write_text(body)
+    (tmp_path / "uv.lock").write_text("version = 1\n")
     pkg = read_config(tmp_path).package
     assert pkg is not None
     assert pkg.python is not None
@@ -1703,6 +1705,7 @@ def test_package_python_full_parse(tmp_path: Path) -> None:
 
 def test_package_targets_subset_parses(tmp_path: Path) -> None:
     (tmp_path / "vergil.toml").write_text(_with_pkg_line(_PKG_PY, 'targets = ["ubuntu/*/*"]'))
+    (tmp_path / "uv.lock").write_text("version = 1\n")
     pkg = read_config(tmp_path).package
     assert pkg is not None
     assert pkg.targets == ["ubuntu/*/*"]
@@ -1772,6 +1775,17 @@ def test_error_names_the_config_path(tmp_path: Path) -> None:
         read_config(tmp_path)
 
 
+def test_python_builder_requires_uv_lock(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_PKG_PY)
+    with pytest.raises(ConfigError, match=r'builder = "python" requires a uv\.lock'):
+        read_config(tmp_path)
+
+
+def test_staged_builder_does_not_need_uv_lock(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_PKG_STAGED + '\n[package.staged]\nbuild-command = "x"\n')
+    assert read_config(tmp_path).package is not None
+
+
 def test_python_builder_requires_runtime(tmp_path: Path) -> None:
     (tmp_path / "vergil.toml").write_text(
         _PKG_PY.replace('\n[package.python]\nruntime = "3.14.4"\n', "")
@@ -1802,6 +1816,7 @@ def test_python_subtable_must_be_a_table(tmp_path: Path) -> None:
 
 def test_unknown_subtable_keys_warn(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     (tmp_path / "vergil.toml").write_text(_PKG_PY + 'comands = ["x"]\n')
+    (tmp_path / "uv.lock").write_text("version = 1\n")
     read_config(tmp_path)
     assert "unrecognized key 'comands' in [package.python]" in capsys.readouterr().err
 
@@ -1895,6 +1910,7 @@ def test_overlay_must_be_valid_yaml(tmp_path: Path) -> None:
 
 def test_empty_overlay_is_allowed(tmp_path: Path) -> None:
     (tmp_path / "vergil.toml").write_text(_PKG_PY)
+    (tmp_path / "uv.lock").write_text("version = 1\n")
     (tmp_path / "packaging").mkdir()
     (tmp_path / "packaging" / "nfpm.overlay.yaml").write_text("")
     assert read_config(tmp_path).package is not None

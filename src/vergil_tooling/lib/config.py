@@ -819,6 +819,13 @@ def _check_package_overlay(repo_root: Path, pkg: PackageConfig, source: str) -> 
         raise ConfigError(msg)
 
 
+def _check_package_python_lock(repo_root: Path, pkg: PackageConfig, source: str) -> None:
+    """The Python builder installs from ``uv.lock`` only, so it must exist (spec §5.4)."""
+    if pkg.builder == "python" and not (repo_root / "uv.lock").is_file():
+        msg = f'{source}: builder = "python" requires a uv.lock next to {CONFIG_FILE}'
+        raise ConfigError(msg)
+
+
 def _warn_unrecognized_keys(raw: dict[str, Any], source: str = CONFIG_FILE) -> None:
     for section in raw:
         if section not in _KNOWN_SECTIONS:
@@ -1018,6 +1025,7 @@ def read_config(repo_root: Path) -> VergilConfig:
     cfg = _parse_raw_config(raw, source=str(config_path))
     if cfg.package is not None:
         _check_package_overlay(repo_root, cfg.package, str(config_path))
+        _check_package_python_lock(repo_root, cfg.package, str(config_path))
     return cfg
 
 
