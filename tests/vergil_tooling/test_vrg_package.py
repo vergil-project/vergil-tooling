@@ -266,3 +266,62 @@ def test_index_requires_config_keys_and_out(capsys: pytest.CaptureFixture[str]) 
         vrg_package.main(["index"])
     assert exc.value.code == 2
     assert "--config" in capsys.readouterr().err
+
+
+def test_install_test_subcommand_wires_run_install_test(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from vergil_tooling.lib.package import install_test
+
+    seen: dict[str, object] = {}
+
+    def fake(repo_root: Path, cell_id: str, artifacts: Path, report: Path) -> None:
+        seen.update(root=repo_root, cell=cell_id, artifacts=artifacts, report=report)
+
+    monkeypatch.setattr(install_test, "run_install_test", fake)
+    monkeypatch.chdir(tmp_path)
+    argv = ["install-test", "--cell", "test-ubuntu-24.04-amd64"]
+    argv += ["--artifacts", "dist/packages", "--report", "/abs/report.json"]
+    assert vrg_package.main(argv) == 0
+    assert seen == {
+        "root": tmp_path,
+        "cell": "test-ubuntu-24.04-amd64",
+        "artifacts": tmp_path / "dist/packages",
+        "report": tmp_path / "/abs/report.json",
+    }
+
+
+def test_install_test_command_failure_returns_1_with_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import subprocess
+
+    from vergil_tooling.lib.package import install_test
+
+    def fake(repo_root: Path, cell_id: str, artifacts: Path, report: Path) -> None:
+        raise subprocess.CalledProcessError(100, ["apt-get", "update"], "", "E: no network\n")
+
+    monkeypatch.setattr(install_test, "run_install_test", fake)
+    monkeypatch.chdir(tmp_path)
+    argv = ["install-test", "--cell", "c", "--artifacts", "a", "--report", "r.json"]
+    assert vrg_package.main(argv) == 1
+    err = capsys.readouterr().err
+    assert "ERROR: Command '['apt-get', 'update']' returned non-zero exit status 100." in err
+    assert "E: no network" in err
+
+
+def test_install_test_package_error_returns_1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML_TEXT)
+    monkeypatch.chdir(tmp_path)
+    argv = ["install-test", "--cell", "c", "--artifacts", "a", "--report", "r.json"]
+    assert vrg_package.main(argv) == 1
+    assert "no [package] section" in capsys.readouterr().err
+
+
+def test_install_test_requires_all_options(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc:
+        vrg_package.main(["install-test", "--cell", "c", "--artifacts", "a"])
+    assert exc.value.code == 2
+    assert "--report" in capsys.readouterr().err

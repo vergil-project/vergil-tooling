@@ -15,10 +15,15 @@ Subcommands:
           Stages into --staging (wiped first) and writes the .deb/.rpm
           artifacts to --out, printing each artifact path. Needs nfpm on PATH.
 
-  indexBuild the signed apt/dnf package-repository site (spec §7.2): collect
+  index   Build the signed apt/dnf package-repository site (spec §7.2): collect
           and verify the stable releases of every product in --config, apply
           retention, write and sign the metadata, and size-check the result in
           --out. Needs PACKAGE_SIGNING_KEY and PACKAGE_SIGNING_PASSPHRASE.
+
+  install-test  In a clean container for one test cell (--cell), install that
+          cell's artifact from --artifacts, verify shipped systemd units, run
+          the smoke command and shim checks with a sanitized environment,
+          remove the package, assert no residue, and write --report (JSON).
 """
 
 from __future__ import annotations
@@ -94,6 +99,27 @@ def _cmd_index(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_install_test(args: argparse.Namespace) -> int:
+    # Imported here, not at module top, to keep sibling subcommand changes conflict-free.
+    import subprocess
+
+    from vergil_tooling.lib.package import install_test
+
+    cwd = Path.cwd()
+    try:
+        install_test.run_install_test(
+            repo_root=cwd,
+            cell_id=args.cell,
+            artifacts=cwd / args.artifacts,
+            report=cwd / args.report,
+        )
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or "").strip()
+        msg = f"{exc}\n{detail}".rstrip()
+        raise PackageError(msg) from exc
+    return 0
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="vrg-package",
@@ -160,6 +186,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "from GITHUB_REPOSITORY)",
     )
     p.set_defaults(func=_cmd_index)
+    it = sub.add_parser(
+        "install-test",
+        help="Install-test one test cell's artifact (install, units, smoke, removal)",
+        description=(
+            "Install the artifact for one test cell in this (clean) container, verify "
+            "shipped systemd units, run the smoke command and shim checks under a "
+            "sanitized environment, remove it and check for residue (spec §8.1)."
+        ),
+    )
+    it.add_argument("--cell", required=True, help="Test cell id from `vrg-package matrix`")
+    it.add_argument("--artifacts", required=True, metavar="DIR", help="Built artifact directory")
+    it.add_argument("--report", required=True, metavar="PATH", help="Write the JSON report here")
+    it.set_defaults(func=_cmd_install_test)
     return parser.parse_args(argv)
 
 
