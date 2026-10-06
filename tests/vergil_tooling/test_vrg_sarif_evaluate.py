@@ -113,3 +113,53 @@ def test_writes_summary_on_findings(tmp_path: Path) -> None:
         main([str(f)])
     mock_sum.assert_called_once()
     assert "Security Scan" in mock_sum.call_args[0][0]
+
+
+_SUPPRESSED_SARIF = {
+    "version": "2.1.0",
+    "runs": [
+        {
+            "tool": {"driver": {"name": "semgrep"}},
+            "results": [
+                {
+                    "ruleId": "VULN-SUP",
+                    "level": "error",
+                    "message": {"text": "reviewed and accepted"},
+                    "locations": [
+                        {
+                            "physicalLocation": {
+                                "artifactLocation": {"uri": "ok.py"},
+                                "region": {"startLine": 9},
+                            }
+                        }
+                    ],
+                    "suppressions": [{"kind": "inSource"}],
+                }
+            ],
+        }
+    ],
+}
+
+
+def test_suppressed_only_passes_and_reports_summary(tmp_path: Path) -> None:
+    f = tmp_path / "suppressed.sarif"
+    _write_sarif(f, _SUPPRESSED_SARIF)
+    with (
+        patch(f"{_MOD}.emit_error") as mock_err,
+        patch(f"{_MOD}.write_summary") as mock_sum,
+    ):
+        rc = main([str(f)])
+    assert rc == 0
+    mock_err.assert_not_called()
+    mock_sum.assert_called_once()
+    assert "VULN-SUP" in mock_sum.call_args[0][0]
+    assert "inSource" in mock_sum.call_args[0][0]
+
+
+def test_clean_file_writes_no_summary(tmp_path: Path) -> None:
+    f = tmp_path / "clean.sarif"
+    _write_sarif(f, _CLEAN_SARIF)
+    with patch(f"{_MOD}.write_summary") as mock_sum:
+        rc = main([str(f)])
+    assert rc == 0
+    mock_sum.assert_not_called()

@@ -99,8 +99,9 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     write_output("finding_count", str(len(result.findings)))
+    write_output("suppressed_count", str(len(result.suppressed)))
 
-    if not result.passed:
+    if not result.passed or result.suppressed:
         write_summary(format_summary(result))
 
     return 0 if result.passed else 1
