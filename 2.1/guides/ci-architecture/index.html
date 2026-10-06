@@ -1248,6 +1248,8 @@
       
         
       
+        
+      
     
     
     
@@ -1300,6 +1302,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.226/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.226
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15451,7 +15481,10 @@ matrix could never produce, leaving the PR "expected, never reported" and
 permanently blocked with no <code>--admin</code> escape (epic
 <a href="https://github.com/vergil-project/.github/issues/338">vergil-project/.github#338</a>).
 Non-matrixed checks (the security scanners, <code>quality / common</code>, the version-bump
-gate, <code>docs / docs</code>) keep their fixed, version-free names.</p>
+gate, <code>docs / docs</code>) keep their fixed, version-free names. A repo whose
+<code>vergil.toml</code> has a <code>[package]</code> section also requires <code>package / evidence</code>, the
+one stable gate <code>ci-package.yml</code> emits over its whole target matrix; repos
+without <code>[package]</code> neither call <code>ci-package.yml</code> nor require the gate.</p>
 <p><code>vrg-github-repo-config audit</code> <strong>hard-fails on required-set drift</strong>: if a
 repo's configured required checks diverge from the desired set, the audit
 fails rather than reporting a warning. <code>vrg-release</code> gates on that audit,
