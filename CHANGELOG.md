@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.227] - 2026-10-06
+
+### Bug fixes
+
+- settle confirm-main on the release leaf job, not the first 'release' match (#3103)
+
 ## [2.1.226] - 2026-10-06
 
 ### Features
