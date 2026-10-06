@@ -48,6 +48,7 @@ def test_matrix_prints_json(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     (tmp_path / "vergil.toml").write_text(_PKG_PY_TOML)
+    (tmp_path / "uv.lock").write_text("version = 1\n")
     monkeypatch.chdir(tmp_path)
     assert vrg_package.main(["matrix"]) == 0
     out = json.loads(capsys.readouterr().out)
@@ -60,6 +61,7 @@ def test_matrix_github_output_and_manifest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     (tmp_path / "vergil.toml").write_text(_PKG_PY_TOML)
+    (tmp_path / "uv.lock").write_text("version = 1\n")
     gho = tmp_path / "gho"
     gho.write_text("prior=1\n")
     monkeypatch.chdir(tmp_path)
@@ -102,6 +104,7 @@ def test_github_output_requires_env(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     (tmp_path / "vergil.toml").write_text(_PKG_PY_TOML)
+    (tmp_path / "uv.lock").write_text("version = 1\n")
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
     assert vrg_package.main(["matrix", "--github-output"]) == 1
