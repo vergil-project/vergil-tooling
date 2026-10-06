@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.227/">
       
       
         <link rel="next" href="../v2.1.225/">
@@ -1257,6 +1257,8 @@
       
         
       
+        
+      
     
     
     
@@ -1312,6 +1314,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.227/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.227
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -14623,6 +14653,7 @@ Adds lib/package/install_test.py (select_artifact, run_install_test) and the vrg
 A release version (vX.Y line or vX.Y.Z exact) now installs vergil-tooling on Lima and cloud VMs from the vergil apt repository: trust bootstrap via repo_setup, an apt preferences pin, a candidate check that fails naming the ref and repository URL when nothing matches, then apt install. Any uv-installed copy and the dev-ref marker are removed only after the apt install succeeds. A non-release ref is an explicit uv dev install that records its ref, and vrg-vm prints a DEV banner on create, rebuild, start, update and session while it is in place. get_tooling_version falls back to the installed deb version.</p>
 </li>
 </ul>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.226/v2.1.226-ci-evidence.tar.gz">Download →</a></p>
 
 
 
