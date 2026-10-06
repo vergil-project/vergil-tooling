@@ -941,7 +941,7 @@ wheels = [
 
 [[package]]
 name = "vergil-tooling"
-version = "2.1.227"
+version = "2.1.228"
 source = { editable = "." }
 dependencies = [
     { name = "pyelftools" },
