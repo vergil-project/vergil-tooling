@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.226] - 2026-10-06
+
+### Features
+
+- target registry, [package] config and vrg-package matrix (#3074) (#3087)
+- index: collect stable releases, verify provenance, per-line retention (#3079) (#3089)
+- package / evidence gate: required with [package], harvested at release (#3081) (#3090)
+- allow the Public Domain license in the Python dependency audit (#3091)
+- staged builder, nFPM packaging, glibc guard, vrg-package build (#3075) (#3092)
+- org repository registry and fingerprint-pinned trust bootstrap (#3076) (#3093)
+- index: apt and dnf metadata, signing, size guard, vrg-package index (#3094)
+- python builder: venv from uv.lock on the pinned runtime (#3077) (#3095)
+- vrg-package install-test: install, units, smoke, clean removal (#3078) (#3096)
+- deferred package-index stage; consumer refresh waits for the index (#3097)
+- VMs install vergil-tooling from the package repository; explicit dev installs (#3083) (#3098)
+
 ## [2.1.225] - 2026-10-03
 
 ### Features
