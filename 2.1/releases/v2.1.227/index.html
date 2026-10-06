@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.228/">
       
       
         <link rel="next" href="../v2.1.226/">
@@ -1259,6 +1259,8 @@
       
         
       
+        
+      
     
     
     
@@ -1314,6 +1316,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.228/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.228
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -14600,6 +14630,7 @@
 confirm_main waited for the first job whose name contained 'release'. With vergil-actions#905, cd-release adds release / package-matrix (always runs, finishes first) plus package-build/package-sign jobs, so the settle wait could end before release / release concluded and the release would fail falsely (a regression of the #1611 race).</li>
 </ul>
 <p>_settled_run_jobs now takes job matchers (predicates on the job name). confirm-main settles on _is_release_job (the leaf-segment matcher that already handles release / release and cd / release, #2001); confirm-develop keeps its substring match via _name_contains('docs').</p>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.227/v2.1.227-ci-evidence.tar.gz">Download →</a></p>
 
 
 
