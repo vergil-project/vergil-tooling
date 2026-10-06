@@ -11375,6 +11375,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#vergil-tooling-inside-the-vm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vergil-tooling inside the VM
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -14708,6 +14719,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#vergil-tooling-inside-the-vm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vergil-tooling inside the VM
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -15043,7 +15065,8 @@ design spec is
   flags the box <code>NEEDS-REBUILD</code> until you do.</li>
 <li><code>destroy-volume</code> — the <strong>only</strong> command that deletes the persistent
   volume. Guarded: retype <code>org/repo</code> to confirm, or pass <code>--yes</code>.</li>
-<li><code>update</code> — refreshes vergil-tooling and Claude plugins <strong>in place</strong>
+<li><code>update</code> — refreshes vergil-tooling (see
+  <a href="#vergil-tooling-inside-the-vm">vergil-tooling inside the VM</a>) and Claude plugins <strong>in place</strong>
   over the IAP tunnel on a running box (seconds, non-disruptive), exactly
   like a Lima box. <code>rebuild</code> is reserved for what genuinely needs a fresh
   image (a new base image or changed provision scripts), not a tooling
@@ -15105,6 +15128,56 @@ set</strong>, so cloud VMs created before the knob existed keep their
 fingerprints; declaring or resizing it trips <code>NEEDS-REBUILD</code> like
 <code>volume</code>. <code>boot_disk_type</code> follows the same rule: it enters the payload
 only when set, and declaring or changing it trips <code>NEEDS-REBUILD</code>.</p>
+<h2 id="vergil-tooling-inside-the-vm">vergil-tooling inside the VM<a class="headerlink" href="#vergil-tooling-inside-the-vm" title="Permanent link">&para;</a></h2>
+<p>Lima and cloud VMs install vergil-tooling from the vergil <strong>package
+repository</strong> (<code>https://vergil-project.github.io/packages</code>) with <code>apt</code>,
+not with <code>uv tool install</code>. The macOS host, the dev container cache and
+this repo's dev-tree <code>.venv</code> are unchanged and still use <code>uv</code>.</p>
+<p><strong>Which version.</strong> The version is the identity's resolved vergil
+version: the per-identity <code>vergil</code> setting in <code>identities.toml</code>, else
+the config-level <code>vergil</code>. The repo's <code>vergil.toml</code> plays no part. A
+<code>vrg-vm update --tag &lt;ref&gt;</code> overrides it for that one update and is not
+remembered.</p>
+<p><strong>Packaged install</strong> (any release version):</p>
+<ul>
+<li><code>vX.Y</code> (a release line) pins <code>vergil-tooling</code> to <code>X.Y.*</code> in
+  <code>/etc/apt/preferences.d/vergil-tooling</code> and installs the newest
+  package on that line.</li>
+<li><code>vX.Y.Z</code> (an exact release) pins <code>X.Y.Z-1</code> and installs
+  <code>vergil-tooling=X.Y.Z-1</code>.</li>
+<li>Before anything is written to the apt sources, <code>vrg-vm</code> downloads
+  the org signing key and checks its fingerprint against the one
+  pinned in vergil-tooling. It then installs <code>vergil-archive-keyring</code>,
+  which owns the key and the source entry from then on.</li>
+<li>The VM's Ubuntu codename must be a published suite (<code>noble</code> or
+  <code>resolute</code>). Any other codename fails provisioning.</li>
+<li>If the repository has no package matching the version, for example
+  a new line before its first packaged release, provisioning <strong>fails</strong>
+  and names the version and the repository URL. It never falls back
+  to another version or to a <code>uv</code> install.</li>
+<li><code>vrg-vm update</code> re-runs the same steps, which upgrades the VM within
+  the pin.</li>
+<li>Once the apt install has succeeded, any <code>uv</code>-installed copy (a legacy
+  install or an earlier dev install) is removed, because the copy in
+  <code>~/.local/bin</code> would shadow <code>/usr/bin</code>. A failed packaged install
+  leaves the existing tooling in place.</li>
+</ul>
+<p><strong>Dev install</strong> (explicit, for a git ref that is not a release version,
+such as <code>develop</code> or a feature branch):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>vrg-vm<span class="w"> </span>update<span class="w"> </span>--tag<span class="w"> </span>develop
+</code></pre></div>
+<ul>
+<li>This runs <code>uv tool install</code> from git into <code>~/.local/bin</code>, which
+  takes precedence over the packaged <code>/usr/bin</code> copy on the VM user's
+  <code>PATH</code>, and records the ref in <code>~/.config/vergil/tooling-dev-ref</code>.</li>
+<li>You only get a dev install by passing a dev ref. A failed packaged
+  install never falls back to one.</li>
+<li>While it is in place, every <code>vrg-vm</code> command that touches the VM
+  (<code>create</code>, <code>rebuild</code>, <code>start</code>, <code>update</code>, <code>session</code>) prints
+  <code>DEV tooling (ref &lt;ref&gt;) — not the packaged install</code>.</li>
+<li>A plain <code>vrg-vm update</code> (no <code>--tag</code>) returns the VM to the packaged
+  install and removes the dev copy.</li>
+</ul>
 
 
 
