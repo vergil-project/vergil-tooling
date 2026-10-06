@@ -61,8 +61,6 @@ def test_packages_stanza_has_hashes_and_filename(tmp_path: Path) -> None:
         "Package: t\nVersion: 2.1.0-1\nArchitecture: amd64\n"
         "Filename: pool/t/t_2.1.0-1_amd64.deb\n"
         "Size: 3\n"
-        f"MD5sum: {hashlib.md5(b'abc', usedforsecurity=False).hexdigest()}\n"
-        f"SHA1: {hashlib.sha1(b'abc', usedforsecurity=False).hexdigest()}\n"
         f"SHA256: {hashlib.sha256(b'abc').hexdigest()}\n"
     )
     assert (site / "deb/pool/t/t_2.1.0-1_amd64.deb").read_bytes() == b"abc"
@@ -81,7 +79,9 @@ def test_release_hashes_every_packages_file(tmp_path: Path) -> None:
     site = tmp_path / "site"
     (release,) = apt.write(site, [_deb(tmp_path)], ["noble"], _control, vendor="v", now=_NOW)
     text = release.read_text()
-    md5_part, sha_part = text.split("MD5Sum:\n")[1].split("SHA256:\n")
+    # SHA256 only: apt verifies with SHA256, and MD5/SHA1 are not collision resistant.
+    assert "MD5Sum:" not in text and "SHA1:" not in text
+    sha_part = text.split("SHA256:\n")[1]
     dist = site / "deb/dists/noble"
     rels = [
         "main/binary-amd64/Packages",
@@ -89,14 +89,13 @@ def test_release_hashes_every_packages_file(tmp_path: Path) -> None:
         "main/binary-arm64/Packages",
         "main/binary-arm64/Packages.gz",
     ]
-    for algo, part in (("md5", md5_part), ("sha256", sha_part)):
-        lines = part.splitlines()
-        assert [ln.split()[2] for ln in lines] == rels
-        for ln in lines:
-            digest, size, rel = ln.split()
-            data = (dist / rel).read_bytes()
-            assert digest == hashlib.new(algo, data).hexdigest()
-            assert int(size) == len(data)
+    lines = sha_part.splitlines()
+    assert [ln.split()[2] for ln in lines] == rels
+    for ln in lines:
+        digest, size, rel = ln.split()
+        data = (dist / rel).read_bytes()
+        assert digest == hashlib.sha256(data).hexdigest()
+        assert int(size) == len(data)
 
 
 def test_packages_gz_is_deterministic_and_matches(tmp_path: Path) -> None:

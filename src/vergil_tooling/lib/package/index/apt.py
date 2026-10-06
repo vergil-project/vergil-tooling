@@ -10,9 +10,12 @@ Layout under ``<site>/deb``::
   (revision ``1~<suite>``) only in its own suite.
 - ``Architecture: all`` packages are listed in every ``binary-*`` directory.
 - ``Packages`` stanzas are the package's full control data followed by
-  ``Filename``/``Size``/``MD5sum``/``SHA1``/``SHA256``, sorted by name then
-  version, separated by blank lines. ``Packages.gz`` is byte-deterministic.
-- ``Release`` lists the ``MD5Sum``/``SHA256`` of every ``Packages{,.gz}``.
+  ``Filename``/``Size``/``SHA256``, sorted by name then version, separated by
+  blank lines. ``Packages.gz`` is byte-deterministic.
+- ``Release`` lists the ``SHA256`` of every ``Packages{,.gz}``.
+
+Only SHA256 is emitted: apt verifies with SHA256, and MD5/SHA1 are not
+collision resistant (flagged by Semgrep's insecure-hash-algorithm rules).
 
 Signing (``InRelease``, ``Release.gpg``) is done by the caller; see ``sign``.
 """
@@ -69,8 +72,6 @@ def _stanza(a: Artifact, control: str, filename: str) -> str:
     lines += [
         f"Filename: {filename}",
         f"Size: {len(data)}",
-        f"MD5sum: {hashlib.md5(data, usedforsecurity=False).hexdigest()}",
-        f"SHA1: {hashlib.sha1(data, usedforsecurity=False).hexdigest()}",
         f"SHA256: {hashlib.sha256(data).hexdigest()}",
     ]
     return "\n".join(lines) + "\n"
@@ -87,13 +88,10 @@ def _release(vendor: str, suite: str, dist: Path, now: datetime) -> str:
     files = sorted(
         p.relative_to(dist).as_posix() for p in dist.glob(f"{COMPONENT}/binary-*/Packages*")
     )
-    md5: list[str] = []
     sha256: list[str] = []
     for rel in files:
         data = (dist / rel).read_bytes()
-        size = f"{len(data):>10}"
-        md5.append(f" {hashlib.md5(data, usedforsecurity=False).hexdigest()} {size} {rel}")
-        sha256.append(f" {hashlib.sha256(data).hexdigest()} {size} {rel}")
+        sha256.append(f" {hashlib.sha256(data).hexdigest()} {len(data):>10} {rel}")
     head = [
         f"Origin: {vendor}",
         f"Label: {vendor}",
@@ -103,7 +101,7 @@ def _release(vendor: str, suite: str, dist: Path, now: datetime) -> str:
         f"Architectures: {' '.join(ARCHES)}",
         f"Components: {COMPONENT}",
     ]
-    return "\n".join([*head, "MD5Sum:", *md5, "SHA256:", *sha256]) + "\n"
+    return "\n".join([*head, "SHA256:", *sha256]) + "\n"
 
 
 def write(
