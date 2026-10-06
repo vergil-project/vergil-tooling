@@ -82,6 +82,8 @@ def _boom(*_a: object) -> NoReturn:
 def _ctx(tmp_path: Path, package: str | None) -> ReleaseContext:
     (tmp_path / "vergil.toml").write_text(_TOML + (package or ""))
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "vergil-tooling"\n')
+    # builder = "python" requires a uv.lock next to vergil.toml (spec §5.4, #3077).
+    (tmp_path / "uv.lock").write_text("version = 1\n")
     return ReleaseContext(
         repo="vergil-project/vergil-tooling",
         version="2.1.240",
