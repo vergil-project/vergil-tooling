@@ -56,7 +56,7 @@ def main(argv: list[str] | None = None) -> int:
             line=finding.line,
         )
 
-    if not result.passed:
+    if not result.passed or result.suppressed:
         write_summary(format_summary(result))
 
     return 0 if result.passed else 1

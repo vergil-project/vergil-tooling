@@ -10,6 +10,7 @@ import pytest
 from vergil_tooling.lib.sarif import (
     EvaluationResult,
     SarifFinding,
+    SuppressedFinding,
     evaluate_findings,
     format_summary,
     parse_sarif,
@@ -208,3 +209,188 @@ class TestFormatSummary:
         assert "1 finding(s)" in summary
         assert "R1" in summary
         assert "a.py" in summary
+
+
+_RULE = "yaml.github-actions.security.secrets-inherit.secrets-inherit"
+
+
+def _suppressed_sarif(
+    suppressions: object,
+    *,
+    level: str = "warning",
+) -> dict:
+    """A one-result SARIF document whose result carries ``suppressions``.
+
+    The shape mirrors semgrep's real SARIF for an inline
+    ``# nosemgrep: <rule-id>`` comment (verified 2026-10-06), which emits the
+    result with ``"suppressions": [{"kind": "inSource"}]``.
+    """
+    return {
+        "version": "2.1.0",
+        "runs": [
+            {
+                "tool": {"driver": {"name": "semgrep"}},
+                "results": [
+                    {
+                        "ruleId": _RULE,
+                        "level": level,
+                        "message": {"text": "secrets: inherit passes all secrets"},
+                        "locations": [
+                            {
+                                "physicalLocation": {
+                                    "artifactLocation": {"uri": ".github/workflows/ci.yml"},
+                                    "region": {"startLine": 17},
+                                }
+                            }
+                        ],
+                        "suppressions": suppressions,
+                    }
+                ],
+            }
+        ],
+    }
+
+
+class TestEvaluateSuppressions:
+    def test_semgrep_nosemgrep_insource_is_suppressed(self) -> None:
+        result = evaluate_findings([_suppressed_sarif([{"kind": "inSource"}])])
+        assert result.passed
+        assert result.findings == []
+        assert result.suppressed == [
+            SuppressedFinding(
+                rule_id=_RULE,
+                message="secrets: inherit passes all secrets",
+                level="warning",
+                file=".github/workflows/ci.yml",
+                line=17,
+                kind="inSource",
+                justification="",
+            )
+        ]
+
+    def test_external_is_suppressed(self) -> None:
+        result = evaluate_findings([_suppressed_sarif([{"kind": "external"}])])
+        assert result.passed
+        assert result.findings == []
+        assert [s.kind for s in result.suppressed] == ["external"]
+
+    def test_accepted_status_is_suppressed(self) -> None:
+        sarif = _suppressed_sarif(
+            [{"kind": "inSource", "status": "accepted", "justification": "reviewed, see #12"}]
+        )
+        result = evaluate_findings([sarif])
+        assert result.passed
+        assert result.suppressed[0].justification == "reviewed, see #12"
+
+    def test_rejected_status_does_not_suppress(self) -> None:
+        sarif = _suppressed_sarif([{"kind": "inSource", "status": "rejected"}])
+        result = evaluate_findings([sarif])
+        assert not result.passed
+        assert [f.rule_id for f in result.findings] == [_RULE]
+        assert result.suppressed == []
+
+    def test_under_review_status_does_not_suppress(self) -> None:
+        sarif = _suppressed_sarif([{"kind": "external", "status": "underReview"}])
+        result = evaluate_findings([sarif])
+        assert not result.passed
+        assert len(result.findings) == 1
+        assert result.suppressed == []
+
+    def test_any_accepted_entry_suppresses(self) -> None:
+        sarif = _suppressed_sarif(
+            [
+                {"kind": "external", "status": "rejected"},
+                {"kind": "inSource"},
+            ]
+        )
+        result = evaluate_findings([sarif])
+        assert result.passed
+        assert [s.kind for s in result.suppressed] == ["inSource"]
+
+    def test_unknown_kind_does_not_suppress(self) -> None:
+        result = evaluate_findings([_suppressed_sarif([{"kind": "somethingElse"}])])
+        assert not result.passed
+        assert result.suppressed == []
+
+    def test_missing_kind_does_not_suppress(self) -> None:
+        result = evaluate_findings([_suppressed_sarif([{"status": "accepted"}])])
+        assert not result.passed
+
+    def test_empty_suppressions_list_does_not_suppress(self) -> None:
+        result = evaluate_findings([_suppressed_sarif([])])
+        assert not result.passed
+        assert result.suppressed == []
+
+    def test_malformed_suppressions_do_not_suppress(self) -> None:
+        for bad in ("inSource", {"kind": "inSource"}, ["inSource"], None):
+            result = evaluate_findings([_suppressed_sarif(bad)])
+            assert not result.passed, bad
+            assert result.suppressed == []
+
+    def test_suppressed_outside_severity_filter_is_not_reported(self) -> None:
+        sarif = _suppressed_sarif([{"kind": "inSource"}], level="note")
+        result = evaluate_findings([sarif])
+        assert result.passed
+        assert result.suppressed == []
+
+    def test_suppressed_and_unsuppressed_mixed(self) -> None:
+        result = evaluate_findings([_suppressed_sarif([{"kind": "inSource"}]), _FINDINGS_SARIF])
+        assert not result.passed
+        assert len(result.findings) == 2
+        assert len(result.suppressed) == 1
+
+
+class TestFormatSummarySuppressed:
+    _SUPPRESSED = SuppressedFinding(
+        rule_id="R-SUP",
+        message="accepted risk",
+        level="warning",
+        file="b.yml",
+        line=7,
+        kind="inSource",
+        justification="",
+    )
+
+    def test_only_suppressed_renders_suppressed_section(self) -> None:
+        result = EvaluationResult(findings=[], suppressed=[self._SUPPRESSED], passed=True)
+        summary = format_summary(result)
+        assert "No findings" not in summary
+        assert "**0 finding(s)**" in summary
+        assert "1 suppressed finding(s)" in summary
+        assert "| R-SUP | warning | b.yml | 7 | inSource |  |" in summary
+
+    def test_findings_and_suppressed_both_rendered(self) -> None:
+        failing = SarifFinding(rule_id="R1", message="bad", level="error", file="a.py", line=1)
+        justified = SuppressedFinding(
+            rule_id="R2",
+            message="ok",
+            level="error",
+            file="c.py",
+            line=3,
+            kind="external",
+            justification="false positive, see #9",
+        )
+        result = EvaluationResult(findings=[failing], suppressed=[justified], passed=False)
+        summary = format_summary(result)
+        assert "**1 finding(s)**" in summary
+        assert "| R1 | error | a.py | 1 | bad |" in summary
+        assert "1 suppressed finding(s)" in summary
+        assert "| R2 | error | c.py | 3 | external | false positive, see #9 |" in summary
+
+    def test_findings_without_suppressed_has_no_suppressed_section(self) -> None:
+        failing = SarifFinding(rule_id="R1", message="bad", level="error", file="a.py", line=1)
+        summary = format_summary(EvaluationResult(findings=[failing], passed=False))
+        assert "suppressed" not in summary.lower()
+
+    def test_pipe_in_cell_is_escaped(self) -> None:
+        sup = SuppressedFinding(
+            rule_id="R3",
+            message="m",
+            level="warning",
+            file="d.py",
+            line=4,
+            kind="inSource",
+            justification="a|b",
+        )
+        summary = format_summary(EvaluationResult(suppressed=[sup], passed=True))
+        assert "a\\|b" in summary

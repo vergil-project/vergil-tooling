@@ -211,6 +211,58 @@ own `vergil-project/vergil-actions@v2.1` references are a **permanent**
 exception — they are our release line, not a mutable third-party tag.
 Every other semgrep rule stays enforced.
 
+#### Suppressing a reviewed finding in source
+
+The SARIF gate (`vrg-sarif-evaluate`, and the `vrg-semgrep-scan` /
+`vrg-trivy-scan` wrappers, all backed by `src/vergil_tooling/lib/sarif.py`)
+honors SARIF result **suppressions**. A result does **not** fail the gate
+when its `suppressions` array holds an entry with:
+
+- `kind` of `inSource` (an in-code comment) or `external` (an out-of-band
+  record), **and**
+- `status` absent or `accepted`.
+
+Every other case fails closed and still counts against the gate: a
+`status` of `underReview` or `rejected`, an unknown or missing `kind`, or an
+empty or malformed `suppressions` array.
+
+Suppressed findings are **reported, not hidden**. They are listed in a
+separate "suppressed finding(s)" table in the job summary (rule, level,
+file, line, suppression kind, and justification). The scan wrappers also
+emit a `suppressed_count` step output next to `finding_count`.
+
+For semgrep, write the suppression as a `nosemgrep` comment that names the
+**exact rule ID**, and put the justification and a tracking reference in the
+same comment, after the rule ID:
+
+```yaml
+    secrets: inherit  # nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit -- reusable workflow needs the release token; reviewed in #123
+```
+
+Semgrep also accepts the comment on the line **above** the finding:
+
+```python
+# nosemgrep: python.lang.security.audit.subprocess-shell-true.subprocess-shell-true -- fixed command string, no user input; see #456
+subprocess.call(CMD, shell=True)
+```
+
+Semgrep emits both forms in SARIF as `"suppressions": [{"kind": "inSource"}]`.
+It does **not** carry the comment text into SARIF, so the summary's
+justification column stays empty for semgrep. The justification lives in the
+code, where review sees it. Rules for writing a suppression:
+
+- **Always name the rule ID.** A bare `# nosemgrep` silences every rule on
+  the line, including ones nobody reviewed.
+- **Always give a reason and a tracking issue.** An unexplained suppression
+  is not a reviewed exception.
+- **Treat suppressions as reviewable code.** A suppression is visible in the
+  diff and in the scan summary, so reviewers can challenge it like any other
+  change.
+
+Other analyzers are honored as long as their SARIF carries a `suppressions`
+entry. Trivy's `.trivyignore` works differently: it drops the finding before
+SARIF is written, so ignored findings never appear in the summary at all.
+
 ### CD: release-publishing secrets
 
 The release-publishing workflow generated into a consuming repo's

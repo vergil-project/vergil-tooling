@@ -218,3 +218,45 @@ def test_outputs_finding_count(tmp_path: Path) -> None:
 
     calls = {c[0][0]: c[0][1] for c in mock_out.call_args_list}
     assert calls["finding_count"] == "1"
+
+
+_SUPPRESSED_SARIF = {
+    "version": "2.1.0",
+    "runs": [
+        {
+            "tool": {"driver": {"name": "semgrep"}},
+            "results": [
+                {
+                    "ruleId": "yaml.github-actions.security.secrets-inherit.secrets-inherit",
+                    "level": "warning",
+                    "message": {"text": "secrets: inherit"},
+                    "locations": [],
+                    "suppressions": [{"kind": "inSource"}],
+                }
+            ],
+        }
+    ],
+}
+
+
+def test_nosemgrep_suppressed_finding_passes(tmp_path: Path) -> None:
+    output = tmp_path / "results.sarif"
+
+    def _fake_scan(rulesets: list, target: object, out: object, **_kwargs: object) -> ScanResult:
+        output.write_text(json.dumps(_SUPPRESSED_SARIF))
+        return ScanResult(returncode=0, sarif_produced=True)
+
+    with (
+        patch(f"{_MOD}.run_scan", side_effect=_fake_scan),
+        patch(f"{_MOD}.emit_error") as mock_err,
+        patch(f"{_MOD}.write_output") as mock_out,
+        patch(f"{_MOD}.write_summary") as mock_sum,
+    ):
+        rc = main(["--language", "python", "--output", str(output)])
+    assert rc == 0
+    mock_err.assert_not_called()
+    calls = {c[0][0]: c[0][1] for c in mock_out.call_args_list}
+    assert calls["finding_count"] == "0"
+    assert calls["suppressed_count"] == "1"
+    mock_sum.assert_called_once()
+    assert "suppressed" in mock_sum.call_args[0][0]
