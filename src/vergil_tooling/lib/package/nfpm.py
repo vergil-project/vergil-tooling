@@ -214,7 +214,7 @@ def check_maintainer_scripts(repo_root: Path, overlay: dict[str, Any]) -> None:
 def package(config: dict[str, Any], fmt: str, out_dir: Path) -> Path:
     """Run nFPM on ``config`` for ``fmt``; move the one artifact into ``out_dir`` and return it."""
     if shutil.which("nfpm") is None:
-        msg = "nfpm not found on PATH (CI installs it via actions/shared/setup/nfpm)"
+        msg = "nfpm not found on PATH (CI installs it via actions/package/setup)"
         raise PackageError(msg)
     out_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="vrg-nfpm-") as tmp:

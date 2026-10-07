@@ -21,6 +21,21 @@ integration-tests = false
 [dependencies]
 vergil = "v2.1"
 
+# Publish vergil-tooling as a signed .deb/.rpm (epic vergil-project/.github#356).
+# The python builder installs the venv from uv.lock at
+# /opt/vergil/vergil-tooling/venv against the packaged vergil-python runtime,
+# shims every [project.scripts] command into /usr/bin, and is built and
+# install-tested on every default target (docs/site/docs/reference/package-config.md).
+[package]
+builder = "python"
+vendor = "vergil"
+summary = "Shared development tooling for Vergil-managed repositories"
+smoke = "vrg-whoami --mode"
+
+[package.python]
+# The released, indexed vergil-python patch (vergil-project/vergil-python#2).
+runtime = "3.14.8"
+
 # This repo dogfoods its own unreleased code: the cached dev image deliberately
 # skips `uv tool install` for the self-repo, so `vrg-validate` is not on PATH —
 # `uv run` activates the project venv instead. Declaring it here (rather than
