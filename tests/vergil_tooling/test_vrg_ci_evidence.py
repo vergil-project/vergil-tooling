@@ -407,6 +407,87 @@ def test_harvest_then_assemble_matches_bundle(
     assert split_manifest == bundle_manifest
 
 
+def test_assemble_missing_state_errors_without_traceback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Issue #3119: the pre-publish harvest failed, so no harvest-state.json exists.
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    staging = tmp_path / "staging"
+    staging.mkdir()
+
+    rc = main(_assemble_argv(staging, tmp_path / "out"))
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert err == (
+        f"ERROR: harvest state not found in {staging}: "
+        "the pre-publish evidence gate did not complete\n"
+    )
+    assert not (tmp_path / "out").exists()
+
+
+def test_assemble_missing_state_emits_gha_annotation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    staging = tmp_path / "staging"
+
+    rc = main(_assemble_argv(staging, tmp_path / "out"))
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert err.startswith("::error")
+    assert f"harvest state not found in {staging}" in err
+    assert "Traceback" not in err
+
+
+def test_assemble_corrupt_state_errors(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    (staging / "harvest-state.json").write_text("{not json", encoding="utf-8")
+
+    rc = main(_assemble_argv(staging, tmp_path / "out"))
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert err.startswith("ERROR: harvest state is not valid JSON at")
+    assert err.count("\n") == 1
+
+
+def test_assemble_wrong_shape_state_errors(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    (staging / "harvest-state.json").write_text("[]", encoding="utf-8")
+
+    rc = main(_assemble_argv(staging, tmp_path / "out"))
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert err.startswith("ERROR: harvest state malformed at")
+    assert err.count("\n") == 1
+
+
+def test_harvest_unresolvable_release_pr_errors(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.setattr(github, "read_json", lambda *a, **k: [])
+    monkeypatch.setattr(github, "read_output", lambda *a, **k: "")
+    staging = tmp_path / "staging"
+
+    rc = main(_harvest_argv(staging))
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert err == "ERROR: cannot resolve release PR for deadbeef in o/r\n"
+
+
 def test_harvest_help_exits_zero(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as excinfo:
         vrg_ci_evidence.main(["harvest", "--help"])
