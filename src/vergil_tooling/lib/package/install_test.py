@@ -4,7 +4,8 @@
 :data:`~vergil_tooling.lib.package.repo_setup.Run` callable (so it can be driven
 locally or faked in tests):
 
-1. prerequisites (``apt-get update`` on deb; nothing on rpm);
+1. prerequisites (a full ``apt-get update`` on deb, unless indexes are already
+   present; nothing on rpm);
 2. for ``builder = "python"`` only, bootstrap the vergil repository as a
    consumer would, since the runtime resolves from the **live** repository
    (``staged`` products install standalone);
@@ -114,23 +115,24 @@ def run_install_test(
     name = naming.package_name(repo_root, pkg)
     artifact = select_artifact(artifacts, name, cell, noarch=pkg.noarch).resolve()
     deb = cell.fmt == "deb"
-    installer = "apt-get" if deb else "dnf"
+    installer = repo_setup.apt_get() if deb else ("dnf",)
 
-    # 1. Prerequisites.
-    if deb:
-        run("apt-get", "update")
+    # 1. Prerequisites: package indexes for the artifact's dependencies. Skipped
+    # when a full update already ran in this container (the CI setup step).
+    if deb and not repo_setup.apt_indexes_present(run):
+        run(*repo_setup.apt_get("update"))
     # 2. The runtime a python-builder product depends on comes from the live repository.
     if pkg.builder == "python":
         repo_setup.bootstrap(run, orgs.for_vendor(RUNTIME_VENDOR), cell.fmt, cell.suite, sudo=False)
     # 3. Install the local artifact.
-    run(installer, "install", "-y", str(artifact))
+    run(*installer, "install", "-y", str(artifact))
     # 4. List what it installed.
     listed = run(*(("dpkg", "-L") if deb else ("rpm", "-ql")), name).stdout
     paths = [line.strip() for line in listed.splitlines() if line.strip()]
     # 5. Shipped systemd units are installed and pass systemd-analyze verify.
     units = [p for p in paths if _UNIT.search(p)]
     if units:
-        run(installer, "install", "-y", "systemd")
+        run(*installer, "install", "-y", "systemd")
         for unit in units:
             run("systemd-analyze", "verify", unit)
     # 6. Smoke and shims, in the sanitized environment only.
@@ -153,7 +155,7 @@ def run_install_test(
             raise PackageError(msg)
     # 7. Remove.
     if deb:
-        run("apt-get", "purge", "-y", name)
+        run(*repo_setup.apt_get("purge", "-y", name))
     else:
         run("dnf", "remove", "-y", name)
     # 8. Nothing may remain.

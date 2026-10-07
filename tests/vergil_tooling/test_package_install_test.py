@@ -15,6 +15,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
     from pathlib import Path
 
+_FAST = "-o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20"
+
 _BASE_TOML = """\
 [project]
 repository-type = "library"
@@ -89,8 +91,12 @@ def _fake_run(
     residue: Iterable[str] = (),
     fail: str | None = None,
     raise_on_absent: bool = False,
+    indexes: bool = False,
 ) -> Callable[..., subprocess.CompletedProcess[str]]:
-    """A ``run`` fake: records every call; ``test -e`` exits 1 unless the path is residue."""
+    """A ``run`` fake: records every call; ``test -e`` exits 1 unless the path is residue.
+
+    ``indexes`` is what the apt-indexes probe reports (a fresh container has none).
+    """
     left = set(residue)
 
     def run(*argv: str) -> subprocess.CompletedProcess[str]:
@@ -98,6 +104,8 @@ def _fake_run(
         calls.append(line)
         if fail is not None and fail in line:
             raise subprocess.CalledProcessError(1, list(argv), "", "boom")
+        if argv[-1] == install_test.repo_setup.APT_INDEXES_PROBE:
+            return subprocess.CompletedProcess(argv, 0, "present\n" if indexes else "", "")
         if argv[:2] in (("dpkg", "-L"), ("rpm", "-ql")):
             return subprocess.CompletedProcess(argv, 0, listing, "")
         if argv[:2] == ("test", "-e"):
@@ -238,12 +246,13 @@ def test_sequence_python_product_deb(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert boot == [("deb", "noble")]
     artifact = arts / "vergil-tooling_2.1.240-1_amd64.deb"
     assert calls == [
-        "apt-get update",
-        f"apt-get install -y {artifact.resolve()}",
+        f"bash -c {install_test.repo_setup.APT_INDEXES_PROBE}",
+        f"apt-get {_FAST} update",
+        f"apt-get {_FAST} install -y {artifact.resolve()}",
         "dpkg -L vergil-tooling",
         f"{install_test.CLEAN_ENV} bash -c vrg-whoami --mode",
         f"{install_test.CLEAN_ENV} bash -c command -v vrg-whoami",
-        "apt-get purge -y vergil-tooling",
+        f"apt-get {_FAST} purge -y vergil-tooling",
         "test -e /opt/vergil/vergil-tooling",
         "test -e /usr/bin/vrg-whoami",
     ]
@@ -306,8 +315,29 @@ def test_staged_product_does_not_bootstrap_repo(
         repo, "test-ubuntu-24.04-amd64", arts, tmp_path / "r.json", run=run
     )
     assert boot == []
-    installs = [c for c in calls if c.startswith("apt-get install -y ")]
-    assert installs == [f"apt-get install -y {(arts / 'vergil-thing_1.0.0-1_amd64.deb').resolve()}"]
+    installs = [c for c in calls if c.startswith(f"apt-get {_FAST} install -y ")]
+    deb = (arts / "vergil-thing_1.0.0-1_amd64.deb").resolve()
+    assert installs == [f"apt-get {_FAST} install -y {deb}"]
+
+
+def test_existing_apt_indexes_skip_the_full_update(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The CI setup step already refreshed the archive indexes in this container.
+    repo = _repo_with_staged_package(tmp_path)
+    arts = _arts(tmp_path, "vergil-thing_1.0.0-1_amd64.deb")
+    _no_bootstrap(monkeypatch)
+    calls: list[str] = []
+    run = _fake_run(calls, listing="/usr/bin/thing\n", indexes=True)
+    install_test.run_install_test(
+        repo, "test-ubuntu-24.04-amd64", arts, tmp_path / "r.json", run=run
+    )
+    deb = (arts / "vergil-thing_1.0.0-1_amd64.deb").resolve()
+    assert calls[:2] == [
+        f"bash -c {install_test.repo_setup.APT_INDEXES_PROBE}",
+        f"apt-get {_FAST} install -y {deb}",
+    ]
+    assert not any(c.endswith(" update") for c in calls)
 
 
 def test_residue_is_fatal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -364,7 +394,7 @@ def test_units_are_verified(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
         "/usr/lib/systemd/system/x.timer",
         "/usr/lib/systemd/system/x.socket",
     ]
-    i = calls.index("apt-get install -y systemd")
+    i = calls.index(f"apt-get {_FAST} install -y systemd")
     assert calls[i - 1] == "dpkg -L vergil-tooling"
     assert calls[i + 1 : i + 4] == [f"systemd-analyze verify {u}" for u in units]
     assert calls[i + 4] == f"{install_test.CLEAN_ENV} bash -c vrg-whoami --mode"
@@ -454,7 +484,7 @@ def test_other_command_failures_propagate(tmp_path: Path, monkeypatch: pytest.Mo
     repo = _repo_with_python_package(tmp_path)
     arts = _arts(tmp_path, "vergil-tooling_2.1.240-1_amd64.deb")
     _no_bootstrap(monkeypatch)
-    run = _fake_run([], listing=_TOOLING_LISTING, fail="apt-get install")
+    run = _fake_run([], listing=_TOOLING_LISTING, fail="install -y")
     with pytest.raises(subprocess.CalledProcessError):
         install_test.run_install_test(
             repo, "test-ubuntu-24.04-amd64", arts, tmp_path / "r.json", run=run
