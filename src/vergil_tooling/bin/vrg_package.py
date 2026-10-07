@@ -5,10 +5,13 @@ Reads the ``[package]`` section of ``vergil.toml`` in the current directory.
 Subcommands:
 
   matrix  Resolve [package] into explicit build and test cells and print them
-          as JSON (read-only). With --github-output, append ``enabled``,
-          ``build`` and ``test`` to $GITHUB_OUTPUT instead of printing. With
-          --manifest PATH, also write the release artifact manifest to PATH.
-          A repo without [package] reports ``enabled: false`` and empty lists.
+          as JSON (read-only). --tier reduced keeps every build cell but only
+          one install-test cell per format (default: full). With
+          --github-output, append ``enabled``, ``build``, ``test`` and
+          ``tier`` to $GITHUB_OUTPUT instead of printing. With --manifest
+          PATH, also write the release artifact manifest to PATH (always the
+          full build output). A repo without [package] reports
+          ``enabled: false`` and empty lists.
 
   build   Build every package format of one build cell (--cell, from the
           matrix) at --version (overridden by [package].version when set).
@@ -43,11 +46,12 @@ from vergil_tooling.lib.package.index import site
 
 def _cmd_matrix(args: argparse.Namespace) -> int:
     cfg = config.read_config(Path.cwd())
-    m = matrix.resolve(cfg.package) if cfg.package is not None else None
+    tier = matrix.Tier(args.tier)
+    m = matrix.resolve(cfg.package, tier=tier) if cfg.package is not None else None
     payload: dict[str, object] = (
-        {"enabled": True, **matrix.to_json(m)}
+        {"enabled": True, "tier": tier.value, **matrix.to_json(m)}
         if m is not None
-        else {"enabled": False, "build": [], "test": []}
+        else {"enabled": False, "tier": tier.value, "build": [], "test": []}
     )
     output_path = os.environ.get("GITHUB_OUTPUT", "")
     if args.github_output and not output_path:
@@ -68,6 +72,7 @@ def _cmd_matrix(args: argparse.Namespace) -> int:
             fh.write(f"enabled={'true' if m is not None else 'false'}\n")
             fh.write(f"build={json.dumps(payload['build'])}\n")
             fh.write(f"test={json.dumps(payload['test'])}\n")
+            fh.write(f"tier={tier.value}\n")
     else:
         print(json.dumps(payload, indent=2))
     return 0
@@ -135,7 +140,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--github-output",
         action="store_true",
-        help="Append enabled/build/test to $GITHUB_OUTPUT instead of printing",
+        help="Append enabled/build/test/tier to $GITHUB_OUTPUT instead of printing",
+    )
+    p.add_argument(
+        "--tier",
+        choices=[t.value for t in matrix.Tier],
+        default=matrix.Tier.FULL.value,
+        help=(
+            "full (default): every build and test cell. reduced: every build "
+            "cell, one install-test cell per format"
+        ),
     )
     p.add_argument(
         "--manifest",

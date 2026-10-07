@@ -115,6 +115,31 @@ gives **2 build cells, 4 artifacts (a `.deb` and an `.rpm` per architecture)
 and 8 test cells**. Runners are `ubuntu-24.04` for amd64 and `ubuntu-24.04-arm`
 for arm64.
 
+### Tiers: full and reduced
+
+`vrg-package matrix --tier {full,reduced}` picks how much of the matrix runs.
+The default is `full`: every build cell and every test cell, as above.
+
+`reduced` is the cheaper gate for feature PRs (the full matrix runs on release
+PRs). It keeps **every build cell**, because build breaks are cheap to catch
+and common, and **one test cell per format present**:
+
+- the **oldest** selected release of that format (compared numerically, so
+  RHEL 9 before RHEL 10), on amd64, else on arm64. The oldest release is the
+  strictest compatibility case: lowest glibc, oldest rpm/dnf and systemd. A
+  package that installs there nearly always installs on newer releases, which
+  the `full` tier still covers on release PRs;
+- drawn from the shared targets; a `native` target is chosen only when the
+  format has no shared target.
+
+With the defaults, `reduced` gives the same 2 build cells and 2 test cells:
+`test-rhel-9-amd64` and `test-ubuntu-24.04-amd64`. A deb-only product
+(`targets = ["ubuntu/*/*"]`) gets one, `test-ubuntu-24.04-amd64`.
+
+The printed JSON carries `"tier"`, and `--github-output` writes a `tier=` line
+after `enabled`, `build` and `test`. `--manifest` is unaffected: the build
+cells, and so the release artifact manifest, are the same in both tiers.
+
 Because a shared cell builds on Ubuntu 24.04 for every target, the python
 builder applies a **glibc floor guard**: any ELF object in the venv that needs
 a `GLIBC_x.y` symbol newer than the lowest glibc among the cell's targets is a
@@ -288,3 +313,4 @@ vrg-container-run -- vrg-package matrix
 ```
 
 prints the resolved build and test cells as JSON without building anything.
+Add `--tier reduced` to see the reduced feature-PR matrix.
