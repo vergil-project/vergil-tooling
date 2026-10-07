@@ -11579,6 +11579,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#tiers-full-and-reduced" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tiers: full and reduced
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -14968,6 +14979,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#tiers-full-and-reduced" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tiers: full and reduced
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -15355,6 +15377,27 @@ and test cells. The workflows consume only that JSON.</p>
 gives <strong>2 build cells, 4 artifacts (a <code>.deb</code> and an <code>.rpm</code> per architecture)
 and 8 test cells</strong>. Runners are <code>ubuntu-24.04</code> for amd64 and <code>ubuntu-24.04-arm</code>
 for arm64.</p>
+<h3 id="tiers-full-and-reduced">Tiers: full and reduced<a class="headerlink" href="#tiers-full-and-reduced" title="Permanent link">&para;</a></h3>
+<p><code>vrg-package matrix --tier {full,reduced}</code> picks how much of the matrix runs.
+The default is <code>full</code>: every build cell and every test cell, as above.</p>
+<p><code>reduced</code> is the cheaper gate for feature PRs (the full matrix runs on release
+PRs). It keeps <strong>every build cell</strong>, because build breaks are cheap to catch
+and common, and <strong>one test cell per format present</strong>:</p>
+<ul>
+<li>the <strong>oldest</strong> selected release of that format (compared numerically, so
+  RHEL 9 before RHEL 10), on amd64, else on arm64. The oldest release is the
+  strictest compatibility case: lowest glibc, oldest rpm/dnf and systemd. A
+  package that installs there nearly always installs on newer releases, which
+  the <code>full</code> tier still covers on release PRs;</li>
+<li>drawn from the shared targets; a <code>native</code> target is chosen only when the
+  format has no shared target.</li>
+</ul>
+<p>With the defaults, <code>reduced</code> gives the same 2 build cells and 2 test cells:
+<code>test-rhel-9-amd64</code> and <code>test-ubuntu-24.04-amd64</code>. A deb-only product
+(<code>targets = ["ubuntu/*/*"]</code>) gets one, <code>test-ubuntu-24.04-amd64</code>.</p>
+<p>The printed JSON carries <code>"tier"</code>, and <code>--github-output</code> writes a <code>tier=</code> line
+after <code>enabled</code>, <code>build</code> and <code>test</code>. <code>--manifest</code> is unaffected: the build
+cells, and so the release artifact manifest, are the same in both tiers.</p>
 <p>Because a shared cell builds on Ubuntu 24.04 for every target, the python
 builder applies a <strong>glibc floor guard</strong>: any ELF object in the venv that needs
 a <code>GLIBC_x.y</code> symbol newer than the lowest glibc among the cell's targets is a
@@ -15515,7 +15558,8 @@ packages. A dispatch failure is deferred: it does not fail the release.</p>
 <h2 id="inspecting-the-matrix">Inspecting the matrix<a class="headerlink" href="#inspecting-the-matrix" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>vrg-container-run<span class="w"> </span>--<span class="w"> </span>vrg-package<span class="w"> </span>matrix
 </code></pre></div>
-<p>prints the resolved build and test cells as JSON without building anything.</p>
+<p>prints the resolved build and test cells as JSON without building anything.
+Add <code>--tier reduced</code> to see the reduced feature-PR matrix.</p>
 
 
 
