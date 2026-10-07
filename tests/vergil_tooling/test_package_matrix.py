@@ -132,3 +132,118 @@ def test_select_targets_default_source_label() -> None:
 def test_select_targets_dedupes_overlapping_patterns() -> None:
     keys = [t.key for t in matrix.select_targets(_pkg(targets=["rhel/*/*", "rhel/9/*"]))]
     assert keys == ["rhel/10/amd64", "rhel/10/arm64", "rhel/9/amd64", "rhel/9/arm64"]
+
+
+# --- tiers (issue #3127) -----------------------------------------------------
+
+
+def _reduced(**kw: Any) -> matrix.Matrix:
+    return matrix.resolve(_pkg(**kw), tier=matrix.Tier.REDUCED)
+
+
+_TIER_CASES: list[dict[str, Any]] = [
+    {},
+    {"exclude": ["rhel/*/arm64"]},
+    {"native": ["ubuntu/26.04/*"]},
+    {"noarch": True},
+]
+
+
+def test_tier_values_are_the_cli_choices() -> None:
+    assert [t.value for t in matrix.Tier] == ["full", "reduced"]
+
+
+@pytest.mark.parametrize("kw", _TIER_CASES)
+def test_full_tier_is_the_default(kw: dict[str, Any]) -> None:
+    assert matrix.resolve(_pkg(**kw), tier=matrix.Tier.FULL) == matrix.resolve(_pkg(**kw))
+
+
+@pytest.mark.parametrize("kw", _TIER_CASES)
+def test_reduced_keeps_every_build_cell_and_a_subset_of_test_cells(kw: dict[str, Any]) -> None:
+    full = matrix.resolve(_pkg(**kw))
+    m = _reduced(**kw)
+    assert m.build == full.build
+    assert all(t in full.test for t in m.test)
+    assert matrix.manifest(m) == matrix.manifest(full)
+
+
+def test_reduced_default_is_one_amd64_test_per_format() -> None:
+    m = _reduced()
+    # Selected targets sort by key, so "rhel/10" precedes "rhel/9": the first
+    # rpm target on amd64 is rhel/10/amd64.
+    assert [(t.id, t.runner, t.fmt) for t in m.test] == [
+        ("test-rhel-10-amd64", "ubuntu-24.04", "rpm"),
+        ("test-ubuntu-24.04-amd64", "ubuntu-24.04", "deb"),
+    ]
+
+
+def test_reduced_with_rhel_arm_excluded() -> None:
+    m = _reduced(exclude=["rhel/*/arm64"])
+    assert [c.id for c in m.build] == ["shared-amd64", "shared-arm64"]
+    assert [t.target for t in m.test] == ["rhel/10/amd64", "ubuntu/24.04/amd64"]
+
+
+def test_reduced_deb_only_product() -> None:
+    m = _reduced(targets=["ubuntu/*/*"])
+    assert [(c.id, c.fmts) for c in m.build] == [
+        ("shared-amd64", ("deb",)),
+        ("shared-arm64", ("deb",)),
+    ]
+    assert [t.target for t in m.test] == ["ubuntu/24.04/amd64"]
+
+
+def test_reduced_falls_back_to_arm64_when_no_amd64_target() -> None:
+    m = _reduced(targets=["*/*/arm64"])
+    assert [c.id for c in m.build] == ["shared-arm64"]
+    assert [(t.target, t.runner) for t in m.test] == [
+        ("rhel/10/arm64", "ubuntu-24.04-arm"),
+        ("ubuntu/24.04/arm64", "ubuntu-24.04-arm"),
+    ]
+
+
+def test_reduced_prefers_amd64_even_when_an_arm64_target_sorts_first() -> None:
+    m = _reduced(targets=["ubuntu/24.04/arm64", "ubuntu/26.04/amd64"])
+    assert [t.target for t in m.test] == ["ubuntu/26.04/amd64"]
+
+
+def test_reduced_skips_native_targets_when_a_shared_one_of_the_format_exists() -> None:
+    m = _reduced(native=["ubuntu/24.04/*", "rhel/10/amd64"])
+    assert [(t.target, t.native) for t in m.test] == [
+        ("rhel/9/amd64", False),
+        ("ubuntu/26.04/amd64", False),
+    ]
+
+
+def test_reduced_shared_arm64_beats_native_amd64() -> None:
+    m = _reduced(targets=["rhel/9/*"], native=["rhel/9/amd64"])
+    assert [(t.target, t.native) for t in m.test] == [("rhel/9/arm64", False)]
+
+
+def test_reduced_uses_native_targets_only_when_no_shared_target_of_the_format() -> None:
+    m = _reduced(targets=["rhel/9/*", "ubuntu/*/*"], native=["rhel/*/*"])
+    assert [c.id for c in m.build] == [
+        "shared-amd64",
+        "shared-arm64",
+        "native-rhel-9-amd64",
+        "native-rhel-9-arm64",
+    ]
+    assert [(t.target, t.native) for t in m.test] == [
+        ("rhel/9/amd64", True),
+        ("ubuntu/24.04/amd64", False),
+    ]
+
+
+def test_reduced_all_native_arm64_only() -> None:
+    m = _reduced(targets=["rhel/9/arm64"], native=["*/*/*"])
+    assert [c.id for c in m.build] == ["native-rhel-9-arm64"]
+    assert [(t.target, t.native) for t in m.test] == [("rhel/9/arm64", True)]
+
+
+def test_reduced_noarch() -> None:
+    m = _reduced(noarch=True)
+    assert [c.id for c in m.build] == ["shared-noarch"]
+    assert [t.target for t in m.test] == ["rhel/10/amd64", "ubuntu/24.04/amd64"]
+
+
+def test_to_json_is_tier_agnostic() -> None:
+    assert set(matrix.to_json(_reduced())) == {"build", "test"}

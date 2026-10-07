@@ -52,9 +52,67 @@ def test_matrix_prints_json(
     monkeypatch.chdir(tmp_path)
     assert vrg_package.main(["matrix"]) == 0
     out = json.loads(capsys.readouterr().out)
+    assert list(out) == ["enabled", "tier", "build", "test"]
     assert out["enabled"] is True
+    assert out["tier"] == "full"
     assert len(out["build"]) == 2
     assert len(out["test"]) == 8
+
+
+def test_matrix_explicit_full_tier_matches_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "vergil.toml").write_text(_PKG_PY_TOML)
+    (tmp_path / "uv.lock").write_text("version = 1\n")
+    monkeypatch.chdir(tmp_path)
+    assert vrg_package.main(["matrix"]) == 0
+    default = capsys.readouterr().out
+    assert vrg_package.main(["matrix", "--tier", "full"]) == 0
+    assert capsys.readouterr().out == default
+
+
+def test_matrix_reduced_tier_prints_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "vergil.toml").write_text(_PKG_PY_TOML)
+    (tmp_path / "uv.lock").write_text("version = 1\n")
+    monkeypatch.chdir(tmp_path)
+    assert vrg_package.main(["matrix", "--tier", "reduced"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["enabled"] is True
+    assert out["tier"] == "reduced"
+    assert [c["id"] for c in out["build"]] == ["shared-amd64", "shared-arm64"]
+    assert [c["id"] for c in out["test"]] == ["test-rhel-10-amd64", "test-ubuntu-24.04-amd64"]
+
+
+def test_matrix_reduced_github_output_keeps_full_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "vergil.toml").write_text(_PKG_PY_TOML)
+    (tmp_path / "uv.lock").write_text("version = 1\n")
+    gho = tmp_path / "gho"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GITHUB_OUTPUT", str(gho))
+    assert vrg_package.main(["matrix", "--manifest", "full.json"]) == 0
+    capsys.readouterr()
+    argv = ["matrix", "--tier", "reduced", "--github-output", "--manifest", "m.json"]
+    assert vrg_package.main(argv) == 0
+    lines = gho.read_text().splitlines()
+    assert [ln.split("=", 1)[0] for ln in lines] == ["enabled", "build", "test", "tier"]
+    assert lines[0] == "enabled=true"
+    assert lines[3] == "tier=reduced"
+    assert len(json.loads(lines[1].removeprefix("build="))) == 2
+    tests = json.loads(lines[2].removeprefix("test="))
+    assert [c["target"] for c in tests] == ["rhel/10/amd64", "ubuntu/24.04/amd64"]
+    assert (tmp_path / "m.json").read_text() == (tmp_path / "full.json").read_text()
+    assert capsys.readouterr().out == ""
+
+
+def test_matrix_rejects_unknown_tier(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc:
+        vrg_package.main(["matrix", "--tier", "minimal"])
+    assert exc.value.code == 2
+    assert "invalid choice: 'minimal'" in capsys.readouterr().err
 
 
 def test_matrix_github_output_and_manifest(
@@ -73,7 +131,9 @@ def test_matrix_github_output_and_manifest(
     assert lines[2].startswith("build=[")
     assert lines[3].startswith("test=[")
     assert len(json.loads(lines[2].removeprefix("build="))) == 2
-    assert len(lines) == 4
+    assert len(json.loads(lines[3].removeprefix("test="))) == 8
+    assert lines[4] == "tier=full"
+    assert len(lines) == 5
     assert json.loads((tmp_path / "m.json").read_text())["artifacts"]
     assert capsys.readouterr().out == ""
 
@@ -84,7 +144,14 @@ def test_matrix_without_package_section_is_disabled(
     (tmp_path / "vergil.toml").write_text(_VALID_TOML_TEXT)
     monkeypatch.chdir(tmp_path)
     assert vrg_package.main(["matrix"]) == 0
-    assert json.loads(capsys.readouterr().out) == {"enabled": False, "build": [], "test": []}
+    assert json.loads(capsys.readouterr().out) == {
+        "enabled": False,
+        "tier": "full",
+        "build": [],
+        "test": [],
+    }
+    assert vrg_package.main(["matrix", "--tier", "reduced"]) == 0
+    assert json.loads(capsys.readouterr().out)["tier"] == "reduced"
 
 
 def test_disabled_github_output_and_no_manifest(
@@ -95,7 +162,7 @@ def test_disabled_github_output_and_no_manifest(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("GITHUB_OUTPUT", str(gho))
     assert vrg_package.main(["matrix", "--github-output", "--manifest", "m.json"]) == 0
-    assert gho.read_text().splitlines() == ["enabled=false", "build=[]", "test=[]"]
+    assert gho.read_text().splitlines() == ["enabled=false", "build=[]", "test=[]", "tier=full"]
     assert not (tmp_path / "m.json").exists()
     assert "no [package] section; manifest not written" in capsys.readouterr().err
 
