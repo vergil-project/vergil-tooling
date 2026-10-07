@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -12,6 +12,7 @@ from vergil_tooling.lib.sarif import (
     SarifFinding,
     SuppressedFinding,
     evaluate_findings,
+    filter_suppressed,
     format_summary,
     parse_sarif,
     parse_sarif_directory,
@@ -394,3 +395,90 @@ class TestFormatSummarySuppressed:
         )
         summary = format_summary(EvaluationResult(suppressed=[sup], passed=True))
         assert "a\\|b" in summary
+
+
+def _result(rule: str, suppressions: object = None) -> dict[str, object]:
+    result: dict[str, object] = {"ruleId": rule, "level": "warning", "message": {"text": rule}}
+    if suppressions is not None:
+        result["suppressions"] = suppressions
+    return result
+
+
+class TestFilterSuppressed:
+    def test_removes_semgrep_insource_result(self) -> None:
+        sarif = _suppressed_sarif([{"kind": "inSource"}])
+        filtered, removed = filter_suppressed(sarif)
+        assert removed == 1
+        assert filtered["runs"][0]["results"] == []
+
+    def test_preserves_everything_but_suppressed_results(self) -> None:
+        sarif = {
+            "$schema": "https://example.invalid/sarif-schema-2.1.0.json",
+            "version": "2.1.0",
+            "runs": [
+                {
+                    "tool": {"driver": {"name": "semgrep", "rules": [{"id": "A"}, {"id": "B"}]}},
+                    "invocations": [{"executionSuccessful": True}],
+                    "results": [
+                        _result("A"),
+                        _result("B", [{"kind": "inSource"}]),
+                        _result("C", [{"kind": "external", "status": "accepted"}]),
+                        _result("D", [{"kind": "inSource", "status": "underReview"}]),
+                        _result("E", [{"kind": "inSource", "status": "rejected"}]),
+                        _result("F", [{"kind": "bogus"}]),
+                        _result("G", []),
+                        _result("H", "not-a-list"),
+                    ],
+                    "properties": {"x": 1},
+                }
+            ],
+        }
+        filtered, removed = filter_suppressed(sarif)
+        assert removed == 2
+        run = filtered["runs"][0]
+        assert [r["ruleId"] for r in run["results"]] == ["A", "D", "E", "F", "G", "H"]
+        expected = json.loads(json.dumps(sarif))
+        expected["runs"][0]["results"] = [
+            r for r in expected["runs"][0]["results"] if r["ruleId"] not in {"B", "C"}
+        ]
+        assert filtered == expected
+
+    def test_does_not_mutate_input(self) -> None:
+        sarif = _suppressed_sarif([{"kind": "inSource"}])
+        snapshot = json.loads(json.dumps(sarif))
+        filtered, _ = filter_suppressed(sarif)
+        assert sarif == snapshot
+        filtered["runs"][0]["tool"]["driver"]["name"] = "changed"
+        assert sarif["runs"][0]["tool"]["driver"]["name"] == "semgrep"
+
+    def test_filters_every_run_and_ignores_severity(self) -> None:
+        sarif = {
+            "version": "2.1.0",
+            "runs": [
+                {"results": [_result("A", [{"kind": "inSource"}])]},
+                {"results": [{**_result("B", [{"kind": "external"}]), "level": "note"}]},
+                {"tool": {"driver": {"name": "no-results"}}},
+            ],
+        }
+        filtered, removed = filter_suppressed(sarif)
+        assert removed == 2
+        assert filtered["runs"][0]["results"] == []
+        assert filtered["runs"][1]["results"] == []
+        assert filtered["runs"][2] == {"tool": {"driver": {"name": "no-results"}}}
+
+    def test_non_dict_result_is_kept(self) -> None:
+        sarif = {"version": "2.1.0", "runs": [{"results": ["odd", _result("A")]}]}
+        filtered, removed = filter_suppressed(sarif)
+        assert removed == 0
+        assert filtered == sarif
+
+    def test_non_list_results_and_non_dict_runs_left_untouched(self) -> None:
+        sarif = {"version": "2.1.0", "runs": [{"results": None}, "odd-run"]}
+        filtered, removed = filter_suppressed(sarif)
+        assert removed == 0
+        assert filtered == sarif
+
+    @pytest.mark.parametrize("doc", [{"version": "2.1.0"}, {"runs": "nope"}, ["runs"]])
+    def test_invalid_document_raises(self, doc: Any) -> None:
+        with pytest.raises(ValueError, match="invalid SARIF"):
+            filter_suppressed(doc)

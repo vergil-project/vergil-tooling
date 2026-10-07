@@ -61,6 +61,7 @@ vrg-resolve-tracking-issue = "vergil_tooling.bin.vrg_resolve_tracking_issue:main
 vrg-reword = "vergil_tooling.bin.vrg_reword:main"
 vrg-roadmap = "vergil_tooling.bin.vrg_roadmap:main"
 vrg-sarif-evaluate = "vergil_tooling.bin.vrg_sarif_evaluate:main"
+vrg-sarif-filter = "vergil_tooling.bin.vrg_sarif_filter:main"
 vrg-scorecard = "vergil_tooling.bin.vrg_scorecard:main"
 vrg-semgrep-scan = "vergil_tooling.bin.vrg_semgrep_scan:main"
 vrg-submit-pr = "vergil_tooling.bin.vrg_submit_pr:main"

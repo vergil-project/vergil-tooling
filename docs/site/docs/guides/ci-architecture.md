@@ -231,6 +231,25 @@ separate "suppressed finding(s)" table in the job summary (rule, level,
 file, line, suppression kind, and justification). The scan wrappers also
 emit a `suppressed_count` step output next to `finding_count`.
 
+GitHub code scanning does not apply the same rule: it raises an alert for
+every SARIF result, suppressed or not. So the SARIF that is **uploaded to
+code scanning** omits accepted-suppressed results, while the **CI-evidence
+bundle keeps the full, unfiltered SARIF**. The filtered copy comes from
+`vrg-sarif-filter`:
+
+```bash
+vrg-sarif-filter INPUT OUTPUT
+```
+
+It drops every result whose suppression is in effect by exactly the rule
+above (the same `effective_suppression()` logic as the gate), from every run
+and at any severity. Everything else is kept: the tool, rules, invocations,
+and every unsuppressed or fail-closed result. It prints
+`vrg-sarif-filter: removed N suppressed result(s) from INPUT -> OUTPUT`.
+`INPUT` and `OUTPUT` may be the same path, because the output is written
+atomically. Unreadable or invalid SARIF (bad JSON, or no `runs` list) is a
+hard error with exit code 1.
+
 For semgrep, write the suppression as a `nosemgrep` comment that names the
 **exact rule ID**, and put the justification and a tracking reference in the
 same comment, after the rule ID:

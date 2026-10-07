@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -94,6 +95,38 @@ def effective_suppression(result: dict[str, Any]) -> dict[str, Any] | None:
         if status == _EFFECTIVE_SUPPRESSION_STATUS:
             return suppression
     return None
+
+
+def filter_suppressed(sarif: dict[str, Any]) -> tuple[dict[str, Any], int]:
+    """Return a copy of ``sarif`` without its effectively-suppressed results.
+
+    Every result for which ``effective_suppression`` reports an accepted
+    suppression is dropped from every run, at any severity. Everything else —
+    top-level fields, runs, tool, rules, invocations and unsuppressed results —
+    is kept as-is. A run whose ``results`` is not a list, or a result that is
+    not an object, is left untouched (it carries no effective suppression).
+    The input is not mutated. Returns the copy and the number of removed
+    results.
+
+    Raises ``ValueError`` for a document that is not a SARIF object with a
+    ``runs`` list.
+    """
+    if not isinstance(sarif, dict) or not isinstance(sarif.get("runs"), list):
+        msg = "invalid SARIF document: expected an object with a 'runs' list"
+        raise ValueError(msg)
+    filtered = copy.deepcopy(sarif)
+    removed = 0
+    for run in filtered["runs"]:
+        if not isinstance(run, dict) or not isinstance(run.get("results"), list):
+            continue
+        kept = [
+            result
+            for result in run["results"]
+            if not isinstance(result, dict) or effective_suppression(result) is None
+        ]
+        removed += len(run["results"]) - len(kept)
+        run["results"] = kept
+    return filtered, removed
 
 
 def evaluate_findings(
