@@ -59,3 +59,8 @@ jobs:
 
   docs:
     uses: vergil-project/vergil-actions/.github/workflows/ci-docs.yml@v2.1
+
+  # Build and install-test the vergil-tooling .deb/.rpm on every default target
+  # (spec §8.1). Surfaces as the `package / evidence` gate.
+  package:
+    uses: vergil-project/vergil-actions/.github/workflows/ci-package.yml@v2.1
