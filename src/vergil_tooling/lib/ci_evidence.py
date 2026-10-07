@@ -283,31 +283,77 @@ def write_harvest_state(state: HarvestState, staging_dir: Path) -> Path:
     return path
 
 
+class HarvestStateError(ValueError):
+    """The persisted harvest state is missing, unreadable, or malformed.
+
+    Raised by :func:`read_harvest_state` so an assemble against a harvest that
+    never completed (or wrote a broken state file) fails with a single-line,
+    actionable message instead of a traceback (issue #3119). Subclasses
+    :class:`ValueError` so existing ``ValueError`` callers keep working.
+    """
+
+
+# Suffix shared by every "the harvest did not leave usable state" message: the
+# harvest-state file is written only as the last step of a successful
+# pre-publish ``harvest``, so its absence or corruption means that gate failed.
+_HARVEST_INCOMPLETE = "the pre-publish evidence gate did not complete"
+
+
 def read_harvest_state(staging_dir: Path) -> HarvestState:
     """Load the :class:`HarvestState` persisted at ``<staging_dir>``.
 
-    Raises :class:`ValueError` on an unknown ``schema_version`` — an assemble
-    against an incompatible harvest is a hard failure, never a silent
-    best-effort read.
+    Raises :class:`HarvestStateError` (a single-line, traceback-free failure
+    the CLI reports) when the state file is missing, unreadable, not valid
+    JSON, the wrong shape, or carries an unknown ``schema_version`` — an
+    assemble against an absent or incompatible harvest is a hard failure,
+    never a silent best-effort read.
     """
     path = staging_dir / HARVEST_STATE_FILENAME
-    data = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        msg = f"harvest state not found in {staging_dir}: {_HARVEST_INCOMPLETE}"
+        raise HarvestStateError(msg) from None
+    except (OSError, UnicodeDecodeError) as exc:
+        msg = f"harvest state unreadable at {path} ({exc}): {_HARVEST_INCOMPLETE}"
+        raise HarvestStateError(msg) from exc
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        msg = f"harvest state is not valid JSON at {path} ({exc}): {_HARVEST_INCOMPLETE}"
+        raise HarvestStateError(msg) from exc
+    if not isinstance(data, dict):
+        msg = (
+            f"harvest state malformed at {path} "
+            f"(expected a JSON object, got {type(data).__name__}): {_HARVEST_INCOMPLETE}"
+        )
+        raise HarvestStateError(msg)
     schema = data.get("schema_version")
     if schema != HARVEST_STATE_SCHEMA_VERSION:
         msg = (
             f"unsupported harvest-state schema {schema!r} at {path} "
             f"(expected {HARVEST_STATE_SCHEMA_VERSION!r})"
         )
-        raise ValueError(msg)
-    return HarvestState(
-        repo=str(data["repo"]),
-        released_commit=str(data["released_commit"]),
-        release_pr=int(data["release_pr"]),
-        validated_head_sha=str(data["validated_head_sha"]),
-        ci_run_urls=tuple(str(url) for url in data["ci_run_urls"]),
-        checks={str(k): str(v) for k, v in data["checks"].items()},
-        gate_conclusions={str(k): str(v) for k, v in data["gate_conclusions"].items()},
-    )
+        raise HarvestStateError(msg)
+    try:
+        return HarvestState(
+            repo=str(data["repo"]),
+            released_commit=str(data["released_commit"]),
+            release_pr=int(data["release_pr"]),
+            validated_head_sha=str(data["validated_head_sha"]),
+            ci_run_urls=tuple(str(url) for url in data["ci_run_urls"]),
+            checks={str(k): str(v) for k, v in data["checks"].items()},
+            gate_conclusions={str(k): str(v) for k, v in data["gate_conclusions"].items()},
+        )
+    except KeyError as exc:
+        msg = f"harvest state malformed at {path} (missing key {exc}): {_HARVEST_INCOMPLETE}"
+        raise HarvestStateError(msg) from exc
+    except (TypeError, ValueError, AttributeError) as exc:
+        msg = (
+            f"harvest state malformed at {path} "
+            f"({type(exc).__name__}: {exc}): {_HARVEST_INCOMPLETE}"
+        )
+        raise HarvestStateError(msg) from exc
 
 
 def copy_sbom(sbom_file: Path, staging_dir: Path) -> Path:
@@ -434,6 +480,14 @@ class NoQualifyingRunError(Exception):
         self.head_sha = head_sha
 
 
+class ReleasePrUnresolvedError(ValueError):
+    """Neither the commits API nor the merge subject names the release PR.
+
+    Substantive harvest failure surfaced by the CLI as a single-line error
+    (issue #3119). Subclasses :class:`ValueError` for existing callers.
+    """
+
+
 def _pr_from_commit_api(repo: str, merge_sha: str) -> int | None:
     """Return the PR number ``merge_sha`` closed, via ``/commits/{sha}/pulls``.
 
@@ -454,7 +508,8 @@ def resolve_release_pr(repo: str, merge_sha: str) -> int:
 
     Primary: the ``/commits/{sha}/pulls`` API. Fallback: the merge/squash
     commit subject (:func:`~vergil_tooling.lib.linkage.extract_merge_pr`) when
-    the API associates no PR. Raises ``ValueError`` when neither resolves a PR.
+    the API associates no PR. Raises :class:`ReleasePrUnresolvedError` when
+    neither resolves a PR.
     """
     pr = _pr_from_commit_api(repo, merge_sha)
     if pr is not None:
@@ -467,7 +522,7 @@ def resolve_release_pr(repo: str, merge_sha: str) -> int:
     if pr is not None:
         return pr
     msg = f"cannot resolve release PR for {merge_sha} in {repo}"
-    raise ValueError(msg)
+    raise ReleasePrUnresolvedError(msg)
 
 
 def _is_qualifying_run(run: Mapping[str, Any], workflow: str) -> bool:
