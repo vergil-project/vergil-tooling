@@ -4,14 +4,18 @@
   on Ubuntu 24.04, emitting every format its targets need. A ``noarch`` package
   has exactly one shared cell, on amd64.
 - Each ``native`` target gets its own build cell, inside a container of its OS.
-- Every target gets its own test cell.
+- Every target gets its own test cell (the ``full`` tier).
+- The ``reduced`` tier (issue #3127) keeps every build cell but only one test
+  cell per format: the first selected target of that format on amd64, else on
+  arm64, drawn from the shared targets unless the format has none.
 
 Workflows consume only the JSON this produces (``vrg-package matrix``).
 """
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
+from enum import StrEnum
 from fnmatch import fnmatchcase
 from typing import TYPE_CHECKING, Any
 
@@ -24,6 +28,13 @@ if TYPE_CHECKING:
 RUNNERS = {"amd64": "ubuntu-24.04", "arm64": "ubuntu-24.04-arm"}
 SHARED_IMAGE = "ubuntu:24.04"
 NOARCH_CELL_ID = "shared-noarch"
+
+
+class Tier(StrEnum):
+    """How much of the matrix to run: everything, or every build plus one test per format."""
+
+    FULL = "full"
+    REDUCED = "reduced"
 
 
 @dataclass(frozen=True)
@@ -97,8 +108,36 @@ def _fmts(ts: list[tg.Target]) -> tuple[str, ...]:
     return tuple(sorted({t.fmt for t in ts}))
 
 
-def resolve(pkg: PackageConfig) -> Matrix:
-    """Resolve ``pkg`` into build and test cells."""
+def reduce_tests(m: Matrix) -> Matrix:
+    """``m`` with every build cell but one test cell per format (the ``reduced`` tier).
+
+    Per format, the candidates are its shared (non-``native``) test cells, or
+    its native ones if it has no shared target; among the amd64 candidates
+    (else the arm64 ones) the **oldest** release wins, compared numerically —
+    the strictest compatibility case (lowest glibc, oldest rpm/dnf/systemd).
+    Test-cell order is preserved.
+    """
+    keep: set[str] = set()
+    for fmt in sorted({t.fmt for t in m.test}):
+        of_fmt = [t for t in m.test if t.fmt == fmt]
+        candidates = [t for t in of_fmt if not t.native] or of_fmt
+        amd64 = [t for t in candidates if t.arch == "amd64"]
+        keep.add(min(amd64 or candidates, key=_release_key).id)
+    return replace(m, test=tuple(t for t in m.test if t.id in keep))
+
+
+def _release_key(cell: TestCell) -> tuple[int, ...]:
+    """Numeric release of ``cell``'s target (``rhel/9/amd64`` → ``(9,)``)."""
+    return tuple(int(part) for part in tg.REGISTRY[cell.target].version.split("."))
+
+
+def resolve(pkg: PackageConfig, *, tier: Tier = Tier.FULL) -> Matrix:
+    """Resolve ``pkg`` into build and test cells for ``tier``."""
+    full = _resolve_full(pkg)
+    return reduce_tests(full) if tier is Tier.REDUCED else full
+
+
+def _resolve_full(pkg: PackageConfig) -> Matrix:
     selected = select_targets(pkg)
     is_native = {t.key: any(fnmatchcase(t.key, p) for p in pkg.native) for t in selected}
     shared = [t for t in selected if not is_native[t.key]]

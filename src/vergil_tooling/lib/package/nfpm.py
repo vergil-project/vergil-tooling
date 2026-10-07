@@ -34,6 +34,20 @@ _OVERRIDE_KEYS = frozenset({"depends", "contents", "scripts", *_RELATION_KEYS})
 _COMMENT = re.compile(r"(?:^|(?<=\s))#.*$")
 # ``systemctl`` as a command word, bare or by path (``/usr/bin/systemctl``).
 _RAW_SYSTEMCTL = re.compile(r"(?<![\w-])systemctl(?![\w-])")
+# nFPM globs the ``src`` of every file-like ``contents`` entry (not ``symlink``,
+# whose src is link-target text, nor ``dir``, which has none). These are the
+# characters its glob library (gobwas/glob ``syntax.Special``) treats as meta.
+_GLOB_META = frozenset("*?[]{}\\")
+
+
+def has_glob_meta(path: str) -> bool:
+    """Whether ``path`` contains a character nFPM's ``src`` globbing treats as meta."""
+    return any(c in _GLOB_META for c in path)
+
+
+def glob_escape(path: str) -> str:
+    """Backslash-escape every nFPM glob metacharacter so ``path`` matches only itself."""
+    return "".join("\\" + c if c in _GLOB_META else c for c in path)
 
 
 def _fail(detail: str) -> PackageError:
@@ -106,11 +120,25 @@ def load_overlay(repo_root: Path) -> dict[str, Any]:
 
 
 def _repo_contents(repo_root: Path, entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Overlay ``contents`` with relative file sources resolved against the repo root."""
+    """Overlay ``contents`` with relative file sources resolved against the repo root.
+
+    An overlay ``src`` is nFPM glob syntax as the author wrote it (a deliberate
+    glob stays a glob). The repo-root prefix is ours, though, and if it holds a
+    glob metacharacter no prefixing can keep the author's semantics (escaping it
+    changes how nFPM maps matches to ``dst``), so that case is refused.
+    """
     out: list[dict[str, Any]] = []
     for entry in entries:
         e = dict(entry)
         if "src" in e and e.get("type") != "symlink" and not str(e["src"]).startswith("/"):
+            if has_glob_meta(str(repo_root)):
+                msg = (
+                    f"{PACKAGE_OVERLAY_PATH}: contents src {e['src']!r} is resolved against "
+                    f"the repo root {repo_root}, whose path contains a glob metacharacter "
+                    f"({' '.join(sorted(_GLOB_META))}) that nFPM would misread; build from a "
+                    "checkout path without them"
+                )
+                raise PackageError(msg)
             e["src"] = str(repo_root / e["src"])
         out.append(e)
     return out
@@ -186,7 +214,7 @@ def check_maintainer_scripts(repo_root: Path, overlay: dict[str, Any]) -> None:
 def package(config: dict[str, Any], fmt: str, out_dir: Path) -> Path:
     """Run nFPM on ``config`` for ``fmt``; move the one artifact into ``out_dir`` and return it."""
     if shutil.which("nfpm") is None:
-        msg = "nfpm not found on PATH (CI installs it via actions/shared/setup/nfpm)"
+        msg = "nfpm not found on PATH (CI installs it via actions/package/setup)"
         raise PackageError(msg)
     out_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="vrg-nfpm-") as tmp:

@@ -69,6 +69,7 @@ nav:
       - VM Spec ([vm]): reference/vm-spec.md
       - Container Config ([container]): reference/container-config.md
       - Test Config ([test]): reference/test-config.md
+      - Package Config ([package]): reference/package-config.md
       - Hook Guard:
           - Claude Code Hook Guard: reference/hooks/pre-commit.md
       - Validators:

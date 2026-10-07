@@ -124,6 +124,37 @@ def test_overlay_contents_src_is_repo_relative(tmp_path: Path) -> None:
     assert overlay["contents"][0]["src"] == "keys/k.asc"
 
 
+def test_glob_escape_quotes_exactly_the_nfpm_metacharacters() -> None:
+    # The set gobwas/glob's ``syntax.Special`` (used by nFPM 2.47.0) treats as meta.
+    assert nfpm.glob_escape(r"a*b?c[d]e{f}g\h") == r"a\*b\?c\[d\]e\{f\}g\\h"
+    assert nfpm.glob_escape("/plain/path-1,2!x.txt") == "/plain/path-1,2!x.txt"
+    assert nfpm.has_glob_meta("x{y") is True
+    assert nfpm.has_glob_meta("/plain/path-1,2!x.txt") is False
+
+
+def test_overlay_relative_src_under_metachar_repo_root_is_refused(tmp_path: Path) -> None:
+    repo = tmp_path / "re{po}"
+    repo.mkdir()
+    overlay = {"contents": [{"src": "keys/k.asc", "dst": "/k"}]}
+    with pytest.raises(PackageError, match=r"src 'keys/k\.asc'.*re\{po\}.*glob metacharacter"):
+        nfpm.render(_ctx(repo), BuildResult(contents=[]), "deb", overlay)
+    over_only = {"overrides": {"rpm": {"contents": [{"src": "r.conf", "dst": "/etc/r"}]}}}
+    with pytest.raises(PackageError, match=r"r\.conf"):
+        nfpm.render(_ctx(repo), BuildResult(contents=[]), "rpm", over_only)
+
+
+def test_overlay_non_glob_entries_under_metachar_repo_root_are_fine(tmp_path: Path) -> None:
+    repo = tmp_path / "re{po}"
+    repo.mkdir()
+    entries = [
+        {"src": "/abs/file", "dst": "/abs"},
+        {"src": "../t", "dst": "/l", "type": "symlink"},
+        {"dst": "/var/lib/x", "type": "dir"},
+    ]
+    cfg = nfpm.render(_ctx(repo), BuildResult(contents=[]), "deb", {"contents": entries})
+    assert cfg["contents"] == entries
+
+
 def test_overlay_relations_and_per_format_overrides_merge(tmp_path: Path) -> None:
     overlay = {
         "provides": ["thing"],
@@ -316,7 +347,10 @@ def test_package_creates_out_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 
 def test_missing_nfpm_is_fatal(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(nfpm.shutil, "which", lambda _: None)
-    with pytest.raises(PackageError, match=r"nfpm not found on PATH"):
+    # The hint must name the setup action that actually installs nFPM.
+    with pytest.raises(
+        PackageError, match=r"nfpm not found on PATH \(CI installs it via actions/package/setup\)"
+    ):
         nfpm.package({}, "deb", tmp_path)
 
 
