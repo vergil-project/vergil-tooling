@@ -150,6 +150,61 @@ def test_contents_of_empty_tree_is_empty(tmp_path: Path) -> None:
     assert build.contents_from_tree(tmp_path / "stage", own_below="/opt/vergil") == []
 
 
+def test_contents_escapes_glob_metacharacters_in_file_sources(tmp_path: Path) -> None:
+    # nFPM globs every file ``src``: a literal ``{``/``[``/``*``/``?``/``\`` must be
+    # escaped, and the escaped src then needs the *parent* dir (trailing slash) as
+    # ``dst`` or nFPM nests the file under a directory of its own name (#3125).
+    root = tmp_path / "stage"
+    base = root / "opt/vergil/x"
+    (base / "{dir}").mkdir(parents=True)
+    for name, mode in (
+        ("{name}.tmpl", 0o755),
+        ("[x]*?.txt", 0o600),
+        ("{dir}/inner.txt", 0o640),
+        ("back\\slash.txt", 0o644),
+        ("normal.txt", 0o644),
+    ):
+        (base / name).write_text(name)
+        (base / name).chmod(mode)
+    (base / "{link}").symlink_to("{name}.tmpl")
+    esc = nfpm.glob_escape(str(base))
+    got = build.contents_from_tree(root, own_below="/opt/vergil")
+    assert got == [
+        {"dst": "/opt/vergil/x", "type": "dir"},
+        {"src": esc + r"/\[x\]\*\?.txt", "dst": "/opt/vergil/x/", "file_info": {"mode": 0o600}},
+        {"src": esc + r"/back\\slash.txt", "dst": "/opt/vergil/x/", "file_info": {"mode": 0o644}},
+        {
+            "src": str(base / "normal.txt"),
+            "dst": "/opt/vergil/x/normal.txt",
+            "file_info": {"mode": 0o644},
+        },
+        # A symlink's src is the link target text, not a glob: nFPM stores it verbatim.
+        {"src": "{name}.tmpl", "dst": "/opt/vergil/x/{link}", "type": "symlink"},
+        {"src": esc + r"/\{name\}.tmpl", "dst": "/opt/vergil/x/", "file_info": {"mode": 0o755}},
+        # A ``type: dir`` entry has no src, and nFPM never globs a dst.
+        {"dst": "/opt/vergil/x/{dir}", "type": "dir"},
+        {
+            "src": esc + r"/\{dir\}/inner.txt",
+            "dst": "/opt/vergil/x/{dir}/",
+            "file_info": {"mode": 0o640},
+        },
+    ]
+
+
+def test_contents_metacharacter_in_staging_root_escapes_every_file(tmp_path: Path) -> None:
+    root = tmp_path / "st[a]ge"
+    (root / "opt/vergil").mkdir(parents=True)
+    (root / "opt/vergil/f").write_text("x")
+    (root / "top").write_text("y")
+    got = build.contents_from_tree(root, own_below="/opt/vergil")
+    esc = nfpm.glob_escape(str(root))
+    assert esc.endswith(r"st\[a\]ge")
+    assert [(e["src"], e["dst"]) for e in got] == [
+        (esc + "/top", "/"),
+        (esc + "/opt/vergil/f", "/opt/vergil/"),
+    ]
+
+
 # --- release, floor, registry -------------------------------------------------------
 
 

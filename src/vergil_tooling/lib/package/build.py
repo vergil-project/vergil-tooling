@@ -62,6 +62,25 @@ def register(kind: str) -> Callable[[Builder], Builder]:
     return deco
 
 
+def _file_entry(path: Path, dst_dir: str, dst: str, mode: int) -> dict[str, Any]:
+    """The nFPM entry installing regular file ``path`` at ``dst`` (in directory ``dst_dir``).
+
+    nFPM treats a file ``src`` as a glob, so a source path with a glob
+    metacharacter (``{name}.tmpl``) matches nothing. Escaping it makes it match
+    exactly that file, but nFPM then reads ``dst`` as a directory to install
+    into, so the entry names the parent directory with a trailing slash
+    (nFPM 2.47.0, #3125). Other paths keep the plain file-to-file form.
+    """
+    src = str(path)
+    if nfpm.has_glob_meta(src):
+        return {
+            "src": nfpm.glob_escape(src),
+            "dst": dst_dir.rstrip("/") + "/",
+            "file_info": {"mode": mode},
+        }
+    return {"src": src, "dst": dst, "file_info": {"mode": mode}}
+
+
 def contents_from_tree(root: Path, own_below: str) -> list[dict[str, Any]]:
     """Return nFPM ``contents`` entries for the staged tree at ``root`` (``root`` stands for ``/``).
 
@@ -69,7 +88,9 @@ def contents_from_tree(root: Path, own_below: str) -> list[dict[str, Any]]:
     are never descended into). Every directory **strictly below** ``own_below``
     is owned (a ``type: dir`` entry); ``own_below`` itself and its ancestors —
     shared directories such as ``/opt/vergil`` — never are (spec §6.3).
-    Anything else (a FIFO, socket or device node) is a hard error.
+    Anything else (a FIFO, socket or device node) is a hard error. File sources
+    with glob metacharacters are escaped (see :func:`_file_entry`); symlink
+    targets and ``dir`` paths are never globbed by nFPM and stay verbatim.
     """
     prefix = "/" + own_below.strip("/")
     out: list[dict[str, Any]] = []
@@ -90,9 +111,7 @@ def contents_from_tree(root: Path, own_below: str) -> list[dict[str, Any]]:
             if stat.S_ISLNK(mode):
                 out.append({"src": str(path.readlink()), "dst": dst, "type": "symlink"})
             elif stat.S_ISREG(mode):
-                out.append(
-                    {"src": str(path), "dst": dst, "file_info": {"mode": stat.S_IMODE(mode)}}
-                )
+                out.append(_file_entry(path, dst_dir, dst, stat.S_IMODE(mode)))
             else:
                 msg = f"staged tree has a non-regular file at {dst} ({path}); cannot package it"
                 raise PackageError(msg)
