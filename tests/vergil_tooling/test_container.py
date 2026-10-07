@@ -12,6 +12,7 @@ from vergil_tooling.lib.container import (
     _DEFAULT_TEST_COMMANDS,
     _DEFAULT_VERSIONS,
     _NPM_GLOBAL_ROOT,
+    PYCACHE_PREFIX,
     assert_docker_available,
     build_container_args,
     build_docker_args,
@@ -509,6 +510,61 @@ def test_build_container_args_respects_host_uv_link_mode(tmp_path: Path) -> None
     with patch.dict("os.environ", {"UV_LINK_MODE": "hardlink"}, clear=True):
         args = build_container_args(tmp_path, "img:1", ["cmd"], runtime="docker")
     assert _env_value(args, "UV_LINK_MODE") == "hardlink"
+
+
+def test_build_container_args_defaults_pycache_prefix_off_mount(tmp_path: Path) -> None:
+    # Bytecode must never land on the bind-mounted tree: concurrent xdist
+    # writes over the macOS<->container mount left truncated .pyc files that
+    # broke later runs (#3111). The prefix is container-local, not /workspace.
+    with patch.dict("os.environ", {}, clear=True):
+        args = build_container_args(tmp_path, "img:1", ["cmd"], runtime="docker")
+    prefix = _env_value(args, "PYTHONPYCACHEPREFIX")
+    assert prefix == PYCACHE_PREFIX
+    assert not prefix.startswith("/workspace")
+
+
+def test_build_container_args_pycache_prefix_applies_to_nerdctl(tmp_path: Path) -> None:
+    with patch.dict("os.environ", {}, clear=True):
+        args = build_container_args(tmp_path, "img:1", ["cmd"], runtime="nerdctl")
+    assert _env_value(args, "PYTHONPYCACHEPREFIX") == PYCACHE_PREFIX
+
+
+def test_build_container_args_pycache_prefix_precedes_image(tmp_path: Path) -> None:
+    # Options after the image would be passed to the command, not the runtime.
+    with patch.dict("os.environ", {}, clear=True):
+        args = build_container_args(tmp_path, "img:1", ["cmd"], runtime="docker")
+    assert args.index(f"PYTHONPYCACHEPREFIX={PYCACHE_PREFIX}") < args.index("img:1")
+
+
+def test_build_container_args_respects_host_pycache_prefix(tmp_path: Path) -> None:
+    # An operator's explicit PYTHONPYCACHEPREFIX wins over the default.
+    with patch.dict("os.environ", {"PYTHONPYCACHEPREFIX": "/var/cache/py"}, clear=True):
+        args = build_container_args(tmp_path, "img:1", ["cmd"], runtime="docker")
+    assert _env_value(args, "PYTHONPYCACHEPREFIX") == "/var/cache/py"
+
+
+def test_build_container_args_empty_host_pycache_prefix_uses_default(tmp_path: Path) -> None:
+    # An empty value would disable the prefix and put bytecode back on the
+    # mount, so it is treated as unset rather than forwarded.
+    with patch.dict("os.environ", {"PYTHONPYCACHEPREFIX": ""}, clear=True):
+        args = build_container_args(tmp_path, "img:1", ["cmd"], runtime="docker")
+    assert _env_value(args, "PYTHONPYCACHEPREFIX") == PYCACHE_PREFIX
+
+
+def test_build_container_args_env_prefix_passthrough_cannot_override_pycache_prefix(
+    tmp_path: Path,
+) -> None:
+    # A consumer's [container].env-prefixes matching PYTHON* forwards the bare
+    # name; the explicit `-e NAME=value` comes later and carries the same
+    # resolved value, so the passthrough can never reintroduce on-mount bytecode
+    # (the runtime applies the last `-e` for a name).
+    with patch.dict("os.environ", {"PYTHONPYCACHEPREFIX": ""}, clear=True):
+        args = build_container_args(
+            tmp_path, "img:1", ["cmd"], runtime="docker", env_prefixes=("PYTHON",)
+        )
+    bare = args.index("PYTHONPYCACHEPREFIX")
+    explicit = args.index(f"PYTHONPYCACHEPREFIX={PYCACHE_PREFIX}")
+    assert bare < explicit
 
 
 def test_build_container_args_masks_venv_for_python(tmp_path: Path) -> None:

@@ -42,6 +42,30 @@ local runs, CI, and agent VMs), see
 The passthrough design is specified in
 [`docs/specs/2026-05-25-configurable-container-env-passthrough-design.md`](https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/2026-05-25-configurable-container-env-passthrough-design.md).
 
+### Variables `vrg-container-run` always sets
+
+Besides the forwarded variables, every container launch sets a few itself. Each
+is emitted **after** the `env-prefixes` passthrough, and the container runtime
+applies the last `-e` given for a name, so a matching prefix cannot override the
+value `vrg-container-run` resolves:
+
+| Variable | Default | Host override |
+|---|---|---|
+| `UV_LINK_MODE` | `copy` (the uv cache and `/workspace` are on different filesystems) | An explicit host value wins |
+| `PYTHONPYCACHEPREFIX` | `/tmp/pycache` (container-local, discarded with the container) | A non-empty host value wins; an empty value falls back to the default |
+| `NODE_PATH` | npm global root, only when `build-command` is declared (see below) | An explicit host value wins |
+
+`PYTHONPYCACHEPREFIX` keeps Python bytecode (including pytest's rewritten test
+modules) out of the bind-mounted repo. Parallel test workers writing
+`__pycache__` over the macOS-to-container mount could leave a truncated `.pyc`
+that a later run trusted, failing with `EOFError: marshal data too short` on code
+that was fine
+([#3111](https://github.com/vergil-project/vergil-tooling/issues/3111)). With the
+prefix, bytecode is still cached and shared by every worker within a run, and any
+stale `.pyc` already in the working tree is ignored. A host override pointing
+inside the repo would put bytecode back on the mount, so keep any override
+outside it.
+
 ## `system-packages`
 
 A list of Debian package **names** — nothing more. Vergil's container model

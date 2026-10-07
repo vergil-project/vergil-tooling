@@ -49,6 +49,17 @@ _DEFAULT_PREFIX = "prod"
 # vergil-project/.github#291)
 _NPM_GLOBAL_ROOT = "/usr/lib/node_modules"
 
+# Container-local bytecode cache root, exported as ``PYTHONPYCACHEPREFIX`` on
+# every container run so CPython (and pytest's assertion rewriter) never writes
+# ``__pycache__`` into the bind-mounted ``/workspace``. Concurrent pytest-xdist
+# writes over the macOS<->container mount left truncated ``.pyc`` files that a
+# later run trusted (``EOFError: marshal data too short``, issue #3111). A prefix
+# is preferred over ``PYTHONDONTWRITEBYTECODE``: workers in one run still share
+# compiled bytecode, and any stale or corrupt ``.pyc`` already on the mount is
+# ignored rather than read. ``/tmp`` lives in the container's own filesystem and
+# is discarded with the ``--rm`` container.
+PYCACHE_PREFIX = "/tmp/pycache"  # noqa: S108
+
 _DEFAULT_TEST_COMMANDS: dict[str, str] = {
     "ruby": "bundle install --jobs 4 && bundle exec rake",
     "python": "uv sync && uv run pytest tests/ -v",
@@ -338,6 +349,15 @@ def build_container_args(
     # host UV_LINK_MODE wins, so an operator can still override it. (#2461)
     uv_link_mode = os.environ.get("UV_LINK_MODE", "copy")
     container_args.extend(["-e", f"UV_LINK_MODE={uv_link_mode}"])
+
+    # Keep Python bytecode off the bind mount (see PYCACHE_PREFIX, #3111). An
+    # explicit non-empty host PYTHONPYCACHEPREFIX wins; an empty one would
+    # disable the prefix and put bytecode back on the mount, so it falls back to
+    # the default. This `-e NAME=value` is emitted after the env-prefixes
+    # passthrough above, and the runtime applies the last `-e` for a name, so a
+    # passthrough of the same variable cannot override the resolved value.
+    pycache_prefix = os.environ.get("PYTHONPYCACHEPREFIX") or PYCACHE_PREFIX
+    container_args.extend(["-e", f"PYTHONPYCACHEPREFIX={pycache_prefix}"])
 
     # Expose the npm global root on NODE_PATH so a library baked out-of-workspace
     # by a [container].build-command global install resolves via CommonJS
