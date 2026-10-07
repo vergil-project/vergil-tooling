@@ -12,6 +12,7 @@ from vergil_tooling.lib.ci_evidence import (
     GateEvidence,
     HarvestContext,
     HarvestState,
+    HarvestStateError,
     IncompleteEvidenceError,
     assemble_bundle,
     build_manifest,
@@ -306,6 +307,96 @@ def test_read_harvest_state_rejects_unknown_schema(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match="unsupported harvest-state schema"):
         read_harvest_state(staging)
+
+
+def test_read_harvest_state_unknown_schema_is_harvest_state_error(tmp_path: Path) -> None:
+    staging = tmp_path / "s"
+    staging.mkdir()
+    (staging / "harvest-state.json").write_text(
+        json.dumps({"schema_version": "9.9"}), encoding="utf-8"
+    )
+    with pytest.raises(HarvestStateError, match="unsupported harvest-state schema"):
+        read_harvest_state(staging)
+
+
+@pytest.mark.parametrize("create_staging", [True, False])
+def test_read_harvest_state_missing_file(tmp_path: Path, *, create_staging: bool) -> None:
+    # Issue #3119: a failed pre-publish harvest leaves no state file (or no
+    # staging dir at all); assemble must fail with a clear domain error.
+    staging = tmp_path / "s"
+    if create_staging:
+        staging.mkdir()
+    with pytest.raises(HarvestStateError) as excinfo:
+        read_harvest_state(staging)
+    assert str(excinfo.value) == (
+        f"harvest state not found in {staging}: the pre-publish evidence gate did not complete"
+    )
+
+
+def test_read_harvest_state_unreadable_file(tmp_path: Path) -> None:
+    staging = tmp_path / "s"
+    # A directory where the file should be: an OSError other than "not found".
+    (staging / "harvest-state.json").mkdir(parents=True)
+    with pytest.raises(HarvestStateError, match="harvest state unreadable at") as excinfo:
+        read_harvest_state(staging)
+    msg = str(excinfo.value)
+    assert "the pre-publish evidence gate did not complete" in msg
+    assert "\n" not in msg
+
+
+def test_read_harvest_state_corrupt_json(tmp_path: Path) -> None:
+    staging = tmp_path / "s"
+    staging.mkdir()
+    (staging / "harvest-state.json").write_text('{"schema_version": "1.0", trunc', encoding="utf-8")
+    with pytest.raises(HarvestStateError, match="harvest state is not valid JSON at") as excinfo:
+        read_harvest_state(staging)
+    msg = str(excinfo.value)
+    assert str(staging / "harvest-state.json") in msg
+    assert "the pre-publish evidence gate did not complete" in msg
+    assert "\n" not in msg
+
+
+def _state_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "schema_version": "1.0",
+        "repo": "o/r",
+        "released_commit": "deadbeef",
+        "release_pr": 2281,
+        "validated_head_sha": "cafef00d",
+        "ci_run_urls": ["https://github.com/o/r/actions/runs/1"],
+        "checks": {"CodeQL": "success"},
+        "gate_conclusions": {"security": "success"},
+    }
+    payload.update(overrides)
+    return payload
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        pytest.param(json.dumps(["not", "an", "object"]), id="top-level-list"),
+        pytest.param(json.dumps("1.0"), id="top-level-string"),
+        pytest.param(
+            json.dumps({k: v for k, v in _state_payload().items() if k != "repo"}),
+            id="missing-key",
+        ),
+        pytest.param(json.dumps(_state_payload(release_pr="abc")), id="non-int-pr"),
+        pytest.param(json.dumps(_state_payload(release_pr=None)), id="null-pr"),
+        pytest.param(json.dumps(_state_payload(ci_run_urls=7)), id="non-iterable-urls"),
+        pytest.param(json.dumps(_state_payload(checks=["x"])), id="checks-not-object"),
+        pytest.param(json.dumps(_state_payload(gate_conclusions="x")), id="conclusions-not-object"),
+    ],
+)
+def test_read_harvest_state_wrong_shape(tmp_path: Path, content: str) -> None:
+    staging = tmp_path / "s"
+    staging.mkdir()
+    (staging / "harvest-state.json").write_text(content, encoding="utf-8")
+    with pytest.raises(HarvestStateError, match="harvest state malformed at") as excinfo:
+        read_harvest_state(staging)
+    msg = str(excinfo.value)
+    assert str(staging / "harvest-state.json") in msg
+    assert "the pre-publish evidence gate did not complete" in msg
+    assert "\n" not in msg
 
 
 def test_load_harvested_gates_from_state_rebuilds_sorted_gates(tmp_path: Path) -> None:

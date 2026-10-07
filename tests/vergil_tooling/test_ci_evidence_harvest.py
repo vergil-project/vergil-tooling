@@ -16,6 +16,7 @@ import pytest
 from vergil_tooling.lib import ci_evidence, github
 from vergil_tooling.lib.ci_evidence import (
     NoQualifyingRunError,
+    ReleasePrUnresolvedError,
     download_evidence_artifacts,
     read_gate_conclusions,
     resolve_release_pr,
@@ -73,7 +74,7 @@ def test_resolve_release_pr_uses_squash_subject(monkeypatch: pytest.MonkeyPatch)
 def test_resolve_release_pr_raises_when_unresolvable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(github, "read_json", lambda *a, **k: [])
     monkeypatch.setattr(github, "read_output", lambda *a, **k: "")
-    with pytest.raises(ValueError, match="cannot resolve release PR"):
+    with pytest.raises(ReleasePrUnresolvedError, match="cannot resolve release PR"):
         resolve_release_pr("o/r", "abc")
 
 

@@ -2,10 +2,13 @@
 
 A thin orchestrator over :mod:`vergil_tooling.lib.ci_evidence`: every subcommand
 maps to one library orchestrator, and the CLI only wires argparse to it and maps
-the two substantive failures
+the substantive failures
 (:class:`~vergil_tooling.lib.ci_evidence.IncompleteEvidenceError`,
-:class:`~vergil_tooling.lib.ci_evidence.NoQualifyingRunError`) to a non-zero exit
-via :func:`~vergil_tooling.lib.output.emit_error`.
+:class:`~vergil_tooling.lib.ci_evidence.NoQualifyingRunError`,
+:class:`~vergil_tooling.lib.ci_evidence.ReleasePrUnresolvedError`,
+:class:`~vergil_tooling.lib.ci_evidence.HarvestStateError`) to a single-line
+error and exit 1 via :func:`~vergil_tooling.lib.output.emit_error` — never a
+traceback.
 
 The atomic flow is split into two subcommands so a release harvests its evidence
 exactly once (issue #2330):
@@ -29,8 +32,10 @@ from pathlib import Path
 
 from vergil_tooling.lib import ci_evidence
 from vergil_tooling.lib.ci_evidence import (
+    HarvestStateError,
     IncompleteEvidenceError,
     NoQualifyingRunError,
+    ReleasePrUnresolvedError,
 )
 from vergil_tooling.lib.output import emit_error
 
@@ -131,7 +136,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
         return int(args.func(args))
-    except (IncompleteEvidenceError, NoQualifyingRunError) as exc:
+    except (
+        HarvestStateError,
+        IncompleteEvidenceError,
+        NoQualifyingRunError,
+        ReleasePrUnresolvedError,
+    ) as exc:
         emit_error(str(exc))
         return 1
 
