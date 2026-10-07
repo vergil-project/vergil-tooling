@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.229] - 2026-10-07
+
+### Bug fixes
+
+- keep Python bytecode off the bind mount in vrg-container-run (#3113)
+
+### Features
+
+- add vrg-sarif-filter to drop accepted-suppressed results for code-scanning upload (#3115)
+
 ## [2.1.228] - 2026-10-06
 
 ### Bug fixes
