@@ -1254,6 +1254,8 @@
       
         
       
+        
+      
     
     
     
@@ -1306,6 +1308,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.229/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.229
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15458,14 +15488,29 @@ empty or malformed <code>suppressions</code> array.</p>
 separate "suppressed finding(s)" table in the job summary (rule, level,
 file, line, suppression kind, and justification). The scan wrappers also
 emit a <code>suppressed_count</code> step output next to <code>finding_count</code>.</p>
+<p>GitHub code scanning does not apply the same rule: it raises an alert for
+every SARIF result, suppressed or not. So the SARIF that is <strong>uploaded to
+code scanning</strong> omits accepted-suppressed results, while the <strong>CI-evidence
+bundle keeps the full, unfiltered SARIF</strong>. The filtered copy comes from
+<code>vrg-sarif-filter</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>vrg-sarif-filter<span class="w"> </span>INPUT<span class="w"> </span>OUTPUT
+</code></pre></div>
+<p>It drops every result whose suppression is in effect by exactly the rule
+above (the same <code>effective_suppression()</code> logic as the gate), from every run
+and at any severity. Everything else is kept: the tool, rules, invocations,
+and every unsuppressed or fail-closed result. It prints
+<code>vrg-sarif-filter: removed N suppressed result(s) from INPUT -&gt; OUTPUT</code>.
+<code>INPUT</code> and <code>OUTPUT</code> may be the same path, because the output is written
+atomically. Unreadable or invalid SARIF (bad JSON, or no <code>runs</code> list) is a
+hard error with exit code 1.</p>
 <p>For semgrep, write the suppression as a <code>nosemgrep</code> comment that names the
 <strong>exact rule ID</strong>, and put the justification and a tracking reference in the
 same comment, after the rule ID:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="w">    </span><span class="nt">secrets</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">inherit</span><span class="w">  </span><span class="c1"># nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit -- reusable workflow needs the release token; reviewed in #123</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="w">    </span><span class="nt">secrets</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">inherit</span><span class="w">  </span><span class="c1"># nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit -- reusable workflow needs the release token; reviewed in #123</span>
 </code></pre></div>
 <p>Semgrep also accepts the comment on the line <strong>above</strong> the finding:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1"># nosemgrep: python.lang.security.audit.subprocess-shell-true.subprocess-shell-true -- fixed command string, no user input; see #456</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">subprocess</span><span class="o">.</span><span class="n">call</span><span class="p">(</span><span class="n">CMD</span><span class="p">,</span> <span class="n">shell</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># nosemgrep: python.lang.security.audit.subprocess-shell-true.subprocess-shell-true -- fixed command string, no user input; see #456</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">subprocess</span><span class="o">.</span><span class="n">call</span><span class="p">(</span><span class="n">CMD</span><span class="p">,</span> <span class="n">shell</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 </code></pre></div>
 <p>Semgrep emits both forms in SARIF as <code>"suppressions": [{"kind": "inSource"}]</code>.
 It does <strong>not</strong> carry the comment text into SARIF, so the summary's
@@ -15557,7 +15602,7 @@ with a single call to <code>ci-security.yml</code>.</p>
 <li>Replace <code>security: *</code> with <code>security-and-standards / security: *</code></li>
 </ul>
 <p>Use the GitHub API to update rulesets:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>gh<span class="w"> </span>api<span class="w"> </span>repos/OWNER/REPO/rulesets/RULESET_ID<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>--input<span class="w"> </span>gates.json
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>gh<span class="w"> </span>api<span class="w"> </span>repos/OWNER/REPO/rulesets/RULESET_ID<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>--input<span class="w"> </span>gates.json
 </code></pre></div>
 <h3 id="step-5-update-claudemd">Step 5: Update CLAUDE.md<a class="headerlink" href="#step-5-update-claudemd" title="Permanent link">&para;</a></h3>
 <p>Add the two-tier CI model and Docker-first testing sections to the
@@ -15649,11 +15694,11 @@ image families (<code>dev-cpp-clang</code> / <code>dev-cpp-gcc</code>, and match
 images) so TYPECHECK and TEST run per compiler and per version. The
 family rides the <code>[ci].versions</code> tag prefix (<code>clang-20</code>, <code>gcc-14</code>).</p>
 <h3 id="building-locally">Building locally<a class="headerlink" href="#building-locally" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nb">cd</span><span class="w"> </span>../vergil-containers
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>docker/build.sh
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nb">cd</span><span class="w"> </span>../vergil-containers
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>docker/build.sh
 </code></pre></div>
 <p>This builds all images. Individual images can be built with:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>docker<span class="w"> </span>build<span class="w"> </span>--build-arg<span class="w"> </span><span class="nv">RUBY_VERSION</span><span class="o">=</span><span class="m">3</span>.4<span class="w"> </span>-t<span class="w"> </span>dev-ruby:3.4<span class="w"> </span>docker/ruby/
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>docker<span class="w"> </span>build<span class="w"> </span>--build-arg<span class="w"> </span><span class="nv">RUBY_VERSION</span><span class="o">=</span><span class="m">3</span>.4<span class="w"> </span>-t<span class="w"> </span>dev-ruby:3.4<span class="w"> </span>docker/ruby/
 </code></pre></div>
 <h3 id="publishing">Publishing<a class="headerlink" href="#publishing" title="Permanent link">&para;</a></h3>
 <p>Images are published automatically on push to <code>develop</code> or <code>main</code> in
@@ -15673,8 +15718,8 @@ treated as a property of the <strong>language</strong>, not the repo, which is w
 image cache sound. A repo that genuinely needs a Debian binary its language image
 does not carry (for example a repo whose render/e2e tests shell out to LilyPond)
 declares it once in <code>vergil.toml</code>, <strong>without</strong> touching the shared base image:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="k">[container]</span>
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">system-packages</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"lilypond"</span><span class="p">]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="k">[container]</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="n">system-packages</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"lilypond"</span><span class="p">]</span>
 </code></pre></div>
 <p>The full key reference — trust model, the names-only surface, cache-key
 behaviour, and the fail-closed error — lives in
@@ -15701,9 +15746,9 @@ Two things matter for the CI/container model here:</p>
 <p>For a dependency that is <strong>not</strong> an apt package — a JS library a test driver
 consumes at runtime, say — a repo declares a <code>build-command</code> (with optional
 <code>build-cache-files</code>) instead of <code>system-packages</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="k">[container]</span>
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="n">build-command</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"npm install -g @coderline/alphatab"</span>
-<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="n">build-cache-files</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"package-lock.json"</span><span class="p">]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="k">[container]</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="n">build-command</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"npm install -g @coderline/alphatab"</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="n">build-cache-files</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"package-lock.json"</span><span class="p">]</span>
 </code></pre></div>
 <p>The full key reference — the out-of-workspace contract, the <code>NODE_PATH</code> handling
 for baked npm libraries, the trust model, and the cache-key behaviour — lives in

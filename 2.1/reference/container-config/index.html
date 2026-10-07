@@ -1254,6 +1254,8 @@
       
         
       
+        
+      
     
     
     
@@ -1306,6 +1308,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.229/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.229
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -11419,6 +11449,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="env-prefixes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#variables-vrg-container-run-always-sets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Variables vrg-container-run always sets
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -14796,6 +14843,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="env-prefixes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#variables-vrg-container-run-always-sets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Variables vrg-container-run always sets
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -15022,6 +15086,47 @@ local runs, CI, and agent VMs), see
 <a href="../../standards/development/cpp/overview/#conancenter-audit-token">C++ Overview → ConanCenter Audit Token</a>.
 The passthrough design is specified in
 <a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/2026-05-25-configurable-container-env-passthrough-design.md"><code>docs/specs/2026-05-25-configurable-container-env-passthrough-design.md</code></a>.</p>
+<h3 id="variables-vrg-container-run-always-sets">Variables <code>vrg-container-run</code> always sets<a class="headerlink" href="#variables-vrg-container-run-always-sets" title="Permanent link">&para;</a></h3>
+<p>Besides the forwarded variables, every container launch sets a few itself. Each
+is emitted <strong>after</strong> the <code>env-prefixes</code> passthrough, and the container runtime
+applies the last <code>-e</code> given for a name, so a matching prefix cannot override the
+value <code>vrg-container-run</code> resolves:</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>Host override</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>UV_LINK_MODE</code></td>
+<td><code>copy</code> (the uv cache and <code>/workspace</code> are on different filesystems)</td>
+<td>An explicit host value wins</td>
+</tr>
+<tr>
+<td><code>PYTHONPYCACHEPREFIX</code></td>
+<td><code>/tmp/pycache</code> (container-local, discarded with the container)</td>
+<td>A non-empty host value wins; an empty value falls back to the default</td>
+</tr>
+<tr>
+<td><code>NODE_PATH</code></td>
+<td>npm global root, only when <code>build-command</code> is declared (see below)</td>
+<td>An explicit host value wins</td>
+</tr>
+</tbody>
+</table>
+<p><code>PYTHONPYCACHEPREFIX</code> keeps Python bytecode (including pytest's rewritten test
+modules) out of the bind-mounted repo. Parallel test workers writing
+<code>__pycache__</code> over the macOS-to-container mount could leave a truncated <code>.pyc</code>
+that a later run trusted, failing with <code>EOFError: marshal data too short</code> on code
+that was fine
+(<a href="https://github.com/vergil-project/vergil-tooling/issues/3111">#3111</a>). With the
+prefix, bytecode is still cached and shared by every worker within a run, and any
+stale <code>.pyc</code> already in the working tree is ignored. A host override pointing
+inside the repo would put bytecode back on the mount, so keep any override
+outside it.</p>
 <h2 id="system-packages"><code>system-packages</code><a class="headerlink" href="#system-packages" title="Permanent link">&para;</a></h2>
 <p>A list of Debian package <strong>names</strong> — nothing more. Vergil's container model
 otherwise treats a system dependency as a property of the <strong>language</strong>
