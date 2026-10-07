@@ -112,16 +112,23 @@ def reduce_tests(m: Matrix) -> Matrix:
     """``m`` with every build cell but one test cell per format (the ``reduced`` tier).
 
     Per format, the candidates are its shared (non-``native``) test cells, or
-    its native ones if it has no shared target; the first candidate on amd64
-    wins, else the first on arm64. Test-cell order is preserved.
+    its native ones if it has no shared target; among the amd64 candidates
+    (else the arm64 ones) the **oldest** release wins, compared numerically —
+    the strictest compatibility case (lowest glibc, oldest rpm/dnf/systemd).
+    Test-cell order is preserved.
     """
     keep: set[str] = set()
     for fmt in sorted({t.fmt for t in m.test}):
         of_fmt = [t for t in m.test if t.fmt == fmt]
         candidates = [t for t in of_fmt if not t.native] or of_fmt
         amd64 = [t for t in candidates if t.arch == "amd64"]
-        keep.add((amd64 or candidates)[0].id)
+        keep.add(min(amd64 or candidates, key=_release_key).id)
     return replace(m, test=tuple(t for t in m.test if t.id in keep))
+
+
+def _release_key(cell: TestCell) -> tuple[int, ...]:
+    """Numeric release of ``cell``'s target (``rhel/9/amd64`` → ``(9,)``)."""
+    return tuple(int(part) for part in tg.REGISTRY[cell.target].version.split("."))
 
 
 def resolve(pkg: PackageConfig, *, tier: Tier = Tier.FULL) -> Matrix:

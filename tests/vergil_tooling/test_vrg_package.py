@@ -82,7 +82,7 @@ def test_matrix_reduced_tier_prints_json(
     assert out["enabled"] is True
     assert out["tier"] == "reduced"
     assert [c["id"] for c in out["build"]] == ["shared-amd64", "shared-arm64"]
-    assert [c["id"] for c in out["test"]] == ["test-rhel-10-amd64", "test-ubuntu-24.04-amd64"]
+    assert [c["id"] for c in out["test"]] == ["test-rhel-9-amd64", "test-ubuntu-24.04-amd64"]
 
 
 def test_matrix_reduced_github_output_keeps_full_manifest(
@@ -103,7 +103,7 @@ def test_matrix_reduced_github_output_keeps_full_manifest(
     assert lines[3] == "tier=reduced"
     assert len(json.loads(lines[1].removeprefix("build="))) == 2
     tests = json.loads(lines[2].removeprefix("test="))
-    assert [c["target"] for c in tests] == ["rhel/10/amd64", "ubuntu/24.04/amd64"]
+    assert [c["target"] for c in tests] == ["rhel/9/amd64", "ubuntu/24.04/amd64"]
     assert (tmp_path / "m.json").read_text() == (tmp_path / "full.json").read_text()
     assert capsys.readouterr().out == ""
 

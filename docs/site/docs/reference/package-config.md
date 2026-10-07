@@ -124,13 +124,16 @@ The default is `full`: every build cell and every test cell, as above.
 PRs). It keeps **every build cell**, because build breaks are cheap to catch
 and common, and **one test cell per format present**:
 
-- the first selected target of that format on amd64, else the first on arm64
-  (targets sort by key, so `rhel/10` comes before `rhel/9`);
+- the **oldest** selected release of that format (compared numerically, so
+  RHEL 9 before RHEL 10), on amd64, else on arm64. The oldest release is the
+  strictest compatibility case: lowest glibc, oldest rpm/dnf and systemd. A
+  package that installs there nearly always installs on newer releases, which
+  the `full` tier still covers on release PRs;
 - drawn from the shared targets; a `native` target is chosen only when the
   format has no shared target.
 
 With the defaults, `reduced` gives the same 2 build cells and 2 test cells:
-`test-rhel-10-amd64` and `test-ubuntu-24.04-amd64`. A deb-only product
+`test-rhel-9-amd64` and `test-ubuntu-24.04-amd64`. A deb-only product
 (`targets = ["ubuntu/*/*"]`) gets one, `test-ubuntu-24.04-amd64`.
 
 The printed JSON carries `"tier"`, and `--github-output` writes a `tier=` line

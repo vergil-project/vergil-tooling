@@ -169,10 +169,11 @@ def test_reduced_keeps_every_build_cell_and_a_subset_of_test_cells(kw: dict[str,
 
 def test_reduced_default_is_one_amd64_test_per_format() -> None:
     m = _reduced()
-    # Selected targets sort by key, so "rhel/10" precedes "rhel/9": the first
-    # rpm target on amd64 is rhel/10/amd64.
+    # The OLDEST release of each format is tested (strictest compatibility case:
+    # lowest glibc, oldest rpm/dnf/systemd), compared numerically, so RHEL 9 is
+    # chosen even though the key "rhel/10" sorts before "rhel/9" as text.
     assert [(t.id, t.runner, t.fmt) for t in m.test] == [
-        ("test-rhel-10-amd64", "ubuntu-24.04", "rpm"),
+        ("test-rhel-9-amd64", "ubuntu-24.04", "rpm"),
         ("test-ubuntu-24.04-amd64", "ubuntu-24.04", "deb"),
     ]
 
@@ -180,7 +181,14 @@ def test_reduced_default_is_one_amd64_test_per_format() -> None:
 def test_reduced_with_rhel_arm_excluded() -> None:
     m = _reduced(exclude=["rhel/*/arm64"])
     assert [c.id for c in m.build] == ["shared-amd64", "shared-arm64"]
-    assert [t.target for t in m.test] == ["rhel/10/amd64", "ubuntu/24.04/amd64"]
+    assert [t.target for t in m.test] == ["rhel/9/amd64", "ubuntu/24.04/amd64"]
+
+
+def test_reduced_picks_the_oldest_release_numerically_not_textually() -> None:
+    m = _reduced(
+        targets=["rhel/10/amd64", "rhel/9/amd64", "ubuntu/26.04/amd64", "ubuntu/24.04/amd64"]
+    )
+    assert [t.target for t in m.test] == ["rhel/9/amd64", "ubuntu/24.04/amd64"]
 
 
 def test_reduced_deb_only_product() -> None:
@@ -196,7 +204,7 @@ def test_reduced_falls_back_to_arm64_when_no_amd64_target() -> None:
     m = _reduced(targets=["*/*/arm64"])
     assert [c.id for c in m.build] == ["shared-arm64"]
     assert [(t.target, t.runner) for t in m.test] == [
-        ("rhel/10/arm64", "ubuntu-24.04-arm"),
+        ("rhel/9/arm64", "ubuntu-24.04-arm"),
         ("ubuntu/24.04/arm64", "ubuntu-24.04-arm"),
     ]
 
@@ -242,7 +250,7 @@ def test_reduced_all_native_arm64_only() -> None:
 def test_reduced_noarch() -> None:
     m = _reduced(noarch=True)
     assert [c.id for c in m.build] == ["shared-noarch"]
-    assert [t.target for t in m.test] == ["rhel/10/amd64", "ubuntu/24.04/amd64"]
+    assert [t.target for t in m.test] == ["rhel/9/amd64", "ubuntu/24.04/amd64"]
 
 
 def test_to_json_is_tier_agnostic() -> None:
