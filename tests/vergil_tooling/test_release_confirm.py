@@ -7,14 +7,13 @@ from unittest.mock import patch
 
 import pytest
 
-from vergil_tooling.lib.retry import KnownResourceNotFoundError
-
 from vergil_tooling.lib.release.confirm import (
     _CD_POLL_ATTEMPTS,
     confirm_develop,
     confirm_main,
 )
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
+from vergil_tooling.lib.retry import KnownResourceNotFoundError
 
 _MOD = "vergil_tooling.lib.release.confirm"
 _SHA = "abc123def456"

@@ -93,11 +93,12 @@ def test_wait_and_merge_waits_for_new_pr_to_be_readable() -> None:
             raise _not_found()
         return "OPEN"
 
+    def engine(*_args: object, **_kwargs: object) -> None:
+        calls.append("engine")
+
     with (
         patch(_MOD + ".github.pr_state", side_effect=pr_state),
-        patch(
-            _MOD + ".pr_merge.wait_and_merge", side_effect=lambda *_a, **_k: calls.append("engine")
-        ),
+        patch(_MOD + ".pr_merge.wait_and_merge", side_effect=engine),
         patch(_RETRY_SLEEP),
     ):
         wait_and_merge(_PR, phase="back-merge-bump")

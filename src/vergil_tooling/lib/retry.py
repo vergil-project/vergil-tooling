@@ -149,18 +149,14 @@ def is_not_found(exc: subprocess.CalledProcessError) -> bool:
 class KnownResourceNotFoundError(subprocess.CalledProcessError):
     """A resource GitHub just reported still returned 404 after the budget."""
 
-    def __init__(
-        self, resource: str, budget: float, last: subprocess.CalledProcessError
-    ) -> None:
+    def __init__(self, resource: str, budget: float, last: subprocess.CalledProcessError) -> None:
         super().__init__(last.returncode, last.cmd, last.stdout, last.stderr)
         self.resource = resource
         self.budget = budget
 
     def __str__(self) -> str:
-        message = (
-            f"{self.resource} was reported by GitHub but still returns 404 "
-            f"after {self.budget:g}s"
-        )
+        after = f"{self.budget:g}s"
+        message = f"{self.resource} was reported by GitHub but still returns 404 after {after}"
         detail = ((self.stderr or "") + (self.stdout or "")).strip()
         return f"{message}: {detail}" if detail else message
 
