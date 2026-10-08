@@ -18,6 +18,19 @@ refused, DNS "no such host", "server misbehaving", EOF) are emitted by
 ``gh``'s Go ``net/http`` stack when the request never reaches GitHub's
 application layer. Like the 401 case they occur before any server-side
 mutation, so retrying is safe for writes as well as reads.
+
+HTTP 404 is **fatal by default**: a 404 normally means the resource does not
+exist, so retrying it would only delay a real error (a mistyped run ID, a PR
+number from user input or config). The one exception is a resource whose
+existence GitHub itself has *just* established — a run ID read from
+``gh run list``, a PR URL returned by ``gh pr create`` or ``gh pr list``, an
+issue number from ``gh issue create``/``list``. GitHub's API can list or return
+such an ID moments before it can serve it (the 2.1.232 ``confirm-main``
+failure, #3137), so there a 404 means "not readable yet", not "missing". Wrap
+exactly those reads in :func:`retry_known_resource`, which retries a 404 with
+the same backoff as transient errors under a ~60 s time budget and then fails
+with a clear :class:`KnownResourceNotFoundError`. Never wrap a read whose ID
+came from user input or config — it must keep failing fast.
 """
 
 from __future__ import annotations
@@ -26,7 +39,10 @@ import logging
 import random
 import subprocess
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 log = logging.getLogger(__name__)
 
@@ -108,3 +124,85 @@ def run_with_retry(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str
             )
             time.sleep(delay)
     raise AssertionError("unreachable")  # pragma: no cover
+
+
+# Total time a just-discovered resource may keep returning 404 before we give
+# up. GitHub's list-before-readable lag is seconds (#3137); 60 s is generous
+# while still surfacing a real problem promptly.
+KNOWN_RESOURCE_BUDGET_SECS = 60.0
+# Only consulted by retry_known_resource — never part of _RETRYABLE_PATTERNS.
+# gh renders a missing resource as "HTTP 404: Not Found" (REST), "release not
+# found", or "Could not resolve to a/an <Type>" (GraphQL: pr/issue view).
+_NOT_FOUND_PATTERNS = (
+    "http 404",
+    "not found",
+    "could not resolve to a",
+)
+
+
+def is_not_found(exc: subprocess.CalledProcessError) -> bool:
+    """Return True if the error is GitHub reporting the resource as missing."""
+    detail = ((exc.stderr or "") + (exc.stdout or "")).lower()
+    return any(p in detail for p in _NOT_FOUND_PATTERNS)
+
+
+class KnownResourceNotFoundError(subprocess.CalledProcessError):
+    """A resource GitHub just reported still returned 404 after the budget."""
+
+    def __init__(
+        self, resource: str, budget: float, last: subprocess.CalledProcessError
+    ) -> None:
+        super().__init__(last.returncode, last.cmd, last.stdout, last.stderr)
+        self.resource = resource
+        self.budget = budget
+
+    def __str__(self) -> str:
+        message = (
+            f"{self.resource} was reported by GitHub but still returns 404 "
+            f"after {self.budget:g}s"
+        )
+        detail = ((self.stderr or "") + (self.stdout or "")).strip()
+        return f"{message}: {detail}" if detail else message
+
+
+def retry_known_resource[T](
+    fn: Callable[[], T],
+    *,
+    resource: str,
+    budget: float = KNOWN_RESOURCE_BUDGET_SECS,
+    sleep: Callable[[float], None] | None = None,
+    clock: Callable[[], float] | None = None,
+) -> T:
+    """Call *fn*, retrying a 404 on a resource whose existence is established.
+
+    Use only when the ID was **just obtained from GitHub itself** (see the
+    module docstring). A not-found error is retried with
+    :func:`compute_delay`'s backoff until *budget* seconds have elapsed —
+    the last sleep is clamped to land on the deadline, followed by one final
+    attempt — and then :class:`KnownResourceNotFoundError` names *resource*.
+    Any other error propagates immediately (transient errors are already
+    retried inside the ``github``/``run_with_retry`` layer *fn* calls).
+    *sleep* and *clock* default to :func:`time.sleep`/:func:`time.monotonic`
+    (resolved at call time) and are injectable for tests.
+    """
+    sleep = sleep or time.sleep
+    clock = clock or time.monotonic
+    deadline = clock() + budget
+    attempt = 0
+    while True:
+        try:
+            return fn()
+        except subprocess.CalledProcessError as exc:
+            if not is_not_found(exc):
+                raise
+            remaining = deadline - clock()
+            if remaining <= 0:
+                raise KnownResourceNotFoundError(resource, budget, exc) from exc
+            delay = min(compute_delay(attempt), remaining)
+            log.warning(
+                "%s not readable yet (404 right after GitHub reported it), retrying in %.1fs",
+                resource,
+                delay,
+            )
+            sleep(delay)
+            attempt += 1
