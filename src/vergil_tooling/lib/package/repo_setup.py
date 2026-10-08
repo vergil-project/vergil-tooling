@@ -13,6 +13,12 @@ package (which owns the permanent key and source from then on), and remove the
 bootstrap files. The bootstrap files are removed even when the keyring install
 fails; the failure still propagates.
 
+Re-running is safe (#3138): stale bootstrap files are removed before any apt or
+dnf call, and a target whose keyring package is already installed, with its
+source and key in place, skips the bootstrap after checking the installed key
+against the pinned fingerprint. A keyring installed without its source or key is
+reinstalled through the bootstrap path.
+
 apt never downloads the full Ubuntu archive indexes unless a prerequisite is
 actually missing: the bootstrap source is refreshed on its own
 (:func:`apt_scoped_update`), and every apt call carries :data:`APT_FAIL_FAST`.
@@ -77,26 +83,56 @@ def apt_get(*args: str) -> tuple[str, ...]:
     return ("apt-get", *APT_FAIL_FAST, *args)
 
 
+def _apt_scope(source: str) -> tuple[str, ...]:
+    """apt options that make ``source`` the only source apt reads."""
+    return ("-o", f"Dir::Etc::sourcelist={source}", "-o", "Dir::Etc::sourceparts=-")
+
+
 def apt_scoped_update(source: str) -> tuple[str, ...]:
     """The ``apt-get update`` argv that refreshes **only** the indexes of ``source``.
 
     The other sources are not consulted, and their already-downloaded indexes are
     kept (``List-Cleanup=0``), so no full Ubuntu archive download happens.
     """
-    return apt_get(
-        "-o",
-        f"Dir::Etc::sourcelist={source}",
-        "-o",
-        "Dir::Etc::sourceparts=-",
-        "-o",
-        "APT::Get::List-Cleanup=0",
-        "update",
-    )
+    return apt_get(*_apt_scope(source), "-o", "APT::Get::List-Cleanup=0", "update")
 
 
 def deb_source_path(org: OrgRepo) -> str:
     """The permanent apt source the org's keyring package writes (its postinst)."""
     return f"/etc/apt/sources.list.d/{org.vendor}.sources"
+
+
+def rpm_source_path(org: OrgRepo) -> str:
+    """The permanent dnf repository file the org's keyring package ships."""
+    return f"/etc/yum.repos.d/{org.vendor}.repo"
+
+
+def installed_key_path(org: OrgRepo, fmt: str) -> str:
+    """The key file the keyring package's permanent source trusts, per format."""
+    if fmt == "deb":
+        return f"/usr/share/keyrings/{org.keyring_package}.asc"
+    return f"/etc/pki/rpm-gpg/RPM-GPG-KEY-{org.vendor}"
+
+
+def keyring_probe(fmt: str, package: str, source: str, key: str) -> str:
+    """A script printing what of the keyring package's permanent setup is in place.
+
+    It prints ``installed`` when ``package`` is installed, ``source`` when its
+    permanent source file exists and ``key`` when the key that source trusts
+    exists, one per line.
+    """
+    pkg = shlex.quote(package)
+    if fmt == "deb":
+        installed = (
+            f"dpkg-query -W -f='${{Status}}' {pkg} 2>/dev/null | grep -qx 'install ok installed'"
+        )
+    else:
+        installed = f"rpm -q {pkg} >/dev/null 2>&1"
+    return (
+        f"{installed} && echo installed; "
+        f"test -e {shlex.quote(source)} && echo source; "
+        f"test -e {shlex.quote(key)} && echo key; true"
+    )
 
 
 def apt_indexes_present(run: Run) -> bool:
@@ -162,30 +198,78 @@ def _rpm_files(org: OrgRepo) -> tuple[str, str, str]:
     return key, src, content
 
 
+_KEYRING_COMPLETE = frozenset({"installed", "source", "key"})
+"""What :func:`keyring_probe` prints when the keyring's permanent setup is whole."""
+
+
+def _keyring_state(run: Run, probe: str) -> set[str]:
+    return set(run("bash", "-c", probe).stdout.split())
+
+
+def _verify_installed_key(run: Run, org: OrgRepo, key: str) -> None:
+    """Fail unless the installed key file's primary fingerprint is the pinned one."""
+    got = parse_primary_fingerprint(run("gpg", "--show-keys", "--with-colons", key).stdout)
+    if got != org.fingerprint:
+        msg = (
+            f"installed {org.vendor} key {key} has primary fingerprint {got}, "
+            f"pinned {org.fingerprint}: refusing to trust it "
+            f"(remove {org.keyring_package} and re-run to re-bootstrap from the published key)"
+        )
+        raise PackageError(msg)
+
+
 def bootstrap(run: Run, org: OrgRepo, fmt: str, suite: str, *, sudo: bool) -> None:
     """Make ``org``'s repository trusted on the target and install its keyring package.
 
     ``fmt`` is ``deb`` (apt; ``suite`` is the Ubuntu codename) or ``rpm`` (dnf;
     the EL release comes from ``$releasever``). With ``sudo``, privileged
     commands are prefixed with ``sudo``; the key download and check never are.
+
+    Idempotent: bootstrap files left by an interrupted earlier run are removed
+    before any apt or dnf call (next to the keyring's own source they make apt
+    reject the source list: conflicting ``Signed-By``). When the keyring package
+    is installed with its source and key in place, the bootstrap is skipped: the
+    installed key's primary fingerprint is checked against the pinned one and
+    the keyring's own source is refreshed. A keyring package installed without
+    its source or key is reinstalled through the bootstrap path, which restores
+    them.
     """
     if fmt not in ("deb", "rpm"):
         msg = f"unknown package format {fmt!r} (expected deb or rpm)"
         raise PackageError(msg)
     s = ("sudo",) if sudo else ()
+    if fmt == "deb":
+        key, src, content = _deb_files(org, suite)
+        permanent = deb_source_path(org)
+    else:
+        key, src, content = _rpm_files(org)
+        permanent = rpm_source_path(org)
+    # A stale bootstrap source from an interrupted run, next to the keyring's own
+    # source, makes apt reject the source list: remove it before any apt/dnf call.
+    run(*s, "rm", "-f", src, key)
 
     # Prerequisites are usually present (VMs, set-up CI containers): install only
     # what is missing, and only then pay for a full index refresh.
     missing = _missing_prerequisites(run, fmt)
-    if fmt == "deb":
-        if missing:
+    if missing:
+        if fmt == "deb":
             run(*s, *apt_get("update"))
             run(*s, *apt_get("install", "-y", *missing))
-        key, src, content = _deb_files(org, suite)
-    else:
-        if missing:
+        else:
             run(*s, "dnf", "install", "-y", *missing)
-        key, src, content = _rpm_files(org)
+
+    installed_key = installed_key_path(org, fmt)
+    probe = keyring_probe(fmt, org.keyring_package, permanent, installed_key)
+    state = _keyring_state(run, probe)
+    if state == _KEYRING_COMPLETE:
+        _verify_installed_key(run, org, installed_key)
+        if fmt == "deb":
+            run(*s, *apt_scoped_update(permanent))
+        else:
+            run(*s, "dnf", "makecache", "--refresh", "--repo", org.vendor)
+        return
+    # Installed but its source or key is gone: only a reinstall re-runs what wrote them.
+    reinstall = "installed" in state
 
     tmp = run("mktemp", "-d").stdout.strip()
     if not tmp.startswith("/"):
@@ -211,13 +295,25 @@ def bootstrap(run: Run, org: OrgRepo, fmt: str, suite: str, *, sudo: bool) -> No
         try:
             run(*s, "bash", "-c", script)
             if fmt == "deb":
-                # Refresh the bootstrap source alone: the keyring package has no
-                # dependencies outside the base system, so no other index is needed.
+                # Refresh and install from the bootstrap source alone: the keyring
+                # package has no dependencies outside the base system, so no other
+                # index is needed, and a stray permanent source cannot conflict.
                 run(*s, *apt_scoped_update(src))
-                run(*s, *apt_get("install", "-y", org.keyring_package))
+                again = ("--reinstall",) if reinstall else ()
+                run(*s, *apt_get(*_apt_scope(src), "install", "-y", *again, org.keyring_package))
             else:
-                run(*s, "dnf", "install", "-y", org.keyring_package)
+                verb = "reinstall" if reinstall else "install"
+                repo = f"{org.vendor}-bootstrap"
+                run(*s, "dnf", verb, "-y", "--repo", repo, org.keyring_package)
         finally:
             run(*s, "rm", "-f", src, key)
+        missing_after = sorted(_KEYRING_COMPLETE - _keyring_state(run, probe))
+        if missing_after:
+            msg = (
+                f"installing {org.keyring_package} did not leave its setup in place "
+                f"(missing: {', '.join(missing_after)}; "
+                f"source {permanent}, key {installed_key})"
+            )
+            raise PackageError(msg)
     finally:
         run("rm", "-rf", tmp)
