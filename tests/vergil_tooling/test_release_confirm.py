@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import itertools
+import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+
+from vergil_tooling.lib.retry import KnownResourceNotFoundError
 
 from vergil_tooling.lib.release.confirm import (
     _CD_POLL_ATTEMPTS,
@@ -648,3 +652,121 @@ def test_confirm_develop_still_settles_on_docs_substring() -> None:
     ):
         confirm_develop(ctx)
     assert fetch.call_count == 2
+
+
+# --- #3137: a just-listed CD run (or just-published release) may 404 briefly ---
+
+_RETRY_SLEEP = "vergil_tooling.lib.retry.time.sleep"
+_RETRY_CLOCK = "vergil_tooling.lib.retry.time.monotonic"
+
+
+def _not_found(stderr: str = "HTTP 404: Not Found") -> subprocess.CalledProcessError:
+    return subprocess.CalledProcessError(1, ["gh"], output="", stderr=stderr)
+
+
+def test_watch_cd_retries_404_on_just_listed_run_url() -> None:
+    """The 2.1.232 failure: `gh run list` returned the run, `gh run view` 404'd."""
+    from vergil_tooling.lib.release.confirm import _watch_cd
+
+    url = "https://github.com/o/r/actions/runs/37784562892"
+    with (
+        patch(
+            _MOD + ".github.read_output",
+            side_effect=["37784562892", _not_found(), url],
+        ),
+        patch(_MOD + ".watch_workflow"),
+        patch(_MOD + ".git.run"),
+        patch(_MOD + ".git.read_output", return_value=_SHA),
+        patch(_RETRY_SLEEP) as sleep,
+    ):
+        assert _watch_cd(_ctx(), branch="main") == ("37784562892", url)
+    sleep.assert_called_once()
+
+
+def test_watch_cd_persistent_404_fails_with_clear_error() -> None:
+    from vergil_tooling.lib.release.confirm import _watch_cd
+
+    def read_output(*args: str) -> str:
+        if args[:2] == ("run", "list"):
+            return "37784562892"
+        raise _not_found()
+
+    with (
+        patch(_MOD + ".github.read_output", side_effect=read_output),
+        patch(_MOD + ".watch_workflow") as watch,
+        patch(_MOD + ".git.run"),
+        patch(_MOD + ".git.read_output", return_value=_SHA),
+        patch(_RETRY_SLEEP),
+        # Each clock read advances 10s, so the 60s budget runs out quickly.
+        patch(_RETRY_CLOCK, side_effect=itertools.count(0.0, 10.0)),
+        pytest.raises(
+            KnownResourceNotFoundError,
+            match="CD run 37784562892 was reported by GitHub but still returns 404 after 60s",
+        ),
+    ):
+        _watch_cd(_ctx(), branch="main")
+    watch.assert_not_called()
+
+
+def test_watch_cd_retries_404_on_run_watch() -> None:
+    from vergil_tooling.lib.release.confirm import _watch_cd
+
+    with (
+        patch(_MOD + ".github.read_output", side_effect=["12345", "https://run/12345"]),
+        patch(_MOD + ".watch_workflow", side_effect=[_not_found(), None]) as watch,
+        patch(_MOD + ".git.run"),
+        patch(_MOD + ".git.read_output", return_value=_SHA),
+        patch(_RETRY_SLEEP),
+    ):
+        _watch_cd(_ctx(), branch="main")
+    assert watch.call_count == 2
+    watch.assert_called_with("owner/repo", "12345", check_status=False)
+
+
+def test_watch_cd_non_404_error_is_not_retried() -> None:
+    from vergil_tooling.lib.release.confirm import _watch_cd
+
+    err = subprocess.CalledProcessError(1, ["gh"], stderr="HTTP 403: Forbidden")
+    with (
+        patch(_MOD + ".github.read_output", side_effect=["12345", err]) as read,
+        patch(_MOD + ".git.run"),
+        patch(_MOD + ".git.read_output", return_value=_SHA),
+        patch(_RETRY_SLEEP) as sleep,
+        pytest.raises(subprocess.CalledProcessError, match="returned non-zero"),
+    ):
+        _watch_cd(_ctx(), branch="main")
+    assert read.call_count == 2
+    sleep.assert_not_called()
+
+
+def test_fetch_run_jobs_retries_404() -> None:
+    from vergil_tooling.lib.release.confirm import _fetch_run_jobs
+
+    with (
+        patch(
+            _MOD + ".github.read_output",
+            side_effect=[_not_found(), '{"jobs": [{"name": "docs / docs"}]}'],
+        ) as read,
+        patch(_RETRY_SLEEP),
+    ):
+        assert _fetch_run_jobs(_ctx(), "12345") == [{"name": "docs / docs"}]
+    assert read.call_count == 2
+
+
+def test_verify_artifacts_retries_404_on_just_published_release() -> None:
+    from vergil_tooling.lib.release.confirm import _verify_artifacts
+
+    ctx = _ctx()
+    url = "https://github.com/o/r/releases/tag/v2.1.0"
+    with (
+        patch(
+            _MOD + ".github.read_output",
+            side_effect=[_not_found("release not found"), url],
+        ) as read,
+        patch(_MOD + ".git.run"),
+        patch(_MOD + ".git.ref_exists", return_value=True),
+        patch(_RETRY_SLEEP),
+    ):
+        _verify_artifacts(ctx)
+    assert ctx.release_url == url
+    assert read.call_count == 2
