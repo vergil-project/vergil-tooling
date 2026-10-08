@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import github
 from vergil_tooling.lib.progress import Stage
 from vergil_tooling.lib.promote import promote
 from vergil_tooling.lib.release.bump import back_merge_and_bump
@@ -13,7 +12,7 @@ from vergil_tooling.lib.release.confirm import confirm_develop, confirm_main
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.finalize import close_and_finalize, teardown_worktree
 from vergil_tooling.lib.release.handoff import consumer_refresh
-from vergil_tooling.lib.release.merge import wait_and_merge
+from vergil_tooling.lib.release.merge import known_pr_state, wait_and_merge
 from vergil_tooling.lib.release.package_index import wait_for_index
 from vergil_tooling.lib.release.preflight import preflight, run_audit
 from vergil_tooling.lib.release.prepare import prepare
@@ -160,7 +159,8 @@ def merge_release(ctx: ReleaseContext) -> None:
             command="merge_release",
             message=("release_pr_url is not set — prepare phase may not have run."),
         )
-    if github.pr_state(ctx.release_pr_url) == "MERGED":
+    # release_pr_url was just created or listed by prepare (#3137).
+    if known_pr_state(ctx.release_pr_url) == "MERGED":
         print("Release PR already merged — skipping merge.")
         ctx.release_merge_sha = "merged"
         return
