@@ -100,9 +100,11 @@ def _install_runtime(fmt: str, rt_pkg: str) -> str:
     """Install ``rt_pkg`` with the cell's package manager; return its upstream version."""
     if fmt == "deb":
         apt_env = {**os.environ, "DEBIAN_FRONTEND": "noninteractive"}
-        # Refresh against the permanent source the keyring package just installed.
-        _run("apt-get", "update", env=apt_env)
-        _run("apt-get", "install", "-y", rt_pkg, env=apt_env)
+        # Refresh only the permanent source the keyring package just wrote; the
+        # runtime has no dependencies outside the base system, so no full update.
+        source = repo_setup.deb_source_path(orgs.for_vendor(_RUNTIME_VENDOR))
+        _run(*repo_setup.apt_scoped_update(source), env=apt_env)
+        _run(*repo_setup.apt_get("install", "-y", rt_pkg), env=apt_env)
         raw = _run("dpkg-query", "-W", "-f=${Version}", rt_pkg).stdout.strip()
         # Drop the Debian revision (``-1``); the upstream version is the PBS build.
         version = raw.rsplit("-", 1)[0] if "-" in raw else raw

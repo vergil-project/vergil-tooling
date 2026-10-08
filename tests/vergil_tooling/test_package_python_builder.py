@@ -64,6 +64,15 @@ def _py_ctx(
     )
 
 
+_FAST = "-o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20"
+
+
+def _verb(argv: tuple[str, ...]) -> str:
+    """``tool subcommand``, skipping ``-o Key=Value`` options (``apt-get install``)."""
+    words = [a for a in argv[1:] if not a.startswith("-") and "::" not in a]
+    return f"{argv[0]} {words[0]}"
+
+
 class _Fake:
     """Records every command (bootstrap included) and fakes the runtime install."""
 
@@ -94,8 +103,8 @@ class _Fake:
         self, *argv: str, env: dict[str, str] | None = None, cwd: Path | None = None
     ) -> subprocess.CompletedProcess[str]:
         self.calls.append(argv)
-        self.envs[argv[0] + " " + argv[1]] = env
-        self.cwds[argv[0] + " " + argv[1]] = cwd
+        self.envs[_verb(argv)] = env
+        self.cwds[_verb(argv)] = cwd
         if self.fail is not None and argv[:2] == tuple(self.fail.split()):
             raise subprocess.CalledProcessError(2, list(argv), "", "boom on stderr")
         out = ""
@@ -219,8 +228,10 @@ def test_build_sequence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     interp = "/opt/vergil/python/3.14.4/bin/python3.14"
     assert fake.flat == [
         "bootstrap",
-        "apt-get update",
-        "apt-get install -y vergil-python3.14.4",
+        # Only the vergil source the keyring package wrote; never the Ubuntu archive.
+        f"apt-get {_FAST} -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/vergil.sources"
+        " -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0 update",
+        f"apt-get {_FAST} install -y vergil-python3.14.4",
         "dpkg-query -W -f=${Version} vergil-python3.14.4",
         f"uv venv --python {interp} {venv}",
         "uv sync --frozen --no-dev --no-editable --compile-bytecode",
@@ -233,6 +244,9 @@ def test_build_sequence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     apt_env = fake.envs["apt-get install"]
     assert apt_env is not None
     assert apt_env["DEBIAN_FRONTEND"] == "noninteractive"
+    update_env = fake.envs["apt-get update"]
+    assert update_env is not None
+    assert update_env["DEBIAN_FRONTEND"] == "noninteractive"
     sync_env = fake.envs["uv sync"]
     assert sync_env is not None
     assert sync_env["UV_PROJECT_ENVIRONMENT"] == venv
@@ -306,7 +320,7 @@ def test_python_minor_comes_from_runtime(tmp_path: Path, monkeypatch: pytest.Mon
     fake = _Fake(tmp_path, monkeypatch)
     pkg = _pkg(python=PackagePythonConfig(runtime="3.13.12"))
     python_builder.build_python(_py_ctx(tmp_path, pkg=pkg))
-    assert "apt-get install -y vergil-python3.13.12" in fake.flat
+    assert f"apt-get {_FAST} install -y vergil-python3.13.12" in fake.flat
     interp = "/opt/vergil/python/3.13.12/bin/python3.13"
     assert any(c.startswith(f"uv venv --python {interp} ") for c in fake.flat)
 

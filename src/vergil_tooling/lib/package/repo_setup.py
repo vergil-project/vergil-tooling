@@ -4,14 +4,18 @@ Reused by VM provisioning, install tests and builders. Every command goes
 through a :data:`Run` callable, so the same sequence runs on this host
 (:func:`local_run`) or inside a guest (``Transport.run``).
 
-The sequence is: install prerequisites, download ``keys/<vendor>.asc``, check
-that it holds exactly one primary key whose fingerprint equals the one pinned in
-:mod:`~vergil_tooling.lib.package.orgs` — **before** anything is written to
-``sources.list.d`` / ``yum.repos.d`` — then write a temporary ``-bootstrap``
-source and key, install the org's keyring package (which owns the permanent
-key and source from then on), and remove the bootstrap files. The bootstrap
-files are removed even when the keyring install fails; the failure still
-propagates.
+The sequence is: install any missing prerequisites, download
+``keys/<vendor>.asc``, check that it holds exactly one primary key whose
+fingerprint equals the one pinned in :mod:`~vergil_tooling.lib.package.orgs` —
+**before** anything is written to ``sources.list.d`` / ``yum.repos.d`` — then
+write a temporary ``-bootstrap`` source and key, install the org's keyring
+package (which owns the permanent key and source from then on), and remove the
+bootstrap files. The bootstrap files are removed even when the keyring install
+fails; the failure still propagates.
+
+apt never downloads the full Ubuntu archive indexes unless a prerequisite is
+actually missing: the bootstrap source is refreshed on its own
+(:func:`apt_scoped_update`), and every apt call carries :data:`APT_FAIL_FAST`.
 """
 
 from __future__ import annotations
@@ -30,9 +34,79 @@ Run = Callable[..., subprocess.CompletedProcess[str]]
 """Called as ``run(*argv)``; raises ``CalledProcessError`` on a nonzero exit."""
 
 
+APT_FAIL_FAST: tuple[str, ...] = (
+    "-o",
+    "Acquire::Retries=3",
+    "-o",
+    "Acquire::http::Timeout=20",
+    "-o",
+    "Acquire::https::Timeout=20",
+)
+"""Options on every apt invocation here: a dead mirror connection retries in seconds."""
+
+DEB_PREREQ_PROBE = (
+    "dpkg-query -W -f='${Status}' ca-certificates 2>/dev/null"
+    " | grep -qx 'install ok installed' || echo ca-certificates; "
+    "command -v curl >/dev/null 2>&1 || echo curl; "
+    "command -v gpg >/dev/null 2>&1 || echo gnupg"
+)
+"""Prints the apt package of each missing bootstrap prerequisite, one per line."""
+
+RPM_PREREQ_PROBE = (
+    "rpm -q ca-certificates >/dev/null 2>&1 || echo ca-certificates; "
+    "command -v curl >/dev/null 2>&1 || echo /usr/bin/curl; "
+    "command -v gpg >/dev/null 2>&1 || echo /usr/bin/gpg"
+)
+"""Prints the dnf spec of each missing bootstrap prerequisite, one per line.
+
+File provides, not ``curl``: RHEL ships curl-minimal, which conflicts with the
+full ``curl`` package but provides ``/usr/bin/curl``.
+"""
+
+APT_INDEXES_PROBE = "compgen -G '/var/lib/apt/lists/*_Packages*' >/dev/null && echo present || true"
+"""Prints ``present`` when apt holds any package index (``apt-get update`` has run)."""
+
+
 def local_run(*argv: str) -> subprocess.CompletedProcess[str]:
     """Run ``argv`` on this host, capturing text output; raise on a nonzero exit."""
     return subprocess.run(list(argv), check=True, capture_output=True, text=True)  # noqa: S603
+
+
+def apt_get(*args: str) -> tuple[str, ...]:
+    """The ``apt-get`` argv for ``args``, with the :data:`APT_FAIL_FAST` options."""
+    return ("apt-get", *APT_FAIL_FAST, *args)
+
+
+def apt_scoped_update(source: str) -> tuple[str, ...]:
+    """The ``apt-get update`` argv that refreshes **only** the indexes of ``source``.
+
+    The other sources are not consulted, and their already-downloaded indexes are
+    kept (``List-Cleanup=0``), so no full Ubuntu archive download happens.
+    """
+    return apt_get(
+        "-o",
+        f"Dir::Etc::sourcelist={source}",
+        "-o",
+        "Dir::Etc::sourceparts=-",
+        "-o",
+        "APT::Get::List-Cleanup=0",
+        "update",
+    )
+
+
+def deb_source_path(org: OrgRepo) -> str:
+    """The permanent apt source the org's keyring package writes (its postinst)."""
+    return f"/etc/apt/sources.list.d/{org.vendor}.sources"
+
+
+def apt_indexes_present(run: Run) -> bool:
+    """Whether the target already holds apt package indexes (a full update has run)."""
+    return run("bash", "-c", APT_INDEXES_PROBE).stdout.strip() == "present"
+
+
+def _missing_prerequisites(run: Run, fmt: str) -> list[str]:
+    probe = DEB_PREREQ_PROBE if fmt == "deb" else RPM_PREREQ_PROBE
+    return run("bash", "-c", probe).stdout.split()
 
 
 def parse_primary_fingerprint(colons: str) -> str:
@@ -100,14 +174,17 @@ def bootstrap(run: Run, org: OrgRepo, fmt: str, suite: str, *, sudo: bool) -> No
         raise PackageError(msg)
     s = ("sudo",) if sudo else ()
 
+    # Prerequisites are usually present (VMs, set-up CI containers): install only
+    # what is missing, and only then pay for a full index refresh.
+    missing = _missing_prerequisites(run, fmt)
     if fmt == "deb":
-        run(*s, "apt-get", "update")
-        run(*s, "apt-get", "install", "-y", "ca-certificates", "curl", "gnupg")
+        if missing:
+            run(*s, *apt_get("update"))
+            run(*s, *apt_get("install", "-y", *missing))
         key, src, content = _deb_files(org, suite)
     else:
-        # File provides: RHEL ships curl-minimal, which conflicts with the full
-        # ``curl`` package but provides /usr/bin/curl.
-        run(*s, "dnf", "install", "-y", "ca-certificates", "/usr/bin/curl", "/usr/bin/gpg")
+        if missing:
+            run(*s, "dnf", "install", "-y", *missing)
         key, src, content = _rpm_files(org)
 
     tmp = run("mktemp", "-d").stdout.strip()
@@ -134,8 +211,10 @@ def bootstrap(run: Run, org: OrgRepo, fmt: str, suite: str, *, sudo: bool) -> No
         try:
             run(*s, "bash", "-c", script)
             if fmt == "deb":
-                run(*s, "apt-get", "update")
-                run(*s, "apt-get", "install", "-y", org.keyring_package)
+                # Refresh the bootstrap source alone: the keyring package has no
+                # dependencies outside the base system, so no other index is needed.
+                run(*s, *apt_scoped_update(src))
+                run(*s, *apt_get("install", "-y", org.keyring_package))
             else:
                 run(*s, "dnf", "install", "-y", org.keyring_package)
         finally:
