@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.231] - 2026-10-07
+
+### Bug fixes
+
+- escape glob metacharacters in nFPM file src paths (#3126)
+
+### Features
+
+- publish vergil-tooling as a signed .deb/.rpm (#3084) (#3124)
+- add vrg-package matrix --tier {full,reduced} (#3128)
+
 ## [2.1.230] - 2026-10-07
 
 ### Bug fixes
