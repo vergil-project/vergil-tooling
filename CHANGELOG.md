@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.232] - 2026-10-08
+
+### Bug fixes
+
+- scope apt updates in package bootstrap/builder and fail fast on dead mirrors (#3133)
+
 ## [2.1.231] - 2026-10-07
 
 ### Bug fixes
