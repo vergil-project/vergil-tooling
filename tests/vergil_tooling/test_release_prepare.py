@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
@@ -194,6 +195,31 @@ def test_prepare_adopts_already_merged_release_pr() -> None:
     m_changelog.assert_not_called()
     m_create_pr.assert_not_called()
     m_run.assert_not_called()
+
+
+def test_prepare_merged_pr_state_retries_404() -> None:
+    """The merged PR URL was just listed by GitHub; a 404 reading it is lag (#3137)."""
+    ctx = _ctx()
+    err = subprocess.CalledProcessError(1, ["gh"], stderr="HTTP 404: Not Found")
+    with (
+        patch(_MOD + ".create_tracking_issue"),
+        patch(_MOD + ".github.pr_for_branch", return_value=None),
+        patch(
+            _MOD + ".github.closed_pr_for_branch",
+            return_value={
+                "url": "https://github.com/owner/repo/pull/880",
+                "headRefOid": "abc123",
+            },
+        ),
+        patch(_MOD + ".github.pr_state", side_effect=[err, "MERGED"]) as m_state,
+        patch(_MOD + ".git.read_output", return_value="abc123"),
+        patch(_MOD + ".github.create_pr") as m_create_pr,
+        patch("vergil_tooling.lib.retry.time.sleep"),
+    ):
+        prepare(ctx)
+    assert ctx.release_pr_url == "https://github.com/owner/repo/pull/880"
+    assert m_state.call_count == 2
+    m_create_pr.assert_not_called()
 
 
 def test_prepare_ignores_closed_unmerged_release_pr() -> None:

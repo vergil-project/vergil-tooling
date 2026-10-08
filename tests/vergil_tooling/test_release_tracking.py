@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -47,6 +48,20 @@ def test_read_issue_body_queries_gh() -> None:
     with patch(_MOD + ".github.read_output", return_value="body text") as ro:
         assert read_issue_body(ctx) == "body text"
     assert "view" in ro.call_args.args
+
+
+def test_read_issue_body_retries_404_on_just_created_issue() -> None:
+    """The tracking issue number always comes from gh issue create/list (#3137)."""
+    ctx = _ctx_with_issue()
+    err = subprocess.CalledProcessError(
+        1, ["gh"], stderr="GraphQL: Could not resolve to an issue or pull request"
+    )
+    with (
+        patch(_MOD + ".github.read_output", side_effect=[err, "body text"]) as ro,
+        patch("vergil_tooling.lib.retry.time.sleep"),
+    ):
+        assert read_issue_body(ctx) == "body text"
+    assert ro.call_count == 2
 
 
 def test_write_issue_body_edits_via_body_file() -> None:

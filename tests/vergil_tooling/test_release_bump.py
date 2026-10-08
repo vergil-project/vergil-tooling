@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
@@ -182,6 +183,25 @@ def test_back_merge_merges_existing_open_pr() -> None:
     m_wm.assert_called_once_with("https://github.com/owner/repo/pull/9", phase="back-merge-bump")
     m_pr.assert_not_called()
     assert ctx.next_version == "2.1.1"
+
+
+def test_back_merge_existing_pr_state_retries_404() -> None:
+    """The PR URL was just listed by GitHub, so a 404 on reading it is lag (#3137)."""
+    ctx = _ctx()
+    err = subprocess.CalledProcessError(1, ["gh"], stderr="HTTP 404: Not Found")
+    with (
+        patch(
+            _MOD + ".github.pr_for_branch",
+            return_value={"url": "https://github.com/owner/repo/pull/9"},
+        ),
+        patch(_MOD + ".github.pr_state", side_effect=[err, "MERGED"]) as m_state,
+        patch(_MOD + "._post_branch_version", return_value="2.1.1"),
+        patch(_MOD + ".wait_and_merge") as m_wm,
+        patch("vergil_tooling.lib.retry.time.sleep"),
+    ):
+        back_merge_and_bump(ctx)
+    assert m_state.call_count == 2
+    m_wm.assert_not_called()
 
 
 def test_post_branch_version_reads_from_fetch_head() -> None:

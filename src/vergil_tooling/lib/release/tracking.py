@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from vergil_tooling.lib import github
+from vergil_tooling.lib import github, retry
 from vergil_tooling.lib.release import checklist
 
 if TYPE_CHECKING:
@@ -165,17 +165,25 @@ def close_tracking_issue(ctx: ReleaseContext, summary: str) -> None:
 
 
 def read_issue_body(ctx: ReleaseContext) -> str:
-    """Return the current body of the tracking issue."""
-    return github.read_output(
-        "issue",
-        "view",
-        str(ctx.issue_number),
-        "--repo",
-        ctx.repo,
-        "--json",
-        "body",
-        "--jq",
-        ".body",
+    """Return the current body of the tracking issue.
+
+    ctx.issue_number always comes from GitHub itself — gh issue create
+    (prepare) or gh issue list (resume) — so a 404 right after it was
+    reported is read lag and is retried under the known-resource budget (#3137).
+    """
+    return retry.retry_known_resource(
+        lambda: github.read_output(
+            "issue",
+            "view",
+            str(ctx.issue_number),
+            "--repo",
+            ctx.repo,
+            "--json",
+            "body",
+            "--jq",
+            ".body",
+        ),
+        resource=f"tracking issue #{ctx.issue_number}",
     )
 
 
