@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.180/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.178/">
+        <link rel="next" href="../v2.1.231/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.179 - VERGIL Tooling</title>
+        <title>2.1.232 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-21179-2026-08-07" class="md-skip">
+        <a href="#release-21232-2026-10-08" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.179
+              2.1.232
             
           </span>
         </div>
@@ -1330,10 +1330,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.232/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.232
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1349,6 +1376,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -2814,37 +2872,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.179
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.179/" class="md-nav__link">
         
   
   
@@ -2860,37 +2891,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -14773,27 +14773,12 @@
 
 
 
-<h1 id="release-21179-2026-08-07">Release 2.1.179 (2026-08-07)<a class="headerlink" href="#release-21179-2026-08-07" title="Permanent link">&para;</a></h1>
+<h1 id="release-21232-2026-10-08">Release 2.1.232 (2026-10-08)<a class="headerlink" href="#release-21232-2026-10-08" title="Permanent link">&para;</a></h1>
 <h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>discard ref_exists subprocess streams so rev-parse's SHA doesn't leak to stdout (#2664)</strong>
-git.ref_exists ran 'git rev-parse --verify --quiet <ref>' without capturing stdout. On success rev-parse --verify prints the resolved SHA to stdout (--quiet suppresses only the failure diagnostic), so the SHA leaked to the terminal. It surfaced as a stray 40-char hash printed above the vrg-worktree-status table once the new detached/rebase path (#2634) began probing refs with ref_exists during status gathering.</li>
+<li><strong>scope apt updates in package bootstrap/builder and fail fast on dead mirrors (#3133)</strong>
+repo_setup.bootstrap probes for its prerequisites and installs only the missing ones, so a full apt-get update (or a dnf install) happens only when something is actually missing. The update after writing the bootstrap source refreshes that source alone (Dir::Etc::sourcelist, sourceparts=-, List-Cleanup=0). python_builder drops its full update for a scoped refresh of the permanent vergil source the keyring postinst writes, and install_test runs its full update only when the container has no apt indexes yet. Every apt call on these paths carries Acquire::Retries=3 and 20 s http/https timeouts.</li>
 </ul>
-<p>Redirect the subprocess's stdout and stderr to DEVNULL; only the return code is consulted. Verified against real git: ref_exists no longer emits the SHA.</p>
-<ul>
-<li>
-<p><strong>thread one work-unit identifier across branch, dir, and summary (#2665)</strong>
-A single unit of work carried three divergent identifier strings: the worktree directory, the git branch, and the finalize/submit batch summary label. Two coupled root causes fixed:</p>
-</li>
-<li>
-<p>Enforcement timing. The 'branch name must include the issue number' rule fired only at vrg-commit, never at branch creation. vrg-git now enforces the <type>/<N>-<slug> form when an issue-family branch is created (worktree add -b, checkout -b, switch -c), and worktree add additionally requires the directory to be the matching issue-<N>-<slug> so the dir and branch stay in lockstep from the start.</p>
-</li>
-<li>
-<p>Lossy display. The submit batch summary labelled each item by the worktree directory name (wt.path.name), which could be a bare slug hiding the issue number (e.g. 'Merged: authz-apply-tag'). It now labels by the full branch name, which is unambiguous and round-trippable back to the issue.</p>
-</li>
-</ul>
-<p>The shared format lives in the new lib/branch_names.py so the creation-time guard and the commit-time guard read from one source and cannot drift.</p>
-<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.179/v2.1.179-ci-evidence.tar.gz">Download →</a></p>
 
 
 
