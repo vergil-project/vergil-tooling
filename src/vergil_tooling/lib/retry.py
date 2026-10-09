@@ -120,9 +120,22 @@ def run_with_retry(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str
     Requires ``check=True`` and ``capture_output=True`` (or equivalent)
     so that ``CalledProcessError`` carries stderr/stdout for detection.
     """
+    return call_with_retry(lambda: subprocess.run(*args, **kwargs))  # noqa: S603
+
+
+def call_with_retry[T](fn: Callable[[], T]) -> T:
+    """Call *fn*, retrying a transient ``CalledProcessError`` with bounded backoff.
+
+    The callable form of :func:`run_with_retry`, for code that runs ``gh``
+    through an injected transport (e.g. the package-index collector's ``Run``,
+    #3153) rather than ``subprocess.run`` directly. An error that
+    :func:`is_retryable` does not classify as transient is raised at once; a
+    transient one is retried up to :data:`MAX_RETRIES` times and then the
+    original error is raised.
+    """
     for attempt in range(MAX_RETRIES + 1):
         try:
-            return subprocess.run(*args, **kwargs)  # noqa: S603
+            return fn()
         except subprocess.CalledProcessError as exc:
             if attempt == MAX_RETRIES or not is_retryable(exc):
                 raise

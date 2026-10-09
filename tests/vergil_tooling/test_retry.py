@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import subprocess
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
@@ -222,6 +222,69 @@ class TestRunWithRetry:
             retry.run_with_retry(("gh", "pr", "view"), check=True)
         delays = [c.args[0] for c in mock_sleep.call_args_list]
         assert delays[0] < delays[1] < delays[2]
+
+
+class TestCallWithRetry:
+    """The callable form behind run_with_retry, for injected ``Run`` transports (#3153)."""
+
+    def test_returns_first_success_without_sleeping(self) -> None:
+        calls: list[int] = []
+
+        def fn() -> str:
+            calls.append(1)
+            return "ok"
+
+        with patch("vergil_tooling.lib.retry.time.sleep") as mock_sleep:
+            assert retry.call_with_retry(fn) == "ok"
+        assert calls == [1]
+        mock_sleep.assert_not_called()
+
+    def test_retries_transient_then_succeeds(self) -> None:
+        outcomes: list[Any] = [_api_error(stderr="HTTP 502"), "ok"]
+
+        def fn() -> str:
+            out = outcomes.pop(0)
+            if isinstance(out, Exception):
+                raise out
+            return str(out)
+
+        with (
+            patch("vergil_tooling.lib.retry.time.sleep") as mock_sleep,
+            patch("vergil_tooling.lib.retry.random.random", return_value=0.5),
+        ):
+            assert retry.call_with_retry(fn) == "ok"
+        assert mock_sleep.call_count == 1
+
+    def test_persistent_transient_raises_original_after_budget(self) -> None:
+        err = _api_error(stderr="HTTP 503")
+        calls: list[int] = []
+
+        def fn() -> str:
+            calls.append(1)
+            raise err
+
+        with (
+            patch("vergil_tooling.lib.retry.time.sleep") as mock_sleep,
+            pytest.raises(subprocess.CalledProcessError) as excinfo,
+        ):
+            retry.call_with_retry(fn)
+        assert excinfo.value is err
+        assert len(calls) == retry.MAX_RETRIES + 1
+        assert mock_sleep.call_count == retry.MAX_RETRIES
+
+    def test_non_transient_raises_immediately(self) -> None:
+        err = _api_error(stderr="release not found")
+
+        def fn() -> str:
+            raise err
+
+        with (
+            patch("vergil_tooling.lib.retry.time.sleep") as mock_sleep,
+            pytest.raises(subprocess.CalledProcessError) as excinfo,
+        ):
+            retry.call_with_retry(fn)
+        assert excinfo.value is err
+        mock_sleep.assert_not_called()
 
 
 class _FakeClock:

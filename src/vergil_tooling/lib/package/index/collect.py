@@ -9,6 +9,9 @@
 - Every collected file must pass ``gh attestation verify`` pinned to the
   vergil-actions release workflow on ``main``; every ``.rpm`` must also carry a
   valid org signature. A failure is a hard error, never a skip.
+- Every ``gh`` call retries a transient GitHub error with the shared bounded
+  backoff of :mod:`vergil_tooling.lib.retry` (#3153); one that outlasts the
+  budget is still a hard error.
 """
 
 from __future__ import annotations
@@ -20,6 +23,7 @@ import subprocess
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from vergil_tooling.lib import retry
 from vergil_tooling.lib.package import PackageError
 from vergil_tooling.lib.package.repo_setup import Run, local_run
 
@@ -91,9 +95,24 @@ def _detail(exc: subprocess.CalledProcessError) -> str:
     return str(exc.stderr or exc.stdout or f"exit {exc.returncode}").strip()
 
 
+def _invoke(run: Run, *argv: str) -> subprocess.CompletedProcess[str]:
+    """Run ``argv``; a ``gh`` call gets the shared transient-error retry (#3153).
+
+    A ``gh`` failure that :func:`retry.is_retryable` classifies as transient (a
+    5xx, GitHub's GraphQL "Something went wrong" blip, a transport drop) is
+    retried with bounded backoff and, once the budget is spent, re-raised. Any
+    other failure — a missing release, a failed attestation — is raised at once,
+    never retried. Local tools (``dpkg-deb``, ``rpm``, ``rpmkeys``) are never
+    retried.
+    """
+    if argv[0] == "gh":
+        return retry.call_with_retry(lambda: run(*argv))
+    return run(*argv)
+
+
 def _call(run: Run, what: str, *argv: str) -> subprocess.CompletedProcess[str]:
     try:
-        return run(*argv)
+        return _invoke(run, *argv)
     except subprocess.CalledProcessError as exc:
         msg = f"{what} failed: {_detail(exc)}"
         raise PackageError(msg) from exc
@@ -340,7 +359,8 @@ def verify(
     """
     for a in artifacts:
         try:
-            gh(
+            _invoke(
+                gh,
                 "gh",
                 "attestation",
                 "verify",
