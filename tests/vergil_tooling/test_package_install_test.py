@@ -15,7 +15,11 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
     from pathlib import Path
 
-_FAST = "-o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20"
+_FAST = (
+    "-o Acquire::Retries=3 -o Acquire::Retries::Delay=false"
+    " -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20"
+    " -o DPkg::Lock::Timeout=60"
+)
 
 _BASE_TOML = """\
 [project]
