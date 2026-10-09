@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -15,6 +16,8 @@ from vergil_tooling.lib.release.orchestrator import (
 )
 
 _MOD = "vergil_tooling.lib.release.orchestrator"
+# merge_release reads PR state via release.merge.known_pr_state (#3137).
+_PR_STATE = "vergil_tooling.lib.release.merge.github.pr_state"
 
 
 def _ctx(*, promote: bool = True) -> ReleaseContext:
@@ -359,7 +362,7 @@ def test_merge_release_calls_wait_and_merge() -> None:
     ctx = _ctx()
     ctx.release_pr_url = "https://github.com/o/r/pull/100"
     with (
-        patch(_MOD + ".github.pr_state", return_value="OPEN"),
+        patch(_PR_STATE, return_value="OPEN"),
         patch(_MOD + ".wait_and_merge") as m_wm,
     ):
         merge_release(ctx)
@@ -370,13 +373,30 @@ def test_merge_release_calls_wait_and_merge() -> None:
     assert ctx.release_merge_sha == "merged"
 
 
+def test_merge_release_pr_state_retries_404() -> None:
+    """release_pr_url came from gh pr create/list; a 404 reading it is lag (#3137)."""
+    from vergil_tooling.lib.release.orchestrator import merge_release
+
+    ctx = _ctx()
+    ctx.release_pr_url = "https://github.com/o/r/pull/100"
+    err = subprocess.CalledProcessError(1, ["gh"], stderr="HTTP 404: Not Found")
+    with (
+        patch(_PR_STATE, side_effect=[err, "MERGED"]) as m_state,
+        patch(_MOD + ".wait_and_merge") as m_wm,
+        patch("vergil_tooling.lib.retry.time.sleep"),
+    ):
+        merge_release(ctx)
+    assert m_state.call_count == 2
+    m_wm.assert_not_called()
+
+
 def test_merge_release_skips_when_already_merged() -> None:
     from vergil_tooling.lib.release.orchestrator import merge_release
 
     ctx = _ctx()
     ctx.release_pr_url = "https://github.com/o/r/pull/100"
     with (
-        patch(_MOD + ".github.pr_state", return_value="MERGED"),
+        patch(_PR_STATE, return_value="MERGED"),
         patch(_MOD + ".wait_and_merge") as m_wm,
     ):
         merge_release(ctx)

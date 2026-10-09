@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import git, github, version
-from vergil_tooling.lib.release.merge import wait_and_merge
+from vergil_tooling.lib.release.merge import known_pr_state, wait_and_merge
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.release.context import ReleaseContext
@@ -30,7 +30,7 @@ def back_merge_and_bump(ctx: ReleaseContext) -> None:
     existing = github.pr_for_branch(branch)
     if existing is not None:
         ctx.bump_pr_url = str(existing["url"])
-        if github.pr_state(ctx.bump_pr_url) == "MERGED":
+        if known_pr_state(ctx.bump_pr_url) == "MERGED":
             print(f"Back-merge PR already merged: {ctx.bump_pr_url}")
         else:
             print(f"Back-merge PR already open — merging: {ctx.bump_pr_url}")

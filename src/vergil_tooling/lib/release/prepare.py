@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import changelog, git, github, version
 from vergil_tooling.lib.release.context import ReleaseError
+from vergil_tooling.lib.release.merge import known_pr_state
 from vergil_tooling.lib.release.tracking import create_tracking_issue
 
 if TYPE_CHECKING:
@@ -55,7 +56,7 @@ def prepare(ctx: ReleaseContext) -> None:
     merged = github.closed_pr_for_branch(branch)
     if (
         merged is not None
-        and github.pr_state(str(merged["url"])) == "MERGED"
+        and known_pr_state(str(merged["url"])) == "MERGED"
         and merged.get("headRefOid") == git.read_output("rev-parse", branch)
     ):
         ctx.release_pr_url = str(merged["url"])

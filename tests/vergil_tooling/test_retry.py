@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import subprocess
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
 
 from vergil_tooling.lib import retry
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 def _api_error(
@@ -171,3 +175,151 @@ class TestRunWithRetry:
             retry.run_with_retry(("gh", "pr", "view"), check=True)
         delays = [c.args[0] for c in mock_sleep.call_args_list]
         assert delays[0] < delays[1] < delays[2]
+
+
+class _FakeClock:
+    """Deterministic monotonic clock whose ``sleep`` advances time instantly."""
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+        self.sleeps: list[float] = []
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def sleep(self, secs: float) -> None:
+        self.sleeps.append(secs)
+        self.now += secs
+
+
+def _sequence(*outcomes: object) -> tuple[list[int], Callable[[], object]]:
+    """Return ``(calls, fn)`` where *fn* raises/returns *outcomes* in order."""
+    calls: list[int] = []
+    queue = list(outcomes)
+
+    def fn() -> object:
+        calls.append(1)
+        outcome = queue.pop(0)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+    return calls, fn
+
+
+class TestIsNotFound:
+    @pytest.mark.parametrize(
+        "stderr",
+        [
+            "HTTP 404: Not Found (https://api.github.com/repos/o/r/actions/runs/1)",
+            "release not found",
+            "GraphQL: Could not resolve to a PullRequest with the number of 7.",
+            "GraphQL: Could not resolve to an issue or pull request with the number of 7.",
+        ],
+    )
+    def test_not_found_errors(self, stderr: str) -> None:
+        assert retry.is_not_found(_api_error(stderr=stderr)) is True
+
+    def test_not_found_in_stdout(self) -> None:
+        assert retry.is_not_found(_api_error(stdout="HTTP 404")) is True
+
+    @pytest.mark.parametrize("stderr", ["", "HTTP 422 Unprocessable Entity", "HTTP 403"])
+    def test_other_errors(self, stderr: str) -> None:
+        assert retry.is_not_found(_api_error(stderr=stderr)) is False
+
+    def test_general_retry_still_treats_404_as_fatal(self) -> None:
+        # The known-resource rule is opt-in per call: the general retryable set
+        # must never absorb 404, or a genuinely missing resource would retry.
+        assert retry.is_retryable(_api_error(stderr="HTTP 404: Not Found")) is False
+
+
+class TestRetryKnownResource:
+    def test_returns_immediately_on_success(self) -> None:
+        clock = _FakeClock()
+        calls, fn = _sequence("ok")
+        result = retry.retry_known_resource(
+            fn, resource="run 1", sleep=clock.sleep, clock=clock.monotonic
+        )
+        assert result == "ok"
+        assert len(calls) == 1
+        assert clock.sleeps == []
+
+    def test_404_then_success(self) -> None:
+        clock = _FakeClock()
+        err = _api_error(stderr="HTTP 404: Not Found")
+        calls, fn = _sequence(err, err, "https://github.com/o/r/actions/runs/1")
+        with patch("vergil_tooling.lib.retry.random.random", return_value=0.5):
+            result = retry.retry_known_resource(
+                fn, resource="run 1", sleep=clock.sleep, clock=clock.monotonic
+            )
+            expected = [retry.compute_delay(0), retry.compute_delay(1)]
+        assert result == "https://github.com/o/r/actions/runs/1"
+        assert len(calls) == 3
+        # Reuses compute_delay's exponential backoff.
+        assert clock.sleeps == expected
+
+    def test_404_until_budget_exhausted_raises_clear_error(self) -> None:
+        clock = _FakeClock()
+        err = _api_error(stderr="HTTP 404: Not Found")
+        calls, fn = _sequence(*([err] * 50))
+        with (
+            patch("vergil_tooling.lib.retry.random.random", return_value=0.5),
+            pytest.raises(retry.KnownResourceNotFoundError) as excinfo,
+        ):
+            retry.retry_known_resource(
+                fn, resource="CD run 37784562892", sleep=clock.sleep, clock=clock.monotonic
+            )
+        message = str(excinfo.value)
+        assert "CD run 37784562892" in message
+        assert "still returns 404 after 60s" in message
+        assert "HTTP 404: Not Found" in message
+        assert excinfo.value.__cause__ is err
+        # Bounded by the time budget, not an attempt count: total sleep lands
+        # exactly on the deadline (the last sleep is clamped), with one final
+        # read at the deadline before giving up.
+        assert sum(clock.sleeps) == pytest.approx(retry.KNOWN_RESOURCE_BUDGET_SECS)
+        assert len(calls) == len(clock.sleeps) + 1
+
+    def test_exhausted_error_is_a_called_process_error(self) -> None:
+        clock = _FakeClock()
+        err = _api_error(returncode=4, stderr="HTTP 404", stdout="body")
+        _, fn = _sequence(*([err] * 50))
+        with pytest.raises(subprocess.CalledProcessError) as excinfo:
+            retry.retry_known_resource(
+                fn, resource="run 1", budget=5.0, sleep=clock.sleep, clock=clock.monotonic
+            )
+        assert excinfo.value.returncode == 4
+        assert excinfo.value.cmd == ["gh"]
+        assert excinfo.value.stderr == "HTTP 404"
+        assert excinfo.value.stdout == "body"
+        assert "after 5s" in str(excinfo.value)
+
+    def test_exhausted_error_without_output(self) -> None:
+        clock = _FakeClock()
+        err = subprocess.CalledProcessError(1, ["gh"], stderr="not found")
+        _, fn = _sequence(*([err] * 50))
+        with pytest.raises(retry.KnownResourceNotFoundError) as excinfo:
+            retry.retry_known_resource(
+                fn, resource="run 1", budget=1.0, sleep=clock.sleep, clock=clock.monotonic
+            )
+        assert str(excinfo.value).endswith("not found")
+
+    def test_non_404_error_is_not_retried(self) -> None:
+        clock = _FakeClock()
+        err = _api_error(stderr="HTTP 422 Unprocessable Entity")
+        calls, fn = _sequence(err, "never")
+        with pytest.raises(subprocess.CalledProcessError) as excinfo:
+            retry.retry_known_resource(
+                fn, resource="run 1", sleep=clock.sleep, clock=clock.monotonic
+            )
+        assert excinfo.value is err
+        assert len(calls) == 1
+        assert clock.sleeps == []
+
+    def test_defaults_use_real_time(self) -> None:
+        err = _api_error(stderr="HTTP 404")
+        calls, fn = _sequence(err, "ok")
+        with patch("vergil_tooling.lib.retry.time.sleep") as mock_sleep:
+            assert retry.retry_known_resource(fn, resource="run 1") == "ok"
+        assert len(calls) == 2
+        mock_sleep.assert_called_once()

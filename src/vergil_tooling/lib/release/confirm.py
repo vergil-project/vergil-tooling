@@ -1,4 +1,11 @@
-"""Phase 3/5: Verify CD workflow and publish artifacts."""
+"""Phase 3/5: Verify CD workflow and publish artifacts.
+
+Every read of the CD run (its URL, the watch, its jobs) and of the GitHub
+Release goes through :func:`retry.retry_known_resource`: the run ID was just
+returned by ``gh run list`` and the release was just published by the CD
+release job, so GitHub has established they exist and a 404 only means "not
+readable yet" (#3137).
+"""
 
 from __future__ import annotations
 
@@ -7,7 +14,7 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from vergil_tooling.lib import git, github, progress
+from vergil_tooling.lib import git, github, progress, retry
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.subprocess import watch_workflow
 
@@ -74,21 +81,28 @@ def _watch_cd(
     head_sha = git.read_output("rev-parse", f"origin/{branch}")
 
     run_id = _poll_for_run(ctx.repo, branch, head_sha)
+    resource = _run_resource(run_id)
 
-    run_url = github.read_output(
-        "run",
-        "view",
-        "--repo",
-        ctx.repo,
-        run_id,
-        "--json",
-        "url",
-        "--jq",
-        ".url",
+    run_url = retry.retry_known_resource(
+        lambda: github.read_output(
+            "run",
+            "view",
+            "--repo",
+            ctx.repo,
+            run_id,
+            "--json",
+            "url",
+            "--jq",
+            ".url",
+        ),
+        resource=resource,
     )
     print(f"  Workflow run: {run_url}")
 
-    watch_workflow(ctx.repo, run_id, check_status=False)
+    retry.retry_known_resource(
+        lambda: watch_workflow(ctx.repo, run_id, check_status=False),
+        resource=resource,
+    )
 
     print(f"  CD workflow completed: {run_url}")
     return run_id, run_url
@@ -123,9 +137,17 @@ def _poll_for_run(repo: str, branch: str, head_sha: str) -> str:
     )
 
 
+def _run_resource(run_id: str) -> str:
+    """Human label for the just-listed CD run, used in the 404-budget error."""
+    return f"CD run {run_id}"
+
+
 def _fetch_run_jobs(ctx: ReleaseContext, run_id: str) -> list[dict[str, Any]]:
     """Return the ``jobs`` array for *run_id* from the GitHub API."""
-    out = github.read_output("run", "view", "--repo", ctx.repo, run_id, "--json", "jobs")
+    out = retry.retry_known_resource(
+        lambda: github.read_output("run", "view", "--repo", ctx.repo, run_id, "--json", "jobs"),
+        resource=_run_resource(run_id),
+    )
     data = json.loads(out) if out.strip() else {}
     jobs: list[dict[str, Any]] = data.get("jobs", [])
     return jobs
@@ -259,16 +281,21 @@ def _verify_artifacts(ctx: ReleaseContext) -> None:
         )
     ctx.tag = tag
 
-    release_url = github.read_output(
-        "release",
-        "view",
-        "--repo",
-        ctx.repo,
-        tag,
-        "--json",
-        "url",
-        "--jq",
-        ".url",
+    # The release job that publishes this release just concluded success
+    # (_verify_release_job) and its tag is on origin, so it exists.
+    release_url = retry.retry_known_resource(
+        lambda: github.read_output(
+            "release",
+            "view",
+            "--repo",
+            ctx.repo,
+            tag,
+            "--json",
+            "url",
+            "--jq",
+            ".url",
+        ),
+        resource=f"GitHub Release {tag}",
     )
     ctx.release_url = release_url
     print(f"  GitHub Release: {release_url}")

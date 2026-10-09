@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.233] - 2026-10-09
+
+### Bug fixes
+
+- retry 404 on just-discovered GitHub resources (list-before-readable lag) (#3139)
+- make the package trust bootstrap idempotent (#3138) (#3140)
+
 ## [2.1.232] - 2026-10-08
 
 ### Bug fixes
