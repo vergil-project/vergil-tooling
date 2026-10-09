@@ -5,7 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [2.1.233] - 2026-10-09
+## [2.1.234] - 2026-10-09
+
+### Bug fixes
+
+- retry transient GitHub GraphQL 'Something went wrong' errors (#3152)
+- apply the fail-fast apt options to vrg-vm install and upgrade (#3154)
+- add Retries::Delay=false and DPkg::Lock::Timeout=60 to the fail-fast apt options (#3155)
+- retry transient GitHub errors in pr_checks and failed_check_names (#3156)
+- retry transient GitHub errors in the package-index collector's gh calls (#3157)
+
+### Documentation
+
+- document binary package publishing across tooling docs (#3145)
+
+### Features
+
+- generate packaging-capable ci.yml and cd.yml for [package] repos (#3146)
+
+## [2.1.233] - 2026-10-08
 
 ### Bug fixes
 
