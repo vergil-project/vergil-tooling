@@ -1262,6 +1262,8 @@
       
         
       
+        
+      
     
     
     
@@ -1314,6 +1316,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.234/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.234
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15151,6 +15181,28 @@ adding new public surface. Versions: <code>v1.3.0</code> → <code>v1.3.1</code>
      (e.g., <code>1.3.1</code> → <code>1.3.2</code>). Merge it.</li>
 <li>The Documentation workflow publishes the new release notes to
      the docs site under <code>releases/v1.3.1</code>.</li>
+<li><strong>Repos with <code>[package]</code></strong> (vergil-tooling is one) also publish
+     signed <code>.deb</code>/<code>.rpm</code> packages, all before the tag exists:
+     <code>cd-release</code> builds every package build cell, then a separate
+     <code>package-sign</code> job signs each <code>.rpm</code> and attests every artifact.
+     Any package failure stops the release before tagging. The signed
+     packages and <code>packages-manifest.json</code> are attached to the GitHub
+     Release.</li>
+<li>After tagging, <code>cd-release</code> dispatches <code>package-released</code> to the
+     org's <code>packages</code> repository. Its <code>publish-index</code> workflow verifies
+     every artifact's build attestation (signer workflow <code>cd-release.yml</code>,
+     source ref <code>refs/heads/main</code>) and every <code>.rpm</code> signature, then
+     rebuilds and signs the apt/dnf index. A failed dispatch does not fail
+     the release; the index's weekly reconcile picks the release up.</li>
+<li><code>vrg-release</code>'s <code>package-index</code> stage then polls the published
+     index (up to 20 minutes, every 30 seconds) until the new version is
+     visible, so the consumer refresh never races the index. A miss
+     (timeout or polling error) does not undo the release. It is recorded
+     as a deferred publish failure: the consumer-refresh stage holds (it
+     prints a warning not to advertise the version instead of the refresh
+     commands), the stage error tells you to re-run the <code>publish-index</code>
+     workflow in <code>&lt;org&gt;/packages</code>, and <code>vrg-release</code> exits 1. See the
+     <a href="../../reference/package-config/#cd">package config reference</a>.</li>
 <li>Run <code>vrg-finalize-pr</code> to clean up local state.</li>
 </ol>
 <h3 id="consumer-steps">Consumer steps<a class="headerlink" href="#consumer-steps" title="Permanent link">&para;</a></h3>
@@ -15176,6 +15228,10 @@ get the fix on the next normal action:</p>
 <tr>
 <td>Dev container image</td>
 <td>Already rebuilt by <code>repository_dispatch</code>; new pulls of <code>dev-base</code> etc. carry the patch within the rebuild window (minutes)</td>
+</tr>
+<tr>
+<td>Agent VM (Lima/cloud)</td>
+<td><code>vrg-vm update</code>: an apt upgrade of the packaged install within its pin, once the patch is in the package index. A <code>vX.Y</code> line pin picks the patch up; an exact <code>vX.Y.Z</code> pin stays put</td>
 </tr>
 </tbody>
 </table>
@@ -15226,6 +15282,10 @@ patches within a minor.</p>
 <tr>
 <td>Dev container image</td>
 <td>Wait for <code>vergil-containers</code> to land the <code>ARG</code> bump, then pull the rebuilt image</td>
+</tr>
+<tr>
+<td>Agent VM (Lima/cloud)</td>
+<td>Set the identity's <code>vergil</code> version (in <code>identities.toml</code>) to <code>v1.4</code>, then <code>vrg-vm rebuild</code>, which installs and records the new line. A plain <code>vrg-vm update</code> keeps upgrading within the line recorded at install time, and <code>vrg-vm update --tag v1.4</code> is a one-off override that is not remembered (see <a href="../../reference/vm-spec/#vergil-tooling-inside-the-vm">VM spec</a>)</td>
 </tr>
 </tbody>
 </table>

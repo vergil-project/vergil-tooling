@@ -1264,6 +1264,8 @@
       
         
       
+        
+      
     
     
     
@@ -1316,6 +1318,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.234/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.234
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15590,6 +15620,9 @@ dependencies differently. Put it under <code>overrides.deb.depends</code> and
 <li>an overlay that is not a YAML mapping or that sets a key outside the list
   above.</li>
 </ul>
+<p>Unrecognized keys are the exception: an unknown key in <code>[package]</code>,
+<code>[package.python]</code> or <code>[package.staged]</code> only prints an
+<code>unrecognized key</code> warning on stderr, and validation still passes.</p>
 <p><code>vrg-validate</code> checks the overlay's shape only, because nFPM is not in the dev
 container. nFPM's own config check runs at build time in CI.</p>
 <h2 id="ci-and-cd">CI and CD<a class="headerlink" href="#ci-and-cd" title="Permanent link">&para;</a></h2>

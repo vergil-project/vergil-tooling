@@ -1264,6 +1264,8 @@
       
         
       
+        
+      
     
     
     
@@ -1316,6 +1318,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.234/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.234
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15533,6 +15563,12 @@ for the measured evidence.</p>
 <li>Standards compliance</li>
 <li>Dependency audit</li>
 <li>Release gates (version divergence, format validation)</li>
+<li>Binary package build and install-test (<code>ci-package.yml</code>, only in repos
+  whose <code>vergil.toml</code> has <code>[package]</code>). Feature PRs run the <strong>reduced</strong>
+  tier: every build cell, but one install-test cell per format (the oldest
+  selected release, amd64 first). Release PRs (<code>release/*</code> into <code>main</code>)
+  and non-PR events run the <strong>full</strong> matrix. See
+  <a href="../../reference/package-config/#tiers-full-and-reduced">Tiers: full and reduced</a>.</li>
 </ul>
 <p>The workflow file is <code>.github/workflows/ci.yml</code>, which runs directly on
 <code>pull_request</code> and is also exposed as a reusable workflow via
@@ -15721,6 +15757,22 @@ publisher reads:</p>
 language) gets <strong>no <code>secrets:</code> block at all</strong>, not <code>secrets: inherit</code>.
 References to our own <code>vergil-actions@v2.1</code> reusable workflows are
 unaffected — they are trusted first-party refs.</p>
+<p><strong>Exception: repos with <code>[package]</code>.</strong> A repo whose <code>vergil.toml</code> has a
+<code>[package]</code> section MUST call <code>cd-release</code> with <code>secrets: inherit</code>,
+suppressed inline:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="w">    </span><span class="nt">secrets</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">inherit</span><span class="w">  </span><span class="c1"># nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit</span>
+</code></pre></div>
+<p>Its <code>package-sign</code> job reads <code>PACKAGE_SIGNING_KEY</code> and
+<code>PACKAGE_SIGNING_PASSPHRASE</code> from the caller's <code>package-signing</code>
+environment. Environment secrets reach a job in a cross-repo reusable
+workflow only through <code>inherit</code>: an explicit secrets map leaves
+<code>package-sign</code> with an empty key (proven by the probe in
+<a href="https://github.com/vergil-project/packages/issues/6">vergil-project/packages#6</a>).
+The callee is first-party, so the blanket form is an accepted, reviewed
+exception. <code>vrg-repo-init</code> generates this caller for <code>[package]</code> repos
+(<a href="https://github.com/vergil-project/vergil-tooling/issues/3144">vergil-project/vergil-tooling#3144</a>).
+See the <a href="../../reference/package-config/#cd">CD section of the package config reference</a>
+for the full caller.</p>
 <h3 id="dynamic-matrix-from-vergiltoml">Dynamic matrix from <code>vergil.toml</code><a class="headerlink" href="#dynamic-matrix-from-vergiltoml" title="Permanent link">&para;</a></h3>
 <p>The matrix is <strong>not</strong> embedded in the workflow or passed as an input. Each
 matrixed reusable workflow (<code>ci-audit</code>, <code>ci-quality</code>, <code>ci-test</code>) reads
@@ -15752,7 +15804,7 @@ with a single call to <code>ci-security.yml</code>.</p>
 <li>Replace <code>security: *</code> with <code>security-and-standards / security: *</code></li>
 </ul>
 <p>Use the GitHub API to update rulesets:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>gh<span class="w"> </span>api<span class="w"> </span>repos/OWNER/REPO/rulesets/RULESET_ID<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>--input<span class="w"> </span>gates.json
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>gh<span class="w"> </span>api<span class="w"> </span>repos/OWNER/REPO/rulesets/RULESET_ID<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>--input<span class="w"> </span>gates.json
 </code></pre></div>
 <h3 id="step-5-update-claudemd">Step 5: Update CLAUDE.md<a class="headerlink" href="#step-5-update-claudemd" title="Permanent link">&para;</a></h3>
 <p>Add the two-tier CI model and Docker-first testing sections to the
@@ -15844,11 +15896,11 @@ image families (<code>dev-cpp-clang</code> / <code>dev-cpp-gcc</code>, and match
 images) so TYPECHECK and TEST run per compiler and per version. The
 family rides the <code>[ci].versions</code> tag prefix (<code>clang-20</code>, <code>gcc-14</code>).</p>
 <h3 id="building-locally">Building locally<a class="headerlink" href="#building-locally" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nb">cd</span><span class="w"> </span>../vergil-containers
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>docker/build.sh
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nb">cd</span><span class="w"> </span>../vergil-containers
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>docker/build.sh
 </code></pre></div>
 <p>This builds all images. Individual images can be built with:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>docker<span class="w"> </span>build<span class="w"> </span>--build-arg<span class="w"> </span><span class="nv">RUBY_VERSION</span><span class="o">=</span><span class="m">3</span>.4<span class="w"> </span>-t<span class="w"> </span>dev-ruby:3.4<span class="w"> </span>docker/ruby/
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>docker<span class="w"> </span>build<span class="w"> </span>--build-arg<span class="w"> </span><span class="nv">RUBY_VERSION</span><span class="o">=</span><span class="m">3</span>.4<span class="w"> </span>-t<span class="w"> </span>dev-ruby:3.4<span class="w"> </span>docker/ruby/
 </code></pre></div>
 <h3 id="publishing">Publishing<a class="headerlink" href="#publishing" title="Permanent link">&para;</a></h3>
 <p>Images are published automatically on push to <code>develop</code> or <code>main</code> in
@@ -15868,8 +15920,8 @@ treated as a property of the <strong>language</strong>, not the repo, which is w
 image cache sound. A repo that genuinely needs a Debian binary its language image
 does not carry (for example a repo whose render/e2e tests shell out to LilyPond)
 declares it once in <code>vergil.toml</code>, <strong>without</strong> touching the shared base image:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="k">[container]</span>
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="n">system-packages</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"lilypond"</span><span class="p">]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="k">[container]</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="n">system-packages</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"lilypond"</span><span class="p">]</span>
 </code></pre></div>
 <p>The full key reference — trust model, the names-only surface, cache-key
 behaviour, and the fail-closed error — lives in
@@ -15896,9 +15948,9 @@ Two things matter for the CI/container model here:</p>
 <p>For a dependency that is <strong>not</strong> an apt package — a JS library a test driver
 consumes at runtime, say — a repo declares a <code>build-command</code> (with optional
 <code>build-cache-files</code>) instead of <code>system-packages</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="k">[container]</span>
-<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="n">build-command</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"npm install -g @coderline/alphatab"</span>
-<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="n">build-cache-files</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"package-lock.json"</span><span class="p">]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="k">[container]</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="n">build-command</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"npm install -g @coderline/alphatab"</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="n">build-cache-files</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"package-lock.json"</span><span class="p">]</span>
 </code></pre></div>
 <p>The full key reference — the out-of-workspace contract, the <code>NODE_PATH</code> handling
 for baked npm libraries, the trust model, and the cache-key behaviour — lives in

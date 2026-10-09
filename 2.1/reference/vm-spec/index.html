@@ -1264,6 +1264,8 @@
       
         
       
+        
+      
     
     
     
@@ -1316,6 +1318,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.234/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.234
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15419,6 +15449,17 @@ remembered.</p>
   the org signing key and checks its fingerprint against the one
   pinned in vergil-tooling. It then installs <code>vergil-archive-keyring</code>,
   which owns the key and the source entry from then on.</li>
+<li>Every apt call <code>vrg-vm</code> makes, both the repository setup and the
+  <code>apt-get update</code> and <code>apt-get install</code> of <code>vergil-tooling</code>, runs
+  with <code>Acquire::Retries=3</code> and 20-second
+  <code>Acquire::http::Timeout</code>/<code>Acquire::https::Timeout</code>, so a dead mirror
+  connection fails or retries in seconds rather than hanging. It also
+  sets <code>Acquire::Retries::Delay=false</code>, because apt 2.4–2.8 can
+  deadlock on mirror failover when retries are delayed
+  (<a href="https://bugs.launchpad.net/ubuntu/+source/apt/+bug/2003851">Launchpad #2003851</a>),
+  and <code>DPkg::Lock::Timeout=60</code>, so a dpkg lock held by
+  <code>unattended-upgrades</code> or <code>apt-daily</code> on a freshly booted VM is waited
+  out for up to 60 seconds instead of failing provisioning at once.</li>
 <li>The VM's Ubuntu codename must be a published suite (<code>noble</code> or
   <code>resolute</code>). Any other codename fails provisioning.</li>
 <li>If the repository has no package matching the version, for example
