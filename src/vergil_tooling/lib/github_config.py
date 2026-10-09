@@ -1026,47 +1026,49 @@ def fetch_actual_state(repo: str) -> FetchResult:
         patterns_allowed=sorted(patterns),
     )
 
-    raw_rulesets = github.read_json("api", f"repos/{repo}/rulesets")
+    # Paginated (issue #3162): a repo with more than one page of rulesets
+    # must not lose the tail. A malformed page raises ValueError instead of
+    # reading as 'no rulesets' (which would report drift or re-POST them).
+    raw_rulesets = github.read_json_paginated(f"repos/{repo}/rulesets")
     rulesets: list[DesiredRuleset] = []
-    if isinstance(raw_rulesets, list):
-        for raw_rs in raw_rulesets:
-            if not isinstance(raw_rs, dict):
-                continue
-            rs_summary = cast("dict[str, object]", raw_rs)
-            rs_id = rs_summary.get("id")
-            if rs_id is None:
-                continue
-            rs_detail = github.read_json("api", f"repos/{repo}/rulesets/{rs_id}")
-            if not isinstance(rs_detail, dict):
-                continue
-            cond_raw = rs_detail.get("conditions")
-            conditions: dict[str, object] = (
-                cast("dict[str, object]", cond_raw) if isinstance(cond_raw, dict) else {}
-            )
-            rn_raw = conditions.get("ref_name")
-            ref_name: dict[str, object] = (
-                cast("dict[str, object]", rn_raw) if isinstance(rn_raw, dict) else {}
-            )
-            include = ref_name.get("include")
-            include = include if isinstance(include, list) else []
+    for raw_rs in raw_rulesets:
+        if not isinstance(raw_rs, dict):
+            continue
+        rs_summary = cast("dict[str, object]", raw_rs)
+        rs_id = rs_summary.get("id")
+        if rs_id is None:
+            continue
+        rs_detail = github.read_json("api", f"repos/{repo}/rulesets/{rs_id}")
+        if not isinstance(rs_detail, dict):
+            continue
+        cond_raw = rs_detail.get("conditions")
+        conditions: dict[str, object] = (
+            cast("dict[str, object]", cond_raw) if isinstance(cond_raw, dict) else {}
+        )
+        rn_raw = conditions.get("ref_name")
+        ref_name: dict[str, object] = (
+            cast("dict[str, object]", rn_raw) if isinstance(rn_raw, dict) else {}
+        )
+        include = ref_name.get("include")
+        include = include if isinstance(include, list) else []
 
-            bypass_raw = rs_detail.get("bypass_actors")
-            bypass: list[dict[str, object]] = (
-                cast("list[dict[str, object]]", bypass_raw) if isinstance(bypass_raw, list) else []
-            )
-            rules_raw = rs_detail.get("rules")
-            rules = _normalize_rules(rules_raw if isinstance(rules_raw, list) else [])
+        bypass_raw = rs_detail.get("bypass_actors")
+        bypass: list[dict[str, object]] = (
+            cast("list[dict[str, object]]", bypass_raw) if isinstance(bypass_raw, list) else []
+        )
+        rules_raw = rs_detail.get("rules")
+        rules = _normalize_rules(rules_raw if isinstance(rules_raw, list) else [])
 
-            rulesets.append(
-                DesiredRuleset(
-                    name=str(rs_detail.get("name", "")),
-                    target=str(rs_detail.get("target", "")),
-                    enforcement=str(rs_detail.get("enforcement", "")),
-                    ref_include=[str(r) for r in include],
-                    bypass_actors=bypass,
-                    rules=rules,
-                )
+        rulesets.append(
+            DesiredRuleset(
+                name=str(rs_detail.get("name", "")),
+                target=str(rs_detail.get("target", "")),
+                enforcement=str(rs_detail.get("enforcement", "")),
+                ref_include=[str(r) for r in include],
+                bypass_actors=bypass,
+                rules=rules,
             )
+        )
 
     # Fold any stale version-suffixed CI legs still enforced via classic branch
     # protection into the actual state so the audit flags them as drift (#338).
@@ -1447,16 +1449,18 @@ def _ruleset_body(ruleset: DesiredRuleset) -> dict[str, object]:
 
 
 def _apply_rulesets(repo: str, desired: list[DesiredRuleset]) -> None:
-    raw_rulesets = github.read_json("api", f"repos/{repo}/rulesets")
+    # Paginated (issue #3162): a repo with more than one page of rulesets
+    # must not lose the tail. A malformed page raises ValueError instead of
+    # reading as 'no rulesets' (which would report drift or re-POST them).
+    raw_rulesets = github.read_json_paginated(f"repos/{repo}/rulesets")
     existing: dict[str, int] = {}
-    if isinstance(raw_rulesets, list):
-        for raw_rs in raw_rulesets:
-            if isinstance(raw_rs, dict):
-                rs = cast("dict[str, object]", raw_rs)
-                name = rs.get("name")
-                rs_id = rs.get("id")
-                if isinstance(name, str) and isinstance(rs_id, int):
-                    existing[name] = rs_id
+    for raw_rs in raw_rulesets:
+        if isinstance(raw_rs, dict):
+            rs = cast("dict[str, object]", raw_rs)
+            name = rs.get("name")
+            rs_id = rs.get("id")
+            if isinstance(name, str) and isinstance(rs_id, int):
+                existing[name] = rs_id
 
     desired_names = {r.name for r in desired}
 

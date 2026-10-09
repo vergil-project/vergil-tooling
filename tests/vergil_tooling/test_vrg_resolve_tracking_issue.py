@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from typing import TYPE_CHECKING
 from unittest.mock import patch
@@ -128,10 +129,8 @@ def test_api_fallback_when_no_pattern_matches(capsys: pytest.CaptureFixture[str]
     with (
         patch(f"{_MOD}.git.read_output", side_effect=["chore: bump version", "abc123sha"]),
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
-        patch(
-            f"{_MOD}.github.read_json",
-            side_effect=[api_response, _PR_BODY_WITH_REF],
-        ),
+        patch(f"{_MOD}.github.read_json_paginated", return_value=api_response),
+        patch(f"{_MOD}.github.read_json", return_value=_PR_BODY_WITH_REF),
     ):
         result = main([])
     assert result == 0
@@ -146,10 +145,8 @@ def test_api_fallback_prefers_merged_pr(capsys: pytest.CaptureFixture[str]) -> N
     with (
         patch(f"{_MOD}.git.read_output", side_effect=["chore: bump version", "abc123sha"]),
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
-        patch(
-            f"{_MOD}.github.read_json",
-            side_effect=[api_response, _PR_BODY_WITH_REF],
-        ),
+        patch(f"{_MOD}.github.read_json_paginated", return_value=api_response),
+        patch(f"{_MOD}.github.read_json", return_value=_PR_BODY_WITH_REF),
     ):
         result = main([])
     assert result == 0
@@ -161,10 +158,8 @@ def test_api_fallback_uses_first_pr_if_none_merged(capsys: pytest.CaptureFixture
     with (
         patch(f"{_MOD}.git.read_output", side_effect=["chore: bump version", "abc123sha"]),
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
-        patch(
-            f"{_MOD}.github.read_json",
-            side_effect=[api_response, _PR_BODY_WITH_REF],
-        ),
+        patch(f"{_MOD}.github.read_json_paginated", return_value=api_response),
+        patch(f"{_MOD}.github.read_json", return_value=_PR_BODY_WITH_REF),
     ):
         result = main([])
     assert result == 0
@@ -177,7 +172,7 @@ def test_api_fallback_empty_list_reports_all_strategies(
     with (
         patch(f"{_MOD}.git.read_output", side_effect=["chore: bump version", "abc123sha"]),
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
-        patch(f"{_MOD}.github.read_json", return_value=[]),
+        patch(f"{_MOD}.github.read_json_paginated", return_value=[]),
     ):
         result = main([])
     assert result == 1
@@ -188,15 +183,41 @@ def test_api_fallback_empty_list_reports_all_strategies(
     assert "--pr N" in err
 
 
-def test_api_fallback_non_list_response(capsys: pytest.CaptureFixture[str]) -> None:
+def test_api_fallback_malformed_response_fails_loudly(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A page that is not a list is reported, never read as 'no PR' (issue #3162)."""
     with (
         patch(f"{_MOD}.git.read_output", side_effect=["chore: bump version", "abc123sha"]),
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
-        patch(f"{_MOD}.github.read_json", return_value={"message": "not a list"}),
+        patch(f"{_MOD}.github.read_output", return_value='{"message": "not a list"}'),
     ):
         result = main([])
-    assert result == 1
-    assert "cannot determine PR" in capsys.readouterr().err
+    assert result == 2
+    err = capsys.readouterr().err
+    assert "malformed GitHub API response for commit HEAD" in err
+    assert "not a list" in err
+
+
+def test_api_fallback_reads_every_page(capsys: pytest.CaptureFixture[str]) -> None:
+    """Issue #3162: the merged PR on page 2 of ``/commits/{sha}/pulls`` is found."""
+    page1 = [{"number": n, "merged_at": None} for n in range(1, 31)]
+    page2 = [{"number": 42, "merged_at": "2026-01-01T00:00:00Z"}]
+    with (
+        patch(f"{_MOD}.git.read_output", side_effect=["chore: bump version", "abc123sha"]),
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(
+            f"{_MOD}.github.read_output", return_value=json.dumps(page1) + json.dumps(page2)
+        ) as mock_gh,
+        patch(f"{_MOD}.github.read_json", return_value=_PR_BODY_WITH_REF) as mock_json,
+    ):
+        result = main([])
+    assert result == 0
+    assert capsys.readouterr().out.strip() == "100"
+    mock_gh.assert_called_once_with(
+        "api", "--paginate", "repos/org/repo/commits/abc123sha/pulls?per_page=100"
+    )
+    mock_json.assert_called_once_with("api", "repos/org/repo/pulls/42")
 
 
 def test_api_fallback_non_int_number(capsys: pytest.CaptureFixture[str]) -> None:
@@ -204,7 +225,7 @@ def test_api_fallback_non_int_number(capsys: pytest.CaptureFixture[str]) -> None
     with (
         patch(f"{_MOD}.git.read_output", side_effect=["chore: bump version", "abc123sha"]),
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
-        patch(f"{_MOD}.github.read_json", return_value=api_response),
+        patch(f"{_MOD}.github.read_json_paginated", return_value=api_response),
     ):
         result = main([])
     assert result == 1

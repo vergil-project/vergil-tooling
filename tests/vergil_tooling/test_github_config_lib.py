@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import contextlib
+import json
 import re
 import subprocess
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from unittest.mock import patch
 
 import pytest
 
+from vergil_tooling.lib import github_config
 from vergil_tooling.lib.config import (
     DEFAULT_VALIDATION_COMMAND,
     CiConfig,
@@ -59,6 +62,52 @@ from vergil_tooling.lib.github_config import (
     unproducible_ci_yaml_contexts,
     unproducible_required_contexts,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
+
+
+def _paginated_via_read_json(endpoint: str, key: str | None = None) -> list[object]:
+    """Route ``read_json_paginated`` through the test's ``read_json`` mock.
+
+    The rulesets listing is paginated (issue #3162), but most tests here model
+    the whole GitHub API as one ``read_json`` endpoint→payload mock. This shim
+    resolves the listing through that mock (looked up at call time, so each
+    test's patch applies) and keeps the helper's contract: a non-list page
+    raises ``ValueError``. Pagination itself is exercised end to end by
+    ``test_*_rulesets_reads_every_page``.
+    """
+    assert key is None
+    page = github_config.github.read_json("api", endpoint)
+    if not isinstance(page, list):
+        msg = f"paginated response from {endpoint!r} is not a list: {type(page).__name__}"
+        raise ValueError(msg)
+    return page
+
+
+_REAL_READ_JSON_PAGINATED = github_config.github.read_json_paginated
+
+
+@pytest.fixture(autouse=True)
+def _route_paginated_rulesets() -> Iterator[None]:
+    with patch(
+        "vergil_tooling.lib.github_config.github.read_json_paginated",
+        side_effect=_paginated_via_read_json,
+    ):
+        yield
+
+
+@contextlib.contextmanager
+def _real_pagination(fake_read_output: Callable[..., str]) -> Iterator[None]:
+    """Undo the autouse shim: run the real helper over a faked ``gh api`` stream."""
+    with (
+        patch(
+            "vergil_tooling.lib.github_config.github.read_json_paginated",
+            side_effect=_REAL_READ_JSON_PAGINATED,
+        ),
+        patch("vergil_tooling.lib.github.read_output", side_effect=fake_read_output),
+    ):
+        yield
 
 
 def test_desired_repo_settings_are_fixed() -> None:
@@ -1092,7 +1141,7 @@ def test_fetch_actual_state_missing_security_and_analysis() -> None:
 
 
 def test_fetch_actual_state_rulesets_edge_cases() -> None:
-    """Cover branches: non-dict summary, missing id, non-dict detail, non-list rulesets."""
+    """Cover branches: non-dict summary, missing id, non-dict detail."""
     repo_json: dict[str, object] = {
         "default_branch": "develop",
         "security_and_analysis": {},
@@ -1140,7 +1189,7 @@ def test_fetch_actual_state_rulesets_edge_cases() -> None:
 
 
 def test_fetch_actual_state_rulesets_not_a_list() -> None:
-    """Cover branch where raw_rulesets is a dict (not a list)."""
+    """A non-list rulesets listing raises rather than reading as no rulesets (#3162)."""
     repo_json: dict[str, object] = {
         "default_branch": "develop",
         "security_and_analysis": {},
@@ -1170,11 +1219,65 @@ def test_fetch_actual_state_rulesets_not_a_list() -> None:
             "vergil_tooling.lib.github_config._fetch_vulnerability_alerts",
             return_value=False,
         ),
+        pytest.raises(ValueError, match="not a list"),
+    ):
+        fetch_actual_state("o/r")
+
+
+def test_fetch_actual_state_rulesets_reads_every_page() -> None:
+    """Issue #3162: a ruleset listed on page 2 is still fetched and reported."""
+    page1: list[object] = [{"id": n} for n in range(1, 31)]
+    page2: list[object] = [{"id": 99}]
+    repo_json: dict[str, object] = {"default_branch": "develop", "security_and_analysis": {}}
+
+    def mock_read_json(*args: str) -> dict[str, object] | list[object]:
+        endpoint = args[1]
+        if endpoint == "repos/o/r":
+            return repo_json
+        if endpoint == "repos/o/r/rulesets/99":
+            return {"name": "Late", "target": "branch", "enforcement": "active"}
+        if endpoint.startswith("repos/o/r/branches/"):
+            raise GitHubAPIError(1, ("gh", "api", endpoint), "", "gh: (HTTP 404)")
+        return {}
+
+    def fake_read_output(*args: str, **_: object) -> str:
+        assert args == ("api", "--paginate", "repos/o/r/rulesets?per_page=100")
+        return json.dumps(page1) + json.dumps(page2)
+
+    with (
+        _real_pagination(fake_read_output),
+        patch("vergil_tooling.lib.github_config.github.read_json", side_effect=mock_read_json),
+        patch(
+            "vergil_tooling.lib.github_config._fetch_vulnerability_alerts",
+            return_value=False,
+        ),
     ):
         result = fetch_actual_state("o/r")
-    actual = result.state
 
-    assert actual.rulesets == []
+    names = [r.name for r in result.state.rulesets]
+    assert len(names) == 31
+    assert names[-1] == "Late"
+
+
+def test_apply_rulesets_reads_every_page() -> None:
+    """Issue #3162: a ruleset on page 2 is updated in place, not re-POSTed."""
+    page1: list[object] = [{"name": f"Other {n}", "id": n} for n in range(1, 31)]
+    page2: list[object] = [{"name": "Branch protection", "id": 42}]
+
+    def fake_read_output(*args: str, **_: object) -> str:
+        assert args == ("api", "--paginate", "repos/o/r/rulesets?per_page=100")
+        return json.dumps(page1) + json.dumps(page2)
+
+    with (
+        _real_pagination(fake_read_output),
+        patch("vergil_tooling.lib.github_config.github.write_json") as mock_write,
+        patch("vergil_tooling.lib.github_config.github.delete") as mock_del,
+    ):
+        _apply_rulesets("o/r", [desired_branch_protection_ruleset()])
+
+    mock_write.assert_called_once()
+    assert mock_write.call_args[0][:2] == ("PUT", "repos/o/r/rulesets/42")
+    assert mock_del.call_count == 30
 
 
 def test_fetch_actual_state_selected_actions_non_dict_response() -> None:
@@ -1827,7 +1930,8 @@ def test_apply_rulesets_skips_invalid_entries() -> None:
     assert mock_write.call_args[0][1] == "repos/o/r/rulesets/7"
 
 
-def test_apply_rulesets_non_list_response_creates_all() -> None:
+def test_apply_rulesets_non_list_response_raises_without_writing() -> None:
+    """A malformed listing aborts; it used to read as empty and re-POST every ruleset."""
     ruleset = desired_branch_protection_ruleset()
     with (
         patch(
@@ -1836,10 +1940,10 @@ def test_apply_rulesets_non_list_response_creates_all() -> None:
         ),
         patch("vergil_tooling.lib.github_config.github.write_json") as mock_write,
         patch("vergil_tooling.lib.github_config.github.delete") as mock_del,
+        pytest.raises(ValueError, match="not a list"),
     ):
         _apply_rulesets("o/r", [ruleset])
-    mock_write.assert_called_once()
-    assert mock_write.call_args[0][0] == "POST"
+    mock_write.assert_not_called()
     mock_del.assert_not_called()
 
 
