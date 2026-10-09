@@ -11727,6 +11727,28 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#vrg-package" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-package
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vrg-sarif-filter" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-sarif-filter
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -15404,6 +15426,28 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#vrg-package" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-package
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vrg-sarif-filter" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-sarif-filter
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -16455,6 +16499,106 @@ placeholder values.</p>
 <tr>
 <td>Exit codes</td>
 <td>0 valid, 1 invalid, 2 file not found</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-package">vrg-package<a class="headerlink" href="#vrg-package" title="Permanent link">&para;</a></h3>
+<p>Build, install-test and index binary OS packages (<code>.deb</code>/<code>.rpm</code>) from
+the <code>[package]</code> section of <code>vergil.toml</code> in the current directory. Run
+by the <code>ci-package</code>, <code>cd-release</code> and <code>publish-index</code> reusable
+workflows; <code>matrix</code> is also useful locally. See the
+<a href="../package-config/">package config reference</a>.</p>
+<ul>
+<li><code>matrix</code> — resolve <code>[package]</code> into build and test cells and print
+  them as JSON (read-only). <code>--tier {full,reduced}</code> (default <code>full</code>),
+  <code>--github-output</code> (append <code>enabled</code>/<code>build</code>/<code>test</code>/<code>tier</code> to
+  <code>$GITHUB_OUTPUT</code>), <code>--manifest PATH</code> (also write the release artifact
+  manifest). A repo without <code>[package]</code> reports <code>enabled: false</code>.</li>
+<li><code>build</code> — build every format of one build cell: <code>--cell</code> (required),
+  <code>--version</code> (required), <code>--out</code> (default <code>dist/packages</code>),
+  <code>--staging</code> (default <code>.vergil/package-staging</code>, wiped first). Needs
+  <code>nfpm</code> on <code>PATH</code>.</li>
+<li><code>install-test</code> — in a clean container, install one test cell's
+  artifact, verify shipped systemd units, run the smoke command and
+  shim checks under a sanitized environment, remove the package and
+  check for residue: <code>--cell</code>, <code>--artifacts DIR</code>, <code>--report PATH</code> (all
+  required).</li>
+<li><code>index</code> — build the signed apt/dnf repository site: <code>--config</code>
+  (<code>packages.toml</code>), <code>--keys DIR</code>, <code>--out DIR</code> (all required), <code>--work</code>
+  (default <code>.vergil/index-work</code>), <code>--base-url</code>. Needs
+  <code>PACKAGE_SIGNING_KEY</code> and <code>PACKAGE_SIGNING_PASSPHRASE</code>.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_package</code></td>
+</tr>
+<tr>
+<td>Args</td>
+<td>Subcommand (<code>matrix</code>, <code>build</code>, <code>install-test</code>, <code>index</code>) with the flags above</td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td><code>vergil.toml</code> in the current directory (<code>index</code>: a <code>packages.toml</code>)</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td><code>ERROR:</code> diagnostic on stderr for config, package, or missing-file errors</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 success, 1 error</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-sarif-filter">vrg-sarif-filter<a class="headerlink" href="#vrg-sarif-filter" title="Permanent link">&para;</a></h3>
+<p>Write a copy of a SARIF file with every accepted-suppressed result
+removed. The CI security composites upload the filtered copy to GitHub
+code scanning, while the CI-evidence bundle keeps the unfiltered
+original. See
+<a href="../../guides/ci-architecture/#suppressing-a-reviewed-finding-in-source">Suppressing a reviewed finding in source</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_sarif_filter</code></td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>INPUT</code> <code>OUTPUT</code> (positional; may be the same path)</td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td><code>INPUT</code> is a readable SARIF file</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td>Error on stderr when the input cannot be read or the output cannot be written</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 success, 1 error</td>
 </tr>
 <tr>
 <td>Status</td>

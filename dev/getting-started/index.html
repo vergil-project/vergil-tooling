@@ -14974,6 +14974,12 @@ which <code>uv</code>'s installer already puts on <code>PATH</code>.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>which<span class="w"> </span>vrg-container-run<span class="w">    </span><span class="c1"># should resolve to ~/.local/bin/vrg-container-run</span>
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>vrg-container-run<span class="w"> </span>--help<span class="w">   </span><span class="c1"># should print usage</span>
 </code></pre></div>
+<p>On Linux, vergil-tooling is also published as a signed <code>.deb</code>/<code>.rpm</code>
+package (this is how Lima and cloud agent VMs get it). Follow the
+<a href="https://github.com/vergil-project/packages#readme"><code>vergil-project/packages</code> README</a>
+to set up the apt or dnf repository. Check the downloaded signing key
+against the pinned primary fingerprint
+<code>B3A1D804DC03AB036566A4E367861822166ECABE</code>.</p>
 <h2 id="2-configure-the-claude-code-hook-guard">2. Configure the Claude Code hook guard<a class="headerlink" href="#2-configure-the-claude-code-hook-guard" title="Permanent link">&para;</a></h2>
 <p>Every managed repo ships a <code>.claude/hooks/guard.sh</code> shim that blocks
 raw <code>git</code> and <code>gh</code> commands in agent sessions. The shim is wired via
