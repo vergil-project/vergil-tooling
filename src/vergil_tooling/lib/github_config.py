@@ -10,7 +10,6 @@ from __future__ import annotations
 import copy
 import json
 import re
-import subprocess
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast
 
@@ -686,14 +685,24 @@ def compute_desired_state(
 
 
 def _fetch_vulnerability_alerts(repo: str) -> bool:
-    """Check if vulnerability alerts are enabled (204 = enabled, 404 = disabled)."""
-    result = subprocess.run(  # noqa: S603
-        ("gh", "api", f"repos/{repo}/vulnerability-alerts", "-i"),  # noqa: S607
-        capture_output=True,
-        text=True,
-        check=False,
+    """Check if vulnerability alerts are enabled (204 = enabled, 404 = disabled).
+
+    Transient GitHub errors are retried; any other status raises instead of
+    silently reading as "disabled" (#3151).
+    """
+    cmd = ("gh", "api", f"repos/{repo}/vulnerability-alerts", "-i")
+    result = github.run_tolerating(cmd, is_answer=github.is_http_404)
+    status = github.http_status_line(result)
+    if "204" in status:
+        return True
+    if "404" in status:
+        return False
+    raise github.GitHubAPIError(
+        result.returncode or 1,
+        cmd,
+        result.stdout,
+        f"unexpected vulnerability-alerts status: {status!r}",
     )
-    return "204" in result.stdout.split("\n")[0]
 
 
 # API-default fields GitHub injects into rule parameters that the desired state

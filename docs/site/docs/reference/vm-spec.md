@@ -323,6 +323,17 @@ remembered.
   the org signing key and checks its fingerprint against the one
   pinned in vergil-tooling. It then installs `vergil-archive-keyring`,
   which owns the key and the source entry from then on.
+- Every apt call `vrg-vm` makes, both the repository setup and the
+  `apt-get update` and `apt-get install` of `vergil-tooling`, runs
+  with `Acquire::Retries=3` and 20-second
+  `Acquire::http::Timeout`/`Acquire::https::Timeout`, so a dead mirror
+  connection fails or retries in seconds rather than hanging. It also
+  sets `Acquire::Retries::Delay=false`, because apt 2.4–2.8 can
+  deadlock on mirror failover when retries are delayed
+  ([Launchpad #2003851](https://bugs.launchpad.net/ubuntu/+source/apt/+bug/2003851)),
+  and `DPkg::Lock::Timeout=60`, so a dpkg lock held by
+  `unattended-upgrades` or `apt-daily` on a freshly booted VM is waited
+  out for up to 60 seconds instead of failing provisioning at once.
 - The VM's Ubuntu codename must be a published suite (`noble` or
   `resolute`). Any other codename fails provisioning.
 - If the repository has no package matching the version, for example

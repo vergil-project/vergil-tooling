@@ -36,6 +36,8 @@ Run inside dev containers launched by `vrg-container-run`.
 | ---- | ------- |
 | [vrg-validate](cli-tools-overview.md#vrg-validate) | Unified validation driver (common + language-specific checks) |
 | [vrg-repo-profile](lint/repo-profile.md) | Repository profile attribute validation |
+| [vrg-package](cli-tools-overview.md#vrg-package) | Build, install-test and index binary OS packages from `[package]` |
+| [vrg-sarif-filter](cli-tools-overview.md#vrg-sarif-filter) | Drop accepted-suppressed results from a SARIF file before upload |
 | [Markdown validation](lint/markdown-standards.md) | Markdownlint with bundled canonical config |
 
 ## Git Hooks

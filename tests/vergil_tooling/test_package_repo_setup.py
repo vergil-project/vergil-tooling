@@ -32,7 +32,11 @@ _ORG = OrgRepo(
 _TMP = "/guest/scratch.AbC123"  # what the fake ``mktemp -d`` answers
 
 
-_FAST = "-o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20"
+_FAST = (
+    "-o Acquire::Retries=3 -o Acquire::Retries::Delay=false"
+    " -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20"
+    " -o DPkg::Lock::Timeout=60"
+)
 _SCOPE = (
     "-o Dir::Etc::sourcelist=/etc/apt/sources.list.d/vergil-bootstrap.sources"
     " -o Dir::Etc::sourceparts=-"
@@ -158,9 +162,13 @@ def test_apt_get_carries_fail_fast_options() -> None:
         "-o",
         "Acquire::Retries=3",
         "-o",
+        "Acquire::Retries::Delay=false",
+        "-o",
         "Acquire::http::Timeout=20",
         "-o",
         "Acquire::https::Timeout=20",
+        "-o",
+        "DPkg::Lock::Timeout=60",
         "install",
         "-y",
         "x",
@@ -173,9 +181,13 @@ def test_scoped_update_refreshes_only_the_given_source() -> None:
         "-o",
         "Acquire::Retries=3",
         "-o",
+        "Acquire::Retries::Delay=false",
+        "-o",
         "Acquire::http::Timeout=20",
         "-o",
         "Acquire::https::Timeout=20",
+        "-o",
+        "DPkg::Lock::Timeout=60",
         "-o",
         "Dir::Etc::sourcelist=/etc/apt/sources.list.d/x.sources",
         "-o",

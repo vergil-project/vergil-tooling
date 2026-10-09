@@ -1394,20 +1394,81 @@ def test_fetch_actual_state_defaults_visibility_to_private() -> None:
     assert result.visibility == "private"
 
 
+@pytest.fixture
+def _ambient_gh_auth(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("vergil_tooling.lib.github._gh_env", lambda: None)
+
+
+@pytest.mark.usefixtures("_ambient_gh_auth")
 def test_fetch_vulnerability_alerts_enabled() -> None:
     cp = subprocess.CompletedProcess(
         args=[], returncode=0, stdout="HTTP/2.0 204 No Content\n", stderr=""
     )
-    with patch("vergil_tooling.lib.github_config.subprocess.run", return_value=cp):
+    with patch("vergil_tooling.lib.github.subprocess.run", return_value=cp):
         assert _fetch_vulnerability_alerts("o/r") is True
 
 
+@pytest.mark.usefixtures("_ambient_gh_auth")
 def test_fetch_vulnerability_alerts_disabled() -> None:
     cp = subprocess.CompletedProcess(
         args=[], returncode=0, stdout="HTTP/2.0 404 Not Found\n", stderr=""
     )
-    with patch("vergil_tooling.lib.github_config.subprocess.run", return_value=cp):
+    with patch("vergil_tooling.lib.github.subprocess.run", return_value=cp):
         assert _fetch_vulnerability_alerts("o/r") is False
+
+
+@pytest.mark.usefixtures("_ambient_gh_auth")
+def test_fetch_vulnerability_alerts_disabled_on_404_exit() -> None:
+    # gh api -i exits 1 on a 404; that status is the answer, not an error.
+    cp = subprocess.CompletedProcess(
+        args=[], returncode=1, stdout="HTTP/2.0 404 Not Found\n", stderr="gh: Not Found (HTTP 404)"
+    )
+    with (
+        patch("vergil_tooling.lib.github.subprocess.run", return_value=cp) as mock_run,
+        patch("vergil_tooling.lib.github.time.sleep") as mock_sleep,
+    ):
+        assert _fetch_vulnerability_alerts("o/r") is False
+    assert mock_run.call_count == 1
+    mock_sleep.assert_not_called()
+
+
+@pytest.mark.usefixtures("_ambient_gh_auth")
+def test_fetch_vulnerability_alerts_retries_transient_error() -> None:
+    blip = subprocess.CompletedProcess(
+        args=[], returncode=1, stdout="HTTP/2.0 502 Bad Gateway\n", stderr="gh: HTTP 502"
+    )
+    ok = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout="HTTP/2.0 204 No Content\n", stderr=""
+    )
+    with (
+        patch("vergil_tooling.lib.github.subprocess.run", side_effect=[blip, ok]) as mock_run,
+        patch("vergil_tooling.lib.github.time.sleep"),
+    ):
+        assert _fetch_vulnerability_alerts("o/r") is True
+    assert mock_run.call_count == 2
+
+
+@pytest.mark.usefixtures("_ambient_gh_auth")
+def test_fetch_vulnerability_alerts_raises_on_unexpected_status() -> None:
+    # Previously any non-204 status (e.g. 403) silently read as "disabled".
+    cp = subprocess.CompletedProcess(
+        args=[], returncode=1, stdout="HTTP/2.0 403 Forbidden\n", stderr="gh: HTTP 403"
+    )
+    with (
+        patch("vergil_tooling.lib.github.subprocess.run", return_value=cp),
+        pytest.raises(GitHubAPIError, match="403"),
+    ):
+        _fetch_vulnerability_alerts("o/r")
+
+
+@pytest.mark.usefixtures("_ambient_gh_auth")
+def test_fetch_vulnerability_alerts_raises_on_unexpected_success_status() -> None:
+    cp = subprocess.CompletedProcess(args=[], returncode=0, stdout="HTTP/2.0 200 OK\n", stderr="")
+    with (
+        patch("vergil_tooling.lib.github.subprocess.run", return_value=cp),
+        pytest.raises(GitHubAPIError, match="unexpected vulnerability-alerts status"),
+    ):
+        _fetch_vulnerability_alerts("o/r")
 
 
 # ---------------------------------------------------------------------------

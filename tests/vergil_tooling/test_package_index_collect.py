@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from vergil_tooling.lib import retry
 from vergil_tooling.lib.config import PackageConfig, PackagePythonConfig
 from vergil_tooling.lib.package import PackageError, matrix, repo_setup
 from vergil_tooling.lib.package.index import collect
@@ -649,3 +650,116 @@ def test_rpm_key_import_failure_is_fatal(tmp_path: Path) -> None:
         PackageError, match=r"importing .*k\.asc into the rpm keyring failed: key file not found"
     ):
         collect.verify([_a("o/t", "v2.1.0", "t", "2.1.0", fmt="rpm")], tmp_path / "k.asc", gh=gh)
+
+
+# --- transient GitHub errors (#3153) -------------------------------------------
+
+_GRAPHQL_BLIP = "GraphQL: Something went wrong while executing your query."
+
+
+class _Flaky:
+    """Wrap a ``Run``: commands starting with ``prefix`` fail ``times`` times first."""
+
+    def __init__(self, inner: repo_setup.Run, prefix: str, times: int, stderr: str) -> None:
+        self.inner = inner
+        self.prefix = prefix
+        self.left = times
+        self.stderr = stderr
+        self.attempts = 0
+
+    def __call__(self, *argv: str) -> subprocess.CompletedProcess[str]:
+        if " ".join(argv).startswith(self.prefix):
+            self.attempts += 1
+            if self.left:
+                self.left -= 1
+                raise subprocess.CalledProcessError(1, argv, "", self.stderr)
+        return self.inner(*argv)
+
+
+@pytest.fixture
+def sleeps(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    slept: list[float] = []
+    monkeypatch.setattr("vergil_tooling.lib.retry.time.sleep", slept.append)
+    return slept
+
+
+def _one_release_gh() -> _FakeGh:
+    return _fake_gh(
+        releases={"o/t": [("v2.1.0", ["packages-manifest.json", "t_2.1.0-1_amd64.deb"])]},
+        manifest={"artifacts": [_entry("deb", "amd64")]},
+    )
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "gh release list",
+        "gh release view",
+        "gh release download v2.1.0 --repo o/t --pattern packages-manifest.json",
+        "gh release download v2.1.0 --repo o/t --pattern t_2.1.0-1_amd64.deb",
+    ],
+)
+@pytest.mark.parametrize("stderr", [_GRAPHQL_BLIP, "HTTP 502: Bad Gateway"])
+def test_transient_gh_release_blip_is_retried_then_succeeds(
+    tmp_path: Path, sleeps: list[float], prefix: str, stderr: str
+) -> None:
+    gh = _Flaky(_one_release_gh(), prefix, 2, stderr)
+    arts = collect.collect(_cfg(), tmp_path, gh=gh)
+    assert [a.path.name for a in arts] == ["t_2.1.0-1_amd64.deb"]
+    assert gh.attempts == 3
+    assert len(sleeps) == 2
+
+
+@pytest.mark.parametrize("prefix", ["gh release list", "gh release view", "gh release download"])
+def test_persistent_transient_gh_release_failure_is_fatal_after_budget(
+    tmp_path: Path, sleeps: list[float], prefix: str
+) -> None:
+    gh = _Flaky(_one_release_gh(), prefix, 99, _GRAPHQL_BLIP)
+    with pytest.raises(PackageError, match=r"failed: GraphQL: Something went wrong"):
+        collect.collect(_cfg(), tmp_path, gh=gh)
+    assert gh.attempts == retry.MAX_RETRIES + 1
+    assert len(sleeps) == retry.MAX_RETRIES
+
+
+@pytest.mark.parametrize("prefix", ["gh release list", "gh release view", "gh release download"])
+def test_answer_type_gh_release_failure_is_not_retried(
+    tmp_path: Path, sleeps: list[float], prefix: str
+) -> None:
+    gh = _Flaky(_one_release_gh(), prefix, 1, "release not found")
+    with pytest.raises(PackageError, match=r"failed: release not found"):
+        collect.collect(_cfg(), tmp_path, gh=gh)
+    assert gh.attempts == 1
+    assert sleeps == []
+
+
+def test_non_gh_command_is_never_retried(tmp_path: Path, sleeps: list[float]) -> None:
+    gh = _Flaky(_one_release_gh(), "dpkg-deb", 1, "unexpected EOF")
+    with pytest.raises(PackageError, match=r"reading t_2\.1\.0-1_amd64\.deb failed"):
+        collect.collect(_cfg(), tmp_path, gh=gh)
+    assert gh.attempts == 1
+    assert sleeps == []
+
+
+def test_transient_attestation_blip_is_retried(tmp_path: Path, sleeps: list[float]) -> None:
+    gh = _Flaky(_stdout(""), "gh attestation verify", 1, "HTTP 503")
+    collect.verify([_a("o/t", "v2.1.0", "t", "2.1.0")], tmp_path / "k.asc", gh=gh)
+    assert gh.attempts == 2
+    assert len(sleeps) == 1
+
+
+def test_persistent_transient_attestation_failure_is_fatal(
+    tmp_path: Path, sleeps: list[float]
+) -> None:
+    gh = _Flaky(_stdout(""), "gh attestation verify", 99, "HTTP 503")
+    with pytest.raises(PackageError, match=r"attestation verification failed for .*: HTTP 503"):
+        collect.verify([_a("o/t", "v2.1.0", "t", "2.1.0")], tmp_path / "k.asc", gh=gh)
+    assert gh.attempts == retry.MAX_RETRIES + 1
+    assert len(sleeps) == retry.MAX_RETRIES
+
+
+def test_failed_attestation_is_not_retried(tmp_path: Path, sleeps: list[float]) -> None:
+    gh = _Flaky(_stdout(""), "gh attestation verify", 1, "no matching attestations")
+    with pytest.raises(PackageError, match=r"attestation verification failed"):
+        collect.verify([_a("o/t", "v2.1.0", "t", "2.1.0")], tmp_path / "k.asc", gh=gh)
+    assert gh.attempts == 1
+    assert sleeps == []

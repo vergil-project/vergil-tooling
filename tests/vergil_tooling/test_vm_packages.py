@@ -13,6 +13,13 @@ if TYPE_CHECKING:
     from vergil_tooling.lib.package.orgs import OrgRepo
 
 _REPO_URL = "https://vergil-project.github.io/packages"
+_FAST = (
+    "-o Acquire::Retries=3 -o Acquire::Retries::Delay=false"
+    " -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20"
+    " -o DPkg::Lock::Timeout=60"
+)
+_UPDATE = f"sudo apt-get {_FAST} update"
+_INSTALL = f"sudo apt-get {_FAST} install -y --allow-downgrades vergil-tooling"
 
 
 def _transport_answering(answers: dict[str, str]) -> MagicMock:
@@ -108,13 +115,9 @@ class TestPackagedInstall:
         assert (fmt, suite, sudo) == ("deb", "noble", True)
         assert _piped(t) == ["sudo tee /etc/apt/preferences.d/vergil-tooling >/dev/null"]
         assert t.pipe.call_args[0][1] == vm_packages.apt_pin("v2.1")
-        assert "sudo apt-get install -y --allow-downgrades vergil-tooling" in flat
+        assert _INSTALL in flat
         # Order: pin, refresh, candidate check, install.
-        assert (
-            _index(flat, "sudo apt-get update")
-            < _index(flat, "apt-cache policy")
-            < _index(flat, "sudo apt-get install")
-        )
+        assert _index(flat, _UPDATE) < _index(flat, "apt-cache policy") < _index(flat, _INSTALL)
         # No legacy copy listed: nothing to uninstall, the dev marker is still cleared.
         assert not any("uv tool uninstall" in c for c in flat)
         assert any("rm -f ~/.config/vergil/tooling-dev-ref" in c for c in flat)
@@ -128,7 +131,7 @@ class TestPackagedInstall:
         )
         vm_packages.packaged_install(t, "v2.1.226")
         flat = _flat(t)
-        assert "sudo apt-get install -y --allow-downgrades vergil-tooling=2.1.226-1" in flat
+        assert f"{_INSTALL}=2.1.226-1" in flat
         assert t.pipe.call_args[0][1] == vm_packages.apt_pin("v2.1.226")
         assert boot
 
@@ -216,7 +219,7 @@ class TestPackagedInstall:
         assert any("rm -f ~/.config/vergil/tooling-dev-ref" in c for c in flat)
         # Only after a successful apt install, so a failed packaged install
         # never leaves the VM without tooling.
-        install = _index(flat, "sudo apt-get install -y --allow-downgrades vergil-tooling")
+        install = _index(flat, _INSTALL)
         assert install < _index(flat, "uv tool uninstall vergil-tooling")
         assert install < _index(flat, "rm -f ~/.config/vergil/tooling-dev-ref")
         assert boot
@@ -230,7 +233,7 @@ class TestPackagedInstall:
         base = _transport_answering(answers).run.side_effect
 
         def run(*args: str, **kw: Any) -> subprocess.CompletedProcess[str]:
-            if args[:3] == ("sudo", "apt-get", "install"):
+            if args[:2] == ("sudo", "apt-get") and "install" in args:
                 raise subprocess.CalledProcessError(100, list(args))
             return base(*args, **kw)
 

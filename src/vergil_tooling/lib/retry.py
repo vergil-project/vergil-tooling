@@ -3,7 +3,8 @@
 Shared by ``github.py`` (library wrappers), ``vrg_gh.py`` (CLI wrapper),
 ``git.py`` and ``vrg_git.py`` (raw git network ops) so every path that
 talks to GitHub handles HTTP 401/502/503/504/429, proxy/gateway bodies
-("502 Bad Gateway"), ``net/http`` transport failures (TLS handshake, i/o
+("502 Bad Gateway"), GitHub's transient GraphQL "Something went wrong
+while executing your query" failure (#3148), ``net/http`` transport failures (TLS handshake, i/o
 timeout, connection refused, DNS lookup, EOF) and raw git/SSH transport
 drops identically (#2835).
 
@@ -66,6 +67,16 @@ _RETRYABLE_PATTERNS = (
     "service unavailable",
     "gateway timeout",
     "gateway time-out",  # nginx's hyphenated 504 wording
+    # GitHub's generic GraphQL server-side failure ("GraphQL: Something went
+    # wrong while executing your query. Please include `<id>` when reporting
+    # this issue."). It is GitHub's 5xx-equivalent for GraphQL — usually a
+    # backend timeout — and repeatedly stopped vrg-release confirm/wait stages
+    # where a plain re-run always succeeded (#3148). Matched on GitHub's exact
+    # phrasing so an unrelated "something went wrong" still fails fast. Like
+    # the 502/504 patterns above, a write that hits this is retried; a mutation
+    # that actually landed then fails loudly on the retry (e.g. "already
+    # merged"), never silently.
+    "something went wrong while executing your query",
     # net/http transport-layer transients (request never reached the app
     # layer, so retrying is safe for writes too)
     "timed out",
@@ -109,9 +120,22 @@ def run_with_retry(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str
     Requires ``check=True`` and ``capture_output=True`` (or equivalent)
     so that ``CalledProcessError`` carries stderr/stdout for detection.
     """
+    return call_with_retry(lambda: subprocess.run(*args, **kwargs))  # noqa: S603
+
+
+def call_with_retry[T](fn: Callable[[], T]) -> T:
+    """Call *fn*, retrying a transient ``CalledProcessError`` with bounded backoff.
+
+    The callable form of :func:`run_with_retry`, for code that runs ``gh``
+    through an injected transport (e.g. the package-index collector's ``Run``,
+    #3153) rather than ``subprocess.run`` directly. An error that
+    :func:`is_retryable` does not classify as transient is raised at once; a
+    transient one is retried up to :data:`MAX_RETRIES` times and then the
+    original error is raised.
+    """
     for attempt in range(MAX_RETRIES + 1):
         try:
-            return subprocess.run(*args, **kwargs)  # noqa: S603
+            return fn()
         except subprocess.CalledProcessError as exc:
             if attempt == MAX_RETRIES or not is_retryable(exc):
                 raise
