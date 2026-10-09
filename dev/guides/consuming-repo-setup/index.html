@@ -14691,6 +14691,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Step 7: CI workflow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#optional-os-packages" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Optional: OS packages
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -14987,6 +15004,23 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Step 7: CI workflow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#optional-os-packages" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Optional: OS packages
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -15379,6 +15413,21 @@ plugin's commit-block hook activates against the presence of
 no further setup is needed in the workflow.</p>
 <p>See the <a href="../ci-architecture/">CI Architecture</a> guide if you also want
 per-language test/lint/audit tiers.</p>
+<h3 id="optional-os-packages">Optional: OS packages<a class="headerlink" href="#optional-os-packages" title="Permanent link">&para;</a></h3>
+<p>To ship signed <code>.deb</code>/<code>.rpm</code> packages from releases:</p>
+<ol>
+<li>Add a <code>[package]</code> table to <code>vergil.toml</code> (see
+   <a href="../../reference/package-config/">Package configuration</a>).</li>
+<li>Re-run <code>vrg-github-repo-init --adopt</code> from the repo root. It keeps
+   <code>[package]</code> (and any other hand-written table) and regenerates the
+   workflows: <code>ci.yml</code> gains a <code>package</code> job calling <code>ci-package.yml</code>, and the
+   <code>cd.yml</code> <code>release</code> job switches to <code>secrets: inherit</code>. The GitHub config
+   step then makes <code>package / evidence</code> a required check.</li>
+<li>Create a <code>package-signing</code> environment, restricted to <code>main</code>, holding
+   <code>PACKAGE_SIGNING_KEY</code> and <code>PACKAGE_SIGNING_PASSPHRASE</code>.</li>
+<li>Make sure the org's GitHub App can dispatch to <code>&lt;org&gt;/packages</code>, which
+   indexes each released package.</li>
+</ol>
 <h2 id="step-8-managed-gitignore-fence-and-config-audit">Step 8: Managed <code>.gitignore</code> fence and config audit<a class="headerlink" href="#step-8-managed-gitignore-fence-and-config-audit" title="Permanent link">&para;</a></h2>
 <p>Every managed repo owes two things to the fleet's self-policing config
 audit, and both are checked nightly:</p>
