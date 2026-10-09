@@ -57,6 +57,24 @@ class TestStreamWithRetry:
             release_subprocess._stream_with_retry(("gh", "pr", "checks", "PR", "--watch"))
         assert m_progress.run.call_count == 2
 
+    def test_retries_graphql_something_went_wrong_then_succeeds(self) -> None:
+        """GitHub's transient GraphQL failure is retried in the release wait path (#3148)."""
+        transient = subprocess.CalledProcessError(
+            1,
+            ("gh",),
+            output="",
+            stderr="GraphQL: Something went wrong while executing your query.",
+        )
+        with (
+            patch(_MOD + ".progress") as m_progress,
+            patch(_MOD + "._gh_env", return_value=None),
+            patch(_MOD + ".time"),
+        ):
+            m_progress.run.side_effect = [transient, None]
+            release_subprocess._stream_with_retry(("gh", "pr", "checks", "PR", "--watch"))
+        assert m_progress.run.call_count == 2
+        m_progress.emit.assert_called_once()
+
     def test_propagates_non_transient(self) -> None:
         fatal = subprocess.CalledProcessError(1, ("gh",), output="", stderr="not found")
         with (

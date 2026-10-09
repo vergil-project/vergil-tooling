@@ -84,6 +84,25 @@ class TestIsRetryable:
     @pytest.mark.parametrize(
         "stderr",
         [
+            # GitHub's generic GraphQL server-side failure, as gh renders it
+            # (seen in vrg-release confirm/wait stages, #3148).
+            "GraphQL: Something went wrong while executing your query. Please include "
+            "`C0DE:1234:ABCD:5678:9EF0` when reporting this issue.",
+            "Something went wrong while executing your query. This may be the result of a timeout,"
+            " or it could be a GitHub bug.",
+        ],
+    )
+    def test_retryable_graphql_something_went_wrong(self, stderr: str) -> None:
+        assert retry.is_retryable(_api_error(stderr=stderr)) is True
+
+    def test_generic_something_went_wrong_is_not_retryable(self) -> None:
+        # Only GitHub's exact GraphQL phrasing is transient; a bare
+        # "something went wrong" from any other source must still fail fast.
+        assert retry.is_retryable(_api_error(stderr="error: something went wrong")) is False
+
+    @pytest.mark.parametrize(
+        "stderr",
+        [
             "HTTP 404 Not Found",
             "HTTP 422 Unprocessable Entity",
             "GraphQL: Pull request is not mergeable (mergePullRequest)",
@@ -151,6 +170,34 @@ class TestRunWithRetry:
             pytest.raises(subprocess.CalledProcessError, match=""),
         ):
             retry.run_with_retry(("gh", "pr", "view"), check=True)
+
+    def test_retries_graphql_blip_then_succeeds(self) -> None:
+        err = _api_error(stderr="GraphQL: Something went wrong while executing your query.")
+        with (
+            patch(
+                "vergil_tooling.lib.retry.subprocess.run",
+                side_effect=[err, _completed(stdout="ok")],
+            ) as mock_run,
+            patch("vergil_tooling.lib.retry.time.sleep") as mock_sleep,
+            patch("vergil_tooling.lib.retry.random.random", return_value=0.5),
+        ):
+            result = retry.run_with_retry(("gh", "pr", "view"), check=True)
+        assert result.stdout == "ok"
+        assert mock_run.call_count == 2
+        assert mock_sleep.call_count == 1
+
+    def test_persistent_graphql_failure_raises_original_error(self) -> None:
+        err = _api_error(stderr="GraphQL: Something went wrong while executing your query.")
+        with (
+            patch("vergil_tooling.lib.retry.subprocess.run", side_effect=err) as mock_run,
+            patch("vergil_tooling.lib.retry.time.sleep") as mock_sleep,
+            patch("vergil_tooling.lib.retry.random.random", return_value=0.5),
+            pytest.raises(subprocess.CalledProcessError) as excinfo,
+        ):
+            retry.run_with_retry(("gh", "pr", "view"), check=True)
+        assert excinfo.value is err
+        assert mock_run.call_count == retry.MAX_RETRIES + 1
+        assert mock_sleep.call_count == retry.MAX_RETRIES
 
     def test_raises_immediately_on_non_retryable(self) -> None:
         err = _api_error(stderr="HTTP 404 Not Found")

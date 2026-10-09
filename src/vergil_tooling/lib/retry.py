@@ -3,7 +3,8 @@
 Shared by ``github.py`` (library wrappers), ``vrg_gh.py`` (CLI wrapper),
 ``git.py`` and ``vrg_git.py`` (raw git network ops) so every path that
 talks to GitHub handles HTTP 401/502/503/504/429, proxy/gateway bodies
-("502 Bad Gateway"), ``net/http`` transport failures (TLS handshake, i/o
+("502 Bad Gateway"), GitHub's transient GraphQL "Something went wrong
+while executing your query" failure (#3148), ``net/http`` transport failures (TLS handshake, i/o
 timeout, connection refused, DNS lookup, EOF) and raw git/SSH transport
 drops identically (#2835).
 
@@ -66,6 +67,16 @@ _RETRYABLE_PATTERNS = (
     "service unavailable",
     "gateway timeout",
     "gateway time-out",  # nginx's hyphenated 504 wording
+    # GitHub's generic GraphQL server-side failure ("GraphQL: Something went
+    # wrong while executing your query. Please include `<id>` when reporting
+    # this issue."). It is GitHub's 5xx-equivalent for GraphQL — usually a
+    # backend timeout — and repeatedly stopped vrg-release confirm/wait stages
+    # where a plain re-run always succeeded (#3148). Matched on GitHub's exact
+    # phrasing so an unrelated "something went wrong" still fails fast. Like
+    # the 502/504 patterns above, a write that hits this is retried; a mutation
+    # that actually landed then fails loudly on the retry (e.g. "already
+    # merged"), never silently.
+    "something went wrong while executing your query",
     # net/http transport-layer transients (request never reached the app
     # layer, so retrying is safe for writes too)
     "timed out",
