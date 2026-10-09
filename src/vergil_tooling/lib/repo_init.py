@@ -56,6 +56,11 @@ class RepoInitContext:
     vergil_version: str = "v2.1"
     license_type: str = "MIT"
     initial_version: str = "0.1.0"
+    # True when vergil.toml declares ``[package]`` (epic
+    # vergil-project/.github#356). Never prompted: it is read from an existing
+    # vergil.toml on adopt, and drives the ``package`` CI job and the
+    # ``secrets: inherit`` CD release caller (issue #3144).
+    package: bool = False
 
     # Non-interactive mode (issue #2382): resolve every value from a flag and
     # never prompt. The wizard fails loud on a missing required value rather
@@ -336,6 +341,56 @@ def render_vergil_toml(ctx: RepoInitContext) -> str:
         "[dependencies]\n"
         f'vergil = "{ctx.vergil_version}"\n'
     )
+
+
+# Top-level vergil.toml tables :func:`render_vergil_toml` owns. Every other
+# table (``[package]``, ``[container]``, ``[validation]`` ...) is hand-authored
+# and must survive an adopt re-run verbatim (issue #3144).
+_MANAGED_TOML_TABLES = frozenset({"project", "ci", "publish", "dependencies"})
+
+# A ``[table]`` / ``[[array-of-tables]]`` header line. The key class excludes
+# commas and brackets so a nested-array value line (``  ["a", "b"],``) is never
+# mistaken for a header.
+_TOML_HEADER_RE = re.compile(r"^\s*\[\[?\s*([A-Za-z0-9_\-.\"' ]+?)\s*\]\]?\s*(?:#.*)?$")
+
+
+def _unmanaged_toml_sections(text: str, parsed: dict[str, Any]) -> str:
+    """Return the verbatim text of every table ``render_vergil_toml`` does not own.
+
+    ``text`` is the existing vergil.toml and ``parsed`` its ``tomllib`` load. The
+    extraction is line-based (header to next header), so it is verified: the
+    result must re-parse to exactly the unmanaged tables of ``parsed``. Anything
+    else (a table defined by a dotted key before the first header, a
+    header-looking line inside a multi-line string) raises instead of silently
+    dropping hand-authored config.
+    """
+    kept: list[str] = []
+    keep = False
+    for line in text.splitlines(keepends=True):
+        m = _TOML_HEADER_RE.match(line)
+        if m:
+            top = m.group(1).split(".", 1)[0].strip().strip("\"'")
+            keep = top not in _MANAGED_TOML_TABLES
+        if keep:
+            kept.append(line)
+    out = "".join(kept).rstrip("\n")
+    out = out + "\n" if out else ""
+
+    expected = {k: v for k, v in parsed.items() if k not in _MANAGED_TOML_TABLES}
+    msg = (
+        "repo-init cannot preserve the hand-authored vergil.toml tables "
+        f"{sorted(expected)} verbatim; move them to plain [table] sections "
+        "(no dotted top-level keys, no header-like lines inside strings) and re-run."
+    )
+    import tomllib
+
+    try:
+        reparsed = tomllib.loads(out)
+    except tomllib.TOMLDecodeError as exc:
+        raise RuntimeError(msg) from exc
+    if reparsed != expected:
+        raise RuntimeError(msg)
+    return out
 
 
 def render_claude_md(ctx: RepoInitContext) -> str:
@@ -722,6 +777,23 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
             ]
         )
 
+    # OS-package build + install-test (epic vergil-project/.github#356, spec
+    # §8.1), only for a repo with [package] — ci-package.yml fails without one.
+    # No inputs: package-tier stays "auto" (full matrix for release PRs and
+    # non-PR events, reduced otherwise), as in vergil-tooling's own ci.yml. The
+    # job key `package` yields the `package / evidence` gate the CI-gates
+    # ruleset requires for [package] repos (issue #3144).
+    if ctx.package:
+        lines.extend(
+            [
+                "\n",
+                "  # Build and install-test the .deb/.rpm on every default target\n",
+                "  # (spec §8.1). Surfaces as the `package / evidence` gate.\n",
+                "  package:\n",
+                "    uses: vergil-project/vergil-actions/.github/workflows/ci-package.yml@v2.1\n",
+            ]
+        )
+
     return "".join(lines)
 
 
@@ -785,8 +857,27 @@ def render_cd_workflow(ctx: RepoInitContext) -> str:
         # the primary language, instead of a blanket `secrets: inherit`
         # (epic vergil-project/.github#189). python (OIDC) / go (none) forward
         # nothing, so no `secrets:` block is emitted at all.
+        #
+        # Exception — a [package] repo must inherit: GitHub delivers a
+        # cross-repo reusable workflow's *environment* secrets only under
+        # `secrets: inherit`, never via an explicit map, so cd-release's
+        # package-sign job would see an empty PACKAGE_SIGNING_KEY from its
+        # `package-signing` environment (probe in vergil-project/packages#6;
+        # issue #3144). inherit also carries the ecosystem's publisher secrets.
         secret_names = _cd_release_secrets(ctx.primary_language)
-        if secret_names:
+        if ctx.package:
+            lines.extend(
+                [
+                    "    # `inherit` is required: environment secrets reach a job in a\n",
+                    "    # cross-repo reusable workflow only under `secrets: inherit`\n",
+                    "    # (vergil-project/packages#6). An explicit map leaves cd-release's\n",
+                    "    # package-sign job an empty PACKAGE_SIGNING_KEY. The callee is\n",
+                    "    # first-party (vergil-project/vergil-actions).\n",
+                    "    secrets: inherit"
+                    "  # nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit\n",
+                ]
+            )
+        elif secret_names:
             lines.append("    secrets:\n")
             lines.extend(f"      {name}: ${{{{ secrets.{name} }}}}\n" for name in secret_names)
 
@@ -1224,6 +1315,15 @@ def step_generate_config(ctx: RepoInitContext) -> None:
     content = render_vergil_toml(ctx)
     if ctx.work_dir is None:  # pragma: no cover
         raise RuntimeError("work_dir not set")
+    if existing is not None:
+        # Adopt re-renders the managed tables; carry every hand-authored table
+        # ([package], [container], ...) across verbatim so re-running init on a
+        # packaged repo keeps the [package] that drives its generated jobs and
+        # its required `package / evidence` gate (issue #3144).
+        ctx.package = "package" in existing
+        extra = _unmanaged_toml_sections((ctx.work_dir / "vergil.toml").read_text(), existing)
+        if extra:
+            content += "\n" + extra
     (ctx.work_dir / "vergil.toml").write_text(content)
 
     git.run("add", "vergil.toml")
