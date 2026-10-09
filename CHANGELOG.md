@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [2.1.234] - 2026-10-09
 
+Not published: merged to `main` but never tagged or released. The enforcing
+CI-evidence gate failed closed because its artifact harvest read only the first
+API page of artifacts (fixed by #3160; tracking issue #3158 closed as not
+planned). These changes ship in 2.1.235.
+
 ### Bug fixes
 
 - retry transient GitHub GraphQL 'Something went wrong' errors (#3152)
