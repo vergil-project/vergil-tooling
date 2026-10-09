@@ -322,7 +322,10 @@ remembered.
 - Before anything is written to the apt sources, `vrg-vm` downloads
   the org signing key and checks its fingerprint against the one
   pinned in vergil-tooling. It then installs `vergil-archive-keyring`,
-  which owns the key and the source entry from then on.
+  which owns the key and the source entry from then on. The apt calls
+  of this repository setup run with `Acquire::Retries=3` and 20-second
+  `Acquire::http::Timeout`/`Acquire::https::Timeout`, so a dead mirror
+  connection fails or retries in seconds rather than hanging.
 - The VM's Ubuntu codename must be a published suite (`noble` or
   `resolute`). Any other codename fails provisioning.
 - If the repository has no package matching the version, for example

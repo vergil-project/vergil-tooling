@@ -65,6 +65,28 @@ adding new public surface. Versions: `v1.3.0` → `v1.3.1`.
      (e.g., `1.3.1` → `1.3.2`). Merge it.
    - The Documentation workflow publishes the new release notes to
      the docs site under `releases/v1.3.1`.
+   - **Repos with `[package]`** (vergil-tooling is one) also publish
+     signed `.deb`/`.rpm` packages, all before the tag exists:
+     `cd-release` builds every package build cell, then a separate
+     `package-sign` job signs each `.rpm` and attests every artifact.
+     Any package failure stops the release before tagging. The signed
+     packages and `packages-manifest.json` are attached to the GitHub
+     Release.
+   - After tagging, `cd-release` dispatches `package-released` to the
+     org's `packages` repository. Its `publish-index` workflow verifies
+     every artifact's build attestation (signer workflow `cd-release.yml`,
+     source ref `refs/heads/main`) and every `.rpm` signature, then
+     rebuilds and signs the apt/dnf index. A failed dispatch does not fail
+     the release; the index's weekly reconcile picks the release up.
+   - `vrg-release`'s `package-index` stage then polls the published
+     index (up to 20 minutes, every 30 seconds) until the new version is
+     visible, so the consumer refresh never races the index. A miss
+     (timeout or polling error) does not undo the release. It is recorded
+     as a deferred publish failure: the consumer-refresh stage holds (it
+     prints a warning not to advertise the version instead of the refresh
+     commands), the stage error tells you to re-run the `publish-index`
+     workflow in `<org>/packages`, and `vrg-release` exits 1. See the
+     [package config reference](../reference/package-config.md#cd).
 5. Run `vrg-finalize-pr` to clean up local state.
 
 ### Consumer steps
@@ -78,6 +100,7 @@ get the fix on the next normal action:
 | Developer host | Manual `uv tool upgrade vergil-tooling` |
 | Python repo `.venv` | `uv lock --upgrade-package vergil-tooling` (typically batched with other dep bumps) |
 | Dev container image | Already rebuilt by `repository_dispatch`; new pulls of `dev-base` etc. carry the patch within the rebuild window (minutes) |
+| Agent VM (Lima/cloud) | `vrg-vm update`: an apt upgrade of the packaged install within its pin, once the patch is in the package index. A `vX.Y` line pin picks the patch up; an exact `vX.Y.Z` pin stays put |
 
 ## Minor release — opt-in for new features
 
@@ -122,6 +145,7 @@ Minor bumps are **deliberate opt-in** at every deployment target:
 | Developer host | `uv tool install --reinstall 'vergil-tooling @ git+...@v1.4'` (or update the pinned tag in their notes / shell history) |
 | Python repo `.venv` | Edit `pyproject.toml` `[tool.uv.sources]` to `tag = "v1.4"`, then `uv lock --upgrade-package vergil-tooling` |
 | Dev container image | Wait for `vergil-containers` to land the `ARG` bump, then pull the rebuilt image |
+| Agent VM (Lima/cloud) | Set the identity's `vergil` version (in `identities.toml`) to `v1.4`, then `vrg-vm rebuild`, which installs and records the new line. A plain `vrg-vm update` keeps upgrading within the line recorded at install time, and `vrg-vm update --tag v1.4` is a one-off override that is not remembered (see [VM spec](../reference/vm-spec.md#vergil-tooling-inside-the-vm)) |
 
 The release author should announce the minor bump in the GitHub
 Release notes, calling out any new features and the `v1.4` pin

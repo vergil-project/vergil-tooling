@@ -35,6 +35,13 @@ which vrg-container-run    # should resolve to ~/.local/bin/vrg-container-run
 vrg-container-run --help   # should print usage
 ```
 
+On Linux, vergil-tooling is also published as a signed `.deb`/`.rpm`
+package (this is how Lima and cloud agent VMs get it). Follow the
+[`vergil-project/packages` README](https://github.com/vergil-project/packages#readme)
+to set up the apt or dnf repository. Check the downloaded signing key
+against the pinned primary fingerprint
+`B3A1D804DC03AB036566A4E367861822166ECABE`.
+
 ## 2. Configure the Claude Code hook guard
 
 Every managed repo ships a `.claude/hooks/guard.sh` shim that blocks

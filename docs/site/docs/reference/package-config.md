@@ -240,6 +240,10 @@ Install tests run in plain containers without systemd as PID 1, so:
 - an overlay that is not a YAML mapping or that sets a key outside the list
   above.
 
+Unrecognized keys are the exception: an unknown key in `[package]`,
+`[package.python]` or `[package.staged]` only prints an
+`unrecognized key` warning on stderr, and validation still passes.
+
 `vrg-validate` checks the overlay's shape only, because nFPM is not in the dev
 container. nFPM's own config check runs at build time in CI.
 

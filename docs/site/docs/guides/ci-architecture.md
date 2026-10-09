@@ -113,6 +113,12 @@ Triggers on `pull_request` events. Runs the full validation suite.
 - Standards compliance
 - Dependency audit
 - Release gates (version divergence, format validation)
+- Binary package build and install-test (`ci-package.yml`, only in repos
+  whose `vergil.toml` has `[package]`). Feature PRs run the **reduced**
+  tier: every build cell, but one install-test cell per format (the oldest
+  selected release, amd64 first). Release PRs (`release/*` into `main`)
+  and non-PR events run the **full** matrix. See
+  [Tiers: full and reduced](../reference/package-config.md#tiers-full-and-reduced).
 
 The workflow file is `.github/workflows/ci.yml`, which runs directly on
 `pull_request` and is also exposed as a reusable workflow via
@@ -305,6 +311,26 @@ A language that needs no secret (python, go, or any non-publishing
 language) gets **no `secrets:` block at all**, not `secrets: inherit`.
 References to our own `vergil-actions@v2.1` reusable workflows are
 unaffected — they are trusted first-party refs.
+
+**Exception: repos with `[package]`.** A repo whose `vergil.toml` has a
+`[package]` section MUST call `cd-release` with `secrets: inherit`,
+suppressed inline:
+
+```yaml
+    secrets: inherit  # nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit
+```
+
+Its `package-sign` job reads `PACKAGE_SIGNING_KEY` and
+`PACKAGE_SIGNING_PASSPHRASE` from the caller's `package-signing`
+environment. Environment secrets reach a job in a cross-repo reusable
+workflow only through `inherit`: an explicit secrets map leaves
+`package-sign` with an empty key (proven by the probe in
+[vergil-project/packages#6](https://github.com/vergil-project/packages/issues/6)).
+The callee is first-party, so the blanket form is an accepted, reviewed
+exception. `vrg-repo-init` generates this caller for `[package]` repos
+([vergil-project/vergil-tooling#3144](https://github.com/vergil-project/vergil-tooling/issues/3144)).
+See the [CD section of the package config reference](../reference/package-config.md#cd)
+for the full caller.
 
 ### Dynamic matrix from `vergil.toml`
 
