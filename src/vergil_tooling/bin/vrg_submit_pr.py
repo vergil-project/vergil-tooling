@@ -519,12 +519,18 @@ def _run_submit_batch(
     chdir in, submit, chdir back, and — when *finalize* — shell out to
     ``vrg-finalize-pr <url> --skip-post-checks``. On full success, one
     end-of-batch validation and a single release run if requested (#1673).
+
+    A branch carrying merge commits is refused rather than rebased (a rebase
+    would drop them), and the summary reports each item as Submitted — or
+    Merged only when *finalize* actually merged it (#3166).
     """
     main_root = git.main_worktree_root()
 
     def _process(wt: worktrees.Worktree) -> None:
         try:
             worktrees.rebase_onto(wt, base)
+        except worktrees.MergeCommitsError as exc:
+            raise batch.BatchAbortError(f"refusing to rebase: {exc}") from exc
         except subprocess.CalledProcessError as exc:
             raise batch.BatchAbortError(f"rebase onto origin/{base} failed: {exc}") from exc
         os.chdir(wt.path)
@@ -581,10 +587,13 @@ def _run_submit_batch(
         label=lambda wt: wt.branch,
         plan=plan,
         assume_yes=assume_yes,
+        # Report what each item actually did: without --finalize the batch
+        # only opens PRs, so nothing may be labelled merged (issue #3166).
+        completed=batch.ItemOutcome.MERGED if finalize else batch.ItemOutcome.SUBMITTED,
         post_steps=post_steps,
     )
     print(batch.format_report(report))
-    return 0 if report.all_merged and report.post_failure is None else 1
+    return 0 if report.all_completed and report.post_failure is None else 1
 
 
 def _push_create_record(
@@ -1049,10 +1058,11 @@ def _run_relay_cascade(
         label=lambda branch: branch,
         plan=plan,
         assume_yes=args.yes,
+        completed=batch.ItemOutcome.MERGED,
         post_steps=post_steps,
     )
     print(batch.format_report(report))
-    return 0 if report.all_merged and report.post_failure is None else 1
+    return 0 if report.all_completed and report.post_failure is None else 1
 
 
 def main(argv: list[str] | None = None) -> int:

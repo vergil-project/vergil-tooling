@@ -32,7 +32,7 @@ from vergil_tooling.bin.vrg_submit_pr import (
 from vergil_tooling.lib import epics, worktrees
 from vergil_tooling.lib.pr_workflow import engine
 from vergil_tooling.lib.pr_workflow.errors import AlreadySubmittedError, WorkflowError
-from vergil_tooling.lib.worktrees import Worktree
+from vergil_tooling.lib.worktrees import MergeCommitsError, Worktree
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -1514,6 +1514,72 @@ def test_submit_batch_rebase_conflict_stops_batch() -> None:
         )
     assert rc == 1
     submit.assert_not_called()
+
+
+def test_submit_batch_refuses_branch_with_merge_commits(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Issue #3166: a branch carrying merge commits must be refused (fail loud),
+    # never silently linearized by the batch rebase and pushed incomplete.
+    a, b = _batch_wt("issue-1-a"), _batch_wt("issue-2-b")
+    with (
+        patch(
+            _MOD + ".worktrees.rebase_onto",
+            side_effect=MergeCommitsError("feature/1-x contains 1 merge commit(s)"),
+        ),
+        patch(_MOD + ".os.chdir"),
+        patch(_MOD + ".git.main_worktree_root", return_value=Path("/repo")),
+        patch(_MOD + "._submit_one") as submit,
+        patch(_MOD + ".confirm", return_value=True),
+    ):
+        rc = _run_submit_batch(
+            [a, b], base="develop", finalize=False, release=False, install=False, assume_yes=True
+        )
+    assert rc == 1
+    submit.assert_not_called()
+    out = capsys.readouterr().out
+    assert "refusing to rebase: feature/1-x contains 1 merge commit(s)" in out
+
+
+def test_submit_only_batch_summary_says_submitted_not_merged(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Issue #3166: without --finalize nothing is merged, so the summary must not
+    # say "Merged".
+    a, b = _batch_wt("issue-1-a"), _batch_wt("issue-2-b")
+    with (
+        patch(_MOD + ".worktrees.rebase_onto"),
+        patch(_MOD + ".os.chdir"),
+        patch(_MOD + ".git.main_worktree_root", return_value=Path("/repo")),
+        patch(_MOD + "._submit_one", side_effect=["https://x/pull/1", "https://x/pull/2"]),
+        patch(_MOD + ".confirm", return_value=True),
+    ):
+        rc = _run_submit_batch(
+            [a, b], base="develop", finalize=False, release=False, install=False, assume_yes=True
+        )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Submitted (PR opened, not merged):" in out
+    assert "Merged" not in out
+
+
+def test_finalize_batch_summary_says_merged(capsys: pytest.CaptureFixture[str]) -> None:
+    a = _batch_wt("issue-1-a")
+    with (
+        patch(_MOD + ".worktrees.rebase_onto"),
+        patch(_MOD + ".os.chdir"),
+        patch(_MOD + ".git.main_worktree_root", return_value=Path("/repo")),
+        patch(_MOD + "._submit_one", return_value="https://x/pull/1"),
+        patch(_MOD + ".subprocess.run", return_value=MagicMock(returncode=0)),
+        patch(_MOD + ".confirm", return_value=True),
+    ):
+        rc = _run_submit_batch(
+            [a], base="develop", finalize=True, release=False, install=False, assume_yes=True
+        )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Merged:" in out
+    assert "Submitted" not in out
 
 
 def test_all_and_select_flags_parse() -> None:

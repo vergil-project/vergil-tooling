@@ -11,6 +11,7 @@ import pytest
 
 from vergil_tooling.lib.pr_workflow.state import WorkflowState
 from vergil_tooling.lib.worktrees import (
+    MergeCommitsError,
     RawWorktree,
     Worktree,
     WorktreeState,
@@ -765,9 +766,19 @@ def test_select_worktrees_empty_raises() -> None:
 
 def test_rebase_onto_fetches_then_rebases() -> None:
     wt = _wt("issue-1-a", "feature/1-a")
-    with patch(_MOD + ".git.run") as run:
+    with (
+        patch(_MOD + ".git.run") as run,
+        patch(_MOD + ".git.read_output", return_value="") as read,
+    ):
         rebase_onto(wt, "develop")
     assert run.call_args_list[0].args == ("-C", str(wt.path), "fetch", "origin", "develop")
+    assert read.call_args.args == (
+        "-C",
+        str(wt.path),
+        "rev-list",
+        "--merges",
+        "origin/develop..HEAD",
+    )
     assert run.call_args_list[1].args == ("-C", str(wt.path), "rebase", "origin/develop")
 
 
@@ -776,9 +787,105 @@ def test_rebase_onto_propagates_conflict() -> None:
     err = subprocess.CalledProcessError(1, ["git", "rebase"])
     with (
         patch(_MOD + ".git.run", side_effect=[None, err]),
+        patch(_MOD + ".git.read_output", return_value=""),
         pytest.raises(subprocess.CalledProcessError),
     ):
         rebase_onto(wt, "develop")
+
+
+def test_rebase_onto_refuses_branch_with_merge_commits() -> None:
+    wt = _wt("issue-1-a", "feature/1-a")
+    with (
+        patch(_MOD + ".git.run") as run,
+        patch(_MOD + ".git.read_output", return_value="a" * 40 + "\n" + "b" * 40),
+        pytest.raises(MergeCommitsError, match=r"2 merge commit\(s\)") as excinfo,
+    ):
+        rebase_onto(wt, "develop")
+    # Only the fetch ran; the rebase that would drop the merges never did.
+    assert [c.args[2] for c in run.call_args_list] == ["fetch"]
+    msg = str(excinfo.value)
+    assert "feature/1-a" in msg
+    assert "aaaaaaaaaaaa, bbbbbbbbbbbb" in msg
+    assert "submit it individually" in msg
+
+
+def _real_git(cwd: Path, *args: str) -> str:
+    return subprocess.run(
+        ("git", *args), cwd=cwd, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+@pytest.fixture
+def _git_identity(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    for var in ("AUTHOR", "COMMITTER"):
+        monkeypatch.setenv(f"GIT_{var}_NAME", "Test")
+        monkeypatch.setenv(f"GIT_{var}_EMAIL", "test@example.com")
+    # Isolate from the developer's global/system git config (hooks, signing).
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "gitconfig"))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+
+
+def _origin_and_clone(tmp_path: Path) -> Path:
+    origin = tmp_path / "origin.git"
+    _real_git(tmp_path, "init", "--bare", "-b", "develop", str(origin))
+    clone = tmp_path / "clone"
+    _real_git(tmp_path, "clone", str(origin), str(clone))
+    _real_git(clone, "checkout", "-b", "develop")
+    (clone / "base.txt").write_text("base\n")
+    _real_git(clone, "add", "base.txt")
+    _real_git(clone, "commit", "-m", "base")
+    _real_git(clone, "push", "origin", "develop")
+    return clone
+
+
+def _advance_origin_develop(clone: Path) -> None:
+    _real_git(clone, "checkout", "develop")
+    (clone / "upstream.txt").write_text("upstream\n")
+    _real_git(clone, "add", "upstream.txt")
+    _real_git(clone, "commit", "-m", "upstream")
+    _real_git(clone, "push", "origin", "develop")
+
+
+@pytest.mark.usefixtures("_git_identity")
+def test_rebase_onto_real_git_never_linearizes_a_merge(tmp_path: Path) -> None:
+    clone = _origin_and_clone(tmp_path)
+    # A feature branch that merges in a side branch (the issue #3166 shape).
+    _real_git(clone, "checkout", "-b", "side")
+    (clone / "side.txt").write_text("side\n")
+    _real_git(clone, "add", "side.txt")
+    _real_git(clone, "commit", "-m", "side")
+    _real_git(clone, "checkout", "develop")
+    _real_git(clone, "checkout", "-b", "feature/1-a")
+    (clone / "feat.txt").write_text("feat\n")
+    _real_git(clone, "add", "feat.txt")
+    _real_git(clone, "commit", "-m", "feat")
+    _real_git(clone, "merge", "--no-ff", "--no-edit", "side")
+    head_before = _real_git(clone, "rev-parse", "feature/1-a")
+    _advance_origin_develop(clone)
+    _real_git(clone, "checkout", "feature/1-a")
+
+    with pytest.raises(MergeCommitsError):
+        rebase_onto(Worktree(path=clone, branch="feature/1-a"), "develop")
+    # The branch is untouched: the merge commit survives.
+    assert _real_git(clone, "rev-parse", "HEAD") == head_before
+    assert _real_git(clone, "rev-list", "--merges", "origin/develop..HEAD") != ""
+
+
+@pytest.mark.usefixtures("_git_identity")
+def test_rebase_onto_real_git_rebases_linear_branch(tmp_path: Path) -> None:
+    clone = _origin_and_clone(tmp_path)
+    _real_git(clone, "checkout", "-b", "feature/2-b")
+    (clone / "feat.txt").write_text("feat\n")
+    _real_git(clone, "add", "feat.txt")
+    _real_git(clone, "commit", "-m", "feat")
+    _advance_origin_develop(clone)
+    _real_git(clone, "checkout", "feature/2-b")
+
+    rebase_onto(Worktree(path=clone, branch="feature/2-b"), "develop")
+    assert _real_git(clone, "merge-base", "HEAD", "origin/develop") == _real_git(
+        clone, "rev-parse", "origin/develop"
+    )
+    assert _real_git(clone, "log", "--format=%s", "-1") == "feat"
 
 
 def test_newest_mtime_takes_max_over_tracked_and_untracked(tmp_path: Path) -> None:
