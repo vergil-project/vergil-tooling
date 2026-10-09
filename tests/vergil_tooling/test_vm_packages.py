@@ -13,7 +13,11 @@ if TYPE_CHECKING:
     from vergil_tooling.lib.package.orgs import OrgRepo
 
 _REPO_URL = "https://vergil-project.github.io/packages"
-_FAST = "-o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20"
+_FAST = (
+    "-o Acquire::Retries=3 -o Acquire::Retries::Delay=false"
+    " -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20"
+    " -o DPkg::Lock::Timeout=60"
+)
 _UPDATE = f"sudo apt-get {_FAST} update"
 _INSTALL = f"sudo apt-get {_FAST} install -y --allow-downgrades vergil-tooling"
 

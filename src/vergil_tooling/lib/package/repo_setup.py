@@ -44,14 +44,32 @@ APT_FAIL_FAST: tuple[str, ...] = (
     "-o",
     "Acquire::Retries=3",
     "-o",
+    "Acquire::Retries::Delay=false",
+    "-o",
     "Acquire::http::Timeout=20",
     "-o",
     "Acquire::https::Timeout=20",
+    "-o",
+    "DPkg::Lock::Timeout=60",
 )
 """Options on every apt invocation here and in :mod:`vergil_tooling.lib.vm_packages`.
 
-The single definition of the fail-fast apt options: a dead mirror connection
-fails or retries in seconds rather than hanging.
+The single definition of the fail-fast apt options, mirroring the
+``80-vergil-fast-fail`` apt.conf that vergil-actions'
+``actions/package/setup/os-prereqs.sh`` writes for CI:
+
+* ``Acquire::Retries=3`` with 20 s http/https timeouts: a dead mirror
+  connection fails or retries in seconds rather than hanging.
+* ``Acquire::Retries::Delay=false``: with delayed retries, apt 2.4-2.8
+  (jammy, noble) deadlocks after a mirror-list failover -- the fallback's
+  InRelease files arrive and then apt waits forever, its timeouts never
+  firing (https://bugs.launchpad.net/ubuntu/+source/apt/+bug/2003851).
+* ``DPkg::Lock::Timeout=60``: wait up to 60 s for the dpkg lock instead of
+  failing at once. On a freshly booted VM, ``unattended-upgrades`` or
+  ``apt-daily`` commonly holds the lock while ``vrg-vm`` provisions.
+
+Both later options are accepted by apt 2.8 (noble) and apt 3.x (resolute);
+apt ignores ``-o`` keys it does not recognise, so an older apt is unharmed.
 """
 
 DEB_PREREQ_PROBE = (
