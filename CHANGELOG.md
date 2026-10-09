@@ -5,12 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [2.1.234] - 2026-10-09
-
-Not published: merged to `main` but never tagged or released. The enforcing
-CI-evidence gate failed closed because its artifact harvest read only the first
-API page of artifacts (fixed by #3160; tracking issue #3158 closed as not
-planned). These changes ship in 2.1.235.
+## [2.1.235] - 2026-10-09
 
 ### Bug fixes
 
@@ -19,10 +14,14 @@ planned). These changes ship in 2.1.235.
 - add Retries::Delay=false and DPkg::Lock::Timeout=60 to the fail-fast apt options (#3155)
 - retry transient GitHub errors in pr_checks and failed_check_names (#3156)
 - retry transient GitHub errors in the package-index collector's gh calls (#3157)
+- paginate the evidence harvest's GitHub list calls past the first page (#3163)
+- paginate PR provenance reviews/timeline and remaining single-page list calls (#3165)
+- refuse batch rebase of branches with merge commits; report Submitted vs Merged accurately (#3167)
 
 ### Documentation
 
 - document binary package publishing across tooling docs (#3145)
+- record 2.1.234 as unpublished
 
 ### Features
 
