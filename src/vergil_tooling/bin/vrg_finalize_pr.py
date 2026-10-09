@@ -164,10 +164,11 @@ def _run_finalize_batch(
         label=lambda pr: f"PR {pr}",
         plan=plan,
         assume_yes=assume_yes,
+        completed=batch.ItemOutcome.MERGED,
         post_steps=post_steps,
     )
     print(batch.format_report(report))
-    return 0 if report.all_merged and report.post_failure is None else 1
+    return 0 if report.all_completed and report.post_failure is None else 1
 
 
 class FinalizeError(Exception):

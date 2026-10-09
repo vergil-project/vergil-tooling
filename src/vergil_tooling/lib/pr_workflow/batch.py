@@ -2,9 +2,10 @@
 
 Runs a sequence of items through a per-item ``process`` callback one at a
 time, stopping at the first failure (fail-fast). Completed items are
-reported MERGED, the failed one FAILED with its reason, and the rest
-NOT_STARTED. Post-steps (end-of-batch validation, a single release) run
-only when every item merged cleanly.
+reported with the caller's ``completed`` outcome — SUBMITTED when the batch
+only opens PRs, MERGED when it also finalizes them — the failed one FAILED
+with its reason, and the rest NOT_STARTED. Post-steps (end-of-batch
+validation, a single release) run only when every item completed cleanly.
 
 The whole run is gated by exactly one up-front confirmation: per-item
 prompts are pre-suppressed by the callers (they thread ``assume_yes``), so
@@ -34,9 +35,16 @@ class BatchAbortError(Exception):
 
 
 class ItemOutcome(StrEnum):
+    SUBMITTED = "submitted"
     MERGED = "merged"
     FAILED = "failed"
     NOT_STARTED = "not-started"
+
+
+# The outcomes an item can complete with. A batch reports exactly what its
+# per-item step did: opening a PR is SUBMITTED, finalizing it is MERGED
+# (issue #3166 — a submit-only batch must never claim a merge).
+_COMPLETED_OUTCOMES = (ItemOutcome.SUBMITTED, ItemOutcome.MERGED)
 
 
 @dataclass(frozen=True)
@@ -58,8 +66,9 @@ class BatchReport:
     post_failure: str | None = None
 
     @property
-    def all_merged(self) -> bool:
-        return bool(self.items) and all(i.outcome is ItemOutcome.MERGED for i in self.items)
+    def all_completed(self) -> bool:
+        """True when there is at least one item and every item completed."""
+        return bool(self.items) and all(i.outcome in _COMPLETED_OUTCOMES for i in self.items)
 
 
 def run_batch(
@@ -69,18 +78,24 @@ def run_batch(
     label: Callable[[Any], str],
     plan: Sequence[str],
     assume_yes: bool,
+    completed: ItemOutcome,
     post_steps: Sequence[PostStep] = (),
 ) -> BatchReport:
     """Run *items* through *process* serially, fail-fast, then *post_steps*.
 
     Prints *plan* and asks exactly one confirmation (skipped with
     *assume_yes*). On decline, returns an all-NOT_STARTED report and runs
-    nothing. Each item that raises ``BatchAbortError`` stops the batch: it is
-    recorded FAILED and the remaining items NOT_STARTED. ``post_steps`` run
-    in order only when every item merged; a post-step ``BatchAbortError`` is
-    recorded in ``post_failure`` (never un-doing a merge) and stops the
-    remaining post-steps.
+    nothing. Each item *process* returns from is recorded with *completed*
+    (SUBMITTED or MERGED — whatever the step actually did). Each item that
+    raises ``BatchAbortError`` stops the batch: it is recorded FAILED and the
+    remaining items NOT_STARTED. ``post_steps`` run in order only when every
+    item completed; a post-step ``BatchAbortError`` is recorded in
+    ``post_failure`` (never un-doing a merge) and stops the remaining
+    post-steps.
     """
+    if completed not in _COMPLETED_OUTCOMES:
+        msg = f"completed must be one of {[o.value for o in _COMPLETED_OUTCOMES]}, got {completed}"
+        raise ValueError(msg)
     report = BatchReport()
 
     print("Batch plan:")
@@ -102,9 +117,9 @@ def run_batch(
             report.items.append(ItemResult(label(it), ItemOutcome.FAILED, str(exc)))
             stopped = True
         else:
-            report.items.append(ItemResult(label(it), ItemOutcome.MERGED))
+            report.items.append(ItemResult(label(it), completed))
 
-    if report.all_merged:
+    if report.all_completed:
         for step in post_steps:
             try:
                 step.run()
@@ -116,9 +131,10 @@ def run_batch(
 
 
 def format_report(report: BatchReport) -> str:
-    """Render the merged / failed / not-started buckets as a summary block."""
+    """Render the submitted / merged / failed / not-started buckets as a summary."""
     lines = ["", "Batch summary:"]
     for bucket, outcome in (
+        ("Submitted (PR opened, not merged)", ItemOutcome.SUBMITTED),
         ("Merged", ItemOutcome.MERGED),
         ("Failed", ItemOutcome.FAILED),
         ("Not started", ItemOutcome.NOT_STARTED),
