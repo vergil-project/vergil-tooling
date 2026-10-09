@@ -116,7 +116,7 @@ def packaged_install(transport: Transport, ref: str) -> None:
     except PackageError as exc:
         _die(f"could not set up the {_VENDOR} package repository ({org.base_url}): {exc}")
     transport.pipe(f"sudo tee {_PIN_FILE} >/dev/null", apt_pin(ref))
-    transport.run("sudo", "apt-get", "update")
+    transport.run("sudo", *repo_setup.apt_get("update"))
     policy = transport.run("apt-cache", "policy", _PACKAGE).stdout
     m = re.search(r"Candidate:\s*(\S+)", policy)
     if m is None or not _candidate_matches(ref, m[1]):
@@ -127,7 +127,7 @@ def packaged_install(transport: Transport, ref: str) -> None:
         )
     spec = f"{_PACKAGE}={_deb_version(ref)}" if kind == "exact" else _PACKAGE
     # An explicit pin may move the VM to an older release (identity pinned back).
-    transport.run("sudo", "apt-get", "install", "-y", "--allow-downgrades", spec)
+    transport.run("sudo", *repo_setup.apt_get("install", "-y", "--allow-downgrades", spec))
     _remove_uv_copy(transport)
 
 

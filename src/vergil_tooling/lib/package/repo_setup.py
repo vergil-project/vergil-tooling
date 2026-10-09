@@ -48,7 +48,11 @@ APT_FAIL_FAST: tuple[str, ...] = (
     "-o",
     "Acquire::https::Timeout=20",
 )
-"""Options on every apt invocation here: a dead mirror connection retries in seconds."""
+"""Options on every apt invocation here and in :mod:`vergil_tooling.lib.vm_packages`.
+
+The single definition of the fail-fast apt options: a dead mirror connection
+fails or retries in seconds rather than hanging.
+"""
 
 DEB_PREREQ_PROBE = (
     "dpkg-query -W -f='${Status}' ca-certificates 2>/dev/null"
