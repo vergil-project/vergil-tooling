@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 def test_resolve_release_pr_prefers_merged_from_api(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         github,
-        "read_json",
+        "read_json_paginated",
         lambda *a, **k: [
             {"number": 10, "merged_at": None},
             {"number": 42, "merged_at": "2026-07-12T00:00:00Z"},
@@ -42,21 +42,36 @@ def test_resolve_release_pr_prefers_merged_from_api(monkeypatch: pytest.MonkeyPa
     assert resolve_release_pr("o/r", "abc") == 42
 
 
+def test_resolve_release_pr_reads_every_page(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Issue #3162: the merged PR on page 2 of ``/commits/{sha}/pulls`` wins."""
+    calls: list[tuple[str, ...]] = []
+
+    def fake_read_output(*args: str, **_: object) -> str:
+        calls.append(args)
+        page1 = [{"number": n, "merged_at": None} for n in range(1, 31)]
+        page2 = [{"number": 77, "merged_at": "2026-07-12T00:00:00Z"}]
+        return json.dumps(page1) + json.dumps(page2)
+
+    monkeypatch.setattr(github, "read_output", fake_read_output)
+    assert resolve_release_pr("o/r", "abc") == 77
+    assert calls == [("api", "--paginate", "repos/o/r/commits/abc/pulls?per_page=100")]
+
+
 def test_resolve_release_pr_falls_back_to_first_unmerged(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
         github,
-        "read_json",
+        "read_json_paginated",
         lambda *a, **k: [{"number": 7, "merged_at": None}, {"number": 8}],
     )
     assert resolve_release_pr("o/r", "abc") == 7
 
 
-def test_resolve_release_pr_uses_subject_when_api_has_no_list(
+def test_resolve_release_pr_uses_subject_when_api_has_no_pr(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(github, "read_json", lambda *a, **k: {})
+    monkeypatch.setattr(github, "read_json_paginated", lambda *a, **k: [])
     monkeypatch.setattr(
         github,
         "read_output",
@@ -66,13 +81,13 @@ def test_resolve_release_pr_uses_subject_when_api_has_no_list(
 
 
 def test_resolve_release_pr_uses_squash_subject(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(github, "read_json", lambda *a, **k: [])
+    monkeypatch.setattr(github, "read_json_paginated", lambda *a, **k: [])
     monkeypatch.setattr(github, "read_output", lambda *a, **k: "chore(release): prepare (#99)")
     assert resolve_release_pr("o/r", "abc") == 99
 
 
 def test_resolve_release_pr_raises_when_unresolvable(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(github, "read_json", lambda *a, **k: [])
+    monkeypatch.setattr(github, "read_json_paginated", lambda *a, **k: [])
     monkeypatch.setattr(github, "read_output", lambda *a, **k: "")
     with pytest.raises(ReleasePrUnresolvedError, match="cannot resolve release PR"):
         resolve_release_pr("o/r", "abc")

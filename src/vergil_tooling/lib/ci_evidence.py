@@ -494,8 +494,10 @@ def _pr_from_commit_api(repo: str, merge_sha: str) -> int | None:
     Prefers a merged PR; falls back to the first associated PR. Returns None
     when the API associates no PR with the commit.
     """
-    raw = github.read_json("api", f"repos/{repo}/commits/{merge_sha}/pulls")
-    prs = cast("list[dict[str, Any]]", raw) if isinstance(raw, list) else []
+    prs = cast(
+        "list[dict[str, Any]]",
+        github.read_json_paginated(f"repos/{repo}/commits/{merge_sha}/pulls"),
+    )
     merged = [pr for pr in prs if pr.get("merged_at")]
     chosen = merged or prs
     if not chosen:
