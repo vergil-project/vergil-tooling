@@ -369,6 +369,16 @@ CLI tools installed as `vrg-*` console scripts:
   fail-closed `physical-host`/`local-vm`/`cloud-vm` token)
 - **`vrg-container-run`** — Run arbitrary commands inside a dev container
 - **`vrg-container-test`** — Run repo test suite inside a dev container
+- **`vrg-package`** — Build, install-test and index binary OS packages
+  (`.deb`/`.rpm`) from `[package]` in `vergil.toml`: `matrix`, `build`,
+  `install-test`, and `index` (the signed apt/dnf site)
+- **`vrg-sarif-filter`** — Copy a SARIF file without its
+  accepted-suppressed results, for upload to GitHub code scanning
+- **`vrg-vm`** — Create, start, update, rebuild and enter Lima/cloud agent
+  VMs (`vrg-vm update` reinstalls vergil-tooling in a running VM)
+
+This list highlights the main tools; `[project.scripts]` in
+`pyproject.toml` is the complete set of entry points.
 
 Shared libraries under `src/vergil_tooling/lib/`:
 
@@ -376,7 +386,10 @@ Shared libraries under `src/vergil_tooling/lib/`:
 - **`github.py`** — gh CLI subprocess wrappers
 - **`config.py`** — Parse `vergil.toml`
 - **`release/`** — Mechanized release workflow (preflight, prepare, merge,
-  bump, confirm, finalize, handoff, orchestrator)
+  bump, confirm, finalize, handoff, orchestrator, package-index wait)
+- **`package/`** — Binary package builds (matrix, python and staged
+  builders, nFPM, install-test, repository bootstrap, `index/` for the
+  apt/dnf site)
 
 ### Docker Dev Images
 
@@ -416,14 +429,21 @@ wrappers through. Only active in repos with a `vergil.toml`.
 
 ### Consumption Model
 
-`vergil-tooling` has two coordinated deployment targets (see
+`vergil-tooling` has three coordinated deployment targets (see
 `docs/specs/host-level-tool.md` — historical spec, written under the
 old `standard-tooling`/`st-*` naming):
 
 | Target | Install mechanism | Who uses it |
 |---|---|---|
-| **Developer host** | `uv tool install` from git URL | Host-side commands: `vrg-container-run`, `vrg-commit`, `vrg-submit-pr`, `vrg-release`, `vrg-finalize-pr` |
+| **Developer host** (macOS) | `uv tool install` from git URL | Host-side commands: `vrg-container-run`, `vrg-commit`, `vrg-submit-pr`, `vrg-release`, `vrg-finalize-pr` |
 | **Container runtime** (all languages) | `vrg-container-run` cache-first install per `vergil.toml` | `vrg-*` inside the container for all consumers |
+| **Agent VM** (Lima/cloud) | Signed `vergil-tooling` package via `apt` from <https://vergil-project.github.io/packages>, pinned to the identity's release line or version | Agent sessions inside the VM |
+
+On an agent VM, a dev ref (`vrg-vm update --tag develop`, or any non-release
+ref) is an explicit `uv tool install` from git that shadows the packaged copy,
+and every `vrg-vm` command that touches the VM prints a `DEV tooling` banner
+while it is in place. A plain `vrg-vm update` returns the VM to the package.
+See `docs/site/docs/reference/vm-spec.md`.
 
 **Host install** (canonical):
 

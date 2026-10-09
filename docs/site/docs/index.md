@@ -39,6 +39,11 @@ PreToolUse hook that blocks raw `git` and `gh`, routing through `vrg-*` wrappers
    `.claude/settings.json`, blocking raw `git`/`gh` in agent sessions.
 5. Consuming repos call tools by bare name -- no file copying or
    syncing.
+6. Lima and cloud agent VMs install the signed `vergil-tooling`
+   package with `apt` instead of `uv`. The apt/dnf install guide is the
+   [`vergil-project/packages` README](https://github.com/vergil-project/packages#readme)
+   (pinned primary key fingerprint
+   `B3A1D804DC03AB036566A4E367861822166ECABE`).
 
 ## Quick Links
 

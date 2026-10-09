@@ -48,6 +48,12 @@ export PATH="$(pwd)/.venv/bin:$PATH"
 - `vrg-finalize-pr` — Merge a PR and run post-merge cleanup
 - `vrg-validate` — Unified validation driver (via vrg-container-run)
 - `vrg-ensure-label` — Idempotent GitHub label creation
+- `vrg-package` — Build, install-test and index binary OS packages
+  (`.deb`/`.rpm`) from `[package]` in `vergil.toml`
+
+Lima and cloud agent VMs install vergil-tooling as a signed apt package
+rather than with `uv`; see the
+[`vergil-project/packages` README](https://github.com/vergil-project/packages#readme).
 
 ## Claude Code hook guard
 

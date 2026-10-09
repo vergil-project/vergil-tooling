@@ -446,6 +446,59 @@ placeholder values.
 | Exit codes | 0 valid, 1 invalid, 2 file not found |
 | Status | Active |
 
+### vrg-package
+
+Build, install-test and index binary OS packages (`.deb`/`.rpm`) from
+the `[package]` section of `vergil.toml` in the current directory. Run
+by the `ci-package`, `cd-release` and `publish-index` reusable
+workflows; `matrix` is also useful locally. See the
+[package config reference](package-config.md).
+
+- `matrix` — resolve `[package]` into build and test cells and print
+  them as JSON (read-only). `--tier {full,reduced}` (default `full`),
+  `--github-output` (append `enabled`/`build`/`test`/`tier` to
+  `$GITHUB_OUTPUT`), `--manifest PATH` (also write the release artifact
+  manifest). A repo without `[package]` reports `enabled: false`.
+- `build` — build every format of one build cell: `--cell` (required),
+  `--version` (required), `--out` (default `dist/packages`),
+  `--staging` (default `.vergil/package-staging`, wiped first). Needs
+  `nfpm` on `PATH`.
+- `install-test` — in a clean container, install one test cell's
+  artifact, verify shipped systemd units, run the smoke command and
+  shim checks under a sanitized environment, remove the package and
+  check for residue: `--cell`, `--artifacts DIR`, `--report PATH` (all
+  required).
+- `index` — build the signed apt/dnf repository site: `--config`
+  (`packages.toml`), `--keys DIR`, `--out DIR` (all required), `--work`
+  (default `.vergil/index-work`), `--base-url`. Needs
+  `PACKAGE_SIGNING_KEY` and `PACKAGE_SIGNING_PASSPHRASE`.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_package` |
+| Args | Subcommand (`matrix`, `build`, `install-test`, `index`) with the flags above |
+| Preconditions | `vergil.toml` in the current directory (`index`: a `packages.toml`) |
+| Failure mode | `ERROR:` diagnostic on stderr for config, package, or missing-file errors |
+| Exit codes | 0 success, 1 error |
+| Status | Active |
+
+### vrg-sarif-filter
+
+Write a copy of a SARIF file with every accepted-suppressed result
+removed. The CI security composites upload the filtered copy to GitHub
+code scanning, while the CI-evidence bundle keeps the unfiltered
+original. See
+[Suppressing a reviewed finding in source](../guides/ci-architecture.md#suppressing-a-reviewed-finding-in-source).
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_sarif_filter` |
+| Args | `INPUT` `OUTPUT` (positional; may be the same path) |
+| Preconditions | `INPUT` is a readable SARIF file |
+| Failure mode | Error on stderr when the input cannot be read or the output cannot be written |
+| Exit codes | 0 success, 1 error |
+| Status | Active |
+
 ## Removed in this audit
 
 ### st-list-project-repos (removed)

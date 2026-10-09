@@ -6,8 +6,9 @@
 - Each ``native`` target gets its own build cell, inside a container of its OS.
 - Every target gets its own test cell (the ``full`` tier).
 - The ``reduced`` tier (issue #3127) keeps every build cell but only one test
-  cell per format: the first selected target of that format on amd64, else on
-  arm64, drawn from the shared targets unless the format has none.
+  cell per format: the oldest release of that format (compared numerically) on
+  amd64, else on arm64, drawn from the shared targets unless the format has
+  none.
 
 Workflows consume only the JSON this produces (``vrg-package matrix``).
 """
