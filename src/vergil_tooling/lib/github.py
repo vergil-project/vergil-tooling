@@ -525,6 +525,61 @@ def read_json(*args: str) -> dict[str, object] | list[object]:
     return result
 
 
+_PAGE_SIZE = 100
+
+
+def _iter_json_documents(raw: str) -> Iterator[object]:
+    """Yield each JSON document in *raw*, a stream of concatenated documents.
+
+    ``gh api --paginate`` writes one JSON document per page back to back
+    (``{...}{...}``), which a single :func:`json.loads` rejects as extra data.
+    """
+    decoder = json.JSONDecoder()
+    index = 0
+    length = len(raw)
+    while True:
+        while index < length and raw[index].isspace():
+            index += 1
+        if index >= length:
+            return
+        document, index = decoder.raw_decode(raw, index)
+        yield document
+
+
+def read_json_paginated(endpoint: str, key: str | None = None) -> list[object]:
+    """GET every page of a REST list *endpoint* and return the flattened items.
+
+    A bare ``gh api`` call returns only the first page — 30 items by default —
+    so any item past it silently vanishes (issue #3160: the release gate missed
+    a required evidence artifact that landed on page 2). This requests
+    ``per_page=100`` and ``--paginate`` so ``gh`` follows every ``Link: next``
+    page, then flattens the result: for an object envelope such as
+    ``{"total_count": N, "artifacts": [...]}`` pass the list's *key*; for a
+    bare-array endpoint leave *key* ``None``.
+
+    No ``-f``/``-F`` field is used — ``gh api`` would switch to POST — so the
+    page size rides the URL query string. Retries are inherited from
+    :func:`read_output`. A page that lacks *key*, or whose list is not a list,
+    raises :class:`ValueError` rather than being treated as empty.
+    """
+    separator = "&" if "?" in endpoint else "?"
+    paged = f"{endpoint}{separator}per_page={_PAGE_SIZE}"
+    raw = read_output("api", "--paginate", paged)
+    items: list[object] = []
+    for document in _iter_json_documents(raw):
+        page: object = document
+        if key is not None:
+            if not isinstance(document, dict) or key not in document:
+                msg = f"paginated response from {endpoint!r} has no {key!r} list"
+                raise ValueError(msg)
+            page = cast("dict[str, object]", document)[key]
+        if not isinstance(page, list):
+            msg = f"paginated response from {endpoint!r} is not a list: {type(page).__name__}"
+            raise ValueError(msg)
+        items.extend(cast("list[object]", page))
+    return items
+
+
 def graphql(query: str, **variables: object) -> dict[str, object]:
     """Run a GraphQL query/mutation via ``gh api graphql`` and return ``data``.
 
