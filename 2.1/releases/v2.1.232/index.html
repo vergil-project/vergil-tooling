@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.233/">
       
       
         <link rel="next" href="../v2.1.231/">
@@ -1269,6 +1269,8 @@
       
         
       
+        
+      
     
     
     
@@ -1324,6 +1326,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.233/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.233
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -14779,6 +14809,7 @@
 <li><strong>scope apt updates in package bootstrap/builder and fail fast on dead mirrors (#3133)</strong>
 repo_setup.bootstrap probes for its prerequisites and installs only the missing ones, so a full apt-get update (or a dnf install) happens only when something is actually missing. The update after writing the bootstrap source refreshes that source alone (Dir::Etc::sourcelist, sourceparts=-, List-Cleanup=0). python_builder drops its full update for a scoped refresh of the permanent vergil source the keyring postinst writes, and install_test runs its full update only when the container has no apt indexes yet. Every apt call on these paths carries Acquire::Retries=3 and 20 s http/https timeouts.</li>
 </ul>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.232/v2.1.232-ci-evidence.tar.gz">Download →</a></p>
 
 
 
