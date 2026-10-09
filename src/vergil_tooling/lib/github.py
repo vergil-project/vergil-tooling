@@ -438,6 +438,66 @@ def _run_with_retry(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[st
         raise
 
 
+def run_tolerating(
+    cmd: tuple[str, ...],
+    *,
+    is_answer: Callable[[subprocess.CompletedProcess[str]], bool],
+) -> subprocess.CompletedProcess[str]:
+    """Run a gh command whose non-zero exit can itself be a valid answer.
+
+    Some ``gh`` invocations exit non-zero to report *state*, not failure —
+    ``gh pr checks`` exits 1/8 for failing/pending checks (with JSON on
+    stdout) or 1 with "no checks reported", and ``gh api -i`` exits 1 on a
+    404 that callers treat as "absent". Those cannot use ``check=True``, so
+    this wrapper gives them the same bounded, logged retry as
+    :func:`_run_with_retry` (#3151):
+
+    * exit 0, or a non-zero exit for which *is_answer* is true, returns the
+      result immediately — a check-state exit is **never** retried;
+    * any other non-zero exit is retried with :func:`retry.compute_delay`
+      backoff while :func:`retry.is_retryable` classifies it as transient;
+    * a non-transient error, or a transient one that outlasts
+      :data:`retry.MAX_RETRIES`, raises :class:`GitHubAPIError`
+      (:class:`MissingGitHubTokenError` for a missing token) carrying the
+      original exit code and output.
+    """
+    kwargs: dict[str, Any] = {}
+    env = _gh_env()
+    if env is not None:
+        kwargs["env"] = env
+    attempt = 0
+    while True:
+        result = subprocess.run(  # noqa: S603
+            cmd, check=False, text=True, capture_output=True, **kwargs
+        )
+        if result.returncode == 0 or is_answer(result):
+            return result
+        exc = subprocess.CalledProcessError(result.returncode, cmd, result.stdout, result.stderr)
+        if attempt == retry.MAX_RETRIES or not retry.is_retryable(exc):
+            missing_token = _is_missing_token_error(result.stderr)
+            error_type = MissingGitHubTokenError if missing_token else GitHubAPIError
+            raise error_type(result.returncode, cmd, result.stdout, result.stderr)
+        delay = retry.compute_delay(attempt)
+        log.warning(
+            "GitHub API error (attempt %d/%d), retrying in %.1fs",
+            attempt + 1,
+            retry.MAX_RETRIES + 1,
+            delay,
+        )
+        time.sleep(delay)
+        attempt += 1
+
+
+def http_status_line(result: subprocess.CompletedProcess[str]) -> str:
+    """First line of ``gh api -i`` output — the HTTP status line."""
+    return result.stdout.split("\n")[0] if result.stdout else ""
+
+
+def is_http_404(result: subprocess.CompletedProcess[str]) -> bool:
+    """True when a ``gh api -i`` result reports HTTP 404 (an answer, not an error)."""
+    return "404" in http_status_line(result)
+
+
 def run(*args: str) -> None:
     """Run a gh command and raise on failure."""
     result = _run_with_retry(("gh", *args), check=True, capture_output=True, text=True)  # noqa: S607
@@ -506,16 +566,16 @@ def delete(endpoint: str) -> None:
 
 
 def delete_if_exists(endpoint: str) -> bool:
-    """Call gh api DELETE; return True if deleted (2xx), False if 404."""
-    result = subprocess.run(  # noqa: S603
-        ("gh", "api", endpoint, "-X", "DELETE", "-i"),  # noqa: S607
-        capture_output=True,
-        text=True,
-        check=False,
-        env=_gh_env(),
+    """Call gh api DELETE; return True if deleted (2xx), False if 404.
+
+    Transient errors are retried; any other failure raises rather than
+    reading as "deleted" (#3151).
+    """
+    result = run_tolerating(
+        ("gh", "api", endpoint, "-X", "DELETE", "-i"),
+        is_answer=is_http_404,
     )
-    first_line = result.stdout.split("\n")[0] if result.stdout else ""
-    return "404" not in first_line
+    return not is_http_404(result)
 
 
 def create_pr(*, base: str, title: str, body_file: str, head: str | None = None) -> str:
@@ -592,6 +652,17 @@ _NO_CHECKS_MARKER = "no checks reported"
 def _is_no_checks_error(exc: subprocess.CalledProcessError) -> bool:
     """True if a watch failure means zero checks on the PR's current head."""
     return _NO_CHECKS_MARKER in (exc.stderr or "").lower()
+
+
+def _is_checks_answer(result: subprocess.CompletedProcess[str]) -> bool:
+    """True when a ``gh pr checks --json`` exit carries check state, not an error.
+
+    ``gh pr checks`` exits non-zero for failing/pending checks but still prints
+    the JSON, and exits 1 with "no checks reported" when the head has none.
+    Both are answers that must never be retried; only an exit with neither
+    (a GitHub API error) is a candidate for :func:`run_tolerating`'s retry.
+    """
+    return bool(result.stdout.strip()) or _NO_CHECKS_MARKER in (result.stderr or "").lower()
 
 
 def _poll_and_watch_checks(
@@ -980,11 +1051,14 @@ def failed_check_names(pr: str) -> list[str]:
     ``gh pr checks`` exits non-zero when checks are failing or pending but
     still emits the requested JSON on stdout, so the call tolerates a
     non-zero exit and derives the verdict from the data rather than the exit
-    code.  Empty stdout (e.g. a transient API error) is surfaced as an error
-    rather than silently treated as a pass.
+    code.  A real API error (non-zero exit with neither JSON nor "no checks
+    reported") is retried while transient and then surfaced via
+    :func:`run_tolerating` (#3151); a check-state exit is never retried.
+    Empty stdout on a zero exit is surfaced as an error rather than silently
+    treated as a pass.
     """
     cmd = ("gh", "pr", "checks", pr, "--json", "name,bucket")
-    result = _run_with_retry(cmd, check=False, text=True, capture_output=True)  # noqa: S607
+    result = run_tolerating(cmd, is_answer=_is_checks_answer)
     out = result.stdout.strip()
     if not out:
         if _NO_CHECKS_MARKER in (result.stderr or "").lower():
@@ -1010,14 +1084,15 @@ def pr_checks(pr: str) -> list[dict[str, str]]:
     still emits the requested JSON, so the verdict is derived from the data,
     not the exit code. When *no* checks are registered for the head commit,
     ``gh`` prints nothing and reports "no checks reported"; that is a valid
-    empty result (checks may not have started), distinct from a transient API
-    error, which is surfaced.
+    empty result (checks may not have started), distinct from an API error,
+    which is retried while transient and then surfaced (#3151). Empty stdout
+    on a zero exit is surfaced as an error too.
 
     ``link`` is included so orphan detection can map a still-pending check
     back to its backing Actions run (see :func:`orphaned_check_names`).
     """
     cmd = ("gh", "pr", "checks", pr, "--json", "name,bucket,state,link")
-    result = _run_with_retry(cmd, check=False, text=True, capture_output=True)  # noqa: S607
+    result = run_tolerating(cmd, is_answer=_is_checks_answer)
     out = result.stdout.strip()
     if out:
         return cast("list[dict[str, str]]", json.loads(out))

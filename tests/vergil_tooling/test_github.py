@@ -590,6 +590,151 @@ def test_pr_checks_raises_on_empty_output_without_no_checks_message() -> None:
         github.pr_checks("https://github.com/pr/1")
 
 
+# --- Transient retry for gh pr checks (#3151) ---
+#
+# ``gh pr checks`` exits non-zero for failing/pending checks (check state, not an
+# error), so these helpers run it with check=False. A transient GitHub blip (no
+# JSON, transient stderr) must still be retried; a check-state exit never is.
+
+_BLIP = "HTTP 502 Bad Gateway"
+_CHECKS_JSON = json.dumps(
+    [{"name": "build", "bucket": "pass", "state": "SUCCESS", "link": "https://x/1"}]
+)
+
+
+@pytest.mark.parametrize(
+    ("helper", "expected"),
+    [(github.pr_checks, json.loads(_CHECKS_JSON)), (github.failed_check_names, [])],
+)
+def test_pr_check_helpers_retry_transient_blip_then_succeed(
+    helper: Callable[[str], object], expected: object
+) -> None:
+    with (
+        patch(
+            "vergil_tooling.lib.github.subprocess.run",
+            side_effect=[
+                _completed(returncode=1, stderr=_BLIP),
+                _completed(returncode=1, stderr="gh: unexpected EOF"),
+                _completed(returncode=0, stdout=_CHECKS_JSON),
+            ],
+        ) as mock_run,
+        patch("vergil_tooling.lib.github.time.sleep") as mock_sleep,
+        patch("vergil_tooling.lib.retry.random.random", return_value=0.5),
+    ):
+        result = helper("https://github.com/pr/1")
+    assert result == expected  # the third attempt's answer, not an error
+    assert mock_run.call_count == 3
+    assert mock_sleep.call_count == 2
+
+
+@pytest.mark.parametrize("helper", [github.pr_checks, github.failed_check_names])
+def test_pr_check_helpers_fail_loudly_after_retry_budget(
+    helper: Callable[[str], object],
+) -> None:
+    with (
+        patch(
+            "vergil_tooling.lib.github.subprocess.run",
+            return_value=_completed(returncode=1, stderr=_BLIP),
+        ) as mock_run,
+        patch("vergil_tooling.lib.github.time.sleep") as mock_sleep,
+        patch("vergil_tooling.lib.retry.random.random", return_value=0.5),
+        pytest.raises(github.GitHubAPIError, match="502 Bad Gateway"),
+    ):
+        helper("https://github.com/pr/1")
+    assert mock_run.call_count == github.retry.MAX_RETRIES + 1
+    assert mock_sleep.call_count == github.retry.MAX_RETRIES
+
+
+@pytest.mark.parametrize("helper", [github.pr_checks, github.failed_check_names])
+@pytest.mark.parametrize("returncode", [1, 8])
+def test_pr_check_helpers_never_retry_check_state_exit(
+    helper: Callable[[str], object], returncode: int
+) -> None:
+    # Failing (1) / pending (8) checks exit non-zero but carry JSON. Even when
+    # stderr happens to contain a transient-looking phrase, the JSON is the answer.
+    payload = json.dumps(
+        [{"name": "build", "bucket": "pending", "state": "IN_PROGRESS", "link": "https://x/1"}]
+    )
+    with (
+        patch(
+            "vergil_tooling.lib.github.subprocess.run",
+            return_value=_completed(returncode=returncode, stdout=payload, stderr="timeout"),
+        ) as mock_run,
+        patch("vergil_tooling.lib.github.time.sleep") as mock_sleep,
+    ):
+        helper("https://github.com/pr/1")
+    assert mock_run.call_count == 1
+    mock_sleep.assert_not_called()
+
+
+@pytest.mark.parametrize("helper", [github.pr_checks, github.failed_check_names])
+def test_pr_check_helpers_never_retry_no_checks_reported(
+    helper: Callable[[str], object],
+) -> None:
+    with (
+        patch(
+            "vergil_tooling.lib.github.subprocess.run",
+            return_value=_completed(returncode=1, stderr="no checks reported on 'x'"),
+        ) as mock_run,
+        patch("vergil_tooling.lib.github.time.sleep") as mock_sleep,
+    ):
+        assert helper("https://github.com/pr/1") == []
+    assert mock_run.call_count == 1
+    mock_sleep.assert_not_called()
+
+
+@pytest.mark.parametrize("helper", [github.pr_checks, github.failed_check_names])
+def test_pr_check_helpers_never_retry_non_transient_error(
+    helper: Callable[[str], object],
+) -> None:
+    with (
+        patch(
+            "vergil_tooling.lib.github.subprocess.run",
+            return_value=_completed(returncode=1, stderr="HTTP 404 Not Found"),
+        ) as mock_run,
+        patch("vergil_tooling.lib.github.time.sleep") as mock_sleep,
+        pytest.raises(github.GitHubAPIError, match="404 Not Found"),
+    ):
+        helper("https://github.com/pr/1")
+    assert mock_run.call_count == 1
+    mock_sleep.assert_not_called()
+
+
+def test_pr_checks_surfaces_missing_token_error() -> None:
+    stderr = (
+        "gh: To use GitHub CLI in a GitHub Actions workflow, set the GH_TOKEN environment variable."
+    )
+    with (
+        patch(
+            "vergil_tooling.lib.github.subprocess.run",
+            return_value=_completed(returncode=4, stderr=stderr),
+        ),
+        pytest.raises(github.MissingGitHubTokenError),
+    ):
+        github.pr_checks("https://github.com/pr/1")
+
+
+@pytest.mark.parametrize("helper", [github.pr_checks, github.failed_check_names])
+def test_pr_check_helpers_raise_on_empty_output_with_zero_exit(
+    helper: Callable[[str], object],
+) -> None:
+    with (
+        patch("vergil_tooling.lib.github.subprocess.run", return_value=_completed()),
+        pytest.raises(github.GitHubAPIError),
+    ):
+        helper("https://github.com/pr/1")
+
+
+def test_run_tolerating_injects_gh_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("vergil_tooling.lib.github._gh_env", lambda: {"GH_TOKEN": "t"})
+    with patch(
+        "vergil_tooling.lib.github.subprocess.run",
+        return_value=_completed(returncode=0, stdout=_CHECKS_JSON),
+    ) as mock_run:
+        github.pr_checks("https://github.com/pr/1")
+    assert mock_run.call_args.kwargs["env"] == {"GH_TOKEN": "t"}
+
+
 def test_pr_reviews_returns_list() -> None:
     reviews = [{"id": "r1", "state": "APPROVED"}, {"id": "r2", "state": "COMMENTED"}]
     with patch("vergil_tooling.lib.github.read_json", return_value=reviews):
@@ -872,6 +1017,27 @@ def test_delete_if_exists_returns_true_on_empty_stdout() -> None:
     cp = _completed(stdout="")
     with patch("vergil_tooling.lib.github.subprocess.run", return_value=cp):
         assert github.delete_if_exists("repos/o/r/branches/main/protection") is True
+
+
+def test_delete_if_exists_retries_transient_error() -> None:
+    blip = _completed(returncode=1, stdout="HTTP/2.0 502 Bad Gateway\n", stderr="HTTP 502")
+    ok = _completed(stdout="HTTP/2.0 204 No Content\n")
+    with (
+        patch("vergil_tooling.lib.github.subprocess.run", side_effect=[blip, ok]) as mock_run,
+        patch("vergil_tooling.lib.github.time.sleep"),
+    ):
+        assert github.delete_if_exists("repos/o/r/branches/main/protection") is True
+    assert mock_run.call_count == 2
+
+
+def test_delete_if_exists_raises_on_non_404_failure() -> None:
+    # A failure that is neither success nor 404 used to read as "deleted".
+    cp = _completed(returncode=1, stdout="HTTP/2.0 403 Forbidden\n", stderr="HTTP 403")
+    with (
+        patch("vergil_tooling.lib.github.subprocess.run", return_value=cp),
+        pytest.raises(github.GitHubAPIError, match="403"),
+    ):
+        github.delete_if_exists("repos/o/r/branches/main/protection")
 
 
 # --- GitHubAPIError ---
