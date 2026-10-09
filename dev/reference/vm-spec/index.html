@@ -15423,7 +15423,13 @@ remembered.</p>
   <code>apt-get update</code> and <code>apt-get install</code> of <code>vergil-tooling</code>, runs
   with <code>Acquire::Retries=3</code> and 20-second
   <code>Acquire::http::Timeout</code>/<code>Acquire::https::Timeout</code>, so a dead mirror
-  connection fails or retries in seconds rather than hanging.</li>
+  connection fails or retries in seconds rather than hanging. It also
+  sets <code>Acquire::Retries::Delay=false</code>, because apt 2.4–2.8 can
+  deadlock on mirror failover when retries are delayed
+  (<a href="https://bugs.launchpad.net/ubuntu/+source/apt/+bug/2003851">Launchpad #2003851</a>),
+  and <code>DPkg::Lock::Timeout=60</code>, so a dpkg lock held by
+  <code>unattended-upgrades</code> or <code>apt-daily</code> on a freshly booted VM is waited
+  out for up to 60 seconds instead of failing provisioning at once.</li>
 <li>The VM's Ubuntu codename must be a published suite (<code>noble</code> or
   <code>resolute</code>). Any other codename fails provisioning.</li>
 <li>If the repository has no package matching the version, for example
