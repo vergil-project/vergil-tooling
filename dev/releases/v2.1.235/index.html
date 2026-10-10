@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.162/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.160/">
+        <link rel="next" href="../v2.1.234/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.161 - VERGIL Tooling</title>
+        <title>2.1.235 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-21161-2026-07-23" class="md-skip">
+        <a href="#release-21235-2026-10-09" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.161
+              2.1.235
             
           </span>
         </div>
@@ -1336,10 +1336,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.235/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.235
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1355,6 +1382,59 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -3408,37 +3488,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.161
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.161/" class="md-nav__link">
         
   
   
@@ -3454,37 +3507,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -14846,6 +14868,28 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -14863,13 +14907,64 @@
 
 
 
-<h1 id="release-21161-2026-07-23">Release 2.1.161 (2026-07-23)<a class="headerlink" href="#release-21161-2026-07-23" title="Permanent link">&para;</a></h1>
+<h1 id="release-21235-2026-10-09">Release 2.1.235 (2026-10-09)<a class="headerlink" href="#release-21235-2026-10-09" title="Permanent link">&para;</a></h1>
 <h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>reclaim anonymous venv mask volume on cache-build cleanup (#2501)</strong>
-The cache-build path creates a build container, commits it, then removes it in the finally block. The cleanup used <code>rm</code> without <code>-v</code>, orphaning the anonymous /workspace/.venv mask volume introduced in #2495 — <code>nerdctl volume ls</code> grew by one per cold build. Add <code>-v</code> so the container's anonymous volumes are reclaimed on removal, matching the run path's <code>run --rm</code> behavior.</li>
+<li>
+<p><strong>retry transient GitHub GraphQL 'Something went wrong' errors (#3152)</strong>
+GitHub's GraphQL endpoint intermittently fails with 'Something went wrong while executing your query' (its 5xx-equivalent, usually a backend timeout). It stopped vrg-release confirm/wait stages repeatedly where a manual re-run always succeeded. Add the exact phrasing to retry._RETRYABLE_PATTERNS so every gh/git path (github._run_with_retry, release _stream_with_retry, vrg-gh) rides it out with the existing bounded, logged backoff (MAX_RETRIES=4) and then re-raises the original error. Matched on the exact phrasing so an unrelated 'something went wrong' still fails fast. Ref #3148</p>
+</li>
+<li>
+<p><strong>apply the fail-fast apt options to vrg-vm install and upgrade (#3154)</strong>
+The apt-get update and apt-get install calls in lib/vm_packages.py, used by vrg-vm create and update, ran without the fail-fast options. They now build their argv through repo_setup.apt_get, so APT_FAIL_FAST stays the single definition shared by repository setup, the builders and the VM install. vm-spec.md now says the options cover every vrg-vm apt call. Ref #3149</p>
+</li>
+<li>
+<p><strong>add Retries::Delay=false and DPkg::Lock::Timeout=60 to the fail-fast apt options (#3155)</strong>
+APT_FAIL_FAST now matches the apt.conf that vergil-actions os-prereqs.sh writes for CI. Retries::Delay=false avoids the apt 2.4-2.8 mirror-failover deadlock (Launchpad #2003851); DPkg::Lock::Timeout=60 waits out a dpkg lock held by unattended-upgrades or apt-daily on a freshly booted VM. Both verified accepted by apt 2.8.3 (ubuntu:24.04) and apt 3.2.0 (ubuntu:26.04). Ref #3150</p>
+</li>
+<li>
+<p><strong>retry transient GitHub errors in pr_checks and failed_check_names (#3156)</strong>
+gh pr checks exits non-zero for failing or pending checks, so pr_checks and failed_check_names ran it with check=False and the shared retry layer never fired: a transient blip (502/504, transport error, GraphQL error) failed them on the first attempt.</p>
+</li>
 </ul>
-<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.161/v2.1.161-ci-evidence.tar.gz">Download →</a></p>
+<p>Add github.run_tolerating, which runs a gh command whose non-zero exit can be a valid answer. An exit the caller's is_answer predicate accepts (check-state JSON, "no checks reported", an HTTP 404 from gh api -i) is returned immediately and never retried. Any other exit is retried with the shared retry.is_retryable classification and retry.compute_delay backoff, then raises GitHubAPIError (MissingGitHubTokenError for a missing token) once the budget is spent or for a non-transient error.</p>
+<p>The same audit found two other gh call sites in lib/ that bypassed the retry layer and also failed silently: github.delete_if_exists read any failure as "deleted", and github_config._fetch_vulnerability_alerts read any non-204 status (including a 502) as "disabled" and skipped App-credential injection. Both now go through run_tolerating and raise on an unexpected status.</p>
+<ul>
+<li>
+<p><strong>retry transient GitHub errors in the package-index collector's gh calls (#3157)</strong>
+Route every gh call in lib/package/index/collect.py (release list/view/download and attestation verify) through a new retry.call_with_retry, the callable form of run_with_retry, so they share lib/retry.py's transient classification and bounded backoff while keeping the injectable Run transport. Non-transient failures (release not found, failed attestation) raise at once; a transient failure that outlasts the budget still fails the index run with PackageError. Local tools (dpkg-deb, rpm, rpmkeys) are never retried. repo_setup.py is unchanged.</p>
+</li>
+<li>
+<p><strong>paginate the evidence harvest's GitHub list calls past the first page (#3163)</strong>
+The release gate listed the CI run's artifacts with one unpaginated call, so only the first 30 were visible; a required gate artifact on page 2 read as missing (#3160). Add github.read_json_paginated (gh api --paginate, per_page=100 in the URL so the verb stays GET, concatenated page documents flattened, retries inherited) and use it for the artifacts, check-runs and workflow-runs listings in ci_evidence.</p>
+</li>
+<li>
+<p><strong>paginate PR provenance reviews/timeline and remaining single-page list calls (#3165)</strong>
+pr_provenance read a PR's reviews and timeline with single unpaginated gh api calls, so any event past the first 30 was never examined and the check could pass when it should fail. Both now use github.read_json_paginated, which follows every page and raises on a malformed page.</p>
+</li>
+</ul>
+<p>The rulesets listing in github_config (fetch and apply), commits/<sha>/pulls in ci_evidence and in vrg-resolve-tracking-issue move to the same helper. A malformed listing now fails loudly instead of reading as empty (which previously could re-POST existing rulesets or report spurious drift); vrg-resolve-tracking-issue reports it as an error with exit 2.</p>
+<ul>
+<li><strong>refuse batch rebase of branches with merge commits; report Submitted vs Merged accurately (#3167)</strong>
+The batch rebase (worktrees.rebase_onto) now checks origin/<base>..HEAD for merge commits and raises MergeCommitsError instead of running a plain rebase that would drop them and any content only in their conflict resolution; _run_submit_batch converts it to a BatchAbortError with an actionable message. The batch orchestrator now takes an explicit completed outcome (SUBMITTED or MERGED): a submit-only batch reports Submitted (PR opened, not merged), finalize batches report Merged. BatchReport.all_merged is renamed all_completed. Ref #3166</li>
+</ul>
+<h2 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h2>
+<ul>
+<li>
+<p><strong>document binary package publishing across tooling docs (#3145)</strong>
+Closing documentation review for epic vergil-project/.github#356 (Ref #3072): the secrets-inherit exception for [package] repos, the package build/sign/index release flow and package-index wait, agent-VM consumer rows, vrg-package/vrg-sarif-filter/vrg-vm entries, the three-target consumption model, apt install pointers, and a corrected reduced-tier comment in matrix.py.</p>
+</li>
+<li>
+<p><strong>record 2.1.234 as unpublished</strong>
+Restore the not-published notes for 2.1.234 in CHANGELOG.md and releases/v2.1.234.md; they lived in the main-into-develop merge commit, which the batch submit's rebase dropped.</p>
+</li>
+</ul>
+<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>generate packaging-capable ci.yml and cd.yml for [package] repos (#3146)</strong>
+For a vergil.toml with [package], ci.yml gains the package job calling ci-package.yml (the package / evidence gate) and the cd.yml release job uses secrets: inherit, since an explicit secrets map does not deliver the package-signing environment secrets to a cross-repo reusable workflow (vergil-project/packages#6). Repos without [package] keep the least-privilege explicit map. Adopt now preserves hand-written vergil.toml tables such as [package] and [container] verbatim (verified by re-parse, failing loudly otherwise), so re-running init keeps [package] and step 9 requires package / evidence. Documents the opt-in in consuming-repo-setup.md. Ref #3144</li>
+</ul>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.235/v2.1.235-ci-evidence.tar.gz">Download →</a></p>
 
 
 
