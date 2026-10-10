@@ -213,6 +213,28 @@ def ref_exists(ref: str) -> bool:
     return result.returncode == 0
 
 
+def is_ancestor(ancestor: str, descendant: str) -> bool:
+    """Return True if *ancestor* is an ancestor of (or equal to) *descendant*.
+
+    ``git merge-base --is-ancestor`` exits 0 for yes and 1 for no; any other
+    exit (e.g. 128 for an unknown commit) is an error and raises
+    ``CalledProcessError`` rather than reading as a silent "no".
+    """
+    args = ("merge-base", "--is-ancestor", ancestor, descendant)
+    result = subprocess.run(  # noqa: S603
+        ("git", *args),  # noqa: S607
+        check=False,
+        text=True,
+        capture_output=True,
+        env=_git_env(args),
+    )
+    if result.returncode in (0, 1):
+        return result.returncode == 0
+    raise subprocess.CalledProcessError(
+        result.returncode, ("git", *args), output=result.stdout, stderr=result.stderr
+    )
+
+
 def commit_sha(ref: str) -> str:
     """Return the commit SHA that *ref* resolves to."""
     return read_output("rev-parse", ref)
