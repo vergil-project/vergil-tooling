@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import http.client
+import io
 import json
 import subprocess
 import urllib.error
@@ -2472,3 +2473,79 @@ def test_checks_timeout_secs_rejects_bad_override(
     monkeypatch.setenv(github.CHECKS_TIMEOUT_ENV, raw)
     with pytest.raises(ValueError, match="VRG_CHECKS_TIMEOUT must be a positive"):
         github.checks_timeout_secs()
+
+
+# --- download_api_binary (#3171) ---
+
+
+def _writing_run(
+    outcomes: list[tuple[bytes, int, str]],
+) -> tuple[Callable[..., subprocess.CompletedProcess[str]], list[dict[str, object]]]:
+    """A fake ``subprocess.run`` that writes each outcome's bytes to ``stdout``."""
+    calls: list[dict[str, object]] = []
+    queue = list(outcomes)
+
+    def fake_run(cmd: tuple[str, ...], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append({"cmd": cmd, **kwargs})
+        body, returncode, stderr = queue.pop(0)
+        fh = kwargs["stdout"]
+        assert isinstance(fh, io.BufferedWriter)
+        fh.write(body)
+        if returncode:
+            raise subprocess.CalledProcessError(returncode, cmd, None, stderr)
+        return subprocess.CompletedProcess(cmd, 0, None, stderr)
+
+    return fake_run, calls
+
+
+class TestDownloadApiBinary:
+    def test_streams_binary_body_to_dest(self, tmp_path: Path) -> None:
+        body = b"PK\x03\x04\xff\x00binary"
+        fake_run, calls = _writing_run([(body, 0, "")])
+        dest = tmp_path / "a.zip"
+        with patch("vergil_tooling.lib.github.subprocess.run", side_effect=fake_run):
+            github.download_api_binary("repos/o/r/actions/artifacts/7/zip", dest)
+        assert dest.read_bytes() == body
+        assert calls[0]["cmd"] == ("gh", "api", "repos/o/r/actions/artifacts/7/zip")
+        assert calls[0]["check"] is True
+        assert "env" not in calls[0]
+
+    def test_retry_truncates_the_partial_body(self, tmp_path: Path) -> None:
+        fake_run, calls = _writing_run(
+            [(b"partial-garbage", 1, "HTTP 502 Bad Gateway"), (b"full", 0, "")]
+        )
+        dest = tmp_path / "a.zip"
+        with (
+            patch("vergil_tooling.lib.github.subprocess.run", side_effect=fake_run),
+            patch("vergil_tooling.lib.retry.time.sleep"),
+            patch("vergil_tooling.lib.retry.random.random", return_value=0.5),
+        ):
+            github.download_api_binary("repos/o/r/actions/artifacts/7/zip", dest)
+        assert dest.read_bytes() == b"full"
+        assert len(calls) == 2
+
+    def test_non_transient_failure_raises_api_error(self, tmp_path: Path) -> None:
+        fake_run, calls = _writing_run([(b"", 1, "HTTP 410: Gone")])
+        with (
+            patch("vergil_tooling.lib.github.subprocess.run", side_effect=fake_run),
+            pytest.raises(github.GitHubAPIError, match="410: Gone") as excinfo,
+        ):
+            github.download_api_binary("repos/o/r/actions/artifacts/7/zip", tmp_path / "a.zip")
+        assert not isinstance(excinfo.value, github.MissingGitHubTokenError)
+        assert len(calls) == 1
+
+    def test_missing_token_raises_missing_token_error(self, tmp_path: Path) -> None:
+        stderr = "gh: set the GH_TOKEN environment variable."
+        fake_run, _ = _writing_run([(b"", 4, stderr)])
+        with (
+            patch("vergil_tooling.lib.github.subprocess.run", side_effect=fake_run),
+            pytest.raises(github.MissingGitHubTokenError),
+        ):
+            github.download_api_binary("repos/o/r/actions/artifacts/7/zip", tmp_path / "a.zip")
+
+    def test_injects_gh_env(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        monkeypatch.setattr("vergil_tooling.lib.github._gh_env", lambda: {"GH_TOKEN": "t"})
+        fake_run, calls = _writing_run([(b"x", 0, "")])
+        with patch("vergil_tooling.lib.github.subprocess.run", side_effect=fake_run):
+            github.download_api_binary("repos/o/r/actions/artifacts/7/zip", tmp_path / "a.zip")
+        assert calls[0]["env"] == {"GH_TOKEN": "t"}

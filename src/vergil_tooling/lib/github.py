@@ -1492,3 +1492,35 @@ def list_project_repos(owner: str, project: str) -> list[str]:
         jq_filter,
     )
     return sorted({r for r in output.splitlines() if r})
+
+
+def download_api_binary(endpoint: str, dest: Path) -> None:
+    """GET a binary REST *endpoint* (e.g. an artifact ``/zip``) into *dest*.
+
+    :func:`read_output` decodes stdout as text, which corrupts a binary body,
+    so the response is streamed straight from ``gh api``'s stdout into *dest*.
+    Each attempt reopens *dest* for writing, so a transient failure retried by
+    :func:`retry.call_with_retry` never leaves a partial earlier body behind.
+    A failure raises :class:`GitHubAPIError` (:class:`MissingGitHubTokenError`
+    for a missing token) carrying ``gh``'s stderr, exactly like the other
+    wrappers (issue #3171).
+    """
+    cmd = ("gh", "api", endpoint)
+    kwargs: dict[str, Any] = {}
+    env = _gh_env()
+    if env is not None:
+        kwargs["env"] = env
+
+    def _attempt() -> subprocess.CompletedProcess[str]:
+        with dest.open("wb") as fh:
+            return subprocess.run(  # noqa: S603
+                cmd, check=True, stdout=fh, stderr=subprocess.PIPE, text=True, **kwargs
+            )
+
+    try:
+        retry.call_with_retry(_attempt)
+    except subprocess.CalledProcessError as exc:
+        error_type = (
+            MissingGitHubTokenError if _is_missing_token_error(exc.stderr) else GitHubAPIError
+        )
+        raise error_type(exc.returncode, exc.cmd, None, exc.stderr) from exc

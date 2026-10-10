@@ -6,7 +6,8 @@ the substantive failures
 (:class:`~vergil_tooling.lib.ci_evidence.IncompleteEvidenceError`,
 :class:`~vergil_tooling.lib.ci_evidence.NoQualifyingRunError`,
 :class:`~vergil_tooling.lib.ci_evidence.ReleasePrUnresolvedError`,
-:class:`~vergil_tooling.lib.ci_evidence.HarvestStateError`) to a single-line
+:class:`~vergil_tooling.lib.ci_evidence.HarvestStateError`,
+:class:`~vergil_tooling.lib.ci_evidence.EvidenceArtifactError`) to a single-line
 error and exit 1 via :func:`~vergil_tooling.lib.output.emit_error` — never a
 traceback.
 
@@ -32,6 +33,7 @@ from pathlib import Path
 
 from vergil_tooling.lib import ci_evidence
 from vergil_tooling.lib.ci_evidence import (
+    EvidenceArtifactError,
     HarvestStateError,
     IncompleteEvidenceError,
     NoQualifyingRunError,
@@ -137,6 +139,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return int(args.func(args))
     except (
+        EvidenceArtifactError,
         HarvestStateError,
         IncompleteEvidenceError,
         NoQualifyingRunError,

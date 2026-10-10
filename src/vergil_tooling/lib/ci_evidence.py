@@ -30,9 +30,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import shutil
 import tarfile
 import tempfile
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -46,6 +48,8 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from vergil_tooling.lib.github_config import EvidenceGate
+
+log = logging.getLogger(__name__)
 
 # Schema version of the manifest object (spec §8).
 SCHEMA_VERSION = "1.0"
@@ -480,6 +484,16 @@ class NoQualifyingRunError(Exception):
         self.head_sha = head_sha
 
 
+class EvidenceArtifactError(Exception):
+    """A required gate's evidence artifact cannot be consumed safely.
+
+    Raised when every listed copy of a gate's artifact has expired (nothing is
+    left to download), or when a downloaded archive carries an unsafe member
+    path (absolute or ``..``-traversing). Substantive harvest failure surfaced
+    by the CLI as a single-line error (issue #3171).
+    """
+
+
 class ReleasePrUnresolvedError(ValueError):
     """Neither the commits API nor the merge subject names the release PR.
 
@@ -577,6 +591,13 @@ def download_evidence_artifacts(
     substantive :class:`IncompleteEvidenceError` at completeness validation
     rather than being silently skipped. Returns the created gate directories,
     sorted for determinism.
+
+    A re-run of a gate's evidence job uploads a second artifact under the
+    **same** name, so a gate can list several copies (issue #3171). Exactly
+    one is consumed — the newest unexpired copy (:func:`_choose_artifact`) —
+    and it is fetched **by id** (``actions/artifacts/{id}/zip``), because
+    ``gh run download --name`` cannot tell same-named artifacts apart and
+    extracting both into one directory collides.
     """
     wanted = {f"{_EVIDENCE_ARTIFACT_PREFIX}{gate.name}": gate.name for gate in required}
     # Every page, not just the first 30: a release PR's CI run uploads more
@@ -584,26 +605,74 @@ def download_evidence_artifacts(
     # page 2 otherwise reads as "no evidence artifact" (issue #3160).
     raw = github.read_json_paginated(f"repos/{repo}/actions/runs/{run_id}/artifacts", "artifacts")
     artifacts = cast("list[dict[str, Any]]", raw)
-    gate_dirs: list[Path] = []
+    by_gate: dict[str, list[dict[str, Any]]] = {}
     for artifact in artifacts:
         gate = wanted.get(str(artifact.get("name", "")))
-        if gate is None:
-            continue
+        if gate is not None:
+            by_gate.setdefault(gate, []).append(artifact)
+    gate_dirs: list[Path] = []
+    for gate, candidates in sorted(by_gate.items()):
+        chosen = _choose_artifact(gate, candidates)
         gate_dir = dest / gate
         gate_dir.mkdir(parents=True, exist_ok=True)
-        github.run(
-            "run",
-            "download",
-            str(run_id),
-            "--repo",
-            repo,
-            "--name",
-            f"{_EVIDENCE_ARTIFACT_PREFIX}{gate}",
-            "--dir",
-            str(gate_dir),
-        )
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp) / "artifact.zip"
+            endpoint = f"repos/{repo}/actions/artifacts/{chosen['id']}/zip"
+            github.download_api_binary(endpoint, archive)
+            _extract_zip_safely(archive, gate_dir)
         gate_dirs.append(gate_dir)
     return sorted(gate_dirs)
+
+
+def _artifact_recency(artifact: Mapping[str, Any]) -> tuple[str, int]:
+    """Sort key: newest ``created_at`` (ISO-8601 sorts lexically), then highest id."""
+    return (str(artifact.get("created_at") or ""), int(artifact["id"]))
+
+
+def _choose_artifact(gate: str, candidates: Sequence[Mapping[str, Any]]) -> Mapping[str, Any]:
+    """Pick the one artifact to consume for *gate* from its same-named *candidates*.
+
+    The newest unexpired copy wins (highest ``created_at``, ties broken by the
+    highest ``id``). When several copies exist a warning names every id and the
+    chosen one, so a re-run's duplicate is visible rather than silent. Every
+    copy expired raises :class:`EvidenceArtifactError` — there is nothing left
+    to harvest, and that must fail loudly (issue #3171).
+    """
+    live = [a for a in candidates if not a.get("expired")]
+    if not live:
+        ids = sorted(int(a["id"]) for a in candidates)
+        msg = f"every evidence artifact for gate {gate!r} has expired (artifact ids {ids})"
+        raise EvidenceArtifactError(msg)
+    chosen = max(live, key=_artifact_recency)
+    if len(candidates) > 1:
+        log.warning(
+            "gate %r has %d evidence artifacts named %s%s (ids %s); using the newest "
+            "unexpired one, id %s",
+            gate,
+            len(candidates),
+            _EVIDENCE_ARTIFACT_PREFIX,
+            gate,
+            sorted(int(a["id"]) for a in candidates),
+            chosen["id"],
+        )
+    return chosen
+
+
+def _extract_zip_safely(archive: Path, dest: Path) -> None:
+    """Extract *archive* into *dest*, refusing any member that escapes *dest*.
+
+    Every member is checked **before** anything is written: an absolute path or
+    one that resolves outside *dest* (``..`` traversal) raises
+    :class:`EvidenceArtifactError` rather than being silently rewritten.
+    """
+    root = dest.resolve()
+    with zipfile.ZipFile(archive) as zf:
+        for name in zf.namelist():
+            target = (root / name).resolve()
+            if name.startswith(("/", "\\")) or not target.is_relative_to(root):
+                msg = f"unsafe member path {name!r} in evidence artifact archive"
+                raise EvidenceArtifactError(msg)
+        zf.extractall(root)  # noqa: S202 — every member validated above
 
 
 def read_gate_conclusions(repo: str, head_sha: str) -> dict[str, str]:
