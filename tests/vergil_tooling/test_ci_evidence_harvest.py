@@ -1,7 +1,7 @@
 """Tests for the GitHub harvest layer in vergil_tooling.lib.ci_evidence.
 
-All GitHub I/O is mocked at the ``vergil_tooling.lib.github`` boundary
-(``read_json`` / ``read_output`` / ``run``), mirroring the ``test_github.py``
+All GitHub I/O is mocked at the ``vergil_tooling.lib.github`` boundary (``read_json`` /
+``read_json_paginated`` / ``read_output`` / ``run``), mirroring the ``test_github.py``
 monkeypatch style: the harvest functions are pure orchestration over those
 wrappers, so the tests assert the selection/filter logic, never the network.
 """
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 def test_resolve_release_pr_prefers_merged_from_api(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         github,
-        "read_json",
+        "read_json_paginated",
         lambda *a, **k: [
             {"number": 10, "merged_at": None},
             {"number": 42, "merged_at": "2026-07-12T00:00:00Z"},
@@ -42,21 +42,36 @@ def test_resolve_release_pr_prefers_merged_from_api(monkeypatch: pytest.MonkeyPa
     assert resolve_release_pr("o/r", "abc") == 42
 
 
+def test_resolve_release_pr_reads_every_page(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Issue #3162: the merged PR on page 2 of ``/commits/{sha}/pulls`` wins."""
+    calls: list[tuple[str, ...]] = []
+
+    def fake_read_output(*args: str, **_: object) -> str:
+        calls.append(args)
+        page1 = [{"number": n, "merged_at": None} for n in range(1, 31)]
+        page2 = [{"number": 77, "merged_at": "2026-07-12T00:00:00Z"}]
+        return json.dumps(page1) + json.dumps(page2)
+
+    monkeypatch.setattr(github, "read_output", fake_read_output)
+    assert resolve_release_pr("o/r", "abc") == 77
+    assert calls == [("api", "--paginate", "repos/o/r/commits/abc/pulls?per_page=100")]
+
+
 def test_resolve_release_pr_falls_back_to_first_unmerged(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
         github,
-        "read_json",
+        "read_json_paginated",
         lambda *a, **k: [{"number": 7, "merged_at": None}, {"number": 8}],
     )
     assert resolve_release_pr("o/r", "abc") == 7
 
 
-def test_resolve_release_pr_uses_subject_when_api_has_no_list(
+def test_resolve_release_pr_uses_subject_when_api_has_no_pr(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(github, "read_json", lambda *a, **k: {})
+    monkeypatch.setattr(github, "read_json_paginated", lambda *a, **k: [])
     monkeypatch.setattr(
         github,
         "read_output",
@@ -66,13 +81,13 @@ def test_resolve_release_pr_uses_subject_when_api_has_no_list(
 
 
 def test_resolve_release_pr_uses_squash_subject(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(github, "read_json", lambda *a, **k: [])
+    monkeypatch.setattr(github, "read_json_paginated", lambda *a, **k: [])
     monkeypatch.setattr(github, "read_output", lambda *a, **k: "chore(release): prepare (#99)")
     assert resolve_release_pr("o/r", "abc") == 99
 
 
 def test_resolve_release_pr_raises_when_unresolvable(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(github, "read_json", lambda *a, **k: [])
+    monkeypatch.setattr(github, "read_json_paginated", lambda *a, **k: [])
     monkeypatch.setattr(github, "read_output", lambda *a, **k: "")
     with pytest.raises(ReleasePrUnresolvedError, match="cannot resolve release PR"):
         resolve_release_pr("o/r", "abc")
@@ -84,7 +99,7 @@ def test_resolve_release_pr_raises_when_unresolvable(monkeypatch: pytest.MonkeyP
 def test_select_ci_run_ignores_cancelled(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         github,
-        "read_json",
+        "read_json_paginated",
         lambda *a, **k: [
             {
                 "name": "CI",
@@ -108,7 +123,7 @@ def test_select_ci_run_ignores_cancelled(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_select_ci_run_picks_latest_success(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         github,
-        "read_json",
+        "read_json_paginated",
         lambda *a, **k: [
             {
                 "name": "CI",
@@ -134,7 +149,7 @@ def test_select_ci_run_ignores_other_workflow_and_in_progress(
 ) -> None:
     monkeypatch.setattr(
         github,
-        "read_json",
+        "read_json_paginated",
         lambda *a, **k: [
             {
                 "name": "Nightly",
@@ -165,7 +180,7 @@ def test_select_ci_run_ignores_other_workflow_and_in_progress(
 def test_select_ci_run_honors_workflow_argument(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         github,
-        "read_json",
+        "read_json_paginated",
         lambda *a, **k: [
             {
                 "name": "Release",
@@ -182,7 +197,7 @@ def test_select_ci_run_honors_workflow_argument(monkeypatch: pytest.MonkeyPatch)
 def test_select_ci_run_none_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         github,
-        "read_json",
+        "read_json_paginated",
         lambda *a, **k: [
             {"name": "CI", "status": "completed", "conclusion": "cancelled", "run_started_at": "t"},
         ],
@@ -216,7 +231,7 @@ def test_select_ci_run_issues_a_get_not_a_post(monkeypatch: pytest.MonkeyPatch) 
             },
         ]
 
-    monkeypatch.setattr(github, "read_json", _record)
+    monkeypatch.setattr(github, "read_json_paginated", _record)
     assert select_ci_run("o/r", "abc")["id"] == 5
 
     args = seen["args"]
@@ -243,7 +258,7 @@ def test_download_evidence_artifacts_filters_prefix(
 
     monkeypatch.setattr(
         github,
-        "read_json",
+        "read_json_paginated",
         lambda *a, **k: [
             {"name": "ci-evidence-test"},
             {"name": "ci-evidence-security"},
@@ -288,7 +303,7 @@ def test_download_evidence_artifacts_ignores_security_sarif_partials(
 
     monkeypatch.setattr(
         github,
-        "read_json",
+        "read_json_paginated",
         lambda *a, **k: [
             {"name": "ci-evidence-security"},
             {"name": "ci-evidence-security-part-codeql"},
@@ -322,7 +337,9 @@ def test_download_evidence_artifacts_omits_genuinely_absent_gate(
     """
     from vergil_tooling.lib.github_config import EvidenceGate
 
-    monkeypatch.setattr(github, "read_json", lambda *a, **k: [{"name": "ci-evidence-security"}])
+    monkeypatch.setattr(
+        github, "read_json_paginated", lambda *a, **k: [{"name": "ci-evidence-security"}]
+    )
     monkeypatch.setattr(github, "run", lambda *a: None)
 
     required = (
@@ -344,13 +361,88 @@ def test_download_evidence_artifacts_none_matching(
 ) -> None:
     from vergil_tooling.lib.github_config import EvidenceGate
 
-    monkeypatch.setattr(github, "read_json", lambda *a, **k: [{"name": "coverage"}])
+    monkeypatch.setattr(github, "read_json_paginated", lambda *a, **k: [{"name": "coverage"}])
     monkeypatch.setattr(github, "run", lambda *a: None)
     required = (EvidenceGate(name="test", checks=("test / unit",)),)
     assert download_evidence_artifacts("o/r", 1, tmp_path, required) == []
 
 
+def _paged_gh_output(key: str, items: list[dict[str, Any]], page_size: int = 30) -> str:
+    """Render *items* as ``gh api --paginate`` does: one envelope per page, back to back."""
+    pages = [items[i : i + page_size] for i in range(0, len(items), page_size)]
+    return "".join(json.dumps({"total_count": len(items), key: page}) for page in pages)
+
+
+def test_download_evidence_artifacts_harvests_required_gate_on_page_two(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A required gate's artifact past the first page is still harvested (issue #3160).
+
+    The 2.1.234 release PR's CI run produced 31 artifacts; the unpaginated
+    listing returned only the first 30, so ``ci-evidence-security`` (31st) read
+    as "no evidence artifact" and the release gate failed closed. The listing is
+    driven through the real :func:`github.read_json_paginated` so the multi-page
+    ``gh api --paginate`` output shape is exercised end to end.
+    """
+    import subprocess
+
+    from vergil_tooling.lib.github_config import EvidenceGate
+
+    artifacts = [{"name": "ci-evidence-test"}]
+    artifacts += [{"name": f"package-reports-test-{i}"} for i in range(29)]
+    artifacts.append({"name": "ci-evidence-security"})  # 31st: lands on page 2
+    assert len(artifacts) == 31
+    stdout = _paged_gh_output("artifacts", artifacts)
+    seen: list[tuple[str, ...]] = []
+
+    def _fake_run(argv: tuple[str, ...], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        seen.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr("vergil_tooling.lib.github._gh_env", lambda: None)
+    monkeypatch.setattr("vergil_tooling.lib.retry.subprocess.run", _fake_run)
+    downloads: list[tuple[str, ...]] = []
+    monkeypatch.setattr(github, "run", lambda *a: downloads.append(a))
+
+    required = (
+        EvidenceGate(name="test", checks=("test / unit",)),
+        EvidenceGate(name="security", checks=("CodeQL",)),
+    )
+    dest = tmp_path / "artifacts"
+    result = download_evidence_artifacts("o/r", 99, dest, required)
+
+    assert result == [dest / "security", dest / "test"]
+    assert {a[a.index("--name") + 1] for a in downloads} == {
+        "ci-evidence-test",
+        "ci-evidence-security",
+    }
+    assert seen == [("gh", "api", "--paginate", "repos/o/r/actions/runs/99/artifacts?per_page=100")]
+
+
 # --- read_gate_conclusions ----------------------------------------------
+
+
+def test_read_gate_conclusions_includes_check_runs_past_first_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Check runs beyond the first page still reach the conclusion map (issue #3160)."""
+    import subprocess
+
+    check_runs = [{"name": f"test / unit / {i}", "conclusion": "success"} for i in range(30)]
+    check_runs.append({"name": "security / evidence", "conclusion": "failure"})
+    stdout = _paged_gh_output("check_runs", check_runs)
+
+    def _fake_run(argv: tuple[str, ...], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        assert "--paginate" in argv
+        return subprocess.CompletedProcess(argv, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr("vergil_tooling.lib.github._gh_env", lambda: None)
+    monkeypatch.setattr("vergil_tooling.lib.retry.subprocess.run", _fake_run)
+
+    result = read_gate_conclusions("o/r", "abc")
+
+    assert len(result) == 31
+    assert result["security / evidence"] == "failure"
 
 
 def test_read_gate_conclusions_maps_name_to_conclusion(
@@ -358,7 +450,7 @@ def test_read_gate_conclusions_maps_name_to_conclusion(
 ) -> None:
     monkeypatch.setattr(
         github,
-        "read_json",
+        "read_json_paginated",
         lambda *a, **k: [
             {"name": "test / unit / 3.14", "conclusion": "success"},
             {"name": "security / codeql", "conclusion": None},
@@ -452,7 +544,7 @@ def test_package_section_makes_harvest_download_ci_evidence_package(
 
     monkeypatch.setattr(
         github,
-        "read_json",
+        "read_json_paginated",
         lambda *a, **k: [{"name": f"ci-evidence-{g.name}"} for g in required],
     )
     calls: list[tuple[str, ...]] = []

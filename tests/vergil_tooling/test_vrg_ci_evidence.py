@@ -477,7 +477,7 @@ def test_harvest_unresolvable_release_pr_errors(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
-    monkeypatch.setattr(github, "read_json", lambda *a, **k: [])
+    monkeypatch.setattr(github, "read_json_paginated", lambda *a, **k: [])
     monkeypatch.setattr(github, "read_output", lambda *a, **k: "")
     staging = tmp_path / "staging"
 

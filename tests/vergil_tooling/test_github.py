@@ -944,6 +944,97 @@ def test_read_json_returns_parsed_list() -> None:
     assert result == payload
 
 
+class TestReadJsonPaginated:
+    """``read_json_paginated`` flattens every ``gh api --paginate`` page (#3160)."""
+
+    def test_requests_every_page_at_100_per_page_as_a_get(self) -> None:
+        cp = _completed(stdout=json.dumps({"artifacts": []}) + "\n")
+        with patch("vergil_tooling.lib.retry.subprocess.run", return_value=cp) as mock_run:
+            github.read_json_paginated("repos/o/r/actions/runs/1/artifacts", "artifacts")
+        argv = mock_run.call_args.args[0]
+        assert argv == (
+            "gh",
+            "api",
+            "--paginate",
+            "repos/o/r/actions/runs/1/artifacts?per_page=100",
+        )
+        # No -f/-F field: gh api would switch the GET to a POST (issue #2335).
+        assert not {"-f", "-F", "--field", "--raw-field"} & set(argv)
+
+    def test_appends_page_size_to_an_existing_query_string(self) -> None:
+        cp = _completed(stdout=json.dumps({"workflow_runs": []}))
+        with patch("vergil_tooling.lib.retry.subprocess.run", return_value=cp) as mock_run:
+            github.read_json_paginated("repos/o/r/actions/runs?head_sha=abc", "workflow_runs")
+        assert mock_run.call_args.args[0][-1] == (
+            "repos/o/r/actions/runs?head_sha=abc&per_page=100"
+        )
+
+    def test_flattens_keyed_list_across_concatenated_pages(self) -> None:
+        page1 = {"total_count": 3, "artifacts": [{"name": "a"}, {"name": "b"}]}
+        page2 = {"total_count": 3, "artifacts": [{"name": "c"}]}
+        # gh writes pages back to back, pretty-printed or compact.
+        stdout = json.dumps(page1, indent=2) + json.dumps(page2) + "\n"
+        with patch(
+            "vergil_tooling.lib.retry.subprocess.run", return_value=_completed(stdout=stdout)
+        ):
+            result = github.read_json_paginated("repos/o/r/x", "artifacts")
+        assert result == [{"name": "a"}, {"name": "b"}, {"name": "c"}]
+
+    def test_flattens_bare_array_pages_without_a_key(self) -> None:
+        stdout = json.dumps([{"id": 1}]) + "\n" + json.dumps([{"id": 2}, {"id": 3}])
+        with patch(
+            "vergil_tooling.lib.retry.subprocess.run", return_value=_completed(stdout=stdout)
+        ):
+            result = github.read_json_paginated("repos/o/r/releases")
+        assert result == [{"id": 1}, {"id": 2}, {"id": 3}]
+
+    def test_empty_output_is_an_empty_list(self) -> None:
+        with patch("vergil_tooling.lib.retry.subprocess.run", return_value=_completed()):
+            assert github.read_json_paginated("repos/o/r/releases") == []
+
+    def test_page_missing_the_key_raises(self) -> None:
+        stdout = json.dumps({"message": "weird"})
+        with (
+            patch(
+                "vergil_tooling.lib.retry.subprocess.run",
+                return_value=_completed(stdout=stdout),
+            ),
+            pytest.raises(ValueError, match="no 'artifacts' list"),
+        ):
+            github.read_json_paginated("repos/o/r/x", "artifacts")
+
+    def test_keyed_page_that_is_not_an_object_raises(self) -> None:
+        with (
+            patch(
+                "vergil_tooling.lib.retry.subprocess.run",
+                return_value=_completed(stdout="[1, 2]"),
+            ),
+            pytest.raises(ValueError, match="no 'artifacts' list"),
+        ):
+            github.read_json_paginated("repos/o/r/x", "artifacts")
+
+    def test_non_list_page_raises(self) -> None:
+        with (
+            patch(
+                "vergil_tooling.lib.retry.subprocess.run",
+                return_value=_completed(stdout=json.dumps({"artifacts": {"name": "a"}})),
+            ),
+            pytest.raises(ValueError, match="is not a list: dict"),
+        ):
+            github.read_json_paginated("repos/o/r/x", "artifacts")
+
+    def test_retries_transient_errors(self) -> None:
+        err = subprocess.CalledProcessError(1, ["gh"], stderr="HTTP 502 Bad Gateway")
+        ok = _completed(stdout=json.dumps({"artifacts": [{"name": "a"}]}))
+        with (
+            patch("vergil_tooling.lib.retry.subprocess.run", side_effect=[err, ok]) as mock_run,
+            patch("vergil_tooling.lib.retry.time.sleep"),
+            patch("vergil_tooling.lib.retry.random.random", return_value=0.5),
+        ):
+            assert github.read_json_paginated("repos/o/r/x", "artifacts") == [{"name": "a"}]
+        assert mock_run.call_count == 2
+
+
 def test_checks_registered_returns_true_when_checks_exist() -> None:
     cp = _completed(stdout="1\n")
     with patch("vergil_tooling.lib.retry.subprocess.run", return_value=cp):

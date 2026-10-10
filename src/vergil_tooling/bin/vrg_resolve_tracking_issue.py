@@ -53,9 +53,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def _pr_from_api(commit: str) -> int | None:
     repo = github.current_repo()
     sha = git.read_output("rev-parse", commit)
-    result = github.read_json("api", f"repos/{repo}/commits/{sha}/pulls")
-    if not isinstance(result, list):
-        return None
+    # Paginated (issue #3162) so a merged PR past the first page is still seen.
+    # A malformed page raises ValueError, reported by main() — never read as empty.
+    result = github.read_json_paginated(f"repos/{repo}/commits/{sha}/pulls")
     prs = cast("list[dict[str, object]]", [p for p in result if isinstance(p, dict)])
     for pr in prs:
         if pr.get("merged_at"):
@@ -122,7 +122,14 @@ def main(argv: list[str] | None = None) -> int:
 
     if pr_num is None:
         with contextlib.suppress(subprocess.CalledProcessError):
-            pr_num = _pr_from_api(args.commit)
+            try:
+                pr_num = _pr_from_api(args.commit)
+            except ValueError as exc:
+                print(
+                    f"ERROR: malformed GitHub API response for commit {args.commit}: {exc}",
+                    file=sys.stderr,
+                )
+                return 2
 
     if pr_num is None:
         print(

@@ -23,8 +23,8 @@ broken check aborts the merge rather than silently passing.
 from __future__ import annotations
 
 import enum
-import json
 from dataclasses import dataclass, field
+from typing import Any, cast
 
 from vergil_tooling.lib import github
 
@@ -95,15 +95,24 @@ def _collect_actions(pr: str) -> list[Action]:
     if author:
         actions.append(Action(author, classify_login(author), "created"))
 
-    reviews_raw = github.read_output("api", f"repos/{repo}/pulls/{number}/reviews")
-    for review in json.loads(reviews_raw or "[]"):
+    # Both lists are paginated (issue #3162): a single ``gh api`` call returns
+    # only the first 30 items, so a forbidden action past page 1 was never
+    # seen and the check failed open. A malformed page raises ValueError.
+    reviews = cast(
+        "list[dict[str, Any]]",
+        github.read_json_paginated(f"repos/{repo}/pulls/{number}/reviews"),
+    )
+    for review in reviews:
         if review.get("state") == "APPROVED":
             login = (review.get("user") or {}).get("login", "")
             if login:
                 actions.append(Action(login, classify_login(login), "approved"))
 
-    timeline_raw = github.read_output("api", f"repos/{repo}/issues/{number}/timeline")
-    for event in json.loads(timeline_raw or "[]"):
+    timeline = cast(
+        "list[dict[str, Any]]",
+        github.read_json_paginated(f"repos/{repo}/issues/{number}/timeline"),
+    )
+    for event in timeline:
         mapped = _EVENT_MAP.get(event.get("event", ""))
         if mapped is None:
             continue

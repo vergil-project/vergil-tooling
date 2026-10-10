@@ -494,8 +494,10 @@ def _pr_from_commit_api(repo: str, merge_sha: str) -> int | None:
     Prefers a merged PR; falls back to the first associated PR. Returns None
     when the API associates no PR with the commit.
     """
-    raw = github.read_json("api", f"repos/{repo}/commits/{merge_sha}/pulls")
-    prs = cast("list[dict[str, Any]]", raw) if isinstance(raw, list) else []
+    prs = cast(
+        "list[dict[str, Any]]",
+        github.read_json_paginated(f"repos/{repo}/commits/{merge_sha}/pulls"),
+    )
     merged = [pr for pr in prs if pr.get("merged_at")]
     chosen = merged or prs
     if not chosen:
@@ -549,11 +551,9 @@ def select_ci_run(repo: str, head_sha: str, *, workflow: str = "CI") -> dict[str
     # present, and ``GET /actions/runs`` is GET-only, so a POST returns HTTP 404
     # and silently sinks the whole harvest (issue #2335). Keeping the filter in
     # the URL preserves the GET verb.
-    raw = github.read_json(
-        "api",
-        f"repos/{repo}/actions/runs?head_sha={head_sha}",
-        "--jq",
-        ".workflow_runs",
+    # Paginated: a commit re-run many times can exceed one page (issue #3160).
+    raw = github.read_json_paginated(
+        f"repos/{repo}/actions/runs?head_sha={head_sha}", "workflow_runs"
     )
     runs = cast("list[dict[str, Any]]", raw)
     qualifying = [run for run in runs if _is_qualifying_run(run, workflow)]
@@ -579,9 +579,10 @@ def download_evidence_artifacts(
     sorted for determinism.
     """
     wanted = {f"{_EVIDENCE_ARTIFACT_PREFIX}{gate.name}": gate.name for gate in required}
-    raw = github.read_json(
-        "api", f"repos/{repo}/actions/runs/{run_id}/artifacts", "--jq", ".artifacts"
-    )
+    # Every page, not just the first 30: a release PR's CI run uploads more
+    # artifacts than one default page holds, and a required gate's artifact on
+    # page 2 otherwise reads as "no evidence artifact" (issue #3160).
+    raw = github.read_json_paginated(f"repos/{repo}/actions/runs/{run_id}/artifacts", "artifacts")
     artifacts = cast("list[dict[str, Any]]", raw)
     gate_dirs: list[Path] = []
     for artifact in artifacts:
@@ -612,9 +613,9 @@ def read_gate_conclusions(repo: str, head_sha: str) -> dict[str, str]:
     validation. A null conclusion (e.g. a still-neutral check) maps to the
     empty string.
     """
-    raw = github.read_json(
-        "api", f"repos/{repo}/commits/{head_sha}/check-runs", "--jq", ".check_runs"
-    )
+    # Paginated: a release PR's matrix CI registers more than 30 check runs, and
+    # a gate check past the first page would otherwise read as absent (#3160).
+    raw = github.read_json_paginated(f"repos/{repo}/commits/{head_sha}/check-runs", "check_runs")
     check_runs = cast("list[dict[str, Any]]", raw)
     return {str(run["name"]): str(run.get("conclusion") or "") for run in check_runs}
 
