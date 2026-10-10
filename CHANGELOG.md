@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.237] - 2026-10-10
+
+### Bug fixes
+
+- warn about stale checks only when genuinely stale, in plain language (#3183)
+
 ## [2.1.236] - 2026-10-10
 
 ### Bug fixes
