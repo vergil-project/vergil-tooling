@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -14,6 +15,9 @@ from vergil_tooling.lib.release.orchestrator import (
     _tracked,
     build_stages,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 _MOD = "vergil_tooling.lib.release.orchestrator"
 # merge_release reads PR state via release.merge.known_pr_state (#3137).
@@ -364,13 +368,83 @@ def test_merge_release_calls_wait_and_merge() -> None:
     with (
         patch(_PR_STATE, return_value="OPEN"),
         patch(_MOD + ".wait_and_merge") as m_wm,
+        patch(_MOD + ".sync_local_branch") as m_sync,
     ):
         merge_release(ctx)
-    m_wm.assert_called_once_with(
+    m_wm.assert_called_once()
+    args, kwargs = m_wm.call_args
+    assert args == ("https://github.com/o/r/pull/100",)
+    assert kwargs["phase"] == "merge-release"
+    assert callable(kwargs["on_branch_updated"])
+    # No server-side update -> the local release branch is left alone (#3175).
+    m_sync.assert_not_called()
+    assert ctx.release_merge_sha == "merged"
+
+
+def _updating_wait_and_merge(updates: int) -> MagicMock:
+    """A wait_and_merge stand-in that reports *updates* server-side branch updates."""
+
+    def fake(_pr: str, *, phase: str, on_branch_updated: Callable[[], None]) -> None:
+        for _ in range(updates):
+            on_branch_updated()
+
+    return MagicMock(side_effect=fake)
+
+
+def test_merge_release_syncs_local_branch_after_server_update() -> None:
+    from vergil_tooling.lib.release.orchestrator import merge_release
+
+    ctx = _ctx()
+    ctx.release_pr_url = "https://github.com/o/r/pull/100"
+    ctx.release_branch = "release/2.1.0"
+    ctx.worktree_path = Path("/tmp/wt")  # noqa: S108
+    with (
+        patch(_PR_STATE, return_value="OPEN"),
+        patch(_MOD + ".wait_and_merge", _updating_wait_and_merge(2)),
+        patch(_MOD + ".sync_local_branch") as m_sync,
+    ):
+        merge_release(ctx)
+    # Synced once, after the merge, however many updates happened.
+    m_sync.assert_called_once_with(
         "https://github.com/o/r/pull/100",
+        branch="release/2.1.0",
+        worktree=Path("/tmp/wt"),  # noqa: S108
         phase="merge-release",
     )
     assert ctx.release_merge_sha == "merged"
+
+
+def test_merge_release_sync_failure_propagates() -> None:
+    from vergil_tooling.lib.release.orchestrator import merge_release
+
+    ctx = _ctx()
+    ctx.release_pr_url = "https://github.com/o/r/pull/100"
+    ctx.release_branch = "release/2.1.0"
+    ctx.worktree_path = Path("/tmp/wt")  # noqa: S108
+    err = ReleaseError(phase="merge-release", command="sync_local_branch", message="diverged")
+    with (
+        patch(_PR_STATE, return_value="OPEN"),
+        patch(_MOD + ".wait_and_merge", _updating_wait_and_merge(1)),
+        patch(_MOD + ".sync_local_branch", side_effect=err),
+        pytest.raises(ReleaseError, match="diverged"),
+    ):
+        merge_release(ctx)
+    assert ctx.release_merge_sha is None
+
+
+def test_merge_release_update_without_worktree_raises() -> None:
+    from vergil_tooling.lib.release.orchestrator import merge_release
+
+    ctx = _ctx()
+    ctx.release_pr_url = "https://github.com/o/r/pull/100"
+    with (
+        patch(_PR_STATE, return_value="OPEN"),
+        patch(_MOD + ".wait_and_merge", _updating_wait_and_merge(1)),
+        patch(_MOD + ".sync_local_branch") as m_sync,
+        pytest.raises(ReleaseError, match="cannot be synced"),
+    ):
+        merge_release(ctx)
+    m_sync.assert_not_called()
 
 
 def test_merge_release_pr_state_retries_404() -> None:
