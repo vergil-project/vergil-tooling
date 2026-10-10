@@ -212,6 +212,33 @@ def test_ref_exists_false() -> None:
         assert git.ref_exists("nonexistent") is False
 
 
+def test_is_ancestor_true() -> None:
+    with patch("vergil_tooling.lib.git.subprocess.run") as mock_run:
+        mock_run.return_value = _completed(returncode=0)
+        assert git.is_ancestor("a", "b") is True
+    args, kwargs = mock_run.call_args
+    assert args[0] == ("git", "merge-base", "--is-ancestor", "a", "b")
+    assert kwargs["env"]["GIT_TERMINAL_PROMPT"] == "0"
+
+
+def test_is_ancestor_false() -> None:
+    with patch("vergil_tooling.lib.git.subprocess.run") as mock_run:
+        mock_run.return_value = _completed(returncode=1)
+        assert git.is_ancestor("a", "b") is False
+
+
+def test_is_ancestor_raises_on_error() -> None:
+    """An unknown commit (exit 128) is an error, never a silent 'not ancestor'."""
+    with patch("vergil_tooling.lib.git.subprocess.run") as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=128, stdout="", stderr="fatal: Not a valid commit name zzz"
+        )
+        with pytest.raises(subprocess.CalledProcessError) as exc_info:
+            git.is_ancestor("a", "zzz")
+    assert exc_info.value.returncode == 128
+    assert "Not a valid commit" in exc_info.value.stderr
+
+
 def test_commit_sha_resolves_ref() -> None:
     with patch("vergil_tooling.lib.git.read_output", return_value="abc123") as mock:
         assert git.commit_sha("develop") == "abc123"
