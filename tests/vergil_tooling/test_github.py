@@ -2289,9 +2289,11 @@ def test_pr_checks_treats_stale_in_progress_success_as_passed(
     assert rollup_cmd[:4] == ("gh", "pr", "view", "https://github.com/pr/1")
     assert "statusCheckRollup" in rollup_cmd
     err = capsys.readouterr().err
-    assert "'quality / matrix' reports status IN_PROGRESS" in err
-    assert "conclusion SUCCESS" in err
-    assert _STALE_LINK in err
+    assert (
+        "Warning: GitHub still shows check 'quality / matrix' as IN_PROGRESS, "
+        "but it already finished with SUCCESS. Treating it as passed "
+        "(known GitHub glitch, #3170). Job: " + _STALE_LINK
+    ) in err
 
 
 def test_pr_checks_keeps_genuinely_running_check_pending() -> None:
@@ -2316,7 +2318,45 @@ def test_reconcile_warns_once_per_stale_check_run(capsys: pytest.CaptureFixture[
                 "1",
                 [{"name": "m", "bucket": "pending", "state": "IN_PROGRESS", "link": _STALE_LINK}],
             )
-    assert capsys.readouterr().err.count("stale check-run") == 1
+    assert capsys.readouterr().err.count("GitHub still shows check 'm'") == 1
+
+
+def test_reconcile_check_completed_between_calls_is_reclassified_silently(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # #3182: gh pr checks saw the check pending, but it finished before the
+    # rollup call. COMPLETED/SUCCESS is normal, not stale: no warning.
+    runs = {_STALE_LINK: ("COMPLETED", "SUCCESS")}
+    with patch.object(github, "_rollup_check_runs", return_value=runs):
+        checks = github._reconcile_stale_checks(
+            "1",
+            [{"name": "m", "bucket": "pending", "state": "IN_PROGRESS", "link": _STALE_LINK}],
+        )
+    assert checks[0]["bucket"] == "pass"
+    assert checks[0]["state"] == "SUCCESS"
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize(
+    ("conclusion", "bucket", "word"),
+    [
+        ("FAILURE", "fail", "failed"),
+        ("CANCELLED", "cancel", "cancelled"),
+        ("SKIPPED", "skipping", "skipped"),
+    ],
+)
+def test_reconcile_stale_warning_names_outcome_in_plain_words(
+    capsys: pytest.CaptureFixture[str], conclusion: str, bucket: str, word: str
+) -> None:
+    runs = {_STALE_LINK: ("IN_PROGRESS", conclusion)}
+    with patch.object(github, "_rollup_check_runs", return_value=runs):
+        checks = github._reconcile_stale_checks(
+            "1",
+            [{"name": "m", "bucket": "pending", "state": "IN_PROGRESS", "link": _STALE_LINK}],
+        )
+    assert checks[0]["bucket"] == bucket
+    err = capsys.readouterr().err
+    assert f"already finished with {conclusion}. Treating it as {word} " in err
 
 
 def test_rollup_check_runs_maps_details_url_and_tolerates_non_list() -> None:
