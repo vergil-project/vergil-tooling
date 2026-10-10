@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.74/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.72/">
+        <link rel="next" href="../v2.1.236/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.73 - VERGIL Tooling</title>
+        <title>2.1.237 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-2173-2026-06-25" class="md-skip">
+        <a href="#release-21237-2026-10-10" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.73
+              2.1.237
             
           </span>
         </div>
@@ -1340,10 +1340,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.237/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.237
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1359,6 +1386,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -5932,37 +5990,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.73
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.73/" class="md-nav__link">
         
   
   
@@ -5978,37 +6009,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Features
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -14896,10 +14896,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
+  <a href="#bug-fixes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Features
+        Bug fixes
       
     </span>
   </a>
@@ -14923,13 +14923,12 @@
 
 
 
-<h1 id="release-2173-2026-06-25">Release 2.1.73 (2026-06-25)<a class="headerlink" href="#release-2173-2026-06-25" title="Permanent link">&para;</a></h1>
-<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
+<h1 id="release-21237-2026-10-10">Release 2.1.237 (2026-10-10)<a class="headerlink" href="#release-21237-2026-10-10" title="Permanent link">&para;</a></h1>
+<h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Azure consumer — provider strategy, SshTransport, capacity, lifecycle (#1878) (#1892)</strong></li>
-<li>docs(off-platform): add Azure consumer implementation plan (vergil-vm #250 / #1878)</li>
+<li><strong>warn about stale checks only when genuinely stale, in plain language (#3183)</strong>
+A check gh pr checks reported pending can finish before the statusCheckRollup call; its rollup status is then COMPLETED and nothing is stale. Re-classify it silently and warn only when the rollup status is not COMPLETED but a conclusion is present (#3170). Reword the warning to name the outcome as passed/failed/cancelled/skipped. Ref #3182</li>
 </ul>
-<p>Copy the line-level Plan 2 from vergil-vm into this repo for execution. Note: its line anchors predate several releases; re-read current source before coding.</p>
 
 
 

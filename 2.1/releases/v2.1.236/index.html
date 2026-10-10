@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.237/">
       
       
         <link rel="next" href="../v2.1.235/">
@@ -1277,6 +1277,8 @@
       
         
       
+        
+      
     
     
     
@@ -1332,6 +1334,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.237/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.237
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -14920,6 +14950,7 @@ On resume, prepare now adopts a merged release PR whose head descends from the l
 pr_merge.wait_and_merge gains an on_branch_updated hook, called after each successful update-branch; the engine stays local-checkout agnostic and the default (None) leaves vrg-finalize-pr and update-deps unchanged. merge_release records whether the release PR was updated and, after the merge, fast-forwards the local release branch in the managed worktree to the merged PR head (release.merge.sync_local_branch). It fails loudly when the worktree is on another branch or the head does not descend from the local tip, and never resets over local commits. Ref #3175.</p>
 </li>
 </ul>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.236/v2.1.236-ci-evidence.tar.gz">Download →</a></p>
 
 
 
