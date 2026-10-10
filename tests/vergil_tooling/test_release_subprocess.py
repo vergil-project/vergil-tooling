@@ -9,10 +9,9 @@ import pytest
 
 from vergil_tooling.lib import retry
 from vergil_tooling.lib.release import subprocess as release_subprocess
-from vergil_tooling.lib.release.subprocess import wait_for_checks, watch_workflow
+from vergil_tooling.lib.release.subprocess import watch_workflow
 
 _MOD = "vergil_tooling.lib.release.subprocess"
-_GH = "vergil_tooling.lib.github"
 
 
 def _cpe(stdout: str = "", stderr: str = "") -> subprocess.CalledProcessError:
@@ -97,85 +96,6 @@ class TestStreamWithRetry:
             m_progress.run.side_effect = transient
             release_subprocess._stream_with_retry(("gh", "run", "watch"))
         assert m_progress.run.call_count == retry.MAX_RETRIES + 1
-
-
-def test_poll_timeout_is_the_shared_github_constant() -> None:
-    # Regression (#2809): the release/update-deps merge waiter and the finalize
-    # merge waiter (github.wait_for_checks) must share one pending-checks ceiling
-    # so they can never drift apart again. subprocess imports the constant from
-    # lib.github; assert it is that same 1800s value.
-    from vergil_tooling.lib import github
-
-    assert release_subprocess._POLL_TIMEOUT_SECS is github._POLL_TIMEOUT_SECS
-    assert release_subprocess._POLL_TIMEOUT_SECS == 1800
-
-
-class TestWaitForChecks:
-    """The shared poll-and-watch engine lives in lib.github (#1490)."""
-
-    def test_streams_watch_command(self) -> None:
-        with (
-            patch(_GH + ".current_repo", return_value="o/r"),
-            patch(_GH + ".head_sha", return_value="abc123"),
-            patch(_GH + "._checks_registered", return_value=True),
-            patch(_MOD + "._stream_with_retry") as m_stream,
-        ):
-            wait_for_checks("https://github.com/o/r/pull/1")
-        m_stream.assert_called_once_with(
-            ("gh", "pr", "checks", "https://github.com/o/r/pull/1", "--watch")
-        )
-
-    def test_failure_raises_with_output(self) -> None:
-        with (
-            patch(_GH + ".current_repo", return_value="o/r"),
-            patch(_GH + ".head_sha", return_value="abc123"),
-            patch(_GH + "._checks_registered", return_value=True),
-            patch(_MOD + "._stream_with_retry", side_effect=_cpe(stdout="fail", stderr="err")),
-            pytest.raises(subprocess.CalledProcessError) as exc_info,
-        ):
-            wait_for_checks("https://github.com/o/r/pull/1")
-        assert exc_info.value.stdout == "fail"
-        assert exc_info.value.stderr == "err"
-
-    def test_polls_until_checks_registered(self) -> None:
-        registered_calls = iter([False, False, True, True])
-        with (
-            patch(_GH + ".current_repo", return_value="o/r"),
-            patch(_GH + ".head_sha", return_value="abc123"),
-            patch(_GH + "._checks_registered", side_effect=registered_calls),
-            patch(_MOD + "._stream_with_retry"),
-            patch(_GH + ".time.sleep"),
-            patch(_GH + ".time.monotonic", side_effect=[0, 1, 2, 3]),
-        ):
-            wait_for_checks("https://github.com/o/r/pull/1")
-
-    def test_polls_timeout_raises(self) -> None:
-        with (
-            patch(_GH + ".current_repo", return_value="o/r"),
-            patch(_GH + ".head_sha", return_value="abc123def456"),
-            patch(_GH + "._checks_registered", return_value=False),
-            patch(_MOD + "._stream_with_retry") as m_stream,
-            patch(_GH + ".time.sleep"),
-            # deadline = 0 + _POLL_TIMEOUT_SECS (1800s, #2809); the second clock
-            # read must clear it to trip the registration timeout.
-            patch(_GH + ".time.monotonic", side_effect=[0, 2000]),
-            pytest.raises(subprocess.CalledProcessError, match="no checks reported"),
-        ):
-            wait_for_checks("https://github.com/o/r/pull/1")
-        m_stream.assert_not_called()
-
-    def test_restarts_watch_on_no_checks_reported(self) -> None:
-        """Head movement mid-watch re-polls registration and restarts the watch (#1490)."""
-        no_checks = _cpe(stderr="no checks reported on the 'feature/x' branch")
-        with (
-            patch(_GH + ".current_repo", return_value="o/r"),
-            patch(_GH + ".head_sha", side_effect=["old", "new"]),
-            patch(_GH + "._checks_registered", return_value=True),
-            patch(_GH + ".time.sleep"),
-            patch(_MOD + "._stream_with_retry", side_effect=[no_checks, None]) as m_stream,
-        ):
-            wait_for_checks("https://github.com/o/r/pull/1")
-        assert m_stream.call_count == 2
 
 
 class TestWatchWorkflow:

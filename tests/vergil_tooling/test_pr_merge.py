@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vergil_tooling.lib.github import GitHubAPIError, OrphanedCheckError
+from vergil_tooling.lib.github import ChecksTimeoutError, GitHubAPIError, OrphanedCheckError
 from vergil_tooling.lib.pr_merge import MergeAbortError, wait_and_merge
 
 _MOD = "vergil_tooling.lib.pr_merge"
@@ -368,3 +368,42 @@ def test_policy_block_with_blank_merge_state_reports_unknown(
     with patch(_MOD + ".github", gh), patch(_MOD + ".time.sleep"):
         wait_and_merge("99", strategy="squash")
     assert "(mergeStateStatus=unknown)" in capsys.readouterr().out
+
+
+# --- #3170: a check wait that expires aborts loudly with a recovery path ---
+
+_JOB = "https://github.com/o/r/actions/runs/1/job/2"
+
+
+def test_check_wait_deadline_aborts_naming_pending_checks_and_recovery() -> None:
+    gh = _gh()
+    gh.wait_for_checks.side_effect = ChecksTimeoutError(
+        "99",
+        f"checks still pending after 1800s: quality / matrix ({_JOB})",
+        [("quality / matrix", _JOB)],
+    )
+    with patch(_MOD + ".github", gh), pytest.raises(MergeAbortError) as excinfo:
+        wait_and_merge("99", strategy="merge")
+    message = str(excinfo.value)
+    assert f"quality / matrix ({_JOB})" in message
+    assert "after 1800s" in message
+    assert "vrg-release --resume" in message
+    assert "Re-run the stuck job" in message
+    gh.merge.assert_not_called()
+
+
+def test_not_ready_deadline_follows_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VRG_CHECKS_TIMEOUT", "120")
+    gh = _gh(
+        merge_states=["CLEAN"] * 10,
+        required=_EVIDENCE,
+        outstanding=[{"test / evidence": "pending"}] * 5,
+    )
+    clock = iter([0.0, 120.0])
+    with (
+        patch(_MOD + ".github", gh),
+        patch(_MOD + ".time.sleep"),
+        patch(_MOD + ".time.monotonic", side_effect=lambda: next(clock)),
+        pytest.raises(MergeAbortError, match="still not mergeable after 120s"),
+    ):
+        wait_and_merge("99", strategy="merge", wait_checks=MagicMock())

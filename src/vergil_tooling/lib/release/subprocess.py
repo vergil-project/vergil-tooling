@@ -6,13 +6,7 @@ import subprocess
 import time
 
 from vergil_tooling.lib import progress, retry
-from vergil_tooling.lib.github import _POLL_TIMEOUT_SECS, _gh_env, _poll_and_watch_checks
-
-# _POLL_TIMEOUT_SECS is the shared pending-checks ceiling (1800s), imported from
-# lib.github so the release/update-deps merge waiter and the finalize merge
-# waiter (github.wait_for_checks) can never drift apart — the 180s-vs-real-CI
-# mismatch that caused #2809. See lib.github._POLL_TIMEOUT_SECS for rationale.
-_POLL_INTERVAL_SECS = 5
+from vergil_tooling.lib.github import _gh_env
 
 
 def _stream_with_retry(cmd: tuple[str, ...]) -> None:
@@ -38,20 +32,6 @@ def _stream_with_retry(cmd: tuple[str, ...]) -> None:
         else:
             return
     raise AssertionError("unreachable")  # pragma: no cover
-
-
-def wait_for_checks(pr: str) -> None:
-    """Block until CI checks on *pr* pass, streaming watch output.
-
-    Delegates to the shared poll-and-watch engine — resilient to the PR
-    head moving mid-wait (#1490) — with the streaming watch runner.
-    """
-    _poll_and_watch_checks(
-        pr,
-        lambda: _stream_with_retry(("gh", "pr", "checks", pr, "--watch")),  # noqa: S607
-        poll_interval=_POLL_INTERVAL_SECS,
-        poll_timeout=_POLL_TIMEOUT_SECS,
-    )
 
 
 def watch_workflow(repo: str, run_id: str, *, check_status: bool = True) -> None:

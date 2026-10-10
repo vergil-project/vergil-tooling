@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import git, github, pr_merge
 from vergil_tooling.lib.managed_worktree import remove_worktree
-from vergil_tooling.lib.release.subprocess import wait_for_checks
 from vergil_tooling.lib.update_deps.context import UpdateDepsError
 
 if TYPE_CHECKING:
@@ -60,7 +59,7 @@ def merge_pr(ctx: UpdateDepsContext) -> None:
             message="No PR URL on context — prepare-pr did not run.",
         )
     try:
-        pr_merge.wait_and_merge(ctx.pr_url, strategy="merge", wait_checks=wait_for_checks)
+        pr_merge.wait_and_merge(ctx.pr_url, strategy="merge")
     except pr_merge.MergeAbortError as exc:
         raise UpdateDepsError(
             phase="merge",

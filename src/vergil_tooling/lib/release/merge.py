@@ -2,8 +2,10 @@
 
 Thin wrapper over the shared engine in ``vergil_tooling.lib.pr_merge``
 — release keeps its public interface (``ReleaseError`` on failure,
-streamed check waiting, merge-commit strategy) while the loop
-logic lives in one place.
+merge-commit strategy) while the loop logic lives in one place. Check
+waiting is the engine's default bounded poller (``github.wait_for_checks``):
+the old streamed ``gh pr checks --watch`` had no deadline and could not see
+past a stale check-run, so it hung a release for 12+ hours (#3170).
 
 Every PR URL the release workflow handles was just returned by GitHub
 itself (``gh pr create`` or ``gh pr list``), so a 404 on reading it means
@@ -19,7 +21,6 @@ from __future__ import annotations
 
 from vergil_tooling.lib import github, pr_merge, retry
 from vergil_tooling.lib.release.context import ReleaseError
-from vergil_tooling.lib.release.subprocess import wait_for_checks
 
 
 def known_pr_state(pr_url: str) -> str:
@@ -35,11 +36,7 @@ def wait_and_merge(pr_url: str, *, phase: str) -> None:
     """
     known_pr_state(pr_url)
     try:
-        pr_merge.wait_and_merge(
-            pr_url,
-            strategy="merge",
-            wait_checks=wait_for_checks,
-        )
+        pr_merge.wait_and_merge(pr_url, strategy="merge")
     except pr_merge.MergeAbortError as exc:
         raise ReleaseError(
             phase=phase,

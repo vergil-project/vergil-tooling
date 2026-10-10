@@ -64,7 +64,26 @@ non-terminal check over a completed run is an orphan, so finalize
 gate, then re-run `vrg-finalize-pr` — rather than hanging. Genuinely
 still-running checks are waited on as normal; if the deadline elapses
 with nothing orphaned (for example an app-posted status that is legitimately
-slow), finalize fails with a plain timeout error instead.
+slow), finalize fails with a timeout error that names every still-pending
+check and its run/job link, with the recovery path: re-run the stuck job,
+then re-run the waiting command (`vrg-finalize-pr`, or `vrg-release --resume`).
+
+**Deadline.** The deadline defaults to 30 minutes (about four times the
+longest legitimate CI run, 5–8 minutes) and is shared by every merge wait:
+`vrg-finalize-pr`, `vrg-release` (merge-release, back-merge-bump),
+`vrg-update-deps` and `vrg-wait-until-green`. Set `VRG_CHECKS_TIMEOUT`
+(seconds, a positive whole number) to change it; a malformed value is an
+error, and the deadline cannot be disabled. While waiting, the waiter prints
+each pending check with how long it has been pending, re-reporting whenever
+the pending set changes and at least once a minute.
+
+**Stale check-runs.** GitHub occasionally sets a check-run's `conclusion`
+and `completedAt` but leaves its `status` at `IN_PROGRESS`. `gh pr checks`
+derives its state from `status`, so it reports such a check as pending
+indefinitely. The waiter checks each pending check's `conclusion` in the
+PR's `statusCheckRollup`. A check that has a conclusion is terminal and is
+classified by that conclusion, so a stale success passes and a stale failure
+fails. A warning names the inconsistent check (issue #3170).
 
 **Required checks.** "Green" includes the target branch's *required*
 status checks, read from both classic branch protection

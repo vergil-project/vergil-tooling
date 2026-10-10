@@ -25,6 +25,8 @@ def _no_credential_injection(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("vergil_tooling.lib.github._gh_env", lambda: None)
     github._token_cache.clear()
     github._installation_cache = None
+    github._warned_stale_links.clear()
+    monkeypatch.delenv(github.CHECKS_TIMEOUT_ENV, raising=False)
 
 
 def _completed(
@@ -430,7 +432,7 @@ def test_failed_check_names_returns_failing_checks() -> None:
         "checks",
         "https://github.com/pr/1",
         "--json",
-        "name,bucket",
+        "name,bucket,link",
     )
 
 
@@ -558,7 +560,11 @@ def test_pr_checks_returns_parsed_checks() -> None:
             {"name": "deploy", "bucket": "pending", "state": "IN_PROGRESS", "link": "https://x/2"},
         ]
     )
-    with patch("vergil_tooling.lib.retry.subprocess.run") as mock_run:
+    with (
+        patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+        # The pending check consults statusCheckRollup (#3170); nothing concluded.
+        patch.object(github, "_rollup_check_runs", return_value={}),
+    ):
         mock_run.return_value = _completed(returncode=8, stdout=payload)
         result = github.pr_checks("https://github.com/pr/1")
     assert result == [
@@ -661,6 +667,8 @@ def test_pr_check_helpers_never_retry_check_state_exit(
             return_value=_completed(returncode=returncode, stdout=payload, stderr="timeout"),
         ) as mock_run,
         patch("vergil_tooling.lib.github.time.sleep") as mock_sleep,
+        # A pending check consults statusCheckRollup (#3170); nothing concluded here.
+        patch("vergil_tooling.lib.github._rollup_check_runs", return_value={}),
     ):
         helper("https://github.com/pr/1")
     assert mock_run.call_count == 1
@@ -1033,28 +1041,6 @@ class TestReadJsonPaginated:
         ):
             assert github.read_json_paginated("repos/o/r/x", "artifacts") == [{"name": "a"}]
         assert mock_run.call_count == 2
-
-
-def test_checks_registered_returns_true_when_checks_exist() -> None:
-    cp = _completed(stdout="1\n")
-    with patch("vergil_tooling.lib.retry.subprocess.run", return_value=cp):
-        assert github._checks_registered("owner/repo", "abc123") is True
-
-
-def test_checks_registered_returns_false_when_no_checks() -> None:
-    cp = _completed(stdout="0\n")
-    with patch("vergil_tooling.lib.retry.subprocess.run", return_value=cp):
-        assert github._checks_registered("owner/repo", "abc123") is False
-
-
-def test_checks_registered_calls_correct_api_endpoint() -> None:
-    cp = _completed(stdout="0\n")
-    with patch("vergil_tooling.lib.retry.subprocess.run", return_value=cp) as mock_run:
-        github._checks_registered("owner/repo", "abc123def456")
-    args = mock_run.call_args[0][0]
-    assert "repos/owner/repo/commits/abc123def456/check-runs" in args
-    assert "--jq" in args
-    assert ".total_count" in args
 
 
 def test_write_json_sends_body_via_stdin() -> None:
@@ -2224,3 +2210,265 @@ def test_repo_exists_reraises_other_errors() -> None:
         pytest.raises(github.GitHubAPIError, match="Bad credentials"),
     ):
         github.repo_exists("org", "repo")
+
+
+# --- #3170: stale check-runs and the bounded, visible check wait ---
+
+_STALE_LINK = "https://github.com/o/r/actions/runs/37969487090/job/113954201447"
+
+
+def _stale_rollup_node(
+    link: str = _STALE_LINK, status: str = "IN_PROGRESS", conclusion: str = "SUCCESS"
+) -> dict[str, str]:
+    """A statusCheckRollup CheckRun node GitHub left non-COMPLETED with a conclusion."""
+    return {
+        "__typename": "CheckRun",
+        "name": "quality / matrix",
+        "status": status,
+        "conclusion": conclusion,
+        "detailsUrl": link,
+        "completedAt": "2026-10-09T17:59:11Z",
+    }
+
+
+@pytest.mark.parametrize(
+    ("status", "conclusion", "bucket"),
+    [
+        ("IN_PROGRESS", "SUCCESS", "pass"),  # the #3170 stale check-run
+        ("QUEUED", "FAILURE", "fail"),
+        ("IN_PROGRESS", "cancelled", "cancel"),  # case-insensitive
+        ("IN_PROGRESS", "NEUTRAL", "skipping"),
+        ("COMPLETED", "SKIPPED", "skipping"),
+        ("COMPLETED", "TIMED_OUT", "fail"),
+        ("COMPLETED", "STARTUP_FAILURE", "fail"),
+        ("IN_PROGRESS", "", "pending"),  # genuinely running: no conclusion yet
+        ("IN_PROGRESS", None, "pending"),
+        ("COMPLETED", "STALE", "pending"),  # gh itself reads STALE as pending
+    ],
+)
+def test_check_run_bucket_is_decided_by_conclusion(
+    status: str, conclusion: str | None, bucket: str
+) -> None:
+    assert github.check_run_bucket(status, conclusion) == bucket
+
+
+def test_pr_checks_treats_stale_in_progress_success_as_passed(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The #3170 incident: gh pr checks reports the check IN_PROGRESS/pending
+    # (it derives state from status unless status is COMPLETED), while the
+    # rollup carries conclusion=SUCCESS and completedAt. It must read as passed.
+    payload = json.dumps(
+        [
+            {
+                "name": "quality / matrix",
+                "bucket": "pending",
+                "state": "IN_PROGRESS",
+                "link": _STALE_LINK,
+            },
+            {"name": "build", "bucket": "pass", "state": "SUCCESS", "link": "https://x/1"},
+        ]
+    )
+    rollup = json.dumps([_stale_rollup_node(), {"__typename": "StatusContext", "context": "x"}])
+    with patch("vergil_tooling.lib.retry.subprocess.run") as mock_run:
+        mock_run.side_effect = [
+            _completed(returncode=8, stdout=payload),
+            _completed(returncode=0, stdout=rollup),
+        ]
+        checks = github.pr_checks("https://github.com/pr/1")
+    assert checks[0]["bucket"] == "pass"
+    assert checks[0]["state"] == "SUCCESS"
+    assert checks[1] == {
+        "name": "build",
+        "bucket": "pass",
+        "state": "SUCCESS",
+        "link": "https://x/1",
+    }
+    rollup_cmd = mock_run.call_args_list[1].args[0]
+    assert rollup_cmd[:4] == ("gh", "pr", "view", "https://github.com/pr/1")
+    assert "statusCheckRollup" in rollup_cmd
+    err = capsys.readouterr().err
+    assert "'quality / matrix' reports status IN_PROGRESS" in err
+    assert "conclusion SUCCESS" in err
+    assert _STALE_LINK in err
+
+
+def test_pr_checks_keeps_genuinely_running_check_pending() -> None:
+    payload = [{"name": "deploy", "bucket": "pending", "state": "IN_PROGRESS", "link": "u"}]
+    runs = {"u": ("IN_PROGRESS", ""), "other": ("IN_PROGRESS", "SUCCESS")}
+    with patch.object(github, "_rollup_check_runs", return_value=runs):
+        assert github._reconcile_stale_checks("1", payload)[0]["bucket"] == "pending"
+
+
+def test_reconcile_skips_rollup_when_nothing_pending() -> None:
+    checks = [{"name": "a", "bucket": "pass", "state": "SUCCESS", "link": "u"}]
+    with patch.object(github, "_rollup_check_runs") as rollup:
+        assert github._reconcile_stale_checks("1", checks) == checks
+    rollup.assert_not_called()
+
+
+def test_reconcile_warns_once_per_stale_check_run(capsys: pytest.CaptureFixture[str]) -> None:
+    runs = {_STALE_LINK: ("IN_PROGRESS", "SUCCESS")}
+    with patch.object(github, "_rollup_check_runs", return_value=runs):
+        for _ in range(3):
+            github._reconcile_stale_checks(
+                "1",
+                [{"name": "m", "bucket": "pending", "state": "IN_PROGRESS", "link": _STALE_LINK}],
+            )
+    assert capsys.readouterr().err.count("stale check-run") == 1
+
+
+def test_rollup_check_runs_maps_details_url_and_tolerates_non_list() -> None:
+    nodes = [
+        None,
+        {"__typename": "StatusContext", "context": "ext", "state": "SUCCESS"},
+        {"__typename": "CheckRun", "name": "no-url", "status": "QUEUED"},
+        _stale_rollup_node(),
+        {"__typename": "CheckRun", "detailsUrl": "u2"},  # missing status/conclusion
+    ]
+    with patch.object(github, "read_json", return_value=nodes):
+        assert github._rollup_check_runs("1") == {
+            _STALE_LINK: ("IN_PROGRESS", "SUCCESS"),
+            "u2": ("", ""),
+        }
+    with patch.object(github, "read_json", return_value=None):
+        assert github._rollup_check_runs("1") == {}
+
+
+def test_failed_check_names_reports_stale_check_that_concluded_in_failure() -> None:
+    payload = json.dumps([{"name": "quality / matrix", "bucket": "pending", "link": _STALE_LINK}])
+    with (
+        patch.object(
+            github, "_rollup_check_runs", return_value={_STALE_LINK: ("IN_PROGRESS", "FAILURE")}
+        ),
+        patch.object(github, "_superseded_check_names", return_value=set()),
+        patch(
+            "vergil_tooling.lib.retry.subprocess.run",
+            return_value=_completed(returncode=8, stdout=payload),
+        ),
+    ):
+        assert github.failed_check_names("https://github.com/pr/1") == ["quality / matrix"]
+
+
+def test_wait_for_checks_returns_on_stale_check_without_waiting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # End to end through pr_checks: the stale check is terminal on the first poll.
+    payload = json.dumps(
+        [
+            {
+                "name": "quality / matrix",
+                "bucket": "pending",
+                "state": "IN_PROGRESS",
+                "link": _STALE_LINK,
+            }
+        ]
+    )
+    monkeypatch.setattr(
+        github, "_rollup_check_runs", lambda pr: {_STALE_LINK: ("IN_PROGRESS", "SUCCESS")}
+    )
+    monkeypatch.setattr(github.time, "sleep", lambda s: pytest.fail("must not wait"))
+    with patch(
+        "vergil_tooling.lib.retry.subprocess.run",
+        return_value=_completed(returncode=8, stdout=payload),
+    ):
+        github.wait_for_checks("934", required=())
+
+
+def test_wait_for_checks_deadline_names_pending_checks_and_links(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        github,
+        "pr_checks",
+        lambda pr: [
+            {
+                "name": "test / unit",
+                "bucket": "pending",
+                "state": "IN_PROGRESS",
+                "link": _STALE_LINK,
+            },
+            {"name": "CodeQL", "bucket": "pending", "state": "QUEUED", "link": ""},
+            {"name": "lint", "bucket": "pass", "state": "SUCCESS", "link": "https://x/2"},
+        ],
+    )
+    monkeypatch.setattr(github, "orphaned_check_names", lambda pr: [])
+    clock = iter([0.0, 5000.0])
+    monkeypatch.setattr(github.time, "monotonic", lambda: next(clock))
+    with pytest.raises(github.ChecksTimeoutError) as excinfo:
+        github.wait_for_checks("934", poll_timeout=3600, required=())
+    message = str(excinfo.value)
+    assert "checks still pending after 3600s" in message
+    assert f"test / unit ({_STALE_LINK})" in message
+    assert "CodeQL (no link)" in message
+    assert "lint" not in message
+    assert excinfo.value.pending == [("test / unit", _STALE_LINK), ("CodeQL", "")]
+    assert isinstance(excinfo.value, github.GitHubAPIError)  # existing handlers still catch it
+
+
+def test_wait_for_checks_deadline_with_no_checks_registered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(github, "pr_checks", lambda pr: [])
+    monkeypatch.setattr(github, "orphaned_check_names", lambda pr: [])
+    with pytest.raises(github.ChecksTimeoutError, match="no checks registered") as excinfo:
+        github.wait_for_checks("934", poll_timeout=0, required=())
+    assert excinfo.value.pending == []
+
+
+def test_wait_for_checks_deadline_comes_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(github.CHECKS_TIMEOUT_ENV, "90")
+    _stub_checks(monkeypatch, lambda: False)
+    monkeypatch.setattr(github, "orphaned_check_names", lambda pr: [])
+    clock = iter([0.0, 89.0, 90.0])
+    monkeypatch.setattr(github.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(github.time, "sleep", lambda s: None)
+    with pytest.raises(github.ChecksTimeoutError, match="after 90s"):
+        github.wait_for_checks("934")
+
+
+def test_wait_for_checks_reports_pending_durations(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    running = {"name": "test / unit", "bucket": "pending", "state": "IN_PROGRESS", "link": "a"}
+    queued = {"name": "package", "bucket": "pending", "state": "QUEUED", "link": "b"}
+    done = {"name": "test / unit", "bucket": "pass", "state": "SUCCESS", "link": "a"}
+    batches = iter(
+        [
+            [running],  # t=0: first report
+            [running],  # t=30: unchanged, under the interval -> silent
+            [running],  # t=65: unchanged but interval elapsed -> re-report
+            [running, queued],  # t=70: set changed -> report
+            [done, {**queued, "bucket": "pass"}],  # terminal
+        ]
+    )
+    monkeypatch.setattr(github, "pr_checks", lambda pr: next(batches))
+    clock = iter([0.0, 0.0, 30.0, 65.0, 3725.0])
+    monkeypatch.setattr(github.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(github.time, "sleep", lambda s: None)
+    github.wait_for_checks("934", poll_timeout=100000, required=())
+    lines = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("Pending")]
+    assert lines == [
+        "Pending checks: test / unit (0s)",
+        "Pending checks: test / unit (1m05s)",
+        "Pending checks: test / unit (1h02m), package (0s)",
+    ]
+
+
+def test_checks_timeout_secs_default_and_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert github.checks_timeout_secs() == 1800
+    monkeypatch.setenv(github.CHECKS_TIMEOUT_ENV, " 5400 ")
+    assert github.checks_timeout_secs() == 5400
+    monkeypatch.setenv(github.CHECKS_TIMEOUT_ENV, "")
+    assert github.checks_timeout_secs() == 1800
+
+
+@pytest.mark.parametrize("raw", ["soon", "0", "-5", "1.5"])
+def test_checks_timeout_secs_rejects_bad_override(
+    monkeypatch: pytest.MonkeyPatch, raw: str
+) -> None:
+    # The deadline is what stops a stale check hanging a merge forever, so a bad
+    # value fails loudly instead of silently falling back or disabling it.
+    monkeypatch.setenv(github.CHECKS_TIMEOUT_ENV, raw)
+    with pytest.raises(ValueError, match="VRG_CHECKS_TIMEOUT must be a positive"):
+        github.checks_timeout_secs()
