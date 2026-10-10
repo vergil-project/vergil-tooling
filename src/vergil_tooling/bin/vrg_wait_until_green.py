@@ -1,14 +1,15 @@
 """Block until a PR's required checks pass and the branch is up to date.
 
-Wraps ``gh pr checks --watch`` with an outer loop that detects when the PR
-branch is behind its base. When the branch is behind, auto-updates it
-(fast-forward merge from base) and re-polls CI.
+Wraps the shared bounded check waiter (``github.wait_for_checks``, deadline
+``$VRG_CHECKS_TIMEOUT`` or 1800s, stale-check-run aware per #3170) with an outer
+loop that detects when the PR branch is behind its base. When the branch is
+behind, auto-updates it (fast-forward merge from base) and re-polls CI.
 
-``gh pr checks --watch`` blocks until checks reach a terminal state but exits
-0 even when a check fails, so success is determined authoritatively from the
-check conclusions (``failed_check_names``) and only then from
-``mergeStateStatus``. The caller sees a zero exit only when every check
-passed and the PR is mergeable (``CLEAN``).
+Waiting only establishes that checks are terminal, not that they passed, so
+success is determined authoritatively from the check conclusions
+(``failed_check_names``) and only then from ``mergeStateStatus``. The caller
+sees a zero exit only when every check passed and the PR is mergeable
+(``CLEAN``).
 """
 
 from __future__ import annotations

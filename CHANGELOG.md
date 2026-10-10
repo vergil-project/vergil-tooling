@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.236] - 2026-10-10
+
+### Bug fixes
+
+- bound every merge wait and treat a concluded stale check-run as terminal (#3174)
+- harvest the newest same-named gate artifact by id (#3176)
+- adopt a merged release PR whose head was updated server-side; never push when merged (#3177)
+- sync the local release branch after a server-side update-branch (#3178)
+
 ## [2.1.235] - 2026-10-09
 
 ### Bug fixes

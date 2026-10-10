@@ -248,12 +248,93 @@ def test_prepare_ignores_closed_unmerged_release_pr() -> None:
     assert ctx.release_pr_url == "https://github.com/owner/repo/pull/101"
 
 
-def test_prepare_ignores_merged_pr_with_mismatched_tip() -> None:
-    """A merged PR whose head no longer matches the branch tip is not adopted.
+def test_prepare_adopts_merged_pr_whose_head_descends_from_local_tip() -> None:
+    """A server-side update-branch moved the PR head ahead of the local tip (#3172).
 
-    Guards the #1719 reused-branch-name straggler: a same-named branch reused
-    after an earlier merge matches by name but not by tip.
+    ``merge-release`` updated the BEHIND release PR on GitHub (a merge of main
+    into the branch), so the merged PR's head descends from — but no longer
+    equals — the local tip. The PR is adopted and the local branch is
+    fast-forwarded to the real head; nothing is pushed and no PR is created.
     """
+    ctx = _ctx()
+    git_run_calls: list[tuple[str, ...]] = []
+
+    def capture_git_run(*args: str) -> None:
+        git_run_calls.append(args)
+
+    with (
+        patch(_MOD + ".create_tracking_issue"),
+        patch(_MOD + ".github.pr_for_branch", return_value=None),
+        patch(
+            _MOD + ".github.closed_pr_for_branch",
+            return_value={
+                "number": "880",
+                "url": "https://github.com/owner/repo/pull/880",
+                "headRefOid": "prhead",
+            },
+        ),
+        patch(_MOD + ".github.pr_state", return_value="MERGED"),
+        patch(_MOD + ".git.read_output", return_value="localtip"),
+        patch(_MOD + ".git.is_ancestor", return_value=True) as m_anc,
+        patch(_MOD + ".git.run", side_effect=capture_git_run),
+        patch(_MOD + "._generate_changelog") as m_changelog,
+        patch(_MOD + ".github.create_pr") as m_create_pr,
+    ):
+        prepare(ctx)
+    assert ctx.release_pr_url == "https://github.com/owner/repo/pull/880"
+    m_anc.assert_called_once_with("localtip", "prhead")
+    assert git_run_calls == [
+        ("fetch", "origin", "pull/880/head"),
+        ("merge", "--ff-only", "prhead"),
+    ]
+    m_changelog.assert_not_called()
+    m_create_pr.assert_not_called()
+
+
+def test_prepare_fails_loud_on_merged_pr_with_unrelated_tip() -> None:
+    """A merged PR whose head does not descend from the local tip fails loud (#3172).
+
+    Keeps the #1719 reused-branch-name straggler protection (an unrelated tip is
+    never adopted) but, unlike before, never falls through to a push: pushing
+    would re-create the deleted remote release branch at a stale tip.
+    """
+    ctx = _ctx()
+    git_run_calls: list[tuple[str, ...]] = []
+
+    def capture_git_run(*args: str) -> None:
+        git_run_calls.append(args)
+
+    with (
+        patch(_MOD + ".create_tracking_issue"),
+        patch(_MOD + ".github.pr_for_branch", return_value=None),
+        patch(
+            _MOD + ".github.closed_pr_for_branch",
+            return_value={
+                "number": "880",
+                "url": "https://github.com/owner/repo/pull/880",
+                "headRefOid": "oldsha",
+            },
+        ),
+        patch(_MOD + ".github.pr_state", return_value="MERGED"),
+        patch(_MOD + ".git.read_output", return_value="newsha"),
+        patch(_MOD + ".git.is_ancestor", return_value=False),
+        patch(_MOD + ".git.run", side_effect=capture_git_run),
+        patch(_MOD + "._generate_changelog") as m_changelog,
+        patch(_MOD + ".github.create_pr") as m_create_pr,
+        pytest.raises(ReleaseError, match="already merged") as exc_info,
+    ):
+        prepare(ctx)
+    assert "does not descend" in str(exc_info.value)
+    assert exc_info.value.phase == "prepare"
+    assert all(c[0] != "push" for c in git_run_calls)
+    assert all(c[0] != "merge" for c in git_run_calls)
+    m_changelog.assert_not_called()
+    m_create_pr.assert_not_called()
+    assert ctx.release_pr_url is None
+
+
+def test_prepare_fails_loud_on_merged_pr_without_head_oid() -> None:
+    """A merged PR GitHub reports with no head SHA cannot be reconciled — fail loud."""
     ctx = _ctx()
     with (
         patch(_MOD + ".create_tracking_issue"),
@@ -261,21 +342,20 @@ def test_prepare_ignores_merged_pr_with_mismatched_tip() -> None:
         patch(
             _MOD + ".github.closed_pr_for_branch",
             return_value={
+                "number": "880",
                 "url": "https://github.com/owner/repo/pull/880",
-                "headRefOid": "oldsha",
+                "headRefOid": "",
             },
         ),
         patch(_MOD + ".github.pr_state", return_value="MERGED"),
-        patch(_MOD + ".git.read_output", return_value="newsha"),
-        patch(_MOD + ".git.run"),
-        patch(_MOD + "._generate_changelog"),
-        patch(
-            _MOD + ".github.create_pr",
-            return_value="https://github.com/owner/repo/pull/102",
-        ),
+        patch(_MOD + ".git.read_output", return_value="localtip"),
+        patch(_MOD + ".git.run") as m_run,
+        patch(_MOD + ".github.create_pr") as m_create_pr,
+        pytest.raises(ReleaseError, match="no head commit"),
     ):
         prepare(ctx)
-    assert ctx.release_pr_url == "https://github.com/owner/repo/pull/102"
+    m_run.assert_not_called()
+    m_create_pr.assert_not_called()
 
 
 def test_generate_changelog_skips_when_prepare_commit_present() -> None:

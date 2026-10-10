@@ -50,17 +50,13 @@ def prepare(ctx: ReleaseContext) -> None:
     # confirm-main failure) leaves the merged release PR invisible to the check
     # above — without this, prepare would re-push and `gh pr create` would fail
     # ("No commits between main and <branch>"). Adopt the merged PR so
-    # `merge_release`'s MERGED-skip carries the pipeline forward. The head-tip
-    # match guards the #1719 reused-branch-name straggler (a same-named branch
-    # reused after an earlier merge matches by name but not by tip).
+    # `merge_release`'s MERGED-skip carries the pipeline forward. A merged PR
+    # for the branch name means the release branch's work is done: prepare
+    # never pushes or re-creates the branch in that case (#3172) — it either
+    # adopts the PR or fails loud.
     merged = github.closed_pr_for_branch(branch)
-    if (
-        merged is not None
-        and known_pr_state(str(merged["url"])) == "MERGED"
-        and merged.get("headRefOid") == git.read_output("rev-parse", branch)
-    ):
-        ctx.release_pr_url = str(merged["url"])
-        print(f"Release PR already merged — adopting for resume: {ctx.release_pr_url}")
+    if merged is not None and known_pr_state(str(merged["url"])) == "MERGED":
+        _adopt_merged_pr(ctx, branch, merged)
         return
 
     if ctx.version_override is not None:
@@ -76,6 +72,54 @@ def prepare(ctx: ReleaseContext) -> None:
 
     ctx.release_pr_url = _create_pr(ctx)
     print(f"Release PR created: {ctx.release_pr_url}")
+
+
+def _adopt_merged_pr(ctx: ReleaseContext, branch: str, merged: dict[str, str]) -> None:
+    """Adopt an already-merged release PR, reconciling the local branch tip.
+
+    * PR head == local tip: adopt as-is.
+    * PR head descends from the local tip: ``merge-release`` updated the
+      BEHIND PR on GitHub (a server-side update-branch merge), so the local
+      branch is stale. Fetch the PR head and fast-forward the local branch to
+      it so later stages see the real tip, then adopt (#3172).
+    * Otherwise (no head, or an unrelated tip — the #1719 reused-branch-name
+      straggler): fail loud. Never fall through to a push, which would
+      re-create the deleted remote release branch at a stale tip.
+    """
+    url = str(merged["url"])
+    head = str(merged.get("headRefOid") or "")
+    local = git.read_output("rev-parse", branch)
+    if not head:
+        raise ReleaseError(
+            phase="prepare",
+            command=f"gh pr list --head {branch} --state closed",
+            message=(
+                f"Release PR {url} for '{branch}' is already merged, but GitHub "
+                f"reported no head commit for it, so the local tip ({local}) "
+                f"cannot be reconciled. Refusing to push or re-create the branch."
+            ),
+        )
+    if head != local:
+        git.run("fetch", "origin", f"pull/{merged['number']}/head")
+        if not git.is_ancestor(local, head):
+            raise ReleaseError(
+                phase="prepare",
+                command=f"git merge-base --is-ancestor {local} {head}",
+                message=(
+                    f"Release PR {url} for '{branch}' is already merged, but its "
+                    f"head {head} does not descend from the local '{branch}' tip "
+                    f"{local}. Refusing to push or re-create the branch. Reconcile "
+                    f"the local branch with the merged PR head (or remove the stale "
+                    f"branch) before resuming."
+                ),
+            )
+        print(
+            f"Release PR head {head} is ahead of local '{branch}' {local} "
+            f"(updated on GitHub) — fast-forwarding."
+        )
+        git.run("merge", "--ff-only", head)
+    ctx.release_pr_url = url
+    print(f"Release PR already merged — adopting for resume: {ctx.release_pr_url}")
 
 
 def _prepare_commit_exists(ctx: ReleaseContext) -> bool:

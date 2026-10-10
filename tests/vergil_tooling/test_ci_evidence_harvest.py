@@ -8,7 +8,9 @@ wrappers, so the tests assert the selection/filter logic, never the network.
 
 from __future__ import annotations
 
+import io
 import json
+import zipfile
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -251,6 +253,186 @@ def test_select_ci_run_issues_a_get_not_a_post(monkeypatch: pytest.MonkeyPatch) 
 # --- download_evidence_artifacts ----------------------------------------
 
 
+def _zip_bytes(members: dict[str, bytes]) -> bytes:
+    """An in-memory zip archive holding *members* (name → content)."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for name, content in members.items():
+            zf.writestr(name, content)
+    return buf.getvalue()
+
+
+def _fake_downloads(
+    monkeypatch: pytest.MonkeyPatch, archives: dict[str, bytes] | None = None
+) -> list[str]:
+    """Stub :func:`github.download_api_binary`; record each endpoint fetched.
+
+    Each download writes the archive registered for its endpoint in *archives*,
+    or by default a zip holding an ``evidence.json`` that names the endpoint.
+    """
+    endpoints: list[str] = []
+
+    def _download(endpoint: str, dest: Path) -> None:
+        endpoints.append(endpoint)
+        default = _zip_bytes({"evidence.json": json.dumps({"from": endpoint}).encode()})
+        dest.write_bytes((archives or {}).get(endpoint, default))
+
+    monkeypatch.setattr(github, "download_api_binary", _download)
+    return endpoints
+
+
+def test_download_evidence_artifacts_uses_newest_of_duplicate_names(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A re-run's second same-named artifact: the newest is fetched once, by id (#3171).
+
+    The 2.1.235 release harvest downloaded ``ci-evidence-quality`` twice by name
+    into one directory and aborted on ``evidence.json: file exists``.
+    """
+    from vergil_tooling.lib.github_config import EvidenceGate
+
+    monkeypatch.setattr(
+        github,
+        "read_json_paginated",
+        lambda *a, **k: [
+            {"name": "ci-evidence-quality", "id": 5, "created_at": "2026-10-01T10:00:00Z"},
+            {"name": "ci-evidence-quality", "id": 9, "created_at": "2026-10-01T11:00:00Z"},
+            {"name": "ci-evidence-quality", "id": 7, "created_at": "2026-10-01T09:00:00Z"},
+        ],
+    )
+    calls = _fake_downloads(monkeypatch)
+    required = (EvidenceGate(name="quality", checks=("quality / evidence",)),)
+    dest = tmp_path / "gates"
+
+    with caplog.at_level("WARNING", logger="vergil_tooling.lib.ci_evidence"):
+        result = download_evidence_artifacts("o/r", 99, dest, required)
+
+    assert result == [dest / "quality"]
+    assert calls == ["repos/o/r/actions/artifacts/9/zip"]
+    evidence = json.loads((dest / "quality" / "evidence.json").read_text())
+    assert evidence == {"from": "repos/o/r/actions/artifacts/9/zip"}
+    assert "[5, 7, 9]" in caplog.text
+    assert "id 9" in caplog.text
+
+
+def test_download_evidence_artifacts_tie_on_created_at_breaks_by_highest_id(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from vergil_tooling.lib.github_config import EvidenceGate
+
+    monkeypatch.setattr(
+        github,
+        "read_json_paginated",
+        lambda *a, **k: [
+            {"name": "ci-evidence-test", "id": 4, "created_at": "2026-10-01T10:00:00Z"},
+            {"name": "ci-evidence-test", "id": 3, "created_at": "2026-10-01T10:00:00Z"},
+        ],
+    )
+    calls = _fake_downloads(monkeypatch)
+    required = (EvidenceGate(name="test", checks=("test / unit",)),)
+    download_evidence_artifacts("o/r", 1, tmp_path, required)
+    assert calls == ["repos/o/r/actions/artifacts/4/zip"]
+
+
+def test_download_evidence_artifacts_single_artifact_logs_no_warning(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    from vergil_tooling.lib.github_config import EvidenceGate
+
+    monkeypatch.setattr(
+        github,
+        "read_json_paginated",
+        lambda *a, **k: [{"name": "ci-evidence-test", "id": 4, "created_at": "t"}],
+    )
+    calls = _fake_downloads(monkeypatch)
+    required = (EvidenceGate(name="test", checks=("test / unit",)),)
+    with caplog.at_level("WARNING", logger="vergil_tooling.lib.ci_evidence"):
+        assert download_evidence_artifacts("o/r", 1, tmp_path, required) == [tmp_path / "test"]
+    assert calls == ["repos/o/r/actions/artifacts/4/zip"]
+    assert caplog.text == ""
+
+
+def test_download_evidence_artifacts_skips_expired_newest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An expired newest copy falls back to the newest unexpired one (#3171)."""
+    from vergil_tooling.lib.github_config import EvidenceGate
+
+    monkeypatch.setattr(
+        github,
+        "read_json_paginated",
+        lambda *a, **k: [
+            {"name": "ci-evidence-test", "id": 1, "created_at": "2026-10-01T09:00:00Z"},
+            {"name": "ci-evidence-test", "id": 2, "created_at": "2026-10-01T10:00:00Z"},
+            {
+                "name": "ci-evidence-test",
+                "id": 3,
+                "created_at": "2026-10-01T11:00:00Z",
+                "expired": True,
+            },
+        ],
+    )
+    calls = _fake_downloads(monkeypatch)
+    required = (EvidenceGate(name="test", checks=("test / unit",)),)
+    download_evidence_artifacts("o/r", 1, tmp_path, required)
+    assert calls == ["repos/o/r/actions/artifacts/2/zip"]
+
+
+def test_download_evidence_artifacts_all_expired_fails_loudly(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from vergil_tooling.lib.github_config import EvidenceGate
+
+    monkeypatch.setattr(
+        github,
+        "read_json_paginated",
+        lambda *a, **k: [
+            {"name": "ci-evidence-test", "id": 2, "created_at": "b", "expired": True},
+            {"name": "ci-evidence-test", "id": 1, "created_at": "a", "expired": True},
+        ],
+    )
+    calls = _fake_downloads(monkeypatch)
+    required = (EvidenceGate(name="test", checks=("test / unit",)),)
+    with pytest.raises(ci_evidence.EvidenceArtifactError, match=r"'test' has expired.*\[1, 2\]"):
+        download_evidence_artifacts("o/r", 1, tmp_path, required)
+    assert calls == []
+
+
+@pytest.mark.parametrize("member", ["../escape.json", "/abs/evidence.json", "a/../../x"])
+def test_download_evidence_artifacts_rejects_unsafe_zip_members(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, member: str
+) -> None:
+    from vergil_tooling.lib.github_config import EvidenceGate
+
+    monkeypatch.setattr(
+        github, "read_json_paginated", lambda *a, **k: [{"name": "ci-evidence-test", "id": 1}]
+    )
+    archive = _zip_bytes({"evidence.json": b"{}", member: b"pwned"})
+    _fake_downloads(monkeypatch, {"repos/o/r/actions/artifacts/1/zip": archive})
+    required = (EvidenceGate(name="test", checks=("test / unit",)),)
+    dest = tmp_path / "gates"
+    with pytest.raises(ci_evidence.EvidenceArtifactError, match="unsafe member path"):
+        download_evidence_artifacts("o/r", 1, dest, required)
+    # Validation precedes extraction: nothing from the archive was written.
+    assert not (dest / "test" / "evidence.json").exists()
+    assert not (tmp_path / "escape.json").exists()
+
+
+def test_download_evidence_artifacts_extracts_nested_members(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from vergil_tooling.lib.github_config import EvidenceGate
+
+    monkeypatch.setattr(
+        github, "read_json_paginated", lambda *a, **k: [{"name": "ci-evidence-test", "id": 1}]
+    )
+    archive = _zip_bytes({"evidence.json": b"{}", "reports/junit.xml": b"<x/>"})
+    _fake_downloads(monkeypatch, {"repos/o/r/actions/artifacts/1/zip": archive})
+    required = (EvidenceGate(name="test", checks=("test / unit",)),)
+    download_evidence_artifacts("o/r", 1, tmp_path, required)
+    assert (tmp_path / "test" / "reports" / "junit.xml").read_bytes() == b"<x/>"
+
+
 def test_download_evidence_artifacts_filters_prefix(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -260,17 +442,12 @@ def test_download_evidence_artifacts_filters_prefix(
         github,
         "read_json_paginated",
         lambda *a, **k: [
-            {"name": "ci-evidence-test"},
-            {"name": "ci-evidence-security"},
-            {"name": "build-logs"},
+            {"name": "ci-evidence-test", "id": 1},
+            {"name": "ci-evidence-security", "id": 2},
+            {"name": "build-logs", "id": 3},
         ],
     )
-    calls: list[tuple[str, ...]] = []
-
-    def _record_run(*args: str) -> None:
-        calls.append(args)
-
-    monkeypatch.setattr(github, "run", _record_run)
+    calls = _fake_downloads(monkeypatch)
 
     required = (
         EvidenceGate(name="test", checks=("test / unit",)),
@@ -283,10 +460,12 @@ def test_download_evidence_artifacts_filters_prefix(
     assert (dest / "test").is_dir()
     assert (dest / "security").is_dir()
     assert not (dest / "build-logs").exists()
-    downloaded_names = {a[a.index("--name") + 1] for a in calls}
-    assert downloaded_names == {"ci-evidence-test", "ci-evidence-security"}
-    # run-id and repo are threaded to every download call.
-    assert all("99" in a and "o/r" in a for a in calls)
+    # Each required gate's artifact is fetched by id from the repo.
+    assert sorted(calls) == [
+        "repos/o/r/actions/artifacts/1/zip",
+        "repos/o/r/actions/artifacts/2/zip",
+    ]
+    assert (dest / "test" / "evidence.json").is_file()
 
 
 def test_download_evidence_artifacts_ignores_security_sarif_partials(
@@ -305,14 +484,13 @@ def test_download_evidence_artifacts_ignores_security_sarif_partials(
         github,
         "read_json_paginated",
         lambda *a, **k: [
-            {"name": "ci-evidence-security"},
-            {"name": "ci-evidence-security-part-codeql"},
-            {"name": "ci-evidence-security-part-trivy"},
-            {"name": "ci-evidence-security-part-semgrep"},
+            {"name": "ci-evidence-security", "id": 10},
+            {"name": "ci-evidence-security-part-codeql", "id": 11},
+            {"name": "ci-evidence-security-part-trivy", "id": 12},
+            {"name": "ci-evidence-security-part-semgrep", "id": 13},
         ],
     )
-    calls: list[tuple[str, ...]] = []
-    monkeypatch.setattr(github, "run", lambda *a: calls.append(a))
+    calls = _fake_downloads(monkeypatch)
 
     required = (EvidenceGate(name="security", checks=("CodeQL",)),)
     dest = tmp_path / "artifacts"
@@ -323,8 +501,7 @@ def test_download_evidence_artifacts_ignores_security_sarif_partials(
     assert not (dest / "security-part-codeql").exists()
     assert not (dest / "security-part-trivy").exists()
     assert not (dest / "security-part-semgrep").exists()
-    downloaded_names = {a[a.index("--name") + 1] for a in calls}
-    assert downloaded_names == {"ci-evidence-security"}
+    assert calls == ["repos/o/r/actions/artifacts/10/zip"]
 
 
 def test_download_evidence_artifacts_omits_genuinely_absent_gate(
@@ -338,9 +515,9 @@ def test_download_evidence_artifacts_omits_genuinely_absent_gate(
     from vergil_tooling.lib.github_config import EvidenceGate
 
     monkeypatch.setattr(
-        github, "read_json_paginated", lambda *a, **k: [{"name": "ci-evidence-security"}]
+        github, "read_json_paginated", lambda *a, **k: [{"name": "ci-evidence-security", "id": 1}]
     )
-    monkeypatch.setattr(github, "run", lambda *a: None)
+    _fake_downloads(monkeypatch)
 
     required = (
         EvidenceGate(name="security", checks=("CodeQL",)),
@@ -361,8 +538,10 @@ def test_download_evidence_artifacts_none_matching(
 ) -> None:
     from vergil_tooling.lib.github_config import EvidenceGate
 
-    monkeypatch.setattr(github, "read_json_paginated", lambda *a, **k: [{"name": "coverage"}])
-    monkeypatch.setattr(github, "run", lambda *a: None)
+    monkeypatch.setattr(
+        github, "read_json_paginated", lambda *a, **k: [{"name": "coverage", "id": 1}]
+    )
+    assert _fake_downloads(monkeypatch) == []
     required = (EvidenceGate(name="test", checks=("test / unit",)),)
     assert download_evidence_artifacts("o/r", 1, tmp_path, required) == []
 
@@ -388,9 +567,9 @@ def test_download_evidence_artifacts_harvests_required_gate_on_page_two(
 
     from vergil_tooling.lib.github_config import EvidenceGate
 
-    artifacts = [{"name": "ci-evidence-test"}]
-    artifacts += [{"name": f"package-reports-test-{i}"} for i in range(29)]
-    artifacts.append({"name": "ci-evidence-security"})  # 31st: lands on page 2
+    artifacts: list[dict[str, Any]] = [{"name": "ci-evidence-test", "id": 1}]
+    artifacts += [{"name": f"package-reports-test-{i}", "id": 100 + i} for i in range(29)]
+    artifacts.append({"name": "ci-evidence-security", "id": 31})  # 31st: lands on page 2
     assert len(artifacts) == 31
     stdout = _paged_gh_output("artifacts", artifacts)
     seen: list[tuple[str, ...]] = []
@@ -401,8 +580,7 @@ def test_download_evidence_artifacts_harvests_required_gate_on_page_two(
 
     monkeypatch.setattr("vergil_tooling.lib.github._gh_env", lambda: None)
     monkeypatch.setattr("vergil_tooling.lib.retry.subprocess.run", _fake_run)
-    downloads: list[tuple[str, ...]] = []
-    monkeypatch.setattr(github, "run", lambda *a: downloads.append(a))
+    downloads = _fake_downloads(monkeypatch)
 
     required = (
         EvidenceGate(name="test", checks=("test / unit",)),
@@ -412,10 +590,10 @@ def test_download_evidence_artifacts_harvests_required_gate_on_page_two(
     result = download_evidence_artifacts("o/r", 99, dest, required)
 
     assert result == [dest / "security", dest / "test"]
-    assert {a[a.index("--name") + 1] for a in downloads} == {
-        "ci-evidence-test",
-        "ci-evidence-security",
-    }
+    assert sorted(downloads) == [
+        "repos/o/r/actions/artifacts/1/zip",
+        "repos/o/r/actions/artifacts/31/zip",
+    ]
     assert seen == [("gh", "api", "--paginate", "repos/o/r/actions/runs/99/artifacts?per_page=100")]
 
 
@@ -545,17 +723,18 @@ def test_package_section_makes_harvest_download_ci_evidence_package(
     monkeypatch.setattr(
         github,
         "read_json_paginated",
-        lambda *a, **k: [{"name": f"ci-evidence-{g.name}"} for g in required],
+        lambda *a, **k: [
+            {"name": f"ci-evidence-{g.name}", "id": i} for i, g in enumerate(required)
+        ],
     )
-    calls: list[tuple[str, ...]] = []
-    monkeypatch.setattr(github, "run", lambda *a: calls.append(a))
+    calls = _fake_downloads(monkeypatch)
 
     dest = tmp_path / "artifacts"
     result = download_evidence_artifacts("o/r", 7, dest, required)
 
     assert dest / "package" in result
-    downloaded_names = {a[a.index("--name") + 1] for a in calls}
-    assert "ci-evidence-package" in downloaded_names
+    package_id = [g.name for g in required].index("package")
+    assert f"repos/o/r/actions/artifacts/{package_id}/zip" in calls
 
 
 # --- _gate_conclusion ---------------------------------------------------

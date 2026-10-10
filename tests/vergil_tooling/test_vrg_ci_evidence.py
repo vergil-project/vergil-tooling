@@ -201,6 +201,30 @@ def test_bundle_no_qualifying_run_errors(
     assert not (out_dir / "v2.1.129-ci-evidence.tar.gz").exists()
 
 
+def test_bundle_expired_evidence_artifact_errors(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Every copy of a gate's artifact expired → one-line error, exit 1 (#3171)."""
+
+    def _download(*_a: Any) -> list[Path]:
+        raise ci_evidence.EvidenceArtifactError("every evidence artifact for gate 'test' expired")
+
+    _wire_github_stages(
+        monkeypatch,
+        tmp_path,
+        required=(EvidenceGate(name="test", checks=("test / unit",)),),
+        conclusions={"test / unit": "success"},
+        download=_download,
+    )
+    out_dir = tmp_path / "out"
+
+    rc = main(_argv(out_dir))
+
+    assert rc == 1
+    assert "expired" in capsys.readouterr().err
+    assert not (out_dir / "v2.1.129-ci-evidence.tar.gz").exists()
+
+
 def test_bundle_help_exits_zero(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as excinfo:
         vrg_ci_evidence.main(["bundle", "--help"])

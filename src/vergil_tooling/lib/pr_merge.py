@@ -30,7 +30,9 @@ not exist; merging there is refused with "the base branch policy prohibits the
 merge". The engine resolves the required set once, keeps waiting while any
 required check is outstanding, and treats that policy rejection with no failed
 checks as *not ready* — poll and re-attempt — rather than fatal, bounded by the
-shared ``_POLL_TIMEOUT_SECS`` deadline. A review requirement is surfaced at once.
+shared pending-checks deadline (``github.checks_timeout_secs``). A review requirement
+is surfaced at once. When the check wait itself expires with checks still pending,
+the engine aborts naming each pending check and its link (issue #3170).
 """
 
 from __future__ import annotations
@@ -44,9 +46,10 @@ from vergil_tooling.lib import github
 # real class even when tests replace the whole `github` module with a mock.
 from vergil_tooling.lib.github import (
     _POLL_INTERVAL_SECS,
-    _POLL_TIMEOUT_SECS,
+    ChecksTimeoutError,
     GitHubAPIError,
     OrphanedCheckError,
+    checks_timeout_secs,
     describe_outstanding,
 )
 
@@ -57,9 +60,14 @@ _MAX_BRANCH_UPDATES = 5
 _UPDATE_SETTLE_SECS = 5
 # Poll cadence and ceiling while the PR is "not ready" — required checks not yet
 # registered/terminal, or a branch-policy rejection with no failed checks (#3061).
-# The ceiling is the shared pending-checks deadline so the waits never drift.
+# The ceiling is the shared pending-checks deadline (checks_timeout_secs(), read
+# per call so $VRG_CHECKS_TIMEOUT applies) so the waits never drift.
 _NOT_READY_POLL_SECS = _POLL_INTERVAL_SECS
-_NOT_READY_TIMEOUT_SECS = _POLL_TIMEOUT_SECS
+# How to get a merge moving again once a wait gives up on a check (#3170).
+_RECOVERY_HINT = (
+    "Re-run the stuck job (or close and reopen the PR to re-run the gate), then re-run "
+    "the waiting command: vrg-release --resume for a release, vrg-finalize-pr otherwise."
+)
 # reviewDecision values that mean branch policy wants a human review — a block
 # no amount of waiting on CI clears, so it is surfaced immediately.
 _REVIEW_BLOCKS = frozenset({"REVIEW_REQUIRED", "CHANGES_REQUESTED"})
@@ -96,12 +104,19 @@ def wait_and_merge(
     *,
     strategy: str,
     wait_checks: Callable[[str], None] | None = None,
+    on_branch_updated: Callable[[], None] | None = None,
 ) -> None:
     """Block until *pr* is green and current, then merge it.
 
     ``wait_checks`` lets callers substitute their own check-waiting
     primitive (the release workflow passes its verbose-aware wrapper);
     the default is ``github.wait_for_checks``.
+
+    ``on_branch_updated`` is called after each successful server-side
+    update-branch, so a caller that holds a local copy of the head branch
+    (the release workflow) learns that GitHub moved it (#3175). The engine
+    itself stays local-checkout agnostic; an exception from the hook
+    propagates unchanged.
 
     The base branch's required status checks are resolved once up front (a
     lookup failure warns and falls back to registered checks only). Whatever
@@ -121,6 +136,7 @@ def wait_and_merge(
 
     updates = 0
     not_ready_deadline: float | None = None
+    not_ready_timeout = checks_timeout_secs()
 
     def _await_not_ready(reason: str) -> None:
         """Pause one poll while the PR is not ready, or abort once the deadline passes.
@@ -131,10 +147,10 @@ def wait_and_merge(
         nonlocal not_ready_deadline
         now = time.monotonic()
         if not_ready_deadline is None:
-            not_ready_deadline = now + _NOT_READY_TIMEOUT_SECS
+            not_ready_deadline = now + not_ready_timeout
         elif now >= not_ready_deadline:
             msg = (
-                f"PR {pr} is still not mergeable after {_NOT_READY_TIMEOUT_SECS}s: {reason}. "
+                f"PR {pr} is still not mergeable after {not_ready_timeout}s: {reason}. "
                 "Check the base branch's protection rules and rulesets, then re-run."
             )
             raise MergeAbortError(msg)
@@ -196,6 +212,8 @@ def wait_and_merge(
             msg = f"update-branch failed for PR {pr}: {exc}"
             raise MergeAbortError(msg) from exc
         time.sleep(_UPDATE_SETTLE_SECS)
+        if on_branch_updated is not None:
+            on_branch_updated()
 
     while True:
         if github.pr_state(pr) == "MERGED":
@@ -224,9 +242,14 @@ def wait_and_merge(
             msg = (
                 f"PR {pr} cannot be merged: GitHub left a check-run non-terminal "
                 "after its backing workflow run completed (orphaned check-run). "
-                "Close and reopen the PR to re-run the gate, then re-run "
-                "vrg-finalize-pr."
+                "Close and reopen the PR to re-run the gate, then re-run the "
+                "waiting command (vrg-release --resume for a release, vrg-finalize-pr "
+                "otherwise)."
             )
+            raise MergeAbortError(msg) from exc
+        except ChecksTimeoutError as exc:
+            # exc.stderr already names every pending check and its link.
+            msg = f"PR {pr} cannot be merged yet: {(exc.stderr or '').strip()}. {_RECOVERY_HINT}"
             raise MergeAbortError(msg) from exc
 
         failed = github.failed_check_names(pr)

@@ -410,6 +410,8 @@ def missing_token_message(tool: str) -> str:
 
 
 _POLL_INTERVAL_SECS = 5
+# How often a waiter re-reports still-pending checks when nothing has changed.
+_PROGRESS_INTERVAL_SECS = 60
 # Ceiling for how long the check-poll waiters block on still-PENDING checks
 # before giving up. Real CI here runs 3-8 min, so 180s guaranteed a spurious
 # finalize-merge failure on normal PRs (#2809); 1800s (30 min) comfortably
@@ -417,9 +419,37 @@ _POLL_INTERVAL_SECS = 5
 # merely-pending check is recoverable and is waited out to this deadline; a
 # *failed* check (pr_merge.failed_check_names) or an *orphaned* check
 # (OrphanedCheckError) still aborts earlier, so this ceiling never lets a
-# genuinely stuck merge hang. Single source of truth: release.subprocess imports
-# this same constant so the two waiters can never drift apart again (#2809).
+# genuinely stuck merge hang. Single source of truth: every check waiter —
+# finalize, release, update-deps — reads it via checks_timeout_secs(), so the
+# waiters can never drift apart again (#2809). The release waiter used to stream
+# ``gh pr checks --watch``, which had no deadline at all and hung a release for
+# 12+ hours on one stale check-run (#3170); it now shares this bounded poller.
+# 30 min is ~4x the longest legitimate release-PR CI (5-8 min, package matrix
+# included) and a timeout is cheap to recover from (re-run the job, then
+# ``vrg-release --resume``), so slow-runner days override it via the env var
+# instead of every hang costing hours.
 _POLL_TIMEOUT_SECS = 1800
+CHECKS_TIMEOUT_ENV = "VRG_CHECKS_TIMEOUT"
+
+
+def checks_timeout_secs() -> int:
+    """The pending-checks deadline in seconds: ``$VRG_CHECKS_TIMEOUT`` or 1800.
+
+    A malformed or non-positive override is a configuration error and raises
+    rather than silently falling back — the deadline is what keeps a stale check
+    from hanging a merge forever, so it cannot be disabled (#3170).
+    """
+    raw = os.environ.get(CHECKS_TIMEOUT_ENV, "").strip()
+    if not raw:
+        return _POLL_TIMEOUT_SECS
+    try:
+        secs = int(raw)
+    except ValueError:
+        secs = 0
+    if secs <= 0:
+        msg = f"{CHECKS_TIMEOUT_ENV} must be a positive whole number of seconds, got {raw!r}"
+        raise ValueError(msg)
+    return secs
 
 
 def _run_with_retry(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
@@ -681,32 +711,9 @@ def edit_pr_body(pr: str, *, body: str) -> None:
         Path(tmp_path).unlink(missing_ok=True)
 
 
-def _checks_registered(repo: str, sha: str) -> bool:
-    """Return True if at least one check run exists for *sha*."""
-    result = _run_with_retry(
-        (
-            "gh",
-            "api",
-            f"repos/{repo}/commits/{sha}/check-runs",  # noqa: S607
-            "--jq",
-            ".total_count",
-        ),
-        check=True,
-        text=True,
-        capture_output=True,
-    )
-    return int(result.stdout.strip()) > 0
-
-
 # gh pr checks exits 1 with this stderr when the current head has no
-# registered checks — transient right after the head moves, fatal only
-# once the registration deadline has passed.
+# registered checks — transient right after PR creation or a head move.
 _NO_CHECKS_MARKER = "no checks reported"
-
-
-def _is_no_checks_error(exc: subprocess.CalledProcessError) -> bool:
-    """True if a watch failure means zero checks on the PR's current head."""
-    return _NO_CHECKS_MARKER in (exc.stderr or "").lower()
 
 
 def _is_checks_answer(result: subprocess.CompletedProcess[str]) -> bool:
@@ -720,62 +727,114 @@ def _is_checks_answer(result: subprocess.CompletedProcess[str]) -> bool:
     return bool(result.stdout.strip()) or _NO_CHECKS_MARKER in (result.stderr or "").lower()
 
 
-def _poll_and_watch_checks(
-    pr: str,
-    watch: Callable[[], None],
-    *,
-    poll_interval: int,
-    poll_timeout: int,
-) -> None:
-    """Wait until checks register on the PR's *current* head, then run *watch*.
-
-    The head can move while waiting — ``update-branch`` or a push creates
-    a new head commit whose CI run takes seconds to register — so the SHA
-    is re-resolved on every poll rather than pinned once.  ``gh pr checks
-    --watch`` likewise re-resolves the head on every refresh and exits 1
-    with "no checks reported" the moment it sees a head with zero
-    registered checks; that failure is transient (head moved mid-watch),
-    so it re-enters the registration poll and restarts the watch instead
-    of raising (#1490).  All waiting shares one deadline; every other
-    watch failure propagates unchanged.
-    """
-    repo = current_repo()
-    deadline = time.monotonic() + poll_timeout
-
-    while True:
-        sha = head_sha(pr)
-        while not _checks_registered(repo, sha):
-            if time.monotonic() >= deadline:
-                raise GitHubAPIError(
-                    1,
-                    ("gh", "pr", "checks", pr, "--watch"),
-                    stderr=(
-                        f"no checks reported for {sha[:8]} after {poll_timeout}s"
-                        " — GitHub may be experiencing delays"
-                    ),
-                )
-            time.sleep(poll_interval)
-            sha = head_sha(pr)
-        try:
-            watch()
-        except subprocess.CalledProcessError as exc:
-            if not _is_no_checks_error(exc) or time.monotonic() >= deadline:
-                raise
-            print("Watch lost the checks (PR head likely moved) — re-polling...")
-            time.sleep(poll_interval)
-        else:
-            return
-
-
 class OrphanedCheckError(Exception):
     """A required check is stuck non-terminal after its backing run completed.
 
     GitHub occasionally leaves a check-run in a non-terminal state
     (``queued``/``in_progress``) even though the workflow run that owns it has
-    finished. ``gh pr checks --watch`` would block on such a check forever, so
-    the bounded watch surfaces it as this error instead of hanging (and never
-    merges past it). The message tells the operator how to recover.
+    finished. Waiting on such a check would block forever, so the bounded
+    waiter surfaces it as this error instead of hanging (and never merges past
+    it). The message tells the operator how to recover.
     """
+
+
+class ChecksTimeoutError(GitHubAPIError):
+    """Checks were still pending when the wait deadline expired (#3170).
+
+    A :class:`GitHubAPIError` subclass so existing handlers keep working;
+    ``pending`` carries ``(name, link)`` for every still-pending check so a
+    caller can name each one — and where to re-run it — in its own error.
+    """
+
+    def __init__(self, pr: str, detail: str, pending: list[tuple[str, str]]) -> None:
+        super().__init__(1, ("gh", "pr", "checks", pr), stderr=detail)
+        self.pending = pending
+
+
+# A check-run conclusion mapped to gh's bucket, mirroring ``gh pr checks``' own
+# state->bucket table. A conclusion GitHub has not (yet) set, or one gh itself
+# reads as pending (``STALE``), has no entry.
+_CONCLUSION_BUCKETS: dict[str, str] = {
+    "SUCCESS": "pass",
+    "SKIPPED": "skipping",
+    "NEUTRAL": "skipping",
+    "FAILURE": "fail",
+    "ERROR": "fail",
+    "TIMED_OUT": "fail",
+    "ACTION_REQUIRED": "fail",
+    "STARTUP_FAILURE": "fail",
+    "CANCELLED": "cancel",
+}
+_PENDING_BUCKET = "pending"
+# Check-run links already warned about as stale, so a long wait warns once per run.
+_warned_stale_links: set[str] = set()
+
+
+def check_run_bucket(status: str | None, conclusion: str | None) -> str:
+    """Classify a check-run by its ``status`` and ``conclusion`` into a gh bucket.
+
+    The **conclusion** is authoritative: a check-run with a conclusion is
+    terminal whatever its ``status`` says. GitHub occasionally leaves a finished
+    check-run at ``status=IN_PROGRESS`` with ``conclusion=SUCCESS`` and
+    ``completedAt`` set (#3170); ``gh pr checks`` derives its state from
+    ``status`` unless that is ``COMPLETED``, so it reports such a check
+    ``pending`` forever. A run with no recognised conclusion is ``pending``.
+    *status* is accepted for the caller's clarity but never overrides a
+    conclusion.
+    """
+    del status  # the conclusion decides; status is the field GitHub leaves stale
+    return _CONCLUSION_BUCKETS.get((conclusion or "").upper(), _PENDING_BUCKET)
+
+
+def _rollup_check_runs(pr: str) -> dict[str, tuple[str, str]]:
+    """Map each CheckRun's ``detailsUrl`` to its ``(status, conclusion)`` from statusCheckRollup.
+
+    ``gh pr checks`` exposes only its derived ``state``/``bucket``; the raw
+    ``status``/``conclusion`` pair lives in GraphQL ``statusCheckRollup``. The
+    ``detailsUrl`` is what ``gh pr checks`` reports as a check's ``link``, so it
+    keys a pending check back to its exact check-run (names repeat across runs).
+    """
+    rollup = read_json(
+        "pr", "view", pr, "--json", "statusCheckRollup", "--jq", ".statusCheckRollup"
+    )
+    items = rollup if isinstance(rollup, list) else []
+    runs: dict[str, tuple[str, str]] = {}
+    for node in map(_as_obj, items):
+        url = node.get("detailsUrl")
+        if node.get("__typename") == "CheckRun" and url:
+            runs[str(url)] = (str(node.get("status") or ""), str(node.get("conclusion") or ""))
+    return runs
+
+
+def _reconcile_stale_checks(pr: str, checks: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Re-classify ``pending`` checks GitHub has actually concluded (#3170).
+
+    Only when some check is pending is ``statusCheckRollup`` consulted; each
+    pending check whose check-run carries a conclusion is re-bucketed by
+    :func:`check_run_bucket` (its ``state`` set to the conclusion) and a warning
+    names the inconsistent check. Every other check is returned unchanged.
+    """
+    pending = [c for c in checks if c.get("bucket") == _PENDING_BUCKET]
+    if not pending:
+        return checks
+    runs = _rollup_check_runs(pr)
+    for check in pending:
+        status, conclusion = runs.get(str(check.get("link") or ""), ("", ""))
+        bucket = check_run_bucket(status, conclusion)
+        if bucket == _PENDING_BUCKET:
+            continue
+        link = str(check.get("link") or "")
+        if link not in _warned_stale_links:  # once per check-run, not once per poll
+            _warned_stale_links.add(link)
+            print(
+                f"Warning: check {check.get('name')!r} reports status {status or 'unknown'} "
+                f"but GitHub recorded conclusion {conclusion} — treating it as terminal "
+                f"({bucket}); stale check-run ({link}).",
+                file=sys.stderr,
+            )
+        check["bucket"] = bucket
+        check["state"] = conclusion.upper()
+    return checks
 
 
 # A check ``link`` for an Actions job looks like
@@ -967,46 +1026,89 @@ def orphaned_check_names(pr: str) -> list[str]:
     return orphans
 
 
+def _format_wait(secs: float) -> str:
+    """Render a wait duration as ``1h02m`` / ``3m05s`` / ``42s``."""
+    whole = int(secs)
+    hours, rest = divmod(whole, 3600)
+    minutes, seconds = divmod(rest, 60)
+    if hours:
+        return f"{hours}h{minutes:02d}m"
+    if minutes:
+        return f"{minutes}m{seconds:02d}s"
+    return f"{seconds}s"
+
+
+def _pending_checks(checks: list[dict[str, str]]) -> list[tuple[str, str]]:
+    """``(name, link)`` of every check still in the ``pending`` bucket, in order."""
+    return [
+        (str(c.get("name")), str(c.get("link") or ""))
+        for c in checks
+        if c.get("bucket") == _PENDING_BUCKET
+    ]
+
+
 def wait_for_checks(
     pr: str,
     *,
     poll_interval: int = _POLL_INTERVAL_SECS,
-    poll_timeout: int = _POLL_TIMEOUT_SECS,
+    poll_timeout: int | None = None,
     required: Collection[str] | None = None,
 ) -> None:
     """Block until all checks on *pr* reach a terminal state, bounded by a deadline.
 
-    Polls ``gh pr checks`` until every check is terminal **and** every required
-    status check of the base branch is registered and non-pending (#3061), then
-    returns — leaving ``pr_merge``'s ``failed_check_names`` gate to catch any
-    failure. *required* defaults to :func:`required_check_names` resolved once at
-    entry; pass an explicit collection (empty to disable) when the caller has
-    already resolved it. When the lookup fails, the waiter warns and falls back
-    to registered checks only. While required checks are outstanding the waiter
-    prints what it is awaiting whenever that set changes. If the
-    deadline elapses with checks still pending, each still-pending check is
-    cross-checked against its backing workflow run via ``gh run view``: a
+    The single check waiter behind every merge path — ``vrg-finalize-pr``,
+    ``vrg-release`` (merge-release, back-merge-bump), ``vrg-update-deps`` and
+    ``vrg-wait-until-green``. Polls :func:`pr_checks` (which re-classifies a
+    stale check-run GitHub has already concluded, #3170) until every check is
+    terminal **and** every required status check of the base branch is
+    registered and non-pending (#3061), then returns — leaving ``pr_merge``'s
+    ``failed_check_names`` gate to catch any failure. Zero registered checks is
+    not terminal (#2623), and the head is re-read on every poll, so a moved head
+    is followed rather than pinned. *required* defaults to
+    :func:`required_check_names` resolved once at entry; pass an explicit
+    collection (empty to disable) when the caller has already resolved it.
+
+    While waiting it prints each pending check with how long this wait has seen
+    it pending — whenever the pending set changes and at least every
+    :data:`_PROGRESS_INTERVAL_SECS` — so a stuck check is obvious long before the
+    deadline. *poll_timeout* defaults to :func:`checks_timeout_secs`
+    (``$VRG_CHECKS_TIMEOUT``, else 1800s). When it elapses with checks still
+    pending, each is cross-checked against its backing workflow run: a
     non-terminal check over a *completed* run is a GitHub orphan and raises
-    :class:`OrphanedCheckError` (never hang, never merge past it). If nothing is
-    orphaned (e.g. app-posted statuses genuinely still running), a plain timeout
-    :class:`GitHubAPIError` is raised instead.
+    :class:`OrphanedCheckError`; otherwise :class:`ChecksTimeoutError` names every
+    still-pending check and its link.
 
     Transient GitHub API errors (401/502/503/504/429) are retried
     automatically via the library-level retry wrapper.
     """
+    timeout = checks_timeout_secs() if poll_timeout is None else poll_timeout
     if required is None:
         required = required_check_names(pr) or frozenset()
-    deadline = time.monotonic() + poll_timeout
+    deadline = time.monotonic() + timeout
     announced: dict[str, str] = {}
+    first_seen: dict[tuple[str, str], float] = {}
+    reported: tuple[tuple[str, str], ...] = ()
+    last_report = 0.0
     while True:
         checks = pr_checks(pr)
         if _checks_terminal(checks, required):
             return  # let pr_merge.failed_check_names catch any failure
+        now = time.monotonic()
         outstanding = outstanding_required_checks(checks, required)
         if outstanding and outstanding != announced:
             print(f"Awaiting required checks: {describe_outstanding(outstanding)}")
         announced = outstanding
-        if time.monotonic() >= deadline:
+        pending = _pending_checks(checks)
+        for key in pending:
+            first_seen.setdefault(key, now)
+        current = tuple(pending)
+        if pending and (current != reported or now - last_report >= _PROGRESS_INTERVAL_SECS):
+            waits = ", ".join(
+                f"{name} ({_format_wait(now - first_seen[(name, link)])})" for name, link in pending
+            )
+            print(f"Pending checks: {waits}")
+            reported, last_report = current, now
+        if now >= deadline:
             orphans = orphaned_check_names(pr)
             if orphans:
                 # The close/reopen recovery this advises replaces the run,
@@ -1016,13 +1118,19 @@ def wait_for_checks(
                 raise OrphanedCheckError(
                     f"GitHub left {', '.join(orphans)} non-terminal after its "
                     "backing workflow run completed (orphaned check-run). Close "
-                    "and reopen the PR to re-run the gate, then re-run "
-                    "vrg-finalize-pr."
+                    "and reopen the PR to re-run the gate, then re-run the "
+                    "waiting command (vrg-finalize-pr, or vrg-release --resume)."
                 )
-            detail = f"checks still pending after {poll_timeout}s"
+            detail = f"checks still pending after {timeout}s"
+            if pending:
+                detail += ": " + ", ".join(
+                    f"{name} ({link or 'no link'})" for name, link in pending
+                )
+            elif not checks:
+                detail += "; no checks registered on the PR head"
             if outstanding:
                 detail += f"; outstanding required checks: {describe_outstanding(outstanding)}"
-            raise GitHubAPIError(1, ("gh", "pr", "checks", pr), stderr=detail)
+            raise ChecksTimeoutError(pr, detail, pending)
         time.sleep(poll_interval)
 
 
@@ -1101,7 +1209,10 @@ def failed_check_names(pr: str) -> list[str]:
     reports ``MERGEABLE``/``CLEAN`` (#2897). Names that exist only on superseded
     runs are subtracted via :func:`_superseded_check_names`; a ``cancel``/``fail``
     on the *latest* run still counts. The rollup is queried only when at least
-    one check is failing, so the all-green path stays a single ``gh`` call.
+    one check is failing, so the all-green path stays a single ``gh`` call. A
+    still-``pending`` check GitHub has in fact concluded is re-bucketed by its
+    conclusion first (:func:`_reconcile_stale_checks`, #3170), so a stale
+    check-run that concluded in failure is still reported.
 
     ``gh pr checks`` exits non-zero when checks are failing or pending but
     still emits the requested JSON on stdout, so the call tolerates a
@@ -1112,7 +1223,7 @@ def failed_check_names(pr: str) -> list[str]:
     Empty stdout on a zero exit is surfaced as an error rather than silently
     treated as a pass.
     """
-    cmd = ("gh", "pr", "checks", pr, "--json", "name,bucket")
+    cmd = ("gh", "pr", "checks", pr, "--json", "name,bucket,link")
     result = run_tolerating(cmd, is_answer=_is_checks_answer)
     out = result.stdout.strip()
     if not out:
@@ -1124,7 +1235,7 @@ def failed_check_names(pr: str) -> list[str]:
             # finalize merge gate during the registration race (#2623).
             return []
         raise GitHubAPIError(result.returncode or 1, cmd, stderr=result.stderr)
-    checks = json.loads(out)
+    checks = _reconcile_stale_checks(pr, cast("list[dict[str, str]]", json.loads(out)))
     failing = [str(c["name"]) for c in checks if c.get("bucket") in _FAILED_BUCKETS]
     if not failing:
         return []
@@ -1144,13 +1255,15 @@ def pr_checks(pr: str) -> list[dict[str, str]]:
     on a zero exit is surfaced as an error too.
 
     ``link`` is included so orphan detection can map a still-pending check
-    back to its backing Actions run (see :func:`orphaned_check_names`).
+    back to its backing Actions run (see :func:`orphaned_check_names`), and so
+    a pending check GitHub has in fact concluded is re-bucketed by its
+    conclusion (:func:`_reconcile_stale_checks`, #3170).
     """
     cmd = ("gh", "pr", "checks", pr, "--json", "name,bucket,state,link")
     result = run_tolerating(cmd, is_answer=_is_checks_answer)
     out = result.stdout.strip()
     if out:
-        return cast("list[dict[str, str]]", json.loads(out))
+        return _reconcile_stale_checks(pr, cast("list[dict[str, str]]", json.loads(out)))
     if "no checks reported" in result.stderr.lower():
         return []
     raise GitHubAPIError(result.returncode or 1, cmd, stderr=result.stderr)
@@ -1379,3 +1492,35 @@ def list_project_repos(owner: str, project: str) -> list[str]:
         jq_filter,
     )
     return sorted({r for r in output.splitlines() if r})
+
+
+def download_api_binary(endpoint: str, dest: Path) -> None:
+    """GET a binary REST *endpoint* (e.g. an artifact ``/zip``) into *dest*.
+
+    :func:`read_output` decodes stdout as text, which corrupts a binary body,
+    so the response is streamed straight from ``gh api``'s stdout into *dest*.
+    Each attempt reopens *dest* for writing, so a transient failure retried by
+    :func:`retry.call_with_retry` never leaves a partial earlier body behind.
+    A failure raises :class:`GitHubAPIError` (:class:`MissingGitHubTokenError`
+    for a missing token) carrying ``gh``'s stderr, exactly like the other
+    wrappers (issue #3171).
+    """
+    cmd = ("gh", "api", endpoint)
+    kwargs: dict[str, Any] = {}
+    env = _gh_env()
+    if env is not None:
+        kwargs["env"] = env
+
+    def _attempt() -> subprocess.CompletedProcess[str]:
+        with dest.open("wb") as fh:
+            return subprocess.run(  # noqa: S603
+                cmd, check=True, stdout=fh, stderr=subprocess.PIPE, text=True, **kwargs
+            )
+
+    try:
+        retry.call_with_retry(_attempt)
+    except subprocess.CalledProcessError as exc:
+        error_type = (
+            MissingGitHubTokenError if _is_missing_token_error(exc.stderr) else GitHubAPIError
+        )
+        raise error_type(exc.returncode, exc.cmd, None, exc.stderr) from exc
