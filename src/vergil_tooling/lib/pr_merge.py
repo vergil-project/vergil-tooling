@@ -104,12 +104,19 @@ def wait_and_merge(
     *,
     strategy: str,
     wait_checks: Callable[[str], None] | None = None,
+    on_branch_updated: Callable[[], None] | None = None,
 ) -> None:
     """Block until *pr* is green and current, then merge it.
 
     ``wait_checks`` lets callers substitute their own check-waiting
     primitive (the release workflow passes its verbose-aware wrapper);
     the default is ``github.wait_for_checks``.
+
+    ``on_branch_updated`` is called after each successful server-side
+    update-branch, so a caller that holds a local copy of the head branch
+    (the release workflow) learns that GitHub moved it (#3175). The engine
+    itself stays local-checkout agnostic; an exception from the hook
+    propagates unchanged.
 
     The base branch's required status checks are resolved once up front (a
     lookup failure warns and falls back to registered checks only). Whatever
@@ -205,6 +212,8 @@ def wait_and_merge(
             msg = f"update-branch failed for PR {pr}: {exc}"
             raise MergeAbortError(msg) from exc
         time.sleep(_UPDATE_SETTLE_SECS)
+        if on_branch_updated is not None:
+            on_branch_updated()
 
     while True:
         if github.pr_state(pr) == "MERGED":

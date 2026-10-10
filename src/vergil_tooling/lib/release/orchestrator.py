@@ -12,7 +12,7 @@ from vergil_tooling.lib.release.confirm import confirm_develop, confirm_main
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.finalize import close_and_finalize, teardown_worktree
 from vergil_tooling.lib.release.handoff import consumer_refresh
-from vergil_tooling.lib.release.merge import known_pr_state, wait_and_merge
+from vergil_tooling.lib.release.merge import known_pr_state, sync_local_branch, wait_and_merge
 from vergil_tooling.lib.release.package_index import wait_for_index
 from vergil_tooling.lib.release.preflight import preflight, run_audit
 from vergil_tooling.lib.release.prepare import prepare
@@ -164,8 +164,32 @@ def merge_release(ctx: ReleaseContext) -> None:
         print("Release PR already merged — skipping merge.")
         ctx.release_merge_sha = "merged"
         return
-    wait_and_merge(ctx.release_pr_url, phase="merge-release")
+    updates: list[None] = []
+    wait_and_merge(
+        ctx.release_pr_url,
+        phase="merge-release",
+        on_branch_updated=lambda: updates.append(None),
+    )
+    if updates:
+        # GitHub added a merge commit the local release branch never saw;
+        # bring the managed worktree up to what actually merged (#3175).
+        _sync_release_branch(ctx, ctx.release_pr_url)
     ctx.release_merge_sha = "merged"
+
+
+def _sync_release_branch(ctx: ReleaseContext, pr_url: str) -> None:
+    if ctx.release_branch is None or ctx.worktree_path is None:
+        raise ReleaseError(
+            phase="merge-release",
+            command="sync_local_branch",
+            message=(
+                "The release PR was updated on GitHub, but release_branch or "
+                "worktree_path is not set, so the local release branch cannot be synced."
+            ),
+        )
+    sync_local_branch(
+        pr_url, branch=ctx.release_branch, worktree=ctx.worktree_path, phase="merge-release"
+    )
 
 
 def _promote_phase(ctx: ReleaseContext) -> None:

@@ -407,3 +407,62 @@ def test_not_ready_deadline_follows_env_override(monkeypatch: pytest.MonkeyPatch
         pytest.raises(MergeAbortError, match="still not mergeable after 120s"),
     ):
         wait_and_merge("99", strategy="merge", wait_checks=MagicMock())
+
+
+# --- #3175: the caller is told each time the engine updates the branch ---
+
+
+def test_on_branch_updated_fires_after_each_update() -> None:
+    gh = _gh(merge_states=["BEHIND", "BEHIND", "CLEAN", "CLEAN"])
+    order: list[str] = []
+    gh.update_branch.side_effect = lambda pr: order.append("update")
+    with patch(_MOD + ".github", gh), patch(_MOD + ".time.sleep"):
+        wait_and_merge("99", strategy="merge", on_branch_updated=lambda: order.append("hook"))
+    assert order == ["update", "hook", "update", "hook"]
+    gh.merge.assert_called_once()
+
+
+def test_on_branch_updated_fires_after_behind_merge_rejection() -> None:
+    gh = _gh(merge_states=["CLEAN", "CLEAN", "CLEAN", "CLEAN"])
+    gh.merge.side_effect = [
+        GitHubAPIError(1, "merge", stderr="Head branch is not up to date with the base branch"),
+        None,
+    ]
+    hook = MagicMock()
+    with patch(_MOD + ".github", gh), patch(_MOD + ".time.sleep"):
+        wait_and_merge("99", strategy="merge", on_branch_updated=hook)
+    hook.assert_called_once_with()
+    assert gh.merge.call_count == 2
+
+
+def test_on_branch_updated_not_fired_without_update() -> None:
+    gh = _gh()
+    hook = MagicMock()
+    with patch(_MOD + ".github", gh):
+        wait_and_merge("99", strategy="merge", on_branch_updated=hook)
+    hook.assert_not_called()
+
+
+def test_on_branch_updated_not_fired_when_update_fails() -> None:
+    gh = _gh(merge_states=["BEHIND"])
+    gh.update_branch.side_effect = GitHubAPIError(1, "update-branch", stderr="boom")
+    hook = MagicMock()
+    with patch(_MOD + ".github", gh), pytest.raises(MergeAbortError, match="update-branch"):
+        wait_and_merge("99", strategy="merge", on_branch_updated=hook)
+    hook.assert_not_called()
+
+
+def test_on_branch_updated_failure_propagates_before_merge() -> None:
+    gh = _gh(merge_states=["BEHIND", "CLEAN", "CLEAN"])
+
+    def hook() -> None:
+        msg = "local branch diverged"
+        raise RuntimeError(msg)
+
+    with (
+        patch(_MOD + ".github", gh),
+        patch(_MOD + ".time.sleep"),
+        pytest.raises(RuntimeError, match="local branch diverged"),
+    ):
+        wait_and_merge("99", strategy="merge", on_branch_updated=hook)
+    gh.merge.assert_not_called()
