@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.236/">
       
       
         <link rel="next" href="../v2.1.234/">
@@ -1275,6 +1275,8 @@
       
         
       
+        
+      
     
     
     
@@ -1330,6 +1332,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.236/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.236
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -14964,6 +14994,7 @@ Restore the not-published notes for 2.1.234 in CHANGELOG.md and releases/v2.1.23
 <li><strong>generate packaging-capable ci.yml and cd.yml for [package] repos (#3146)</strong>
 For a vergil.toml with [package], ci.yml gains the package job calling ci-package.yml (the package / evidence gate) and the cd.yml release job uses secrets: inherit, since an explicit secrets map does not deliver the package-signing environment secrets to a cross-repo reusable workflow (vergil-project/packages#6). Repos without [package] keep the least-privilege explicit map. Adopt now preserves hand-written vergil.toml tables such as [package] and [container] verbatim (verified by re-parse, failing loudly otherwise), so re-running init keeps [package] and step 9 requires package / evidence. Documents the opt-in in consuming-repo-setup.md. Ref #3144</li>
 </ul>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.235/v2.1.235-ci-evidence.tar.gz">Download →</a></p>
 
 
 

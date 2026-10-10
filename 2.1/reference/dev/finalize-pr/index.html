@@ -1268,6 +1268,8 @@
       
         
       
+        
+      
     
     
     
@@ -1320,6 +1322,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.236/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.236
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15327,7 +15357,24 @@ non-terminal check over a completed run is an orphan, so finalize
 gate, then re-run <code>vrg-finalize-pr</code> — rather than hanging. Genuinely
 still-running checks are waited on as normal; if the deadline elapses
 with nothing orphaned (for example an app-posted status that is legitimately
-slow), finalize fails with a plain timeout error instead.</p>
+slow), finalize fails with a timeout error that names every still-pending
+check and its run/job link, with the recovery path: re-run the stuck job,
+then re-run the waiting command (<code>vrg-finalize-pr</code>, or <code>vrg-release --resume</code>).</p>
+<p><strong>Deadline.</strong> The deadline defaults to 30 minutes (about four times the
+longest legitimate CI run, 5–8 minutes) and is shared by every merge wait:
+<code>vrg-finalize-pr</code>, <code>vrg-release</code> (merge-release, back-merge-bump),
+<code>vrg-update-deps</code> and <code>vrg-wait-until-green</code>. Set <code>VRG_CHECKS_TIMEOUT</code>
+(seconds, a positive whole number) to change it; a malformed value is an
+error, and the deadline cannot be disabled. While waiting, the waiter prints
+each pending check with how long it has been pending, re-reporting whenever
+the pending set changes and at least once a minute.</p>
+<p><strong>Stale check-runs.</strong> GitHub occasionally sets a check-run's <code>conclusion</code>
+and <code>completedAt</code> but leaves its <code>status</code> at <code>IN_PROGRESS</code>. <code>gh pr checks</code>
+derives its state from <code>status</code>, so it reports such a check as pending
+indefinitely. The waiter checks each pending check's <code>conclusion</code> in the
+PR's <code>statusCheckRollup</code>. A check that has a conclusion is terminal and is
+classified by that conclusion, so a stale success passes and a stale failure
+fails. A warning names the inconsistent check (issue #3170).</p>
 <p><strong>Required checks.</strong> "Green" includes the target branch's <em>required</em>
 status checks, read from both classic branch protection
 (<code>GET /repos/{owner}/{repo}/branches/{branch}</code>) and repository rulesets
