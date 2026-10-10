@@ -766,6 +766,8 @@ _CONCLUSION_BUCKETS: dict[str, str] = {
     "CANCELLED": "cancel",
 }
 _PENDING_BUCKET = "pending"
+# Plain-language outcome for each terminal bucket, for the stale-check warning.
+_BUCKET_WORDS = {"pass": "passed", "fail": "failed", "cancel": "cancelled", "skipping": "skipped"}
 # Check-run links already warned about as stale, so a long wait warns once per run.
 _warned_stale_links: set[str] = set()
 
@@ -811,8 +813,11 @@ def _reconcile_stale_checks(pr: str, checks: list[dict[str, str]]) -> list[dict[
 
     Only when some check is pending is ``statusCheckRollup`` consulted; each
     pending check whose check-run carries a conclusion is re-bucketed by
-    :func:`check_run_bucket` (its ``state`` set to the conclusion) and a warning
-    names the inconsistent check. Every other check is returned unchanged.
+    :func:`check_run_bucket` (its ``state`` set to the conclusion). A warning
+    names the check only when its rollup ``status`` is not ``COMPLETED`` — the
+    genuinely stale case; a ``COMPLETED`` check merely finished between the two
+    calls and is re-classified silently (#3182). Every other check is returned
+    unchanged.
     """
     pending = [c for c in checks if c.get("bucket") == _PENDING_BUCKET]
     if not pending:
@@ -824,12 +829,16 @@ def _reconcile_stale_checks(pr: str, checks: list[dict[str, str]]) -> list[dict[
         if bucket == _PENDING_BUCKET:
             continue
         link = str(check.get("link") or "")
-        if link not in _warned_stale_links:  # once per check-run, not once per poll
+        # A COMPLETED rollup status just means the check finished between the
+        # ``gh pr checks`` call and the rollup call (#3182): normal, not stale.
+        stale = status.upper() != "COMPLETED"
+        if stale and link not in _warned_stale_links:  # once per check-run, not per poll
             _warned_stale_links.add(link)
             print(
-                f"Warning: check {check.get('name')!r} reports status {status or 'unknown'} "
-                f"but GitHub recorded conclusion {conclusion} — treating it as terminal "
-                f"({bucket}); stale check-run ({link}).",
+                f"Warning: GitHub still shows check {check.get('name')!r} as "
+                f"{status or 'unknown'}, but it already finished with {conclusion}. "
+                f"Treating it as {_BUCKET_WORDS[bucket]} (known GitHub glitch, #3170). "
+                f"Job: {link}",
                 file=sys.stderr,
             )
         check["bucket"] = bucket
