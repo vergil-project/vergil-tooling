@@ -35,7 +35,9 @@ def test_delegates_with_merge_strategy() -> None:
     args, kwargs = engine.call_args
     assert args == (_PR,)
     assert kwargs["strategy"] == "merge"
-    assert callable(kwargs["wait_checks"])
+    # Regression (#3170): no injected streaming waiter — the engine's bounded,
+    # stale-check-aware default poller (github.wait_for_checks) does the waiting.
+    assert "wait_checks" not in kwargs
 
 
 def test_wraps_merge_abort_in_release_error() -> None:
@@ -46,17 +48,6 @@ def test_wraps_merge_abort_in_release_error() -> None:
     ):
         wait_and_merge(_PR, phase="phase-3")
     assert excinfo.value.phase == "phase-3"
-
-
-def test_injected_waiter_is_wait_for_checks() -> None:
-    with (
-        patch(_MOD + ".github.pr_state", return_value="OPEN"),
-        patch(_MOD + ".pr_merge.wait_and_merge") as engine,
-        patch(_MOD + ".wait_for_checks") as waiter,
-    ):
-        wait_and_merge(_PR, phase="phase-2")
-        engine.call_args.kwargs["wait_checks"](_PR)
-    waiter.assert_called_once_with(_PR)
 
 
 # --- #3137: a PR URL GitHub just returned may 404 briefly ---
