@@ -14,10 +14,11 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import subprocess
 import sys
 
 from vergil_tooling.lib import git, worktrees
-from vergil_tooling.lib.worktrees import WorktreeState, WorktreeStatus
+from vergil_tooling.lib.worktrees import RawWorktree, WorktreeState, WorktreeStatus
 
 # Live work first, cruft last, so the removable rows group at the bottom.
 # In-flight/mid-operation worktrees (rebasing, detached) sort near the top —
@@ -129,31 +130,49 @@ def _summary(statuses: list[WorktreeStatus]) -> str:
     return line
 
 
+def _gather(raw: RawWorktree, *, target: str) -> WorktreeStatus:
+    # A detached-HEAD worktree (the normal state during a paused rebase) has
+    # no branch to classify a lifecycle from — it gets its own REBASING /
+    # DETACHED status instead of being dropped, so an in-flight worktree is
+    # never hidden behind "no worktrees found" (issue #2634).
+    if raw.branch is None:
+        return worktrees.gather_detached_status(raw, target=target, with_freshness=True)
+    return worktrees.gather_worktree_status(
+        worktrees.Worktree(path=raw.path, branch=raw.branch),
+        target=target,
+        with_freshness=True,
+    )
+
+
+def _print_vanished(vanished: list[RawWorktree]) -> None:
+    """Report worktrees removed mid-scan, so the drop is never silent."""
+    for raw in vanished:
+        label = raw.branch or "(detached)"
+        print(
+            f"  note: {raw.path.name} ({label}): removed by a concurrent operation "
+            "during the scan — not listed"
+        )
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     root = git.repo_root()
     statuses: list[WorktreeStatus] = []
+    vanished: list[RawWorktree] = []
     for raw in worktrees.discover_worktrees(root):
-        # A detached-HEAD worktree (the normal state during a paused rebase) has
-        # no branch to classify a lifecycle from — it gets its own REBASING /
-        # DETACHED status instead of being dropped, so an in-flight worktree is
-        # never hidden behind "no worktrees found" (issue #2634).
-        if raw.branch is None:
-            statuses.append(
-                worktrees.gather_detached_status(
-                    raw, target=args.target_branch, with_freshness=True
-                )
-            )
-        else:
-            statuses.append(
-                worktrees.gather_worktree_status(
-                    worktrees.Worktree(path=raw.path, branch=raw.branch),
-                    target=args.target_branch,
-                    with_freshness=True,
-                )
-            )
+        try:
+            statuses.append(_gather(raw, target=args.target_branch))
+        except subprocess.CalledProcessError:
+            # Discovery is a snapshot: a concurrent operation (e.g. a parallel
+            # vrg-finalize-pr) can remove the worktree and delete its branch
+            # before we reach it (issue #3187). Only that race is tolerated —
+            # a failure on a worktree that still exists propagates unchanged.
+            if worktrees.worktree_still_present(raw, root):
+                raise
+            vanished.append(raw)
     if not statuses:
         print("No canonical .worktrees/ worktrees found.")
+        _print_vanished(vanished)
         return 0
     statuses.sort(key=lambda s: (_SORT_RANK[s.state], s.worktree.branch))
     now = datetime.datetime.now(tz=datetime.UTC).timestamp()
@@ -171,6 +190,7 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 f"  note: {status.worktree.branch}: pr-workflow unreadable: {status.workflow_error}"
             )
+    _print_vanished(vanished)
     return 0
 
 
