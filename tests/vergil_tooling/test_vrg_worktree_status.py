@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING
 from unittest.mock import patch
+
+import pytest
 
 from vergil_tooling.bin.vrg_worktree_status import _format_age, _row, main
 from vergil_tooling.lib.worktrees import RawWorktree, Worktree, WorktreeState, WorktreeStatus
-
-if TYPE_CHECKING:
-    import pytest
 
 _MOD = "vergil_tooling.bin.vrg_worktree_status"
 
@@ -359,3 +358,53 @@ def test_format_age_none_is_dash() -> None:
 
 def test_format_age_future_clamps_to_zero() -> None:
     assert _format_age(_NOW + 5000, _NOW) == "0h ago"
+
+
+_RACE_ERR = subprocess.CalledProcessError(128, ("git", "rev-list"))
+
+
+def test_main_skips_worktree_removed_mid_scan(capsys: pytest.CaptureFixture[str]) -> None:
+    """Issue #3187: a worktree a concurrent finalize removes between discovery
+    and status-gathering is dropped with a visible note — no traceback."""
+    live = _status("feature/1-live", WorktreeState.NO_PR, ahead=1)
+    gone = RawWorktree(path=Path("/repo/.worktrees/issue-327-gone"), branch="feature/327-gone")
+    with (
+        patch(_MOD + ".git.repo_root", return_value=Path("/repo")),
+        patch(_MOD + ".worktrees.discover_worktrees", return_value=[*_raws([live]), gone]),
+        patch(_MOD + ".worktrees.gather_worktree_status", side_effect=[live, _RACE_ERR]),
+        patch(_MOD + ".worktrees.worktree_still_present", return_value=False),
+    ):
+        rc = main([])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "feature/1-live" in out
+    assert "1 worktrees" in out
+    assert "note: issue-327-gone (feature/327-gone): removed by a concurrent operation" in out
+
+
+def test_main_all_worktrees_removed_mid_scan(capsys: pytest.CaptureFixture[str]) -> None:
+    gone = RawWorktree(path=Path("/repo/.worktrees/issue-9-gone"), branch=None)
+    with (
+        patch(_MOD + ".git.repo_root", return_value=Path("/repo")),
+        patch(_MOD + ".worktrees.discover_worktrees", return_value=[gone]),
+        patch(_MOD + ".worktrees.gather_detached_status", side_effect=_RACE_ERR),
+        patch(_MOD + ".worktrees.worktree_still_present", return_value=False),
+    ):
+        rc = main([])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "No canonical" in out
+    assert "note: issue-9-gone ((detached)): removed by a concurrent operation" in out
+
+
+def test_main_reraises_git_failure_on_present_worktree() -> None:
+    """A git failure on a worktree that still exists is real — never swallowed."""
+    raw = RawWorktree(path=Path("/repo/.worktrees/issue-5-x"), branch="feature/5-x")
+    with (
+        patch(_MOD + ".git.repo_root", return_value=Path("/repo")),
+        patch(_MOD + ".worktrees.discover_worktrees", return_value=[raw]),
+        patch(_MOD + ".worktrees.gather_worktree_status", side_effect=_RACE_ERR),
+        patch(_MOD + ".worktrees.worktree_still_present", return_value=True),
+        pytest.raises(subprocess.CalledProcessError),
+    ):
+        main([])

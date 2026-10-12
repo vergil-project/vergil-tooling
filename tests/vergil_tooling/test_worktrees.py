@@ -31,6 +31,7 @@ from vergil_tooling.lib.worktrees import (
     select_worktree,
     select_worktrees,
     worktree_for_branch,
+    worktree_still_present,
 )
 
 _MOD = "vergil_tooling.lib.worktrees"
@@ -924,3 +925,39 @@ def test_newest_mtime_skips_listed_but_missing_file(tmp_path: Path) -> None:
 def test_newest_mtime_none_when_no_files(tmp_path: Path) -> None:
     with patch(_MOD + ".git.read_output", side_effect=["", ""]):
         assert _newest_mtime(tmp_path) is None
+
+
+_RAW = RawWorktree(path=Path("/repo/.worktrees/issue-327-x"), branch="feature/327-x")
+
+
+def test_worktree_still_present_when_rediscovered_and_branch_exists() -> None:
+    with (
+        patch(_MOD + ".discover_worktrees", return_value=[_RAW]),
+        patch(_MOD + ".git.ref_exists", return_value=True) as ref_exists,
+    ):
+        assert worktree_still_present(_RAW, Path("/repo")) is True
+    ref_exists.assert_called_once_with("refs/heads/feature/327-x")
+
+
+def test_worktree_not_present_when_no_longer_discovered() -> None:
+    """Issue #3187: a worktree removed by a concurrent finalize is gone."""
+    with patch(_MOD + ".discover_worktrees", return_value=[]):
+        assert worktree_still_present(_RAW, Path("/repo")) is False
+
+
+def test_worktree_not_present_when_branch_deleted() -> None:
+    with (
+        patch(_MOD + ".discover_worktrees", return_value=[_RAW]),
+        patch(_MOD + ".git.ref_exists", return_value=False),
+    ):
+        assert worktree_still_present(_RAW, Path("/repo")) is False
+
+
+def test_detached_worktree_present_without_branch_check() -> None:
+    raw = RawWorktree(path=_RAW.path, branch=None)
+    with (
+        patch(_MOD + ".discover_worktrees", return_value=[raw]),
+        patch(_MOD + ".git.ref_exists") as ref_exists,
+    ):
+        assert worktree_still_present(raw, Path("/repo")) is True
+    ref_exists.assert_not_called()

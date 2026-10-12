@@ -405,6 +405,21 @@ def discover_worktrees(repo_root: Path) -> list[RawWorktree]:
     return records
 
 
+def worktree_still_present(raw: RawWorktree, repo_root: Path) -> bool:
+    """Return True if *raw* still exists exactly as discovered.
+
+    ``discover_worktrees`` is a snapshot; a concurrent operation (e.g. a
+    parallel ``vrg-finalize-pr``) can remove a worktree and delete its branch
+    before a status scan reaches it (issue #3187). A caller whose per-worktree
+    git call failed uses this to tell that race apart from a genuine failure:
+    the worktree is still present only if it is re-discovered at the same path
+    with the same branch and, when it has one, that branch ref still exists.
+    """
+    if raw not in discover_worktrees(repo_root):
+        return False
+    return raw.branch is None or git.ref_exists(f"refs/heads/{raw.branch}")
+
+
 def list_worktrees(repo_root: Path) -> list[Worktree]:
     """Return worktrees under ``repo_root/.worktrees/`` with their branches.
 
