@@ -34,6 +34,7 @@ Required checks for Python repositories are maintained in the
 ## Document Map
 
 - Naming conventions: [naming-conventions.md](naming-conventions.md)
+- CLI entry points: [cli-entry-points.md](cli-entry-points.md)
 - Import-time side effects: [import-time-side-effects.md](import-time-side-effects.md)
 - Type hints: [type-hints.md](type-hints.md)
 - Testing and coverage: [testing-and-coverage.md](testing-and-coverage.md)

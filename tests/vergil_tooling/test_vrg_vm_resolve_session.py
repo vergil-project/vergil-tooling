@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from vergil_tooling.bin import vrg_vm_resolve as r
+from vergil_tooling.bin import vrg_vm_resolve_session as r
 
 if TYPE_CHECKING:
     from pathlib import Path

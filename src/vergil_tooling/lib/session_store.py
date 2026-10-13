@@ -131,7 +131,7 @@ class ScrapeStore:
 
     Shipped unconditionally: the seam always has a working backend, independent of
     any Agent SDK. It wraps the existing scrape helpers in
-    :mod:`vergil_tooling.bin.vrg_vm_resolve` (``name_by_session`` / ``read_roster``
+    :mod:`vergil_tooling.bin.vrg_vm_resolve_session` (``name_by_session`` / ``read_roster``
     and friends) — the *only* place transcript/roster parsing is allowed — and
     adapts their output into :class:`SessionInfo` rows.
 
@@ -209,7 +209,7 @@ class ScrapeStore:
         or (b) it has passed the TTL without ever materializing. Runs at
         reservation-write time so the read path stays side-effect free.
         """
-        from vergil_tooling.bin import vrg_vm_resolve as res
+        from vergil_tooling.bin import vrg_vm_resolve_session as res
 
         reservations = self._reservations_dir
         if not reservations.is_dir():
@@ -234,11 +234,11 @@ class ScrapeStore:
                 path.unlink(missing_ok=True)
 
     def list_sessions(self) -> list[SessionInfo]:
-        # Imported lazily to avoid an import cycle: ``vrg_vm_resolve`` imports this
+        # Imported lazily to avoid an import cycle: ``vrg_vm_resolve_session`` imports this
         # module at load time. The indirection keeps the transcript/roster scrape
         # in one place while its low-level readers still live in the bin module
         # (and stay monkeypatchable there).
-        from vergil_tooling.bin import vrg_vm_resolve as res
+        from vergil_tooling.bin import vrg_vm_resolve_session as res
 
         projects = self._projects_dir
         roster = res.read_roster(self._sessions_dir)
@@ -313,7 +313,7 @@ class ScrapeStore:
         return resolve_over(self.list_sessions(), name)
 
     def rename(self, session_id: str, new_name: str) -> None:
-        from vergil_tooling.bin import vrg_vm_resolve as res
+        from vergil_tooling.bin import vrg_vm_resolve_session as res
 
         transcript = res.projects_glob(self._projects_dir, session_id)
         entry = {"type": "custom-title", "customTitle": new_name, "sessionId": session_id}

@@ -109,7 +109,7 @@ def test_scrape_store_surfaces_roster_cwd_and_active(tmp_path: Path) -> None:
         '"updatedAt":1748000000000}'
     )
 
-    import vergil_tooling.bin.vrg_vm_resolve as res
+    import vergil_tooling.bin.vrg_vm_resolve_session as res
 
     monkey = pytest.MonkeyPatch()
     monkey.setattr(res, "_is_live", lambda _pid, _ps: True)
