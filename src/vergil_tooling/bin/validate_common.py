@@ -32,6 +32,115 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
+    repo_root = git.repo_root()
+
+    print("Running: repo-profile")
+    rc = vrg_repo_profile.main([])
+    if rc != 0:
+        return rc
+
+    cfg = read_config(repo_root)
+    strict_md = _find_strict_markdown_files(repo_root, ignore=cfg.markdownlint.ignore)
+    prose_md = _find_prose_markdown_files(repo_root, ignore=cfg.markdownlint.ignore)
+    # The "(N files ...)" counts below name their fixed discovery scope on
+    # purpose: each check lints a scoped slice of the working tree (published
+    # docs, scripts/, etc.), NOT the branch diff. Agents kept reading a bare
+    # "(N files)" as "N markdown files I changed" and reporting a phantom
+    # off-by-one when a changed file fell outside the scope (issue #2601).
+    #
+    # markdownlint runs as two passes so long-form epic prose can be exempted
+    # from MD013 (line-length) while docs/site and README stay strict (issue
+    # #2803). Both passes always run and the step fails if EITHER reports a
+    # violation, so a failure in the first scope never masks the second.
+    markdownlint_rc = 0
+    if strict_md:
+        print(f"Running: markdownlint ({len(strict_md)} files in docs/site/, README.md)")
+        strict_config = files("vergil_tooling.configs") / "markdownlint.yaml"
+        result = subprocess.run(  # noqa: S603
+            ["markdownlint", "--config", str(strict_config), *strict_md],  # noqa: S607
+            check=False,
+        )
+        markdownlint_rc = markdownlint_rc or result.returncode
+    if prose_md:
+        print(f"Running: markdownlint ({len(prose_md)} files in epics/, MD013 relaxed)")
+        prose_config = files("vergil_tooling.configs") / "markdownlint-prose.yaml"
+        result = subprocess.run(  # noqa: S603
+            ["markdownlint", "--config", str(prose_config), *prose_md],  # noqa: S607
+            check=False,
+        )
+        markdownlint_rc = markdownlint_rc or result.returncode
+    if markdownlint_rc != 0:
+        return markdownlint_rc
+
+    shell_files = _find_shell_files(repo_root)
+    if shell_files:
+        print(f"Running: shellcheck ({len(shell_files)} files in scripts/)")
+        result = subprocess.run(  # noqa: S603
+            ["shellcheck", *shell_files],  # noqa: S607
+            check=False,
+        )
+        if result.returncode != 0:
+            return result.returncode
+
+    yaml_files = _find_yaml_files(repo_root)
+    if yaml_files:
+        print(
+            f"Running: yamllint ({len(yaml_files)} files in "
+            ".github/, repo root, docs/site/mkdocs.yml)"
+        )
+        yaml_config = files("vergil_tooling.configs") / "yamllint.yaml"
+        result = subprocess.run(  # noqa: S603
+            ["yamllint", "--config-file", str(yaml_config), *yaml_files],  # noqa: S607
+            check=False,
+        )
+        if result.returncode != 0:
+            return result.returncode
+
+    dockerfile_files = _find_dockerfiles(repo_root)
+    if dockerfile_files:
+        print(f"Running: hadolint ({len(dockerfile_files)} Dockerfile* in repo root)")
+        result = subprocess.run(  # noqa: S603
+            ["hadolint", *dockerfile_files],  # noqa: S607
+            check=False,
+        )
+        if result.returncode != 0:
+            return result.returncode
+
+    workflows_dir = repo_root / ".github" / "workflows"
+    if workflows_dir.is_dir():
+        print("Running: actionlint")
+        result = subprocess.run(  # noqa: S603
+            ["actionlint"],  # noqa: S607
+            check=False,
+        )
+        if result.returncode != 0:
+            return result.returncode
+
+    if _has_ansible_content(repo_root):
+        print("Running: ansible-lint")
+        ansible_config = files("vergil_tooling.configs") / "ansible-lint.yaml"
+        overrides: list[str] = []
+        local_config = _find_ansible_lint_config(repo_root)
+        if local_config is not None:
+            try:
+                overrides = _ansible_lint_overrides(local_config)
+            except yaml.YAMLError as exc:
+                print(
+                    f"error: failed to parse {local_config}: {exc}",
+                    file=sys.stderr,
+                )
+                return 1
+        result = subprocess.run(  # noqa: S603
+            ["ansible-lint", "-c", str(ansible_config), *overrides],  # noqa: S607
+            check=False,
+        )
+        if result.returncode != 0:
+            return result.returncode
+
+    return 0
+
+
 def _find_shell_files(repo_root: Path) -> list[str]:
     """Discover shell files under scripts/."""
     scripts_dir = repo_root / "scripts"
@@ -224,115 +333,6 @@ def _ansible_lint_overrides(config_path: Path) -> list[str]:
             overrides += ["--exclude", str(entry)]
 
     return overrides
-
-
-def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
-    repo_root = git.repo_root()
-
-    print("Running: repo-profile")
-    rc = vrg_repo_profile.main([])
-    if rc != 0:
-        return rc
-
-    cfg = read_config(repo_root)
-    strict_md = _find_strict_markdown_files(repo_root, ignore=cfg.markdownlint.ignore)
-    prose_md = _find_prose_markdown_files(repo_root, ignore=cfg.markdownlint.ignore)
-    # The "(N files ...)" counts below name their fixed discovery scope on
-    # purpose: each check lints a scoped slice of the working tree (published
-    # docs, scripts/, etc.), NOT the branch diff. Agents kept reading a bare
-    # "(N files)" as "N markdown files I changed" and reporting a phantom
-    # off-by-one when a changed file fell outside the scope (issue #2601).
-    #
-    # markdownlint runs as two passes so long-form epic prose can be exempted
-    # from MD013 (line-length) while docs/site and README stay strict (issue
-    # #2803). Both passes always run and the step fails if EITHER reports a
-    # violation, so a failure in the first scope never masks the second.
-    markdownlint_rc = 0
-    if strict_md:
-        print(f"Running: markdownlint ({len(strict_md)} files in docs/site/, README.md)")
-        strict_config = files("vergil_tooling.configs") / "markdownlint.yaml"
-        result = subprocess.run(  # noqa: S603
-            ["markdownlint", "--config", str(strict_config), *strict_md],  # noqa: S607
-            check=False,
-        )
-        markdownlint_rc = markdownlint_rc or result.returncode
-    if prose_md:
-        print(f"Running: markdownlint ({len(prose_md)} files in epics/, MD013 relaxed)")
-        prose_config = files("vergil_tooling.configs") / "markdownlint-prose.yaml"
-        result = subprocess.run(  # noqa: S603
-            ["markdownlint", "--config", str(prose_config), *prose_md],  # noqa: S607
-            check=False,
-        )
-        markdownlint_rc = markdownlint_rc or result.returncode
-    if markdownlint_rc != 0:
-        return markdownlint_rc
-
-    shell_files = _find_shell_files(repo_root)
-    if shell_files:
-        print(f"Running: shellcheck ({len(shell_files)} files in scripts/)")
-        result = subprocess.run(  # noqa: S603
-            ["shellcheck", *shell_files],  # noqa: S607
-            check=False,
-        )
-        if result.returncode != 0:
-            return result.returncode
-
-    yaml_files = _find_yaml_files(repo_root)
-    if yaml_files:
-        print(
-            f"Running: yamllint ({len(yaml_files)} files in "
-            ".github/, repo root, docs/site/mkdocs.yml)"
-        )
-        yaml_config = files("vergil_tooling.configs") / "yamllint.yaml"
-        result = subprocess.run(  # noqa: S603
-            ["yamllint", "--config-file", str(yaml_config), *yaml_files],  # noqa: S607
-            check=False,
-        )
-        if result.returncode != 0:
-            return result.returncode
-
-    dockerfile_files = _find_dockerfiles(repo_root)
-    if dockerfile_files:
-        print(f"Running: hadolint ({len(dockerfile_files)} Dockerfile* in repo root)")
-        result = subprocess.run(  # noqa: S603
-            ["hadolint", *dockerfile_files],  # noqa: S607
-            check=False,
-        )
-        if result.returncode != 0:
-            return result.returncode
-
-    workflows_dir = repo_root / ".github" / "workflows"
-    if workflows_dir.is_dir():
-        print("Running: actionlint")
-        result = subprocess.run(  # noqa: S603
-            ["actionlint"],  # noqa: S607
-            check=False,
-        )
-        if result.returncode != 0:
-            return result.returncode
-
-    if _has_ansible_content(repo_root):
-        print("Running: ansible-lint")
-        ansible_config = files("vergil_tooling.configs") / "ansible-lint.yaml"
-        overrides: list[str] = []
-        local_config = _find_ansible_lint_config(repo_root)
-        if local_config is not None:
-            try:
-                overrides = _ansible_lint_overrides(local_config)
-            except yaml.YAMLError as exc:
-                print(
-                    f"error: failed to parse {local_config}: {exc}",
-                    file=sys.stderr,
-                )
-                return 1
-        result = subprocess.run(  # noqa: S603
-            ["ansible-lint", "-c", str(ansible_config), *overrides],  # noqa: S607
-            check=False,
-        )
-        if result.returncode != 0:
-            return result.returncode
-
-    return 0
 
 
 if __name__ == "__main__":

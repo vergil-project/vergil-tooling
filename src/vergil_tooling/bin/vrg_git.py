@@ -111,6 +111,129 @@ _REMOTE_SUBCOMMANDS: set[str] = {"push", "pull", "fetch", "ls-remote", "clone"}
 _GITHUB_CLONE_URL_RE = re.compile(r"(?:https://github\.com/|git@github\.com:)([^/]+)/")
 
 
+def main(argv: list[str] | None = None) -> int:
+    if argv is None:
+        argv = sys.argv[1:]
+
+    if not argv:
+        print("usage: vrg-git <subcommand> [args...]", file=sys.stderr)
+        return 2
+
+    if argv[0] in ("-h", "--help"):
+        _print_help()
+        return 0
+
+    subcmd = argv[0]
+
+    if subcmd in _DENIED:
+        msg = _DENIED[subcmd]
+        print(f"vrg-git: {subcmd} is denied. {msg}", file=sys.stderr)
+        return 1
+
+    if subcmd in _READONLY_WITH_DENIED_SUBS:
+        denied_subs = _READONLY_WITH_DENIED_SUBS[subcmd]
+        # The mutating sub-operation, if any, is the first positional token.
+        sub = argv[1] if len(argv) >= 2 else None
+        if sub in denied_subs:
+            print(f"vrg-git: {subcmd} {sub} is denied by vrg-git.", file=sys.stderr)
+            return 1
+        result = subprocess.run(["git", *argv], check=False)  # noqa: S603, S607
+        return result.returncode
+
+    if subcmd in _ALLOWED_COMPOUND:
+        allowed_subs = _ALLOWED_COMPOUND[subcmd]
+        if len(argv) < 2 or argv[1] not in allowed_subs:
+            sub = argv[1] if len(argv) >= 2 else "(none)"
+            print(
+                f"vrg-git: {subcmd} {sub} is not recognized. "
+                f"Allowed: {', '.join(sorted(allowed_subs))}",
+                file=sys.stderr,
+            )
+            return 1
+
+        flag_err = _check_denied_flags(subcmd, argv[1:])
+        if flag_err:
+            print(f"vrg-git: {flag_err}", file=sys.stderr)
+            return 1
+
+        if subcmd == "worktree" and argv[1] == "add":
+            add_err = _check_worktree_add(argv[2:])
+            if add_err:
+                print(f"vrg-git: {add_err}", file=sys.stderr)
+                return 1
+
+        result = subprocess.run(["git", *argv], check=False)  # noqa: S603, S607
+        return result.returncode
+
+    if subcmd not in _ALLOWED_SIMPLE:
+        allowed = _ALLOWED_SIMPLE | set(_ALLOWED_COMPOUND) | set(_READONLY_WITH_DENIED_SUBS)
+        print(
+            f"vrg-git: {subcmd} is not recognized. Allowed: {', '.join(sorted(allowed))}",
+            file=sys.stderr,
+        )
+        return 1
+
+    flag_err = _check_denied_flags(subcmd, argv[1:])
+    if flag_err:
+        print(f"vrg-git: {flag_err}", file=sys.stderr)
+        return 1
+
+    worktree_err = _check_worktree_convention(subcmd, argv[1:])
+    if worktree_err:
+        print(f"vrg-git: {worktree_err}", file=sys.stderr)
+        return 1
+
+    branch_name_err = _check_new_branch_name(subcmd, argv[1:])
+    if branch_name_err:
+        print(f"vrg-git: {branch_name_err}", file=sys.stderr)
+        return 1
+
+    if subcmd == "push":
+        frozen_msg = _check_frozen_push(argv[1:])
+        if frozen_msg is not None:
+            print(frozen_msg, file=sys.stderr)
+            return 1
+
+    env = None
+    if subcmd in _REMOTE_SUBCOMMANDS:
+        # clone runs outside any repo, so get_installation_token's default
+        # org-from-remote detection finds nothing — derive the org from the
+        # clone URL argument instead. (#1785)
+        org = _org_from_clone_url(argv[1:]) if subcmd == "clone" else None
+        token = github.get_installation_token(org)
+        if token is not None:
+            env = _git_auth_env(token)
+
+    if subcmd == "rebase":
+        env = _noninteractive_rebase_env(env)
+
+    if subcmd in _REMOTE_SUBCOMMANDS:
+        # Network op: capture output so its stderr can be inspected for
+        # retryable transients (GitHub 502s, SSH-backend blips), and ride
+        # those out instead of failing the first attempt (#2835).
+        net_result = _run_network_with_retry(argv, env)
+        if net_result.stdout:
+            sys.stdout.write(net_result.stdout)
+        if net_result.stderr:
+            sys.stderr.write(net_result.stderr)
+        if (
+            subcmd == "push"
+            and net_result.returncode != 0
+            and _WORKFLOW_PERMISSION_RE.search(net_result.stderr or "")
+        ):
+            # A workflow-file push refusal is expected and routine: the agent
+            # never pushes a workflow branch — the human's vrg-submit-pr does,
+            # at submit time. Warn and report success so the agent proceeds to
+            # report-ready instead of mistreating a normal case as a failure
+            # (#2540). Any other push failure keeps its original returncode.
+            _print_workflow_push_guidance()
+            return 0
+        return net_result.returncode
+
+    result = subprocess.run(["git", *argv], check=False, env=env)  # noqa: S603, S607
+    return result.returncode
+
+
 def _org_from_clone_url(args: list[str]) -> str | None:
     """Return the GitHub org/owner from the first github.com URL among clone args."""
     for arg in args:
@@ -620,129 +743,6 @@ def _print_help() -> None:
         "\n"
         "Per-subcommand git help still forwards, e.g. 'vrg-git log --help'."
     )
-
-
-def main(argv: list[str] | None = None) -> int:
-    if argv is None:
-        argv = sys.argv[1:]
-
-    if not argv:
-        print("usage: vrg-git <subcommand> [args...]", file=sys.stderr)
-        return 2
-
-    if argv[0] in ("-h", "--help"):
-        _print_help()
-        return 0
-
-    subcmd = argv[0]
-
-    if subcmd in _DENIED:
-        msg = _DENIED[subcmd]
-        print(f"vrg-git: {subcmd} is denied. {msg}", file=sys.stderr)
-        return 1
-
-    if subcmd in _READONLY_WITH_DENIED_SUBS:
-        denied_subs = _READONLY_WITH_DENIED_SUBS[subcmd]
-        # The mutating sub-operation, if any, is the first positional token.
-        sub = argv[1] if len(argv) >= 2 else None
-        if sub in denied_subs:
-            print(f"vrg-git: {subcmd} {sub} is denied by vrg-git.", file=sys.stderr)
-            return 1
-        result = subprocess.run(["git", *argv], check=False)  # noqa: S603, S607
-        return result.returncode
-
-    if subcmd in _ALLOWED_COMPOUND:
-        allowed_subs = _ALLOWED_COMPOUND[subcmd]
-        if len(argv) < 2 or argv[1] not in allowed_subs:
-            sub = argv[1] if len(argv) >= 2 else "(none)"
-            print(
-                f"vrg-git: {subcmd} {sub} is not recognized. "
-                f"Allowed: {', '.join(sorted(allowed_subs))}",
-                file=sys.stderr,
-            )
-            return 1
-
-        flag_err = _check_denied_flags(subcmd, argv[1:])
-        if flag_err:
-            print(f"vrg-git: {flag_err}", file=sys.stderr)
-            return 1
-
-        if subcmd == "worktree" and argv[1] == "add":
-            add_err = _check_worktree_add(argv[2:])
-            if add_err:
-                print(f"vrg-git: {add_err}", file=sys.stderr)
-                return 1
-
-        result = subprocess.run(["git", *argv], check=False)  # noqa: S603, S607
-        return result.returncode
-
-    if subcmd not in _ALLOWED_SIMPLE:
-        allowed = _ALLOWED_SIMPLE | set(_ALLOWED_COMPOUND) | set(_READONLY_WITH_DENIED_SUBS)
-        print(
-            f"vrg-git: {subcmd} is not recognized. Allowed: {', '.join(sorted(allowed))}",
-            file=sys.stderr,
-        )
-        return 1
-
-    flag_err = _check_denied_flags(subcmd, argv[1:])
-    if flag_err:
-        print(f"vrg-git: {flag_err}", file=sys.stderr)
-        return 1
-
-    worktree_err = _check_worktree_convention(subcmd, argv[1:])
-    if worktree_err:
-        print(f"vrg-git: {worktree_err}", file=sys.stderr)
-        return 1
-
-    branch_name_err = _check_new_branch_name(subcmd, argv[1:])
-    if branch_name_err:
-        print(f"vrg-git: {branch_name_err}", file=sys.stderr)
-        return 1
-
-    if subcmd == "push":
-        frozen_msg = _check_frozen_push(argv[1:])
-        if frozen_msg is not None:
-            print(frozen_msg, file=sys.stderr)
-            return 1
-
-    env = None
-    if subcmd in _REMOTE_SUBCOMMANDS:
-        # clone runs outside any repo, so get_installation_token's default
-        # org-from-remote detection finds nothing — derive the org from the
-        # clone URL argument instead. (#1785)
-        org = _org_from_clone_url(argv[1:]) if subcmd == "clone" else None
-        token = github.get_installation_token(org)
-        if token is not None:
-            env = _git_auth_env(token)
-
-    if subcmd == "rebase":
-        env = _noninteractive_rebase_env(env)
-
-    if subcmd in _REMOTE_SUBCOMMANDS:
-        # Network op: capture output so its stderr can be inspected for
-        # retryable transients (GitHub 502s, SSH-backend blips), and ride
-        # those out instead of failing the first attempt (#2835).
-        net_result = _run_network_with_retry(argv, env)
-        if net_result.stdout:
-            sys.stdout.write(net_result.stdout)
-        if net_result.stderr:
-            sys.stderr.write(net_result.stderr)
-        if (
-            subcmd == "push"
-            and net_result.returncode != 0
-            and _WORKFLOW_PERMISSION_RE.search(net_result.stderr or "")
-        ):
-            # A workflow-file push refusal is expected and routine: the agent
-            # never pushes a workflow branch — the human's vrg-submit-pr does,
-            # at submit time. Warn and report success so the agent proceeds to
-            # report-ready instead of mistreating a normal case as a failure
-            # (#2540). Any other push failure keeps its original returncode.
-            _print_workflow_push_guidance()
-            return 0
-        return net_result.returncode
-
-    result = subprocess.run(["git", *argv], check=False, env=env)  # noqa: S603, S607
-    return result.returncode
 
 
 if __name__ == "__main__":

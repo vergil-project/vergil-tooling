@@ -32,6 +32,34 @@ from vergil_tooling.lib.container_cache import (
 )
 
 
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="vrg-container-cache",
+        description="Manage per-branch cached container images.",
+    )
+    sub = parser.add_subparsers(dest="command")
+
+    sub.add_parser("build", help="Build or refresh the cached image")
+    sub.add_parser("clean", help="Remove cached image for current branch")
+    sub.add_parser("status", help="Show cache state for current branch")
+    sub.add_parser("clean-all", help="Remove all cached images")
+
+    args = parser.parse_args(argv)
+    if args.command is None:
+        parser.print_help()
+        return 1
+
+    runtime = detect_runtime()
+
+    dispatch = {
+        "build": _cmd_build,
+        "clean": _cmd_clean,
+        "status": _cmd_status,
+        "clean-all": _cmd_clean_all,
+    }
+    return dispatch[args.command](args, runtime=runtime)
+
+
 def _cmd_build(_args: argparse.Namespace, *, runtime: str) -> int:
     repo_root = git.repo_root()
     lang = resolve_language(repo_root)
@@ -110,34 +138,6 @@ def _cmd_clean_all(_args: argparse.Namespace, *, runtime: str) -> int:
 
     print(f"Removed {removed} cached image(s).")
     return 0
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="vrg-container-cache",
-        description="Manage per-branch cached container images.",
-    )
-    sub = parser.add_subparsers(dest="command")
-
-    sub.add_parser("build", help="Build or refresh the cached image")
-    sub.add_parser("clean", help="Remove cached image for current branch")
-    sub.add_parser("status", help="Show cache state for current branch")
-    sub.add_parser("clean-all", help="Remove all cached images")
-
-    args = parser.parse_args(argv)
-    if args.command is None:
-        parser.print_help()
-        return 1
-
-    runtime = detect_runtime()
-
-    dispatch = {
-        "build": _cmd_build,
-        "clean": _cmd_clean,
-        "status": _cmd_status,
-        "clean-all": _cmd_clean_all,
-    }
-    return dispatch[args.command](args, runtime=runtime)
 
 
 if __name__ == "__main__":

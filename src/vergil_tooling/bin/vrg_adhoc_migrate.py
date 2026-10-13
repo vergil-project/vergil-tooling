@@ -16,28 +16,6 @@ import sys
 from vergil_tooling.lib import adhoc_migrate, github, identity_mode
 
 
-def _parse_args(argv: list[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        prog="vrg-adhoc-migrate",
-        description=(
-            "Relocate per-repo standing epics into the org .github (the ad-hoc "
-            "model, epic #85): re-link open children under the new .github ad-hoc "
-            "epic and close the old standing epic. Dry-run by default; pass "
-            "--apply (as a human) to execute. The org is auto-detected from this "
-            "repo's 'origin' remote."
-        ),
-    )
-    parser.add_argument(
-        "--apply",
-        action="store_true",
-        help=(
-            "Execute the relocations (a human action — refused in agent "
-            "sessions). Default: read-only dry-run preview."
-        ),
-    )
-    return parser.parse_args(argv)
-
-
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     # Gate the write path before any network work, mirroring vrg-epic-audit
@@ -66,6 +44,28 @@ def main(argv: list[str] | None = None) -> int:
     summaries = [adhoc_migrate.apply_one(reloc) for reloc in relocations]
     print(adhoc_migrate.render_applied(summaries, org=org))
     return 0
+
+
+def _parse_args(argv: list[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="vrg-adhoc-migrate",
+        description=(
+            "Relocate per-repo standing epics into the org .github (the ad-hoc "
+            "model, epic #85): re-link open children under the new .github ad-hoc "
+            "epic and close the old standing epic. Dry-run by default; pass "
+            "--apply (as a human) to execute. The org is auto-detected from this "
+            "repo's 'origin' remote."
+        ),
+    )
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help=(
+            "Execute the relocations (a human action — refused in agent "
+            "sessions). Default: read-only dry-run preview."
+        ),
+    )
+    return parser.parse_args(argv)
 
 
 if __name__ == "__main__":

@@ -53,6 +53,55 @@ _PR_URL_REPO_RE = re.compile(r"github\.com/([^/]+/[^/]+)/pull/\d+")
 _PERMISSION_SIGNATURES = ("resource not accessible by integration", "http 403")
 
 
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    try:
+        # Mint the App token for the PR's owner, not the cwd org (#3055).
+        with github.target_org(pr_owner(args.pr)):
+            state, reason = pr_await.wait_for_settle(
+                args.pr,
+                since_sha=args.since_sha,
+                since_reviews=args.since_reviews,
+            )
+    except github.NoInstallationError as exc:
+        print(f"vrg-pr-await: {github.no_installation_message(exc)}", file=sys.stderr)
+        return 1
+    except github.MissingGitHubTokenError:
+        print(github.missing_token_message("vrg-pr-await"), file=sys.stderr)
+        return 1
+    except github.GitHubAPIError as exc:
+        if is_permission_error(exc):
+            print(f"vrg-pr-await: {permission_error_message(args.pr, exc)}", file=sys.stderr)
+        else:
+            print(f"vrg-pr-await: GitHub API error: {exc}", file=sys.stderr)
+        return 1
+    except pr_await.PrMergedError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(json.dumps(pr_await.to_output(state, reason), indent=2))
+    return 0
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Block until a PR settles (checks terminal, or new commit/review).",
+    )
+    parser.add_argument("pr", help="PR URL or number")
+    parser.add_argument(
+        "--since-sha",
+        default=None,
+        help="Last seen head SHA; settle immediately if the head has moved",
+    )
+    parser.add_argument(
+        "--since-reviews",
+        type=int,
+        default=None,
+        help="Number of reviews last seen; settle when a new review appears",
+    )
+    return parser.parse_args(argv)
+
+
 def pr_owner(pr: str) -> str | None:
     """The owner of *pr* when it is a PR URL, else ``None`` (cwd resolution)."""
     match = _PR_URL_OWNER_RE.search(pr)
@@ -81,55 +130,6 @@ def permission_error_message(pr: str, exc: github.GitHubAPIError) -> str:
         "(actions: read) repository permissions set to Read-only on its "
         f"installation for this repository.\n{exc}"
     )
-
-
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(
-        description="Block until a PR settles (checks terminal, or new commit/review).",
-    )
-    parser.add_argument("pr", help="PR URL or number")
-    parser.add_argument(
-        "--since-sha",
-        default=None,
-        help="Last seen head SHA; settle immediately if the head has moved",
-    )
-    parser.add_argument(
-        "--since-reviews",
-        type=int,
-        default=None,
-        help="Number of reviews last seen; settle when a new review appears",
-    )
-    return parser.parse_args(argv)
-
-
-def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
-    try:
-        # Mint the App token for the PR's owner, not the cwd org (#3055).
-        with github.target_org(pr_owner(args.pr)):
-            state, reason = pr_await.wait_for_settle(
-                args.pr,
-                since_sha=args.since_sha,
-                since_reviews=args.since_reviews,
-            )
-    except github.NoInstallationError as exc:
-        print(f"vrg-pr-await: {github.no_installation_message(exc)}", file=sys.stderr)
-        return 1
-    except github.MissingGitHubTokenError:
-        print(github.missing_token_message("vrg-pr-await"), file=sys.stderr)
-        return 1
-    except github.GitHubAPIError as exc:
-        if is_permission_error(exc):
-            print(f"vrg-pr-await: {permission_error_message(args.pr, exc)}", file=sys.stderr)
-        else:
-            print(f"vrg-pr-await: GitHub API error: {exc}", file=sys.stderr)
-        return 1
-    except pr_await.PrMergedError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-    print(json.dumps(pr_await.to_output(state, reason), indent=2))
-    return 0
 
 
 if __name__ == "__main__":

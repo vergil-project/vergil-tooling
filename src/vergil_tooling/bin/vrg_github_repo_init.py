@@ -30,6 +30,125 @@ _REQUIRED_NON_INTERACTIVE = (
 )
 
 
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+
+    # `gh repo create` and the org-level branch/label/Pages setup this command
+    # drives require human GitHub credentials. Under an agent identity those
+    # credentials are absent, and without this guard the failure surfaces deep in
+    # the call stack as an opaque `gh auth login` traceback (issue #2391). Refuse
+    # up front with one clear message — mirroring the identity check in
+    # vrg-submit-pr / vrg-release — before any side effect. This command is
+    # human-credential-only until that boundary moves.
+    if identity_mode.is_agent():
+        print(
+            "vrg-github-repo-init must be run by a human with an authenticated gh. "
+            "It runs `gh repo create` and other org-level operations that the "
+            "agent-credential path cannot perform, so it is human-credential-only "
+            "until that boundary moves.\n"
+            "Remedy: run it in a human shell.",
+            file=sys.stderr,
+        )
+        return 1
+
+    if args.adopt:
+        from vergil_tooling.lib import github
+
+        repo_slug = github.current_repo()
+        org, name = repo_slug.split("/", 1)
+
+        print(f"Adopting {repo_slug}...")
+        print(
+            "WARNING: This will overwrite all Vergil-managed files to canonical state.\n"
+            "Files affected: vergil.toml, CLAUDE.md, .claude/settings.json,\n"
+            ".claude/hooks/guard.sh, LICENSE, README.md, .gitignore, CI/CD workflows,\n"
+            "docs site config, GitHub settings, rulesets, and labels."
+        )
+        # Under --non-interactive/--yes the destructive confirmation is
+        # auto-accepted (issue #2382).
+        if not args.non_interactive and not prompt_yes_no("Continue?", default=False):
+            print("Aborted.")
+            return 1
+
+        ctx = RepoInitContext(org=org, name=name, adopt=True)
+        if args.description is not None:
+            ctx.description = args.description
+    else:
+        org, name = args.repo.split("/", 1)
+        ctx = RepoInitContext(org=org, name=name)
+        if args.target_dir is not None:
+            ctx.target_dir = Path(args.target_dir)
+
+        if args.visibility:
+            ctx.visibility = args.visibility
+        elif args.non_interactive:
+            ctx.visibility = "public"
+        else:
+            ctx.visibility = prompt_choice(
+                "Repository visibility",
+                ["public", "private"],
+                default="public",
+            )
+
+        # --description is a required flag under --non-interactive (validated in
+        # parse_args), so it is always present there; the else is reached only by
+        # an interactive run, which prompts.
+        if args.description is not None:
+            ctx.description = args.description
+        else:
+            ctx.description = prompt_free_text("Project description (one paragraph)")
+
+    # Carry the remaining wizard-prompt flags into the context; the wizard
+    # resolves each (flag override > non-interactive default > prompt).
+    ctx.non_interactive = args.non_interactive
+    ctx.opt_description = args.description
+    ctx.opt_repository_type = args.repository_type
+    ctx.opt_primary_language = args.language
+    ctx.opt_branching_model = args.branching_model
+    ctx.opt_versioning_scheme = args.versioning_scheme
+    ctx.opt_release_model = args.release_model
+    ctx.opt_ci_versions = args.versions
+    ctx.opt_integration_tests = args.integration_tests
+    ctx.opt_publish_release = args.publish_release
+    ctx.opt_publish_docs = args.publish_docs
+    ctx.opt_vergil_version = args.vergil_version
+    ctx.opt_license_type = args.license
+    ctx.opt_initial_version = args.initial_version
+
+    # Refuse a new-repo run launched from inside an unrelated repo before any side
+    # effect (notably before step 1 creates the remote), unless --target-dir names
+    # where the clone goes (#2717). Adopt runs and --target-dir runs return None.
+    refusal = foreign_repo_refusal(ctx)
+    if refusal is not None:
+        print(refusal, file=sys.stderr)
+        return 1
+
+    # Fail-fast container precondition (epic vergil-project/.github#342). A
+    # language whose init resolves locks (cpp) can only be born green inside a
+    # container; without a runtime the skeleton phase would refuse mid-init,
+    # after the remote already exists. Check up front — before run_wizard's
+    # step 1 creates the repo — so the refusal leaves nothing behind. Only an
+    # explicitly-named lock-resolving language is checked here; an interactive
+    # or adopt run whose language is not yet known still fail-fasts in the
+    # scaffold step before writing anything.
+    if (
+        args.language is not None
+        and language_lock_command(args.language) is not None
+        and not lang_scaffold.container_runtime_available()
+    ):
+        print(
+            f"Refusing to create {ctx.repo}: --language {args.language} resolves "
+            "locks and must be born green inside a container, but no container "
+            "runtime (docker/nerdctl) is available. Nothing was created. "
+            "Remedy: run vrg-github-repo-init where a container runtime is present.",
+            file=sys.stderr,
+        )
+        return 1
+
+    run_wizard(ctx)
+    return 0
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
@@ -161,125 +280,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             )
 
     return args
-
-
-def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
-
-    # `gh repo create` and the org-level branch/label/Pages setup this command
-    # drives require human GitHub credentials. Under an agent identity those
-    # credentials are absent, and without this guard the failure surfaces deep in
-    # the call stack as an opaque `gh auth login` traceback (issue #2391). Refuse
-    # up front with one clear message — mirroring the identity check in
-    # vrg-submit-pr / vrg-release — before any side effect. This command is
-    # human-credential-only until that boundary moves.
-    if identity_mode.is_agent():
-        print(
-            "vrg-github-repo-init must be run by a human with an authenticated gh. "
-            "It runs `gh repo create` and other org-level operations that the "
-            "agent-credential path cannot perform, so it is human-credential-only "
-            "until that boundary moves.\n"
-            "Remedy: run it in a human shell.",
-            file=sys.stderr,
-        )
-        return 1
-
-    if args.adopt:
-        from vergil_tooling.lib import github
-
-        repo_slug = github.current_repo()
-        org, name = repo_slug.split("/", 1)
-
-        print(f"Adopting {repo_slug}...")
-        print(
-            "WARNING: This will overwrite all Vergil-managed files to canonical state.\n"
-            "Files affected: vergil.toml, CLAUDE.md, .claude/settings.json,\n"
-            ".claude/hooks/guard.sh, LICENSE, README.md, .gitignore, CI/CD workflows,\n"
-            "docs site config, GitHub settings, rulesets, and labels."
-        )
-        # Under --non-interactive/--yes the destructive confirmation is
-        # auto-accepted (issue #2382).
-        if not args.non_interactive and not prompt_yes_no("Continue?", default=False):
-            print("Aborted.")
-            return 1
-
-        ctx = RepoInitContext(org=org, name=name, adopt=True)
-        if args.description is not None:
-            ctx.description = args.description
-    else:
-        org, name = args.repo.split("/", 1)
-        ctx = RepoInitContext(org=org, name=name)
-        if args.target_dir is not None:
-            ctx.target_dir = Path(args.target_dir)
-
-        if args.visibility:
-            ctx.visibility = args.visibility
-        elif args.non_interactive:
-            ctx.visibility = "public"
-        else:
-            ctx.visibility = prompt_choice(
-                "Repository visibility",
-                ["public", "private"],
-                default="public",
-            )
-
-        # --description is a required flag under --non-interactive (validated in
-        # parse_args), so it is always present there; the else is reached only by
-        # an interactive run, which prompts.
-        if args.description is not None:
-            ctx.description = args.description
-        else:
-            ctx.description = prompt_free_text("Project description (one paragraph)")
-
-    # Carry the remaining wizard-prompt flags into the context; the wizard
-    # resolves each (flag override > non-interactive default > prompt).
-    ctx.non_interactive = args.non_interactive
-    ctx.opt_description = args.description
-    ctx.opt_repository_type = args.repository_type
-    ctx.opt_primary_language = args.language
-    ctx.opt_branching_model = args.branching_model
-    ctx.opt_versioning_scheme = args.versioning_scheme
-    ctx.opt_release_model = args.release_model
-    ctx.opt_ci_versions = args.versions
-    ctx.opt_integration_tests = args.integration_tests
-    ctx.opt_publish_release = args.publish_release
-    ctx.opt_publish_docs = args.publish_docs
-    ctx.opt_vergil_version = args.vergil_version
-    ctx.opt_license_type = args.license
-    ctx.opt_initial_version = args.initial_version
-
-    # Refuse a new-repo run launched from inside an unrelated repo before any side
-    # effect (notably before step 1 creates the remote), unless --target-dir names
-    # where the clone goes (#2717). Adopt runs and --target-dir runs return None.
-    refusal = foreign_repo_refusal(ctx)
-    if refusal is not None:
-        print(refusal, file=sys.stderr)
-        return 1
-
-    # Fail-fast container precondition (epic vergil-project/.github#342). A
-    # language whose init resolves locks (cpp) can only be born green inside a
-    # container; without a runtime the skeleton phase would refuse mid-init,
-    # after the remote already exists. Check up front — before run_wizard's
-    # step 1 creates the repo — so the refusal leaves nothing behind. Only an
-    # explicitly-named lock-resolving language is checked here; an interactive
-    # or adopt run whose language is not yet known still fail-fasts in the
-    # scaffold step before writing anything.
-    if (
-        args.language is not None
-        and language_lock_command(args.language) is not None
-        and not lang_scaffold.container_runtime_available()
-    ):
-        print(
-            f"Refusing to create {ctx.repo}: --language {args.language} resolves "
-            "locks and must be born green inside a container, but no container "
-            "runtime (docker/nerdctl) is available. Nothing was created. "
-            "Remedy: run vrg-github-repo-init where a container runtime is present.",
-            file=sys.stderr,
-        )
-        return 1
-
-    run_wizard(ctx)
-    return 0
 
 
 if __name__ == "__main__":

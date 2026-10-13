@@ -68,20 +68,6 @@ examples:
 """
 
 
-def _apply_validation_override(command: list[str], repo_root: Path) -> list[str]:
-    """Rewrite a ``vrg-validate`` invocation per the repo's override.
-
-    Only the validation entry point is rewritten; any other command passes
-    through unchanged. Trailing arguments (e.g. ``--check common``) are
-    preserved. The default override is ``vrg-validate`` itself, so repos
-    without a ``[validation]`` section are left untouched.
-    """
-    if not command or command[0] != _VALIDATION_ENTRY:
-        return command
-    override = validation_container_command(repo_root)
-    return shlex.split(override) + command[1:]
-
-
 def main(argv: list[str] | None = None) -> int:
     args = argv if argv is not None else sys.argv[1:]
 
@@ -169,6 +155,20 @@ def main(argv: list[str] | None = None) -> int:
     else:
         os.execvp("docker", container_args)  # noqa: S606, S607
     return 0  # pragma: no cover
+
+
+def _apply_validation_override(command: list[str], repo_root: Path) -> list[str]:
+    """Rewrite a ``vrg-validate`` invocation per the repo's override.
+
+    Only the validation entry point is rewritten; any other command passes
+    through unchanged. Trailing arguments (e.g. ``--check common``) are
+    preserved. The default override is ``vrg-validate`` itself, so repos
+    without a ``[validation]`` section are left untouched.
+    """
+    if not command or command[0] != _VALIDATION_ENTRY:
+        return command
+    override = validation_container_command(repo_root)
+    return shlex.split(override) + command[1:]
 
 
 if __name__ == "__main__":

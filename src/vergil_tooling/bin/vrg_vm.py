@@ -92,6 +92,310 @@ _default_config_path = default_config_path
 _TERMINAL_ENV_VARS = "COLORTERM,TERM_PROGRAM,TERM_PROGRAM_VERSION"
 
 
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="vrg-vm",
+        description="Manage identity VM lifecycle",
+    )
+    _add_global_identity_args(parser)
+    sub = parser.add_subparsers(dest="command")
+
+    p_create = sub.add_parser("create", help="Create and provision a new VM")
+    _add_identity_args(p_create)
+    _add_workspace_arg(p_create)
+    _add_name_arg(p_create)
+    p_create.add_argument(
+        "--tag", default="", help="VM template version tag (default: vergil version from config)"
+    )
+    p_create.add_argument(
+        "--verbose",
+        action="store_true",
+        help=(
+            "Stream live cloud-init provisioning output during await-readiness "
+            "(off-platform only; also enabled by VERGIL_VM_VERBOSE)"
+        ),
+    )
+    progress.add_progress_args(p_create, ())
+
+    p_start = sub.add_parser("start", help="Start VM and inject credentials")
+    _add_identity_args(p_start)
+    _add_workspace_arg(p_start)
+    _add_name_arg(p_start)
+    p_start.add_argument(
+        "--allow-stale-vm",
+        action="store_true",
+        help="Start even if the VM exceeds the staleness threshold",
+    )
+    p_start.add_argument(
+        "--timeout",
+        default="30m",
+        help="How long to wait for VM to reach running status (default: 30m)",
+    )
+    progress.add_progress_args(p_start, ())
+
+    p_stop = sub.add_parser("stop", help="Stop VM")
+    _add_identity_args(p_stop)
+    _add_workspace_arg(p_stop)
+    _add_name_arg(p_stop)
+
+    p_restart = sub.add_parser("restart", help="Restart VM and re-inject credentials")
+    _add_identity_args(p_restart)
+    _add_workspace_arg(p_restart)
+    _add_name_arg(p_restart)
+
+    p_update = sub.add_parser(
+        "update", help="Reinstall vergil-tooling and refresh plugins in a running box (in place)"
+    )
+    _add_identity_args(p_update)
+    _add_workspace_arg(p_update)
+    _add_name_arg(p_update)
+    p_update.add_argument(
+        "--tag", default="", help="Override version tag (default: tag from initial install)"
+    )
+    p_update.add_argument(
+        "--all",
+        action="store_true",
+        help=(
+            "Update every box owned by a configured identity (fail-deferred: all "
+            "boxes are attempted even if one fails; non-running boxes are skipped and "
+            "reported). Off-platform boxes are updated in place over IAP, exactly "
+            "like Lima boxes — no rebuild."
+        ),
+    )
+    progress.add_progress_args(p_update, ())
+
+    p_destroy = sub.add_parser("destroy", help="Destroy VM entirely")
+    _add_identity_args(p_destroy)
+    _add_workspace_arg(p_destroy)
+    _add_name_arg(p_destroy)
+    p_destroy.add_argument(
+        "--tag",
+        default="",
+        help="OpenTofu module version tag for off-platform destroy (default: from config)",
+    )
+    p_destroy.add_argument(
+        "--yes",
+        "-y",
+        action="store_true",
+        help="Skip the confirmation prompt (required for non-interactive destroy)",
+    )
+
+    p_destroy_volume = sub.add_parser(
+        "destroy-volume",
+        help="Destroy an off-platform VM's PERSISTENT volume (irreversible)",
+    )
+    _add_identity_args(p_destroy_volume)
+    _add_workspace_arg(p_destroy_volume)
+    _add_name_arg(p_destroy_volume)
+    p_destroy_volume.add_argument(
+        "--tag",
+        default="",
+        help="OpenTofu module version tag (default: from config)",
+    )
+    p_destroy_volume.add_argument(
+        "--yes",
+        action="store_true",
+        help="Skip the org/repo confirmation prompt",
+    )
+
+    p_rebuild = sub.add_parser("rebuild", help="Destroy and recreate VM (stateless rebuild)")
+    _add_identity_args(p_rebuild)
+    _add_workspace_arg(p_rebuild)
+    _add_name_arg(p_rebuild)
+    p_rebuild.add_argument(
+        "--tag", default="", help="VM template version tag (default: vergil version from config)"
+    )
+    p_rebuild.add_argument(
+        "--timeout",
+        default="30m",
+        help="How long to wait for VM to reach running status (default: 30m)",
+    )
+    p_rebuild.add_argument(
+        "--verbose",
+        action="store_true",
+        help=(
+            "Stream live cloud-init provisioning output during await-readiness "
+            "(off-platform only; also enabled by VERGIL_VM_VERBOSE)"
+        ),
+    )
+    progress.add_progress_args(p_rebuild, ())
+
+    p_list = sub.add_parser(
+        "list",
+        help="List all identity VMs and their status",
+        description=(
+            "List each identity's base and dedicated VMs with configured footprint "
+            "(CPUS/MEM/DISK), live occupancy, and SPEC health. Dedicated rows enumerate "
+            "existing VM instances only; a spec'd repo whose VM was never built is "
+            "surfaced by the session/start preflight gate, not here. AGENTS counts "
+            "harness instances (Claude Code sessions); HUMANS counts open human-held "
+            "interactive shells (a tally of shells, not distinct people). SPEC is one "
+            "of: ok, NEEDS-REBUILD (drift — rebuild it), orphaned (a VM whose repo "
+            "dropped its [vm]), or an 'under' flag when a host override sized the box "
+            "below the repo's declared footprint."
+        ),
+    )
+    # SUPPRESS so a global `--config` (before the subcommand) is not clobbered;
+    # `list` carries no `--identity` (identity does not scope a list of all VMs).
+    p_list.add_argument(
+        "--config", type=Path, default=argparse.SUPPRESS, help="Path to identities.toml"
+    )
+    p_list.add_argument(
+        "--sessions",
+        action="store_true",
+        help="List named Claude sessions across identity VMs instead of VMs",
+    )
+    p_list.add_argument("--active", action="store_true", help="With --sessions: only active")
+    p_list.add_argument("--idle", action="store_true", help="With --sessions: only idle")
+    p_list.add_argument(
+        "--all",
+        action="store_true",
+        help="With --sessions: include sessions older than the recency window",
+    )
+
+    p_volumes = sub.add_parser(
+        "volumes",
+        help="List off-platform persistent volumes",
+        description=(
+            "List every off-platform persistent volume from local tofu state — the "
+            "long-lived, billable, quota-consuming disks that outlive each ephemeral "
+            "cloud VM. Columns: IDENTITY, ORG/REPO, DISK NAME, SIZE, ZONE, REGION, all "
+            "read from the disk's stamped labels/attributes with no network call, so the "
+            "listing reflects exactly what vrg-vm manages. --live cross-checks each disk "
+            "against the provider (a LIVE column) to spot drift: a disk deleted out of "
+            "band shows MISSING; an unauthed/unreachable provider degrades to 'unknown'."
+        ),
+    )
+    p_volumes.add_argument(
+        "--live",
+        action="store_true",
+        help="Cross-check each volume against the cloud provider (adds a LIVE column)",
+    )
+
+    p_session = sub.add_parser("session", help="Launch a Claude session in a VM")
+    _add_identity_args(p_session)
+    p_session.add_argument(
+        "--name",
+        default=None,
+        help=(
+            "Named VM instance for this repo (default: the unnamed default instance). "
+            "Must be declared under [vm.<identity>.instances.<name>]. The instance is "
+            "appended to the session name ('<label>:<workspace>:<name>') so the title "
+            "shows which instance the session runs on; --resume renames a session "
+            "created before instance names to that form."
+        ),
+    )
+    p_session.add_argument(
+        "--allow-stale-vm",
+        action="store_true",
+        help="Connect even if the VM exceeds the staleness threshold",
+    )
+    p_session.add_argument(
+        "--resume",
+        default=None,
+        metavar="NAME",
+        help=(
+            "Attach to a session by name. Accepts a bare label (e.g. "
+            "'epic-85-centralize-epics'), composed with the workspace positional into "
+            "'<label>:<workspace>' (plus ':<name>' with --name) — symmetric with --label. "
+            "A full 'label:workspace[:name]' is also accepted, but its workspace (and "
+            "instance) must match the command line. "
+            "Resolves the name to one session and derives its working directory from that "
+            "session. With no verb, the workspace's sessions are listed and --label/--resume "
+            "are named. Mutually exclusive with --fresh."
+        ),
+    )
+    p_session.add_argument(
+        "--label",
+        default=None,
+        metavar="LABEL",
+        help=(
+            "Create a new purpose-named session named '<label>:<workspace>' (plus "
+            "':<name>' with --name) (e.g. "
+            "--label epic-213-x). The label is a clean slug; an epic-/adhoc- prefix "
+            "is the convention (off-convention warns, never blocks). Errors if a "
+            "session of that name already exists (add --fresh to retire that prior "
+            "session and start clean). Mutually exclusive with --resume."
+        ),
+    )
+    p_session.add_argument(
+        "--fresh",
+        action="store_true",
+        help=(
+            "With --label: retire any prior session of that name (rename to "
+            "'<name>~<datestamp>', never delete) and start a fresh one in its place."
+        ),
+    )
+    p_session.add_argument(
+        "--model",
+        default="",
+        help="Claude model to launch (overrides the identity's 'model' default)",
+    )
+    p_session.add_argument(
+        "workspace", help="Workspace path relative to projects_dir (use '.' for the root)"
+    )
+    p_session.add_argument(
+        "cmd",
+        nargs="*",
+        help=(
+            "Optional command override. A bare 'claude' (or nothing) goes through the "
+            "session resolver; anything else runs raw. Pass flags after '--' so they are "
+            "not parsed as session options (e.g. '-- bash', '-- claude --model X')."
+        ),
+    )
+
+    p_cp = sub.add_parser(
+        "cp",
+        help="Copy files/dirs between the host and a VM (bidirectional)",
+        description=(
+            "Copy files and directories (always recursive) between the host and the VM "
+            "that <workspace> resolves to. A ':'-prefixed path is on the VM; everything "
+            "else is on the host. All host paths -> push (dest defaults to the session "
+            "workspace dir); a ':'-prefixed source -> pull (dest defaults to the host "
+            "cwd). The destination is always treated as a directory (no rename). "
+            "Examples: 'vrg-vm cp acme/widgets spec.pdf' (into the workspace); "
+            "'vrg-vm cp acme/widgets spec.pdf :docs'; "
+            "'vrg-vm cp acme/widgets :artifacts/out.json .'"
+        ),
+    )
+    _add_identity_args(p_cp)
+    _add_name_arg(p_cp)
+    p_cp.add_argument(
+        "workspace", help="Workspace path relative to projects_dir (use '.' for the root)"
+    )
+    p_cp.add_argument(
+        "paths",
+        nargs="+",
+        help="Source path(s) then optional destination; ':'-prefix marks the VM side.",
+    )
+
+    args = parser.parse_args(argv)
+    warn_if_off_host()
+    if args.command is None:
+        parser.print_help()
+        return 1
+
+    dispatch = {
+        "create": _cmd_create,
+        "start": _cmd_start,
+        "stop": _cmd_stop,
+        "restart": _cmd_restart,
+        "update": _cmd_update,
+        "destroy": _cmd_destroy,
+        "destroy-volume": _cmd_destroy_volume,
+        "rebuild": _cmd_rebuild,
+        "list": _cmd_list,
+        "volumes": _cmd_volumes,
+        "session": _cmd_session,
+        "cp": _cmd_cp,
+    }
+    try:
+        return dispatch[args.command](args)
+    except (BorrowError, CopyPlanError, SpecError, NotImplementedError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+
+
 def _resolve(args: argparse.Namespace) -> tuple[str, Identity, IdentityConfig]:
     config_path = args.config if args.config else _default_config_path()
     config = load_config(config_path)
@@ -2777,310 +3081,6 @@ def warn_if_off_host() -> None:
     reason = _off_host_reason(platform.system())
     if reason:
         print(f"WARNING: {reason}", file=sys.stderr)
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="vrg-vm",
-        description="Manage identity VM lifecycle",
-    )
-    _add_global_identity_args(parser)
-    sub = parser.add_subparsers(dest="command")
-
-    p_create = sub.add_parser("create", help="Create and provision a new VM")
-    _add_identity_args(p_create)
-    _add_workspace_arg(p_create)
-    _add_name_arg(p_create)
-    p_create.add_argument(
-        "--tag", default="", help="VM template version tag (default: vergil version from config)"
-    )
-    p_create.add_argument(
-        "--verbose",
-        action="store_true",
-        help=(
-            "Stream live cloud-init provisioning output during await-readiness "
-            "(off-platform only; also enabled by VERGIL_VM_VERBOSE)"
-        ),
-    )
-    progress.add_progress_args(p_create, ())
-
-    p_start = sub.add_parser("start", help="Start VM and inject credentials")
-    _add_identity_args(p_start)
-    _add_workspace_arg(p_start)
-    _add_name_arg(p_start)
-    p_start.add_argument(
-        "--allow-stale-vm",
-        action="store_true",
-        help="Start even if the VM exceeds the staleness threshold",
-    )
-    p_start.add_argument(
-        "--timeout",
-        default="30m",
-        help="How long to wait for VM to reach running status (default: 30m)",
-    )
-    progress.add_progress_args(p_start, ())
-
-    p_stop = sub.add_parser("stop", help="Stop VM")
-    _add_identity_args(p_stop)
-    _add_workspace_arg(p_stop)
-    _add_name_arg(p_stop)
-
-    p_restart = sub.add_parser("restart", help="Restart VM and re-inject credentials")
-    _add_identity_args(p_restart)
-    _add_workspace_arg(p_restart)
-    _add_name_arg(p_restart)
-
-    p_update = sub.add_parser(
-        "update", help="Reinstall vergil-tooling and refresh plugins in a running box (in place)"
-    )
-    _add_identity_args(p_update)
-    _add_workspace_arg(p_update)
-    _add_name_arg(p_update)
-    p_update.add_argument(
-        "--tag", default="", help="Override version tag (default: tag from initial install)"
-    )
-    p_update.add_argument(
-        "--all",
-        action="store_true",
-        help=(
-            "Update every box owned by a configured identity (fail-deferred: all "
-            "boxes are attempted even if one fails; non-running boxes are skipped and "
-            "reported). Off-platform boxes are updated in place over IAP, exactly "
-            "like Lima boxes — no rebuild."
-        ),
-    )
-    progress.add_progress_args(p_update, ())
-
-    p_destroy = sub.add_parser("destroy", help="Destroy VM entirely")
-    _add_identity_args(p_destroy)
-    _add_workspace_arg(p_destroy)
-    _add_name_arg(p_destroy)
-    p_destroy.add_argument(
-        "--tag",
-        default="",
-        help="OpenTofu module version tag for off-platform destroy (default: from config)",
-    )
-    p_destroy.add_argument(
-        "--yes",
-        "-y",
-        action="store_true",
-        help="Skip the confirmation prompt (required for non-interactive destroy)",
-    )
-
-    p_destroy_volume = sub.add_parser(
-        "destroy-volume",
-        help="Destroy an off-platform VM's PERSISTENT volume (irreversible)",
-    )
-    _add_identity_args(p_destroy_volume)
-    _add_workspace_arg(p_destroy_volume)
-    _add_name_arg(p_destroy_volume)
-    p_destroy_volume.add_argument(
-        "--tag",
-        default="",
-        help="OpenTofu module version tag (default: from config)",
-    )
-    p_destroy_volume.add_argument(
-        "--yes",
-        action="store_true",
-        help="Skip the org/repo confirmation prompt",
-    )
-
-    p_rebuild = sub.add_parser("rebuild", help="Destroy and recreate VM (stateless rebuild)")
-    _add_identity_args(p_rebuild)
-    _add_workspace_arg(p_rebuild)
-    _add_name_arg(p_rebuild)
-    p_rebuild.add_argument(
-        "--tag", default="", help="VM template version tag (default: vergil version from config)"
-    )
-    p_rebuild.add_argument(
-        "--timeout",
-        default="30m",
-        help="How long to wait for VM to reach running status (default: 30m)",
-    )
-    p_rebuild.add_argument(
-        "--verbose",
-        action="store_true",
-        help=(
-            "Stream live cloud-init provisioning output during await-readiness "
-            "(off-platform only; also enabled by VERGIL_VM_VERBOSE)"
-        ),
-    )
-    progress.add_progress_args(p_rebuild, ())
-
-    p_list = sub.add_parser(
-        "list",
-        help="List all identity VMs and their status",
-        description=(
-            "List each identity's base and dedicated VMs with configured footprint "
-            "(CPUS/MEM/DISK), live occupancy, and SPEC health. Dedicated rows enumerate "
-            "existing VM instances only; a spec'd repo whose VM was never built is "
-            "surfaced by the session/start preflight gate, not here. AGENTS counts "
-            "harness instances (Claude Code sessions); HUMANS counts open human-held "
-            "interactive shells (a tally of shells, not distinct people). SPEC is one "
-            "of: ok, NEEDS-REBUILD (drift — rebuild it), orphaned (a VM whose repo "
-            "dropped its [vm]), or an 'under' flag when a host override sized the box "
-            "below the repo's declared footprint."
-        ),
-    )
-    # SUPPRESS so a global `--config` (before the subcommand) is not clobbered;
-    # `list` carries no `--identity` (identity does not scope a list of all VMs).
-    p_list.add_argument(
-        "--config", type=Path, default=argparse.SUPPRESS, help="Path to identities.toml"
-    )
-    p_list.add_argument(
-        "--sessions",
-        action="store_true",
-        help="List named Claude sessions across identity VMs instead of VMs",
-    )
-    p_list.add_argument("--active", action="store_true", help="With --sessions: only active")
-    p_list.add_argument("--idle", action="store_true", help="With --sessions: only idle")
-    p_list.add_argument(
-        "--all",
-        action="store_true",
-        help="With --sessions: include sessions older than the recency window",
-    )
-
-    p_volumes = sub.add_parser(
-        "volumes",
-        help="List off-platform persistent volumes",
-        description=(
-            "List every off-platform persistent volume from local tofu state — the "
-            "long-lived, billable, quota-consuming disks that outlive each ephemeral "
-            "cloud VM. Columns: IDENTITY, ORG/REPO, DISK NAME, SIZE, ZONE, REGION, all "
-            "read from the disk's stamped labels/attributes with no network call, so the "
-            "listing reflects exactly what vrg-vm manages. --live cross-checks each disk "
-            "against the provider (a LIVE column) to spot drift: a disk deleted out of "
-            "band shows MISSING; an unauthed/unreachable provider degrades to 'unknown'."
-        ),
-    )
-    p_volumes.add_argument(
-        "--live",
-        action="store_true",
-        help="Cross-check each volume against the cloud provider (adds a LIVE column)",
-    )
-
-    p_session = sub.add_parser("session", help="Launch a Claude session in a VM")
-    _add_identity_args(p_session)
-    p_session.add_argument(
-        "--name",
-        default=None,
-        help=(
-            "Named VM instance for this repo (default: the unnamed default instance). "
-            "Must be declared under [vm.<identity>.instances.<name>]. The instance is "
-            "appended to the session name ('<label>:<workspace>:<name>') so the title "
-            "shows which instance the session runs on; --resume renames a session "
-            "created before instance names to that form."
-        ),
-    )
-    p_session.add_argument(
-        "--allow-stale-vm",
-        action="store_true",
-        help="Connect even if the VM exceeds the staleness threshold",
-    )
-    p_session.add_argument(
-        "--resume",
-        default=None,
-        metavar="NAME",
-        help=(
-            "Attach to a session by name. Accepts a bare label (e.g. "
-            "'epic-85-centralize-epics'), composed with the workspace positional into "
-            "'<label>:<workspace>' (plus ':<name>' with --name) — symmetric with --label. "
-            "A full 'label:workspace[:name]' is also accepted, but its workspace (and "
-            "instance) must match the command line. "
-            "Resolves the name to one session and derives its working directory from that "
-            "session. With no verb, the workspace's sessions are listed and --label/--resume "
-            "are named. Mutually exclusive with --fresh."
-        ),
-    )
-    p_session.add_argument(
-        "--label",
-        default=None,
-        metavar="LABEL",
-        help=(
-            "Create a new purpose-named session named '<label>:<workspace>' (plus "
-            "':<name>' with --name) (e.g. "
-            "--label epic-213-x). The label is a clean slug; an epic-/adhoc- prefix "
-            "is the convention (off-convention warns, never blocks). Errors if a "
-            "session of that name already exists (add --fresh to retire that prior "
-            "session and start clean). Mutually exclusive with --resume."
-        ),
-    )
-    p_session.add_argument(
-        "--fresh",
-        action="store_true",
-        help=(
-            "With --label: retire any prior session of that name (rename to "
-            "'<name>~<datestamp>', never delete) and start a fresh one in its place."
-        ),
-    )
-    p_session.add_argument(
-        "--model",
-        default="",
-        help="Claude model to launch (overrides the identity's 'model' default)",
-    )
-    p_session.add_argument(
-        "workspace", help="Workspace path relative to projects_dir (use '.' for the root)"
-    )
-    p_session.add_argument(
-        "cmd",
-        nargs="*",
-        help=(
-            "Optional command override. A bare 'claude' (or nothing) goes through the "
-            "session resolver; anything else runs raw. Pass flags after '--' so they are "
-            "not parsed as session options (e.g. '-- bash', '-- claude --model X')."
-        ),
-    )
-
-    p_cp = sub.add_parser(
-        "cp",
-        help="Copy files/dirs between the host and a VM (bidirectional)",
-        description=(
-            "Copy files and directories (always recursive) between the host and the VM "
-            "that <workspace> resolves to. A ':'-prefixed path is on the VM; everything "
-            "else is on the host. All host paths -> push (dest defaults to the session "
-            "workspace dir); a ':'-prefixed source -> pull (dest defaults to the host "
-            "cwd). The destination is always treated as a directory (no rename). "
-            "Examples: 'vrg-vm cp acme/widgets spec.pdf' (into the workspace); "
-            "'vrg-vm cp acme/widgets spec.pdf :docs'; "
-            "'vrg-vm cp acme/widgets :artifacts/out.json .'"
-        ),
-    )
-    _add_identity_args(p_cp)
-    _add_name_arg(p_cp)
-    p_cp.add_argument(
-        "workspace", help="Workspace path relative to projects_dir (use '.' for the root)"
-    )
-    p_cp.add_argument(
-        "paths",
-        nargs="+",
-        help="Source path(s) then optional destination; ':'-prefix marks the VM side.",
-    )
-
-    args = parser.parse_args(argv)
-    warn_if_off_host()
-    if args.command is None:
-        parser.print_help()
-        return 1
-
-    dispatch = {
-        "create": _cmd_create,
-        "start": _cmd_start,
-        "stop": _cmd_stop,
-        "restart": _cmd_restart,
-        "update": _cmd_update,
-        "destroy": _cmd_destroy,
-        "destroy-volume": _cmd_destroy_volume,
-        "rebuild": _cmd_rebuild,
-        "list": _cmd_list,
-        "volumes": _cmd_volumes,
-        "session": _cmd_session,
-        "cp": _cmd_cp,
-    }
-    try:
-        return dispatch[args.command](args)
-    except (BorrowError, CopyPlanError, SpecError, NotImplementedError) as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 1
 
 
 if __name__ == "__main__":

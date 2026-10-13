@@ -14,8 +14,33 @@ from vergil_tooling.lib import git, identity_mode, progress
 from vergil_tooling.lib.update_deps.orchestrator import UpdateDepsState, build_stages
 
 
-def _csv(value: str) -> list[str]:
-    return [token.strip() for token in value.split(",") if token.strip()]
+def main(argv: list[str] | None = None) -> int:
+    if not identity_mode.is_human():
+        print(
+            "vrg-update-deps is a human-only command (PR submission, merge, and "
+            "finalization are human actions). Refusing to run as an agent.",
+            file=sys.stderr,
+        )
+        return 1
+    args = parse_args(argv)
+    repo_root = git.repo_root()
+    # --vergil is the special case: a deliberate ecosystem upgrade that runs only
+    # the vergil updater, in bump mode. It is mutually exclusive with --only/--skip.
+    only = ["vergil"] if args.vergil is not None else args.only
+    state = UpdateDepsState(
+        repo_root=repo_root,
+        only=only,
+        skip=args.skip,
+        vergil_bump=args.vergil,
+    )
+    return progress.run_pipeline(
+        state,
+        build_stages(),
+        command="vrg-update-deps",
+        label="vrg-update-deps",
+        args=args,
+        repo_root=repo_root,
+    )
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -44,33 +69,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def main(argv: list[str] | None = None) -> int:
-    if not identity_mode.is_human():
-        print(
-            "vrg-update-deps is a human-only command (PR submission, merge, and "
-            "finalization are human actions). Refusing to run as an agent.",
-            file=sys.stderr,
-        )
-        return 1
-    args = parse_args(argv)
-    repo_root = git.repo_root()
-    # --vergil is the special case: a deliberate ecosystem upgrade that runs only
-    # the vergil updater, in bump mode. It is mutually exclusive with --only/--skip.
-    only = ["vergil"] if args.vergil is not None else args.only
-    state = UpdateDepsState(
-        repo_root=repo_root,
-        only=only,
-        skip=args.skip,
-        vergil_bump=args.vergil,
-    )
-    return progress.run_pipeline(
-        state,
-        build_stages(),
-        command="vrg-update-deps",
-        label="vrg-update-deps",
-        args=args,
-        repo_root=repo_root,
-    )
+def _csv(value: str) -> list[str]:
+    return [token.strip() for token in value.split(",") if token.strip()]
 
 
 if __name__ == "__main__":

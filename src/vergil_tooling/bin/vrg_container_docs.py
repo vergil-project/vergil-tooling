@@ -17,29 +17,6 @@ from vergil_tooling.lib.container import build_container_args, detect_runtime
 _VALID_PREFIXES = {"dev", "prod"}
 
 
-def _usage(port: str) -> None:
-    print("Usage: vrg-container-docs [--prefix <dev|prod>] <serve|build> [mkdocs args...]")
-    print()
-    print("Commands:")
-    print(f"  serve   Start a live-reloading preview server (port {port})")
-    print("  build   Build the static documentation site")
-    print()
-    print("Options:")
-    print("  --prefix <dev|prod>  image prefix (default: prod)")
-    print()
-    print("Environment variables:")
-    print("  DOCKER_DOCS_IMAGE  Container image (override; ignores --prefix)")
-    print("  MKDOCS_CONFIG      Path to mkdocs.yml (default: docs/site/mkdocs.yml)")
-    print("  DOCS_PORT          Host port for serve (default: 8000)")
-
-
-def _docs_image(prefix: str) -> str:
-    return os.environ.get(
-        "DOCKER_DOCS_IMAGE",
-        f"ghcr.io/vergil-project/{prefix}-base:latest",
-    )
-
-
 def main(argv: list[str] | None = None) -> int:
     args = list(argv if argv is not None else sys.argv[1:])
 
@@ -121,6 +98,29 @@ def main(argv: list[str] | None = None) -> int:
     else:
         os.execvp("docker", container_args)  # noqa: S606, S607
     return 0  # pragma: no cover
+
+
+def _usage(port: str) -> None:
+    print("Usage: vrg-container-docs [--prefix <dev|prod>] <serve|build> [mkdocs args...]")
+    print()
+    print("Commands:")
+    print(f"  serve   Start a live-reloading preview server (port {port})")
+    print("  build   Build the static documentation site")
+    print()
+    print("Options:")
+    print("  --prefix <dev|prod>  image prefix (default: prod)")
+    print()
+    print("Environment variables:")
+    print("  DOCKER_DOCS_IMAGE  Container image (override; ignores --prefix)")
+    print("  MKDOCS_CONFIG      Path to mkdocs.yml (default: docs/site/mkdocs.yml)")
+    print("  DOCS_PORT          Host port for serve (default: 8000)")
+
+
+def _docs_image(prefix: str) -> str:
+    return os.environ.get(
+        "DOCKER_DOCS_IMAGE",
+        f"ghcr.io/vergil-project/{prefix}-base:latest",
+    )
 
 
 if __name__ == "__main__":

@@ -22,16 +22,6 @@ import sys
 from vergil_tooling.lib import epics, github
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(
-        description="Link a task under an epic as a native GitHub sub-issue."
-    )
-    parser.add_argument("--epic", required=True, help="Epic ref: owner/repo#N or #N")
-    parser.add_argument("--task", required=True, help="Task ref: owner/repo#N or #N")
-    return parser.parse_args(argv)
-
-
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     default_repo = github.current_repo()
@@ -67,6 +57,16 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     print(f"Linked {task.slug} under epic {epic.slug}.")
     return 0
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Link a task under an epic as a native GitHub sub-issue."
+    )
+    parser.add_argument("--epic", required=True, help="Epic ref: owner/repo#N or #N")
+    parser.add_argument("--task", required=True, help="Task ref: owner/repo#N or #N")
+    return parser.parse_args(argv)
 
 
 if __name__ == "__main__":

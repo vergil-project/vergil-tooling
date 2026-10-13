@@ -12,49 +12,6 @@ from vergil_tooling.lib.release.orchestrator import ReleaseState, build_stages
 from vergil_tooling.lib.release.resume import find_resume_target
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(
-        description="Run the full release workflow from develop to main.",
-    )
-    parser.add_argument(
-        "version_override",
-        nargs="?",
-        choices=("minor", "major"),
-        default=None,
-        help="Bump to next minor or major before releasing (default: release current version).",
-    )
-    parser.add_argument(
-        "--no-promote",
-        action="store_true",
-        default=False,
-        help="Skip rolling-tag promotion after release.",
-    )
-    parser.add_argument(
-        "--install",
-        action="store_true",
-        default=False,
-        help=(
-            "After a successful release, execute the [publish].consumer-refresh "
-            "commands (the install/refresh step of the cascade) instead of only "
-            "printing them."
-        ),
-    )
-    parser.add_argument(
-        "--resume",
-        nargs="?",
-        const="",
-        default=None,
-        metavar="X.Y.Z",
-        help=(
-            "Resume an interrupted release from its open tracking issue. "
-            "Optionally name the version when more than one is in flight."
-        ),
-    )
-    progress.add_progress_args(parser, build_stages())
-    return parser.parse_args(argv)
-
-
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
@@ -131,6 +88,49 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         return run_consumer_refresh(commands)
     return rc
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Run the full release workflow from develop to main.",
+    )
+    parser.add_argument(
+        "version_override",
+        nargs="?",
+        choices=("minor", "major"),
+        default=None,
+        help="Bump to next minor or major before releasing (default: release current version).",
+    )
+    parser.add_argument(
+        "--no-promote",
+        action="store_true",
+        default=False,
+        help="Skip rolling-tag promotion after release.",
+    )
+    parser.add_argument(
+        "--install",
+        action="store_true",
+        default=False,
+        help=(
+            "After a successful release, execute the [publish].consumer-refresh "
+            "commands (the install/refresh step of the cascade) instead of only "
+            "printing them."
+        ),
+    )
+    parser.add_argument(
+        "--resume",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="X.Y.Z",
+        help=(
+            "Resume an interrupted release from its open tracking issue. "
+            "Optionally name the version when more than one is in flight."
+        ),
+    )
+    progress.add_progress_args(parser, build_stages())
+    return parser.parse_args(argv)
 
 
 if __name__ == "__main__":

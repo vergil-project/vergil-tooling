@@ -65,6 +65,28 @@ _ISSUE_URL_RE = re.compile(r"/issues/(\d+)")
 _DRY_RUN_FOLLOWUP_ACTION = "dry-run: would file a follow-up issue"
 
 
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
+    spec = SweepSpec(
+        repos=list(args.repos),
+        branch_slug="add-pytest-xdist",
+        title=_TITLE,
+        body=_BODY,
+        commit_type="chore",
+        commit_scope="test",
+        epic=None,
+    )
+    results = run_sweep(spec, add_xdist, dry_run=args.dry_run)
+    for result in results:
+        print(f"{result.status:8} {result.repo}  {result.detail}")
+
+    followups = [r for r in results if r.needs_followup]
+    if followups:
+        _report_followups(followups, dry_run=args.dry_run)
+
+    return 1 if any(r.status == "error" for r in results) else 0
+
+
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="vrg-xdist-sync",
@@ -133,28 +155,6 @@ def _report_followups(followups: list[RepoResult], *, dry_run: bool) -> None:
     for result in followups:
         action = _DRY_RUN_FOLLOWUP_ACTION if dry_run else _file_followup(result.repo)
         print(f"  {result.repo}: {result.detail}\n    -> {action}")
-
-
-def main(argv: list[str] | None = None) -> int:
-    args = _parse_args(argv)
-    spec = SweepSpec(
-        repos=list(args.repos),
-        branch_slug="add-pytest-xdist",
-        title=_TITLE,
-        body=_BODY,
-        commit_type="chore",
-        commit_scope="test",
-        epic=None,
-    )
-    results = run_sweep(spec, add_xdist, dry_run=args.dry_run)
-    for result in results:
-        print(f"{result.status:8} {result.repo}  {result.detail}")
-
-    followups = [r for r in results if r.needs_followup]
-    if followups:
-        _report_followups(followups, dry_run=args.dry_run)
-
-    return 1 if any(r.status == "error" for r in results) else 0
 
 
 if __name__ == "__main__":
