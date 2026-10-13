@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -366,6 +367,29 @@ class TestRepoFlagInstallationSelection:
         assert "unknown-owner" in captured
         assert "vergil-project" in captured
         assert "wphillipmoore" in captured
+
+    @pytest.mark.parametrize("extra", [[], ["-R", "vergil-project/repo"]])
+    def test_app_auth_failure_fails_loudly_without_ambient_fallback(
+        self, extra: list[str], capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # A broken App key must never run gh on ambient (possibly human) auth (#3214).
+        err = github.AppAuthError(
+            "vergil-project", "12345", Path("/keys/app.pem"), "HTTP Error 401: Unauthorized"
+        )
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+                side_effect=err,
+            ),
+            patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+        ):
+            rc = main(["issue", "list", *extra])
+        assert rc == 1
+        mock_run.assert_not_called()
+        captured = capsys.readouterr().err
+        assert captured.startswith("vrg-gh: GitHub App authentication failed")
+        assert "HTTP Error 401" in captured
+        assert "Refusing to fall back to ambient gh auth" in captured
 
 
 # -- subprocess passthrough ---------------------------------------------------

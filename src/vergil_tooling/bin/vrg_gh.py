@@ -293,6 +293,9 @@ def _exec_gh(argv: list[str]) -> int:
             file=sys.stderr,
         )
         return 1
+    except github.AppAuthError as exc:
+        print(f"vrg-gh: {github.app_auth_message(exc)}", file=sys.stderr)
+        return 1
     env: dict[str, str] | None = None
     if token is not None:
         env = {**os.environ, "GH_TOKEN": token}
