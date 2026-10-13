@@ -14697,6 +14697,34 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#rotating-an-app-private-key" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rotating an App private key
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Rotating an App private key">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#steps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Steps
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#responding-to-a-compromised-credential" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -15282,6 +15310,34 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#rotating-an-app-private-key" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rotating an App private key
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Rotating an App private key">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#steps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Steps
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#responding-to-a-compromised-credential" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -15499,6 +15555,102 @@ the contributor operates in. Installation tokens are minted per-org
 from the same private key, so adding a new org requires only
 installing the existing App on it — no new keys, no credential
 reconfiguration.</p>
+<h2 id="rotating-an-app-private-key">Rotating an App private key<a class="headerlink" href="#rotating-an-app-private-key" title="Permanent link">&para;</a></h2>
+<p>Routine rotation replaces an agent App's private key while the old
+key is still trusted. The user App (<code>&lt;username&gt;-vergil-user</code>) and the
+audit App (<code>&lt;username&gt;-vergil-audit</code>) each have their own key, so
+rotate them one at a time with the steps below. If a key is known or
+suspected to be exposed, do not use this procedure. Follow
+<a href="#responding-to-a-compromised-credential">Responding to a compromised credential</a>
+instead, which deletes the old key first.</p>
+<p>A GitHub App can hold more than one active private key at a time.
+Rotation relies on that: you add the new key, switch the agent VM to
+it, prove it works, and only then delete the old one. The agent is
+never left without a working credential.</p>
+<p>No rotation cadence is set for these keys. The date in each key's
+filename (see <a href="../account-setup/">Account Setup</a>, Step 1.3) records
+when it was generated.</p>
+<h3 id="steps">Steps<a class="headerlink" href="#steps" title="Permanent link">&para;</a></h3>
+<ol>
+<li>
+<p><strong>Generate a new key.</strong> On the App's settings page, go to
+   <strong>Private keys</strong> and click <strong>Generate a private key</strong>, as in
+   <a href="../account-setup/">Account Setup</a>, Step 1.3 (user App) or Step 2.3
+   (audit App). Leave the existing key in place for now.</p>
+</li>
+<li>
+<p><strong>Store it next to the old key.</strong> Move the downloaded file into
+   <code>~/.config/vergil/keys/</code> and keep GitHub's filename, which carries
+   the generation date:</p>
+</li>
+</ol>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>mv<span class="w"> </span>~/Downloads/&lt;username&gt;-vergil-&lt;role&gt;.&lt;YYYY-MM-DD&gt;.private-key.pem<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">   </span>~/.config/vergil/keys/
+</code></pre></div>
+<ol>
+<li>
+<p><strong>Point <code>identities.toml</code> at the new key.</strong> In
+   <code>~/.config/vergil/identities.toml</code>, set the identity's
+   <code>private_key_path</code> to the new file. The <code>app_id</code>, the App's
+   permissions, and its installations do not change.</p>
+</li>
+<li>
+<p><strong>Re-inject the key into the agent VM.</strong> Provisioning copies the
+   key into the VM as <code>~/.config/vergil/app.pem</code>, and it does so only
+   when the VM is created, started, restarted, or rebuilt. A running VM
+   keeps using the old key until one of those happens:</p>
+</li>
+<li>
+<p><strong>Lima:</strong> <code>vrg-vm restart --identity &lt;identity&gt;</code> stops and
+     starts the VM, then re-injects credentials. This ends any session
+     running in the VM, so do it between sessions.</p>
+</li>
+<li><strong>Off-platform:</strong> <code>vrg-vm rebuild --identity &lt;identity&gt;</code>.
+     Off-platform VMs do not support <code>restart</code>, so the rebuild destroys
+     the VM and creates it again. Its persistent volume is reattached.</li>
+</ol>
+<p>Do this for every VM provisioned from the identity, including any
+   dedicated workspace VM (pass its <code>&lt;org&gt;/&lt;repo&gt;</code> after the command,
+   for example <code>vrg-vm restart --identity &lt;identity&gt; &lt;org&gt;/&lt;repo&gt;</code>).</p>
+<ol>
+<li><strong>Verify the new key.</strong> Inside the VM, run a read that has to mint
+   an installation token, for example:</li>
+</ol>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>vrg-gh<span class="w"> </span>pr<span class="w"> </span>list<span class="w"> </span>--repo<span class="w"> </span>&lt;owner&gt;/&lt;repo&gt;
+</code></pre></div>
+<p><code>pr list</code> is allowed for both the user and the audit identity. Use
+   a repository on an account the App is installed on. The check
+   passes when the command lists PRs with no warnings. If the key
+   cannot mint a token, <code>vrg-gh</code> prints
+   <code>GitHub App auth failed, falling back to ambient auth</code> on stderr.
+   Treat that warning as a failed check even if the command goes on to
+   return output.</p>
+<p><code>vrg-whoami --explain</code> is not a key check. It reports which
+   identity the VM resolves to, from the injected files, but it does
+   not use the key to authenticate.</p>
+<ol>
+<li><strong>Delete the old key on GitHub.</strong> Back on the App's <strong>Private keys</strong>
+   list, delete the old key. Each key is listed with its creation date
+   and a SHA-256 fingerprint. To match a local file to a fingerprint,
+   run:</li>
+</ol>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>openssl<span class="w"> </span>rsa<span class="w"> </span>-in<span class="w"> </span>&lt;key-file&gt;.pem<span class="w"> </span>-pubout<span class="w"> </span>-outform<span class="w"> </span>DER<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="p">|</span><span class="w"> </span>openssl<span class="w"> </span>sha256<span class="w"> </span>-binary<span class="w"> </span><span class="p">|</span><span class="w"> </span>openssl<span class="w"> </span>base64
+</code></pre></div>
+<p>Do not delete the old key before step 5 passes. Until it is deleted,
+   a copy of it can still mint tokens.</p>
+<ol>
+<li><strong>Delete the old key file.</strong> Remove the old <code>.pem</code> from
+   <code>~/.config/vergil/keys/</code>.</li>
+</ol>
+<p>Repeat the steps for the other App.</p>
+<p>The org automation App (<code>vergil-release[bot]</code>) is not covered by these
+steps. Its key is consumed by the <code>APP_PRIVATE_KEY</code> Actions secret,
+not by an agent VM. The CI publishing secrets are not covered either.
+For both, see
+<a href="#org-automation-app-vergil-releasebot">Org automation App</a> and
+<a href="#ci-publishing-secrets">CI publishing secrets</a> under the compromise
+procedure below.</p>
 <h2 id="responding-to-a-compromised-credential">Responding to a compromised credential<a class="headerlink" href="#responding-to-a-compromised-credential" title="Permanent link">&para;</a></h2>
 <p>Use this procedure when a credential is known or suspected to be
 exposed: a private key copied off its host, a secret printed in a log,
@@ -15590,9 +15742,9 @@ old <code>.pem</code> from <code>~/.config/vergil/keys/</code>. Then re-inject t
 the agent VM. Credentials are injected when a VM is created, started,
 restarted, or rebuilt, so run <code>vrg-vm restart</code> on Lima or
 <code>vrg-vm rebuild</code> off-platform. The App ID, permissions, and
-installations do not change. Routine, non-emergency key rotation is
-tracked separately in
-<a href="https://github.com/vergil-project/vergil-tooling/issues/779">#779</a>.</p>
+installations do not change. Verify the new key as described in
+<a href="#rotating-an-app-private-key">Rotating an App private key</a>, step 5.
+For routine, non-emergency key rotation, use that procedure instead.</p>
 <h3 id="the-human-account">The human account<a class="headerlink" href="#the-human-account" title="Permanent link">&para;</a></h3>
 <p><strong>Blast radius.</strong> This is the most severe case. The human account
 holds the authority that the agent Apps lack: review, approval, merge,
