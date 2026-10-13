@@ -18,7 +18,9 @@ readability, and long-term maintainability across repositories.
 - Shebang: `#!/usr/bin/env bash` (portable, PATH-based resolution).
 - Safety header: `set -euo pipefail` required in all scripts immediately
   after the shebang. This enables exit-on-error (`-e`), undefined variable
-  errors (`-u`), and pipeline failure propagation (`pipefail`).
+  errors (`-u`), and pipeline failure propagation (`pipefail`). See
+  [Shell Error Handling](error-handling.md) for the cases this header does
+  not cover and the rules for tolerating an expected failure.
 - Linting: ShellCheck. Run with default settings unless a project documents
   specific exclusions.
 - Formatting: shfmt. Run with default settings unless a project documents
@@ -39,3 +41,5 @@ Required checks for shell/infrastructure repositories are maintained in the
 ## Document Map
 
 - Naming conventions: [naming-conventions.md](naming-conventions.md)
+- Error handling (`|| true`, pipefail pitfalls, GitHub Actions shells):
+  [error-handling.md](error-handling.md)
