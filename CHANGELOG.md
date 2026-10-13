@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.240] - 2026-10-13
+
+### Bug fixes
+
+- report GitHub API failures as named errors instead of a traceback (#3208)
+- link ci-sync tasks per-org and discard the probe worktree on failure (#3209)
+
+### Documentation
+
+- add routine App private key rotation procedure (#3210)
+
 ## [2.1.239] - 2026-10-13
 
 ### Bug fixes
