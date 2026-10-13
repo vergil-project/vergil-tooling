@@ -6,7 +6,7 @@ import contextlib
 import json
 import re
 import subprocess
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -45,6 +45,7 @@ from vergil_tooling.lib.github_config import (
     _read_classic_protection,
     _ruleset_body,
     apply_desired_state,
+    assert_ci_gates_producible,
     classify_evidence_gate,
     compute_desired_state,
     compute_diff,
@@ -667,6 +668,43 @@ def test_unrecognized_reusable_workflow_produces_no_contexts() -> None:
     assert unproducible_ci_yaml_contexts(ci_yaml, ["quality / common"], ghas=True) == [
         "quality / common"
     ]
+
+
+# -- assert_ci_gates_producible: the guard shared by repo-init and apply (#2788)
+
+
+def _desired_with(rulesets: list[DesiredRuleset]) -> Any:
+    """A desired-state stand-in: the guard reads only ``.rulesets``."""
+    from types import SimpleNamespace
+
+    return SimpleNamespace(rulesets=rulesets)
+
+
+def test_assert_ci_gates_producible_passes_when_every_context_is_emitted() -> None:
+    ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=True, docs=True)
+    assert_ci_gates_producible(
+        _desired_with([ruleset]), _ci_yaml(jobs=_FULL_CI_JOBS), ghas=True, source="ci.yml"
+    )
+
+
+def test_assert_ci_gates_producible_names_source_and_missing_context() -> None:
+    ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=True, docs=True)
+    jobs_without_docs = {k: v for k, v in _FULL_CI_JOBS.items() if k != "docs"}
+    with pytest.raises(RuntimeError) as exc:
+        assert_ci_gates_producible(
+            _desired_with([ruleset]),
+            _ci_yaml(jobs=jobs_without_docs),
+            ghas=True,
+            source="o/r@develop:.github/workflows/ci.yml",
+        )
+    message = str(exc.value)
+    assert "o/r@develop:.github/workflows/ci.yml never emits" in message
+    assert "Unproducible required contexts: docs / docs" in message
+
+
+def test_assert_ci_gates_producible_no_ci_gates_ruleset_is_a_no_op() -> None:
+    """With no ``CI gates`` ruleset there is nothing required to cross-check."""
+    assert_ci_gates_producible(_desired_with([]), "", ghas=True, source="ci.yml")
 
 
 # ---------------------------------------------------------------------------

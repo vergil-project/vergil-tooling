@@ -1529,36 +1529,17 @@ def _assert_ci_gates_producible(ctx: RepoInitContext, desired: DesiredState, *, 
     ruleset against the contexts the generated ``.github/workflows/ci.yml``
     actually produces on a ``pull_request``. A mismatch means the repository
     cannot merge any PR — every check that runs is green while the merge stays
-    blocked on a context that never reports (issue #2720).
+    blocked on a context that never reports (issue #2720). The check itself is
+    shared with the ``vrg-github-repo-config apply`` sync path (issue #2788).
     """
-    from vergil_tooling.lib.github_config import (
-        required_status_contexts,
-        unproducible_ci_yaml_contexts,
-    )
+    from vergil_tooling.lib.github_config import assert_ci_gates_producible
 
     if ctx.work_dir is None:  # pragma: no cover
         raise RuntimeError("work_dir not set")
-    ci_gates = next((rs for rs in desired.rulesets if rs.name == "CI gates"), None)
-    if ci_gates is None:  # pragma: no cover - the CI-gates ruleset is always derived
-        return
-
     ci_yaml = (ctx.work_dir / ".github" / "workflows" / "ci.yml").read_text()
-    unproducible = unproducible_ci_yaml_contexts(
-        ci_yaml, required_status_contexts(ci_gates), ghas=ghas
+    assert_ci_gates_producible(
+        desired, ci_yaml, ghas=ghas, source="the generated .github/workflows/ci.yml"
     )
-    if unproducible:
-        raise RuntimeError(
-            "GitHub CI-gates ruleset requires status checks that "
-            ".github/workflows/ci.yml never emits on a pull_request, so the "
-            "repository could not merge any PR (every check that runs would be "
-            "green while the merge stays blocked).\n"
-            "  Unproducible required contexts: " + ", ".join(unproducible) + "\n"
-            "Every required context must correspond to a job the generated ci.yml "
-            "runs on pull_request. Likely cause:\n"
-            "  - integration-tests = true: ci.yml has no integration job yet "
-            "(vergil-project/vergil-tooling#2721) — set integration-tests = false "
-            "in vergil.toml until it is a first-class feature."
-        )
 
 
 def step_github_config(ctx: RepoInitContext) -> None:
