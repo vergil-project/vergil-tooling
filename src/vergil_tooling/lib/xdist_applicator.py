@@ -12,7 +12,21 @@ right place:
   ``[project.optional-dependencies]``.
 * ``REQUIREMENTS_TXT`` — a ``requirements-dev.txt`` / ``requirements-test.txt``
   line.
-* ``POETRY`` — the dev/test table under ``[tool.poetry…]``.
+* ``POETRY`` — **not supported yet**: a Poetry repo needing the change is
+  refused loudly (``needs_followup=True``, no edit) because the sweep does not
+  run ``poetry lock``, and an edit without it would commit a stale
+  ``poetry.lock``. One that already declares ``pytest-xdist`` is reported as
+  unchanged.
+
+**Lockfile refresh (#2980).** Editing ``pyproject.toml`` in a uv-managed repo
+(one carrying a ``uv.lock``) without re-locking leaves the lockfile stale, and
+the PR then fails the audit gate (``uv lock --check``). So after a
+``UV_GROUPS`` / ``PEP621_OPTIONAL`` edit, when ``uv.lock`` is present, the
+applicator runs ``uv lock`` in the worktree (on the host, where the sweep
+runs) so the lock change lands in the same commit. If ``uv`` is not on
+``PATH`` or ``uv lock`` fails, it raises :class:`UvLockError`; the sweep driver
+records that repo as an ``error`` rather than committing a stale lock. The
+``REQUIREMENTS_TXT`` shape carries no lockfile, so there is nothing to refresh.
 
 The edit is **idempotent**: if ``pytest-xdist`` is already declared the applicator
 reports no change. For :attr:`~vergil_tooling.lib.dev_deps.DevDepShape.UNKNOWN` —
@@ -25,6 +39,8 @@ follow-up, never a silent no-op (repo "no silent failures" policy).
 from __future__ import annotations
 
 import re
+import shutil
+import subprocess  # noqa: S404 - fixed `uv lock` argv, never shell
 import tomllib
 from typing import TYPE_CHECKING, cast
 
@@ -46,6 +62,56 @@ _REQUIREMENTS_FILES = ("requirements-dev.txt", "requirements-test.txt")
 #: group that already carries ``pytest`` wins; otherwise a conventional dev/test
 #: group is used.
 _GROUP_PREFERENCE = ("dev", "test")
+
+_UV_LOCK = "uv.lock"
+
+
+class UvLockError(RuntimeError):
+    """``uv.lock`` could not be refreshed after editing ``pyproject.toml``.
+
+    Raised (never swallowed) so the sweep driver records the repo as an
+    ``error`` instead of committing a ``pyproject.toml`` whose lockfile is stale.
+    """
+
+
+def _refresh_uv_lock(worktree: Path) -> bool:
+    """Run ``uv lock`` in *worktree* if it is uv-managed (has a ``uv.lock``).
+
+    Returns ``True`` when the lock was refreshed, ``False`` when the repo has no
+    ``uv.lock`` (nothing to keep in sync). Raises :class:`UvLockError` when
+    ``uv`` is not on ``PATH`` or ``uv lock`` exits non-zero.
+    """
+    if not (worktree / _UV_LOCK).is_file():
+        return False
+    uv = shutil.which("uv")
+    if uv is None:
+        raise UvLockError(
+            f"{worktree}: pyproject.toml was edited but `uv` is not on PATH, so "
+            f"{_UV_LOCK} cannot be refreshed; install uv and re-run the sweep "
+            f"(refusing to commit a stale {_UV_LOCK})"
+        )
+    result = subprocess.run(  # noqa: S603 - fixed `uv lock` argv, no shell
+        [uv, "lock"],
+        cwd=worktree,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        raise UvLockError(
+            f"{worktree}: `uv lock` failed (exit {result.returncode}) after editing "
+            f"pyproject.toml; refusing to commit a stale {_UV_LOCK}: {detail}"
+        )
+    return True
+
+
+def _write_and_lock(worktree: Path, pyproject: Path, new_text: str, where: str) -> AppResult:
+    """Write the edited *pyproject*, refresh ``uv.lock`` if present, report it."""
+    pyproject.write_text(new_text, encoding="utf-8")
+    if _refresh_uv_lock(worktree):
+        return _added(f"{where} (and refreshed {_UV_LOCK})")
+    return _added(where)
 
 
 def _normalize_req_name(spec: str) -> str:
@@ -122,8 +188,7 @@ def _apply_uv_groups(worktree: Path) -> AppResult:
     )
     if new_text is None:  # pragma: no cover - guarded by the isinstance check above
         return _cannot_place("could not locate the [dependency-groups].dev array")
-    pyproject.write_text(new_text, encoding="utf-8")
-    return _added("[dependency-groups].dev")
+    return _write_and_lock(worktree, pyproject, new_text, "[dependency-groups].dev")
 
 
 def _select_group(groups: dict[str, object]) -> str | None:
@@ -165,8 +230,9 @@ def _apply_pep621_optional(worktree: Path) -> AppResult:
     )
     if new_text is None:  # pragma: no cover - the target came from the parsed table
         return _cannot_place(f"could not locate the [project.optional-dependencies].{target} array")
-    pyproject.write_text(new_text, encoding="utf-8")
-    return _added(f"[project.optional-dependencies].{target}")
+    return _write_and_lock(
+        worktree, pyproject, new_text, f"[project.optional-dependencies].{target}"
+    )
 
 
 def _apply_requirements(worktree: Path) -> AppResult:
@@ -192,21 +258,23 @@ def _apply_requirements(worktree: Path) -> AppResult:
 
 
 def _apply_poetry(worktree: Path) -> AppResult:
-    """Add ``pytest-xdist = "*"`` to the dev/test poetry dependency table."""
+    """Refuse a Poetry repo that needs ``pytest-xdist``: no edit, loud follow-up.
+
+    The sweep does not run ``poetry lock``, so editing the dependency table
+    would commit a stale ``poetry.lock`` (the uv analogue is #2980). Until
+    Poetry is supported the repo is flagged ``needs_followup``. A repo that
+    already declares ``pytest-xdist`` needs no change and is reported as such.
+    """
     pyproject = worktree / "pyproject.toml"
-    text = pyproject.read_text(encoding="utf-8")
-    data = tomllib.loads(text)
+    data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
     poetry = data.get("tool", {}).get("poetry", {})
     header, table = _select_poetry_table(poetry)
-    if header is None:
-        return _cannot_place("no dev/test dependency table found under [tool.poetry]")
-    if isinstance(table, dict) and _has_package(table):
+    if header is not None and isinstance(table, dict) and _has_package(table):
         return _already(f"[{header}]")
-    new_text = _insert_poetry_dependency(text, header, _PACKAGE)
-    if new_text is None:  # pragma: no cover - the header came from the parsed table
-        return _cannot_place(f"could not locate the [{header}] table")
-    pyproject.write_text(new_text, encoding="utf-8")
-    return _added(f"[{header}]")
+    return _cannot_place(
+        "Poetry-managed repos are not supported by the xdist sweep yet (it does not "
+        "run `poetry lock`, so an edit would leave poetry.lock stale)"
+    )
 
 
 def _select_poetry_table(poetry: dict[str, object]) -> tuple[str | None, object]:
@@ -227,16 +295,6 @@ def _select_poetry_table(poetry: dict[str, object]) -> tuple[str | None, object]
     if isinstance(poetry.get("dev-dependencies"), dict):
         return "tool.poetry.dev-dependencies", poetry["dev-dependencies"]
     return None, None
-
-
-def _insert_poetry_dependency(text: str, header: str, package: str) -> str | None:
-    """Insert ``package = "*"`` immediately after the ``[header]`` table line."""
-    header_re = re.compile(r"^\[" + re.escape(header) + r"\][ \t]*$", re.MULTILINE)
-    m = header_re.search(text)
-    if m is None:
-        return None
-    insert_at = m.end()
-    return f'{text[:insert_at]}\n{package} = "*"{text[insert_at:]}'
 
 
 def _added(where: str) -> AppResult:

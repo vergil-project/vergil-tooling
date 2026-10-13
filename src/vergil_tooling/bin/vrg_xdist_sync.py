@@ -7,10 +7,16 @@ It builds the xdist :class:`~vergil_tooling.lib.fleet_sweep.SweepSpec` and drive
 :func:`~vergil_tooling.lib.xdist_applicator.add_xdist` — one PR per repo whose dev
 dependencies actually need ``pytest-xdist``.
 
-Per the "no silent failures" policy, a repo whose dev-dependency shape the
-applicator cannot classify is **not** silently skipped: it is flagged
-``needs_followup``, reported in a prominent post-sweep summary, and a follow-up
-issue is filed against it so the gap is tracked rather than lost.
+Per the "no silent failures" policy, a repo the applicator cannot safely
+change — an unclassifiable dev-dependency shape, an unlocatable target group,
+or a Poetry-managed repo (not supported yet) — is **not** silently skipped: it
+is flagged ``needs_followup``, reported in a prominent post-sweep summary, and a
+follow-up issue is filed against it so the gap is tracked rather than lost.
+
+In a uv-managed repo (one with a ``uv.lock``) the applicator also runs
+``uv lock`` on the host so the lockfile change lands in the same commit; ``uv``
+must therefore be on the sweeping host's ``PATH``. A missing ``uv`` or a failed
+``uv lock`` is recorded as that repo's ``error`` (#2980).
 
 Each repo in ``--repos`` is a path to a local clone. ``--dry-run`` reports the
 intended action per repo without touching any git or GitHub state (no worktree,
@@ -41,14 +47,17 @@ _BODY = (
     "(epic vergil-project/.github#333, Task 9)."
 )
 
-_FOLLOWUP_TITLE = "chore(test): add pytest-xdist manually (unclassifiable dev-dependency shape)"
+_FOLLOWUP_TITLE = "chore(test): add pytest-xdist manually (fleet sweep could not apply it)"
 _FOLLOWUP_BODY = (
     "The `vrg-xdist-sync` fleet sweep (epic vergil-project/.github#333, Task 9) "
-    "could not classify this repository's development-dependency shape, so it "
-    "made **no** edit rather than guess. Add `pytest-xdist` to the dev "
-    "dependencies by hand so the suite can run in parallel under the shared "
-    "TEST command. Filed automatically because the sweep reports loudly instead "
-    'of silently skipping (repo "no silent failures" policy).'
+    "could not safely add `pytest-xdist` to this repository (an unclassifiable "
+    "development-dependency shape, no dev/test group to place it in, or a "
+    "Poetry-managed repo, which the sweep does not support yet), so it made "
+    "**no** edit rather than guess. Add `pytest-xdist` to the dev dependencies "
+    "by hand (and refresh the lockfile, if any) so the suite can run in "
+    "parallel under the shared TEST command. Filed automatically because the "
+    'sweep reports loudly instead of silently skipping (repo "no silent '
+    'failures" policy).'
 )
 
 _ISSUE_URL_RE = re.compile(r"/issues/(\d+)")
@@ -61,8 +70,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         prog="vrg-xdist-sync",
         description=(
             "Add pytest-xdist to each Python repo's dev dependencies, opening "
-            "one PR per repo that needs it. Repos whose dev-dependency shape "
-            "cannot be classified are reported loudly and get a follow-up "
+            "one PR per repo that needs it. Repos the sweep cannot safely "
+            "change are reported loudly and get a follow-up "
             "issue. Never submits or merges — stops at report-ready."
         ),
     )
@@ -86,7 +95,7 @@ def _file_followup(repo: str) -> str:
 
     Returns a human-readable outcome line. A ``vrg-issue-create`` failure is
     caught and surfaced in that line rather than aborting the summary — the
-    unclassified repo is already reported loudly regardless.
+    deferred repo is already reported loudly regardless.
     """
     result = subprocess.run(  # noqa: S603 - fixed vrg-issue-create argv, no shell
         [  # noqa: S607
@@ -117,7 +126,7 @@ def _report_followups(followups: list[RepoResult], *, dry_run: bool) -> None:
     """
     print("\n" + "=" * 72)
     print(
-        f"NEEDS FOLLOW-UP: {len(followups)} repo(s) could not be classified "
+        f"NEEDS FOLLOW-UP: {len(followups)} repo(s) could not be changed safely "
         "— pytest-xdist NOT added"
     )
     print("=" * 72)
