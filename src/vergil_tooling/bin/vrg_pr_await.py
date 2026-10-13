@@ -21,15 +21,30 @@ If any poll (including the first) finds the PR already merged, it aborts with
 an error and exits 1: a merged PR can never settle into actionable output, and
 a merge observed mid-watch means the audit cycle was bypassed — failing loudly
 surfaces the short-circuit instead of leaving an orphaned poll loop running.
+
+When the PR is given as a URL, every GitHub call is scoped to the URL's owner
+(``github.target_org``) so the App installation token is minted for the PR's
+org regardless of the cwd -- e.g. under a Monitor whose cwd is not a git repo,
+where cwd org detection finds nothing and no token is injected (#3055). A bare
+PR number keeps the cwd-based resolution, matching how ``gh`` resolves it.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 
-from vergil_tooling.lib import pr_await
+from vergil_tooling.lib import github, pr_await
+
+_PR_URL_OWNER_RE = re.compile(r"github\.com/([^/]+)/[^/]+/pull/\d+")
+
+
+def pr_owner(pr: str) -> str | None:
+    """The owner of *pr* when it is a PR URL, else ``None`` (cwd resolution)."""
+    match = _PR_URL_OWNER_RE.search(pr)
+    return match.group(1) if match else None
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -55,11 +70,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
-        state, reason = pr_await.wait_for_settle(
-            args.pr,
-            since_sha=args.since_sha,
-            since_reviews=args.since_reviews,
-        )
+        # Mint the App token for the PR's owner, not the cwd org (#3055).
+        with github.target_org(pr_owner(args.pr)):
+            state, reason = pr_await.wait_for_settle(
+                args.pr,
+                since_sha=args.since_sha,
+                since_reviews=args.since_reviews,
+            )
+    except github.NoInstallationError as exc:
+        print(f"vrg-pr-await: {github.no_installation_message(exc)}", file=sys.stderr)
+        return 1
     except pr_await.PrMergedError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
