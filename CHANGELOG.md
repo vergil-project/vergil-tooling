@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.239] - 2026-10-13
+
+### Bug fixes
+
+- run the ci-gates producibility guard on the config-sync path (#3196)
+- resolve relative repo paths before driving worktrees (#3197)
+- refresh uv.lock after the xdist edit and refuse Poetry repos (#3198)
+- scope App token to the PR URL's owner (#3201)
+- allow a frozen push that publishes exactly the reported commit (#3202)
+
+### Documentation
+
+- add shell error-handling standard (#3194)
+- add compromised-credential response procedure (#3203)
+
+### Refactoring
+
+- rename vrg_vm_resolve to match its command and document CLI entry-point standard (#3195)
+
 ## [2.1.238] - 2026-10-12
 
 ### Bug fixes
