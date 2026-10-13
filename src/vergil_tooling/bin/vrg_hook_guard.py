@@ -58,28 +58,6 @@ _GH_DENY_REASON = (
 )
 
 
-def _find_vergil_toml(start: Path) -> Path | None:
-    current = start.resolve()
-    for parent in (current, *current.parents):
-        candidate = parent / "vergil.toml"
-        if candidate.exists():
-            return candidate
-    return None
-
-
-def _deny(reason: str) -> None:
-    json.dump(
-        {
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "deny",
-                "permissionDecisionReason": reason,
-            },
-        },
-        sys.stdout,
-    )
-
-
 def main() -> int:
     try:
         data = json.load(sys.stdin)
@@ -119,3 +97,25 @@ def main() -> int:
                 return 0
 
     return 0
+
+
+def _find_vergil_toml(start: Path) -> Path | None:
+    current = start.resolve()
+    for parent in (current, *current.parents):
+        candidate = parent / "vergil.toml"
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _deny(reason: str) -> None:
+    json.dump(
+        {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": reason,
+            },
+        },
+        sys.stdout,
+    )

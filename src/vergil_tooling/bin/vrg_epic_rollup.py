@@ -21,15 +21,6 @@ import sys
 from vergil_tooling.lib import epics, github
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(
-        description="Roll up a task's parent epic when the task closes."
-    )
-    parser.add_argument("--task", required=True, help="Closed task ref: owner/repo#N or #N")
-    return parser.parse_args(argv)
-
-
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     default_repo = github.current_repo()
@@ -48,6 +39,15 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     print(f"Epic rollup check complete for {task.slug}.")
     return 0
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Roll up a task's parent epic when the task closes."
+    )
+    parser.add_argument("--task", required=True, help="Closed task ref: owner/repo#N or #N")
+    return parser.parse_args(argv)
 
 
 if __name__ == "__main__":

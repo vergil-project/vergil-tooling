@@ -22,37 +22,6 @@ from vergil_tooling.lib import github
 _KINDS = ("triage", "idea", "research")
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(
-        prog="vrg-triage-create",
-        description=(
-            "Create an unlinked intake issue (triage/idea/research, no parent "
-            "epic). Routed to the org's .github by default; use --repo to "
-            "override (e.g. a task whose PR lands in .github itself)."
-        ),
-        epilog=("The issue is intentionally unlinked; triage-review folds it into an epic later."),
-    )
-    parser.add_argument("--title", required=True, help="Issue title")
-    parser.add_argument(
-        "--kind",
-        choices=_KINDS,
-        default="triage",
-        help="Intake kind; sets the primary label (default: triage)",
-    )
-    parser.add_argument("--body", default="", help="Issue body text")
-    parser.add_argument("--body-file", help="Read the issue body from a file")
-    parser.add_argument(
-        "--label",
-        action="append",
-        default=[],
-        help="Extra label (repeatable); the --kind label is always added",
-    )
-    parser.add_argument("--assignee", action="append", default=[], help="Assignee (repeatable)")
-    parser.add_argument("--repo", help="Target repo owner/name (defaults to the org's .github)")
-    return parser.parse_args(argv)
-
-
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     if args.repo:
@@ -84,6 +53,37 @@ def main(argv: list[str] | None = None) -> int:
         )
     print(f"Created {url} ({args.kind}).")
     return 0
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        prog="vrg-triage-create",
+        description=(
+            "Create an unlinked intake issue (triage/idea/research, no parent "
+            "epic). Routed to the org's .github by default; use --repo to "
+            "override (e.g. a task whose PR lands in .github itself)."
+        ),
+        epilog=("The issue is intentionally unlinked; triage-review folds it into an epic later."),
+    )
+    parser.add_argument("--title", required=True, help="Issue title")
+    parser.add_argument(
+        "--kind",
+        choices=_KINDS,
+        default="triage",
+        help="Intake kind; sets the primary label (default: triage)",
+    )
+    parser.add_argument("--body", default="", help="Issue body text")
+    parser.add_argument("--body-file", help="Read the issue body from a file")
+    parser.add_argument(
+        "--label",
+        action="append",
+        default=[],
+        help="Extra label (repeatable); the --kind label is always added",
+    )
+    parser.add_argument("--assignee", action="append", default=[], help="Assignee (repeatable)")
+    parser.add_argument("--repo", help="Target repo owner/name (defaults to the org's .github)")
+    return parser.parse_args(argv)
 
 
 if __name__ == "__main__":

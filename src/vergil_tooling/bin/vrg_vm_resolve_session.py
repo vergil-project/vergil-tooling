@@ -41,6 +41,39 @@ from vergil_tooling.lib.session_store import (
 )
 
 
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="vrg-vm-resolve-session")
+    parser.add_argument("--identity")
+    parser.add_argument("--path")
+    parser.add_argument("--fresh", action="store_true")
+    parser.add_argument("--resume-name", dest="resume_name", default=None)
+    parser.add_argument("--label", dest="label", default=None)
+    parser.add_argument("--instance", dest="instance", default=None)
+    parser.add_argument("--list-json", action="store_true", dest="list_json")
+    parser.add_argument("extra", nargs=argparse.REMAINDER)
+    args = parser.parse_args(argv)
+
+    if args.list_json:
+        return list_json()
+
+    if not args.identity or not args.path:
+        print("ERROR: --identity and --path are required", file=sys.stderr)
+        return 1
+
+    extra = args.extra
+    if extra and extra[0] == "--":
+        extra = extra[1:]
+    return resolve(
+        args.identity,
+        args.path,
+        args.fresh,
+        extra,
+        args.resume_name,
+        args.label,
+        args.instance,
+    )
+
+
 def _claude_dir() -> Path:
     return Path.home() / ".claude"
 
@@ -778,39 +811,6 @@ def list_json() -> int:
     ]
     print(json.dumps(rows))
     return 0
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="vrg-vm-resolve-session")
-    parser.add_argument("--identity")
-    parser.add_argument("--path")
-    parser.add_argument("--fresh", action="store_true")
-    parser.add_argument("--resume-name", dest="resume_name", default=None)
-    parser.add_argument("--label", dest="label", default=None)
-    parser.add_argument("--instance", dest="instance", default=None)
-    parser.add_argument("--list-json", action="store_true", dest="list_json")
-    parser.add_argument("extra", nargs=argparse.REMAINDER)
-    args = parser.parse_args(argv)
-
-    if args.list_json:
-        return list_json()
-
-    if not args.identity or not args.path:
-        print("ERROR: --identity and --path are required", file=sys.stderr)
-        return 1
-
-    extra = args.extra
-    if extra and extra[0] == "--":
-        extra = extra[1:]
-    return resolve(
-        args.identity,
-        args.path,
-        args.fresh,
-        extra,
-        args.resume_name,
-        args.label,
-        args.instance,
-    )
 
 
 if __name__ == "__main__":

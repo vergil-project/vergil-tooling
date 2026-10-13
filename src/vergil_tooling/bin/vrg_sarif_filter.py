@@ -20,19 +20,6 @@ from vergil_tooling.lib.output import emit_error
 from vergil_tooling.lib.sarif import filter_suppressed, parse_sarif
 
 
-def _write_atomic(path: Path, text: str) -> None:
-    """Write ``text`` to ``path`` via a sibling temp file and an atomic replace."""
-    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
-    tmp = Path(tmp_name)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(text)
-        tmp.replace(path)
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        raise
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="vrg-sarif-filter",
@@ -65,6 +52,19 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"vrg-sarif-filter: removed {removed} suppressed result(s) from {src} -> {dst}")
     return 0
+
+
+def _write_atomic(path: Path, text: str) -> None:
+    """Write ``text`` to ``path`` via a sibling temp file and an atomic replace."""
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        tmp.replace(path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 if __name__ == "__main__":

@@ -18,6 +18,52 @@ from datetime import UTC, datetime
 from vergil_tooling.lib import epics, github
 
 
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    return int(args.func(args))
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        prog="vrg-adhoc-epic",
+        description=(
+            "Manage a repo's ad-hoc epic. The live epic is 'Epic (ad hoc): "
+            "<repo>' labelled epic + ad-hoc; stamped per-quarter buckets are "
+            "'Archive (ad hoc): <repo> — YYYY-Qn' labelled archive + ad-hoc. "
+            "Homed by visibility: <org>/.github for a public repo, the repo "
+            "itself when private."
+        ),
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+    p_ensure = sub.add_parser(
+        "ensure",
+        help="Ensure the repo's ad-hoc epic exists (create-if-missing, idempotent).",
+    )
+    p_ensure.add_argument("--repo", help="Target repo owner/name (defaults to the current repo)")
+    p_ensure.set_defaults(func=cmd_ensure)
+    p_arch = sub.add_parser(
+        "archive",
+        help="Drain closed children into per-quarter archives (dry-run unless --apply).",
+    )
+    scope = p_arch.add_mutually_exclusive_group()
+    scope.add_argument("--repo", help="Target repo owner/name (defaults to the current repo)")
+    scope.add_argument("--all-in", metavar="ORG", help="Sweep every repo in ORG")
+    p_arch.add_argument("--apply", action="store_true", help="Execute (default: dry-run)")
+    p_arch.set_defaults(func=cmd_archive)
+    p_norm = sub.add_parser(
+        "normalize",
+        help=(
+            "Convert legacy 'Epic (ad hoc): … — Qn' archives to the "
+            "'Archive (ad hoc): …' form (dry-run unless --apply)."
+        ),
+    )
+    p_norm.add_argument("--all-in", metavar="ORG", required=True, help="Sweep every repo in ORG")
+    p_norm.add_argument("--apply", action="store_true", help="Execute (default: dry-run)")
+    p_norm.set_defaults(func=cmd_normalize)
+    return parser.parse_args(argv)
+
+
 def cmd_ensure(args: argparse.Namespace) -> int:
     repo = args.repo or github.current_repo()
     if "/" not in repo:
@@ -74,52 +120,6 @@ def cmd_normalize(args: argparse.Namespace) -> int:
     for conv in conversions:
         print(f"  {conv.ref.slug}: {conv.old_title!r} -> {conv.new_title!r}")
     return 0
-
-
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(
-        prog="vrg-adhoc-epic",
-        description=(
-            "Manage a repo's ad-hoc epic. The live epic is 'Epic (ad hoc): "
-            "<repo>' labelled epic + ad-hoc; stamped per-quarter buckets are "
-            "'Archive (ad hoc): <repo> — YYYY-Qn' labelled archive + ad-hoc. "
-            "Homed by visibility: <org>/.github for a public repo, the repo "
-            "itself when private."
-        ),
-    )
-    sub = parser.add_subparsers(dest="command", required=True)
-    p_ensure = sub.add_parser(
-        "ensure",
-        help="Ensure the repo's ad-hoc epic exists (create-if-missing, idempotent).",
-    )
-    p_ensure.add_argument("--repo", help="Target repo owner/name (defaults to the current repo)")
-    p_ensure.set_defaults(func=cmd_ensure)
-    p_arch = sub.add_parser(
-        "archive",
-        help="Drain closed children into per-quarter archives (dry-run unless --apply).",
-    )
-    scope = p_arch.add_mutually_exclusive_group()
-    scope.add_argument("--repo", help="Target repo owner/name (defaults to the current repo)")
-    scope.add_argument("--all-in", metavar="ORG", help="Sweep every repo in ORG")
-    p_arch.add_argument("--apply", action="store_true", help="Execute (default: dry-run)")
-    p_arch.set_defaults(func=cmd_archive)
-    p_norm = sub.add_parser(
-        "normalize",
-        help=(
-            "Convert legacy 'Epic (ad hoc): … — Qn' archives to the "
-            "'Archive (ad hoc): …' form (dry-run unless --apply)."
-        ),
-    )
-    p_norm.add_argument("--all-in", metavar="ORG", required=True, help="Sweep every repo in ORG")
-    p_norm.add_argument("--apply", action="store_true", help="Execute (default: dry-run)")
-    p_norm.set_defaults(func=cmd_normalize)
-    return parser.parse_args(argv)
-
-
-def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
-    return int(args.func(args))
 
 
 if __name__ == "__main__":

@@ -37,25 +37,21 @@ _BODY = (
 )
 
 
-def _gitignore_applicator(worktree: Path) -> AppResult:
-    """Sync one worktree's ``.gitignore`` via the single-repo applicator CLI.
-
-    ``vrg-gitignore-sync --write`` prints ``already in sync`` when the block is
-    already current (no change) and a ``synced managed block …`` line when it
-    rewrote the file; that distinction is mapped to :attr:`AppResult.changed`.
-    A non-zero exit raises so the driver records the repo as an error.
-    """
-    result = subprocess.run(  # noqa: S603 - fixed argv, no shell, no interpolation
-        ["vrg-gitignore-sync", "--write", "--repo", str(worktree)],  # noqa: S607
-        capture_output=True,
-        text=True,
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
+    spec = SweepSpec(
+        repos=list(args.repos),
+        branch_slug="gitignore-sync",
+        title=_TITLE,
+        body=_BODY,
+        commit_type="chore",
+        commit_scope="gitignore",
+        epic=None,
     )
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout).strip()
-        raise RuntimeError(f"vrg-gitignore-sync failed (exit {result.returncode}): {detail}")
-    output = result.stdout.strip()
-    changed = "already in sync" not in output
-    return AppResult(changed=changed, summary=output)
+    results = run_sweep(spec, _gitignore_applicator, dry_run=args.dry_run)
+    for result in results:
+        print(f"{result.status:8} {result.repo}  {result.detail}")
+    return 1 if any(r.status == "error" for r in results) else 0
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -82,21 +78,25 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = _parse_args(argv)
-    spec = SweepSpec(
-        repos=list(args.repos),
-        branch_slug="gitignore-sync",
-        title=_TITLE,
-        body=_BODY,
-        commit_type="chore",
-        commit_scope="gitignore",
-        epic=None,
+def _gitignore_applicator(worktree: Path) -> AppResult:
+    """Sync one worktree's ``.gitignore`` via the single-repo applicator CLI.
+
+    ``vrg-gitignore-sync --write`` prints ``already in sync`` when the block is
+    already current (no change) and a ``synced managed block …`` line when it
+    rewrote the file; that distinction is mapped to :attr:`AppResult.changed`.
+    A non-zero exit raises so the driver records the repo as an error.
+    """
+    result = subprocess.run(  # noqa: S603 - fixed argv, no shell, no interpolation
+        ["vrg-gitignore-sync", "--write", "--repo", str(worktree)],  # noqa: S607
+        capture_output=True,
+        text=True,
     )
-    results = run_sweep(spec, _gitignore_applicator, dry_run=args.dry_run)
-    for result in results:
-        print(f"{result.status:8} {result.repo}  {result.detail}")
-    return 1 if any(r.status == "error" for r in results) else 0
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        raise RuntimeError(f"vrg-gitignore-sync failed (exit {result.returncode}): {detail}")
+    output = result.stdout.strip()
+    changed = "already in sync" not in output
+    return AppResult(changed=changed, summary=output)
 
 
 if __name__ == "__main__":

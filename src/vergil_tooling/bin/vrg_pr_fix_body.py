@@ -38,29 +38,6 @@ _RETRIGGER_MESSAGE = (
 )
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(
-        description="Regenerate a PR body from corrected fields via the validated builder."
-    )
-    parser.add_argument("pr", help="PR number or URL")
-    parser.add_argument(
-        "--issue", required=True, help="Issue reference: number or owner/repo#number"
-    )
-    parser.add_argument("--summary", required=True, help="One-line PR summary")
-    parser.add_argument(
-        "--linkage", default="Ref", choices=ALLOWED_LINKAGES, help="Issue linkage keyword"
-    )
-    parser.add_argument("--notes", default="", help="Additional notes")
-    parser.add_argument("--dry-run", action="store_true", help="Print the body without editing")
-    parser.add_argument(
-        "--no-retrigger",
-        action="store_true",
-        help="Skip the empty-commit push that re-triggers CI after the edit",
-    )
-    return parser.parse_args(argv)
-
-
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
@@ -120,6 +97,29 @@ def main(argv: list[str] | None = None) -> int:
     git.run("push")
     print("Done. CI will re-run against the corrected body.")
     return 0
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Regenerate a PR body from corrected fields via the validated builder."
+    )
+    parser.add_argument("pr", help="PR number or URL")
+    parser.add_argument(
+        "--issue", required=True, help="Issue reference: number or owner/repo#number"
+    )
+    parser.add_argument("--summary", required=True, help="One-line PR summary")
+    parser.add_argument(
+        "--linkage", default="Ref", choices=ALLOWED_LINKAGES, help="Issue linkage keyword"
+    )
+    parser.add_argument("--notes", default="", help="Additional notes")
+    parser.add_argument("--dry-run", action="store_true", help="Print the body without editing")
+    parser.add_argument(
+        "--no-retrigger",
+        action="store_true",
+        help="Skip the empty-commit push that re-triggers CI after the edit",
+    )
+    return parser.parse_args(argv)
 
 
 if __name__ == "__main__":

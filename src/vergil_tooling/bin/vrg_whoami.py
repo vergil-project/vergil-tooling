@@ -41,6 +41,25 @@ _SIGNAL_LABELS = {
 }
 
 
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+
+    if args.platform:
+        print(resolve_platform().platform.value)
+        return 0
+
+    resolution = resolve()
+
+    if args.explain:
+        rc = _explain(resolution)
+        print()
+        _explain_platform(resolve_platform())
+        return rc
+
+    print(resolution.mode.value)
+    return 0
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Print the resolved Vergil identity role.",
@@ -114,25 +133,6 @@ def _explain_platform(platform: PlatformResolution) -> None:
             "— disagreement is the condition that precedes a misread.",
             file=sys.stderr,
         )
-
-
-def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
-
-    if args.platform:
-        print(resolve_platform().platform.value)
-        return 0
-
-    resolution = resolve()
-
-    if args.explain:
-        rc = _explain(resolution)
-        print()
-        _explain_platform(resolve_platform())
-        return rc
-
-    print(resolution.mode.value)
-    return 0
 
 
 if __name__ == "__main__":

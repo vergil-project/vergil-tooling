@@ -31,6 +31,77 @@ from vergil_tooling.lib.output import emit_error
 from vergil_tooling.lib.repo_config import audit_local_config
 
 
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    all_compliant = True
+
+    local_compliant = True
+    if args.repo and not _cwd_matches_repo(args.repo):
+        print(
+            f"\n  WARNING: --repo {args.repo} does not match the current directory's "
+            f"git remote.\n"
+            f"  Local checks skipped — cd into the repo's checkout to audit local files.\n",
+            file=sys.stderr,
+        )
+        print("  local: skipped (not in local checkout)")
+    else:
+        local_diff = audit_local_config(Path.cwd())
+        _print_local_diff(local_diff)
+        local_compliant = local_diff.is_compliant()
+
+    if not local_compliant:
+        all_compliant = False
+
+    repo = _resolve_repo(args)
+    # Exit codes are a contract for callers (e.g. vrg-release): 0 = compliant,
+    # 1 = genuinely non-compliant, 2 = the audit could not complete. Config
+    # resolution and the GitHub state fetch can fail operationally (missing
+    # vergil.toml, HTTP 403 reading actions/permissions under an App token);
+    # those are exit 2 with a clean diagnostic, never a false "non-compliant"
+    # verdict or a raw traceback (#1691).
+    try:
+        config = _load_local_config(args.config) if args.config else _resolve_config(repo)
+    except RuntimeError as exc:
+        emit_error(str(exc))
+        return 2
+
+    try:
+        github_diff = _audit_repo(repo, config)
+    except (github.GitHubAPIError, RuntimeError) as exc:
+        emit_error(f"Could not audit {repo}: {exc}")
+        return 2
+    _print_diff(repo, github_diff)
+    if not github_diff.is_compliant():
+        all_compliant = False
+
+    if args.command == "audit":
+        return 0 if all_compliant else 1
+    if args.command == "diff":
+        return 0
+
+    if github_diff.is_compliant():
+        print("GitHub config compliant, nothing to apply.")
+    else:
+        print(f"  Applying to {repo}...")
+        try:
+            reports = _apply_repo(repo, config)
+        except RuntimeError as exc:
+            emit_error(str(exc))
+            return 1
+        print(f"  {repo}: applied")
+        for report in reports:
+            preserved = ", ".join(report.preserved_settings) or "none"
+            print(
+                f"  {repo}: classic protection on {report.branch} — removed stale CI "
+                f"contexts [{', '.join(report.removed_contexts)}]; preserved [{preserved}]"
+            )
+
+    if not local_compliant:
+        return 1
+
+    return 0
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Enforce canonical repository configuration.",
@@ -282,77 +353,6 @@ def _cwd_matches_repo(repo: str) -> bool:
     except Exception:
         return False
     return cwd_repo == repo
-
-
-def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
-    all_compliant = True
-
-    local_compliant = True
-    if args.repo and not _cwd_matches_repo(args.repo):
-        print(
-            f"\n  WARNING: --repo {args.repo} does not match the current directory's "
-            f"git remote.\n"
-            f"  Local checks skipped — cd into the repo's checkout to audit local files.\n",
-            file=sys.stderr,
-        )
-        print("  local: skipped (not in local checkout)")
-    else:
-        local_diff = audit_local_config(Path.cwd())
-        _print_local_diff(local_diff)
-        local_compliant = local_diff.is_compliant()
-
-    if not local_compliant:
-        all_compliant = False
-
-    repo = _resolve_repo(args)
-    # Exit codes are a contract for callers (e.g. vrg-release): 0 = compliant,
-    # 1 = genuinely non-compliant, 2 = the audit could not complete. Config
-    # resolution and the GitHub state fetch can fail operationally (missing
-    # vergil.toml, HTTP 403 reading actions/permissions under an App token);
-    # those are exit 2 with a clean diagnostic, never a false "non-compliant"
-    # verdict or a raw traceback (#1691).
-    try:
-        config = _load_local_config(args.config) if args.config else _resolve_config(repo)
-    except RuntimeError as exc:
-        emit_error(str(exc))
-        return 2
-
-    try:
-        github_diff = _audit_repo(repo, config)
-    except (github.GitHubAPIError, RuntimeError) as exc:
-        emit_error(f"Could not audit {repo}: {exc}")
-        return 2
-    _print_diff(repo, github_diff)
-    if not github_diff.is_compliant():
-        all_compliant = False
-
-    if args.command == "audit":
-        return 0 if all_compliant else 1
-    if args.command == "diff":
-        return 0
-
-    if github_diff.is_compliant():
-        print("GitHub config compliant, nothing to apply.")
-    else:
-        print(f"  Applying to {repo}...")
-        try:
-            reports = _apply_repo(repo, config)
-        except RuntimeError as exc:
-            emit_error(str(exc))
-            return 1
-        print(f"  {repo}: applied")
-        for report in reports:
-            preserved = ", ".join(report.preserved_settings) or "none"
-            print(
-                f"  {repo}: classic protection on {report.branch} — removed stale CI "
-                f"contexts [{', '.join(report.removed_contexts)}]; preserved [{preserved}]"
-            )
-
-    if not local_compliant:
-        return 1
-
-    return 0
 
 
 if __name__ == "__main__":

@@ -32,6 +32,71 @@ class CommandSpec:
     name_default: str | None  # e.g. "*" for DISPLAY QUEUE
 
 
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+
+    if not args.mapping_data.is_file():
+        print(f"Error: mapping-data.json not found: {args.mapping_data}", file=sys.stderr)
+        return 1
+
+    specs = load_commands(args.mapping_data)
+    mapping_pages = _resolve_mapping_pages(args.mapping_pages_dir)
+    generated = generate(args.language, specs, mapping_pages=mapping_pages)
+
+    if args.target is not None:
+        if args.check:
+            return _check_target(args.target, args.language, generated)
+        changed = update_file(args.target, args.language, generated)
+        status = "updated" if changed else "unchanged"
+        print(f"{args.target}: {status} ({len(specs)} methods)")
+    else:
+        print(generated)
+
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Generate MQSC command methods from mapping-data.json."
+    )
+    parser.add_argument(
+        "--language",
+        required=True,
+        choices=LANGUAGES,
+        help="Target language for code generation.",
+    )
+    parser.add_argument(
+        "--mapping-data",
+        required=True,
+        type=Path,
+        help="Path to mapping-data.json.",
+    )
+    parser.add_argument(
+        "--target",
+        type=Path,
+        default=None,
+        help="Target source file to update (between markers). If omitted, prints to stdout.",
+    )
+    parser.add_argument(
+        "--mapping-pages-dir",
+        type=Path,
+        default=None,
+        help="Directory containing Sphinx mapping .md files (Python only).",
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Check that generated output matches the target file (exit 1 if different).",
+    )
+    return parser.parse_args(argv)
+
+
 def classify_command(
     verb: str,
     mqsc_qualifier: str,
@@ -703,48 +768,6 @@ def update_file(target_path: Path, language: str, generated: str) -> bool:
     return changed
 
 
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
-
-
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(
-        description="Generate MQSC command methods from mapping-data.json."
-    )
-    parser.add_argument(
-        "--language",
-        required=True,
-        choices=LANGUAGES,
-        help="Target language for code generation.",
-    )
-    parser.add_argument(
-        "--mapping-data",
-        required=True,
-        type=Path,
-        help="Path to mapping-data.json.",
-    )
-    parser.add_argument(
-        "--target",
-        type=Path,
-        default=None,
-        help="Target source file to update (between markers). If omitted, prints to stdout.",
-    )
-    parser.add_argument(
-        "--mapping-pages-dir",
-        type=Path,
-        default=None,
-        help="Directory containing Sphinx mapping .md files (Python only).",
-    )
-    parser.add_argument(
-        "--check",
-        action="store_true",
-        help="Check that generated output matches the target file (exit 1 if different).",
-    )
-    return parser.parse_args(argv)
-
-
 def _resolve_mapping_pages(mapping_pages_dir: Path | None) -> frozenset[str]:
     """Discover available mapping pages from a directory."""
     if mapping_pages_dir is None or not mapping_pages_dir.is_dir():
@@ -752,29 +775,6 @@ def _resolve_mapping_pages(mapping_pages_dir: Path | None) -> frozenset[str]:
     return frozenset(
         p.stem for p in mapping_pages_dir.iterdir() if p.suffix == ".md" and p.stem != "index"
     )
-
-
-def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
-
-    if not args.mapping_data.is_file():
-        print(f"Error: mapping-data.json not found: {args.mapping_data}", file=sys.stderr)
-        return 1
-
-    specs = load_commands(args.mapping_data)
-    mapping_pages = _resolve_mapping_pages(args.mapping_pages_dir)
-    generated = generate(args.language, specs, mapping_pages=mapping_pages)
-
-    if args.target is not None:
-        if args.check:
-            return _check_target(args.target, args.language, generated)
-        changed = update_file(args.target, args.language, generated)
-        status = "updated" if changed else "unchanged"
-        print(f"{args.target}: {status} ({len(specs)} methods)")
-    else:
-        print(generated)
-
-    return 0
 
 
 def _check_target(target: Path, language: str, generated: str) -> int:

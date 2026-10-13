@@ -32,6 +32,47 @@ from vergil_tooling.lib.linkage import extract_merge_pr, extract_tracking_issue
 _extract_pr_number = extract_merge_pr
 
 
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+
+    if args.pr is not None:
+        return _resolve_from_pr(args.pr)
+
+    try:
+        subject = git.read_output("log", "-1", "--format=%s", args.commit)
+    except subprocess.CalledProcessError as exc:
+        print(
+            f"ERROR: failed to read commit {args.commit}: {exc}",
+            file=sys.stderr,
+        )
+        return 2
+
+    pr_num = _extract_pr_number(subject)
+
+    if pr_num is None:
+        with contextlib.suppress(subprocess.CalledProcessError):
+            try:
+                pr_num = _pr_from_api(args.commit)
+            except ValueError as exc:
+                print(
+                    f"ERROR: malformed GitHub API response for commit {args.commit}: {exc}",
+                    file=sys.stderr,
+                )
+                return 2
+
+    if pr_num is None:
+        print(
+            f"ERROR: cannot determine PR for commit {args.commit}. "
+            f"Subject: {subject!r}. "
+            "Tried: merge-commit pattern, squash-merge pattern, GitHub API lookup. "
+            "Use --pr N to specify the PR number directly.",
+            file=sys.stderr,
+        )
+        return 1
+
+    return _resolve_from_pr(pr_num)
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Extract the tracking issue number from a merge commit.",
@@ -101,47 +142,6 @@ def _resolve_from_pr(pr_num: int) -> int:
 
     print(issue_num)
     return 0
-
-
-def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
-
-    if args.pr is not None:
-        return _resolve_from_pr(args.pr)
-
-    try:
-        subject = git.read_output("log", "-1", "--format=%s", args.commit)
-    except subprocess.CalledProcessError as exc:
-        print(
-            f"ERROR: failed to read commit {args.commit}: {exc}",
-            file=sys.stderr,
-        )
-        return 2
-
-    pr_num = _extract_pr_number(subject)
-
-    if pr_num is None:
-        with contextlib.suppress(subprocess.CalledProcessError):
-            try:
-                pr_num = _pr_from_api(args.commit)
-            except ValueError as exc:
-                print(
-                    f"ERROR: malformed GitHub API response for commit {args.commit}: {exc}",
-                    file=sys.stderr,
-                )
-                return 2
-
-    if pr_num is None:
-        print(
-            f"ERROR: cannot determine PR for commit {args.commit}. "
-            f"Subject: {subject!r}. "
-            "Tried: merge-commit pattern, squash-merge pattern, GitHub API lookup. "
-            "Use --pr N to specify the PR number directly.",
-            file=sys.stderr,
-        )
-        return 1
-
-    return _resolve_from_pr(pr_num)
 
 
 if __name__ == "__main__":

@@ -37,6 +37,82 @@ _LANGUAGE_CHECK_ORDER = [
 ]
 
 
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="vrg-validate",
+        description="Run validation checks from the command registry.",
+    )
+    parser.add_argument(
+        "--check",
+        choices=list(_CHECK_KINDS.keys()),
+        default=None,
+        help="Run only this check type. Omit to run all.",
+    )
+    progress.add_progress_args(parser, ())
+    args = parser.parse_args(argv)
+
+    if not _in_dev_container():
+        print(
+            "ERROR: vrg-validate must run inside a dev container.\n"
+            "       Run: vrg-container-run -- vrg-validate",
+            file=sys.stderr,
+        )
+        return 1
+
+    # Prepend `.venv/bin` unconditionally. Under the container's anonymous
+    # `.venv` mask the dir is empty at startup and populated by the install
+    # stage; PATH resolves at exec time, so prepending a not-yet-existent dir is
+    # harmless and required for later bare `ruff`/`mypy`/`pytest` to resolve
+    # (#2486).
+    venv_bin = Path.cwd() / ".venv" / "bin"
+    if str(venv_bin) not in os.environ.get("PATH", "").split(os.pathsep):
+        os.environ["PATH"] = f"{venv_bin}{os.pathsep}{os.environ.get('PATH', '')}"
+
+    repo_root = git.repo_root()
+
+    cpp_std: str | None = None
+    cpp_stdlib: str | None = None
+    test_parallel = True
+    try:
+        vergil_config = config.read_config(repo_root)
+        language = vergil_config.project.primary_language
+        cpp_std = vergil_config.cpp.std
+        cpp_stdlib = vergil_config.cpp.stdlib
+        test_parallel = vergil_config.test.parallel
+    except FileNotFoundError:
+        language = None
+    except config.ConfigError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+
+    # Probe pytest-xdist live: the Python TEST command only gains
+    # ``-n auto --dist worksteal`` when the plugin is importable in the
+    # environment where the tests actually run (this container).
+    xdist_available = importlib.util.find_spec("xdist") is not None
+
+    stages = _build_stages(
+        args.check,
+        language,
+        repo_root,
+        cpp_std=cpp_std,
+        cpp_stdlib=cpp_stdlib,
+        test_parallel=test_parallel,
+        xdist_available=xdist_available,
+    )
+    if not stages:
+        print(f"No {args.check} commands for language '{language or '<not set>'}'")
+        return 0
+
+    return progress.run_pipeline(
+        None,
+        stages,
+        command="vrg-validate",
+        label="vrg-validate",
+        args=args,
+        repo_root=repo_root,
+    )
+
+
 def _in_dev_container() -> bool:
     if Path("/.dockerenv").exists():
         return True
@@ -189,82 +265,6 @@ def _build_stages(
             stages.append(Stage("custom", custom_fn, mode="fail_defer"))
 
     return stages
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="vrg-validate",
-        description="Run validation checks from the command registry.",
-    )
-    parser.add_argument(
-        "--check",
-        choices=list(_CHECK_KINDS.keys()),
-        default=None,
-        help="Run only this check type. Omit to run all.",
-    )
-    progress.add_progress_args(parser, ())
-    args = parser.parse_args(argv)
-
-    if not _in_dev_container():
-        print(
-            "ERROR: vrg-validate must run inside a dev container.\n"
-            "       Run: vrg-container-run -- vrg-validate",
-            file=sys.stderr,
-        )
-        return 1
-
-    # Prepend `.venv/bin` unconditionally. Under the container's anonymous
-    # `.venv` mask the dir is empty at startup and populated by the install
-    # stage; PATH resolves at exec time, so prepending a not-yet-existent dir is
-    # harmless and required for later bare `ruff`/`mypy`/`pytest` to resolve
-    # (#2486).
-    venv_bin = Path.cwd() / ".venv" / "bin"
-    if str(venv_bin) not in os.environ.get("PATH", "").split(os.pathsep):
-        os.environ["PATH"] = f"{venv_bin}{os.pathsep}{os.environ.get('PATH', '')}"
-
-    repo_root = git.repo_root()
-
-    cpp_std: str | None = None
-    cpp_stdlib: str | None = None
-    test_parallel = True
-    try:
-        vergil_config = config.read_config(repo_root)
-        language = vergil_config.project.primary_language
-        cpp_std = vergil_config.cpp.std
-        cpp_stdlib = vergil_config.cpp.stdlib
-        test_parallel = vergil_config.test.parallel
-    except FileNotFoundError:
-        language = None
-    except config.ConfigError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 1
-
-    # Probe pytest-xdist live: the Python TEST command only gains
-    # ``-n auto --dist worksteal`` when the plugin is importable in the
-    # environment where the tests actually run (this container).
-    xdist_available = importlib.util.find_spec("xdist") is not None
-
-    stages = _build_stages(
-        args.check,
-        language,
-        repo_root,
-        cpp_std=cpp_std,
-        cpp_stdlib=cpp_stdlib,
-        test_parallel=test_parallel,
-        xdist_available=xdist_available,
-    )
-    if not stages:
-        print(f"No {args.check} commands for language '{language or '<not set>'}'")
-        return 0
-
-    return progress.run_pipeline(
-        None,
-        stages,
-        command="vrg-validate",
-        label="vrg-validate",
-        args=args,
-        repo_root=repo_root,
-    )
 
 
 if __name__ == "__main__":
