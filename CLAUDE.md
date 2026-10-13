@@ -140,7 +140,11 @@ identity and warns when the two disagree.
 **Agents must not run `vrg-submit-pr`.** PR submission, merge, and
 finalization are human actions. The PR handoff is:
 
-1. The agent records the PR metadata with `vrg-pr-workflow report-ready
+1. The agent pushes the branch to origin (`vrg-git push -u origin <branch>`)
+   **before** `report-ready` — `report-ready` pushes only the relay ref, never
+   the branch. When the delta touches `.github/workflows/**` the agent push is
+   refused by GitHub (expected); the human's `vrg-submit-pr` pushes it instead.
+   The agent then records the PR metadata with `vrg-pr-workflow report-ready
    --issue <N> --title --summary --notes` (optional `--linkage`), which writes
    it to `.vergil/pr-workflow.json`. `title`, `summary`, and `notes` are
    required and non-empty. `linkage` defaults to `Ref`; leave it there.
@@ -164,7 +168,13 @@ push path refuses a further push — both printing an actionable refusal
 (and a loud DRIFT warning if HEAD has already advanced past the reported
 commit, the reused-branch straggler of epic #146 / issue #1719). The rule
 follows directly from "a task is exactly one PR": more work is a **new
-follow-up issue**, never a change to this branch. Two things stay allowed:
+follow-up issue**, never a change to this branch. Three things stay allowed:
+
+- **Publishing the reported commit** — if the branch was not pushed before
+  `report-ready`, an explicit `vrg-git push [-u] origin <branch>` is still
+  allowed while HEAD is exactly the recorded `head_sha` on that branch (it
+  cannot advance the branch past what was reported; issue #3071). A drifted
+  HEAD, a missing `head_sha`, or any other refspec/flag stays refused.
 
 - **Correcting the PR prose** — re-running `report-ready` overwrites the
   recorded title/summary/notes. That is metadata, not code, so it is not

@@ -47,12 +47,20 @@ class FreezeCheck:
       hard-blocking legitimate work over a corrupt file.
     - ``drifted`` — HEAD has already advanced past the reported commit; the
       straggler state, flagged loudly in ``message``.
+    - ``publishable_branch`` — set (to the frozen branch's name) only on
+      positive evidence that the worktree is still checked out on that branch
+      with HEAD exactly at the recorded ``head_sha``. A push that publishes
+      that branch at HEAD lands precisely the reported commit, so it cannot
+      create the straggler the freeze exists to prevent (issue #3071). ``None``
+      whenever that evidence is missing — including a missing ``head_sha`` or an
+      unresolvable HEAD/branch — so an unknown never becomes a bypass.
     """
 
     frozen: bool
     message: str | None = None
     read_error: str | None = None
     drifted: bool = False
+    publishable_branch: str | None = None
 
 
 def is_frozen(state: WorkflowState | None) -> bool:
@@ -79,6 +87,19 @@ def has_drifted(state: WorkflowState, current_head: str | None) -> bool:
     if not recorded or not current_head:
         return False
     return bool(recorded != current_head)
+
+
+def at_reported_commit(state: WorkflowState, current_head: str | None) -> bool:
+    """Return True only when HEAD is positively the commit ``report-ready`` recorded.
+
+    The safe-state counterpart of :func:`has_drifted`, with the opposite
+    default: a missing recorded ``head_sha`` or an unresolvable current HEAD
+    yields False, so an unknown is never treated as "at the reported commit".
+    """
+    recorded = state.git.get("head_sha")
+    if not recorded or not current_head:
+        return False
+    return bool(recorded == current_head)
 
 
 def build_refusal(state: WorkflowState, *, action: str, current_head: str | None) -> str:
@@ -132,6 +153,18 @@ def _current_head(worktree_root: Path) -> str | None:
         return None
 
 
+def _current_branch(worktree_root: Path) -> str | None:
+    """Resolve *worktree_root*'s checked-out branch name (None if unresolvable).
+
+    A detached HEAD resolves to ``"HEAD"``, which never equals a recorded
+    branch name, so it cannot open the reported-commit push allowance.
+    """
+    try:
+        return git.read_output("-C", str(worktree_root), "rev-parse", "--abbrev-ref", "HEAD")
+    except (subprocess.CalledProcessError, OSError):
+        return None
+
+
 def check_worktree(worktree_root: Path, *, action: str) -> FreezeCheck:
     """Read *worktree_root*'s workflow state and report its freeze status.
 
@@ -148,4 +181,9 @@ def check_worktree(worktree_root: Path, *, action: str) -> FreezeCheck:
     current_head = _current_head(worktree_root)
     drifted = has_drifted(state, current_head)
     message = build_refusal(state, action=action, current_head=current_head)
-    return FreezeCheck(frozen=True, message=message, drifted=drifted)
+    publishable = None
+    if at_reported_commit(state, current_head) and _current_branch(worktree_root) == state.branch:
+        publishable = state.branch
+    return FreezeCheck(
+        frozen=True, message=message, drifted=drifted, publishable_branch=publishable
+    )
