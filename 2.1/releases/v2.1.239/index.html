@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.240/">
       
       
         <link rel="next" href="../v2.1.238/">
@@ -1283,6 +1283,8 @@
       
         
       
+        
+      
     
     
     
@@ -1338,6 +1340,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.240/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.240
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15130,6 +15160,7 @@ Add a 'Responding to a compromised credential' section to the credential managem
 <li><strong>rename vrg_vm_resolve to match its command and document CLI entry-point standard (#3195)</strong>
 Rename bin/vrg_vm_resolve.py to vrg_vm_resolve_session.py (and its test) so the module matches the vrg-vm-resolve-session command, the last mismatched entry point. Document the CLI entry-point convention (module name = command name, main(argv) -&gt; int signature and position, <strong>name</strong> guard, coverage exclusion) and gate the name mapping with test_cli_entry_points.py.</li>
 </ul>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.239/v2.1.239-ci-evidence.tar.gz">Download →</a></p>
 
 
 
