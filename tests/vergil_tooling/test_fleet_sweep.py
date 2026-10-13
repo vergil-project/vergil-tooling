@@ -265,6 +265,104 @@ def test_unparseable_issue_url_is_an_error(monkeypatch: pytest.MonkeyPatch) -> N
     assert "could not parse issue number" in results[0].detail
 
 
+# --- probe cleanup on failure (#3015) -------------------------------------
+
+_PROBE_REMOVE = (
+    "-C",
+    "/clones/demo",
+    "worktree",
+    "remove",
+    "--force",
+    "/clones/demo/.worktrees/probe-gitignore-sync",
+)
+
+
+def test_applicator_failure_removes_probe(calls: dict[str, list]) -> None:
+    """An applicator raising discards the probe so the next sweep can re-add it."""
+
+    def applicator(_worktree: Path) -> AppResult:
+        raise RuntimeError("applicator exploded")
+
+    results = run_sweep(_spec(["/clones/demo"]), applicator, dry_run=False)
+
+    assert results == [
+        RepoResult(repo="/clones/demo", status="error", detail="applicator exploded")
+    ]
+    assert _PROBE_REMOVE in calls["git"]
+
+
+def test_issue_create_failure_removes_probe(
+    calls: dict[str, list], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cross-org vrg-issue-create refusal discards the probe, keeping the error."""
+
+    def refusing_run(args, **kwargs):  # noqa: ANN001, ANN003
+        return _FakeProc(returncode=1, stderr="cross-org operation is out of scope")
+
+    monkeypatch.setattr(fleet_sweep.subprocess, "run", refusing_run)
+
+    def applicator(_worktree: Path) -> AppResult:
+        return AppResult(changed=True, summary="synced")
+
+    results = run_sweep(_spec(["/clones/demo"]), applicator, dry_run=False)
+
+    assert results[0].status == "error"
+    assert "cross-org operation is out of scope" in results[0].detail
+    assert _PROBE_REMOVE in calls["git"]
+    assert not any(len(call) >= 4 and call[3] == "move" for call in calls["git"])
+
+
+def test_failure_after_rename_keeps_issue_worktree(
+    calls: dict[str, list], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failure after the probe is renamed removes NO worktree.
+
+    The renamed ``issue-<N>-<slug>`` worktree carries the change for a human to
+    finish, so the driver must not discard it (nor try to remove the vanished
+    probe).
+    """
+
+    def fake_proc_run(args, **kwargs):  # noqa: ANN001, ANN003
+        if args[0] == "vrg-issue-create":
+            return _FakeProc(stdout="Created https://github.com/o/demo/issues/77\n")
+        return _FakeProc(returncode=1, stderr="commit refused")
+
+    monkeypatch.setattr(fleet_sweep.subprocess, "run", fake_proc_run)
+
+    def applicator(_worktree: Path) -> AppResult:
+        return AppResult(changed=True, summary="synced")
+
+    results = run_sweep(_spec(["/clones/demo"]), applicator, dry_run=False)
+
+    assert results[0].status == "error"
+    assert "commit refused" in results[0].detail
+    assert not any(len(call) >= 4 and call[3] == "remove" for call in calls["git"])
+
+
+def test_probe_cleanup_failure_reports_both_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    """If removing the probe also fails, the detail names BOTH failures."""
+    git_calls: list[tuple[str, ...]] = []
+
+    def fake_git_run(*args: str) -> None:
+        git_calls.append(args)
+        if args[2:4] == ("worktree", "remove"):
+            raise RuntimeError("remove denied")
+
+    monkeypatch.setattr(fleet_sweep.git, "run", fake_git_run)
+
+    def applicator(_worktree: Path) -> AppResult:
+        raise RuntimeError("applicator exploded")
+
+    results = run_sweep(_spec(["/clones/demo"]), applicator, dry_run=False)
+
+    assert results[0].status == "error"
+    detail = results[0].detail
+    assert "applicator exploded" in detail
+    assert "remove denied" in detail
+    assert "/clones/demo/.worktrees/probe-gitignore-sync" in detail
+    assert _PROBE_REMOVE in git_calls
+
+
 # --- integration-style: a real git repo proves the change is committed ----
 
 
@@ -389,6 +487,30 @@ def test_run_sweep_handles_a_relative_repo_path(
     _assert_committed_in_issue_worktree(clone)
     # Nothing was created under a doubled ``clone/clone`` prefix.
     assert not (clone / "clone").exists()
+
+
+def test_failed_sweep_does_not_strand_probe_in_a_real_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed repo leaves no probe behind, so a re-run succeeds (#3015).
+
+    Before the fix, an error after ``worktree add`` stranded
+    ``.worktrees/probe-<slug>`` and the next sweep of that repo failed at
+    ``worktree add`` because the path already existed.
+    """
+    clone = _make_real_clone(tmp_path)
+    monkeypatch.setattr(fleet_sweep, "_run_tool", _fake_run_tool)
+
+    def failing_applicator(_worktree: Path) -> AppResult:
+        raise RuntimeError("applicator exploded")
+
+    first = run_sweep(_spec([str(clone)]), failing_applicator, dry_run=False)
+    assert first == [RepoResult(repo=str(clone), status="error", detail="applicator exploded")]
+    assert not (clone / ".worktrees" / "probe-gitignore-sync").exists()
+
+    second = run_sweep(_spec([str(clone)]), _real_applicator, dry_run=False)
+    assert second == [RepoResult(repo=str(clone), status="ready", detail="added managed.txt")]
+    _assert_committed_in_issue_worktree(clone)
 
 
 # --- vrg_fleet_sync entry -------------------------------------------------
