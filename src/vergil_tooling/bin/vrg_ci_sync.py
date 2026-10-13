@@ -17,19 +17,17 @@ owned by :func:`~vergil_tooling.lib.fleet_sweep.run_sweep`. One PR per repo whos
 This tool **never** submits or merges a PR — it stops at ``report-ready``, exactly
 like any other agent-run task. The human runs the sweep and, later, ``vrg-submit-pr``.
 
-Each ``--repos`` entry is a path to a local clone; paths are resolved to
-**absolute** before the sweep so the probe worktree is not doubled under a ``-C``
-directory (the relative-path bug of #2979). ``--dry-run`` reports the intended
-action per repo without touching any git or GitHub state. A repo whose ``ci.yml``
-shape cannot be understood is left unchanged and listed **prominently** in a
-follow-up report — never silently skipped (this repo's "no silent failures" policy).
+Each ``--repos`` entry is a path to a local clone, absolute or relative (the
+driver resolves it, #2979). ``--dry-run`` reports the intended action per repo
+without touching any git or GitHub state. A repo whose ``ci.yml`` shape cannot
+be understood is left unchanged and listed **prominently** in a follow-up
+report — never silently skipped (this repo's "no silent failures" policy).
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
-from pathlib import Path
 
 from vergil_tooling.lib.ci_yml_applicator import strip_matrix_inputs
 from vergil_tooling.lib.fleet_sweep import SweepSpec, run_sweep
@@ -71,11 +69,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
-    # Resolve to absolute paths so fleet_sweep's probe-worktree path is never
-    # doubled under a relative ``-C`` directory (#2979).
-    repos = [str(Path(repo).resolve()) for repo in args.repos]
     spec = SweepSpec(
-        repos=repos,
+        repos=args.repos,
         branch_slug="ci-sync",
         title=_TITLE,
         body=_BODY,

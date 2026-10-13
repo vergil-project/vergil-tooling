@@ -10,6 +10,8 @@ from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
 if TYPE_CHECKING:
     from pathlib import Path
 
+    import pytest
+
     from vergil_tooling.lib.pr_workflow.state import WorkflowState
 
 
@@ -141,3 +143,85 @@ def test_check_worktree_captures_read_error(tmp_path: Path) -> None:
     check = freeze.check_worktree(tmp_path, action="add a commit")
     assert check.frozen is False
     assert check.read_error is not None
+
+
+# -- at_reported_commit / publishable_branch (#3071) --------------------------
+
+
+def test_at_reported_commit_true_when_head_matches() -> None:
+    assert freeze.at_reported_commit(_ready(), "aaaaaaaa1111") is True
+
+
+def test_at_reported_commit_false_when_drifted() -> None:
+    assert freeze.at_reported_commit(_ready(), "bbbbbbbb2222") is False
+
+
+def test_at_reported_commit_false_when_head_unknown() -> None:
+    assert freeze.at_reported_commit(_ready(), None) is False
+
+
+def test_at_reported_commit_false_when_head_sha_missing() -> None:
+    # A missing recorded head_sha must never read as "at the reported commit".
+    state = _ready()
+    state.git.pop("head_sha", None)
+    assert freeze.at_reported_commit(state, "aaaaaaaa1111") is False
+
+
+def test_check_worktree_publishable_at_reported_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_state(tmp_path, _ready())
+    monkeypatch.setattr(freeze, "_current_head", lambda _root: "aaaaaaaa1111")
+    monkeypatch.setattr(freeze, "_current_branch", lambda _root: "feature/42-x")
+    check = freeze.check_worktree(tmp_path, action="advance this branch with a push")
+    assert check.frozen is True
+    assert check.drifted is False
+    assert check.publishable_branch == "feature/42-x"
+
+
+def test_check_worktree_not_publishable_when_drifted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_state(tmp_path, _ready())
+    monkeypatch.setattr(freeze, "_current_head", lambda _root: "bbbbbbbb2222")
+    monkeypatch.setattr(freeze, "_current_branch", lambda _root: "feature/42-x")
+    check = freeze.check_worktree(tmp_path, action="advance this branch with a push")
+    assert check.frozen is True
+    assert check.drifted is True
+    assert check.publishable_branch is None
+
+
+def test_check_worktree_not_publishable_when_head_sha_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state = _ready()
+    state.git.pop("head_sha", None)
+    _write_state(tmp_path, state)
+    monkeypatch.setattr(freeze, "_current_head", lambda _root: "aaaaaaaa1111")
+    monkeypatch.setattr(freeze, "_current_branch", lambda _root: "feature/42-x")
+    check = freeze.check_worktree(tmp_path, action="advance this branch with a push")
+    assert check.frozen is True
+    assert check.publishable_branch is None
+
+
+def test_check_worktree_not_publishable_on_other_branch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Same commit, but a different (or detached) checkout: not the frozen branch.
+    _write_state(tmp_path, _ready())
+    monkeypatch.setattr(freeze, "_current_head", lambda _root: "aaaaaaaa1111")
+    monkeypatch.setattr(freeze, "_current_branch", lambda _root: "HEAD")
+    check = freeze.check_worktree(tmp_path, action="advance this branch with a push")
+    assert check.frozen is True
+    assert check.publishable_branch is None
+
+
+def test_check_worktree_not_publishable_when_branch_unresolvable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # tmp_path is not a git repo, so the real _current_branch resolves to None.
+    _write_state(tmp_path, _ready())
+    monkeypatch.setattr(freeze, "_current_head", lambda _root: "aaaaaaaa1111")
+    check = freeze.check_worktree(tmp_path, action="advance this branch with a push")
+    assert check.frozen is True
+    assert check.publishable_branch is None

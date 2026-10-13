@@ -627,6 +627,95 @@ def test_push_allowed_when_not_frozen(tmp_path: Path) -> None:
     assert rc == 0
 
 
+# -- frozen push of exactly the reported commit (#3071) ----------------------
+
+
+def _run_frozen_push(
+    tmp_path: Path, argv: list[str], *, publishable_branch: str | None
+) -> tuple[int, MagicMock]:
+    from vergil_tooling.lib.pr_workflow.freeze import FreezeCheck
+
+    check = FreezeCheck(
+        frozen=True,
+        message="branch FROZEN; unfreeze first",
+        publishable_branch=publishable_branch,
+    )
+    with (
+        patch("vergil_tooling.bin.vrg_git._current_worktree_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_git.freeze.check_worktree", return_value=check),
+        patch("vergil_tooling.bin.vrg_git.github.get_installation_token", return_value=None),
+        patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
+    ):
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=["git", "push"], returncode=0, stdout="", stderr=""
+        )
+        rc = main(argv)
+    return rc, mock_run
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["push", "-u", "origin", "feature/42-x"],
+        ["push", "--set-upstream", "origin", "feature/42-x"],
+        ["push", "origin", "HEAD"],
+        ["push", "-q", "origin", "HEAD:feature/42-x"],
+        ["push", "origin", "refs/heads/feature/42-x:refs/heads/feature/42-x"],
+    ],
+)
+def test_frozen_push_at_reported_commit_allowed(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path, argv: list[str]
+) -> None:
+    rc, mock_run = _run_frozen_push(tmp_path, argv, publishable_branch="feature/42-x")
+    assert rc == 0
+    mock_run.assert_called_once()
+    assert mock_run.call_args.args[0] == ["git", *argv]
+    assert "allowing this push" in capsys.readouterr().err
+
+
+def test_frozen_push_refused_when_drifted_or_head_sha_missing(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    # check_worktree withholds publishable_branch on drift and on a missing
+    # head_sha / unresolvable HEAD; the push guard must then refuse outright.
+    rc, mock_run = _run_frozen_push(
+        tmp_path, ["push", "-u", "origin", "feature/42-x"], publishable_branch=None
+    )
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "FROZEN" in err
+    assert "publishing it is allowed" not in err
+    mock_run.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["push"],  # what it publishes depends on push.default
+        ["push", "origin"],
+        ["push", "origin", "feature/other"],
+        ["push", "origin", "+feature/42-x"],
+        ["push", "origin", "deadbeef:feature/42-x"],
+        ["push", "origin", "HEAD:feature/other"],
+        ["push", "origin", ":feature/42-x"],
+        ["push", "origin", "feature/42-x", "feature/other"],
+        ["push", "--all", "origin"],
+        ["push", "--tags", "origin", "feature/42-x"],
+        ["push", "--no-verify", "origin", "feature/42-x"],
+        ["push", "-o", "ci.skip", "origin", "feature/42-x"],
+    ],
+)
+def test_frozen_push_at_reported_commit_refuses_other_refspecs(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path, argv: list[str]
+) -> None:
+    rc, mock_run = _run_frozen_push(tmp_path, argv, publishable_branch="feature/42-x")
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "FROZEN" in err
+    assert "vrg-git push -u origin feature/42-x" in err
+    mock_run.assert_not_called()
+
+
 def test_checkout_dot_denied(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["checkout", "--", "."]) != 0
 

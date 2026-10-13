@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from vergil_tooling.lib.vm_cloud import OffPlatformBackend
     from vergil_tooling.lib.vm_transport import Transport
 
-from vergil_tooling.bin.vrg_vm_resolve import (
+from vergil_tooling.bin.vrg_vm_resolve_session import (
     _last_activity,
     name_by_session,
     projects_glob,

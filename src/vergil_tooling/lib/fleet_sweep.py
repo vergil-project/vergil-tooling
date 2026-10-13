@@ -154,8 +154,17 @@ def _commit_subject(title: str) -> str:
 
 
 def _process_repo(spec: SweepSpec, applicator: Applicator, repo: str) -> RepoResult:
-    """Run the full work-chain for one *repo*; the caller isolates failures."""
-    worktrees = Path(repo) / ".worktrees"
+    """Run the full work-chain for one *repo*; the caller isolates failures.
+
+    *repo* is resolved to an absolute path first. The worktree paths are handed
+    to ``git -C <repo> worktree ...``, which interprets a relative path against
+    ``<repo>`` itself — so a relative *repo* would double the prefix
+    (``<repo>/<repo>/.worktrees/...``) and the chain would fail (#2979). The
+    reported :attr:`RepoResult.repo` keeps the caller's spelling.
+    """
+    repo_path = Path(repo).resolve()
+    repo_dir = str(repo_path)
+    worktrees = repo_path / ".worktrees"
     # The issue number is not known until *after* the applicator has run (an
     # unchanged repo mints no issue), so the worktree starts under a probe name
     # and is renamed to the ``issue-<N>-<slug>`` convention once the issue is
@@ -164,14 +173,14 @@ def _process_repo(spec: SweepSpec, applicator: Applicator, repo: str) -> RepoRes
 
     # 1. Detached probe worktree at origin/develop: no branch, so an unchanged
     #    repo leaves nothing behind and never needs an issue.
-    git.run("-C", repo, "worktree", "add", "--detach", str(probe), "origin/develop")
+    git.run("-C", repo_dir, "worktree", "add", "--detach", str(probe), "origin/develop")
 
     result = applicator(probe)
 
     if not result.changed:
         # Nothing to propagate: tear down the probe and skip. No issue, no
         # branch, no PR.
-        git.run("-C", repo, "worktree", "remove", "--force", str(probe))
+        git.run("-C", repo_dir, "worktree", "remove", "--force", str(probe))
         return RepoResult(
             repo=repo,
             status="skipped",
@@ -183,10 +192,10 @@ def _process_repo(spec: SweepSpec, applicator: Applicator, repo: str) -> RepoRes
     #    worktree to the repo convention ``issue-<N>-<slug>`` and name the branch
     #    after the issue, carrying the working-tree change (which moves with the
     #    worktree) onto the branch.
-    issue = _ensure_issue(spec, repo)
+    issue = _ensure_issue(spec, repo_dir)
     branch = f"feature/{issue}-{spec.branch_slug}"
     worktree = worktrees / f"issue-{issue}-{spec.branch_slug}"
-    git.run("-C", repo, "worktree", "move", str(probe), str(worktree))
+    git.run("-C", repo_dir, "worktree", "move", str(probe), str(worktree))
     git.run("-C", str(worktree), "checkout", "-b", branch)
 
     # 3. Stage the applicator's working-tree changes, then commit and hand off.

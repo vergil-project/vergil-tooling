@@ -2,18 +2,24 @@
 
 from __future__ import annotations
 
+import subprocess
 import tomllib
 from typing import TYPE_CHECKING
+from unittest.mock import patch
+
+import pytest
 
 from vergil_tooling.lib.xdist_applicator import (
+    UvLockError,
     _insert_into_array,
-    _insert_poetry_dependency,
     _select_poetry_table,
     add_xdist,
 )
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+_MOD = "vergil_tooling.lib.xdist_applicator"
 
 # --- uv dependency-groups -------------------------------------------------
 
@@ -172,24 +178,28 @@ def test_requirements_ignores_comment_lines(tmp_path: Path) -> None:
 # --- poetry ---------------------------------------------------------------
 
 
-def test_adds_to_poetry_group_dev(tmp_path: Path) -> None:
-    (tmp_path / "pyproject.toml").write_text(
-        '[tool.poetry]\nname = "x"\n\n[tool.poetry.group.dev.dependencies]\npytest = "*"\n',
-    )
-    result = add_xdist(tmp_path)
-    assert result.changed is True
-    data = tomllib.loads((tmp_path / "pyproject.toml").read_text())
-    assert "pytest-xdist" in data["tool"]["poetry"]["group"]["dev"]["dependencies"]
+def test_poetry_group_dev_refused_loudly_no_edit(tmp_path: Path) -> None:
+    # The sweep does not run `poetry lock`, so it refuses rather than commit a
+    # stale poetry.lock (#2980).
+    original = '[tool.poetry]\nname = "x"\n\n[tool.poetry.group.dev.dependencies]\npytest = "*"\n'
+    (tmp_path / "pyproject.toml").write_text(original)
+    with patch(f"{_MOD}.subprocess.run") as run:
+        result = add_xdist(tmp_path)
+    assert result.changed is False
+    assert result.needs_followup is True
+    assert "Poetry" in result.summary
+    assert "NOT added" in result.summary
+    assert (tmp_path / "pyproject.toml").read_text() == original
+    run.assert_not_called()
 
 
-def test_adds_to_legacy_poetry_dev_dependencies(tmp_path: Path) -> None:
-    (tmp_path / "pyproject.toml").write_text(
-        '[tool.poetry]\nname = "x"\n\n[tool.poetry.dev-dependencies]\npytest = "*"\n',
-    )
+def test_legacy_poetry_dev_dependencies_refused_loudly_no_edit(tmp_path: Path) -> None:
+    original = '[tool.poetry]\nname = "x"\n\n[tool.poetry.dev-dependencies]\npytest = "*"\n'
+    (tmp_path / "pyproject.toml").write_text(original)
     result = add_xdist(tmp_path)
-    assert result.changed is True
-    data = tomllib.loads((tmp_path / "pyproject.toml").read_text())
-    assert "pytest-xdist" in data["tool"]["poetry"]["dev-dependencies"]
+    assert result.changed is False
+    assert result.needs_followup is True
+    assert (tmp_path / "pyproject.toml").read_text() == original
 
 
 def test_poetry_idempotent(tmp_path: Path) -> None:
@@ -199,6 +209,8 @@ def test_poetry_idempotent(tmp_path: Path) -> None:
     )
     result = add_xdist(tmp_path)
     assert result.changed is False
+    assert result.needs_followup is False
+    assert "already present" in result.summary
 
 
 def test_poetry_group_without_dependencies_table_needs_followup(tmp_path: Path) -> None:
@@ -247,18 +259,114 @@ def test_insert_into_array_returns_none_when_array_absent() -> None:
     assert _insert_into_array(text, "dependency-groups", "dev", "pytest-xdist") is None
 
 
-def test_insert_poetry_dependency_returns_none_when_header_absent() -> None:
-    assert (
-        _insert_poetry_dependency(
-            "[tool.poetry]\n", "tool.poetry.group.dev.dependencies", "pytest-xdist"
-        )
-        is None
-    )
-
-
 def test_select_poetry_table_ignores_non_dict_group_and_falls_back_to_legacy() -> None:
     header, table = _select_poetry_table(
         {"group": "not-a-table", "dev-dependencies": {"pytest": "*"}}
     )
     assert header == "tool.poetry.dev-dependencies"
     assert table == {"pytest": "*"}
+
+
+# --- uv.lock refresh (#2980) ---------------------------------------------
+
+
+def _completed(
+    returncode: int, stdout: str = "", stderr: str = ""
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(["uv", "lock"], returncode, stdout, stderr)
+
+
+def test_uv_groups_refreshes_uv_lock_when_present(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text('[dependency-groups]\ndev = ["pytest"]\n')
+    (tmp_path / "uv.lock").write_text("version = 1\n")
+    with (
+        patch(f"{_MOD}.shutil.which", return_value="/usr/bin/uv"),
+        patch(f"{_MOD}.subprocess.run", return_value=_completed(0)) as run,
+    ):
+        result = add_xdist(tmp_path)
+    assert result.changed is True
+    assert result.needs_followup is False
+    assert "refreshed uv.lock" in result.summary
+    run.assert_called_once()
+    assert run.call_args.args[0] == ["/usr/bin/uv", "lock"]
+    assert run.call_args.kwargs["cwd"] == tmp_path
+    # The lock runs against the already-edited pyproject.toml.
+    data = tomllib.loads((tmp_path / "pyproject.toml").read_text())
+    assert "pytest-xdist" in data["dependency-groups"]["dev"]
+
+
+def test_pep621_refreshes_uv_lock_when_present(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "x"\n\n[project.optional-dependencies]\ndev = ["pytest"]\n',
+    )
+    (tmp_path / "uv.lock").write_text("version = 1\n")
+    with (
+        patch(f"{_MOD}.shutil.which", return_value="/usr/bin/uv"),
+        patch(f"{_MOD}.subprocess.run", return_value=_completed(0)) as run,
+    ):
+        result = add_xdist(tmp_path)
+    assert result.changed is True
+    assert "refreshed uv.lock" in result.summary
+    run.assert_called_once()
+
+
+def test_no_uv_lock_means_no_lock_refresh(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text('[dependency-groups]\ndev = ["pytest"]\n')
+    with patch(f"{_MOD}.subprocess.run") as run:
+        result = add_xdist(tmp_path)
+    assert result.changed is True
+    assert "uv.lock" not in result.summary
+    run.assert_not_called()
+
+
+def test_already_present_does_not_relock(tmp_path: Path) -> None:
+    text = '[dependency-groups]\ndev = ["pytest", "pytest-xdist"]\n'
+    (tmp_path / "pyproject.toml").write_text(text)
+    (tmp_path / "uv.lock").write_text("version = 1\n")
+    with patch(f"{_MOD}.subprocess.run") as run:
+        result = add_xdist(tmp_path)
+    assert result.changed is False
+    run.assert_not_called()
+
+
+def test_requirements_shape_never_relocks(tmp_path: Path) -> None:
+    (tmp_path / "requirements-dev.txt").write_text("pytest\n")
+    (tmp_path / "uv.lock").write_text("version = 1\n")
+    with patch(f"{_MOD}.subprocess.run") as run:
+        result = add_xdist(tmp_path)
+    assert result.changed is True
+    run.assert_not_called()
+
+
+def test_missing_uv_raises_loudly(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text('[dependency-groups]\ndev = ["pytest"]\n')
+    (tmp_path / "uv.lock").write_text("version = 1\n")
+    with (
+        patch(f"{_MOD}.shutil.which", return_value=None),
+        patch(f"{_MOD}.subprocess.run") as run,
+        pytest.raises(UvLockError, match="`uv` is not on PATH"),
+    ):
+        add_xdist(tmp_path)
+    run.assert_not_called()
+
+
+def test_failed_uv_lock_raises_with_detail(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text('[dependency-groups]\ndev = ["pytest"]\n')
+    (tmp_path / "uv.lock").write_text("version = 1\n")
+    with (
+        patch(f"{_MOD}.shutil.which", return_value="/usr/bin/uv"),
+        patch(f"{_MOD}.subprocess.run", return_value=_completed(2, stderr="resolution failed\n")),
+        pytest.raises(UvLockError, match=r"`uv lock` failed \(exit 2\).*resolution failed"),
+    ):
+        add_xdist(tmp_path)
+
+
+def test_failed_uv_lock_falls_back_to_stdout_detail(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text('[dependency-groups]\ndev = ["pytest"]\n')
+    (tmp_path / "uv.lock").write_text("version = 1\n")
+    with (
+        patch(f"{_MOD}.shutil.which", return_value="/usr/bin/uv"),
+        patch(f"{_MOD}.subprocess.run", return_value=_completed(1, stdout="only stdout")),
+        pytest.raises(UvLockError, match="only stdout"),
+    ):
+        add_xdist(tmp_path)

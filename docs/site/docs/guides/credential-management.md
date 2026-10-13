@@ -120,6 +120,163 @@ from the same private key, so adding a new org requires only
 installing the existing App on it — no new keys, no credential
 reconfiguration.
 
+## Responding to a compromised credential
+
+Use this procedure when a credential is known or suspected to be
+exposed: a private key copied off its host, a secret printed in a log,
+a lost or untrusted machine. Act on suspicion. Revoking a credential
+that turns out to be safe costs a few minutes of re-provisioning.
+Leaving a leaked one live can cost far more.
+
+### The response, in order
+
+1. **Contain.** Revoke or suspend the credential so it cannot be used
+   again. The per-credential steps are below.
+2. **Halt dependent work.** Stop the operations that use the
+   credential, such as agent sessions, releases, and publishing
+   workflows, until a replacement is in place. If the agent VM is the
+   suspected source of the leak, stop it (`vrg-vm stop` on Lima) or
+   destroy it (`vrg-vm destroy` off-platform, where `stop` is not
+   supported). An off-platform VM's injected credentials live on its
+   ephemeral boot disk and are deleted with it.
+3. **Review activity.** Check what the identity did during the window
+   of suspected exposure (see [Reviewing activity](#reviewing-activity)).
+4. **Restore.** Issue a replacement credential and re-provision
+   whatever consumed the old one.
+5. **Retrospect.** Find out how the credential was exposed, and decide
+   what process or tooling change stops it from happening again.
+
+### Agent App private key (user or audit App)
+
+The private key in `private_key_path` is the agent's only long-lived
+credential. Installation tokens are derived from it and expire after
+about an hour.
+
+**Blast radius.** The holder of the key can mint tokens for every
+account the App is installed on. Each token can reach the repositories
+that installation covers. The token is limited to the App's declared
+permissions, as listed in [Account Setup](account-setup.md):
+
+| | `<username>-vergil-user` key | `<username>-vergil-audit` key |
+|---|---|---|
+| Contents | **Read and write.** Can push branches and read all code in covered repos, private repos included. | **Read-only.** Can read all code in covered repos, private repos included. |
+| Issues | **Read and write.** Can create, edit, and comment on issues. | Read-only |
+| Pull requests | Read-only | **Read and write.** Can write PR reviews and comments. |
+| Workflows | No access. Cannot push under `.github/workflows/`. | No access. Cannot push under `.github/workflows/`. |
+| Merge | Cannot open, approve, or merge PRs. | Cannot merge, because merging needs `contents: write`. |
+
+Branch protection still limits a leaked user-App key. It cannot push
+directly to a protected branch or merge without review. It can still
+push malicious content to feature branches, and it can read every
+private repo its installations cover. Because both Apps can read code,
+treat a leak of either key as exposure of that code.
+
+**Contain.**
+
+- **Delete the compromised key.** Open the App's settings page and go
+  to **Private keys**. Delete the compromised key so that no new
+  tokens can be minted from it. A token minted before the deletion
+  stays valid until it expires (about an hour).
+- **Suspend the installations** to cut off access immediately, before
+  the outstanding tokens expire. In the settings of each account the
+  App is installed on, open the App's installation and suspend it.
+  Unsuspend it after the replacement key is in place.
+
+**Restore.** Generate a new private key for the same App as in
+[Account Setup](account-setup.md), Step 1.3 or 2.3. Point
+`private_key_path` in `identities.toml` at the new file and delete the
+old `.pem` from `~/.config/vergil/keys/`. Then re-inject the key into
+the agent VM. Credentials are injected when a VM is created, started,
+restarted, or rebuilt, so run `vrg-vm restart` on Lima or
+`vrg-vm rebuild` off-platform. The App ID, permissions, and
+installations do not change. Routine, non-emergency key rotation is
+tracked separately in
+[#779](https://github.com/vergil-project/vergil-tooling/issues/779).
+
+### The human account
+
+**Blast radius.** This is the most severe case. The human account
+holds the authority that the agent Apps lack: review, approval, merge,
+and administration (see
+[Identity Architecture](identity-architecture.md)). It is also an
+owner of the orgs the agents work in, and it owns both agent Apps,
+which are registered under its Developer settings. Anyone in control of
+the human account can therefore generate fresh keys for both agent
+Apps.
+
+**Contain and restore.** Secure the GitHub account itself, then treat
+**both** agent App keys as compromised and work through the App-key
+procedure above for each one. Review the account's recent merge and
+administrative activity in addition to the agent activity.
+
+### Org automation App (`vergil-release[bot]`)
+
+The org-level App does mechanized release work. It creates release
+PRs, and a human approves and merges them (see
+[Identity Architecture](identity-architecture.md#the-release-app)).
+CI also reaches the org's App through the `APP_CLIENT_ID` and
+`APP_PRIVATE_KEY` Actions secrets. The `cd-release` workflow uses
+them to dispatch to the org's `packages` repository (see
+[Package config](../reference/package-config.md)). The `ops` and
+`epic-rollup` workflows also receive them.
+
+**Blast radius.** The App is installed at the org level, not per
+contributor, so a leaked key reaches every repo that installation
+covers. Its permission set is not listed in the Account Setup tables.
+Read the exact permissions from the App's settings page before you
+assess the impact. Release PRs it creates still need human approval to
+merge.
+
+**Contain and restore.** Follow the same steps as for an agent App key:
+delete the key, suspend the installation if access must stop at once,
+and generate a new key. Then update the `APP_PRIVATE_KEY` secret
+wherever it is stored. Until you do, the workflows that depend on it
+(release dispatch, ops, epic roll-up) will fail.
+
+### CI publishing secrets
+
+The release workflow forwards per-ecosystem secrets to `cd-release`
+(see [CI Architecture](ci-architecture.md#cd-release-publishing-secrets)):
+
+| Secret | Blast radius |
+|---|---|
+| `CARGO_REGISTRY_TOKEN`, `RUBYGEMS_API_KEY`, `CENTRAL_USERNAME`/`CENTRAL_TOKEN` | Can publish to that registry under the project's account |
+| `GPG_PRIVATE_KEY`/`GPG_PASSPHRASE` (java) | Can sign artifacts as the project |
+| `PACKAGE_SIGNING_KEY`/`PACKAGE_SIGNING_PASSPHRASE` | Can sign `.deb`/`.rpm` packages that apt/dnf clients will trust, because clients trust the org signing key |
+
+Python publishing uses PyPI OIDC trusted publishing, so there is no
+stored PyPI token to leak.
+
+**Contain.** Revoke the token or key **at its issuer**, such as the
+registry account or the GPG key, so that a leaked copy stops working.
+Changing only the GitHub secret leaves the leaked copy valid. Halt
+releases until a replacement is in place.
+
+**Restore.** Issue a replacement at the issuer. Then update the
+repository, organization, or environment secret that held it.
+`PACKAGE_SIGNING_*` live in the `package-signing` environment. The
+package signing key is more involved to replace than the others,
+because clients pin it. Its primary fingerprint is pinned in
+vergil-tooling, checked by `vrg-vm`, published in
+[Getting Started](../getting-started.md), and shipped in the
+`vergil-archive-keyring` package (see
+[VM spec](../reference/vm-spec.md)). Replacing it means changing all
+of those together.
+
+### Reviewing activity
+
+- **Org audit log.** In the organization's settings, open **Audit
+  log** and filter by the compromised identity across the window of
+  suspected exposure. For an agent App, that identity is the
+  `<username>-vergil-<role>[bot]` actor. Repeat for every org the
+  App is installed on.
+- **Repository history.** Every commit, PR, review, and comment made
+  through an App carries its bot identity, so the App's work stands
+  out in branch, PR, and issue history. Look for unexpected branches,
+  pushes, PRs, reviews, and issue edits.
+- **Release artifacts.** For a publishing secret, check the registry
+  or package index for versions you did not release.
+
 ## Related
 
 - [Account Setup](account-setup.md) — registering the Apps,

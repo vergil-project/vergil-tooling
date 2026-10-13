@@ -633,12 +633,129 @@ def test_apply_repo_calls_pipeline() -> None:
     with (
         patch(f"{_MODULE}.fetch_actual_state") as mock_fetch,
         patch(f"{_MODULE}.compute_desired_state"),
+        patch(f"{_MODULE}._fetch_ci_workflow", return_value="ci") as mock_ci,
+        patch(f"{_MODULE}.assert_ci_gates_producible") as mock_guard,
         patch(f"{_MODULE}.apply_desired_state", return_value=[]) as mock_apply,
     ):
         result = _apply_repo("o/r", cfg)
     mock_fetch.assert_called_once_with("o/r")
+    mock_ci.assert_called_once_with("o/r", "develop")
+    mock_guard.assert_called_once()
     mock_apply.assert_called_once()
     assert result == []
+
+
+# -- _apply_repo: CI-gates producibility guard on the sync path (#2788) -------
+
+
+def _ci_contents(jobs: list[str]) -> dict[str, object]:
+    """A contents-API response for a ci.yml calling the named reusable workflows."""
+    import base64
+
+    reusable = {
+        "audit": "ci-audit.yml",
+        "quality": "ci-quality.yml",
+        "security": "ci-security.yml",
+        "docs": "ci-docs.yml",
+        "test": "ci-test.yml",
+        "version": "ci-version-bump.yml",
+    }
+    lines = ["name: CI\n", "on:\n", "  pull_request:\n", "jobs:\n"]
+    for job in jobs:
+        lines.append(f"  {job}:\n")
+        lines.append(
+            f"    uses: vergil-project/vergil-actions/.github/workflows/{reusable[job]}@v2.1\n"
+        )
+    return {"content": base64.b64encode("".join(lines).encode()).decode()}
+
+
+_ALL_CI_JOBS = ["audit", "quality", "security", "docs", "test", "version"]
+
+
+def _actual_state() -> object:
+    from types import SimpleNamespace
+
+    return SimpleNamespace(visibility="public", owner_type="Organization")
+
+
+def test_apply_repo_applies_when_ci_yml_emits_every_required_gate() -> None:
+    with (
+        patch(f"{_MODULE}.fetch_actual_state", return_value=_actual_state()),
+        patch(f"{_MODULE}.github.read_json", return_value=_ci_contents(_ALL_CI_JOBS)) as mock_read,
+        patch(f"{_MODULE}.apply_desired_state", return_value=[]) as mock_apply,
+    ):
+        assert _apply_repo("o/r", _make_config()) == []
+    mock_read.assert_called_once_with(
+        "api", "repos/o/r/contents/.github/workflows/ci.yml?ref=develop"
+    )
+    mock_apply.assert_called_once()
+
+
+def test_apply_repo_refuses_unproducible_required_gate() -> None:
+    """The docs incident: the ruleset requires `docs / docs` but the committed
+    ci.yml has no docs job on pull_request — refuse before writing anything."""
+    jobs = [j for j in _ALL_CI_JOBS if j != "docs"]
+    with (
+        patch(f"{_MODULE}.fetch_actual_state", return_value=_actual_state()),
+        patch(f"{_MODULE}.github.read_json", return_value=_ci_contents(jobs)),
+        patch(f"{_MODULE}.apply_desired_state") as mock_apply,
+        pytest.raises(RuntimeError) as exc,
+    ):
+        _apply_repo("o/r", _make_config())
+    mock_apply.assert_not_called()
+    assert "o/r@develop:.github/workflows/ci.yml never emits" in str(exc.value)
+    assert "docs / docs" in str(exc.value)
+
+
+def test_apply_repo_refuses_when_ci_yml_absent() -> None:
+    not_found = GitHubAPIError(
+        1,
+        ("gh", "api", "repos/o/r/contents/.github/workflows/ci.yml?ref=develop"),
+        '{"message":"Not Found","status":"404"}',
+        "gh: Not Found (HTTP 404)",
+    )
+    with (
+        patch(f"{_MODULE}.fetch_actual_state", return_value=_actual_state()),
+        patch(f"{_MODULE}.github.read_json", side_effect=not_found),
+        patch(f"{_MODULE}.apply_desired_state") as mock_apply,
+        pytest.raises(RuntimeError, match=r"\.github/workflows/ci\.yml is absent"),
+    ):
+        _apply_repo("o/r", _make_config())
+    mock_apply.assert_not_called()
+
+
+def test_apply_repo_ci_yml_fetch_other_error_propagates() -> None:
+    server_error = GitHubAPIError(
+        1,
+        ("gh", "api", "repos/o/r/contents/.github/workflows/ci.yml?ref=develop"),
+        '{"message":"Server Error","status":"500"}',
+        "gh: Server Error (HTTP 500)",
+    )
+    with (
+        patch(f"{_MODULE}.fetch_actual_state", return_value=_actual_state()),
+        patch(f"{_MODULE}.github.read_json", side_effect=server_error),
+        patch(f"{_MODULE}.apply_desired_state") as mock_apply,
+        pytest.raises(GitHubAPIError),
+    ):
+        _apply_repo("o/r", _make_config())
+    mock_apply.assert_not_called()
+
+
+def test_main_apply_refusal_exits_nonzero(capsys: pytest.CaptureFixture[str]) -> None:
+    """A producibility refusal surfaces as a clean error and exit 1, not a traceback."""
+    jobs = [j for j in _ALL_CI_JOBS if j != "docs"]
+    with (
+        patch(f"{_MODULE}.github.current_repo", return_value="o/r"),
+        patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
+        patch(f"{_MODULE}._resolve_config", return_value=_make_config()),
+        patch(f"{_MODULE}._audit_repo", return_value=_mock_github_noncompliant()),
+        patch(f"{_MODULE}.fetch_actual_state", return_value=_actual_state()),
+        patch(f"{_MODULE}.github.read_json", return_value=_ci_contents(jobs)),
+        patch(f"{_MODULE}.apply_desired_state") as mock_apply,
+    ):
+        assert main(["apply", "--repo", "o/r"]) == 1
+    mock_apply.assert_not_called()
+    assert "docs / docs" in capsys.readouterr().err
 
 
 # -- Local check skip on --repo mismatch --------------------------------------

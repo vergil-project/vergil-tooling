@@ -103,6 +103,7 @@ nav:
           - Python:
               - Overview: standards/development/python/overview.md
               - Naming Conventions: standards/development/python/naming-conventions.md
+              - CLI Entry Points: standards/development/python/cli-entry-points.md
               - Type Hints: standards/development/python/type-hints.md
               - Import-Time Side Effects: standards/development/python/import-time-side-effects.md
               - Testing and Coverage: standards/development/python/testing-and-coverage.md
@@ -127,6 +128,7 @@ nav:
           - Shell:
               - Overview: standards/development/shell/overview.md
               - Naming Conventions: standards/development/shell/naming-conventions.md
+              - Error Handling: standards/development/shell/error-handling.md
           - TypeScript:
               - Overview: standards/development/typescript/overview.md
               - Toolchain and Strictness: standards/development/typescript/toolchain-and-strictness.md

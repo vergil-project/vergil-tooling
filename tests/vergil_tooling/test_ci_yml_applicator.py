@@ -7,21 +7,24 @@ so its filesystem behaviour — strip, idempotent no-op, and the no-silent-failu
 touched.
 
 The ``vrg_ci_sync`` entry tests mock :func:`run_sweep` (and, where relevant,
-capture the applicator it is handed) so the CLI's spec construction, absolute
-``--repos`` resolution (#2979), dry-run passthrough, per-repo reporting, and the
+capture the applicator it is handed) so the CLI's spec construction, dry-run
+passthrough, per-repo reporting, and the
 loud ``needs_followup`` follow-up report are asserted without a real sweep.
 """
 
 from __future__ import annotations
 
 import textwrap
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from vergil_tooling.bin import vrg_ci_sync
 from vergil_tooling.lib.ci_yml_applicator import strip_matrix_inputs
 from vergil_tooling.lib.fleet_sweep import RepoResult, SweepSpec
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # A representative "fat" ci.yml with the hardcoded matrix inputs on multiple
 # reusable-workflow calls — the shape the sweep converges onto the thin caller.
@@ -192,24 +195,6 @@ def test_main_builds_ci_sync_spec(monkeypatch: pytest.MonkeyPatch) -> None:
     assert captured["dry_run"] is True
     # The applicator handed to the driver is the matrix-strip applicator.
     assert captured["applicator"] is strip_matrix_inputs
-
-
-def test_main_resolves_repos_to_absolute_paths(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Relative --repos are resolved to absolute paths, dodging the #2979 bug."""
-    captured: dict[str, object] = {}
-
-    def fake_run_sweep(spec, applicator, *, dry_run):  # noqa: ANN001, ANN003
-        captured["spec"] = spec
-        return []
-
-    monkeypatch.setattr(vrg_ci_sync, "run_sweep", fake_run_sweep)
-
-    vrg_ci_sync.main(["--repos", "some/relative/repo", "another-repo"])
-    spec = captured["spec"]
-    assert isinstance(spec, SweepSpec)
-    assert all(Path(p).is_absolute() for p in spec.repos)
-    assert spec.repos[0] == str(Path("some/relative/repo").resolve())
-    assert spec.repos[1] == str(Path("another-repo").resolve())
 
 
 def test_main_prints_per_repo_status_and_exits_zero(
