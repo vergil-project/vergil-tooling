@@ -127,6 +127,7 @@ nav:
           - Shell:
               - Overview: standards/development/shell/overview.md
               - Naming Conventions: standards/development/shell/naming-conventions.md
+              - Error Handling: standards/development/shell/error-handling.md
           - TypeScript:
               - Overview: standards/development/typescript/overview.md
               - Toolchain and Strictness: standards/development/typescript/toolchain-and-strictness.md
