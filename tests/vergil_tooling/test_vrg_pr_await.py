@@ -6,7 +6,8 @@ import json
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
-from vergil_tooling.bin.vrg_pr_await import main, parse_args
+from vergil_tooling.bin.vrg_pr_await import main, parse_args, pr_owner
+from vergil_tooling.lib import github
 from vergil_tooling.lib.pr_await import PrMergedError, PrState
 
 if TYPE_CHECKING:
@@ -57,3 +58,48 @@ def test_main_errors_when_pr_already_merged(capsys: pytest.CaptureFixture[str]) 
     assert captured.out == ""
     assert captured.err.startswith("error:")
     assert "already merged" in captured.err
+
+
+def test_pr_owner_from_url() -> None:
+    assert pr_owner("https://github.com/some-org/some-repo/pull/215") == "some-org"
+
+
+def test_pr_owner_none_for_bare_number() -> None:
+    assert pr_owner("215") is None
+
+
+def _settle_minting_token(*_args: object, **_kwargs: object) -> tuple[PrState, str]:
+    """Stand-in settle that exercises the real token-injection path once."""
+    github._gh_env()  # noqa: SLF001
+    return PrState("sha", [], []), "checks_terminal"
+
+
+def test_main_mints_token_for_pr_url_owner_not_cwd() -> None:
+    """A PR URL scopes App-token minting to its owner, not the cwd org (#3055)."""
+    with (
+        patch(f"{_MOD}.pr_await.wait_for_settle", side_effect=_settle_minting_token),
+        patch("vergil_tooling.lib.github.get_installation_token", return_value="t") as mint,
+    ):
+        assert main(["https://github.com/other-org/repo/pull/7"]) == 0
+    mint.assert_called_once_with(org="other-org", require_installation=True)
+
+
+def test_main_bare_number_keeps_cwd_resolution() -> None:
+    with (
+        patch(f"{_MOD}.pr_await.wait_for_settle", side_effect=_settle_minting_token),
+        patch("vergil_tooling.lib.github.get_installation_token", return_value="t") as mint,
+    ):
+        assert main(["7"]) == 0
+    mint.assert_called_once_with(org=None, require_installation=False)
+
+
+def test_main_errors_when_owner_has_no_installation(capsys: pytest.CaptureFixture[str]) -> None:
+    exc = github.NoInstallationError("other-org", ["vergil-project"])
+    with patch(f"{_MOD}.pr_await.wait_for_settle", side_effect=exc):
+        result = main(["https://github.com/other-org/repo/pull/7"])
+    assert result == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith("vrg-pr-await: ")
+    assert "other-org" in captured.err
+    assert "vergil-project" in captured.err
