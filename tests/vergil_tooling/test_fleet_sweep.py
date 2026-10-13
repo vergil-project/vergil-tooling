@@ -279,6 +279,70 @@ def _git(*args: str, cwd: Path | None = None) -> str:
     ).stdout
 
 
+def _make_real_clone(tmp_path: Path) -> Path:
+    """Build an origin repo with a commit on develop and return a clone of it.
+
+    The clone carries an ``origin/develop`` remote-tracking ref for the probe.
+    """
+    origin = tmp_path / "origin"
+    clone = tmp_path / "clone"
+    origin.mkdir()
+    _git("init", "-q", "-b", "develop", str(origin))
+    _git("config", "user.email", "t@example.com", cwd=origin)
+    _git("config", "user.name", "Test", cwd=origin)
+    (origin / "existing.txt").write_text("original\n")
+    _git("add", "-A", cwd=origin)
+    _git("commit", "-qm", "init", cwd=origin)
+    _git("clone", "-q", str(origin), str(clone))
+    _git("config", "user.email", "t@example.com", cwd=clone)
+    _git("config", "user.name", "Test", cwd=clone)
+    return clone
+
+
+def _real_applicator(worktree: Path) -> AppResult:
+    (worktree / "managed.txt").write_text("propagated content\n")
+    return AppResult(changed=True, summary="added managed.txt")
+
+
+def _fake_run_tool(args: list[str], *, cwd: Path | str | None = None) -> str:
+    """Fake the host-tool seam so ``git.run`` stays REAL.
+
+    Faking ``_run_tool`` (not ``subprocess.run``) is deliberate: patching the
+    shared ``subprocess`` module would also intercept the tests' own real
+    ``git`` calls. Here only the ``vrg-*`` shell-outs are simulated; every
+    ``git.run`` in the driver runs against the real repo.
+    """
+    prog = args[0]
+    if prog == "vrg-issue-create":
+        return "Created https://github.com/o/r/issues/42\n"
+    if prog == "vrg-commit":
+        # Mimic real vrg-commit: raise (as _run_tool would) when nothing is
+        # staged, else make a real commit so the change lands on the branch.
+        staged = subprocess.run(  # noqa: S603
+            ["git", "-C", str(cwd), "diff", "--cached", "--quiet"],  # noqa: S607
+            check=False,
+        )
+        if staged.returncode == 0:
+            msg = "vrg-commit failed (exit 1): ERROR: no staged changes"
+            raise RuntimeError(msg)
+        _git("-C", str(cwd), "commit", "-qm", "chore(gitignore): sync managed block")
+        return ""
+    # vrg-pr-workflow report-ready: no-op success (no relay ref in the test).
+    return ""
+
+
+def _assert_committed_in_issue_worktree(clone: Path) -> None:
+    # The worktree was renamed to the issue-<N>-<slug> convention...
+    worktree = clone / ".worktrees" / "issue-42-gitignore-sync"
+    assert worktree.is_dir()
+    # ...and its HEAD commit actually contains the applicator's new file.
+    committed = _git("-C", str(worktree), "show", "--stat", "--name-only", "HEAD")
+    assert "managed.txt" in committed
+    # the branch follows the convention too.
+    branch = _git("-C", str(worktree), "rev-parse", "--abbrev-ref", "HEAD").strip()
+    assert branch == "feature/42-gitignore-sync"
+
+
 def test_run_sweep_commits_the_change_in_a_real_repo(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -292,69 +356,39 @@ def test_run_sweep_commits_the_change_in_a_real_repo(
     the sweep records ``error`` instead of ``ready``. The test therefore fails on
     the pre-fix code and passes only once the driver stages before committing.
     """
-    # Build an origin repo with a committed file on develop, then clone it so the
-    # clone carries an ``origin/develop`` remote-tracking ref for the probe.
-    origin = tmp_path / "origin"
-    clone = tmp_path / "clone"
-    origin.mkdir()
-    _git("init", "-q", "-b", "develop", str(origin))
-    _git("config", "user.email", "t@example.com", cwd=origin)
-    _git("config", "user.name", "Test", cwd=origin)
-    (origin / "existing.txt").write_text("original\n")
-    _git("add", "-A", cwd=origin)
-    _git("commit", "-qm", "init", cwd=origin)
-    _git("clone", "-q", str(origin), str(clone))
-    _git("config", "user.email", "t@example.com", cwd=clone)
-    _git("config", "user.name", "Test", cwd=clone)
-
-    def applicator(worktree: Path) -> AppResult:
-        (worktree / "managed.txt").write_text("propagated content\n")
-        return AppResult(changed=True, summary="added managed.txt")
-
-    def fake_run_tool(args: list[str], *, cwd: Path | str | None = None) -> str:
-        """Fake the host-tool seam so ``git.run`` stays REAL.
-
-        Faking ``_run_tool`` (not ``subprocess.run``) is deliberate: patching the
-        shared ``subprocess`` module would also intercept this test's own real
-        ``git`` calls. Here only the ``vrg-*`` shell-outs are simulated; every
-        ``git.run`` in the driver runs against the real repo.
-        """
-        prog = args[0]
-        if prog == "vrg-issue-create":
-            return "Created https://github.com/o/r/issues/42\n"
-        if prog == "vrg-commit":
-            # Mimic real vrg-commit: raise (as _run_tool would) when nothing is
-            # staged, else make a real commit so the change lands on the branch.
-            staged = subprocess.run(  # noqa: S603
-                ["git", "-C", str(cwd), "diff", "--cached", "--quiet"],  # noqa: S607
-                check=False,
-            )
-            if staged.returncode == 0:
-                msg = "vrg-commit failed (exit 1): ERROR: no staged changes"
-                raise RuntimeError(msg)
-            _git("-C", str(cwd), "commit", "-qm", "chore(gitignore): sync managed block")
-            return ""
-        # vrg-pr-workflow report-ready: no-op success (no relay ref in the test).
-        return ""
-
+    clone = _make_real_clone(tmp_path)
     # git.run stays REAL; only the host-tool shell-outs (_run_tool) are faked.
-    monkeypatch.setattr(fleet_sweep, "_run_tool", fake_run_tool)
+    monkeypatch.setattr(fleet_sweep, "_run_tool", _fake_run_tool)
 
-    results = run_sweep(_spec([str(clone)]), applicator, dry_run=False)
+    results = run_sweep(_spec([str(clone)]), _real_applicator, dry_run=False)
 
     assert results == [RepoResult(repo=str(clone), status="ready", detail="added managed.txt")], (
         "sweep must succeed with the applicator's change committed"
     )
+    _assert_committed_in_issue_worktree(clone)
 
-    # The worktree was renamed to the issue-<N>-<slug> convention...
-    worktree = clone / ".worktrees" / "issue-42-gitignore-sync"
-    assert worktree.is_dir()
-    # ...and its HEAD commit actually contains the applicator's new file.
-    committed = _git("-C", str(worktree), "show", "--stat", "--name-only", "HEAD")
-    assert "managed.txt" in committed
-    # the branch follows the convention too.
-    branch = _git("-C", str(worktree), "rev-parse", "--abbrev-ref", "HEAD").strip()
-    assert branch == "feature/42-gitignore-sync"
+
+def test_run_sweep_handles_a_relative_repo_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A relative repo path resolves to the right worktree location (#2979).
+
+    ``git -C <repo> worktree add <path>`` interprets a relative ``<path>``
+    against ``<repo>``, so an unresolved relative repo doubled the prefix
+    (``clone/clone/.worktrees/...``) and the chain failed with a spurious
+    error. The driver now resolves the repo first; the reported repo keeps the
+    caller's spelling.
+    """
+    clone = _make_real_clone(tmp_path)
+    monkeypatch.setattr(fleet_sweep, "_run_tool", _fake_run_tool)
+    monkeypatch.chdir(tmp_path)
+
+    results = run_sweep(_spec(["clone"]), _real_applicator, dry_run=False)
+
+    assert results == [RepoResult(repo="clone", status="ready", detail="added managed.txt")]
+    _assert_committed_in_issue_worktree(clone)
+    # Nothing was created under a doubled ``clone/clone`` prefix.
+    assert not (clone / "clone").exists()
 
 
 # --- vrg_fleet_sync entry -------------------------------------------------
