@@ -27,6 +27,12 @@ When the PR is given as a URL, every GitHub call is scoped to the URL's owner
 org regardless of the cwd -- e.g. under a Monitor whose cwd is not a git repo,
 where cwd org detection finds nothing and no token is injected (#3055). A bare
 PR number keeps the cwd-based resolution, matching how ``gh`` resolves it.
+
+A GitHub API failure while polling exits 1 with the underlying ``gh`` error on
+stderr instead of a traceback. A permission failure (HTTP 403 / "Resource not
+accessible by integration" -- typically on the checks/statusCheckRollup or
+Actions reads) is named as a GitHub App permissions problem for the PR's repo,
+pointing at the **Checks** and **Actions** repository permissions (#2862).
 """
 
 from __future__ import annotations
@@ -39,12 +45,42 @@ import sys
 from vergil_tooling.lib import github, pr_await
 
 _PR_URL_OWNER_RE = re.compile(r"github\.com/([^/]+)/[^/]+/pull/\d+")
+_PR_URL_REPO_RE = re.compile(r"github\.com/([^/]+/[^/]+)/pull/\d+")
+
+# Lowercased substrings of gh's output that mark an API permission failure.
+# The GraphQL checks read reports only the "not accessible" text; the REST
+# Actions read reports "HTTP 403" alongside it.
+_PERMISSION_SIGNATURES = ("resource not accessible by integration", "http 403")
 
 
 def pr_owner(pr: str) -> str | None:
     """The owner of *pr* when it is a PR URL, else ``None`` (cwd resolution)."""
     match = _PR_URL_OWNER_RE.search(pr)
     return match.group(1) if match else None
+
+
+def pr_repo(pr: str) -> str | None:
+    """The ``owner/repo`` of *pr* when it is a PR URL, else ``None``."""
+    match = _PR_URL_REPO_RE.search(pr)
+    return match.group(1) if match else None
+
+
+def is_permission_error(exc: github.GitHubAPIError) -> bool:
+    """True when *exc* is a GitHub API permission (403) failure."""
+    text = f"{exc.stderr or ''}\n{exc.stdout or ''}".lower()
+    return any(signature in text for signature in _PERMISSION_SIGNATURES)
+
+
+def permission_error_message(pr: str, exc: github.GitHubAPIError) -> str:
+    """An actionable message for a 403 reading the PR's checks/Actions state."""
+    repo = pr_repo(pr) or "the current repository"
+    return (
+        f"GitHub App permissions problem for {repo}: the agent identity's App "
+        "installation was denied reading PR checks/Actions state (HTTP 403). "
+        "The App likely needs the Checks (checks: read) and Actions "
+        "(actions: read) repository permissions set to Read-only on its "
+        f"installation for this repository.\n{exc}"
+    )
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -79,6 +115,15 @@ def main(argv: list[str] | None = None) -> int:
             )
     except github.NoInstallationError as exc:
         print(f"vrg-pr-await: {github.no_installation_message(exc)}", file=sys.stderr)
+        return 1
+    except github.MissingGitHubTokenError:
+        print(github.missing_token_message("vrg-pr-await"), file=sys.stderr)
+        return 1
+    except github.GitHubAPIError as exc:
+        if is_permission_error(exc):
+            print(f"vrg-pr-await: {permission_error_message(args.pr, exc)}", file=sys.stderr)
+        else:
+            print(f"vrg-pr-await: GitHub API error: {exc}", file=sys.stderr)
         return 1
     except pr_await.PrMergedError as exc:
         print(f"error: {exc}", file=sys.stderr)

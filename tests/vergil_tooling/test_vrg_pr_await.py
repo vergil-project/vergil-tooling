@@ -6,7 +6,13 @@ import json
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
-from vergil_tooling.bin.vrg_pr_await import main, parse_args, pr_owner
+from vergil_tooling.bin.vrg_pr_await import (
+    is_permission_error,
+    main,
+    parse_args,
+    pr_owner,
+    pr_repo,
+)
 from vergil_tooling.lib import github
 from vergil_tooling.lib.pr_await import PrMergedError, PrState
 
@@ -103,3 +109,83 @@ def test_main_errors_when_owner_has_no_installation(capsys: pytest.CaptureFixtur
     assert captured.err.startswith("vrg-pr-await: ")
     assert "other-org" in captured.err
     assert "vergil-project" in captured.err
+
+
+_CHECKS_CMD = ("gh", "pr", "checks", "7", "--json", "name,bucket,state,link")
+_GRAPHQL_403 = (
+    "GraphQL: Resource not accessible by integration "
+    "(node.statusCheckRollup.nodes.0.commit.statusCheckRollup)"
+)
+_REST_403 = "failed to get runs: HTTP 403: Resource not accessible by integration"
+
+
+def test_pr_repo_from_url() -> None:
+    assert pr_repo("https://github.com/some-org/some-repo/pull/215") == "some-org/some-repo"
+
+
+def test_pr_repo_none_for_bare_number() -> None:
+    assert pr_repo("215") is None
+
+
+def test_is_permission_error_graphql_message() -> None:
+    assert is_permission_error(github.GitHubAPIError(1, _CHECKS_CMD, stderr=_GRAPHQL_403))
+
+
+def test_is_permission_error_http_403_in_stdout() -> None:
+    assert is_permission_error(github.GitHubAPIError(1, _CHECKS_CMD, output="HTTP 403: Forbidden"))
+
+
+def test_is_permission_error_false_for_other_failures() -> None:
+    assert not is_permission_error(github.GitHubAPIError(1, _CHECKS_CMD, stderr="HTTP 502"))
+
+
+def test_main_names_permission_problem_on_403(capsys: pytest.CaptureFixture[str]) -> None:
+    """A 403 on the checks read is reported as an App permission problem (#2862)."""
+    exc = github.GitHubAPIError(1, _CHECKS_CMD, stderr=_GRAPHQL_403)
+    with patch(f"{_MOD}.pr_await.wait_for_settle", side_effect=exc):
+        result = main(["https://github.com/other-org/repo/pull/7"])
+    assert result == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    expected = "vrg-pr-await: GitHub App permissions problem for other-org/repo"
+    assert captured.err.startswith(expected)
+    assert "checks: read" in captured.err
+    assert "actions: read" in captured.err
+    # The underlying gh error is never swallowed.
+    assert "Resource not accessible by integration" in captured.err
+    assert "statusCheckRollup" in captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_main_permission_problem_bare_number_names_current_repo(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    exc = github.GitHubAPIError(1, _CHECKS_CMD, stderr=_REST_403)
+    with patch(f"{_MOD}.pr_await.wait_for_settle", side_effect=exc):
+        result = main(["7"])
+    assert result == 1
+    err = capsys.readouterr().err
+    assert "permissions problem for the current repository" in err
+    assert "HTTP 403" in err
+
+
+def test_main_reports_other_api_errors_plainly(capsys: pytest.CaptureFixture[str]) -> None:
+    exc = github.GitHubAPIError(1, _CHECKS_CMD, stderr="HTTP 502: Bad Gateway")
+    with patch(f"{_MOD}.pr_await.wait_for_settle", side_effect=exc):
+        result = main([_PR])
+    assert result == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith("vrg-pr-await: GitHub API error: ")
+    assert "HTTP 502: Bad Gateway" in captured.err
+    assert "permissions" not in captured.err
+
+
+def test_main_reports_missing_token(capsys: pytest.CaptureFixture[str]) -> None:
+    stderr = "gh: In a GitHub Actions workflow, set the GH_TOKEN environment variable."
+    exc = github.MissingGitHubTokenError(4, _CHECKS_CMD, stderr=stderr)
+    with patch(f"{_MOD}.pr_await.wait_for_settle", side_effect=exc):
+        result = main([_PR])
+    assert result == 1
+    err = capsys.readouterr().err
+    assert err.startswith("vrg-pr-await: no GitHub token available")

@@ -120,6 +120,107 @@ from the same private key, so adding a new org requires only
 installing the existing App on it — no new keys, no credential
 reconfiguration.
 
+## Rotating an App private key
+
+Routine rotation replaces an agent App's private key while the old
+key is still trusted. The user App (`<username>-vergil-user`) and the
+audit App (`<username>-vergil-audit`) each have their own key, so
+rotate them one at a time with the steps below. If a key is known or
+suspected to be exposed, do not use this procedure. Follow
+[Responding to a compromised credential](#responding-to-a-compromised-credential)
+instead, which deletes the old key first.
+
+A GitHub App can hold more than one active private key at a time.
+Rotation relies on that: you add the new key, switch the agent VM to
+it, prove it works, and only then delete the old one. The agent is
+never left without a working credential.
+
+No rotation cadence is set for these keys. The date in each key's
+filename (see [Account Setup](account-setup.md), Step 1.3) records
+when it was generated.
+
+### Steps
+
+1. **Generate a new key.** On the App's settings page, go to
+   **Private keys** and click **Generate a private key**, as in
+   [Account Setup](account-setup.md), Step 1.3 (user App) or Step 2.3
+   (audit App). Leave the existing key in place for now.
+
+2. **Store it next to the old key.** Move the downloaded file into
+   `~/.config/vergil/keys/` and keep GitHub's filename, which carries
+   the generation date:
+
+   ```bash
+   mv ~/Downloads/<username>-vergil-<role>.<YYYY-MM-DD>.private-key.pem \
+      ~/.config/vergil/keys/
+   ```
+
+3. **Point `identities.toml` at the new key.** In
+   `~/.config/vergil/identities.toml`, set the identity's
+   `private_key_path` to the new file. The `app_id`, the App's
+   permissions, and its installations do not change.
+
+4. **Re-inject the key into the agent VM.** Provisioning copies the
+   key into the VM as `~/.config/vergil/app.pem`, and it does so only
+   when the VM is created, started, restarted, or rebuilt. A running VM
+   keeps using the old key until one of those happens:
+
+   - **Lima:** `vrg-vm restart --identity <identity>` stops and
+     starts the VM, then re-injects credentials. This ends any session
+     running in the VM, so do it between sessions.
+   - **Off-platform:** `vrg-vm rebuild --identity <identity>`.
+     Off-platform VMs do not support `restart`, so the rebuild destroys
+     the VM and creates it again. Its persistent volume is reattached.
+
+   Do this for every VM provisioned from the identity, including any
+   dedicated workspace VM (pass its `<org>/<repo>` after the command,
+   for example `vrg-vm restart --identity <identity> <org>/<repo>`).
+
+5. **Verify the new key.** Inside the VM, run a read that has to mint
+   an installation token, for example:
+
+   ```bash
+   vrg-gh pr list --repo <owner>/<repo>
+   ```
+
+   `pr list` is allowed for both the user and the audit identity. Use
+   a repository on an account the App is installed on. The check
+   passes when the command lists PRs with no warnings. If the key
+   cannot mint a token, `vrg-gh` prints
+   `GitHub App auth failed, falling back to ambient auth` on stderr.
+   Treat that warning as a failed check even if the command goes on to
+   return output.
+
+   `vrg-whoami --explain` is not a key check. It reports which
+   identity the VM resolves to, from the injected files, but it does
+   not use the key to authenticate.
+
+6. **Delete the old key on GitHub.** Back on the App's **Private keys**
+   list, delete the old key. Each key is listed with its creation date
+   and a SHA-256 fingerprint. To match a local file to a fingerprint,
+   run:
+
+   ```bash
+   openssl rsa -in <key-file>.pem -pubout -outform DER \
+     | openssl sha256 -binary | openssl base64
+   ```
+
+   Do not delete the old key before step 5 passes. Until it is deleted,
+   a copy of it can still mint tokens.
+
+7. **Delete the old key file.** Remove the old `.pem` from
+   `~/.config/vergil/keys/`.
+
+Repeat the steps for the other App.
+
+The org automation App (`vergil-release[bot]`) is not covered by these
+steps. Its key is consumed by the `APP_PRIVATE_KEY` Actions secret,
+not by an agent VM. The CI publishing secrets are not covered either.
+For both, see
+[Org automation App](#org-automation-app-vergil-releasebot) and
+[CI publishing secrets](#ci-publishing-secrets) under the compromise
+procedure below.
+
 ## Responding to a compromised credential
 
 Use this procedure when a credential is known or suspected to be
@@ -189,9 +290,9 @@ old `.pem` from `~/.config/vergil/keys/`. Then re-inject the key into
 the agent VM. Credentials are injected when a VM is created, started,
 restarted, or rebuilt, so run `vrg-vm restart` on Lima or
 `vrg-vm rebuild` off-platform. The App ID, permissions, and
-installations do not change. Routine, non-emergency key rotation is
-tracked separately in
-[#779](https://github.com/vergil-project/vergil-tooling/issues/779).
+installations do not change. Verify the new key as described in
+[Rotating an App private key](#rotating-an-app-private-key), step 5.
+For routine, non-emergency key rotation, use that procedure instead.
 
 ### The human account
 
