@@ -13792,6 +13792,8 @@
       
         
       
+        
+      
     
     
     
@@ -13982,6 +13984,34 @@
     
   
     Naming Conventions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../error-handling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Error Handling
   
 
     
@@ -15074,7 +15104,9 @@ readability, and long-term maintainability across repositories.</p>
 <li>Shebang: <code>#!/usr/bin/env bash</code> (portable, PATH-based resolution).</li>
 <li>Safety header: <code>set -euo pipefail</code> required in all scripts immediately
   after the shebang. This enables exit-on-error (<code>-e</code>), undefined variable
-  errors (<code>-u</code>), and pipeline failure propagation (<code>pipefail</code>).</li>
+  errors (<code>-u</code>), and pipeline failure propagation (<code>pipefail</code>). See
+  <a href="../error-handling/">Shell Error Handling</a> for the cases this header does
+  not cover and the rules for tolerating an expected failure.</li>
 <li>Linting: ShellCheck. Run with default settings unless a project documents
   specific exclusions.</li>
 <li>Formatting: shfmt. Run with default settings unless a project documents
@@ -15092,6 +15124,8 @@ carve-out (see the
 <h2 id="document-map">Document Map<a class="headerlink" href="#document-map" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Naming conventions: <a href="../naming-conventions/">naming-conventions.md</a></li>
+<li>Error handling (<code>|| true</code>, pipefail pitfalls, GitHub Actions shells):
+  <a href="../error-handling/">error-handling.md</a></li>
 </ul>
 
 
