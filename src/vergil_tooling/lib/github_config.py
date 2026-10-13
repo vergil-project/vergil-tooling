@@ -503,6 +503,40 @@ def unproducible_ci_yaml_contexts(
     return sorted(missing)
 
 
+def assert_ci_gates_producible(
+    desired: DesiredState, ci_workflow_yaml: str, *, ghas: bool, source: str
+) -> None:
+    """Refuse a CI-gates ruleset that requires a check ci.yml never emits on a PR.
+
+    The single guard shared by every path that writes the ``CI gates`` ruleset —
+    repo-init (against the freshly generated ci.yml) and the ongoing config sync
+    ``vrg-github-repo-config apply`` (against the repo's committed ci.yml,
+    issue #2788). A mismatch means the repository cannot merge any PR: every
+    check that runs is green while the merge stays blocked on a context that
+    never reports (issue #2720). ``source`` names the ci.yml that was checked.
+    """
+    ci_gates = next((rs for rs in desired.rulesets if rs.name == _CI_GATES_RULESET_NAME), None)
+    if ci_gates is None:
+        return
+    unproducible = unproducible_ci_yaml_contexts(
+        ci_workflow_yaml, required_status_contexts(ci_gates), ghas=ghas
+    )
+    if unproducible:
+        raise RuntimeError(
+            f"GitHub CI-gates ruleset requires status checks that {source} never "
+            "emits on a pull_request, so the repository could not merge any PR "
+            "(every check that runs would be green while the merge stays blocked).\n"
+            "  Unproducible required contexts: " + ", ".join(unproducible) + "\n"
+            "Every required context must correspond to a job ci.yml runs on "
+            "pull_request. Likely causes:\n"
+            "  - integration-tests = true: ci.yml has no integration job yet "
+            "(vergil-project/vergil-tooling#2721) — set integration-tests = false "
+            "in vergil.toml until it is a first-class feature.\n"
+            "  - a ci.yml that predates a vergil.toml flag (e.g. publish.docs = true "
+            "with no docs job on pull_request) — regenerate or fix ci.yml first."
+        )
+
+
 # The stable status-check contexts the vergil-actions reusable workflows emit as
 # *required* gates — the evidence-gate model (epic vergil-project/.github#338).
 # The ongoing audit treats a live required context outside this catalog (and

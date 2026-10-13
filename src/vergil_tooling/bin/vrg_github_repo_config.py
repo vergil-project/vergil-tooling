@@ -20,10 +20,12 @@ from vergil_tooling.lib.github_config import (
     ConfigDiff,
     DiffItem,
     apply_desired_state,
+    assert_ci_gates_producible,
     compute_desired_state,
     compute_diff,
     fetch_actual_state,
     format_rules_delta,
+    ghas_available,
 )
 from vergil_tooling.lib.output import emit_error
 from vergil_tooling.lib.repo_config import audit_local_config
@@ -73,19 +75,25 @@ def _is_not_found(exc: github.GitHubAPIError) -> bool:
     return "404" in (exc.stderr or "") or "404" in (exc.stdout or "")
 
 
+def _decode_contents(
+    repo: str, ref: str, what: str, content_data: dict[str, object] | list[object]
+) -> str:
+    """Decode a GitHub contents API response into the file's text."""
+    if not isinstance(content_data, dict):
+        msg = f"Unexpected response fetching {what} from {repo}@{ref}"
+        raise RuntimeError(msg)
+    content = content_data.get("content")
+    if not isinstance(content, str):
+        msg = f"No content field in {what} response from {repo}@{ref}"
+        raise RuntimeError(msg)
+    return base64.b64decode(content).decode()
+
+
 def _decode_config(
     repo: str, ref: str, content_data: dict[str, object] | list[object]
 ) -> VergilConfig:
     """Decode a GitHub contents API response into a VergilConfig."""
-    if not isinstance(content_data, dict):
-        msg = f"Unexpected response fetching config from {repo}@{ref}"
-        raise RuntimeError(msg)
-    content = content_data.get("content")
-    if not isinstance(content, str):
-        msg = f"No content field in config response from {repo}@{ref}"
-        raise RuntimeError(msg)
-    raw_bytes = base64.b64decode(content)
-    raw = tomllib.loads(raw_bytes.decode())
+    raw = tomllib.loads(_decode_contents(repo, ref, "config", content_data))
     return _parse_raw_config(raw, source=f"{repo}@{ref}:vergil.toml")
 
 
@@ -105,6 +113,37 @@ def _fetch_config_from_ref(repo: str, ref: str) -> VergilConfig | None:
             return None
         raise
     return _decode_config(repo, ref, content_data)
+
+
+_CI_WORKFLOW_PATH = ".github/workflows/ci.yml"
+
+
+def _fetch_ci_workflow(repo: str, ref: str) -> str:
+    """Fetch the committed ``.github/workflows/ci.yml`` of ``repo`` at ``ref``.
+
+    An absent ci.yml (HTTP 404) is a hard error, never a skip: the ``CI gates``
+    ruleset always requires status checks, and with no ci.yml nothing posts them
+    on a pull_request, so applying the ruleset would block every merge — the
+    exact failure the producibility guard exists to prevent (issue #2788).
+    Non-404 API errors propagate unchanged.
+    """
+    try:
+        content_data = github.read_json(
+            "api",
+            f"repos/{repo}/contents/{_CI_WORKFLOW_PATH}?ref={ref}",
+        )
+    except github.GitHubAPIError as exc:
+        if _is_not_found(exc):
+            msg = (
+                f"Refusing to apply the CI-gates ruleset to {repo}: "
+                f"{_CI_WORKFLOW_PATH} is absent from the '{ref}' branch, so no "
+                f"required status check could ever report on a pull_request and "
+                f"every merge would be blocked. Commit a ci.yml to '{ref}' "
+                f"(vrg-github-repo-init generates the canonical one) before applying."
+            )
+            raise RuntimeError(msg) from exc
+        raise
+    return _decode_contents(repo, ref, _CI_WORKFLOW_PATH, content_data)
 
 
 def _load_cwd_config() -> VergilConfig | None:
@@ -216,10 +255,23 @@ def _print_diff(repo: str, diff: ConfigDiff) -> None:
 
 
 def _apply_repo(repo: str, config: VergilConfig) -> list[ClassicProtectionReport]:
-    """Apply desired state to a repo. Returns the classic-protection cleanup report."""
+    """Apply desired state to a repo. Returns the classic-protection cleanup report.
+
+    Before anything is written, the desired ``CI gates`` ruleset is
+    cross-checked against the repo's committed ci.yml on the default branch —
+    the same producibility guard repo-init runs — so a routine sync can never
+    (re)apply a required status check no pull_request job emits (issue #2788).
+    """
     result = fetch_actual_state(repo)
     is_org = result.owner_type == "Organization"
     desired = compute_desired_state(config, visibility=result.visibility, is_org=is_org)
+    ci_yaml = _fetch_ci_workflow(repo, _DEFAULT_BRANCH)
+    assert_ci_gates_producible(
+        desired,
+        ci_yaml,
+        ghas=ghas_available(config, visibility=result.visibility),
+        source=f"{repo}@{_DEFAULT_BRANCH}:{_CI_WORKFLOW_PATH}",
+    )
     return apply_desired_state(repo, desired)
 
 

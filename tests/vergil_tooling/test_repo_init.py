@@ -1774,6 +1774,7 @@ class TestStepGithubConfig:
             patch("vergil_tooling.lib.github_config.apply_desired_state", side_effect=mock_apply),
             patch("vergil_tooling.lib.repo_init._sync_labels", side_effect=mock_sync),
             patch("vergil_tooling.lib.config.read_config"),
+            patch("vergil_tooling.lib.repo_init._assert_ci_gates_producible"),
         ):
             mock_fetch.return_value.owner_type = "Organization"
             mock_fetch.return_value.visibility = "public"
@@ -1953,6 +1954,7 @@ class TestStepGithubConfigExtended:
             patch("vergil_tooling.lib.github_config.apply_desired_state", side_effect=mock_apply),
             patch("vergil_tooling.lib.repo_init._sync_labels"),
             patch("vergil_tooling.lib.config.read_config"),
+            patch("vergil_tooling.lib.repo_init._assert_ci_gates_producible"),
         ):
             mock_fetch.return_value.owner_type = "Organization"
             mock_fetch.return_value.visibility = "public"
