@@ -15327,12 +15327,19 @@ output, with no subprocess and no patching of <code>sys.argv</code>.</p>
 <code>vrg-hook-guard</code> PreToolUse hook, which reads a JSON event from stdin) may
 declare <code>def main() -&gt; int:</code> instead.</p>
 <h3 id="position">Position<a class="headerlink" href="#position" title="Permanent link">&para;</a></h3>
-<p><code>main</code> is the last function defined in the module. Helpers (argument parser
-construction, validation, the individual steps) are defined above it, and
-<code>main</code> composes them. The <code>if __name__</code> guard follows <code>main</code> at the end of the
-file. Reading a command module therefore means reading its building blocks
-first and finding the orchestration that ties them together, plus the guard, at
-the bottom.</p>
+<p><code>main</code> is the first function defined in the module. It comes directly after the
+imports, the module constants, and any module-level types (classes, dataclasses,
+type aliases) defined ahead of the functions. The argument parser function
+(<code>parse_args</code> or <code>_parse_args</code>), when the module has one, follows immediately
+after <code>main</code>. The remaining helpers (validation, the individual steps) are
+defined below. Reading a command module therefore starts with the orchestration:
+what the command does, step by step, before the details of each step.</p>
+<p>Defining <code>main</code> ahead of the helpers it calls is safe because Python resolves
+those names when <code>main</code> runs, not when it is defined. The <code>if __name__</code> guard
+stays at the end of the file, after every definition, so that the whole module
+is loaded before <code>main</code> is called.</p>
+<p><code>tests/vergil_tooling/test_cli_entry_points.py</code> enforces that <code>main</code> is the
+first top-level function in every <code>bin/</code> module that defines one.</p>
 <h3 id="the-if-__name__-guard">The <code>if __name__</code> guard<a class="headerlink" href="#the-if-__name__-guard" title="Permanent link">&para;</a></h3>
 <p>End the module with:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">"__main__"</span><span class="p">:</span>
