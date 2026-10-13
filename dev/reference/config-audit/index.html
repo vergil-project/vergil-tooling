@@ -15477,6 +15477,12 @@ version-agnostic CI model (epic
   workflow emits — for example a stale per-version check surviving a matrix
   reduction — is reported as drift rather than silently sitting "expected, never
   reported" and blocking every PR.</li>
+<li><strong>Apply-time producibility guard.</strong> Before <code>apply</code> writes anything, it
+  fetches the repo's committed <code>.github/workflows/ci.yml</code> from <code>develop</code> and
+  refuses (exit 1) if the desired <code>CI gates</code> ruleset requires a context no
+  <code>pull_request</code> job in that file emits — the same guard repo-init runs
+  against the ci.yml it generates. A missing <code>ci.yml</code> is also a refusal, never
+  a skip: with no workflow, no required check could ever report.</li>
 <li><strong>Classic branch-protection read + scoped cleanup.</strong> The audit reads legacy
   <em>classic</em> branch protection in addition to the rulesets API. When it
   reconciles, it removes <strong>only</strong> the stale version-suffixed CI contexts the
