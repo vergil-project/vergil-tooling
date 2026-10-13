@@ -1274,6 +1274,8 @@
       
         
       
+        
+      
     
     
     
@@ -1326,6 +1328,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.239/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.239
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -12903,6 +12933,8 @@
       
         
       
+        
+      
     
     
     
@@ -12991,6 +13023,34 @@
     
   
     Naming Conventions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../standards/development/python/cli-entry-points/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI Entry Points
   
 
     
@@ -13769,6 +13829,8 @@
       
         
       
+        
+      
     
     
     
@@ -13857,6 +13919,34 @@
     
   
     Naming Conventions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../standards/development/shell/error-handling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Error Handling
   
 
     
@@ -15629,12 +15719,18 @@ merge. Removing that call is tracked in
 <div class="admonition note">
 <p class="admonition-title">Agent handoff and the post-report-ready freeze</p>
 <p>In an agent session, submission is a <strong>human</strong> action. The agent
-instead runs <code>vrg-pr-workflow report-ready</code> to record the PR
-metadata in <code>.vergil/pr-workflow.json</code>, then stops; the human runs
+pushes the branch to origin (<code>vrg-git push -u origin &lt;branch&gt;</code>)
+<strong>first</strong> — <code>report-ready</code> pushes only the relay ref, never the
+branch; when the delta touches <code>.github/workflows/**</code> the agent push
+is refused and the human's <code>vrg-submit-pr</code> pushes it instead. The
+agent then runs <code>vrg-pr-workflow report-ready</code> to record the PR
+metadata in <code>.vergil/pr-workflow.json</code>, and stops; the human runs
 <code>vrg-submit-pr</code>. Recording ready <strong>freezes the branch</strong>: <code>vrg-commit</code>
 and the <code>vrg-git</code> push path refuse further commits/pushes on it,
 because a task is exactly one PR and more work is a new follow-up
-issue. Correcting the PR prose (re-running <code>report-ready</code>) is still
+issue. One push stays allowed: an explicit push of the branch while
+HEAD is still exactly the reported commit, which publishes it without
+advancing it. Correcting the PR prose (re-running <code>report-ready</code>) is still
 allowed; deliberately reopening the branch needs
 <code>vrg-pr-workflow unfreeze</code>. See the tool's entry in the
 <a href="../../reference/cli-tools-overview/#vrg-pr-workflow">CLI Tools Overview</a>.</p>
