@@ -14667,6 +14667,89 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#responding-to-a-compromised-credential" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Responding to a compromised credential
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Responding to a compromised credential">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-response-in-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The response, in order
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#agent-app-private-key-user-or-audit-app" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Agent App private key (user or audit App)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-human-account" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The human account
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#org-automation-app-vergil-releasebot" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Org automation App (vergil-release[bot])
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ci-publishing-secrets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CI publishing secrets
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reviewing-activity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reviewing activity
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#related" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -15169,6 +15252,89 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#responding-to-a-compromised-credential" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Responding to a compromised credential
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Responding to a compromised credential">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-response-in-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The response, in order
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#agent-app-private-key-user-or-audit-app" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Agent App private key (user or audit App)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-human-account" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The human account
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#org-automation-app-vergil-releasebot" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Org automation App (vergil-release[bot])
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ci-publishing-secrets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CI publishing secrets
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reviewing-activity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reviewing activity
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#related" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -15303,6 +15469,188 @@ the contributor operates in. Installation tokens are minted per-org
 from the same private key, so adding a new org requires only
 installing the existing App on it — no new keys, no credential
 reconfiguration.</p>
+<h2 id="responding-to-a-compromised-credential">Responding to a compromised credential<a class="headerlink" href="#responding-to-a-compromised-credential" title="Permanent link">&para;</a></h2>
+<p>Use this procedure when a credential is known or suspected to be
+exposed: a private key copied off its host, a secret printed in a log,
+a lost or untrusted machine. Act on suspicion. Revoking a credential
+that turns out to be safe costs a few minutes of re-provisioning.
+Leaving a leaked one live can cost far more.</p>
+<h3 id="the-response-in-order">The response, in order<a class="headerlink" href="#the-response-in-order" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>Contain.</strong> Revoke or suspend the credential so it cannot be used
+   again. The per-credential steps are below.</li>
+<li><strong>Halt dependent work.</strong> Stop the operations that use the
+   credential, such as agent sessions, releases, and publishing
+   workflows, until a replacement is in place. If the agent VM is the
+   suspected source of the leak, stop it (<code>vrg-vm stop</code> on Lima) or
+   destroy it (<code>vrg-vm destroy</code> off-platform, where <code>stop</code> is not
+   supported). An off-platform VM's injected credentials live on its
+   ephemeral boot disk and are deleted with it.</li>
+<li><strong>Review activity.</strong> Check what the identity did during the window
+   of suspected exposure (see <a href="#reviewing-activity">Reviewing activity</a>).</li>
+<li><strong>Restore.</strong> Issue a replacement credential and re-provision
+   whatever consumed the old one.</li>
+<li><strong>Retrospect.</strong> Find out how the credential was exposed, and decide
+   what process or tooling change stops it from happening again.</li>
+</ol>
+<h3 id="agent-app-private-key-user-or-audit-app">Agent App private key (user or audit App)<a class="headerlink" href="#agent-app-private-key-user-or-audit-app" title="Permanent link">&para;</a></h3>
+<p>The private key in <code>private_key_path</code> is the agent's only long-lived
+credential. Installation tokens are derived from it and expire after
+about an hour.</p>
+<p><strong>Blast radius.</strong> The holder of the key can mint tokens for every
+account the App is installed on. Each token can reach the repositories
+that installation covers. The token is limited to the App's declared
+permissions, as listed in <a href="../account-setup/">Account Setup</a>:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th><code>&lt;username&gt;-vergil-user</code> key</th>
+<th><code>&lt;username&gt;-vergil-audit</code> key</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Contents</td>
+<td><strong>Read and write.</strong> Can push branches and read all code in covered repos, private repos included.</td>
+<td><strong>Read-only.</strong> Can read all code in covered repos, private repos included.</td>
+</tr>
+<tr>
+<td>Issues</td>
+<td><strong>Read and write.</strong> Can create, edit, and comment on issues.</td>
+<td>Read-only</td>
+</tr>
+<tr>
+<td>Pull requests</td>
+<td>Read-only</td>
+<td><strong>Read and write.</strong> Can write PR reviews and comments.</td>
+</tr>
+<tr>
+<td>Workflows</td>
+<td>No access. Cannot push under <code>.github/workflows/</code>.</td>
+<td>No access. Cannot push under <code>.github/workflows/</code>.</td>
+</tr>
+<tr>
+<td>Merge</td>
+<td>Cannot open, approve, or merge PRs.</td>
+<td>Cannot merge, because merging needs <code>contents: write</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>Branch protection still limits a leaked user-App key. It cannot push
+directly to a protected branch or merge without review. It can still
+push malicious content to feature branches, and it can read every
+private repo its installations cover. Because both Apps can read code,
+treat a leak of either key as exposure of that code.</p>
+<p><strong>Contain.</strong></p>
+<ul>
+<li><strong>Delete the compromised key.</strong> Open the App's settings page and go
+  to <strong>Private keys</strong>. Delete the compromised key so that no new
+  tokens can be minted from it. A token minted before the deletion
+  stays valid until it expires (about an hour).</li>
+<li><strong>Suspend the installations</strong> to cut off access immediately, before
+  the outstanding tokens expire. In the settings of each account the
+  App is installed on, open the App's installation and suspend it.
+  Unsuspend it after the replacement key is in place.</li>
+</ul>
+<p><strong>Restore.</strong> Generate a new private key for the same App as in
+<a href="../account-setup/">Account Setup</a>, Step 1.3 or 2.3. Point
+<code>private_key_path</code> in <code>identities.toml</code> at the new file and delete the
+old <code>.pem</code> from <code>~/.config/vergil/keys/</code>. Then re-inject the key into
+the agent VM. Credentials are injected when a VM is created, started,
+restarted, or rebuilt, so run <code>vrg-vm restart</code> on Lima or
+<code>vrg-vm rebuild</code> off-platform. The App ID, permissions, and
+installations do not change. Routine, non-emergency key rotation is
+tracked separately in
+<a href="https://github.com/vergil-project/vergil-tooling/issues/779">#779</a>.</p>
+<h3 id="the-human-account">The human account<a class="headerlink" href="#the-human-account" title="Permanent link">&para;</a></h3>
+<p><strong>Blast radius.</strong> This is the most severe case. The human account
+holds the authority that the agent Apps lack: review, approval, merge,
+and administration (see
+<a href="../identity-architecture/">Identity Architecture</a>). It is also an
+owner of the orgs the agents work in, and it owns both agent Apps,
+which are registered under its Developer settings. Anyone in control of
+the human account can therefore generate fresh keys for both agent
+Apps.</p>
+<p><strong>Contain and restore.</strong> Secure the GitHub account itself, then treat
+<strong>both</strong> agent App keys as compromised and work through the App-key
+procedure above for each one. Review the account's recent merge and
+administrative activity in addition to the agent activity.</p>
+<h3 id="org-automation-app-vergil-releasebot">Org automation App (<code>vergil-release[bot]</code>)<a class="headerlink" href="#org-automation-app-vergil-releasebot" title="Permanent link">&para;</a></h3>
+<p>The org-level App does mechanized release work. It creates release
+PRs, and a human approves and merges them (see
+<a href="../identity-architecture/#the-release-app">Identity Architecture</a>).
+CI also reaches the org's App through the <code>APP_CLIENT_ID</code> and
+<code>APP_PRIVATE_KEY</code> Actions secrets. The <code>cd-release</code> workflow uses
+them to dispatch to the org's <code>packages</code> repository (see
+<a href="../../reference/package-config/">Package config</a>). The <code>ops</code> and
+<code>epic-rollup</code> workflows also receive them.</p>
+<p><strong>Blast radius.</strong> The App is installed at the org level, not per
+contributor, so a leaked key reaches every repo that installation
+covers. Its permission set is not listed in the Account Setup tables.
+Read the exact permissions from the App's settings page before you
+assess the impact. Release PRs it creates still need human approval to
+merge.</p>
+<p><strong>Contain and restore.</strong> Follow the same steps as for an agent App key:
+delete the key, suspend the installation if access must stop at once,
+and generate a new key. Then update the <code>APP_PRIVATE_KEY</code> secret
+wherever it is stored. Until you do, the workflows that depend on it
+(release dispatch, ops, epic roll-up) will fail.</p>
+<h3 id="ci-publishing-secrets">CI publishing secrets<a class="headerlink" href="#ci-publishing-secrets" title="Permanent link">&para;</a></h3>
+<p>The release workflow forwards per-ecosystem secrets to <code>cd-release</code>
+(see <a href="../ci-architecture/#cd-release-publishing-secrets">CI Architecture</a>):</p>
+<table>
+<thead>
+<tr>
+<th>Secret</th>
+<th>Blast radius</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>CARGO_REGISTRY_TOKEN</code>, <code>RUBYGEMS_API_KEY</code>, <code>CENTRAL_USERNAME</code>/<code>CENTRAL_TOKEN</code></td>
+<td>Can publish to that registry under the project's account</td>
+</tr>
+<tr>
+<td><code>GPG_PRIVATE_KEY</code>/<code>GPG_PASSPHRASE</code> (java)</td>
+<td>Can sign artifacts as the project</td>
+</tr>
+<tr>
+<td><code>PACKAGE_SIGNING_KEY</code>/<code>PACKAGE_SIGNING_PASSPHRASE</code></td>
+<td>Can sign <code>.deb</code>/<code>.rpm</code> packages that apt/dnf clients will trust, because clients trust the org signing key</td>
+</tr>
+</tbody>
+</table>
+<p>Python publishing uses PyPI OIDC trusted publishing, so there is no
+stored PyPI token to leak.</p>
+<p><strong>Contain.</strong> Revoke the token or key <strong>at its issuer</strong>, such as the
+registry account or the GPG key, so that a leaked copy stops working.
+Changing only the GitHub secret leaves the leaked copy valid. Halt
+releases until a replacement is in place.</p>
+<p><strong>Restore.</strong> Issue a replacement at the issuer. Then update the
+repository, organization, or environment secret that held it.
+<code>PACKAGE_SIGNING_*</code> live in the <code>package-signing</code> environment. The
+package signing key is more involved to replace than the others,
+because clients pin it. Its primary fingerprint is pinned in
+vergil-tooling, checked by <code>vrg-vm</code>, published in
+<a href="../../getting-started/">Getting Started</a>, and shipped in the
+<code>vergil-archive-keyring</code> package (see
+<a href="../../reference/vm-spec/">VM spec</a>). Replacing it means changing all
+of those together.</p>
+<h3 id="reviewing-activity">Reviewing activity<a class="headerlink" href="#reviewing-activity" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Org audit log.</strong> In the organization's settings, open <strong>Audit
+  log</strong> and filter by the compromised identity across the window of
+  suspected exposure. For an agent App, that identity is the
+  <code>&lt;username&gt;-vergil-&lt;role&gt;[bot]</code> actor. Repeat for every org the
+  App is installed on.</li>
+<li><strong>Repository history.</strong> Every commit, PR, review, and comment made
+  through an App carries its bot identity, so the App's work stands
+  out in branch, PR, and issue history. Look for unexpected branches,
+  pushes, PRs, reviews, and issue edits.</li>
+<li><strong>Release artifacts.</strong> For a publishing secret, check the registry
+  or package index for versions you did not release.</li>
+</ul>
 <h2 id="related">Related<a class="headerlink" href="#related" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../account-setup/">Account Setup</a> — registering the Apps,
