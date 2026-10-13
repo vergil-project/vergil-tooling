@@ -455,7 +455,44 @@ def _current_worktree_root() -> Path | None:
     return Path(root) if root else None
 
 
-def _check_frozen_push() -> str | None:
+# Push flags that change only output/upstream bookkeeping, never *what* is
+# pushed or how. Anything else (``--all``, ``--mirror``, ``--tags``,
+# ``--delete``, ``--force-with-lease``, ``-o``, ...) keeps the frozen push
+# refused — the reported-commit allowance is fail-closed (issue #3071).
+_PUBLISH_SAFE_PUSH_FLAGS = frozenset(
+    {"-u", "--set-upstream", "-q", "--quiet", "-v", "--verbose", "--progress", "--no-progress"}
+)
+
+
+def _pushes_only_branch_at_head(args: list[str], branch: str) -> bool:
+    """Return True when ``git push *args`` publishes only *branch* at HEAD.
+
+    Fail-closed parse: every flag must be in :data:`_PUBLISH_SAFE_PUSH_FLAGS`,
+    there must be an explicit remote **and** at least one explicit refspec, and
+    every refspec must take its source from HEAD/*branch* and land on *branch*
+    — no ``+`` force, no other source commit or destination. A bare ``push``
+    is refused because what it publishes depends on ``push.default`` config.
+    """
+    positionals: list[str] = []
+    for arg in args:
+        if arg.startswith("-"):
+            if arg not in _PUBLISH_SAFE_PUSH_FLAGS:
+                return False
+        else:
+            positionals.append(arg)
+    if len(positionals) < 2:
+        return False
+    names = {branch, f"refs/heads/{branch}"}
+    for refspec in positionals[1:]:
+        src, sep, dst = refspec.partition(":")
+        if src not in names | {"HEAD"}:
+            return False
+        if sep and dst not in names:
+            return False
+    return True
+
+
+def _check_frozen_push(args: list[str]) -> str | None:
     """Return a refusal message when the current worktree's branch is frozen.
 
     A branch reported ready (``report-ready``) is done; advancing it with a push
@@ -463,6 +500,14 @@ def _check_frozen_push() -> str | None:
     ``vrg-submit-pr`` pushes via ``lib.git`` directly, not this wrapper, so this
     guard only stops an *agent* push of a frozen branch. Returns None (push
     allowed) when not frozen or when the worktree root cannot be resolved.
+
+    One frozen push is allowed: publishing the branch at exactly the reported
+    commit (HEAD == recorded ``head_sha``, on the recorded branch, with refspecs
+    that push only that branch at HEAD). That push cannot move the branch past
+    what ``report-ready`` recorded, so it is not drift — and it is what a relay
+    ``vrg-submit-pr <branch>`` needs when the branch was not pushed before
+    ``report-ready`` (issue #3071). A missing ``head_sha`` or unresolvable HEAD
+    never qualifies.
     """
     root = _current_worktree_root()
     if root is None:
@@ -474,7 +519,24 @@ def _check_frozen_push() -> str | None:
             "proceeding without a freeze check.",
             file=sys.stderr,
         )
-    return check.message if check.frozen else None
+    if not check.frozen:
+        return None
+    branch = check.publishable_branch
+    if branch is None:
+        return check.message
+    if _pushes_only_branch_at_head(args, branch):
+        print(
+            "vrg-git: branch is frozen, but HEAD is exactly the reported commit; "
+            "allowing this push (it publishes the reported commit, not new work).",
+            file=sys.stderr,
+        )
+        return None
+    return (
+        f"{check.message}\n\n"
+        "HEAD is still exactly the reported commit, so publishing it is allowed —\n"
+        "but only with an explicit push of this branch:\n"
+        f"  vrg-git push -u origin {branch}"
+    )
 
 
 def _print_workflow_push_guidance() -> None:
@@ -638,7 +700,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if subcmd == "push":
-        frozen_msg = _check_frozen_push()
+        frozen_msg = _check_frozen_push(argv[1:])
         if frozen_msg is not None:
             print(frozen_msg, file=sys.stderr)
             return 1

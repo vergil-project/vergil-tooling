@@ -3,6 +3,14 @@
 Run-and-done since #1872. The implementing agent calls ``report-ready`` when its
 work is green; that writes ``.vergil/pr-workflow.json`` with the PR metadata,
 and ``vrg-submit-pr`` (human-run) reads it. ``status`` prints the current state.
+
+Ordering: push the branch to origin (``vrg-git push -u origin <branch>``)
+*before* ``report-ready``. ``report-ready`` pushes only the relay ref, never the
+branch, and a relay ``vrg-submit-pr <branch>`` needs the branch already on
+origin. When the delta touches ``.github/workflows/**`` the agent push is
+refused by GitHub; that is expected — the human's ``vrg-submit-pr`` pushes the
+branch instead. If the push was missed, the freeze still allows publishing the
+branch at exactly the reported commit (issue #3071).
 """
 
 from __future__ import annotations
@@ -227,7 +235,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--base", default="origin/develop", help="Base ref for the delta")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_ready = sub.add_parser("report-ready", help="Record the PR metadata for this worktree")
+    p_ready = sub.add_parser(
+        "report-ready",
+        help="Record the PR metadata for this worktree (push the branch first)",
+        description=(
+            "Record the PR metadata for this worktree and freeze the branch. "
+            "Push the branch to origin BEFORE running this "
+            "(vrg-git push -u origin <branch>): report-ready pushes only the "
+            "relay ref, not the branch. If the delta touches .github/workflows/**, "
+            "the agent push is refused and the human's vrg-submit-pr pushes the "
+            "branch instead."
+        ),
+    )
     p_ready.add_argument("--issue", required=True)
     p_ready.add_argument("--title", required=True)
     p_ready.add_argument("--summary", required=True)
