@@ -22,6 +22,10 @@ driver resolves it, #2979). ``--dry-run`` reports the intended action per repo
 without touching any git or GitHub state. A repo whose ``ci.yml`` shape cannot
 be understood is left unchanged and listed **prominently** in a follow-up
 report — never silently skipped (this repo's "no silent failures" policy).
+
+Each repo's tracking issue links under that repo's **own** org ad-hoc epic
+(``epic=None``), like ``vrg-fleet-sync`` and ``vrg-xdist-sync``: the fleet spans
+several orgs and ``vrg-issue-create`` refuses a cross-org epic link (#3015).
 """
 
 from __future__ import annotations
@@ -32,7 +36,6 @@ import sys
 from vergil_tooling.lib.ci_yml_applicator import strip_matrix_inputs
 from vergil_tooling.lib.fleet_sweep import SweepSpec, run_sweep
 
-_EPIC = "vergil-project/.github#338"
 _TITLE = "refactor(ci): drop the hardcoded matrix inputs from ci.yml"
 _BODY = (
     "Remove the `versions:` and `container-tag:` inputs from every "
@@ -76,7 +79,10 @@ def main(argv: list[str] | None = None) -> int:
         body=_BODY,
         commit_type="refactor",
         commit_scope="ci",
-        epic=_EPIC,
+        # No fixed epic: each repo's task links under its OWN org's ad-hoc
+        # epic. A hardcoded vergil-project epic made vrg-issue-create refuse
+        # every repo in another org as a cross-org link (#3015).
+        epic=None,
     )
     results = run_sweep(spec, strip_matrix_inputs, dry_run=args.dry_run)
     for result in results:

@@ -30,7 +30,10 @@ Per repo, :func:`run_sweep`:
    report-ready`` — recording ``"ready"``.
 
 Each repo runs inside its own ``try``/``except`` so one repo's failure is
-recorded (``"error"``) and never aborts the sweep. The driver **never** runs
+recorded (``"error"``) and never aborts the sweep. A failure before the probe
+worktree is renamed removes the probe, so it never blocks the next sweep of that
+repo; a cleanup failure is reported alongside the original error. The driver
+**never** runs
 ``vrg-submit-pr`` or merges — PR submission and merge stay human actions.
 """
 
@@ -153,6 +156,22 @@ def _commit_subject(title: str) -> str:
     return _COMMIT_PREFIX_RE.sub("", title).strip() or title
 
 
+def _discard_probe(repo_dir: str, probe: Path, cause: Exception) -> None:
+    """Remove the probe worktree after *cause* aborted the probe phase.
+
+    Called only for a probe this sweep created. If the removal itself fails,
+    raise a :class:`RuntimeError` naming **both** the original failure and the
+    cleanup failure (chained from *cause*), so neither is masked and the
+    stranded probe is reported rather than silently left behind. On success it
+    returns and the caller re-raises *cause* unchanged.
+    """
+    try:
+        git.run("-C", repo_dir, "worktree", "remove", "--force", str(probe))
+    except Exception as cleanup_exc:
+        msg = f"{cause}; additionally failed to remove probe worktree {probe}: {cleanup_exc}"
+        raise RuntimeError(msg) from cause
+
+
 def _process_repo(spec: SweepSpec, applicator: Applicator, repo: str) -> RepoResult:
     """Run the full work-chain for one *repo*; the caller isolates failures.
 
@@ -175,27 +194,38 @@ def _process_repo(spec: SweepSpec, applicator: Applicator, repo: str) -> RepoRes
     #    repo leaves nothing behind and never needs an issue.
     git.run("-C", repo_dir, "worktree", "add", "--detach", str(probe), "origin/develop")
 
-    result = applicator(probe)
+    # Probe phase: until the probe is renamed to ``issue-<N>-<slug>`` it holds
+    # nothing worth keeping, so any failure here discards it — otherwise the
+    # stranded probe makes the next sweep of this repo fail at ``worktree add``
+    # (#3015). Once renamed, the worktree is left in place on failure: it is the
+    # issue's worktree and may hold the applicator's change for a human to
+    # finish.
+    try:
+        result = applicator(probe)
 
-    if not result.changed:
-        # Nothing to propagate: tear down the probe and skip. No issue, no
-        # branch, no PR.
-        git.run("-C", repo_dir, "worktree", "remove", "--force", str(probe))
-        return RepoResult(
-            repo=repo,
-            status="skipped",
-            detail=result.summary,
-            needs_followup=result.needs_followup,
-        )
+        if not result.changed:
+            # Nothing to propagate: tear down the probe and skip. No issue, no
+            # branch, no PR.
+            git.run("-C", repo_dir, "worktree", "remove", "--force", str(probe))
+            return RepoResult(
+                repo=repo,
+                status="skipped",
+                detail=result.summary,
+                needs_followup=result.needs_followup,
+            )
 
-    # 2. There is a change worth a PR: mint the tracking issue, then rename the
-    #    worktree to the repo convention ``issue-<N>-<slug>`` and name the branch
-    #    after the issue, carrying the working-tree change (which moves with the
-    #    worktree) onto the branch.
-    issue = _ensure_issue(spec, repo_dir)
-    branch = f"feature/{issue}-{spec.branch_slug}"
-    worktree = worktrees / f"issue-{issue}-{spec.branch_slug}"
-    git.run("-C", repo_dir, "worktree", "move", str(probe), str(worktree))
+        # 2. There is a change worth a PR: mint the tracking issue, then rename
+        #    the worktree to the repo convention ``issue-<N>-<slug>`` and name
+        #    the branch after the issue, carrying the working-tree change (which
+        #    moves with the worktree) onto the branch.
+        issue = _ensure_issue(spec, repo_dir)
+        branch = f"feature/{issue}-{spec.branch_slug}"
+        worktree = worktrees / f"issue-{issue}-{spec.branch_slug}"
+        git.run("-C", repo_dir, "worktree", "move", str(probe), str(worktree))
+    except Exception as exc:
+        _discard_probe(repo_dir, probe, exc)
+        raise
+
     git.run("-C", str(worktree), "checkout", "-b", branch)
 
     # 3. Stage the applicator's working-tree changes, then commit and hand off.

@@ -169,7 +169,11 @@ def test_unrecognized_shape_without_jobs_flags_needs_followup(tmp_path: Path) ->
 
 
 def test_main_builds_ci_sync_spec(monkeypatch: pytest.MonkeyPatch) -> None:
-    """main builds the ci-sync SweepSpec (epic #338) and hands it to run_sweep."""
+    """main builds the ci-sync SweepSpec and hands it to run_sweep.
+
+    ``epic`` is None so each repo links under its own org's ad-hoc epic; a
+    hardcoded vergil-project epic failed every cross-org repo (#3015).
+    """
     captured: dict[str, object] = {}
 
     def fake_run_sweep(spec, applicator, *, dry_run):  # noqa: ANN001, ANN003
@@ -189,7 +193,7 @@ def test_main_builds_ci_sync_spec(monkeypatch: pytest.MonkeyPatch) -> None:
     assert spec.branch_slug == "ci-sync"
     assert spec.commit_type == "refactor"
     assert spec.commit_scope == "ci"
-    assert spec.epic == "vergil-project/.github#338"
+    assert spec.epic is None
     assert spec.title
     assert spec.body
     assert captured["dry_run"] is True
