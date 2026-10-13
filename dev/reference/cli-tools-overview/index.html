@@ -15916,7 +15916,12 @@ ref is world-readable on a public repo, keep secrets out of
 <code>--title/--summary/--notes</code>. Reaching <strong>ready</strong> <em>freezes</em> the branch:
 <code>vrg-commit</code> and the <code>vrg-git</code> push path then refuse further
 commits/pushes, because a task is exactly one PR and more work is a new
-follow-up issue (epic #146). <code>unfreeze</code> is the only sanctioned way to
+follow-up issue (epic #146). Push the branch to origin <strong>before</strong>
+<code>report-ready</code> (it pushes only the relay ref, never the branch); when the
+delta touches <code>.github/workflows/**</code> the human's <code>vrg-submit-pr</code> pushes it
+instead. If that push was missed, an explicit <code>vrg-git push [-u] origin
+&lt;branch&gt;</code> is still allowed while HEAD is exactly the reported commit — it
+publishes, not advances, the branch (issue #3071). <code>unfreeze</code> is the only sanctioned way to
 reopen a still-unsubmitted branch — it drops the state back to
 <code>implementing</code> while keeping the metadata; an already-submitted branch
 cannot be unfrozen. <code>status</code> prints the current state.</p>
