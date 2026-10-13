@@ -185,11 +185,13 @@ when it was generated.
 
    `pr list` is allowed for both the user and the audit identity. Use
    a repository on an account the App is installed on. The check
-   passes when the command lists PRs with no warnings. If the key
-   cannot mint a token, `vrg-gh` prints
-   `GitHub App auth failed, falling back to ambient auth` on stderr.
-   Treat that warning as a failed check even if the command goes on to
-   return output.
+   passes when the command lists PRs. If the key cannot mint a token,
+   `vrg-gh` stops before running `gh`, prints
+   `GitHub App authentication failed for owner '<owner>'` with the App
+   ID, the key path, and GitHub's error, and exits non-zero. It never
+   falls back to another login, so a broken key cannot pass the check
+   by acting as someone else. Every other `vrg-*` command fails the same
+   way while the key is broken.
 
    `vrg-whoami --explain` is not a key check. It reports which
    identity the VM resolves to, from the injected files, but it does

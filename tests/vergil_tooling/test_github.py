@@ -6,6 +6,7 @@ import http.client
 import io
 import json
 import subprocess
+import sys
 import urllib.error
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -27,6 +28,7 @@ def _no_credential_injection(monkeypatch: pytest.MonkeyPatch) -> None:
     github._token_cache.clear()
     github._installation_cache = None
     github._warned_stale_links.clear()
+    github._warned_no_installation.clear()
     monkeypatch.delenv(github.CHECKS_TIMEOUT_ENV, raising=False)
 
 
@@ -1765,6 +1767,99 @@ class TestResolveInstallations:
         assert result == {"good-org": "100"}
 
 
+def _configure_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Configure file-based App credentials under a temp HOME; return the key path."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("VRG_APP_ID", raising=False)
+    monkeypatch.delenv("VRG_PRIVATE_KEY_PATH", raising=False)
+    config_dir = tmp_path / ".config" / "vergil"
+    config_dir.mkdir(parents=True)
+    (config_dir / "app.env").write_text("APP_ID=12345\n")
+    key_path = config_dir / "app.pem"
+    key_path.write_text("fake-key\n")
+    return key_path
+
+
+def _app_auth_error() -> github.AppAuthError:
+    return github.AppAuthError("test-org", "12345", Path("/keys/app.pem"), "HTTP Error 401")
+
+
+class TestAppAuthError:
+    def test_is_not_a_gh_failure(self) -> None:
+        # gh-failure handlers (retry, "not found" probes) must not swallow it.
+        assert not issubclass(github.AppAuthError, subprocess.CalledProcessError)
+
+    def test_repo_exists_does_not_swallow_it(self) -> None:
+        github.repo_visibility.cache_clear()
+        with (
+            patch("vergil_tooling.lib.github.read_json", side_effect=_app_auth_error()),
+            pytest.raises(github.AppAuthError),
+        ):
+            github.repo_exists("test-org", "repo")
+
+    def test_message_is_actionable(self) -> None:
+        msg = github.app_auth_message(_app_auth_error())
+        assert "owner 'test-org'" in msg
+        assert "App ID 12345" in msg
+        assert "/keys/app.pem" in msg
+        assert "HTTP Error 401" in msg
+        assert "Refusing to fall back to ambient gh auth" in msg
+
+    def test_excepthook_is_installed(self) -> None:
+        assert sys.excepthook is github._app_auth_excepthook
+
+    def test_excepthook_prints_clean_message(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        previous = MagicMock()
+        monkeypatch.setattr(github, "_previous_excepthook", previous)
+        monkeypatch.setattr(sys, "argv", ["/usr/bin/vrg-git", "push"])
+        exc = _app_auth_error()
+        github._app_auth_excepthook(type(exc), exc, None)
+        err = capsys.readouterr().err
+        assert err.startswith("vrg-git: GitHub App authentication failed for owner 'test-org'")
+        assert "Traceback" not in err
+        previous.assert_not_called()
+
+    def test_excepthook_names_package_without_argv(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setattr(github, "_previous_excepthook", MagicMock())
+        monkeypatch.setattr(sys, "argv", [])
+        exc = _app_auth_error()
+        github._app_auth_excepthook(type(exc), exc, None)
+        assert capsys.readouterr().err.startswith("vergil-tooling: ")
+
+    def test_excepthook_delegates_other_exceptions(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        previous = MagicMock()
+        monkeypatch.setattr(github, "_previous_excepthook", previous)
+        exc = RuntimeError("boom")
+        github._app_auth_excepthook(RuntimeError, exc, None)
+        previous.assert_called_once_with(RuntimeError, exc, None)
+
+    def test_uncaught_error_exits_nonzero_without_traceback(self) -> None:
+        # End to end: a real interpreter, as a console-script entry point sees it.
+        code = (
+            "from pathlib import Path\n"
+            "from vergil_tooling.lib import github\n"
+            "raise github.AppAuthError('o', '1', Path('/k.pem'), 'bad key')\n"
+        )
+        result = subprocess.run(  # noqa: S603
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 1
+        assert "Traceback" not in result.stderr
+        assert "GitHub App authentication failed for owner 'o'" in result.stderr
+        assert "bad key" in result.stderr
+
+
 class TestGetInstallationToken:
     def test_returns_none_when_no_app_config(
         self,
@@ -1816,11 +1911,17 @@ class TestGetInstallationToken:
             method="POST",
         )
 
-    def test_returns_none_when_org_not_in_installations(
+    def test_returns_none_and_warns_once_when_org_not_in_installations(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
+        # Cwd-scoped callers (require_installation=False) keep the ambient
+        # fallback for an owner the App is not installed on (#2070, #3214),
+        # but the identity switch is announced, once per owner.
+        import logging
+
         monkeypatch.setenv("HOME", str(tmp_path))
         monkeypatch.delenv("VRG_APP_ID", raising=False)
         monkeypatch.delenv("VRG_PRIVATE_KEY_PATH", raising=False)
@@ -1834,8 +1935,32 @@ class TestGetInstallationToken:
                 "vergil_tooling.lib.github._resolve_installations",
                 return_value={"other-org": "111"},
             ),
+            caplog.at_level(logging.WARNING, logger="vergil_tooling.lib.github"),
         ):
             assert github.get_installation_token(org="missing-org") is None
+            assert github.get_installation_token(org="missing-org") is None
+        warnings = [r for r in caplog.records if "no installation" in r.getMessage()]
+        assert len(warnings) == 1
+        assert "'missing-org'" in warnings[0].getMessage()
+        assert "other-org" in warnings[0].getMessage()
+        assert "ambient" in warnings[0].getMessage()
+
+    def test_no_installation_warning_lists_none_when_app_has_no_installations(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        import logging
+
+        _configure_app(tmp_path, monkeypatch)
+        with (
+            patch("vergil_tooling.lib.github._generate_jwt", return_value="jwt"),
+            patch("vergil_tooling.lib.github._resolve_installations", return_value={}),
+            caplog.at_level(logging.WARNING, logger="vergil_tooling.lib.github"),
+        ):
+            assert github.get_installation_token(org="missing-org") is None
+        assert "known: none" in caplog.text
 
     def test_raises_when_required_and_org_has_no_installation(
         self,
@@ -1899,60 +2024,64 @@ class TestGetInstallationToken:
         assert first == second == "ghs_token"
         assert mock_req.call_count == 1
 
-    def test_returns_none_when_jwt_generation_fails(
+    def test_raises_app_auth_error_when_jwt_signing_fails(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        monkeypatch.setenv("HOME", str(tmp_path))
-        monkeypatch.delenv("VRG_APP_ID", raising=False)
-        monkeypatch.delenv("VRG_PRIVATE_KEY_PATH", raising=False)
-        config_dir = tmp_path / ".config" / "vergil"
-        config_dir.mkdir(parents=True)
-        (config_dir / "app.env").write_text("APP_ID=12345\n")
-        (config_dir / "app.pem").write_text("fake-key\n")
-        with patch(
-            "vergil_tooling.lib.github._generate_jwt",
-            side_effect=subprocess.CalledProcessError(1, "openssl"),
+        # openssl runs without text=True, so its stderr arrives as bytes.
+        key_path = _configure_app(tmp_path, monkeypatch)
+        err = subprocess.CalledProcessError(
+            1, "openssl", output=b"\x00sig", stderr=b"unable to load key\n"
+        )
+        with (
+            patch("vergil_tooling.lib.github._generate_jwt", side_effect=err),
+            pytest.raises(github.AppAuthError) as excinfo,
         ):
-            assert github.get_installation_token(org="test-org") is None
+            github.get_installation_token(org="test-org")
+        assert excinfo.value.org == "test-org"
+        assert excinfo.value.app_id == "12345"
+        assert excinfo.value.key_path == key_path
+        assert excinfo.value.detail == "unable to load key"
+        assert excinfo.value.__cause__ is err
+        assert "test-org" in str(excinfo.value)
+        assert github._token_cache == {}
 
-    def test_returns_none_when_resolve_installations_fails(
+    def test_app_auth_error_detail_falls_back_to_exception_text(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        monkeypatch.setenv("HOME", str(tmp_path))
-        monkeypatch.delenv("VRG_APP_ID", raising=False)
-        monkeypatch.delenv("VRG_PRIVATE_KEY_PATH", raising=False)
-        config_dir = tmp_path / ".config" / "vergil"
-        config_dir.mkdir(parents=True)
-        (config_dir / "app.env").write_text("APP_ID=12345\n")
-        (config_dir / "app.pem").write_text("fake-key\n")
-        err = subprocess.CalledProcessError(1, "gh")
-        err.stderr = "HTTP 401 Unauthorized"
-        err.stdout = ""
+        _configure_app(tmp_path, monkeypatch)
+        err = subprocess.CalledProcessError(1, "openssl")
+        with (
+            patch("vergil_tooling.lib.github._generate_jwt", side_effect=err),
+            pytest.raises(github.AppAuthError) as excinfo,
+        ):
+            github.get_installation_token(org="test-org")
+        assert excinfo.value.detail == str(err)
+
+    def test_raises_app_auth_error_when_resolve_installations_fails(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _configure_app(tmp_path, monkeypatch)
+        err = subprocess.CalledProcessError(1, "gh", output="", stderr="HTTP 401 Unauthorized")
         with (
             patch("vergil_tooling.lib.github._generate_jwt", return_value="fake-jwt"),
-            patch(
-                "vergil_tooling.lib.github._resolve_installations",
-                side_effect=err,
-            ),
+            patch("vergil_tooling.lib.github._resolve_installations", side_effect=err),
+            pytest.raises(github.AppAuthError, match="HTTP 401 Unauthorized"),
         ):
-            assert github.get_installation_token(org="test-org") is None
+            github.get_installation_token(org="test-org")
 
-    def test_returns_none_when_token_exchange_fails(
+    def test_raises_app_auth_error_when_token_exchange_fails(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        monkeypatch.setenv("HOME", str(tmp_path))
-        monkeypatch.delenv("VRG_APP_ID", raising=False)
-        monkeypatch.delenv("VRG_PRIVATE_KEY_PATH", raising=False)
-        config_dir = tmp_path / ".config" / "vergil"
-        config_dir.mkdir(parents=True)
-        (config_dir / "app.env").write_text("APP_ID=12345\n")
-        (config_dir / "app.pem").write_text("fake-key\n")
+        # urllib's HTTPError is an OSError: the rejected-key case.
+        _configure_app(tmp_path, monkeypatch)
         err = urllib.error.HTTPError(
             "https://api.github.com/app/installations/67890/access_tokens",
             401,
@@ -1967,56 +2096,100 @@ class TestGetInstallationToken:
                 return_value={"test-org": "67890"},
             ),
             patch("vergil_tooling.lib.github._jwt_api_request", side_effect=err),
+            pytest.raises(github.AppAuthError) as excinfo,
         ):
-            assert github.get_installation_token(org="test-org") is None
+            github.get_installation_token(org="test-org")
+        assert "401" in excinfo.value.detail
 
-    def test_returns_none_when_openssl_not_found(
+    def test_raises_app_auth_error_when_openssl_not_found(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        monkeypatch.setenv("HOME", str(tmp_path))
-        monkeypatch.delenv("VRG_APP_ID", raising=False)
-        monkeypatch.delenv("VRG_PRIVATE_KEY_PATH", raising=False)
-        config_dir = tmp_path / ".config" / "vergil"
-        config_dir.mkdir(parents=True)
-        (config_dir / "app.env").write_text("APP_ID=12345\n")
-        (config_dir / "app.pem").write_text("fake-key\n")
-        with patch(
-            "vergil_tooling.lib.github._generate_jwt",
-            side_effect=FileNotFoundError("openssl"),
+        _configure_app(tmp_path, monkeypatch)
+        with (
+            patch(
+                "vergil_tooling.lib.github._generate_jwt",
+                side_effect=FileNotFoundError("openssl"),
+            ),
+            pytest.raises(github.AppAuthError, match="openssl"),
         ):
-            assert github.get_installation_token(org="test-org") is None
+            github.get_installation_token(org="test-org")
 
-    def test_logs_warning_on_app_auth_failure(
+    def test_raises_app_auth_error_when_key_file_unreadable(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-        caplog: pytest.LogCaptureFixture,
     ) -> None:
-        import logging
-
+        # Env-var configuration pointing at a key that is not there.
         monkeypatch.setenv("HOME", str(tmp_path))
-        monkeypatch.delenv("VRG_APP_ID", raising=False)
-        monkeypatch.delenv("VRG_PRIVATE_KEY_PATH", raising=False)
-        config_dir = tmp_path / ".config" / "vergil"
-        config_dir.mkdir(parents=True)
-        (config_dir / "app.env").write_text("APP_ID=12345\n")
-        (config_dir / "app.pem").write_text("fake-key\n")
-        err = subprocess.CalledProcessError(1, "gh")
-        err.stderr = "HTTP 401 Unauthorized"
-        err.stdout = ""
+        monkeypatch.setenv("VRG_APP_ID", "777")
+        monkeypatch.setenv("VRG_PRIVATE_KEY_PATH", str(tmp_path / "gone.pem"))
+        with (
+            patch(
+                "vergil_tooling.lib.github._generate_jwt",
+                side_effect=PermissionError("gone.pem"),
+            ),
+            pytest.raises(github.AppAuthError) as excinfo,
+        ):
+            github.get_installation_token(org="test-org")
+        assert excinfo.value.app_id == "777"
+        assert excinfo.value.key_path == tmp_path / "gone.pem"
+
+    def test_raises_app_auth_error_on_malformed_api_response(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _configure_app(tmp_path, monkeypatch)
         with (
             patch("vergil_tooling.lib.github._generate_jwt", return_value="fake-jwt"),
             patch(
                 "vergil_tooling.lib.github._resolve_installations",
-                side_effect=err,
+                side_effect=json.JSONDecodeError("Expecting value", "<html>", 0),
             ),
-            caplog.at_level(logging.WARNING, logger="vergil_tooling.lib.github"),
+            pytest.raises(github.AppAuthError, match="Expecting value"),
         ):
             github.get_installation_token(org="test-org")
-        assert "App auth failed" in caplog.text
-        assert "401" in caplog.text
+
+    @pytest.mark.parametrize("response", [{}, {"token": ""}, {"token": 5}, ["ghs_x"]])
+    def test_raises_app_auth_error_when_response_has_no_token(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        response: object,
+    ) -> None:
+        # An empty GH_TOKEN makes gh use its stored login: never hand one out.
+        _configure_app(tmp_path, monkeypatch)
+        with (
+            patch("vergil_tooling.lib.github._generate_jwt", return_value="fake-jwt"),
+            patch(
+                "vergil_tooling.lib.github._resolve_installations",
+                return_value={"test-org": "67890"},
+            ),
+            patch("vergil_tooling.lib.github._jwt_api_request", return_value=response),
+            pytest.raises(github.AppAuthError, match="no installation token"),
+        ):
+            github.get_installation_token(org="test-org")
+        assert github._token_cache == {}
+
+    def test_gh_env_propagates_app_auth_error(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The lib path: no ambient-auth env (None) may come back from a mint failure.
+        monkeypatch.setattr("vergil_tooling.lib.github._gh_env", _real_gh_env)
+        _configure_app(tmp_path, monkeypatch)
+        with (
+            patch("vergil_tooling.lib.github.detect_org", return_value="test-org"),
+            patch(
+                "vergil_tooling.lib.github._generate_jwt",
+                side_effect=FileNotFoundError("openssl"),
+            ),
+            pytest.raises(github.AppAuthError),
+        ):
+            github._gh_env()
 
     def test_refreshes_expired_cache(
         self,
