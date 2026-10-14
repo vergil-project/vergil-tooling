@@ -27,6 +27,8 @@ from vergil_tooling.lib.github_config import EvidenceGate
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from tests.vergil_tooling.conftest import FakeApp
+
 
 def _wire_github_stages(
     monkeypatch: pytest.MonkeyPatch,
@@ -524,3 +526,83 @@ def test_assemble_help_exits_zero(capsys: pytest.CaptureFixture[str]) -> None:
         vrg_ci_evidence.main(["assemble", "--help"])
     assert excinfo.value.code == 0
     assert "--staging" in capsys.readouterr().out
+
+
+# -- App-token scoping (#3220) ------------------------------------------------
+
+
+def test_harvest_reads_release_pr_head_from_the_target_repo(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The PR head lookup names --repo; a bare number would hit the cwd repo."""
+    _wire_github_stages(
+        monkeypatch,
+        tmp_path,
+        required=(EvidenceGate(name="test", checks=("test / unit",)),),
+        conclusions={"test / unit": "success"},
+        download=_full_download(("test",)),
+    )
+    seen: list[str] = []
+
+    def _head_sha(pr: str) -> str:
+        seen.append(pr)
+        return "cafef00d"
+
+    monkeypatch.setattr(github, "head_sha", _head_sha)
+
+    assert main(_harvest_argv(tmp_path / "staging")) == 0
+    assert seen == ["https://github.com/o/r/pull/2281"]
+
+
+def _scoped_argv(command: str, repo: str, tmp_path: Path) -> list[str]:
+    argv = [command, "--repo", repo, "--merge-sha", "deadbeef", "--out-dir", str(tmp_path)]
+    if command == "bundle":
+        argv += ["--version", "2.1.129", "--generated-at", "2026-07-13T00:00:00Z"]
+    return argv
+
+
+@pytest.mark.parametrize("command", ["harvest", "bundle"])
+@pytest.mark.parametrize("cwd_org", [None, "cwd-org"], ids=["outside-repo", "other-org"])
+def test_token_minted_for_repo_owner(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fake_app: FakeApp,
+    command: str,
+    cwd_org: str | None,
+) -> None:
+    """Every harvest-time GitHub call runs under the --repo owner's installation."""
+    fake_app.cwd_org = cwd_org
+    owners: list[str] = []
+
+    def _record(repo: str, *_args: object, **_kwargs: object) -> None:
+        assert repo == "target-org/r"
+        owners.append(fake_app.token_owner())
+
+    monkeypatch.setattr(ci_evidence, f"run_{command}", _record)
+
+    assert main(_scoped_argv(command, "target-org/r", tmp_path)) == 0
+    assert owners == ["target-org"]
+
+
+@pytest.mark.parametrize("command", ["harvest", "bundle"])
+def test_missing_installation_for_repo_owner_fails_loudly(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fake_app: FakeApp,
+    capsys: pytest.CaptureFixture[str],
+    command: str,
+) -> None:
+    """An uninstalled --repo owner stops the command; no ambient-auth fallback."""
+    fake_app.cwd_org = "cwd-org"
+
+    def _first_gh_call(_repo: str, *_args: object, **_kwargs: object) -> None:
+        fake_app.token_owner()
+
+    monkeypatch.setattr(ci_evidence, f"run_{command}", _first_gh_call)
+
+    with pytest.raises(SystemExit) as excinfo:
+        main(_scoped_argv(command, "lonely-org/r", tmp_path))
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert "vrg-ci-evidence:" in err
+    assert "no installation for owner 'lonely-org'" in err

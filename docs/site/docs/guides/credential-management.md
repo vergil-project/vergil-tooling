@@ -100,8 +100,8 @@ is present, these two cases stop the command rather than fall back
 to ambient `gh`/`git` auth:
 
 - **No target org.** The target org comes from an explicit owner
-  (`-R owner/repo` for `vrg-gh`, the owner a command explicitly
-  scopes its token to, or a `vrg-git clone` URL) or else from the
+  (`-R owner/repo` for `vrg-gh`, a command's own target argument
+  such as `--repo owner/repo`, or a `vrg-git clone` URL) or else from the
   current repo's GitHub `origin` remote. If neither yields an org (for
   example, `vrg-gh` without `-R` run outside a repo), the command
   stops with `GitHub App mode is configured ... but no target org

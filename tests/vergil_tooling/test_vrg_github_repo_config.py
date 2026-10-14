@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 import pytest
 
@@ -22,6 +20,7 @@ from vergil_tooling.bin.vrg_github_repo_config import (
     main,
     parse_args,
 )
+from vergil_tooling.lib import github
 from vergil_tooling.lib.config import (
     DEFAULT_VALIDATION_COMMAND,
     CiConfig,
@@ -34,6 +33,11 @@ from vergil_tooling.lib.config import (
 )
 from vergil_tooling.lib.github import GitHubAPIError
 from vergil_tooling.lib.github_config import ClassicProtectionReport, ConfigDiff, DiffItem
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from tests.vergil_tooling.conftest import FakeApp
 
 # -- Argument parsing ---------------------------------------------------------
 
@@ -1018,3 +1022,104 @@ def test_audit_prints_skipped_bypass_actors(capsys: pytest.CaptureFixture[str]) 
     output = capsys.readouterr().out
     assert "bypass_actors: skipped" in output
     assert "GitHub App credentials" in output
+
+
+# -- App-token scoping (#3220) ------------------------------------------------
+
+
+@pytest.mark.parametrize("cwd_org", [None, "cwd-org"], ids=["outside-repo", "other-org"])
+def test_token_minted_for_repo_owner(fake_app: FakeApp, cwd_org: str | None) -> None:
+    """Config resolution, audit and apply all run under the --repo owner's token."""
+    fake_app.cwd_org = cwd_org
+    owners: list[str] = []
+
+    def _record(result: object) -> Callable[..., object]:
+        def _call(*_args: object) -> object:
+            owners.append(fake_app.token_owner())
+            return result
+
+        return _call
+
+    with (
+        patch(f"{_MODULE}._cwd_matches_repo", return_value=False),
+        patch(f"{_MODULE}._resolve_config", side_effect=_record(object())),
+        patch(f"{_MODULE}._audit_repo", side_effect=_record(_mock_github_noncompliant())),
+        patch(f"{_MODULE}._apply_repo", side_effect=_record([])),
+    ):
+        result = main(["apply", "--repo", "target-org/r"])
+    assert result == 0
+    assert owners == ["target-org", "target-org", "target-org"]
+
+
+def test_default_repo_mints_for_resolved_repo_owner(fake_app: FakeApp) -> None:
+    """Without --repo the cwd repo is the target, so its owner's token is used."""
+    fake_app.cwd_org = "cwd-org"
+    owners: list[str] = []
+
+    def _audit(*_args: object) -> ConfigDiff:
+        owners.append(fake_app.token_owner())
+        return _mock_github_compliant()
+
+    with (
+        patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
+        patch(f"{_MODULE}.github.current_repo", return_value="cwd-org/here"),
+        patch(f"{_MODULE}._resolve_config"),
+        patch(f"{_MODULE}._audit_repo", side_effect=_audit),
+    ):
+        result = main(["audit"])
+    assert result == 0
+    assert owners == ["cwd-org"]
+
+
+def test_missing_installation_for_repo_owner_exits_two(
+    fake_app: FakeApp, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An uninstalled --repo owner means the audit could not complete (exit 2),
+    not a false 'non-compliant' exit 1, and never an ambient-auth fallback."""
+    fake_app.cwd_org = "cwd-org"
+
+    def _first_gh_call(*_args: object) -> object:
+        return fake_app.token_owner()
+
+    with (
+        patch(f"{_MODULE}._cwd_matches_repo", return_value=False),
+        patch(f"{_MODULE}._resolve_config", side_effect=_first_gh_call),
+        patch(f"{_MODULE}._audit_repo") as mock_audit,
+    ):
+        result = main(["audit", "--repo", "lonely-org/r"])
+    assert result == 2
+    mock_audit.assert_not_called()
+    err = capsys.readouterr().err
+    assert "Could not audit lonely-org/r" in err
+    assert "no installation for owner 'lonely-org'" in err
+
+
+def test_app_auth_failure_exits_two(capsys: pytest.CaptureFixture[str]) -> None:
+    """A failed App token mint is could-not-complete (exit 2), not exit 1."""
+    failure = github.AppAuthError("o", "12345", Path("/k/app.pem"), "bad key")
+    with (
+        patch(f"{_MODULE}._cwd_matches_repo", return_value=False),
+        patch(f"{_MODULE}._resolve_config", side_effect=failure),
+    ):
+        result = main(["audit", "--repo", "o/r"])
+    assert result == 2
+    err = capsys.readouterr().err
+    assert "Could not audit o/r" in err
+    assert "GitHub App authentication failed for owner 'o'" in err
+
+
+def test_config_resolution_api_error_exits_two(capsys: pytest.CaptureFixture[str]) -> None:
+    """A non-404 API error fetching vergil.toml is could-not-complete (exit 2)."""
+    api_error = GitHubAPIError(1, ("gh", "api"), "", "gh: Server Error (HTTP 500)")
+    with (
+        patch(f"{_MODULE}._cwd_matches_repo", return_value=False),
+        patch(f"{_MODULE}._resolve_config", side_effect=api_error),
+        patch(f"{_MODULE}._audit_repo") as mock_audit,
+    ):
+        result = main(["audit", "--repo", "o/r"])
+    assert result == 2
+    mock_audit.assert_not_called()
+    err = capsys.readouterr().err
+    assert "Could not resolve vergil.toml for o/r" in err
+    assert "HTTP 500" in err
+    assert "Traceback" not in err

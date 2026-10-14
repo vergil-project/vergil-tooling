@@ -35,7 +35,6 @@ from vergil_tooling.lib.repo_config import audit_local_config
 @cli_main
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    all_compliant = True
 
     local_compliant = True
     if args.repo and not _cwd_matches_repo(args.repo):
@@ -51,10 +50,30 @@ def main(argv: list[str] | None = None) -> int:
         _print_local_diff(local_diff)
         local_compliant = local_diff.is_compliant()
 
-    if not local_compliant:
-        all_compliant = False
-
     repo = _resolve_repo(args)
+    # Every GitHub call below targets *repo*, so mint the App token for its
+    # owner rather than the cwd org (#3220). Under target_org a missing
+    # installation for that owner raises NoInstallationError instead of
+    # falling back to ambient auth.
+    try:
+        with github.target_org(repo.split("/", 1)[0]):
+            return _audit_and_apply(args, repo, local_compliant=local_compliant)
+    except (github.NoInstallationError, github.AppAuthError) as exc:
+        # The audit could not complete: exit 2, never the "non-compliant"
+        # exit 1 that cli_main would otherwise give an auth failure (#1691).
+        if isinstance(exc, github.NoInstallationError):
+            emit_error(f"Could not audit {repo}: {github.no_installation_message(exc)}")
+        else:
+            emit_error(f"Could not audit {repo}: {github.app_auth_message(exc)}")
+        return 2
+
+
+def _audit_and_apply(args: argparse.Namespace, repo: str, *, local_compliant: bool) -> int:
+    """Audit *repo*'s GitHub config and, for ``apply``, converge it.
+
+    Runs inside the caller's ``github.target_org`` scope for *repo*'s owner.
+    """
+    all_compliant = local_compliant
     # Exit codes are a contract for callers (e.g. vrg-release): 0 = compliant,
     # 1 = genuinely non-compliant, 2 = the audit could not complete. Config
     # resolution and the GitHub state fetch can fail operationally (missing
@@ -63,6 +82,9 @@ def main(argv: list[str] | None = None) -> int:
     # verdict or a raw traceback (#1691).
     try:
         config = _load_local_config(args.config) if args.config else _resolve_config(repo)
+    except github.GitHubAPIError as exc:
+        emit_error(f"Could not resolve vergil.toml for {repo}: {exc}")
+        return 2
     except RuntimeError as exc:
         emit_error(str(exc))
         return 2
