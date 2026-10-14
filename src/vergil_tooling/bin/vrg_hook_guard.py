@@ -23,6 +23,8 @@ import re
 import sys
 from pathlib import Path
 
+from vergil_tooling.lib.cli import cli_main
+
 # Canonical command-position anchor (spec section 2.2): the tool name
 # matches only at line start or after a command separator, applied per
 # line of the quote-stripped text.
@@ -58,6 +60,7 @@ _GH_DENY_REASON = (
 )
 
 
+@cli_main
 def main() -> int:
     try:
         data = json.load(sys.stdin)

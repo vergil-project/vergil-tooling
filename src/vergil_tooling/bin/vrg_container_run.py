@@ -14,6 +14,7 @@ import sys
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import git
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.config import (
     DEFAULT_VALIDATION_COMMAND,
     container_env_prefixes,
@@ -68,6 +69,7 @@ examples:
 """
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     args = argv if argv is not None else sys.argv[1:]
 

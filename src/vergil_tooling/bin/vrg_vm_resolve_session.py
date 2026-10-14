@@ -22,6 +22,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.session import (
     Create,
     Decision,
@@ -41,6 +42,7 @@ from vergil_tooling.lib.session_store import (
 )
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="vrg-vm-resolve-session")
     parser.add_argument("--identity")

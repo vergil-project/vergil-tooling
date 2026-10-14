@@ -38,12 +38,14 @@ import sys
 from pathlib import Path
 
 from vergil_tooling.lib import config
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.package import PackageError, build, matrix
 from vergil_tooling.lib.package import python_builder as _python_builder  # noqa: F401
 from vergil_tooling.lib.package import staged as _staged  # noqa: F401  (registers the builder)
 from vergil_tooling.lib.package.index import site
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:

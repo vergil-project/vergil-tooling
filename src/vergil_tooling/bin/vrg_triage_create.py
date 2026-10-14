@@ -18,10 +18,12 @@ import argparse
 import sys
 
 from vergil_tooling.lib import github
+from vergil_tooling.lib.cli import cli_main
 
 _KINDS = ("triage", "idea", "research")
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     if args.repo:

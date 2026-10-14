@@ -7,9 +7,11 @@ import sys
 from pathlib import Path
 
 from vergil_tooling.lib.changelog import generate_changelog, generate_release_notes
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.version import show
 
 
+@cli_main
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="vrg-changelog",

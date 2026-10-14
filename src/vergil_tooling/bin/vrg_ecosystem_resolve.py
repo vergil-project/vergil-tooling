@@ -10,10 +10,12 @@ import argparse
 import shlex
 import sys
 
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.languages import ecosystem_metadata, supported_languages
 from vergil_tooling.lib.output import emit_error, is_ci, write_output
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="vrg-ecosystem-resolve",

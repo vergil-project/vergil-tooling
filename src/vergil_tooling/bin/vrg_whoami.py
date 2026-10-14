@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import sys
 
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.identity_mode import Resolution, Signal, resolve
 from vergil_tooling.lib.platform_env import PlatformResolution, resolve_platform
 
@@ -41,6 +42,7 @@ _SIGNAL_LABELS = {
 }
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 

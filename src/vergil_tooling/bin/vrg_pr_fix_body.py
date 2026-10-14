@@ -29,6 +29,7 @@ import argparse
 import sys
 
 from vergil_tooling.lib import git, github, identity_mode, pr_body
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.linkage import ALLOWED_LINKAGES
 
 _RETRIGGER_MESSAGE = (
@@ -38,6 +39,7 @@ _RETRIGGER_MESSAGE = (
 )
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 

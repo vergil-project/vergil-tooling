@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.output import emit_error, write_output, write_summary
 from vergil_tooling.lib.version_divergence import (
     DivergenceStatus,
@@ -12,6 +13,7 @@ from vergil_tooling.lib.version_divergence import (
 )
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="vrg-version-divergence",

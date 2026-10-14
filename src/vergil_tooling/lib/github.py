@@ -29,7 +29,6 @@ from vergil_tooling.lib import retry
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Iterator
-    from types import TracebackType
 
 log = logging.getLogger(__name__)
 
@@ -67,8 +66,9 @@ class AppAuthError(Exception):
     Deliberately *not* a :class:`subprocess.CalledProcessError`: handlers that
     interpret ``gh`` failures (transient-retry classification, "not found"
     probes such as :func:`repo_exists`) must never mistake a broken credential
-    for an API answer. Uncaught, it is printed by :func:`_app_auth_excepthook`
-    as :func:`app_auth_message` instead of a traceback, and the process exits 1.
+    for an API answer. If a command's ``main`` lets it escape, the
+    :func:`vergil_tooling.lib.cli.cli_main` boundary prints it as
+    :func:`app_auth_message` instead of a traceback and exits 1.
     """
 
     def __init__(self, org: str, app_id: str, key_path: Path, detail: str) -> None:
@@ -89,29 +89,6 @@ def app_auth_message(exc: AppAuthError) -> str:
         "readable, and is a key the App still accepts (it may have been "
         "rotated or deleted on GitHub), and that the App ID is correct."
     )
-
-
-def _app_auth_excepthook(
-    exc_type: type[BaseException],
-    exc: BaseException,
-    tb: TracebackType | None,
-) -> None:
-    """Print an uncaught :class:`AppAuthError` as a message, not a traceback.
-
-    Every ``vrg-*`` entry point that reaches GitHub imports this module, so
-    installing the hook here makes a broken App credential fail loudly and
-    cleanly (stderr message, exit status 1) from every command without a
-    per-command handler. Every other exception goes to the previous hook.
-    """
-    if isinstance(exc, AppAuthError):
-        prog = Path(sys.argv[0]).name if sys.argv and sys.argv[0] else "vergil-tooling"
-        print(f"{prog}: {app_auth_message(exc)}", file=sys.stderr)
-        return
-    _previous_excepthook(exc_type, exc, tb)
-
-
-_previous_excepthook = sys.excepthook
-sys.excepthook = _app_auth_excepthook
 
 
 def _load_app_config() -> tuple[str, Path] | None:

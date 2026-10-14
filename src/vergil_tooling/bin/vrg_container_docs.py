@@ -11,12 +11,14 @@ import os
 import sys
 
 from vergil_tooling.lib import git
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.config import container_env_prefixes
 from vergil_tooling.lib.container import build_container_args, detect_runtime
 
 _VALID_PREFIXES = {"dev", "prod"}
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     args = list(argv if argv is not None else sys.argv[1:])
 

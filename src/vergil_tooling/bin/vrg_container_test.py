@@ -14,6 +14,7 @@ import sys
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import git
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.config import container_env_prefixes, primary_ci_version
 from vergil_tooling.lib.container import (
     _DEFAULT_TEST_COMMANDS,
@@ -31,6 +32,7 @@ if TYPE_CHECKING:
 _detect_language = detect_language
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     _parse_args(argv)
     runtime = detect_runtime()

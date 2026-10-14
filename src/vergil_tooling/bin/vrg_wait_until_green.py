@@ -19,12 +19,14 @@ import sys
 import time
 
 from vergil_tooling.lib import github
+from vergil_tooling.lib.cli import cli_main
 
 _MAX_BRANCH_UPDATES = 5
 _MAX_UNKNOWN_RETRIES = 3
 _UNKNOWN_RETRY_DELAY = 5
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     updates = 0

@@ -9,12 +9,14 @@ from __future__ import annotations
 import argparse
 import sys
 
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.languages import ecosystem_metadata, supported_languages
 from vergil_tooling.lib.output import emit_error
 
 _CONTAINER_LANGUAGES = frozenset({"python", "java", "ruby", "rust", "go"})
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="vrg-release-validate-inputs",

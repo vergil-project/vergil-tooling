@@ -13,6 +13,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from vergil_tooling.lib.cli import cli_main
+
 # ---------------------------------------------------------------------------
 # Metadata defaults
 # ---------------------------------------------------------------------------
@@ -32,6 +34,7 @@ class CommandSpec:
     name_default: str | None  # e.g. "*" for DISPLAY QUEUE
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 

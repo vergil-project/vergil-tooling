@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 
 from vergil_tooling.lib import config, git, progress
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.languages import CheckKind, language_commands
 from vergil_tooling.lib.progress import Stage, StageMode
 
@@ -37,6 +38,7 @@ _LANGUAGE_CHECK_ORDER = [
 ]
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="vrg-validate",

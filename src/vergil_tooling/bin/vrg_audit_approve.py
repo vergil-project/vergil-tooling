@@ -19,6 +19,7 @@ import argparse
 import sys
 
 from vergil_tooling.lib import github, identity_mode
+from vergil_tooling.lib.cli import cli_main
 
 CHECK_NAME = "vergil-audit/approved"
 
@@ -30,6 +31,7 @@ _TITLES = {
 }
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 

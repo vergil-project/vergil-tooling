@@ -43,6 +43,7 @@ import re
 import sys
 
 from vergil_tooling.lib import github, pr_await
+from vergil_tooling.lib.cli import cli_main
 
 _PR_URL_OWNER_RE = re.compile(r"github\.com/([^/]+)/[^/]+/pull/\d+")
 _PR_URL_REPO_RE = re.compile(r"github\.com/([^/]+/[^/]+)/pull/\d+")
@@ -53,6 +54,7 @@ _PR_URL_REPO_RE = re.compile(r"github\.com/([^/]+/[^/]+)/pull/\d+")
 _PERMISSION_SIGNATURES = ("resource not accessible by integration", "http 403")
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:

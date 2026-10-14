@@ -6,10 +6,12 @@ import argparse
 import sys
 from pathlib import Path
 
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.promote import promote
 from vergil_tooling.lib.version import show
 
 
+@cli_main
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="vrg-promote",

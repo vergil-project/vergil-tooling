@@ -84,6 +84,43 @@ is loaded before `main` is called.
 `tests/vergil_tooling/test_cli_entry_points.py` enforces that `main` is the
 first top-level function in every `bin/` module that defines one.
 
+### The `cli_main` boundary
+
+Every console script's `main` is decorated with
+`vergil_tooling.lib.cli.cli_main`:
+
+```python
+from vergil_tooling.lib.cli import cli_main
+
+
+@cli_main
+def main(argv: list[str] | None = None) -> int:
+    ...
+```
+
+The decorator is the command boundary for the known GitHub authentication
+failures. When `main` lets one escape, it prints a single `<prog>: <message>`
+report on stderr and exits with status `1` instead of a traceback:
+
+| Exception | Message |
+|---|---|
+| `github.AppAuthError` | `github.app_auth_message()` |
+| `github.NoInstallationError` | `github.no_installation_message()` |
+| `github.MissingGitHubTokenError` | `github.missing_token_message()` |
+
+`<prog>` is the command name, derived from the module file name, so it is
+correct under an installed script, `python -m`, and in-process tests. Every
+other exception propagates unchanged. A command that needs command-specific
+wording (for example `vrg-gh`'s `-R/--repo` hint) still catches the error
+inside `main`; the decorator only sees what `main` does not handle.
+
+Library modules never install a global `sys.excepthook` or otherwise change
+interpreter state at import time to get the same effect: error handling stays
+visible at the entry point (#3216).
+
+`tests/vergil_tooling/test_cli_entry_points.py` enforces that every
+`[project.scripts]` entry point is wrapped by `cli_main`.
+
 ### The `if __name__` guard
 
 End the module with:

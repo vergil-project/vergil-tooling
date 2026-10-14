@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from vergil_tooling.lib import identity_mode, lang_scaffold
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.config import _ENUMS
 from vergil_tooling.lib.languages import language_lock_command
 from vergil_tooling.lib.repo_init import (
@@ -30,6 +31,7 @@ _REQUIRED_NON_INTERACTIVE = (
 )
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 

@@ -6,12 +6,14 @@ import argparse
 import sys
 
 from vergil_tooling.lib import git, github, identity_mode, progress
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.handoff import run_consumer_refresh
 from vergil_tooling.lib.release.orchestrator import ReleaseState, build_stages
 from vergil_tooling.lib.release.resume import find_resume_target
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 

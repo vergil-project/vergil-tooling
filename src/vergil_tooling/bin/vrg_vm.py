@@ -31,6 +31,7 @@ from vergil_tooling.bin.vrg_vm_resolve_session import (
     projects_glob,
 )
 from vergil_tooling.lib import progress, vm_cloud, vm_memory, vm_packages
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.config import ConfigError, VmStanza, read_config
 from vergil_tooling.lib.identity import (
     Identity,
@@ -92,6 +93,7 @@ _default_config_path = default_config_path
 _TERMINAL_ENV_VARS = "COLORTERM,TERM_PROGRAM,TERM_PROGRAM_VERSION"
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="vrg-vm",

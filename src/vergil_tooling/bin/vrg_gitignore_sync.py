@@ -21,9 +21,11 @@ import sys
 from pathlib import Path
 
 from vergil_tooling.lib import gitignore
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.repo_config import _gitignore_language
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     repo_root = Path(args.repo).resolve() if args.repo else Path.cwd()

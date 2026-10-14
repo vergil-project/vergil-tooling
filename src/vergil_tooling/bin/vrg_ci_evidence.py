@@ -39,9 +39,11 @@ from vergil_tooling.lib.ci_evidence import (
     NoQualifyingRunError,
     ReleasePrUnresolvedError,
 )
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.output import emit_error
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:

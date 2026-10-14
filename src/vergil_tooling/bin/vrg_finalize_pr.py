@@ -55,6 +55,7 @@ from vergil_tooling.lib import (
     progress,
     worktrees,
 )
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.confirm import add_yes_argument, confirm
 from vergil_tooling.lib.container import resolve_language
 from vergil_tooling.lib.container_cache import (
@@ -89,6 +90,7 @@ _ETERNAL_BY_MODEL: dict[str, list[str]] = {
 }
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 

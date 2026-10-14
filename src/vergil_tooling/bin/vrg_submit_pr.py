@@ -66,6 +66,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import epics, git, github, identity_mode, worktrees
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.confirm import add_yes_argument, confirm
 from vergil_tooling.lib.linkage import ALLOWED_LINKAGES, normalize_linkage
 from vergil_tooling.lib.pr_body import build_pr_body, resolve_issue_ref
@@ -78,6 +79,7 @@ if TYPE_CHECKING:
     from vergil_tooling.lib.pr_workflow.state import WorkflowState
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
