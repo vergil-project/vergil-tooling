@@ -1278,6 +1278,8 @@
       
         
       
+        
+      
     
     
     
@@ -1330,6 +1332,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.241/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.241
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15563,6 +15593,31 @@ the token-minting path returns nothing and the <code>gh</code> subprocess
 inherits the parent environment. This lets the tooling run in CI
 environments where credentials are provided through other mechanisms
 (for example, an Actions-provided token).</p>
+<p>Degradation applies only when App config is absent. When App config
+is present, these two cases stop the command rather than fall back
+to ambient <code>gh</code>/<code>git</code> auth:</p>
+<ul>
+<li><strong>No target org.</strong> The target org comes from an explicit owner
+  (<code>-R owner/repo</code> for <code>vrg-gh</code>, the owner a command explicitly
+  scopes its token to, or a <code>vrg-git clone</code> URL) or else from the
+  current repo's GitHub <code>origin</code> remote. If neither yields an org (for
+  example, <code>vrg-gh</code> without <code>-R</code> run outside a repo), the command
+  stops with <code>GitHub App mode is configured ... but no target org
+  could be determined</code> and exits non-zero. Run it inside a repo
+  whose <code>origin</code> is on GitHub, or name the target explicitly.</li>
+<li><strong>Minting fails.</strong> A broken or rotated key stops the command with
+  <code>GitHub App authentication failed for owner '&lt;owner&gt;'</code> (see
+  <a href="#rotating-an-app-private-key">Rotating an App private key</a>).</li>
+</ul>
+<p>Ambient auth may be a human's <code>gh</code> login. Falling back to it would
+let an agent act under a different identity without any sign.</p>
+<p>One case still falls back: the org is known, but the App has no
+installation on it, and the command did not name that owner
+explicitly. The tooling logs a warning naming the owner, then uses
+ambient auth for it. Some human-run commands and anonymous fetches
+of public repos rely on this. A command that names the owner
+explicitly fails with <code>the GitHub App has no installation for owner</code>
+instead.</p>
 <h2 id="security-model">Security model<a class="headerlink" href="#security-model" title="Permanent link">&para;</a></h2>
 <p>Credential security does not rest on token scope. Defense in depth,
 in priority order:</p>
@@ -15650,11 +15705,13 @@ when it was generated.</p>
 </code></pre></div>
 <p><code>pr list</code> is allowed for both the user and the audit identity. Use
    a repository on an account the App is installed on. The check
-   passes when the command lists PRs with no warnings. If the key
-   cannot mint a token, <code>vrg-gh</code> prints
-   <code>GitHub App auth failed, falling back to ambient auth</code> on stderr.
-   Treat that warning as a failed check even if the command goes on to
-   return output.</p>
+   passes when the command lists PRs. If the key cannot mint a token,
+   <code>vrg-gh</code> stops before running <code>gh</code>, prints
+   <code>GitHub App authentication failed for owner '&lt;owner&gt;'</code> with the App
+   ID, the key path, and GitHub's error, and exits non-zero. It never
+   falls back to another login, so a broken key cannot pass the check
+   by acting as someone else. Every other <code>vrg-*</code> command fails the same
+   way while the key is broken.</p>
 <p><code>vrg-whoami --explain</code> is not a key check. It reports which
    identity the VM resolves to, from the injected files, but it does
    not use the key to authenticate.</p>

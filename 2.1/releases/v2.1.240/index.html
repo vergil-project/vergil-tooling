@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.241/">
       
       
         <link rel="next" href="../v2.1.239/">
@@ -1285,6 +1285,8 @@
       
         
       
+        
+      
     
     
     
@@ -1340,6 +1342,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.241/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.241
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15113,6 +15143,7 @@ vrg-ci-sync hardcoded the vergil-project epic, so vrg-issue-create refused every
 <li><strong>add routine App private key rotation procedure (#3210)</strong>
 Add a Rotating an App private key section to credential-management.md covering the user and audit agent Apps: generate a second key, repoint private_key_path in identities.toml, re-inject via vrg-vm restart (Lima) or vrg-vm rebuild (off-platform), verify with a token-minting vrg-gh read, then delete the old key. Repoint the compromise-response Restore step at the new section instead of issue #779. The classic-PAT half of #779 is obsolete; agents no longer use PATs.</li>
 </ul>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.240/v2.1.240-ci-evidence.tar.gz">Download →</a></p>
 
 
 
