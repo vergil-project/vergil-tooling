@@ -95,6 +95,33 @@ inherits the parent environment. This lets the tooling run in CI
 environments where credentials are provided through other mechanisms
 (for example, an Actions-provided token).
 
+Degradation applies only when App config is absent. When App config
+is present, these two cases stop the command rather than fall back
+to ambient `gh`/`git` auth:
+
+- **No target org.** The target org comes from an explicit owner
+  (`-R owner/repo` for `vrg-gh`, a command's `--repo`/`--org`
+  argument, or a `vrg-git clone` URL) or else from the current
+  repo's GitHub `origin` remote. If neither yields an org (for
+  example, `vrg-gh` without `-R` run outside a repo), the command
+  stops with `GitHub App mode is configured ... but no target org
+  could be determined` and exits non-zero. Run it inside a repo
+  whose `origin` is on GitHub, or name the target explicitly.
+- **Minting fails.** A broken or rotated key stops the command with
+  `GitHub App authentication failed for owner '<owner>'` (see
+  [Rotating an App private key](#rotating-an-app-private-key)).
+
+Ambient auth may be a human's `gh` login. Falling back to it would
+let an agent act under a different identity without any sign.
+
+One case still falls back: the org is known, but the App has no
+installation on it, and the command did not name that owner
+explicitly. The tooling logs a warning naming the owner, then uses
+ambient auth for it. Some human-run commands and anonymous fetches
+of public repos rely on this. A command that names the owner
+explicitly fails with `the GitHub App has no installation for owner`
+instead.
+
 ## Security model
 
 Credential security does not rest on token scope. Defense in depth,
