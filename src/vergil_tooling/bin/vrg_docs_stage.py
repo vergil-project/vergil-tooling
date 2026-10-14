@@ -57,13 +57,16 @@ def main(argv: list[str] | None = None) -> int:
     changelog = args.changelog if args.changelog.is_file() else None
     repo = args.repo or github.current_repo()
     try:
-        count = stage_docs(
-            docs_dir=args.docs_dir,
-            releases_dir=args.releases_dir,
-            changelog=changelog,
-            repo=repo,
-            has_evidence_asset=_evidence_resolver(repo),
-        )
+        # Mint the App token for the repo's owner, not the cwd org (#3220). A
+        # missing installation for that owner fails loudly (cli_main).
+        with github.target_org(repo.split("/", 1)[0]):
+            count = stage_docs(
+                docs_dir=args.docs_dir,
+                releases_dir=args.releases_dir,
+                changelog=changelog,
+                repo=repo,
+                has_evidence_asset=_evidence_resolver(repo),
+            )
     except GitHubAPIError as exc:
         if _is_auth_error(exc):
             emit_error("GH_TOKEN required for evidence linking; gh is not authenticated")

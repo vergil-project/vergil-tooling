@@ -803,7 +803,9 @@ def run_harvest(repo: str, merge_sha: str, staging_dir: Path) -> HarvestState:
     gates_dest.mkdir(parents=True, exist_ok=True)
 
     release_pr = resolve_release_pr(repo, merge_sha)
-    head_sha = github.head_sha(str(release_pr))
+    # A bare PR number resolves against the cwd checkout's repo; the URL pins
+    # the lookup to *repo* so it reads the right PR from any directory (#3220).
+    head_sha = github.head_sha(f"https://github.com/{repo}/pull/{release_pr}")
     run = select_ci_run(repo, head_sha)
 
     required = resolve_required_gates(repo, git.repo_root())
