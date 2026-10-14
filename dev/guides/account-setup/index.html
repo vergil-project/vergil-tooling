@@ -15580,6 +15580,18 @@ the permission model — set the permissions exactly as documented.</p>
 <td><strong>Read-only</strong></td>
 </tr>
 <tr>
+<td><strong>Actions</strong></td>
+<td>Read-only</td>
+</tr>
+<tr>
+<td><strong>Checks</strong></td>
+<td>Read-only</td>
+</tr>
+<tr>
+<td><strong>Commit statuses</strong></td>
+<td>Read-only</td>
+</tr>
+<tr>
 <td><strong>Metadata</strong></td>
 <td>Read-only (mandatory; usually auto-selected)</td>
 </tr>
@@ -15589,6 +15601,13 @@ the permission model — set the permissions exactly as documented.</p>
 </tr>
 </tbody>
 </table>
+<p>!!! note "Actions, Checks and Commit statuses are for reading CI"
+       <code>vrg-pr-await</code> and pr-watch read a PR's check runs, commit
+       statuses and workflow runs. On a <strong>private</strong> repo, an App
+       without these grants gets HTTP 403 "Resource not accessible by
+       integration". On a public repo the reads succeed anyway, which
+       hides a missing grant. All three are read-only and grant no
+       ability to trigger, re-run or change CI.</p>
 <p>!!! warning "Pull requests is Read-only on purpose"
        The user agent does not open or comment on PRs. Its workflow
        ends at "ready for PR"; the human submits the PR from the host.
@@ -15714,6 +15733,18 @@ code and writes PRs, the mirror of the user App).</p>
 <td><strong>Read and write</strong></td>
 </tr>
 <tr>
+<td><strong>Actions</strong></td>
+<td>Read-only</td>
+</tr>
+<tr>
+<td><strong>Checks</strong></td>
+<td>Read-only</td>
+</tr>
+<tr>
+<td><strong>Commit statuses</strong></td>
+<td>Read-only</td>
+</tr>
+<tr>
 <td><strong>Metadata</strong></td>
 <td>Read-only (mandatory)</td>
 </tr>
@@ -15723,6 +15754,9 @@ code and writes PRs, the mirror of the user App).</p>
 </tr>
 </tbody>
 </table>
+<p>Actions, Checks and Commit statuses are the same read-only CI
+  grants as the user App (see the note in Step 1.1); they are not
+  inverted.</p>
 <p>Everything else (Webhook unchecked, <strong>Any account</strong>, the "Make
 public" warning) is identical to Step 1.1.</p>
 <h3 id="step-22-record-the-app-id-and-client-id">Step 2.2 — Record the App ID and Client ID<a class="headerlink" href="#step-22-record-the-app-id-and-client-id" title="Permanent link">&para;</a></h3>
@@ -15797,7 +15831,8 @@ VM. The dual-identity model uses one stanza per role.</p>
       the correct App ID and key path</li>
 <li>[ ] Each App shows the correct <strong>inverted</strong> repository permissions
       (user: contents/issues write, PRs read; audit: contents/issues
-      read, PRs write; neither holds Workflows)</li>
+      read, PRs write; both hold Actions, Checks and Commit statuses
+      read-only; neither holds Workflows)</li>
 <li>[ ] Both Apps are installed on every account that owns repos the
       agents will operate on</li>
 <li>[ ] The reserved <code>&lt;username&gt;-vergil-admin</code> App was <strong>not</strong> created</li>
