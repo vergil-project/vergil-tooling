@@ -391,6 +391,26 @@ class TestRepoFlagInstallationSelection:
         assert "HTTP Error 401" in captured
         assert "Refusing to fall back to ambient gh auth" in captured
 
+    def test_no_target_org_in_app_mode_fails_loudly(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # App configured, no -R and no repo cwd: never run gh on ambient auth (#3217).
+        err = github.NoTargetOrgError("12345", Path("/keys/app.pem"))
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+                side_effect=err,
+            ),
+            patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+        ):
+            rc = main(["issue", "list"])
+        assert rc == 1
+        mock_run.assert_not_called()
+        captured = capsys.readouterr().err
+        assert captured.startswith("vrg-gh: GitHub App mode is configured")
+        assert "no target org could be determined" in captured
+        assert "-R owner/repo" in captured
+
 
 # -- subprocess passthrough ---------------------------------------------------
 

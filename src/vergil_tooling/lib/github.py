@@ -79,8 +79,39 @@ class AppAuthError(Exception):
         self.detail = detail
 
 
+class NoTargetOrgError(AppAuthError):
+    """GitHub App credentials are configured but no target org could be determined.
+
+    The App token is minted per installation, and the installation is chosen
+    by the target org: an explicit owner (``-R owner/repo``, a
+    :func:`target_org` context, a clone URL) or the cwd repo's ``origin``
+    remote. With neither, no App token can be selected, and returning
+    ``None`` would let ``gh``/``git`` use ambient auth (a human's login)
+    silently (#3217). A subclass of :class:`AppAuthError` so every existing
+    App-auth failure handler covers it.
+    """
+
+    def __init__(self, app_id: str, key_path: Path) -> None:
+        super().__init__(
+            "",
+            app_id,
+            key_path,
+            "no target org could be determined (no explicit owner was given and "
+            "the current directory is not a repo with a GitHub 'origin' remote)",
+        )
+
+
 def app_auth_message(exc: AppAuthError) -> str:
     """A consistent, actionable message for a failed App token mint."""
+    if isinstance(exc, NoTargetOrgError):
+        return (
+            f"GitHub App mode is configured (App ID {exc.app_id}, private key "
+            f"{exc.key_path}) but {exc.detail}.\n"
+            "Refusing to fall back to ambient gh auth, which would act under a "
+            "different identity. Run the command inside a repo whose 'origin' "
+            "remote is on GitHub, or name the target explicitly (for example "
+            "pass -R owner/repo to vrg-gh)."
+        )
     return (
         f"GitHub App authentication failed for owner '{exc.org}' "
         f"(App ID {exc.app_id}, private key {exc.key_path}): {exc.detail}\n"
@@ -136,7 +167,7 @@ def detect_org() -> str | None:
         return None
     url = result.stdout.strip()
     # git@github.com:ORG/REPO.git or https://github.com/ORG/REPO.git
-    for prefix in ("git@github.com:", "https://github.com/"):
+    for prefix in ("git@github.com:", "https://github.com/", "ssh://git@github.com/"):
         if url.startswith(prefix):
             remainder = url[len(prefix) :]
             org = remainder.split("/")[0]
@@ -285,11 +316,19 @@ def get_installation_token(
     of public repos) depend on that path. Without App credentials
     configured, ``None`` is returned (ambient gh auth is the human-mode
     path and is not installation-scoped).
+
+    When App credentials are configured but no org is given and none can
+    be detected from the cwd remote, :class:`NoTargetOrgError` is raised:
+    there is no installation to mint for, and ``None`` would silently hand
+    the call to ambient auth (#3217).
     """
     if org is None:
         org = detect_org()
     if org is None:
-        return None
+        no_org_config = _load_app_config()
+        if no_org_config is None:
+            return None
+        raise NoTargetOrgError(*no_org_config)
 
     cached = _token_cache.get(org)
     if cached is not None:
@@ -423,7 +462,9 @@ def _gh_env() -> dict[str, str] | None:
 
     When a :func:`target_org` context is active, the token is minted for that
     owner and a missing installation raises :class:`NoInstallationError`;
-    otherwise the org is resolved from the cwd git remote (the default).
+    otherwise the org is resolved from the cwd git remote (the default). In
+    App mode with no resolvable org, :class:`NoTargetOrgError` propagates
+    rather than returning ``None`` (ambient auth) (#3217).
     """
     org = _target_org.get()
     token = get_installation_token(org=org, require_installation=org is not None)

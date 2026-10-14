@@ -1342,6 +1342,22 @@ class TestGhEnvNew:
         ):
             assert github._gh_env() is None
 
+    def test_propagates_no_target_org_in_app_mode(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # No ambient fallback (None) when App mode has no org to mint for (#3217).
+        monkeypatch.setattr("vergil_tooling.lib.github._gh_env", _real_gh_env)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("VRG_APP_ID", "12345")
+        monkeypatch.setenv("VRG_PRIVATE_KEY_PATH", "/keys/app.pem")
+        with (
+            patch("vergil_tooling.lib.github.detect_org", return_value=None),
+            pytest.raises(github.NoTargetOrgError),
+        ):
+            github._gh_env()
+
 
 # --- target_org token scoping (issue #2070) ---
 
@@ -1672,6 +1688,13 @@ class TestDetectOrg:
             )
             assert github.detect_org() == "vergil-project"
 
+    def test_parses_ssh_url_remote(self) -> None:
+        with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
+            mock_run.return_value = _completed(
+                stdout="ssh://git@github.com/vergil-project/vergil-tooling.git\n"
+            )
+            assert github.detect_org() == "vergil-project"
+
     def test_returns_none_on_git_failure(self) -> None:
         with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
             mock_run.side_effect = subprocess.CalledProcessError(1, "git")
@@ -1804,6 +1827,18 @@ class TestAppAuthError:
         assert "HTTP Error 401" in msg
         assert "Refusing to fall back to ambient gh auth" in msg
 
+    def test_no_target_org_is_an_app_auth_error(self) -> None:
+        # Existing AppAuthError handlers (vrg-gh, CLI boundary) must cover it.
+        assert issubclass(github.NoTargetOrgError, github.AppAuthError)
+
+    def test_no_target_org_message_is_actionable(self) -> None:
+        msg = github.app_auth_message(github.NoTargetOrgError("12345", Path("/keys/app.pem")))
+        assert msg.startswith("GitHub App mode is configured (App ID 12345")
+        assert "/keys/app.pem" in msg
+        assert "no target org could be determined" in msg
+        assert "Refusing to fall back to ambient gh auth" in msg
+        assert "-R owner/repo" in msg
+
 
 class TestGetInstallationToken:
     def test_returns_none_when_no_app_config(
@@ -1826,6 +1861,38 @@ class TestGetInstallationToken:
         monkeypatch.delenv("VRG_PRIVATE_KEY_PATH", raising=False)
         with patch("vergil_tooling.lib.github.detect_org", return_value=None):
             assert github.get_installation_token() is None
+
+    def test_raises_when_app_configured_and_no_org_detected(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # App mode with no target org must not silently fall back to ambient auth (#3217).
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("VRG_APP_ID", "12345")
+        monkeypatch.setenv("VRG_PRIVATE_KEY_PATH", "/keys/app.pem")
+        with (
+            patch("vergil_tooling.lib.github.detect_org", return_value=None),
+            patch("vergil_tooling.lib.github._generate_jwt") as mock_jwt,
+            pytest.raises(github.NoTargetOrgError) as excinfo,
+        ):
+            github.get_installation_token()
+        mock_jwt.assert_not_called()
+        assert excinfo.value.app_id == "12345"
+        assert excinfo.value.key_path == Path("/keys/app.pem")
+
+    def test_explicit_org_bypasses_detection_in_app_mode(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("VRG_APP_ID", "12345")
+        monkeypatch.setenv("VRG_PRIVATE_KEY_PATH", "/keys/app.pem")
+        monkeypatch.setitem(github._token_cache, "explicit-org", ("ghs_cached", 2**40))
+        with patch("vergil_tooling.lib.github.detect_org") as mock_detect:
+            assert github.get_installation_token(org="explicit-org") == "ghs_cached"
+        mock_detect.assert_not_called()
 
     def test_exchanges_jwt_for_installation_token(
         self,
