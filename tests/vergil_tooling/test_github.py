@@ -6,7 +6,6 @@ import http.client
 import io
 import json
 import subprocess
-import sys
 import urllib.error
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -1804,60 +1803,6 @@ class TestAppAuthError:
         assert "/keys/app.pem" in msg
         assert "HTTP Error 401" in msg
         assert "Refusing to fall back to ambient gh auth" in msg
-
-    def test_excepthook_is_installed(self) -> None:
-        assert sys.excepthook is github._app_auth_excepthook
-
-    def test_excepthook_prints_clean_message(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        previous = MagicMock()
-        monkeypatch.setattr(github, "_previous_excepthook", previous)
-        monkeypatch.setattr(sys, "argv", ["/usr/bin/vrg-git", "push"])
-        exc = _app_auth_error()
-        github._app_auth_excepthook(type(exc), exc, None)
-        err = capsys.readouterr().err
-        assert err.startswith("vrg-git: GitHub App authentication failed for owner 'test-org'")
-        assert "Traceback" not in err
-        previous.assert_not_called()
-
-    def test_excepthook_names_package_without_argv(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        monkeypatch.setattr(github, "_previous_excepthook", MagicMock())
-        monkeypatch.setattr(sys, "argv", [])
-        exc = _app_auth_error()
-        github._app_auth_excepthook(type(exc), exc, None)
-        assert capsys.readouterr().err.startswith("vergil-tooling: ")
-
-    def test_excepthook_delegates_other_exceptions(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        previous = MagicMock()
-        monkeypatch.setattr(github, "_previous_excepthook", previous)
-        exc = RuntimeError("boom")
-        github._app_auth_excepthook(RuntimeError, exc, None)
-        previous.assert_called_once_with(RuntimeError, exc, None)
-
-    def test_uncaught_error_exits_nonzero_without_traceback(self) -> None:
-        # End to end: a real interpreter, as a console-script entry point sees it.
-        code = (
-            "from pathlib import Path\n"
-            "from vergil_tooling.lib import github\n"
-            "raise github.AppAuthError('o', '1', Path('/k.pem'), 'bad key')\n"
-        )
-        result = subprocess.run(  # noqa: S603
-            [sys.executable, "-c", code],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        assert result.returncode == 1
-        assert "Traceback" not in result.stderr
-        assert "GitHub App authentication failed for owner 'o'" in result.stderr
-        assert "bad key" in result.stderr
 
 
 class TestGetInstallationToken:

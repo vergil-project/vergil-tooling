@@ -6,6 +6,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.output import emit_error, emit_warning, write_summary
 from vergil_tooling.lib.sarif import (
     evaluate_findings,
@@ -15,6 +16,7 @@ from vergil_tooling.lib.sarif import (
 )
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="vrg-sarif-evaluate",

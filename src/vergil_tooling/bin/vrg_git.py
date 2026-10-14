@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 from vergil_tooling.lib import branch_names, github, retry
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.git import _git_auth_env, main_worktree_root
 from vergil_tooling.lib.pr_workflow import freeze
 
@@ -111,6 +112,7 @@ _REMOTE_SUBCOMMANDS: set[str] = {"push", "pull", "fetch", "ls-remote", "clone"}
 _GITHUB_CLONE_URL_RE = re.compile(r"(?:https://github\.com/|git@github\.com:)([^/]+)/")
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]

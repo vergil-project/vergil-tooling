@@ -14,8 +14,10 @@ import argparse
 import sys
 
 from vergil_tooling.lib import adhoc_migrate, github, identity_mode
+from vergil_tooling.lib.cli import cli_main
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     # Gate the write path before any network work, mirroring vrg-epic-audit

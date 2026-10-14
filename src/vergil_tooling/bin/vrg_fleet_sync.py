@@ -23,6 +23,7 @@ import subprocess  # noqa: S404 - fixed vrg-gitignore-sync argv, never shell
 import sys
 from typing import TYPE_CHECKING
 
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.fleet_sweep import AppResult, SweepSpec, run_sweep
 
 if TYPE_CHECKING:
@@ -37,6 +38,7 @@ _BODY = (
 )
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     spec = SweepSpec(

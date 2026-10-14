@@ -13,10 +13,12 @@ import argparse
 import sys
 
 from vergil_tooling.lib import github
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.github import list_project_repos
 from vergil_tooling.lib.labels import load_labels
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 

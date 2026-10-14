@@ -18,6 +18,7 @@ import subprocess
 import sys
 
 from vergil_tooling.lib import git, worktrees
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.worktrees import RawWorktree, WorktreeState, WorktreeStatus
 
 # Live work first, cruft last, so the removable rows group at the bottom.
@@ -47,6 +48,7 @@ _COLUMNS = (
 )
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     root = git.repo_root()

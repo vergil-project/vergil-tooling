@@ -15,6 +15,7 @@ import subprocess
 import sys
 
 from vergil_tooling.lib import git
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.config import primary_ci_version
 from vergil_tooling.lib.container import (
     assert_runtime_available,
@@ -32,6 +33,7 @@ from vergil_tooling.lib.container_cache import (
 )
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="vrg-container-cache",

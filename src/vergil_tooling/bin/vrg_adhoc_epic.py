@@ -16,8 +16,10 @@ import sys
 from datetime import UTC, datetime
 
 from vergil_tooling.lib import epics, github
+from vergil_tooling.lib.cli import cli_main
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     return int(args.func(args))

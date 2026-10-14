@@ -11,9 +11,11 @@ import argparse
 import sys
 
 from vergil_tooling.lib import git, identity_mode, progress
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.update_deps.orchestrator import UpdateDepsState, build_stages
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     if not identity_mode.is_human():
         print(

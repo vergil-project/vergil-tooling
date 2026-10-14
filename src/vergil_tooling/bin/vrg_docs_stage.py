@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from vergil_tooling.lib import github
 from vergil_tooling.lib.ci_evidence import evidence_asset_name
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.docs import stage_docs
 from vergil_tooling.lib.github import GitHubAPIError
 from vergil_tooling.lib.output import emit_error, write_output
@@ -17,6 +18,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="vrg-docs-stage",

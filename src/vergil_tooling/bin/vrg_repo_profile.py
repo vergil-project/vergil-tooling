@@ -13,6 +13,7 @@ import re
 import sys
 from pathlib import Path
 
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.config import CONFIG_FILE, ConfigError, read_config
 
 _CODE_FENCE_RE = re.compile(r"^(```|~~~)")
@@ -20,6 +21,7 @@ _TOC_RE = re.compile(r"^## Table of Contents\s*$")
 _HEADING_RE = re.compile(r"^(#{1,6}) ")
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     _parse_args(argv)
     try:

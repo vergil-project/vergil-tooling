@@ -14,6 +14,7 @@ import tomllib
 from pathlib import Path
 
 from vergil_tooling.lib import github
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.config import VergilConfig, _parse_raw_config
 from vergil_tooling.lib.github_config import (
     ClassicProtectionReport,
@@ -31,6 +32,7 @@ from vergil_tooling.lib.output import emit_error
 from vergil_tooling.lib.repo_config import audit_local_config
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     all_compliant = True

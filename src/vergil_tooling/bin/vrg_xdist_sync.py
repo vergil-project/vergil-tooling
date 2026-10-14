@@ -36,6 +36,7 @@ import re
 import subprocess  # noqa: S404 - fixed vrg-* argv, never shell
 import sys
 
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.fleet_sweep import RepoResult, SweepSpec, run_sweep
 from vergil_tooling.lib.xdist_applicator import add_xdist
 
@@ -65,6 +66,7 @@ _ISSUE_URL_RE = re.compile(r"/issues/(\d+)")
 _DRY_RUN_FOLLOWUP_ACTION = "dry-run: would file a follow-up issue"
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     spec = SweepSpec(

@@ -25,6 +25,7 @@ import sys
 from typing import cast
 
 from vergil_tooling.lib import git, github
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.linkage import extract_merge_pr, extract_tracking_issue
 
 # Backward-compatible alias: the merge/squash subject → PR-number extraction now
@@ -32,6 +33,7 @@ from vergil_tooling.lib.linkage import extract_merge_pr, extract_tracking_issue
 _extract_pr_number = extract_merge_pr
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 

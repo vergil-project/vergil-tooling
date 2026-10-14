@@ -16,10 +16,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.output import emit_error
 from vergil_tooling.lib.sarif import filter_suppressed, parse_sarif
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="vrg-sarif-filter",

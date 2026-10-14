@@ -15,6 +15,7 @@ import tempfile
 from pathlib import Path
 
 from vergil_tooling.lib import branch_names, config, git
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.commit_message import (
     ALLOWED_TYPES,
     build_commit_message,
@@ -42,6 +43,7 @@ _BRANCHING_MODELS: dict[str, tuple[str, str]] = {
 _WORKTREES_DIRNAME = ".worktrees"
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     root = git.repo_root()

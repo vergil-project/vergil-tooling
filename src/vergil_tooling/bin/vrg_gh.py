@@ -11,6 +11,7 @@ import subprocess
 import sys
 
 from vergil_tooling.lib import github, identity_mode, retry
+from vergil_tooling.lib.cli import cli_main
 
 _ALLOWED: dict[str, set[str]] = {
     "issue": {"view", "close", "reopen", "edit", "list", "comment", "transfer"},
@@ -88,6 +89,7 @@ _API_WRITE_FLAGS: set[str] = {"-f", "-F", "--field", "--raw-field", "--input"}
 _MIN_MERGE_ARGS = 3
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]

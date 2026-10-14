@@ -23,6 +23,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import epics, git, github
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.linkage import (
     find_linkage_keyword,
     freetext_linkage_error,
@@ -38,6 +39,7 @@ if TYPE_CHECKING:
     from vergil_tooling.lib.pr_workflow.state import WorkflowState
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     transport = LocalFileTransport(git.repo_root(), base=args.base)

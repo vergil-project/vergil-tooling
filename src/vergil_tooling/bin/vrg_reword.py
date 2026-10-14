@@ -43,6 +43,7 @@ import tempfile
 from pathlib import Path
 
 from vergil_tooling.lib import git
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.commit_message import (
     ALLOWED_TYPES,
     build_commit_message,
@@ -60,6 +61,7 @@ _SEQ_EDIT_FLAG = "--seq-edit"
 _MSG_EDIT_FLAG = "--msg-edit"
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]

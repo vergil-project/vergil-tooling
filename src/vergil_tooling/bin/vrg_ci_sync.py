@@ -34,6 +34,7 @@ import argparse
 import sys
 
 from vergil_tooling.lib.ci_yml_applicator import strip_matrix_inputs
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.fleet_sweep import SweepSpec, run_sweep
 
 _TITLE = "refactor(ci): drop the hardcoded matrix inputs from ci.yml"
@@ -46,6 +47,7 @@ _BODY = (
 )
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     spec = SweepSpec(

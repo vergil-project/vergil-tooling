@@ -12,6 +12,7 @@ import sys
 from datetime import UTC, datetime, timedelta
 
 from vergil_tooling.lib import epic_audit, epics, github, identity_mode
+from vergil_tooling.lib.cli import cli_main
 
 _DEFAULT_WINDOW_DAYS = 30
 
@@ -23,6 +24,7 @@ _DEFAULT_WINDOW_DAYS = 30
 _SWEEP_ENV = "VRG_EPIC_SWEEP"
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     # Epic-scoped enumeration is a distinct, read-only mode: resolve the epic ref
