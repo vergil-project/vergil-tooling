@@ -85,7 +85,8 @@ Workflows access, so neither can push changes under
 
 - Commit and push to feature branches (`contents: write`)
 - Create and comment on issues (`issues: write`)
-- Read PR and CI status (`pull_requests: read`)
+- Read PR and CI status (`pull_requests: read`, plus `checks: read`,
+  `statuses: read` and `actions: read`)
 - Record PR metadata in `.vergil/pr-workflow.json` (via `vrg-pr-workflow`)
   to stage a PR for the human
 
@@ -102,6 +103,7 @@ Workflows access, so neither can push changes under
 
 - Read code and issues (`contents: read`, `issues: read`)
 - Write PR reviews and comments (`pull_requests: write`)
+- Read CI status (`checks: read`, `statuses: read`, `actions: read`)
 
 ### What the audit agent cannot do
 

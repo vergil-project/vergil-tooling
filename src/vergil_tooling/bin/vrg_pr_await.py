@@ -32,7 +32,8 @@ A GitHub API failure while polling exits 1 with the underlying ``gh`` error on
 stderr instead of a traceback. A permission failure (HTTP 403 / "Resource not
 accessible by integration" -- typically on the checks/statusCheckRollup or
 Actions reads) is named as a GitHub App permissions problem for the PR's repo,
-pointing at the **Checks** and **Actions** repository permissions (#2862).
+pointing at the **Checks**, **Commit statuses** and **Actions** repository
+permissions (#2862, #3215).
 """
 
 from __future__ import annotations
@@ -128,9 +129,10 @@ def permission_error_message(pr: str, exc: github.GitHubAPIError) -> str:
     return (
         f"GitHub App permissions problem for {repo}: the agent identity's App "
         "installation was denied reading PR checks/Actions state (HTTP 403). "
-        "The App likely needs the Checks (checks: read) and Actions "
-        "(actions: read) repository permissions set to Read-only on its "
-        f"installation for this repository.\n{exc}"
+        "The App likely needs the Checks (checks: read), Commit statuses "
+        "(statuses: read) and Actions (actions: read) repository permissions "
+        "set to Read-only, accepted on its installation for this repository.\n"
+        f"{exc}"
     )
 
 
