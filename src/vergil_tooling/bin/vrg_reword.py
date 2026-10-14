@@ -43,6 +43,7 @@ import tempfile
 from pathlib import Path
 
 from vergil_tooling.lib import git
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.commit_message import (
     ALLOWED_TYPES,
     build_commit_message,
@@ -58,6 +59,89 @@ _ENV_MSG_FILE = "VRG_REWORD_MSG_FILE"
 
 _SEQ_EDIT_FLAG = "--seq-edit"
 _MSG_EDIT_FLAG = "--msg-edit"
+
+
+@cli_main
+def main(argv: list[str] | None = None) -> int:
+    if argv is None:
+        argv = sys.argv[1:]
+
+    # Re-entrant scripted-editor modes must short-circuit before argparse,
+    # which would reject the bare editor flags.
+    editor_rc = _dispatch_editor(argv)
+    if editor_rc is not None:
+        return editor_rc
+
+    args = parse_args(argv)
+
+    if args.body and contains_autoclose(args.body):
+        return _reject(
+            "commit body contains a GitHub auto-close keyword (close/fix/resolve). "
+            "Commit bodies must carry no issue-linkage keyword.",
+            "Issue linkage is set on the PR at submit time (via "
+            "'vrg-pr-workflow report-ready' / 'vrg-submit-pr'), not in the commit "
+            "body. Issues stay open until post-merge workflows succeed.",
+        )
+
+    rc, target_sha, branch = _validate(args)
+    if rc != 0:
+        return rc
+
+    later = _later_commits(target_sha)
+    if later:
+        print(
+            f"Note: rewording {args.sha} re-applies {len(later)} later commit(s) "
+            f"({', '.join(later)}),\n"
+            "  which changes their committer (the author is preserved).",
+            file=sys.stderr,
+        )
+
+    co_author = os.environ.get("VRG_CO_AUTHOR")
+    message = build_commit_message(
+        commit_type=args.commit_type,
+        scope=args.scope,
+        message=args.message,
+        body=args.body,
+        co_author=co_author,
+    )
+
+    rebase_rc = _run_reword_rebase(target_sha, message)
+    if rebase_rc != 0:
+        return rebase_rc
+
+    print(f"Reworded {args.sha}: {args.commit_type}({args.scope}): {args.message}")
+    return _maybe_push(branch, no_push=args.no_push)
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Reword a branch-local commit's message via a scripted rebase."
+    )
+    parser.add_argument("sha", help="The commit to reword (any branch-local revision)")
+    parser.add_argument(
+        "--type",
+        required=True,
+        choices=ALLOWED_TYPES,
+        dest="commit_type",
+        help="Conventional commit type",
+    )
+    parser.add_argument("--scope", required=True, help="Conventional commit scope")
+    parser.add_argument("--message", required=True, help="Commit description")
+    parser.add_argument("--body", default="", help="Detailed commit body")
+    parser.add_argument(
+        "--allow-foreign-author",
+        action="store_true",
+        default=False,
+        help="Reword even when the commit's author differs from the current identity",
+    )
+    parser.add_argument(
+        "--no-push",
+        action="store_true",
+        default=False,
+        help="Do not push the rewritten branch to origin afterward",
+    )
+    return parser.parse_args(argv)
 
 
 def _is_protected_branch(branch: str) -> bool:
@@ -338,88 +422,6 @@ def _maybe_push(branch: str, *, no_push: bool) -> int:
         )
         return 1
     return 0
-
-
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(
-        description="Reword a branch-local commit's message via a scripted rebase."
-    )
-    parser.add_argument("sha", help="The commit to reword (any branch-local revision)")
-    parser.add_argument(
-        "--type",
-        required=True,
-        choices=ALLOWED_TYPES,
-        dest="commit_type",
-        help="Conventional commit type",
-    )
-    parser.add_argument("--scope", required=True, help="Conventional commit scope")
-    parser.add_argument("--message", required=True, help="Commit description")
-    parser.add_argument("--body", default="", help="Detailed commit body")
-    parser.add_argument(
-        "--allow-foreign-author",
-        action="store_true",
-        default=False,
-        help="Reword even when the commit's author differs from the current identity",
-    )
-    parser.add_argument(
-        "--no-push",
-        action="store_true",
-        default=False,
-        help="Do not push the rewritten branch to origin afterward",
-    )
-    return parser.parse_args(argv)
-
-
-def main(argv: list[str] | None = None) -> int:
-    if argv is None:
-        argv = sys.argv[1:]
-
-    # Re-entrant scripted-editor modes must short-circuit before argparse,
-    # which would reject the bare editor flags.
-    editor_rc = _dispatch_editor(argv)
-    if editor_rc is not None:
-        return editor_rc
-
-    args = parse_args(argv)
-
-    if args.body and contains_autoclose(args.body):
-        return _reject(
-            "commit body contains a GitHub auto-close keyword (close/fix/resolve). "
-            "Commit bodies must carry no issue-linkage keyword.",
-            "Issue linkage is set on the PR at submit time (via "
-            "'vrg-pr-workflow report-ready' / 'vrg-submit-pr'), not in the commit "
-            "body. Issues stay open until post-merge workflows succeed.",
-        )
-
-    rc, target_sha, branch = _validate(args)
-    if rc != 0:
-        return rc
-
-    later = _later_commits(target_sha)
-    if later:
-        print(
-            f"Note: rewording {args.sha} re-applies {len(later)} later commit(s) "
-            f"({', '.join(later)}),\n"
-            "  which changes their committer (the author is preserved).",
-            file=sys.stderr,
-        )
-
-    co_author = os.environ.get("VRG_CO_AUTHOR")
-    message = build_commit_message(
-        commit_type=args.commit_type,
-        scope=args.scope,
-        message=args.message,
-        body=args.body,
-        co_author=co_author,
-    )
-
-    rebase_rc = _run_reword_rebase(target_sha, message)
-    if rebase_rc != 0:
-        return rebase_rc
-
-    print(f"Reworded {args.sha}: {args.commit_type}({args.scope}): {args.message}")
-    return _maybe_push(branch, no_push=args.no_push)
 
 
 if __name__ == "__main__":

@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.241] - 2026-10-14
+
+### Bug fixes
+
+- fail loudly when App token minting fails instead of falling back to ambient gh auth (#3219)
+- fail loudly when App mode is configured but no target org can be determined (#3222)
+
+### Refactoring
+
+- put main() first in every bin/ module (#3218)
+- replace the import-time sys.excepthook with a cli_main boundary on every entry point (#3221)
+
 ## [2.1.240] - 2026-10-13
 
 ### Bug fixes

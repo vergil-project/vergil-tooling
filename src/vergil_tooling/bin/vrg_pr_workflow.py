@@ -23,6 +23,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import epics, git, github
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.linkage import (
     find_linkage_keyword,
     freetext_linkage_error,
@@ -36,6 +37,53 @@ from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.pr_workflow.state import WorkflowState
+
+
+@cli_main
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    transport = LocalFileTransport(git.repo_root(), base=args.base)
+    try:
+        return int(args.func(args, transport))
+    except WorkflowError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Record PR metadata for the human submit step.")
+    parser.add_argument("--base", default="origin/develop", help="Base ref for the delta")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p_ready = sub.add_parser(
+        "report-ready",
+        help="Record the PR metadata for this worktree (push the branch first)",
+        description=(
+            "Record the PR metadata for this worktree and freeze the branch. "
+            "Push the branch to origin BEFORE running this "
+            "(vrg-git push -u origin <branch>): report-ready pushes only the "
+            "relay ref, not the branch. If the delta touches .github/workflows/**, "
+            "the agent push is refused and the human's vrg-submit-pr pushes the "
+            "branch instead."
+        ),
+    )
+    p_ready.add_argument("--issue", required=True)
+    p_ready.add_argument("--title", required=True)
+    p_ready.add_argument("--summary", required=True)
+    p_ready.add_argument("--notes", required=True)
+    p_ready.add_argument("--linkage", default="Ref")
+    p_ready.set_defaults(func=cmd_report_ready)
+
+    p_unfreeze = sub.add_parser(
+        "unfreeze",
+        help="Deliberately reopen a frozen (reported-ready) branch for more commits",
+    )
+    p_unfreeze.set_defaults(func=cmd_unfreeze)
+
+    p_status = sub.add_parser("status", help="Print the current workflow state")
+    p_status.set_defaults(func=cmd_status)
+
+    return parser.parse_args(argv)
 
 
 def _now() -> str:
@@ -228,52 +276,6 @@ def cmd_status(_args: argparse.Namespace, transport: LocalFileTransport) -> int:
         return 0
     print(state.to_json())
     return 0
-
-
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Record PR metadata for the human submit step.")
-    parser.add_argument("--base", default="origin/develop", help="Base ref for the delta")
-    sub = parser.add_subparsers(dest="command", required=True)
-
-    p_ready = sub.add_parser(
-        "report-ready",
-        help="Record the PR metadata for this worktree (push the branch first)",
-        description=(
-            "Record the PR metadata for this worktree and freeze the branch. "
-            "Push the branch to origin BEFORE running this "
-            "(vrg-git push -u origin <branch>): report-ready pushes only the "
-            "relay ref, not the branch. If the delta touches .github/workflows/**, "
-            "the agent push is refused and the human's vrg-submit-pr pushes the "
-            "branch instead."
-        ),
-    )
-    p_ready.add_argument("--issue", required=True)
-    p_ready.add_argument("--title", required=True)
-    p_ready.add_argument("--summary", required=True)
-    p_ready.add_argument("--notes", required=True)
-    p_ready.add_argument("--linkage", default="Ref")
-    p_ready.set_defaults(func=cmd_report_ready)
-
-    p_unfreeze = sub.add_parser(
-        "unfreeze",
-        help="Deliberately reopen a frozen (reported-ready) branch for more commits",
-    )
-    p_unfreeze.set_defaults(func=cmd_unfreeze)
-
-    p_status = sub.add_parser("status", help="Print the current workflow state")
-    p_status.set_defaults(func=cmd_status)
-
-    return parser.parse_args(argv)
-
-
-def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
-    transport = LocalFileTransport(git.repo_root(), base=args.base)
-    try:
-        return int(args.func(args, transport))
-    except WorkflowError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
 
 
 if __name__ == "__main__":

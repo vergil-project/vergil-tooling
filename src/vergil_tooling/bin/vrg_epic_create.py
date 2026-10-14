@@ -16,6 +16,37 @@ import argparse
 import sys
 
 from vergil_tooling.lib import epics, github
+from vergil_tooling.lib.cli import cli_main
+
+
+@cli_main
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    target = args.repo or github.current_repo()  # "owner/repo"; raises if undeterminable
+    if "/" not in target:
+        print(
+            f"vrg-epic-create: --repo must be 'owner/repo' (got {target!r})",
+            file=sys.stderr,
+        )
+        return 1
+    owner, bare = target.split("/", 1)
+    home = epics.resolve_epic_home(owner, bare)
+    labels = list(dict.fromkeys(["epic", *args.label]))
+    # Scope every App-token call to the target's org, not the cwd org (mirrors
+    # issue-create, #2070). Without this a cross-org epic mints the token for the
+    # wrong org and either fails to write or misreports the epic's location (#2722).
+    with github.target_org(owner):
+        print(f"-> epic home: {home} [{github.repo_visibility(home)}]")
+        url = github.create_issue(
+            repo=home,
+            title=args.title,
+            body=args.body,
+            body_file=args.body_file,
+            labels=labels,
+            assignees=args.assignee,
+        )
+    print(f"Created {url} (epic).")
+    return 0
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -50,35 +81,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--assignee", action="append", default=[], help="Assignee (repeatable)")
     return parser.parse_args(argv)
-
-
-def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
-    target = args.repo or github.current_repo()  # "owner/repo"; raises if undeterminable
-    if "/" not in target:
-        print(
-            f"vrg-epic-create: --repo must be 'owner/repo' (got {target!r})",
-            file=sys.stderr,
-        )
-        return 1
-    owner, bare = target.split("/", 1)
-    home = epics.resolve_epic_home(owner, bare)
-    labels = list(dict.fromkeys(["epic", *args.label]))
-    # Scope every App-token call to the target's org, not the cwd org (mirrors
-    # issue-create, #2070). Without this a cross-org epic mints the token for the
-    # wrong org and either fails to write or misreports the epic's location (#2722).
-    with github.target_org(owner):
-        print(f"-> epic home: {home} [{github.repo_visibility(home)}]")
-        url = github.create_issue(
-            repo=home,
-            title=args.title,
-            body=args.body,
-            body_file=args.body_file,
-            labels=labels,
-            assignees=args.assignee,
-        )
-    print(f"Created {url} (epic).")
-    return 0
 
 
 if __name__ == "__main__":

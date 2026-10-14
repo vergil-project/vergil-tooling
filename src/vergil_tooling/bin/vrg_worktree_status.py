@@ -18,6 +18,7 @@ import subprocess
 import sys
 
 from vergil_tooling.lib import git, worktrees
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.worktrees import RawWorktree, WorktreeState, WorktreeStatus
 
 # Live work first, cruft last, so the removable rows group at the bottom.
@@ -45,6 +46,47 @@ _COLUMNS = (
     "LAST COMMIT",
     "LAST MODIFIED",
 )
+
+
+@cli_main
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    root = git.repo_root()
+    statuses: list[WorktreeStatus] = []
+    vanished: list[RawWorktree] = []
+    for raw in worktrees.discover_worktrees(root):
+        try:
+            statuses.append(_gather(raw, target=args.target_branch))
+        except subprocess.CalledProcessError:
+            # Discovery is a snapshot: a concurrent operation (e.g. a parallel
+            # vrg-finalize-pr) can remove the worktree and delete its branch
+            # before we reach it (issue #3187). Only that race is tolerated —
+            # a failure on a worktree that still exists propagates unchanged.
+            if worktrees.worktree_still_present(raw, root):
+                raise
+            vanished.append(raw)
+    if not statuses:
+        print("No canonical .worktrees/ worktrees found.")
+        _print_vanished(vanished)
+        return 0
+    statuses.sort(key=lambda s: (_SORT_RANK[s.state], s.worktree.branch))
+    now = datetime.datetime.now(tz=datetime.UTC).timestamp()
+    print(_render_table([_row(s, now) for s in statuses]))
+    print()
+    print(_summary(statuses))
+    # Surface any captured detail so neither a failed lookup (UNKNOWN) nor a
+    # reused-branch-name mismatch (issue #1719) is silently hidden. An
+    # unreadable pr-workflow file (the WORKFLOW 'unknown' cell) gets its reason
+    # surfaced too, never a silent failure.
+    for status in statuses:
+        if status.detail:
+            print(f"  note: {status.worktree.branch}: {status.detail}")
+        if status.workflow_error:
+            print(
+                f"  note: {status.worktree.branch}: pr-workflow unreadable: {status.workflow_error}"
+            )
+    _print_vanished(vanished)
+    return 0
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -152,46 +194,6 @@ def _print_vanished(vanished: list[RawWorktree]) -> None:
             f"  note: {raw.path.name} ({label}): removed by a concurrent operation "
             "during the scan — not listed"
         )
-
-
-def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
-    root = git.repo_root()
-    statuses: list[WorktreeStatus] = []
-    vanished: list[RawWorktree] = []
-    for raw in worktrees.discover_worktrees(root):
-        try:
-            statuses.append(_gather(raw, target=args.target_branch))
-        except subprocess.CalledProcessError:
-            # Discovery is a snapshot: a concurrent operation (e.g. a parallel
-            # vrg-finalize-pr) can remove the worktree and delete its branch
-            # before we reach it (issue #3187). Only that race is tolerated —
-            # a failure on a worktree that still exists propagates unchanged.
-            if worktrees.worktree_still_present(raw, root):
-                raise
-            vanished.append(raw)
-    if not statuses:
-        print("No canonical .worktrees/ worktrees found.")
-        _print_vanished(vanished)
-        return 0
-    statuses.sort(key=lambda s: (_SORT_RANK[s.state], s.worktree.branch))
-    now = datetime.datetime.now(tz=datetime.UTC).timestamp()
-    print(_render_table([_row(s, now) for s in statuses]))
-    print()
-    print(_summary(statuses))
-    # Surface any captured detail so neither a failed lookup (UNKNOWN) nor a
-    # reused-branch-name mismatch (issue #1719) is silently hidden. An
-    # unreadable pr-workflow file (the WORKFLOW 'unknown' cell) gets its reason
-    # surfaced too, never a silent failure.
-    for status in statuses:
-        if status.detail:
-            print(f"  note: {status.worktree.branch}: {status.detail}")
-        if status.workflow_error:
-            print(
-                f"  note: {status.worktree.branch}: pr-workflow unreadable: {status.workflow_error}"
-            )
-    _print_vanished(vanished)
-    return 0
 
 
 if __name__ == "__main__":

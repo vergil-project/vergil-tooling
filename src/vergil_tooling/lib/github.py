@@ -55,6 +55,73 @@ class NoInstallationError(Exception):
         self.known = known
 
 
+class AppAuthError(Exception):
+    """GitHub App credentials are configured but no installation token could be minted.
+
+    Raised instead of falling back to ambient ``gh`` auth (#3214). On a host
+    where a human is logged in to ``gh``, that fallback let an agent whose App
+    key was broken (rotated away, unreadable, rejected) silently act as the
+    human, bypassing the user/audit App permission model.
+
+    Deliberately *not* a :class:`subprocess.CalledProcessError`: handlers that
+    interpret ``gh`` failures (transient-retry classification, "not found"
+    probes such as :func:`repo_exists`) must never mistake a broken credential
+    for an API answer. If a command's ``main`` lets it escape, the
+    :func:`vergil_tooling.lib.cli.cli_main` boundary prints it as
+    :func:`app_auth_message` instead of a traceback and exits 1.
+    """
+
+    def __init__(self, org: str, app_id: str, key_path: Path, detail: str) -> None:
+        super().__init__(f"GitHub App authentication failed for owner {org!r}: {detail}")
+        self.org = org
+        self.app_id = app_id
+        self.key_path = key_path
+        self.detail = detail
+
+
+class NoTargetOrgError(AppAuthError):
+    """GitHub App credentials are configured but no target org could be determined.
+
+    The App token is minted per installation, and the installation is chosen
+    by the target org: an explicit owner (``-R owner/repo``, a
+    :func:`target_org` context, a clone URL) or the cwd repo's ``origin``
+    remote. With neither, no App token can be selected, and returning
+    ``None`` would let ``gh``/``git`` use ambient auth (a human's login)
+    silently (#3217). A subclass of :class:`AppAuthError` so every existing
+    App-auth failure handler covers it.
+    """
+
+    def __init__(self, app_id: str, key_path: Path) -> None:
+        super().__init__(
+            "",
+            app_id,
+            key_path,
+            "no target org could be determined (no explicit owner was given and "
+            "the current directory is not a repo with a GitHub 'origin' remote)",
+        )
+
+
+def app_auth_message(exc: AppAuthError) -> str:
+    """A consistent, actionable message for a failed App token mint."""
+    if isinstance(exc, NoTargetOrgError):
+        return (
+            f"GitHub App mode is configured (App ID {exc.app_id}, private key "
+            f"{exc.key_path}) but {exc.detail}.\n"
+            "Refusing to fall back to ambient gh auth, which would act under a "
+            "different identity. Run the command inside a repo whose 'origin' "
+            "remote is on GitHub, or name the target explicitly (for example "
+            "pass -R owner/repo to vrg-gh)."
+        )
+    return (
+        f"GitHub App authentication failed for owner '{exc.org}' "
+        f"(App ID {exc.app_id}, private key {exc.key_path}): {exc.detail}\n"
+        "Refusing to fall back to ambient gh auth, which would act under a "
+        "different identity. Check that the private key file exists, is "
+        "readable, and is a key the App still accepts (it may have been "
+        "rotated or deleted on GitHub), and that the App ID is correct."
+    )
+
+
 def _load_app_config() -> tuple[str, Path] | None:
     """Read GitHub App credentials from env vars or ~/.config/vergil/.
 
@@ -100,7 +167,7 @@ def detect_org() -> str | None:
         return None
     url = result.stdout.strip()
     # git@github.com:ORG/REPO.git or https://github.com/ORG/REPO.git
-    for prefix in ("git@github.com:", "https://github.com/"):
+    for prefix in ("git@github.com:", "https://github.com/", "ssh://git@github.com/"):
         if url.startswith(prefix):
             remainder = url[len(prefix) :]
             org = remainder.split("/")[0]
@@ -232,18 +299,36 @@ def get_installation_token(
     ``None``, detects it from the current repo's git remote.
     Tokens are cached per-org for 55 minutes.
 
+    When App credentials are configured, a failure to mint the token
+    (JWT signing, installation lookup, token exchange, or an unusable
+    response) raises :class:`AppAuthError` — it never returns ``None``,
+    because ``None`` means "use ambient gh auth", which may be a
+    different identity (#3214).
+
     With *require_installation*, an org that has no App installation
     raises :class:`NoInstallationError` instead of returning ``None``
     — an App token minted for a different installation cannot reach
     the requested owner's private repos, so silently falling back
-    would mask the failure as a missing grant. Without App
-    credentials configured, ``None`` is still returned (ambient gh
-    auth is not installation-scoped).
+    would mask the failure as a missing grant. Without it, a
+    no-installation org still returns ``None`` (with a warning): the
+    cwd-scoped callers (#2070 kept ``vrg-epic-audit`` and
+    ``vrg-finalize-pr`` on it deliberately, and anonymous ``git fetch``
+    of public repos) depend on that path. Without App credentials
+    configured, ``None`` is returned (ambient gh auth is the human-mode
+    path and is not installation-scoped).
+
+    When App credentials are configured but no org is given and none can
+    be detected from the cwd remote, :class:`NoTargetOrgError` is raised:
+    there is no installation to mint for, and ``None`` would silently hand
+    the call to ambient auth (#3217).
     """
     if org is None:
         org = detect_org()
     if org is None:
-        return None
+        no_org_config = _load_app_config()
+        if no_org_config is None:
+            return None
+        raise NoTargetOrgError(*no_org_config)
 
     cached = _token_cache.get(org)
     if cached is not None:
@@ -264,6 +349,7 @@ def get_installation_token(
         if not installation_id:
             if require_installation:
                 raise NoInstallationError(org, sorted(installations))
+            _warn_no_installation_fallback(org, sorted(installations))
             return None
 
         data = _jwt_api_request(
@@ -271,19 +357,43 @@ def get_installation_token(
             jwt_token,
             method="POST",
         )
-    except (subprocess.CalledProcessError, OSError) as exc:
-        detail = ""
+    except (subprocess.CalledProcessError, OSError, ValueError) as exc:
+        detail = str(exc)
         if isinstance(exc, subprocess.CalledProcessError):
-            detail = ((exc.stderr or "") + (exc.stdout or "")).strip()
-        if detail:
-            log.warning("GitHub App auth failed, falling back to ambient auth: %s", detail)
-        else:
-            log.warning("GitHub App auth failed, falling back to ambient auth: %s", exc)
-        return None
+            output = exc.stderr or b""
+            if isinstance(output, bytes):
+                output = output.decode(errors="replace")
+            detail = output.strip() or detail
+        raise AppAuthError(org, app_id, key_path, detail) from exc
 
-    token = str(data.get("token", ""))
-    _token_cache[org] = (token, time.time() + 3300)
-    return token
+    minted = data.get("token") if isinstance(data, dict) else None
+    if not isinstance(minted, str) or not minted:
+        # An empty GH_TOKEN makes gh use its stored login, so never hand one out.
+        missing = "token exchange response carried no installation token"
+        raise AppAuthError(org, app_id, key_path, missing)
+    _token_cache[org] = (minted, time.time() + 3300)
+    return minted
+
+
+_warned_no_installation: set[str] = set()
+
+
+def _warn_no_installation_fallback(org: str, known: list[str]) -> None:
+    """Warn (once per owner) that a cwd-scoped call is using ambient auth.
+
+    The App has no installation for *org*, so no App token can reach it.
+    Cwd-scoped callers keep the historical ambient fallback (see
+    :func:`get_installation_token`); the warning keeps that identity switch
+    visible rather than silent.
+    """
+    if org in _warned_no_installation:
+        return
+    _warned_no_installation.add(org)
+    log.warning(
+        "GitHub App has no installation for owner %r (known: %s); using ambient gh/git auth for it",
+        org,
+        ", ".join(known) or "none",
+    )
 
 
 def is_app_mode() -> bool:
@@ -352,7 +462,9 @@ def _gh_env() -> dict[str, str] | None:
 
     When a :func:`target_org` context is active, the token is minted for that
     owner and a missing installation raises :class:`NoInstallationError`;
-    otherwise the org is resolved from the cwd git remote (the default).
+    otherwise the org is resolved from the cwd git remote (the default). In
+    App mode with no resolvable org, :class:`NoTargetOrgError` propagates
+    rather than returning ``None`` (ambient auth) (#3217).
     """
     org = _target_org.get()
     token = get_installation_token(org=org, require_installation=org is not None)

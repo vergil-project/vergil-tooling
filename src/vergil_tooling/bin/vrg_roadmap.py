@@ -10,8 +10,10 @@ import argparse
 import sys
 
 from vergil_tooling.lib import epics, github, roadmap
+from vergil_tooling.lib.cli import cli_main
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Print the generated project roadmap.")
     parser.add_argument(

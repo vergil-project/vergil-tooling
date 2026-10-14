@@ -13,8 +13,39 @@ import argparse
 import sys
 
 from vergil_tooling.lib import github
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.github import list_project_repos
 from vergil_tooling.lib.labels import load_labels
+
+
+@cli_main
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+
+    # Scope the App token to the owner named by the target argument — the
+    # project owner in project mode, else the --repo owner — so labelling a
+    # repo outside the cwd org selects the right installation (#2070).
+    owner = args.owner if (args.owner and args.project) else args.repo.split("/", 1)[0]
+
+    try:
+        with github.target_org(owner):
+            if args.owner and args.project:
+                # Project mode: discover repos, sync each
+                repos = list_project_repos(args.owner, args.project)
+                print(f"Found {len(repos)} repos in project {args.project}")
+                for repo in repos:
+                    sync_repo(repo)
+            elif args.sync:
+                # Sync mode: single repo
+                sync_repo(args.repo)
+            else:
+                # Single-label mode
+                _ensure_single(args.repo, args.label, args.color, args.description)
+    except github.NoInstallationError as exc:
+        print(f"vrg-ensure-label: {github.no_installation_message(exc)}", file=sys.stderr)
+        return 1
+
+    return 0
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -82,35 +113,6 @@ def sync_repo(repo: str) -> None:
         _ensure_single(repo, label["name"], label["color"], label["description"])
     for name in registry.get("delete", []):
         _delete_label(repo, name)
-
-
-def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
-
-    # Scope the App token to the owner named by the target argument — the
-    # project owner in project mode, else the --repo owner — so labelling a
-    # repo outside the cwd org selects the right installation (#2070).
-    owner = args.owner if (args.owner and args.project) else args.repo.split("/", 1)[0]
-
-    try:
-        with github.target_org(owner):
-            if args.owner and args.project:
-                # Project mode: discover repos, sync each
-                repos = list_project_repos(args.owner, args.project)
-                print(f"Found {len(repos)} repos in project {args.project}")
-                for repo in repos:
-                    sync_repo(repo)
-            elif args.sync:
-                # Sync mode: single repo
-                sync_repo(args.repo)
-            else:
-                # Single-label mode
-                _ensure_single(args.repo, args.label, args.color, args.description)
-    except github.NoInstallationError as exc:
-        print(f"vrg-ensure-label: {github.no_installation_message(exc)}", file=sys.stderr)
-        return 1
-
-    return 0
 
 
 if __name__ == "__main__":

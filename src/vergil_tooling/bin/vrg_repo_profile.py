@@ -13,11 +13,52 @@ import re
 import sys
 from pathlib import Path
 
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.config import CONFIG_FILE, ConfigError, read_config
 
 _CODE_FENCE_RE = re.compile(r"^(```|~~~)")
 _TOC_RE = re.compile(r"^## Table of Contents\s*$")
 _HEADING_RE = re.compile(r"^(#{1,6}) ")
+
+
+@cli_main
+def main(argv: list[str] | None = None) -> int:
+    _parse_args(argv)
+    try:
+        read_config(Path.cwd())
+    except FileNotFoundError:
+        print(
+            f"ERROR: {CONFIG_FILE} not found",
+            file=sys.stderr,
+        )
+        return 2
+    except ConfigError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+
+    readme = Path("README.md")
+    if readme.is_file() and not _structural_check(str(readme)):
+        return 1
+
+    return 0
+
+
+def _parse_args(argv: list[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="vrg-repo-profile",
+        description=(
+            "Validate the current repository's configuration and README "
+            "structure: that vergil.toml is present and valid (required "
+            "fields, enum values, co-author format, dependencies) and that "
+            "README.md follows the structural conventions (exactly one H1, a "
+            "Table of Contents, no heading-level skips)."
+        ),
+        epilog=(
+            "Run from the repository root. Exit codes: 0 ok, 1 validation "
+            "failure, 2 vergil.toml not found."
+        ),
+    )
+    return parser.parse_args(argv)
 
 
 def _structural_check(file_path: str) -> bool:
@@ -61,45 +102,6 @@ def _structural_check(file_path: str) -> bool:
         print(error, file=sys.stderr)
 
     return len(errors) == 0
-
-
-def _parse_args(argv: list[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        prog="vrg-repo-profile",
-        description=(
-            "Validate the current repository's configuration and README "
-            "structure: that vergil.toml is present and valid (required "
-            "fields, enum values, co-author format, dependencies) and that "
-            "README.md follows the structural conventions (exactly one H1, a "
-            "Table of Contents, no heading-level skips)."
-        ),
-        epilog=(
-            "Run from the repository root. Exit codes: 0 ok, 1 validation "
-            "failure, 2 vergil.toml not found."
-        ),
-    )
-    return parser.parse_args(argv)
-
-
-def main(argv: list[str] | None = None) -> int:
-    _parse_args(argv)
-    try:
-        read_config(Path.cwd())
-    except FileNotFoundError:
-        print(
-            f"ERROR: {CONFIG_FILE} not found",
-            file=sys.stderr,
-        )
-        return 2
-    except ConfigError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 1
-
-    readme = Path("README.md")
-    if readme.is_file() and not _structural_check(str(readme)):
-        return 1
-
-    return 0
 
 
 if __name__ == "__main__":

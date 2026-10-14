@@ -23,6 +23,8 @@ import re
 import sys
 from pathlib import Path
 
+from vergil_tooling.lib.cli import cli_main
+
 # Canonical command-position anchor (spec section 2.2): the tool name
 # matches only at line start or after a command separator, applied per
 # line of the quote-stripped text.
@@ -58,28 +60,7 @@ _GH_DENY_REASON = (
 )
 
 
-def _find_vergil_toml(start: Path) -> Path | None:
-    current = start.resolve()
-    for parent in (current, *current.parents):
-        candidate = parent / "vergil.toml"
-        if candidate.exists():
-            return candidate
-    return None
-
-
-def _deny(reason: str) -> None:
-    json.dump(
-        {
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "deny",
-                "permissionDecisionReason": reason,
-            },
-        },
-        sys.stdout,
-    )
-
-
+@cli_main
 def main() -> int:
     try:
         data = json.load(sys.stdin)
@@ -119,3 +100,25 @@ def main() -> int:
                 return 0
 
     return 0
+
+
+def _find_vergil_toml(start: Path) -> Path | None:
+    current = start.resolve()
+    for parent in (current, *current.parents):
+        candidate = parent / "vergil.toml"
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _deny(reason: str) -> None:
+    json.dump(
+        {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": reason,
+            },
+        },
+        sys.stdout,
+    )

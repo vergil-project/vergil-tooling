@@ -11,6 +11,7 @@ import os
 import sys
 
 from vergil_tooling.lib import git, github
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.container import (
     assert_runtime_available,
     build_container_args,
@@ -41,6 +42,7 @@ examples:
 """
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     args = list(argv if argv is not None else sys.argv[1:])
 

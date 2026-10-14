@@ -6,11 +6,13 @@ import argparse
 import sys
 from pathlib import Path
 
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.output import emit_error, write_output, write_summary
 from vergil_tooling.lib.sarif import evaluate_findings, format_summary, parse_sarif
 from vergil_tooling.lib.trivy import generate_sbom, run_scan
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="vrg-trivy-scan",

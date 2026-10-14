@@ -14,6 +14,7 @@ import sys
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import git
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.config import container_env_prefixes, primary_ci_version
 from vergil_tooling.lib.container import (
     _DEFAULT_TEST_COMMANDS,
@@ -29,6 +30,57 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 _detect_language = detect_language
+
+
+@cli_main
+def main(argv: list[str] | None = None) -> int:
+    _parse_args(argv)
+    runtime = detect_runtime()
+    repo_root = git.repo_root()
+    lang = resolve_language(repo_root)
+
+    if not lang and not os.environ.get("DOCKER_DEV_IMAGE"):
+        print(
+            "ERROR: could not detect project language from repo contents.",
+            file=sys.stderr,
+        )
+        print("Set DOCKER_DEV_IMAGE and DOCKER_TEST_CMD explicitly.", file=sys.stderr)
+        return 1
+
+    env_prefixes = container_env_prefixes(repo_root)
+    container_args = build_test_container_args(
+        repo_root, lang, runtime=runtime, env_prefixes=env_prefixes
+    )
+
+    if not _runtime_is_available(runtime):
+        print(
+            f"ERROR: {runtime} is not available. Ensure the container runtime is running.",
+            file=sys.stderr,
+        )
+        return 1
+
+    if runtime == "nerdctl":
+        os.execvp("nerdctl", container_args)  # noqa: S606, S607
+    else:
+        os.execvp("docker", container_args)  # noqa: S606, S607
+    return 0  # pragma: no cover
+
+
+def _parse_args(argv: list[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="vrg-container-test",
+        description=(
+            "Run the current repository's test suite inside a dev container. "
+            "The project language is auto-detected from its package-manager "
+            "files to choose a default image and test command."
+        ),
+        epilog=(
+            "Environment overrides: DOCKER_DEV_IMAGE (image), DOCKER_TEST_CMD "
+            "(command), DOCKER_NETWORK (network to join). Requires a running "
+            "container runtime (docker or nerdctl)."
+        ),
+    )
+    return parser.parse_args(argv)
 
 
 def build_test_container_args(
@@ -85,56 +137,6 @@ def _runtime_is_available(runtime: str) -> bool:
 
 # Keep backward-compatible alias
 _docker_is_available = _runtime_is_available
-
-
-def _parse_args(argv: list[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        prog="vrg-container-test",
-        description=(
-            "Run the current repository's test suite inside a dev container. "
-            "The project language is auto-detected from its package-manager "
-            "files to choose a default image and test command."
-        ),
-        epilog=(
-            "Environment overrides: DOCKER_DEV_IMAGE (image), DOCKER_TEST_CMD "
-            "(command), DOCKER_NETWORK (network to join). Requires a running "
-            "container runtime (docker or nerdctl)."
-        ),
-    )
-    return parser.parse_args(argv)
-
-
-def main(argv: list[str] | None = None) -> int:
-    _parse_args(argv)
-    runtime = detect_runtime()
-    repo_root = git.repo_root()
-    lang = resolve_language(repo_root)
-
-    if not lang and not os.environ.get("DOCKER_DEV_IMAGE"):
-        print(
-            "ERROR: could not detect project language from repo contents.",
-            file=sys.stderr,
-        )
-        print("Set DOCKER_DEV_IMAGE and DOCKER_TEST_CMD explicitly.", file=sys.stderr)
-        return 1
-
-    env_prefixes = container_env_prefixes(repo_root)
-    container_args = build_test_container_args(
-        repo_root, lang, runtime=runtime, env_prefixes=env_prefixes
-    )
-
-    if not _runtime_is_available(runtime):
-        print(
-            f"ERROR: {runtime} is not available. Ensure the container runtime is running.",
-            file=sys.stderr,
-        )
-        return 1
-
-    if runtime == "nerdctl":
-        os.execvp("nerdctl", container_args)  # noqa: S606, S607
-    else:
-        os.execvp("docker", container_args)  # noqa: S606, S607
-    return 0  # pragma: no cover
 
 
 if __name__ == "__main__":

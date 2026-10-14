@@ -10,11 +10,13 @@ import argparse
 import sys
 from pathlib import Path
 
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.config import container_system_packages
 from vergil_tooling.lib.container import container_platform
 from vergil_tooling.lib.container_cache import apt_install_command
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Print declared [container].system-packages.")
     parser.add_argument(

@@ -21,7 +21,49 @@ import sys
 from pathlib import Path
 
 from vergil_tooling.lib import gitignore
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.repo_config import _gitignore_language
+
+
+@cli_main
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
+    repo_root = Path(args.repo).resolve() if args.repo else Path.cwd()
+    lang = _gitignore_language(repo_root)
+    if args.write:
+        return _run_write(repo_root, lang)
+    return _run_check(repo_root, lang)
+
+
+def _parse_args(argv: list[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="vrg-gitignore-sync",
+        description=(
+            "Check or write the vergil-managed block in a single repository's "
+            ".gitignore. The fence language is the repo's asserted "
+            "[project].primary-language, normalized to base-only for any "
+            "language without a managed fragment. This is the applicator: it "
+            "owns only the file change and has no git or PR knowledge."
+        ),
+        epilog="Exit codes: 0 ok, 1 --check drift, 2 usage error.",
+    )
+    parser.add_argument(
+        "--repo",
+        default=None,
+        help="Repository root (default: current working directory).",
+    )
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--check",
+        action="store_true",
+        help="Report compliance without modifying the file (default).",
+    )
+    mode.add_argument(
+        "--write",
+        action="store_true",
+        help="Write the managed block into .gitignore.",
+    )
+    return parser.parse_args(argv)
 
 
 def _read_gitignore(repo_root: Path) -> str:
@@ -59,46 +101,6 @@ def _run_write(repo_root: Path, lang: str | None) -> int:
         )
     print(f"synced managed block in {repo_root / '.gitignore'}")
     return 0
-
-
-def _parse_args(argv: list[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        prog="vrg-gitignore-sync",
-        description=(
-            "Check or write the vergil-managed block in a single repository's "
-            ".gitignore. The fence language is the repo's asserted "
-            "[project].primary-language, normalized to base-only for any "
-            "language without a managed fragment. This is the applicator: it "
-            "owns only the file change and has no git or PR knowledge."
-        ),
-        epilog="Exit codes: 0 ok, 1 --check drift, 2 usage error.",
-    )
-    parser.add_argument(
-        "--repo",
-        default=None,
-        help="Repository root (default: current working directory).",
-    )
-    mode = parser.add_mutually_exclusive_group()
-    mode.add_argument(
-        "--check",
-        action="store_true",
-        help="Report compliance without modifying the file (default).",
-    )
-    mode.add_argument(
-        "--write",
-        action="store_true",
-        help="Write the managed block into .gitignore.",
-    )
-    return parser.parse_args(argv)
-
-
-def main(argv: list[str] | None = None) -> int:
-    args = _parse_args(argv)
-    repo_root = Path(args.repo).resolve() if args.repo else Path.cwd()
-    lang = _gitignore_language(repo_root)
-    if args.write:
-        return _run_write(repo_root, lang)
-    return _run_check(repo_root, lang)
 
 
 if __name__ == "__main__":

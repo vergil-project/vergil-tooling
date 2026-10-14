@@ -6,6 +6,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.freeze_refs import (
     collect_yaml_files,
     freeze_references,
@@ -14,6 +15,7 @@ from vergil_tooling.lib.freeze_refs import (
 from vergil_tooling.lib.output import emit_error, emit_warning, write_summary
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="vrg-freeze-refs",

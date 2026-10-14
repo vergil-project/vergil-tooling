@@ -68,12 +68,58 @@ declare `def main() -> int:` instead.
 
 ### Position
 
-`main` is the last function defined in the module. Helpers (argument parser
-construction, validation, the individual steps) are defined above it, and
-`main` composes them. The `if __name__` guard follows `main` at the end of the
-file. Reading a command module therefore means reading its building blocks
-first and finding the orchestration that ties them together, plus the guard, at
-the bottom.
+`main` is the first function defined in the module. It comes directly after the
+imports, the module constants, and any module-level types (classes, dataclasses,
+type aliases) defined ahead of the functions. The argument parser function
+(`parse_args` or `_parse_args`), when the module has one, follows immediately
+after `main`. The remaining helpers (validation, the individual steps) are
+defined below. Reading a command module therefore starts with the orchestration:
+what the command does, step by step, before the details of each step.
+
+Defining `main` ahead of the helpers it calls is safe because Python resolves
+those names when `main` runs, not when it is defined. The `if __name__` guard
+stays at the end of the file, after every definition, so that the whole module
+is loaded before `main` is called.
+
+`tests/vergil_tooling/test_cli_entry_points.py` enforces that `main` is the
+first top-level function in every `bin/` module that defines one.
+
+### The `cli_main` boundary
+
+Every console script's `main` is decorated with
+`vergil_tooling.lib.cli.cli_main`:
+
+```python
+from vergil_tooling.lib.cli import cli_main
+
+
+@cli_main
+def main(argv: list[str] | None = None) -> int:
+    ...
+```
+
+The decorator is the command boundary for the known GitHub authentication
+failures. When `main` lets one escape, it prints a single `<prog>: <message>`
+report on stderr and exits with status `1` instead of a traceback:
+
+| Exception | Message |
+|---|---|
+| `github.AppAuthError` | `github.app_auth_message()` |
+| `github.NoInstallationError` | `github.no_installation_message()` |
+| `github.MissingGitHubTokenError` | `github.missing_token_message()` |
+
+`<prog>` is the command name, derived from the module file name, so it is
+correct under an installed script, `python -m`, and in-process tests. Every
+other exception propagates unchanged. A command that needs command-specific
+wording (for example `vrg-gh`'s `-R/--repo` hint) still catches the error
+inside `main`; the decorator only sees what `main` does not handle.
+
+Library modules never install a global `sys.excepthook` or otherwise change
+interpreter state at import time to get the same effect: error handling stays
+visible at the entry point (#3216).
+
+`tests/vergil_tooling/test_cli_entry_points.py` enforces that every
+`[project.scripts]` entry point is wrapped by `cli_main`.
 
 ### The `if __name__` guard
 

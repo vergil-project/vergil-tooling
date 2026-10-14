@@ -55,6 +55,7 @@ from vergil_tooling.lib import (
     progress,
     worktrees,
 )
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.confirm import add_yes_argument, confirm
 from vergil_tooling.lib.container import resolve_language
 from vergil_tooling.lib.container_cache import (
@@ -87,6 +88,182 @@ _ETERNAL_BY_MODEL: dict[str, list[str]] = {
     "library-release": ["develop", "main"],
     "application-promotion": ["develop", "release", "main"],
 }
+
+
+@cli_main
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+
+    # --install extends the cascade one step past --release; normalize once so
+    # the release-chain logic below sees release on (issue #1643).
+    if args.install:
+        args.release = True
+
+    if not git.is_main_worktree():
+        main_root = git.main_worktree_root()
+        print(
+            f"ERROR: vrg-finalize-pr must be run from the main worktree at {main_root},\n"
+            "  not from a secondary worktree. The script removes worktrees during cleanup\n"
+            "  and cannot safely do so when the calling shell's CWD is inside one.",
+            file=sys.stderr,
+        )
+        return 1
+
+    root = git.repo_root()
+
+    # Batch mode (issue #1673): an explicit comma-list or --all finalizes
+    # several PRs serially. A single PR (or none) falls through to the
+    # unchanged single-PR pipeline below.
+    if args.all_prs:
+        prs = _resolve_open_prs(root)
+        if not prs:
+            print("vrg-finalize-pr --all: no open PRs found in worktrees.")
+            return 0
+        return _run_finalize_batch(
+            prs, root=root, release=args.release, install=args.install, assume_yes=args.yes
+        )
+    if args.pr is not None and "," in args.pr:
+        prs = _parse_pr_list(args.pr)
+        return _run_finalize_batch(
+            prs, root=root, release=args.release, install=args.install, assume_yes=args.yes
+        )
+
+    # --cleanup-only is the scriptable release path: no inference, no
+    # prompts, no stdin reads — args.pr stays None and only the
+    # cleanup/validation/cd-check stages run (issue #1448).
+    if args.pr is None and not args.cleanup_only:
+        try:
+            args.pr = _infer_pr(root, args.target_branch, assume_yes=args.yes)
+        except SystemExit as exc:
+            if exc.code == 0:
+                return 0
+            raise
+
+    # Inference and its prompts above need the real TTY; everything
+    # below runs under the progress pipeline, which owns stdout/stderr
+    # (issue #1479).
+    ctx = FinalizeContext(args=args, root=root)
+    rc = progress.run_pipeline(
+        ctx,
+        build_stages(
+            include_pr=args.pr is not None,
+            include_post_checks=not args.skip_post_checks,
+        ),
+        command="vrg-finalize-pr",
+        label="vrg-finalize-pr",
+        args=args,
+        repo_root=root,
+    )
+
+    # Surface — and, with --clean-dirty, guardedly clear — any merged/closed
+    # worktrees the sweep could not remove (issue #2348). Runs after the
+    # pipeline has torn down its live display so the report (and the
+    # confirmation prompt) reaches the human on real stdio, and regardless of
+    # rc so a stuck worktree is never hidden behind a failed later stage.
+    _handle_stuck_worktrees(ctx)
+
+    # Task closure and epic rollup are event-driven now (epic
+    # vergil-project/.github#75): the PR's `Closes #N` linkage closes the task on
+    # merge, and the on: issues.closed rollup Action closes the parent epic. The
+    # old post-pipeline `_close_managed_task` call was removed here in T4.
+
+    # --release cascade (issue #1634): chain into vrg-release only after a
+    # clean finalize. A non-zero pipeline must not trigger a release, and the
+    # hand-off happens here — after run_pipeline has closed its live display —
+    # so the two renderers never nest (cf. issue #1470). --skip-post-checks
+    # never chains: release is the batch orchestrator's single end-of-batch
+    # step (issue #1673).
+    if rc != 0 or not args.release or args.skip_post_checks:
+        return rc
+    if args.dry_run:
+        target = "vrg-release --install" if args.install else "vrg-release"
+        print(f"\n[dry-run] would chain into: {target}")
+        return 0
+    return _chain_release(root, install=args.install)
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(description="Finalize a pull request.")
+    # A PR argument and --cleanup-only contradict each other: the flag
+    # promises no merge and no prompts, the argument requests a merge.
+    target = parser.add_mutually_exclusive_group()
+    target.add_argument(
+        "pr",
+        nargs="?",
+        default=None,
+        help="PR number or URL to merge and finalize. Omit to infer interactively.",
+    )
+    target.add_argument(
+        "--cleanup-only",
+        action="store_true",
+        help="Skip PR inference and merge; run cleanup without prompting "
+        "or reading stdin (non-interactive release path).",
+    )
+    target.add_argument(
+        "--all",
+        dest="all_prs",
+        action="store_true",
+        help="Finalize every open PR found in .worktrees/ as a serial batch (issue #1673).",
+    )
+    parser.add_argument("--target-branch", default="develop", help="Target branch to switch to")
+    parser.add_argument(
+        "--strategy",
+        default=None,
+        choices=["merge", "squash", "rebase"],
+        help=(
+            "Merge strategy for the PR. Default by branch prefix: 'release/*' "
+            "branches merge with a merge commit (preserve develop<->main "
+            "ancestry); all others squash."
+        ),
+    )
+    parser.add_argument(
+        "--allow-provenance-violation",
+        action="store_true",
+        help="Proceed despite provenance violations (conscious human override)",
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Show what would be done without making changes"
+    )
+    parser.add_argument(
+        "--clean-dirty",
+        action="store_true",
+        help="Opt-in: clear a merged/closed worktree whose only dirt is "
+        "untracked build/validation output, after showing exactly what will "
+        "be deleted and confirming. Never touches modified tracked files or a "
+        "reused-branch straggler with unmerged commits (issue #2348).",
+    )
+    parser.add_argument(
+        "--release",
+        action="store_true",
+        help="After a successful finalize, chain straight into vrg-release "
+        "(the full submit-finalize-release cascade)",
+    )
+    parser.add_argument(
+        "--install",
+        action="store_true",
+        help="Extend the cascade one step further: implies --release and passes "
+        "--install through, so vrg-release runs the consumer-refresh install "
+        "step (issue #1643)",
+    )
+    parser.add_argument(
+        "--skip-post-checks",
+        action="store_true",
+        help="Skip the post-merge validation and CD-status stages (and any "
+        "release chain). Used by the batch orchestrator, which runs those "
+        "once at the end of the batch (issue #1673).",
+    )
+    parser.add_argument(
+        "--no-wait-cd",
+        action="store_true",
+        help="Do not block on the CD workflow run the merge triggers. By "
+        "default finalize waits for that run to complete and fails if it does "
+        "not succeed (issue #2753); this is the conscious opt-out for the rare "
+        "case where blocking on the post-merge publish is not wanted.",
+    )
+    add_yes_argument(parser)
+    progress.add_progress_args(parser, ())
+    return parser.parse_args(argv)
 
 
 def _parse_pr_list(value: str) -> list[str]:
@@ -198,90 +375,6 @@ class FinalizeContext:
     # tears down its live display, so the skip reason is impossible to miss
     # instead of buried in the collapsed stage log (issue #2348).
     stuck: list[worktrees.WorktreeStatus] = field(default_factory=list)
-
-
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(description="Finalize a pull request.")
-    # A PR argument and --cleanup-only contradict each other: the flag
-    # promises no merge and no prompts, the argument requests a merge.
-    target = parser.add_mutually_exclusive_group()
-    target.add_argument(
-        "pr",
-        nargs="?",
-        default=None,
-        help="PR number or URL to merge and finalize. Omit to infer interactively.",
-    )
-    target.add_argument(
-        "--cleanup-only",
-        action="store_true",
-        help="Skip PR inference and merge; run cleanup without prompting "
-        "or reading stdin (non-interactive release path).",
-    )
-    target.add_argument(
-        "--all",
-        dest="all_prs",
-        action="store_true",
-        help="Finalize every open PR found in .worktrees/ as a serial batch (issue #1673).",
-    )
-    parser.add_argument("--target-branch", default="develop", help="Target branch to switch to")
-    parser.add_argument(
-        "--strategy",
-        default=None,
-        choices=["merge", "squash", "rebase"],
-        help=(
-            "Merge strategy for the PR. Default by branch prefix: 'release/*' "
-            "branches merge with a merge commit (preserve develop<->main "
-            "ancestry); all others squash."
-        ),
-    )
-    parser.add_argument(
-        "--allow-provenance-violation",
-        action="store_true",
-        help="Proceed despite provenance violations (conscious human override)",
-    )
-    parser.add_argument(
-        "--dry-run", action="store_true", help="Show what would be done without making changes"
-    )
-    parser.add_argument(
-        "--clean-dirty",
-        action="store_true",
-        help="Opt-in: clear a merged/closed worktree whose only dirt is "
-        "untracked build/validation output, after showing exactly what will "
-        "be deleted and confirming. Never touches modified tracked files or a "
-        "reused-branch straggler with unmerged commits (issue #2348).",
-    )
-    parser.add_argument(
-        "--release",
-        action="store_true",
-        help="After a successful finalize, chain straight into vrg-release "
-        "(the full submit-finalize-release cascade)",
-    )
-    parser.add_argument(
-        "--install",
-        action="store_true",
-        help="Extend the cascade one step further: implies --release and passes "
-        "--install through, so vrg-release runs the consumer-refresh install "
-        "step (issue #1643)",
-    )
-    parser.add_argument(
-        "--skip-post-checks",
-        action="store_true",
-        help="Skip the post-merge validation and CD-status stages (and any "
-        "release chain). Used by the batch orchestrator, which runs those "
-        "once at the end of the batch (issue #1673).",
-    )
-    parser.add_argument(
-        "--no-wait-cd",
-        action="store_true",
-        help="Do not block on the CD workflow run the merge triggers. By "
-        "default finalize waits for that run to complete and fails if it does "
-        "not succeed (issue #2753); this is the conscious opt-out for the rare "
-        "case where blocking on the post-merge publish is not wanted.",
-    )
-    add_yes_argument(parser)
-    progress.add_progress_args(parser, ())
-    return parser.parse_args(argv)
 
 
 def _run(args: list[str], *, dry_run: bool) -> None:
@@ -1222,97 +1315,6 @@ def _chain_release(root: Path, *, install: bool = False) -> int:
             file=sys.stderr,
         )
     return result.returncode
-
-
-def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
-
-    # --install extends the cascade one step past --release; normalize once so
-    # the release-chain logic below sees release on (issue #1643).
-    if args.install:
-        args.release = True
-
-    if not git.is_main_worktree():
-        main_root = git.main_worktree_root()
-        print(
-            f"ERROR: vrg-finalize-pr must be run from the main worktree at {main_root},\n"
-            "  not from a secondary worktree. The script removes worktrees during cleanup\n"
-            "  and cannot safely do so when the calling shell's CWD is inside one.",
-            file=sys.stderr,
-        )
-        return 1
-
-    root = git.repo_root()
-
-    # Batch mode (issue #1673): an explicit comma-list or --all finalizes
-    # several PRs serially. A single PR (or none) falls through to the
-    # unchanged single-PR pipeline below.
-    if args.all_prs:
-        prs = _resolve_open_prs(root)
-        if not prs:
-            print("vrg-finalize-pr --all: no open PRs found in worktrees.")
-            return 0
-        return _run_finalize_batch(
-            prs, root=root, release=args.release, install=args.install, assume_yes=args.yes
-        )
-    if args.pr is not None and "," in args.pr:
-        prs = _parse_pr_list(args.pr)
-        return _run_finalize_batch(
-            prs, root=root, release=args.release, install=args.install, assume_yes=args.yes
-        )
-
-    # --cleanup-only is the scriptable release path: no inference, no
-    # prompts, no stdin reads — args.pr stays None and only the
-    # cleanup/validation/cd-check stages run (issue #1448).
-    if args.pr is None and not args.cleanup_only:
-        try:
-            args.pr = _infer_pr(root, args.target_branch, assume_yes=args.yes)
-        except SystemExit as exc:
-            if exc.code == 0:
-                return 0
-            raise
-
-    # Inference and its prompts above need the real TTY; everything
-    # below runs under the progress pipeline, which owns stdout/stderr
-    # (issue #1479).
-    ctx = FinalizeContext(args=args, root=root)
-    rc = progress.run_pipeline(
-        ctx,
-        build_stages(
-            include_pr=args.pr is not None,
-            include_post_checks=not args.skip_post_checks,
-        ),
-        command="vrg-finalize-pr",
-        label="vrg-finalize-pr",
-        args=args,
-        repo_root=root,
-    )
-
-    # Surface — and, with --clean-dirty, guardedly clear — any merged/closed
-    # worktrees the sweep could not remove (issue #2348). Runs after the
-    # pipeline has torn down its live display so the report (and the
-    # confirmation prompt) reaches the human on real stdio, and regardless of
-    # rc so a stuck worktree is never hidden behind a failed later stage.
-    _handle_stuck_worktrees(ctx)
-
-    # Task closure and epic rollup are event-driven now (epic
-    # vergil-project/.github#75): the PR's `Closes #N` linkage closes the task on
-    # merge, and the on: issues.closed rollup Action closes the parent epic. The
-    # old post-pipeline `_close_managed_task` call was removed here in T4.
-
-    # --release cascade (issue #1634): chain into vrg-release only after a
-    # clean finalize. A non-zero pipeline must not trigger a release, and the
-    # hand-off happens here — after run_pipeline has closed its live display —
-    # so the two renderers never nest (cf. issue #1470). --skip-post-checks
-    # never chains: release is the batch orchestrator's single end-of-batch
-    # step (issue #1673).
-    if rc != 0 or not args.release or args.skip_post_checks:
-        return rc
-    if args.dry_run:
-        target = "vrg-release --install" if args.install else "vrg-release"
-        print(f"\n[dry-run] would chain into: {target}")
-        return 0
-    return _chain_release(root, install=args.install)
 
 
 if __name__ == "__main__":

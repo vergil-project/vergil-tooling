@@ -11,10 +11,12 @@ import sys
 from datetime import UTC, datetime, timedelta
 
 from vergil_tooling.lib import activity_log, github
+from vergil_tooling.lib.cli import cli_main
 
 _WINDOW_DAYS = 30
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Print the project activity log.")
     parser.add_argument(

@@ -66,6 +66,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import epics, git, github, identity_mode, worktrees
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.confirm import add_yes_argument, confirm
 from vergil_tooling.lib.linkage import ALLOWED_LINKAGES, normalize_linkage
 from vergil_tooling.lib.pr_body import build_pr_body, resolve_issue_ref
@@ -76,6 +77,79 @@ from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.pr_workflow.state import WorkflowState
+
+
+@cli_main
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+
+    # Capture the cascade intent before normalization mutates the flags — the
+    # relay path guard below needs to know what the caller actually passed.
+    cascade_requested = args.finalize or args.release or args.install
+
+    # --install extends the cascade one link past --release, which itself
+    # implies --finalize; normalize once (install ⇒ release ⇒ finalize) so
+    # every downstream branch (dry-run notes, chain, summary) sees the right
+    # flags (issues #1634, #1643).
+    if args.install:
+        args.release = True
+    if args.release:
+        args.finalize = True
+
+    if identity_mode.is_agent():
+        print(
+            "vrg-submit-pr: PR submission requires a human maintainer. Agents cannot submit PRs.",
+            file=sys.stderr,
+        )
+        return 1
+
+    if args.branches:
+        # Relay path: branches identify the submit. It opens PRs worktree-free
+        # (from the branch's relayed ready-state), and — when a cascade flag is
+        # passed — carries them through finalize/release/install locally, exactly
+        # like the local worktree batch (issue #2398). It still rejects the
+        # worktree-selection and single-PR CLI flags, which name a different path.
+        if args.all_worktrees or args.select is not None:
+            print(
+                "vrg-submit-pr: branch arguments select the submit directly and "
+                "cannot be combined with --all/--select.",
+                file=sys.stderr,
+            )
+            return 1
+        if args.issue is not None or args.summary is not None or args.title is not None:
+            print(
+                "vrg-submit-pr: branch arguments cannot be combined with "
+                "--issue/--summary/--title (those drive the single-PR CLI path).",
+                file=sys.stderr,
+            )
+            return 1
+        if cascade_requested:
+            return _run_relay_cascade(
+                args.branches, args, release=args.release, install=args.install
+            )
+        return _run_relay(args.branches, args)
+
+    cli_fields = [args.issue, args.summary, args.title]
+    has_any = any(f is not None for f in cli_fields)
+    has_all = all(f is not None for f in cli_fields)
+
+    if has_any and not has_all:
+        missing = []
+        if args.issue is None:
+            missing.append("--issue")
+        if args.summary is None:
+            missing.append("--summary")
+        if args.title is None:
+            missing.append("--title")
+        print(
+            f"vrg-submit-pr: The following required arguments are missing: {', '.join(missing)}",
+            file=sys.stderr,
+        )
+        return 1
+
+    if has_all:
+        return _run_cli_mode(args)
+    return _run_template_mode(args)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -1063,78 +1137,6 @@ def _run_relay_cascade(
     )
     print(batch.format_report(report))
     return 0 if report.all_completed and report.post_failure is None else 1
-
-
-def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
-
-    # Capture the cascade intent before normalization mutates the flags — the
-    # relay path guard below needs to know what the caller actually passed.
-    cascade_requested = args.finalize or args.release or args.install
-
-    # --install extends the cascade one link past --release, which itself
-    # implies --finalize; normalize once (install ⇒ release ⇒ finalize) so
-    # every downstream branch (dry-run notes, chain, summary) sees the right
-    # flags (issues #1634, #1643).
-    if args.install:
-        args.release = True
-    if args.release:
-        args.finalize = True
-
-    if identity_mode.is_agent():
-        print(
-            "vrg-submit-pr: PR submission requires a human maintainer. Agents cannot submit PRs.",
-            file=sys.stderr,
-        )
-        return 1
-
-    if args.branches:
-        # Relay path: branches identify the submit. It opens PRs worktree-free
-        # (from the branch's relayed ready-state), and — when a cascade flag is
-        # passed — carries them through finalize/release/install locally, exactly
-        # like the local worktree batch (issue #2398). It still rejects the
-        # worktree-selection and single-PR CLI flags, which name a different path.
-        if args.all_worktrees or args.select is not None:
-            print(
-                "vrg-submit-pr: branch arguments select the submit directly and "
-                "cannot be combined with --all/--select.",
-                file=sys.stderr,
-            )
-            return 1
-        if args.issue is not None or args.summary is not None or args.title is not None:
-            print(
-                "vrg-submit-pr: branch arguments cannot be combined with "
-                "--issue/--summary/--title (those drive the single-PR CLI path).",
-                file=sys.stderr,
-            )
-            return 1
-        if cascade_requested:
-            return _run_relay_cascade(
-                args.branches, args, release=args.release, install=args.install
-            )
-        return _run_relay(args.branches, args)
-
-    cli_fields = [args.issue, args.summary, args.title]
-    has_any = any(f is not None for f in cli_fields)
-    has_all = all(f is not None for f in cli_fields)
-
-    if has_any and not has_all:
-        missing = []
-        if args.issue is None:
-            missing.append("--issue")
-        if args.summary is None:
-            missing.append("--summary")
-        if args.title is None:
-            missing.append("--title")
-        print(
-            f"vrg-submit-pr: The following required arguments are missing: {', '.join(missing)}",
-            file=sys.stderr,
-        )
-        return 1
-
-    if has_all:
-        return _run_cli_mode(args)
-    return _run_template_mode(args)
 
 
 if __name__ == "__main__":

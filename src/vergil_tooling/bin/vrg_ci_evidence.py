@@ -39,54 +39,24 @@ from vergil_tooling.lib.ci_evidence import (
     NoQualifyingRunError,
     ReleasePrUnresolvedError,
 )
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.output import emit_error
 
 
-def cmd_harvest(args: argparse.Namespace) -> int:
-    """Harvest the release's CI evidence into a staging dir (pre-publish gate).
-
-    Delegates to :func:`~vergil_tooling.lib.ci_evidence.run_harvest`, which
-    resolves the release PR, selects the qualifying CI run, downloads the
-    evidence artifacts, enforces completeness, and persists the harvested tree
-    plus a state file into ``--out-dir`` for a later network-free assemble.
-    """
-    ci_evidence.run_harvest(args.repo, args.merge_sha, Path(args.out_dir))
-    return 0
-
-
-def cmd_assemble(args: argparse.Namespace) -> int:
-    """Assemble the bundle from a persisted harvest (post-release attach).
-
-    Delegates to :func:`~vergil_tooling.lib.ci_evidence.run_assemble`, which
-    reads the persisted state + tree from ``--staging`` and writes the tarball +
-    standalone manifest into ``--out-dir``. No network.
-    """
-    ci_evidence.run_assemble(
-        Path(args.staging),
-        version=args.version,
-        generated_at=args.generated_at,
-        out_dir=Path(args.out_dir),
-        sbom_file=Path(args.sbom_file) if args.sbom_file else None,
-    )
-    return 0
-
-
-def cmd_bundle(args: argparse.Namespace) -> int:
-    """Harvest then assemble in one shot (back-compat + local dogfooding).
-
-    Delegates to :func:`~vergil_tooling.lib.ci_evidence.run_bundle`, which
-    composes ``harvest`` and ``assemble`` over a throwaway staging directory —
-    the original atomic behaviour.
-    """
-    ci_evidence.run_bundle(
-        args.repo,
-        version=args.version,
-        merge_sha=args.merge_sha,
-        generated_at=args.generated_at,
-        out_dir=Path(args.out_dir),
-        sbom_file=Path(args.sbom_file) if args.sbom_file else None,
-    )
-    return 0
+@cli_main
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    try:
+        return int(args.func(args))
+    except (
+        EvidenceArtifactError,
+        HarvestStateError,
+        IncompleteEvidenceError,
+        NoQualifyingRunError,
+        ReleasePrUnresolvedError,
+    ) as exc:
+        emit_error(str(exc))
+        return 1
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -134,19 +104,51 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
-    try:
-        return int(args.func(args))
-    except (
-        EvidenceArtifactError,
-        HarvestStateError,
-        IncompleteEvidenceError,
-        NoQualifyingRunError,
-        ReleasePrUnresolvedError,
-    ) as exc:
-        emit_error(str(exc))
-        return 1
+def cmd_harvest(args: argparse.Namespace) -> int:
+    """Harvest the release's CI evidence into a staging dir (pre-publish gate).
+
+    Delegates to :func:`~vergil_tooling.lib.ci_evidence.run_harvest`, which
+    resolves the release PR, selects the qualifying CI run, downloads the
+    evidence artifacts, enforces completeness, and persists the harvested tree
+    plus a state file into ``--out-dir`` for a later network-free assemble.
+    """
+    ci_evidence.run_harvest(args.repo, args.merge_sha, Path(args.out_dir))
+    return 0
+
+
+def cmd_assemble(args: argparse.Namespace) -> int:
+    """Assemble the bundle from a persisted harvest (post-release attach).
+
+    Delegates to :func:`~vergil_tooling.lib.ci_evidence.run_assemble`, which
+    reads the persisted state + tree from ``--staging`` and writes the tarball +
+    standalone manifest into ``--out-dir``. No network.
+    """
+    ci_evidence.run_assemble(
+        Path(args.staging),
+        version=args.version,
+        generated_at=args.generated_at,
+        out_dir=Path(args.out_dir),
+        sbom_file=Path(args.sbom_file) if args.sbom_file else None,
+    )
+    return 0
+
+
+def cmd_bundle(args: argparse.Namespace) -> int:
+    """Harvest then assemble in one shot (back-compat + local dogfooding).
+
+    Delegates to :func:`~vergil_tooling.lib.ci_evidence.run_bundle`, which
+    composes ``harvest`` and ``assemble`` over a throwaway staging directory —
+    the original atomic behaviour.
+    """
+    ci_evidence.run_bundle(
+        args.repo,
+        version=args.version,
+        merge_sha=args.merge_sha,
+        generated_at=args.generated_at,
+        out_dir=Path(args.out_dir),
+        sbom_file=Path(args.sbom_file) if args.sbom_file else None,
+    )
+    return 0
 
 
 if __name__ == "__main__":

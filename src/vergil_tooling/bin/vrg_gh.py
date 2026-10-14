@@ -11,6 +11,7 @@ import subprocess
 import sys
 
 from vergil_tooling.lib import github, identity_mode, retry
+from vergil_tooling.lib.cli import cli_main
 
 _ALLOWED: dict[str, set[str]] = {
     "issue": {"view", "close", "reopen", "edit", "list", "comment", "transfer"},
@@ -86,6 +87,107 @@ _DENIED_TOP: dict[str, str] = {
 _API_WRITE_FLAGS: set[str] = {"-f", "-F", "--field", "--raw-field", "--input"}
 
 _MIN_MERGE_ARGS = 3
+
+
+@cli_main
+def main(argv: list[str] | None = None) -> int:
+    if argv is None:
+        argv = sys.argv[1:]
+
+    if not argv:
+        print("usage: vrg-gh <subcommand> <action> [args...]", file=sys.stderr)
+        return 2
+
+    if argv[0] in ("-h", "--help"):
+        _print_help()
+        return 0
+
+    top = argv[0]
+
+    if top in _DENIED_TOP:
+        msg = _DENIED_TOP[top]
+        print(f"vrg-gh: {top} is denied. {msg}", file=sys.stderr)
+        return 1
+
+    # Identity-aware `gh api`: the broad escape hatch is gated per identity.
+    if top == "api":
+        mode = identity_mode.current_mode()
+        if mode == identity_mode.IdentityMode.USER:
+            print(
+                "vrg-gh: gh api is denied for the user identity "
+                "(broad write-capable escape hatch).",
+                file=sys.stderr,
+            )
+            return 1
+        if mode == identity_mode.IdentityMode.AUDIT and not _api_is_get(argv):
+            print(
+                "vrg-gh: gh api is restricted to read-only GET calls for the audit identity.",
+                file=sys.stderr,
+            )
+            return 1
+        # human (full) or audit GET: execute directly, bypassing the
+        # subcommand-pair allowlist (api has no fixed sub-actions).
+        return _exec_gh(argv)
+
+    allowed = _get_allowed()
+
+    if top not in allowed:
+        print(
+            f"vrg-gh: {top} is not recognized. Allowed: {', '.join(sorted(allowed))}",
+            file=sys.stderr,
+        )
+        return 1
+
+    if len(argv) < 2:  # noqa: PLR2004
+        print(
+            f"vrg-gh: {top} requires a subcommand. Allowed: {', '.join(sorted(allowed[top]))}",
+            file=sys.stderr,
+        )
+        return 1
+
+    sub = argv[1]
+
+    denied_pairs = _get_denied_pairs()
+    if top in denied_pairs and sub in denied_pairs[top]:
+        msg = denied_pairs[top][sub]
+        print(f"vrg-gh: {top} {sub} is denied. {msg}", file=sys.stderr)
+        return 1
+
+    if sub not in allowed[top]:
+        print(
+            f"vrg-gh: {top} {sub} is not recognized. Allowed: {', '.join(sorted(allowed[top]))}",
+            file=sys.stderr,
+        )
+        return 1
+
+    mode = identity_mode.current_mode()
+
+    if (
+        top == "pr"
+        and sub == "review"
+        and "--approve" in argv
+        and mode not in (identity_mode.IdentityMode.AUDIT, identity_mode.IdentityMode.HUMAN)
+    ):
+        print(
+            "vrg-gh: pr review --approve is denied. "
+            "PR approval is restricted to the audit identity or a human maintainer.",
+            file=sys.stderr,
+        )
+        return 1
+
+    if (
+        top == "pr"
+        and sub == "merge"
+        and not identity_mode.is_agent()
+        and len(argv) < _MIN_MERGE_ARGS
+    ):
+        print(
+            "vrg-gh: pr merge is denied. pr merge requires a PR number or URL.",
+            file=sys.stderr,
+        )
+        return 1
+
+    return _exec_gh(argv)
 
 
 def _get_allowed() -> dict[str, set[str]]:
@@ -193,6 +295,9 @@ def _exec_gh(argv: list[str]) -> int:
             file=sys.stderr,
         )
         return 1
+    except github.AppAuthError as exc:
+        print(f"vrg-gh: {github.app_auth_message(exc)}", file=sys.stderr)
+        return 1
     env: dict[str, str] | None = None
     if token is not None:
         env = {**os.environ, "GH_TOKEN": token}
@@ -240,106 +345,6 @@ def _print_help() -> None:
         "Identity mode is resolved via vrg-whoami. Per-subcommand gh help still\n"
         "forwards, e.g. 'vrg-gh pr view --help'."
     )
-
-
-def main(argv: list[str] | None = None) -> int:
-    if argv is None:
-        argv = sys.argv[1:]
-
-    if not argv:
-        print("usage: vrg-gh <subcommand> <action> [args...]", file=sys.stderr)
-        return 2
-
-    if argv[0] in ("-h", "--help"):
-        _print_help()
-        return 0
-
-    top = argv[0]
-
-    if top in _DENIED_TOP:
-        msg = _DENIED_TOP[top]
-        print(f"vrg-gh: {top} is denied. {msg}", file=sys.stderr)
-        return 1
-
-    # Identity-aware `gh api`: the broad escape hatch is gated per identity.
-    if top == "api":
-        mode = identity_mode.current_mode()
-        if mode == identity_mode.IdentityMode.USER:
-            print(
-                "vrg-gh: gh api is denied for the user identity "
-                "(broad write-capable escape hatch).",
-                file=sys.stderr,
-            )
-            return 1
-        if mode == identity_mode.IdentityMode.AUDIT and not _api_is_get(argv):
-            print(
-                "vrg-gh: gh api is restricted to read-only GET calls for the audit identity.",
-                file=sys.stderr,
-            )
-            return 1
-        # human (full) or audit GET: execute directly, bypassing the
-        # subcommand-pair allowlist (api has no fixed sub-actions).
-        return _exec_gh(argv)
-
-    allowed = _get_allowed()
-
-    if top not in allowed:
-        print(
-            f"vrg-gh: {top} is not recognized. Allowed: {', '.join(sorted(allowed))}",
-            file=sys.stderr,
-        )
-        return 1
-
-    if len(argv) < 2:  # noqa: PLR2004
-        print(
-            f"vrg-gh: {top} requires a subcommand. Allowed: {', '.join(sorted(allowed[top]))}",
-            file=sys.stderr,
-        )
-        return 1
-
-    sub = argv[1]
-
-    denied_pairs = _get_denied_pairs()
-    if top in denied_pairs and sub in denied_pairs[top]:
-        msg = denied_pairs[top][sub]
-        print(f"vrg-gh: {top} {sub} is denied. {msg}", file=sys.stderr)
-        return 1
-
-    if sub not in allowed[top]:
-        print(
-            f"vrg-gh: {top} {sub} is not recognized. Allowed: {', '.join(sorted(allowed[top]))}",
-            file=sys.stderr,
-        )
-        return 1
-
-    mode = identity_mode.current_mode()
-
-    if (
-        top == "pr"
-        and sub == "review"
-        and "--approve" in argv
-        and mode not in (identity_mode.IdentityMode.AUDIT, identity_mode.IdentityMode.HUMAN)
-    ):
-        print(
-            "vrg-gh: pr review --approve is denied. "
-            "PR approval is restricted to the audit identity or a human maintainer.",
-            file=sys.stderr,
-        )
-        return 1
-
-    if (
-        top == "pr"
-        and sub == "merge"
-        and not identity_mode.is_agent()
-        and len(argv) < _MIN_MERGE_ARGS
-    ):
-        print(
-            "vrg-gh: pr merge is denied. pr merge requires a PR number or URL.",
-            file=sys.stderr,
-        )
-        return 1
-
-    return _exec_gh(argv)
 
 
 if __name__ == "__main__":

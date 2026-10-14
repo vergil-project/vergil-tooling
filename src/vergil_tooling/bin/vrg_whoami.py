@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import sys
 
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.identity_mode import Resolution, Signal, resolve
 from vergil_tooling.lib.platform_env import PlatformResolution, resolve_platform
 
@@ -39,6 +40,26 @@ _SIGNAL_LABELS = {
     Signal.APP_ID: "app id",
     Signal.DEFAULT: "default (no signal present)",
 }
+
+
+@cli_main
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+
+    if args.platform:
+        print(resolve_platform().platform.value)
+        return 0
+
+    resolution = resolve()
+
+    if args.explain:
+        rc = _explain(resolution)
+        print()
+        _explain_platform(resolve_platform())
+        return rc
+
+    print(resolution.mode.value)
+    return 0
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -114,25 +135,6 @@ def _explain_platform(platform: PlatformResolution) -> None:
             "— disagreement is the condition that precedes a misread.",
             file=sys.stderr,
         )
-
-
-def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
-
-    if args.platform:
-        print(resolve_platform().platform.value)
-        return 0
-
-    resolution = resolve()
-
-    if args.explain:
-        rc = _explain(resolution)
-        print()
-        _explain_platform(resolve_platform())
-        return rc
-
-    print(resolution.mode.value)
-    return 0
 
 
 if __name__ == "__main__":

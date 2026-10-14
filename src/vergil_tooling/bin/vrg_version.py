@@ -5,9 +5,11 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.version import bump, show, show_major_minor
 
 
+@cli_main
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="vrg-version",

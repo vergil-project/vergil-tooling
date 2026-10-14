@@ -15,6 +15,7 @@ import tempfile
 from pathlib import Path
 
 from vergil_tooling.lib import branch_names, config, git
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.commit_message import (
     ALLOWED_TYPES,
     build_commit_message,
@@ -40,6 +41,82 @@ _BRANCHING_MODELS: dict[str, tuple[str, str]] = {
 }
 
 _WORKTREES_DIRNAME = ".worktrees"
+
+
+@cli_main
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    root = git.repo_root()
+
+    try:
+        vergil_config = config.read_config(root)
+        branching_model = vergil_config.project.branching_model
+    except FileNotFoundError:
+        vergil_config = None
+        branching_model = ""
+    except config.ConfigError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+
+    rc = _validate_commit_context(root, branching_model)
+    if rc != 0:
+        return rc
+
+    # Freeze gate: once this branch was reported ready, a new commit would move
+    # its tip past the reported/merged commit and strand the worktree
+    # (issue #1719). Reopening requires the deliberate `vrg-pr-workflow unfreeze`.
+    freeze_check = freeze.check_worktree(root, action="add a commit")
+    if freeze_check.read_error is not None:
+        print(
+            f"WARNING: could not read PR-workflow state ({freeze_check.read_error}); "
+            "proceeding without a freeze check.",
+            file=sys.stderr,
+        )
+    if freeze_check.frozen:
+        print(freeze_check.message, file=sys.stderr)
+        return 1
+
+    if args.body and contains_autoclose(args.body):
+        return _reject(
+            "ERROR: commit body contains a GitHub auto-close keyword "
+            "(close/fix/resolve). Commit bodies must carry no issue-linkage "
+            "keyword.",
+            "Issue linkage is set on the PR at submit time (via "
+            "'vrg-pr-workflow report-ready' / 'vrg-submit-pr'), not in the "
+            "commit body. Issues must remain open until post-merge workflows "
+            "succeed.",
+        )
+
+    co_author = os.environ.get("VRG_CO_AUTHOR")
+
+    if not args.allow_empty and not git.has_staged_changes():
+        print(
+            "ERROR: no staged changes. Stage files with 'git add' before committing.",
+            file=sys.stderr,
+        )
+        return 1
+
+    message = build_commit_message(
+        commit_type=args.commit_type,
+        scope=args.scope,
+        message=args.message,
+        body=args.body,
+        co_author=co_author,
+    )
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+        f.write(message)
+        tmp_path = f.name
+
+    try:
+        commit_args = ["commit", "--file", tmp_path]
+        if args.allow_empty:
+            commit_args.append("--allow-empty")
+        git.run(*commit_args)
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+    return 0
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -148,81 +225,6 @@ def _validate_commit_context(root: Path, branching_model: str) -> int:
             f"-b {current_branch} origin/develop  # to create one",
             "See docs/specs/worktree-convention.md for the full convention.",
         )
-
-    return 0
-
-
-def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
-    root = git.repo_root()
-
-    try:
-        vergil_config = config.read_config(root)
-        branching_model = vergil_config.project.branching_model
-    except FileNotFoundError:
-        vergil_config = None
-        branching_model = ""
-    except config.ConfigError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 1
-
-    rc = _validate_commit_context(root, branching_model)
-    if rc != 0:
-        return rc
-
-    # Freeze gate: once this branch was reported ready, a new commit would move
-    # its tip past the reported/merged commit and strand the worktree
-    # (issue #1719). Reopening requires the deliberate `vrg-pr-workflow unfreeze`.
-    freeze_check = freeze.check_worktree(root, action="add a commit")
-    if freeze_check.read_error is not None:
-        print(
-            f"WARNING: could not read PR-workflow state ({freeze_check.read_error}); "
-            "proceeding without a freeze check.",
-            file=sys.stderr,
-        )
-    if freeze_check.frozen:
-        print(freeze_check.message, file=sys.stderr)
-        return 1
-
-    if args.body and contains_autoclose(args.body):
-        return _reject(
-            "ERROR: commit body contains a GitHub auto-close keyword "
-            "(close/fix/resolve). Commit bodies must carry no issue-linkage "
-            "keyword.",
-            "Issue linkage is set on the PR at submit time (via "
-            "'vrg-pr-workflow report-ready' / 'vrg-submit-pr'), not in the "
-            "commit body. Issues must remain open until post-merge workflows "
-            "succeed.",
-        )
-
-    co_author = os.environ.get("VRG_CO_AUTHOR")
-
-    if not args.allow_empty and not git.has_staged_changes():
-        print(
-            "ERROR: no staged changes. Stage files with 'git add' before committing.",
-            file=sys.stderr,
-        )
-        return 1
-
-    message = build_commit_message(
-        commit_type=args.commit_type,
-        scope=args.scope,
-        message=args.message,
-        body=args.body,
-        co_author=co_author,
-    )
-
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
-        f.write(message)
-        tmp_path = f.name
-
-    try:
-        commit_args = ["commit", "--file", tmp_path]
-        if args.allow_empty:
-            commit_args.append("--allow-empty")
-        git.run(*commit_args)
-    finally:
-        Path(tmp_path).unlink(missing_ok=True)
 
     return 0
 

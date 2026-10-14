@@ -19,21 +19,14 @@ import sys
 import time
 
 from vergil_tooling.lib import github
+from vergil_tooling.lib.cli import cli_main
 
 _MAX_BRANCH_UPDATES = 5
 _MAX_UNKNOWN_RETRIES = 3
 _UNKNOWN_RETRY_DELAY = 5
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(
-        description="Block until a PR's required checks pass.",
-    )
-    parser.add_argument("pr", help="PR URL or number")
-    return parser.parse_args(argv)
-
-
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     updates = 0
@@ -87,6 +80,15 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  Review status: {review}", file=sys.stderr)
         print("  Check branch protection settings.", file=sys.stderr)
     return 1
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Block until a PR's required checks pass.",
+    )
+    parser.add_argument("pr", help="PR URL or number")
+    return parser.parse_args(argv)
 
 
 if __name__ == "__main__":

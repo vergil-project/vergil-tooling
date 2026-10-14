@@ -19,6 +19,7 @@ import argparse
 import sys
 
 from vergil_tooling.lib import github, identity_mode
+from vergil_tooling.lib.cli import cli_main
 
 CHECK_NAME = "vergil-audit/approved"
 
@@ -30,26 +31,7 @@ _TITLES = {
 }
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(
-        description="Post the vergil-audit/approved check-run for a PR's head commit.",
-    )
-    parser.add_argument("pr", help="PR URL or number")
-    parser.add_argument(
-        "--conclusion",
-        default="success",
-        choices=("success", "failure", "action_required", "neutral"),
-        help="Check-run conclusion (default: success — posted only on approval)",
-    )
-    parser.add_argument(
-        "--summary",
-        default="",
-        help="Check-run summary (defaults to a conclusion-appropriate line)",
-    )
-    return parser.parse_args(argv)
-
-
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
@@ -76,6 +58,26 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(f"Posted {CHECK_NAME} ({args.conclusion}) for {repo}@{sha[:8]}.")
     return 0
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Post the vergil-audit/approved check-run for a PR's head commit.",
+    )
+    parser.add_argument("pr", help="PR URL or number")
+    parser.add_argument(
+        "--conclusion",
+        default="success",
+        choices=("success", "failure", "action_required", "neutral"),
+        help="Check-run conclusion (default: success — posted only on approval)",
+    )
+    parser.add_argument(
+        "--summary",
+        default="",
+        help="Check-run summary (defaults to a conclusion-appropriate line)",
+    )
+    return parser.parse_args(argv)
 
 
 if __name__ == "__main__":

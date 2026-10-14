@@ -38,91 +38,21 @@ import sys
 from pathlib import Path
 
 from vergil_tooling.lib import config
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.package import PackageError, build, matrix
 from vergil_tooling.lib.package import python_builder as _python_builder  # noqa: F401
 from vergil_tooling.lib.package import staged as _staged  # noqa: F401  (registers the builder)
 from vergil_tooling.lib.package.index import site
 
 
-def _cmd_matrix(args: argparse.Namespace) -> int:
-    cfg = config.read_config(Path.cwd())
-    tier = matrix.Tier(args.tier)
-    m = matrix.resolve(cfg.package, tier=tier) if cfg.package is not None else None
-    payload: dict[str, object] = (
-        {"enabled": True, "tier": tier.value, **matrix.to_json(m)}
-        if m is not None
-        else {"enabled": False, "tier": tier.value, "build": [], "test": []}
-    )
-    output_path = os.environ.get("GITHUB_OUTPUT", "")
-    if args.github_output and not output_path:
-        msg = "--github-output: GITHUB_OUTPUT is not set"
-        raise PackageError(msg)
-    if args.manifest:
-        if m is None:
-            print(
-                f"vrg-package: no [package] section; manifest not written to {args.manifest}",
-                file=sys.stderr,
-            )
-        else:
-            Path(args.manifest).write_text(
-                json.dumps(matrix.manifest(m), indent=2) + "\n", encoding="utf-8"
-            )
-    if args.github_output:
-        with Path(output_path).open("a", encoding="utf-8") as fh:
-            fh.write(f"enabled={'true' if m is not None else 'false'}\n")
-            fh.write(f"build={json.dumps(payload['build'])}\n")
-            fh.write(f"test={json.dumps(payload['test'])}\n")
-            fh.write(f"tier={tier.value}\n")
-    else:
-        print(json.dumps(payload, indent=2))
-    return 0
-
-
-def _cmd_build(args: argparse.Namespace) -> int:
-    cwd = Path.cwd()
-    artifacts = build.run_build(
-        repo_root=cwd,
-        cell_id=args.cell,
-        version=args.version,
-        out_dir=cwd / args.out,
-        staging_root=cwd / args.staging,
-    )
-    for path in artifacts:
-        print(path)
-    return 0
-
-
-def _cmd_index(args: argparse.Namespace) -> int:
-    site.build_site(
-        Path(args.config),
-        Path(args.keys),
-        Path(args.out),
-        Path(args.work),
-        base_url=args.base_url or site.default_base_url(),
-    )
-    print(f"vrg-package: package site written to {args.out}")
-    return 0
-
-
-def _cmd_install_test(args: argparse.Namespace) -> int:
-    # Imported here, not at module top, to keep sibling subcommand changes conflict-free.
-    import subprocess
-
-    from vergil_tooling.lib.package import install_test
-
-    cwd = Path.cwd()
+@cli_main
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
     try:
-        install_test.run_install_test(
-            repo_root=cwd,
-            cell_id=args.cell,
-            artifacts=cwd / args.artifacts,
-            report=cwd / args.report,
-        )
-    except subprocess.CalledProcessError as exc:
-        detail = (exc.stderr or exc.stdout or "").strip()
-        msg = f"{exc}\n{detail}".rstrip()
-        raise PackageError(msg) from exc
-    return 0
+        return int(args.func(args))
+    except (config.ConfigError, PackageError, FileNotFoundError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -216,13 +146,85 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
+def _cmd_matrix(args: argparse.Namespace) -> int:
+    cfg = config.read_config(Path.cwd())
+    tier = matrix.Tier(args.tier)
+    m = matrix.resolve(cfg.package, tier=tier) if cfg.package is not None else None
+    payload: dict[str, object] = (
+        {"enabled": True, "tier": tier.value, **matrix.to_json(m)}
+        if m is not None
+        else {"enabled": False, "tier": tier.value, "build": [], "test": []}
+    )
+    output_path = os.environ.get("GITHUB_OUTPUT", "")
+    if args.github_output and not output_path:
+        msg = "--github-output: GITHUB_OUTPUT is not set"
+        raise PackageError(msg)
+    if args.manifest:
+        if m is None:
+            print(
+                f"vrg-package: no [package] section; manifest not written to {args.manifest}",
+                file=sys.stderr,
+            )
+        else:
+            Path(args.manifest).write_text(
+                json.dumps(matrix.manifest(m), indent=2) + "\n", encoding="utf-8"
+            )
+    if args.github_output:
+        with Path(output_path).open("a", encoding="utf-8") as fh:
+            fh.write(f"enabled={'true' if m is not None else 'false'}\n")
+            fh.write(f"build={json.dumps(payload['build'])}\n")
+            fh.write(f"test={json.dumps(payload['test'])}\n")
+            fh.write(f"tier={tier.value}\n")
+    else:
+        print(json.dumps(payload, indent=2))
+    return 0
+
+
+def _cmd_build(args: argparse.Namespace) -> int:
+    cwd = Path.cwd()
+    artifacts = build.run_build(
+        repo_root=cwd,
+        cell_id=args.cell,
+        version=args.version,
+        out_dir=cwd / args.out,
+        staging_root=cwd / args.staging,
+    )
+    for path in artifacts:
+        print(path)
+    return 0
+
+
+def _cmd_index(args: argparse.Namespace) -> int:
+    site.build_site(
+        Path(args.config),
+        Path(args.keys),
+        Path(args.out),
+        Path(args.work),
+        base_url=args.base_url or site.default_base_url(),
+    )
+    print(f"vrg-package: package site written to {args.out}")
+    return 0
+
+
+def _cmd_install_test(args: argparse.Namespace) -> int:
+    # Imported here, not at module top, to keep sibling subcommand changes conflict-free.
+    import subprocess
+
+    from vergil_tooling.lib.package import install_test
+
+    cwd = Path.cwd()
     try:
-        return int(args.func(args))
-    except (config.ConfigError, PackageError, FileNotFoundError) as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 1
+        install_test.run_install_test(
+            repo_root=cwd,
+            cell_id=args.cell,
+            artifacts=cwd / args.artifacts,
+            report=cwd / args.report,
+        )
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or "").strip()
+        msg = f"{exc}\n{detail}".rstrip()
+        raise PackageError(msg) from exc
+    return 0
 
 
 if __name__ == "__main__":

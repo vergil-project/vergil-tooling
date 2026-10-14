@@ -6,10 +6,12 @@ import argparse
 import sys
 from pathlib import Path
 
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.config import ConfigError, vrg_install_tag
 from vergil_tooling.lib.output import emit_error, write_output
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="vrg-resolve-tooling-version",

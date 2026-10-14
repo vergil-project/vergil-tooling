@@ -12,6 +12,7 @@ import sys
 from datetime import UTC, datetime, timedelta
 
 from vergil_tooling.lib import epic_audit, epics, github, identity_mode
+from vergil_tooling.lib.cli import cli_main
 
 _DEFAULT_WINDOW_DAYS = 30
 
@@ -23,81 +24,7 @@ _DEFAULT_WINDOW_DAYS = 30
 _SWEEP_ENV = "VRG_EPIC_SWEEP"
 
 
-def _automated_sweep() -> bool:
-    """True when running as the trusted scheduled reconciliation sweep."""
-    return os.environ.get(_SWEEP_ENV) == "1"
-
-
-def _positive_int(raw: str) -> int:
-    value = int(raw)
-    if value < 1:
-        msg = "must be a positive integer"
-        raise argparse.ArgumentTypeError(msg)
-    return value
-
-
-def _parse_args(argv: list[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        prog="vrg-epic-audit",
-        description=(
-            "Report epic/task drift and invariant violations for the current "
-            "repo's GitHub org: merged PRs whose Ref'd task is still open, open "
-            "non-perpetual epics whose children are all closed, and issues in "
-            "the wrong place (epics outside .github; stray .github issues). "
-            "Read-only by default; pass --close (as a human) to close the drift "
-            "it finds (invariant violations are report-only)."
-        ),
-        epilog=(
-            "Scope: the org is auto-detected from this repo's 'origin' remote, "
-            "so run it from inside a repo in the org you want to audit (there is "
-            "no --org flag). Output is Markdown on stdout."
-        ),
-    )
-    parser.add_argument(
-        "--window-days",
-        type=_positive_int,
-        default=_DEFAULT_WINDOW_DAYS,
-        metavar="N",
-        help=(f"How many days back to scan for merged PRs (default: {_DEFAULT_WINDOW_DAYS})."),
-    )
-    parser.add_argument(
-        "--epic",
-        metavar="REF",
-        help=(
-            "Enumerate a single epic's child tasks as machine-readable JSON "
-            "instead of running the drift audit. REF is an epic ref "
-            "('owner/repo#N', or a bare '#N' resolved against the current repo). "
-            'Emits {"epic": <slug>, "children": [{repo, number, title, '
-            "state}, ...]} — a stable array of objects (native sub-issues, with "
-            "the portable Parent: reflink fallback), so "
-            "'.children[] | select(.state==\"OPEN\")' lists the open children "
-            "without brittle jq against GitHub's raw subIssues shape. Read-only; "
-            "ignores the drift-audit flags."
-        ),
-    )
-    parser.add_argument(
-        "--repo",
-        help=(
-            "Audit a single repo's resolved epic home ('owner/repo') instead of "
-            "the org's .github — a private repo self-homes its epics. The "
-            "home-scoped checks (epic drift, stray issues, operational-pending, "
-            "and --close) then target that repo."
-        ),
-    )
-    parser.add_argument(
-        "--close",
-        action="store_true",
-        help=(
-            "Close the drifted task issues and rolled-up epics, and reopen any "
-            "epic wrongly closed while a child was still open (with an "
-            "explanatory comment on each), instead of only reporting them. A "
-            "human action (or the scheduled reconciliation sweep) — refused in "
-            "interactive agent sessions. Default: read-only."
-        ),
-    )
-    return parser.parse_args(argv)
-
-
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     # Epic-scoped enumeration is a distinct, read-only mode: resolve the epic ref
@@ -201,6 +128,81 @@ def main(argv: list[str] | None = None) -> int:
         )
     )
     return 0
+
+
+def _parse_args(argv: list[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="vrg-epic-audit",
+        description=(
+            "Report epic/task drift and invariant violations for the current "
+            "repo's GitHub org: merged PRs whose Ref'd task is still open, open "
+            "non-perpetual epics whose children are all closed, and issues in "
+            "the wrong place (epics outside .github; stray .github issues). "
+            "Read-only by default; pass --close (as a human) to close the drift "
+            "it finds (invariant violations are report-only)."
+        ),
+        epilog=(
+            "Scope: the org is auto-detected from this repo's 'origin' remote, "
+            "so run it from inside a repo in the org you want to audit (there is "
+            "no --org flag). Output is Markdown on stdout."
+        ),
+    )
+    parser.add_argument(
+        "--window-days",
+        type=_positive_int,
+        default=_DEFAULT_WINDOW_DAYS,
+        metavar="N",
+        help=(f"How many days back to scan for merged PRs (default: {_DEFAULT_WINDOW_DAYS})."),
+    )
+    parser.add_argument(
+        "--epic",
+        metavar="REF",
+        help=(
+            "Enumerate a single epic's child tasks as machine-readable JSON "
+            "instead of running the drift audit. REF is an epic ref "
+            "('owner/repo#N', or a bare '#N' resolved against the current repo). "
+            'Emits {"epic": <slug>, "children": [{repo, number, title, '
+            "state}, ...]} — a stable array of objects (native sub-issues, with "
+            "the portable Parent: reflink fallback), so "
+            "'.children[] | select(.state==\"OPEN\")' lists the open children "
+            "without brittle jq against GitHub's raw subIssues shape. Read-only; "
+            "ignores the drift-audit flags."
+        ),
+    )
+    parser.add_argument(
+        "--repo",
+        help=(
+            "Audit a single repo's resolved epic home ('owner/repo') instead of "
+            "the org's .github — a private repo self-homes its epics. The "
+            "home-scoped checks (epic drift, stray issues, operational-pending, "
+            "and --close) then target that repo."
+        ),
+    )
+    parser.add_argument(
+        "--close",
+        action="store_true",
+        help=(
+            "Close the drifted task issues and rolled-up epics, and reopen any "
+            "epic wrongly closed while a child was still open (with an "
+            "explanatory comment on each), instead of only reporting them. A "
+            "human action (or the scheduled reconciliation sweep) — refused in "
+            "interactive agent sessions. Default: read-only."
+        ),
+    )
+    return parser.parse_args(argv)
+
+
+def _automated_sweep() -> bool:
+    """True when running as the trusted scheduled reconciliation sweep."""
+    return os.environ.get(_SWEEP_ENV) == "1"
+
+
+def _positive_int(raw: str) -> int:
+    value = int(raw)
+    if value < 1:
+        msg = "must be a positive integer"
+        raise argparse.ArgumentTypeError(msg)
+    return value
 
 
 if __name__ == "__main__":

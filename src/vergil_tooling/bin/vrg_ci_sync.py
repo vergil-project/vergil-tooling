@@ -34,6 +34,7 @@ import argparse
 import sys
 
 from vergil_tooling.lib.ci_yml_applicator import strip_matrix_inputs
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.fleet_sweep import SweepSpec, run_sweep
 
 _TITLE = "refactor(ci): drop the hardcoded matrix inputs from ci.yml"
@@ -46,30 +47,7 @@ _BODY = (
 )
 
 
-def _parse_args(argv: list[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        prog="vrg-ci-sync",
-        description=(
-            "Strip the hardcoded versions:/container-tag: matrix inputs from each "
-            "repo's ci.yml across a fleet, opening one PR per repo whose ci.yml "
-            "drifts. Never submits or merges — stops at report-ready."
-        ),
-    )
-    parser.add_argument(
-        "--repos",
-        nargs="+",
-        required=True,
-        metavar="PATH",
-        help="Local clone path(s) of the repositories to sweep.",
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Report the intended action per repo without touching git/GitHub state.",
-    )
-    return parser.parse_args(argv)
-
-
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     spec = SweepSpec(
@@ -98,6 +76,30 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {result.repo}  {result.detail}")
 
     return 1 if any(r.status == "error" for r in results) else 0
+
+
+def _parse_args(argv: list[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="vrg-ci-sync",
+        description=(
+            "Strip the hardcoded versions:/container-tag: matrix inputs from each "
+            "repo's ci.yml across a fleet, opening one PR per repo whose ci.yml "
+            "drifts. Never submits or merges — stops at report-ready."
+        ),
+    )
+    parser.add_argument(
+        "--repos",
+        nargs="+",
+        required=True,
+        metavar="PATH",
+        help="Local clone path(s) of the repositories to sweep.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report the intended action per repo without touching git/GitHub state.",
+    )
+    return parser.parse_args(argv)
 
 
 if __name__ == "__main__":

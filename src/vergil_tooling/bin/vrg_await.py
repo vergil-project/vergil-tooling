@@ -18,6 +18,15 @@ import sys
 from pathlib import Path
 
 from vergil_tooling.lib import await_file
+from vergil_tooling.lib.cli import cli_main
+
+
+@cli_main
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    digest = await_file.wait_for_file(Path(args.path), since=args.since)
+    print(digest)
+    return 0
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -31,13 +40,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Previously seen SHA-256; wait until the file's digest differs from it",
     )
     return parser.parse_args(argv)
-
-
-def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
-    digest = await_file.wait_for_file(Path(args.path), since=args.since)
-    print(digest)
-    return 0
 
 
 if __name__ == "__main__":

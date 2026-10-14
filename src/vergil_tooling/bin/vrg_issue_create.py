@@ -18,91 +18,10 @@ from importlib import resources
 from pathlib import Path
 
 from vergil_tooling.lib import epics, github
+from vergil_tooling.lib.cli import cli_main
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(
-        description="Create an issue linked under an epic (native sub-issue)."
-    )
-    parser.add_argument("--epic", required=True, help="Epic ref: 'adhoc', #N, or owner/repo#N")
-    parser.add_argument("--title", required=True, help="Issue title")
-    parser.add_argument("--body", default="", help="Issue body text")
-    parser.add_argument("--body-file", help="Read the issue body from a file")
-    parser.add_argument("--label", action="append", default=[], help="Label (repeatable)")
-    parser.add_argument("--assignee", action="append", default=[], help="Assignee (repeatable)")
-    parser.add_argument("--repo", help="Target repo owner/name (defaults to the current repo)")
-    parser.add_argument(
-        "--kind",
-        choices=("task", "validation", "deployment", "retrospective"),
-        default="task",
-        help="Issue kind; validation/deployment stamp an operational "
-        "(not-PR-workable) label + scaffold, retrospective stamps a PR-workable "
-        "epic-retrospective label + scaffold",
-    )
-    parser.add_argument(
-        "--blocked-by",
-        action="append",
-        default=[],
-        metavar="REF",
-        help="Dependency ref this task is blocked by; stamps a portable "
-        "Blocked-by: reflink (repeatable; not valid for --kind retrospective)",
-    )
-    return parser.parse_args(argv)
-
-
-def _issue_number_from_url(url: str) -> int:
-    return int(url.rstrip("/").rsplit("/", 1)[-1])
-
-
-# The operational kinds — a not-PR-workable task run to completion and recorded
-# as a comment. Kept in sync with ``epics._OPERATIONAL_LABELS``. ``retrospective``
-# is deliberately NOT here: it is an ordinary PR-workable task whose docs PR
-# publishes ``retrospective.md``, so PR tooling must accept it.
-_OPERATIONAL_KINDS = ("validation", "deployment")
-
-_SCAFFOLD_INTRO = {
-    "validation": "Post-merge validation task.",
-    "deployment": "Deployment task.",
-    "retrospective": "Epic retrospective task.",
-}
-
-
-def _render_scaffold_body(*, kind: str, intro: str, deps: list[epics.IssueRef]) -> str:
-    """Build a scaffolded issue body from the *kind*'s template.
-
-    Each scaffolded kind has its own ``<kind>_task_body.md`` template. The
-    operational kinds (validation, deployment) render a precondition self-check,
-    the procedure, acceptance criteria, and a SUCCESS/FAILURE results template;
-    ``retrospective`` renders the backward-looking epic-retrospective outline.
-    *deps* (operational only) are rendered as machine-parseable ``Blocked-by:``
-    reflinks under a Dependencies heading (or omitted entirely when there are
-    none); a template without a ``{blocked_by}`` field simply ignores them.
-    """
-    template = (
-        resources.files("vergil_tooling.data")
-        .joinpath(f"{kind}_task_body.md")
-        .read_text(encoding="utf-8")
-    )
-    blocked_by = ""
-    if deps:
-        blocked_by = "## Dependencies (merge-first)\n\n" + epics.render_blocked_by(deps) + "\n"
-    return template.format(intro=intro or _SCAFFOLD_INTRO[kind], blocked_by=blocked_by)
-
-
-def _append_blocked_by(base: str, deps: list[epics.IssueRef]) -> str:
-    """Append a machine-parseable ``Blocked-by:`` reflink section to *base*.
-
-    A plain task has no scaffold template, so its dependencies are stamped by
-    appending the same portable ``Blocked-by: owner/repo#N`` reflinks the
-    operational scaffolds use (``epics.render_blocked_by``) under a Dependencies
-    heading. The reflink is what ``epics.blockers_of`` parses, so a plain task's
-    dependency becomes as machine-readable as an operational one (#2269).
-    """
-    section = "## Dependencies\n\n" + epics.render_blocked_by(deps)
-    return f"{base.rstrip()}\n\n{section}" if base.strip() else section
-
-
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     repo = args.repo or github.current_repo()
@@ -216,6 +135,89 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"Created {url}, linked under epic {epic.slug}.")
     return 0
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Create an issue linked under an epic (native sub-issue)."
+    )
+    parser.add_argument("--epic", required=True, help="Epic ref: 'adhoc', #N, or owner/repo#N")
+    parser.add_argument("--title", required=True, help="Issue title")
+    parser.add_argument("--body", default="", help="Issue body text")
+    parser.add_argument("--body-file", help="Read the issue body from a file")
+    parser.add_argument("--label", action="append", default=[], help="Label (repeatable)")
+    parser.add_argument("--assignee", action="append", default=[], help="Assignee (repeatable)")
+    parser.add_argument("--repo", help="Target repo owner/name (defaults to the current repo)")
+    parser.add_argument(
+        "--kind",
+        choices=("task", "validation", "deployment", "retrospective"),
+        default="task",
+        help="Issue kind; validation/deployment stamp an operational "
+        "(not-PR-workable) label + scaffold, retrospective stamps a PR-workable "
+        "epic-retrospective label + scaffold",
+    )
+    parser.add_argument(
+        "--blocked-by",
+        action="append",
+        default=[],
+        metavar="REF",
+        help="Dependency ref this task is blocked by; stamps a portable "
+        "Blocked-by: reflink (repeatable; not valid for --kind retrospective)",
+    )
+    return parser.parse_args(argv)
+
+
+def _issue_number_from_url(url: str) -> int:
+    return int(url.rstrip("/").rsplit("/", 1)[-1])
+
+
+# The operational kinds — a not-PR-workable task run to completion and recorded
+# as a comment. Kept in sync with ``epics._OPERATIONAL_LABELS``. ``retrospective``
+# is deliberately NOT here: it is an ordinary PR-workable task whose docs PR
+# publishes ``retrospective.md``, so PR tooling must accept it.
+_OPERATIONAL_KINDS = ("validation", "deployment")
+
+_SCAFFOLD_INTRO = {
+    "validation": "Post-merge validation task.",
+    "deployment": "Deployment task.",
+    "retrospective": "Epic retrospective task.",
+}
+
+
+def _render_scaffold_body(*, kind: str, intro: str, deps: list[epics.IssueRef]) -> str:
+    """Build a scaffolded issue body from the *kind*'s template.
+
+    Each scaffolded kind has its own ``<kind>_task_body.md`` template. The
+    operational kinds (validation, deployment) render a precondition self-check,
+    the procedure, acceptance criteria, and a SUCCESS/FAILURE results template;
+    ``retrospective`` renders the backward-looking epic-retrospective outline.
+    *deps* (operational only) are rendered as machine-parseable ``Blocked-by:``
+    reflinks under a Dependencies heading (or omitted entirely when there are
+    none); a template without a ``{blocked_by}`` field simply ignores them.
+    """
+    template = (
+        resources.files("vergil_tooling.data")
+        .joinpath(f"{kind}_task_body.md")
+        .read_text(encoding="utf-8")
+    )
+    blocked_by = ""
+    if deps:
+        blocked_by = "## Dependencies (merge-first)\n\n" + epics.render_blocked_by(deps) + "\n"
+    return template.format(intro=intro or _SCAFFOLD_INTRO[kind], blocked_by=blocked_by)
+
+
+def _append_blocked_by(base: str, deps: list[epics.IssueRef]) -> str:
+    """Append a machine-parseable ``Blocked-by:`` reflink section to *base*.
+
+    A plain task has no scaffold template, so its dependencies are stamped by
+    appending the same portable ``Blocked-by: owner/repo#N`` reflinks the
+    operational scaffolds use (``epics.render_blocked_by``) under a Dependencies
+    heading. The reflink is what ``epics.blockers_of`` parses, so a plain task's
+    dependency becomes as machine-readable as an operational one (#2269).
+    """
+    section = "## Dependencies\n\n" + epics.render_blocked_by(deps)
+    return f"{base.rstrip()}\n\n{section}" if base.strip() else section
 
 
 if __name__ == "__main__":
