@@ -13223,6 +13223,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#the-cli_main-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The cli_main boundary
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#the-if-__name__-guard" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -15212,6 +15223,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#the-cli_main-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The cli_main boundary
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#the-if-__name__-guard" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -15340,10 +15362,55 @@ stays at the end of the file, after every definition, so that the whole module
 is loaded before <code>main</code> is called.</p>
 <p><code>tests/vergil_tooling/test_cli_entry_points.py</code> enforces that <code>main</code> is the
 first top-level function in every <code>bin/</code> module that defines one.</p>
+<h3 id="the-cli_main-boundary">The <code>cli_main</code> boundary<a class="headerlink" href="#the-cli_main-boundary" title="Permanent link">&para;</a></h3>
+<p>Every console script's <code>main</code> is decorated with
+<code>vergil_tooling.lib.cli.cli_main</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">vergil_tooling.lib.cli</span><span class="w"> </span><span class="kn">import</span> <span class="n">cli_main</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="nd">@cli_main</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">(</span><span class="n">argv</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    <span class="o">...</span>
+</code></pre></div>
+<p>The decorator is the command boundary for the known GitHub authentication
+failures. When <code>main</code> lets one escape, it prints a single <code>&lt;prog&gt;: &lt;message&gt;</code>
+report on stderr and exits with status <code>1</code> instead of a traceback:</p>
+<table>
+<thead>
+<tr>
+<th>Exception</th>
+<th>Message</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>github.AppAuthError</code></td>
+<td><code>github.app_auth_message()</code></td>
+</tr>
+<tr>
+<td><code>github.NoInstallationError</code></td>
+<td><code>github.no_installation_message()</code></td>
+</tr>
+<tr>
+<td><code>github.MissingGitHubTokenError</code></td>
+<td><code>github.missing_token_message()</code></td>
+</tr>
+</tbody>
+</table>
+<p><code>&lt;prog&gt;</code> is the command name, derived from the module file name, so it is
+correct under an installed script, <code>python -m</code>, and in-process tests. Every
+other exception propagates unchanged. A command that needs command-specific
+wording (for example <code>vrg-gh</code>'s <code>-R/--repo</code> hint) still catches the error
+inside <code>main</code>; the decorator only sees what <code>main</code> does not handle.</p>
+<p>Library modules never install a global <code>sys.excepthook</code> or otherwise change
+interpreter state at import time to get the same effect: error handling stays
+visible at the entry point (#3216).</p>
+<p><code>tests/vergil_tooling/test_cli_entry_points.py</code> enforces that every
+<code>[project.scripts]</code> entry point is wrapped by <code>cli_main</code>.</p>
 <h3 id="the-if-__name__-guard">The <code>if __name__</code> guard<a class="headerlink" href="#the-if-__name__-guard" title="Permanent link">&para;</a></h3>
 <p>End the module with:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">"__main__"</span><span class="p">:</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">"__main__"</span><span class="p">:</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
 </code></pre></div>
 <p><code>sys.exit(main())</code> propagates the returned code to the shell when the module is
 run directly with <code>python -m</code>. Installed console scripts call <code>main</code> through the
@@ -15351,10 +15418,10 @@ generated wrapper, which applies <code>sys.exit</code> to the return value the s
 <h3 id="coverage-exclusion">Coverage exclusion<a class="headerlink" href="#coverage-exclusion" title="Permanent link">&para;</a></h3>
 <p>The guard only runs under <code>python -m</code>, never under pytest, so it is excluded
 from coverage centrally rather than with per-line pragmas:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">[tool.coverage.report]</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">exclude_lines</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span>
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">    </span><span class="s2">"if __name__ == .__main__."</span><span class="p">,</span>
-<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="p">]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">[tool.coverage.report]</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">exclude_lines</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span><span class="s2">"if __name__ == .__main__."</span><span class="p">,</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="p">]</span>
 </code></pre></div>
 <p>Do not add <code># pragma: no cover</code> to the guard; the <code>exclude_lines</code> entry already
 covers it, and everything above the guard, including <code>main</code> itself, is held to
