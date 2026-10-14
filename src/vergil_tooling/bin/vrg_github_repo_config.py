@@ -8,7 +8,6 @@ auditing.
 from __future__ import annotations
 
 import argparse
-import base64
 import sys
 import tomllib
 from pathlib import Path
@@ -29,6 +28,9 @@ from vergil_tooling.lib.github_config import (
     ghas_available,
 )
 from vergil_tooling.lib.output import emit_error
+from vergil_tooling.lib.remote_config import decode_contents as _decode_contents
+from vergil_tooling.lib.remote_config import fetch_config_from_ref as _fetch_config_from_ref
+from vergil_tooling.lib.remote_config import is_not_found as _is_not_found
 from vergil_tooling.lib.repo_config import audit_local_config
 
 
@@ -163,51 +165,6 @@ def _load_local_config(path: str) -> VergilConfig:
 # Canonical config branches, in resolution order: the released/stable branch
 # first, then the integration branch as a bootstrap fallback.
 _DEFAULT_BRANCH = "develop"
-
-
-def _is_not_found(exc: github.GitHubAPIError) -> bool:
-    """Return True when a GitHub API error is an HTTP 404 (Not Found)."""
-    return "404" in (exc.stderr or "") or "404" in (exc.stdout or "")
-
-
-def _decode_contents(
-    repo: str, ref: str, what: str, content_data: dict[str, object] | list[object]
-) -> str:
-    """Decode a GitHub contents API response into the file's text."""
-    if not isinstance(content_data, dict):
-        msg = f"Unexpected response fetching {what} from {repo}@{ref}"
-        raise RuntimeError(msg)
-    content = content_data.get("content")
-    if not isinstance(content, str):
-        msg = f"No content field in {what} response from {repo}@{ref}"
-        raise RuntimeError(msg)
-    return base64.b64decode(content).decode()
-
-
-def _decode_config(
-    repo: str, ref: str, content_data: dict[str, object] | list[object]
-) -> VergilConfig:
-    """Decode a GitHub contents API response into a VergilConfig."""
-    raw = tomllib.loads(_decode_contents(repo, ref, "config", content_data))
-    return _parse_raw_config(raw, source=f"{repo}@{ref}:vergil.toml")
-
-
-def _fetch_config_from_ref(repo: str, ref: str) -> VergilConfig | None:
-    """Fetch and parse vergil.toml from a specific branch of a remote repo.
-
-    Returns ``None`` when the file is absent on that branch (HTTP 404).
-    Non-404 API errors propagate unchanged.
-    """
-    try:
-        content_data = github.read_json(
-            "api",
-            f"repos/{repo}/contents/vergil.toml?ref={ref}",
-        )
-    except github.GitHubAPIError as exc:
-        if _is_not_found(exc):
-            return None
-        raise
-    return _decode_config(repo, ref, content_data)
 
 
 _CI_WORKFLOW_PATH = ".github/workflows/ci.yml"

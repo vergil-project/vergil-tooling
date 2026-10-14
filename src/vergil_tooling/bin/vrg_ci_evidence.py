@@ -7,7 +7,8 @@ the substantive failures
 :class:`~vergil_tooling.lib.ci_evidence.NoQualifyingRunError`,
 :class:`~vergil_tooling.lib.ci_evidence.ReleasePrUnresolvedError`,
 :class:`~vergil_tooling.lib.ci_evidence.HarvestStateError`,
-:class:`~vergil_tooling.lib.ci_evidence.EvidenceArtifactError`) to a single-line
+:class:`~vergil_tooling.lib.ci_evidence.EvidenceArtifactError`,
+:class:`~vergil_tooling.lib.remote_config.RemoteConfigError`) to a single-line
 error and exit 1 via :func:`~vergil_tooling.lib.output.emit_error` — never a
 traceback.
 
@@ -41,6 +42,7 @@ from vergil_tooling.lib.ci_evidence import (
 )
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.output import emit_error
+from vergil_tooling.lib.remote_config import RemoteConfigError
 
 
 @cli_main
@@ -54,6 +56,7 @@ def main(argv: list[str] | None = None) -> int:
         IncompleteEvidenceError,
         NoQualifyingRunError,
         ReleasePrUnresolvedError,
+        RemoteConfigError,
     ) as exc:
         emit_error(str(exc))
         return 1

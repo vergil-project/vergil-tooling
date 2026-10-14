@@ -177,6 +177,15 @@ spuriously fail for a gate it never ran. Adding a future required gate
 automatically pulls it into the evidence set via the shared config; the
 harvester never changes.
 
+The config the set is derived from is always the **release repo's own**
+`vergil.toml`, read at the release PR's validated head through the GitHub
+contents API (Contents: read) — the same commit whose CI run is being
+evidenced. `vrg-ci-evidence harvest` (and `bundle`) never read the
+`vergil.toml` in the current directory, so the command gives the same result
+from any directory and can never judge one repo's checks against another
+repo's config. A `vergil.toml` that is absent or unparseable at that commit
+fails the harvest with an actionable error; there is no fallback.
+
 ## Producer prerequisite: real report files
 
 The evidence layer only has value if the gates emit **machine-readable report
