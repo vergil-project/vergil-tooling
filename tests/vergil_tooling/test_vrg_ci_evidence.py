@@ -714,6 +714,7 @@ def test_missing_remote_config_fails_loudly(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """No vergil.toml at the head → one-line actionable error; no cwd fallback."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     (tmp_path / "vergil.toml").write_bytes(_vergil_toml("python"))
     monkeypatch.chdir(tmp_path)
     not_found = GitHubAPIError(
@@ -735,6 +736,7 @@ def test_missing_remote_config_fails_loudly(
 def test_unparseable_remote_config_fails_loudly(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     monkeypatch.chdir(tmp_path)
     _wire_remote_config(monkeypatch, {"content": base64.b64encode(b"[project").decode()})
 
