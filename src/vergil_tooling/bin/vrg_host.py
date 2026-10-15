@@ -10,6 +10,19 @@ Subcommands (epic vergil-project/.github#167, spec §6):
   error, or an unreadable manifest or pins file). ``status --fix`` first runs
   the remediation of each installed dependency's unsatisfied auxiliary checks
   (spec §7.4); a failed remediation is reported and forces exit ``2``.
+- ``vrg-host upgrade [<dep>... | --all]`` — remediate. Upgrades only
+  ``upgrade = "auto"`` dependencies via their method handler. A ``manual``
+  dependency is refused with an actionable message (``--all`` lists every
+  ``manual`` dependency it skipped). An actively pinned dependency — pins
+  come from the host-local pins file, so ``vrg-host pin`` holds it — is held:
+  the package managers cannot upgrade *to a constraint*, so a pin is a real
+  hold, unless ``--force`` overrides it. An upgrade that would need privilege
+  escalation is reported as needing manual action, never retried elevated.
+  The exit code is ``0`` when everything requested was upgraded (or, under
+  ``--all``, deliberately skipped or held), ``1`` when an explicitly named
+  dependency was refused (``manual`` or pinned), and ``2`` on any failure (an
+  unknown dependency name, a failed or privilege-refused upgrade, an
+  unsupported pin constraint, or an unreadable manifest or pins file).
 - ``vrg-host pin <dep> --constraint <c> --inducing-release <v> --reason <text>
   [--tracking-issue <url>] [--deterministic]`` — hold a declared dependency
   back (epic #155 doctrine). ``--reason`` is required — the justification
@@ -52,7 +65,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         prog="vrg-host",
         description="Observe and manage Vergil-critical macOS host dependencies.",
     )
-    sub = parser.add_subparsers(dest="cmd", metavar="{status,pin,unpin}")
+    sub = parser.add_subparsers(dest="cmd", metavar="{status,upgrade,pin,unpin}")
     status = sub.add_parser(
         "status",
         help="report installed-vs-latest gaps and health (default)",
@@ -70,8 +83,25 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "auxiliary checks (unprivileged; never prompts for a password)"
         ),
     )
+    up = sub.add_parser(
+        "upgrade",
+        help="upgrade auto-managed dependencies (pin-respecting)",
+        description=(
+            "Upgrade the named dependencies, or every dependency with --all. Only "
+            "'upgrade = auto' dependencies are upgraded; 'manual' ones are refused "
+            "and actively pinned ones are held unless --force. Exit 0 = done, "
+            "1 = a named dependency was refused, 2 = a failure."
+        ),
+    )
+    up.add_argument("deps", nargs="*", metavar="dep", help="dependency names to upgrade")
+    up.add_argument("--all", action="store_true", help="upgrade every auto dependency")
+    up.add_argument(
+        "--force", action="store_true", help="upgrade past an active pin (overrides the hold)"
+    )
     _add_pin_parsers(sub)
     args = parser.parse_args(argv)
+    if args.cmd == "upgrade" and bool(args.deps) == args.all:
+        up.error("name one or more dependencies, or pass --all (not both)")
     if args.cmd is None:
         args.cmd = "status"
     return args
@@ -251,8 +281,85 @@ def _status(args: argparse.Namespace) -> int:
     return worst if fixes_ok else host_status.ERROR
 
 
+def _upgrade_one(dep: HostDependency, *, force: bool) -> tuple[str, int]:
+    """Upgrade one ``auto`` dependency; return ``(outcome line, severity)``.
+
+    An active pin holds the dependency (WARN) unless *force*; an unsupported
+    pin constraint is an ERROR even under *force*. Every handler failure — a
+    failed command, a privilege-escalation refusal, an unupgradeable manifest
+    entry — is reported for this dependency (ERROR) and never retried.
+    """
+    pin = dep.pin
+    if pin is not None and pin.state == "active":
+        try:
+            host_pins.parse_constraint(pin.constraint)
+        except ValueError as exc:
+            return f"ERROR    {dep.name}: {exc}", host_status.ERROR
+        if not force:
+            return (
+                f"held     {dep.name}: pinned to {pin.constraint} ({pin.reason}); "
+                f"run 'vrg-host unpin {dep.name}' or pass --force to upgrade past the pin",
+                host_status.WARN,
+            )
+    try:
+        host_methods.upgrade(dep)
+    except ValueError as exc:
+        return (
+            f"MANUAL   {dep.name}: upgrade refused, needs manual action ({exc})",
+            host_status.ERROR,
+        )
+    except (host_methods.UpgradeFailedError, host_deps.ManifestError) as exc:
+        return (
+            f"FAILED   {dep.name}: {exc} (if it needs elevated privileges, upgrade it manually)",
+            host_status.ERROR,
+        )
+    return f"upgraded {dep.name}", host_status.OK
+
+
+def _upgrade(args: argparse.Namespace) -> int:
+    try:
+        deps = host_pins.load_effective_manifest()
+    except host_pins.PinsError as exc:
+        print(f"vrg-host: invalid host pins file: {exc}", file=sys.stderr)
+        return host_status.ERROR
+    except host_deps.ManifestError as exc:
+        print(f"vrg-host: invalid host-dependency manifest: {exc}", file=sys.stderr)
+        return host_status.ERROR
+    by_name = {dep.name: dep for dep in deps}
+    unknown = [name for name in args.deps if name not in by_name]
+    if unknown:
+        print(
+            f"vrg-host: unknown dependency: {', '.join(unknown)} (known: {', '.join(by_name)})",
+            file=sys.stderr,
+        )
+        return host_status.ERROR
+    targets = list(deps) if args.all else [by_name[name] for name in dict.fromkeys(args.deps)]
+    worst = host_status.OK
+    skipped_manual: list[str] = []
+    for dep in targets:
+        if dep.upgrade == "manual":
+            if args.all:
+                skipped_manual.append(dep.name)
+                continue
+            print(
+                f"refused  {dep.name}: upgrade = manual (vrg-host never upgrades it); "
+                "upgrade it by hand"
+            )
+            worst = max(worst, host_status.WARN)
+            continue
+        line, severity = _upgrade_one(dep, force=args.force)
+        print(line)
+        # Under --all a pin hold is the intended outcome, not a refused request.
+        if not (args.all and severity == host_status.WARN):
+            worst = max(worst, severity)
+    if skipped_manual:
+        print(f"skipped (upgrade = manual, upgrade by hand): {', '.join(skipped_manual)}")
+    return worst
+
+
 _COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
     "status": _status,
+    "upgrade": _upgrade,
     "pin": _pin,
     "unpin": _unpin,
 }
