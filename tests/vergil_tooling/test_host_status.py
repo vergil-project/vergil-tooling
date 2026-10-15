@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+import datetime
 from typing import Any
 
 import pytest
@@ -106,8 +108,8 @@ def test_active_pin_off_constraint_warns() -> None:
 
 
 def test_active_wildcard_pin_satisfied_is_ok() -> None:
-    dep = _dep(pin=_pin(constraint="2.40.x"))
-    state, sev = hs.classify(dep, installed="2.40.3", latest="2.41.0", check_results=[])
+    pin = dataclasses.replace(_pin(constraint="2.40.x"), inducing_release="2.41.0")
+    state, sev = hs.classify(_dep(pin=pin), installed="2.40.3", latest="2.41.0", check_results=[])
     assert (state, sev) == ("pinned", hs.OK)
 
 
@@ -230,7 +232,8 @@ def test_render_rows_and_details() -> None:
     assert "-> unknown" in out and "latest-unknown" in out
     assert "[ERROR] docker" in out and "missing" in out
     assert "pinned (tracked debt)" in out
-    assert "pin: 1.0 (2.0 breaks us)" in out
+    assert "pin: 1.0, holding back from 2.0 (inducing release 2.0)" in out
+    assert "reason: 2.0 breaks us" in out
     assert "check numpy: satisfied" in out
     assert "check ssl: UNSATISFIED" in out
     assert "[ERROR] gcloud" in out and "probe-error" in out
@@ -246,3 +249,68 @@ def test_render_freed_pin_has_no_pin_line() -> None:
 
 def test_render_empty() -> None:
     assert hs.render([]) == "overall: OK (0 dependencies)"
+
+
+# -- plan Task 6: pin debt and the #155 re-evaluation trigger ----------------------
+
+
+@pytest.mark.parametrize(
+    ("latest", "review", "fragment"),
+    [
+        ("2.0", "not-due", None),
+        ("1.5", "not-due", None),
+        ("2.1", "due", "!! RE-EVALUATION DUE: leading edge 2.1 is past inducing release 2.0"),
+        (None, "unknown", "!! RE-EVALUATION UNKNOWN: latest version unknown"),
+        ("2.1-rc1", "unknown", "!! RE-EVALUATION UNKNOWN: cannot compare version '2.1-rc1'"),
+        (hm.UNMANAGED, "no-feed", "re-evaluation: no latest feed"),
+    ],
+)
+def test_pin_review(latest: hs.Latest, review: str, fragment: str | None) -> None:
+    got, message = hs.pin_review(_pin(), latest)
+    assert got == review
+    if fragment is None:
+        assert message is None
+    else:
+        assert message is not None and fragment in message
+
+
+@pytest.mark.parametrize(
+    ("latest", "severity"),
+    [("2.0", hs.OK), ("2.1", hs.WARN), (None, hs.WARN), ("bad", hs.WARN), (hm.UNMANAGED, hs.OK)],
+)
+def test_active_pin_reevaluation_severity(latest: hs.Latest, severity: int) -> None:
+    state, sev = hs.classify(_dep(pin=_pin()), installed="1.0", latest=latest, check_results=[])
+    assert (state, sev) == ("pinned", severity)
+
+
+def test_render_pin_debt_lines() -> None:
+    pin = dataclasses.replace(_pin(), tracking_issue="https://github.com/o/r/issues/9")
+    report = hs.Report(_dep(pin=pin), "1.0", "2.1", "pinned", hs.WARN)
+    out = hs.render([report], today=datetime.date(2026, 10, 15))
+    assert "pin: 1.0, holding back from 2.1 (inducing release 2.0)" in out
+    assert "reason: 2.0 breaks us" in out
+    assert "tracking issue: https://github.com/o/r/issues/9" in out
+    assert "age: 14 days (pinned 2026-10-01)" in out
+    assert "!! RE-EVALUATION DUE" in out
+
+
+def test_render_pin_debt_not_due_has_no_marker() -> None:
+    report = hs.Report(_dep(pin=_pin()), "1.0", "2.0", "pinned", hs.OK)
+    out = hs.render([report], today=datetime.date(2026, 10, 2))
+    assert "tracking issue: none" in out
+    assert "age: 1 day (pinned 2026-10-01)" in out
+    assert "RE-EVALUATION" not in out
+
+
+def test_render_pin_future_date_and_default_today() -> None:
+    report = hs.Report(_dep(pin=_pin()), "1.0", "2.0", "pinned", hs.OK)
+    out = hs.render([report], today=datetime.date(2026, 9, 1))
+    assert "age: pinned_date 2026-10-01 is in the future" in out
+    assert "age:" in hs.render([report])
+
+
+def test_render_under_evaluation_pin() -> None:
+    report = hs.Report(_dep(pin=_pin(state="under-evaluation")), "1.1", "2.0", "behind", hs.WARN)
+    out = hs.render([report])
+    assert "pin under evaluation (not holding): 1.0 (2.0 breaks us); tracking issue: none" in out
+    assert "holding back from" not in out
