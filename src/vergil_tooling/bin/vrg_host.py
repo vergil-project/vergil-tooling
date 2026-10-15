@@ -65,8 +65,9 @@ def _report(dep: HostDependency) -> Report:
     """Probe and classify one dependency.
 
     A probe that answers unreadably (:class:`~host_methods.ProbeError`), an
-    entry that cannot be probed (:class:`~host_deps.ManifestError`) or a probe
-    refused by the privilege guard (``ValueError``) becomes an explicit
+    entry that cannot be probed (:class:`~host_deps.ManifestError`), a probe
+    refused by the privilege guard or an unsupported pin constraint (both
+    ``ValueError``) becomes an explicit
     ``probe-error`` (ERROR) report for this dependency alone — never ``OK``,
     and never fatal to the rest of the report.
     """
@@ -74,9 +75,9 @@ def _report(dep: HostDependency) -> Report:
         installed = host_methods.installed_version(dep)
         latest = host_methods.latest_version(dep)
         checks = [_run_check(c) for c in dep.checks]
+        state, severity = host_status.classify(dep, installed, latest, checks)
     except (host_methods.ProbeError, host_deps.ManifestError, ValueError) as exc:
         return host_status.probe_error_report(dep, f"{type(exc).__name__}: {exc}")
-    state, severity = host_status.classify(dep, installed, latest, checks)
     return Report(dep, installed, latest, state, severity, checks)
 
 

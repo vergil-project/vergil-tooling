@@ -101,9 +101,59 @@ def test_active_pin_at_constraint_is_ok_debt() -> None:
 
 
 def test_active_pin_off_constraint_warns() -> None:
-    # Interim "differs" comparator (refined in plan Task 7).
     state, sev = hs.classify(_dep(pin=_pin()), installed="1.1", latest="2.0", check_results=[])
     assert (state, sev) == ("pinned", hs.WARN)
+
+
+def test_active_wildcard_pin_satisfied_is_ok() -> None:
+    dep = _dep(pin=_pin(constraint="2.40.x"))
+    state, sev = hs.classify(dep, installed="2.40.3", latest="2.41.0", check_results=[])
+    assert (state, sev) == ("pinned", hs.OK)
+
+
+def test_active_wildcard_pin_drifted_warns() -> None:
+    dep = _dep(pin=_pin(constraint="2.40.x"))
+    state, sev = hs.classify(dep, installed="2.41.0", latest="2.41.0", check_results=[])
+    assert (state, sev) == ("pinned", hs.WARN)
+
+
+def test_active_pin_unsupported_constraint_raises() -> None:
+    dep = _dep(pin=_pin(constraint="<=1.x"))
+    with pytest.raises(ValueError, match="unsupported pin constraint '<=1.x'"):
+        hs.classify(dep, installed="1.0", latest="2.0", check_results=[])
+
+
+def test_missing_wins_over_unsupported_pin() -> None:
+    dep = _dep(pin=_pin(constraint="<=1.x"))
+    assert hs.classify(dep, None, "2.0", check_results=[]) == ("missing", hs.ERROR)
+
+
+@pytest.mark.parametrize(
+    ("installed", "constraint", "expected"),
+    [
+        ("2.40.0", "2.x", True),
+        ("2.40.0", "2.40.x", True),
+        ("2.40.0", "2.40.0", True),
+        ("2.40.0", "2.x.x", True),
+        ("2.41.0", "2.40.x", False),
+        ("1.9", "1.9.2", False),
+        ("3.0.0", "2.x", False),
+        ("2.40.0", "2.4.x", False),
+        ("2.40.0rc1", "2.40.x", True),
+    ],
+)
+def test_pin_satisfied(installed: str, constraint: str, expected: bool) -> None:
+    assert hs.pin_satisfied(installed, constraint) is expected
+
+
+@pytest.mark.parametrize(
+    "constraint",
+    ["<=1.x", ">=1.0", "~=1.2", "==1.0", "1.x.3", "x.1", "1..2", "", "x", "x.x", "1.", "1.*"],
+)
+def test_pin_satisfied_rejects_unsupported_syntax(constraint: str) -> None:
+    with pytest.raises(ValueError, match="unsupported pin constraint") as exc:
+        hs.pin_satisfied("1.0", constraint)
+    assert repr(constraint) in str(exc.value)
 
 
 def test_active_pin_with_unsatisfied_check_errors() -> None:

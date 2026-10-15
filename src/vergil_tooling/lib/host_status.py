@@ -13,8 +13,10 @@ Version states (spec §8):
 - ``missing`` — not installed (ERROR).
 - ``current`` — installed == latest (OK).
 - ``behind`` — installed differs from latest, unpinned (WARN).
-- ``pinned`` — an active pin holds the dep (OK; WARN while it drifts off the
-  constraint under the interim "differs" comparator).
+- ``pinned`` — an active pin holds the dep: OK (tracked debt) while the
+  installed version satisfies the pin constraint (see :func:`pin_satisfied`),
+  WARN once it has drifted off it. An unsupported constraint raises
+  ``ValueError``, which ``vrg-host status`` reports as ``probe-error``.
 - ``latest-unmanaged`` — the manifest declares no latest feed (OK, info).
 - ``latest-unknown`` — a latest probe that should work failed (WARN).
 
@@ -27,6 +29,7 @@ rest of the report, and it is never treated as ``current`` or ``missing``.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Final
 
@@ -54,6 +57,8 @@ _DISPLAY: Final = {
     "latest-unmanaged": "info: no latest feed",
 }
 
+_PIN_COMPONENT: Final = re.compile(r"[0-9A-Za-z]+")
+
 type Latest = str | hm._Unmanaged | None  # noqa: SLF001 - the sentinel's type
 type CheckResult = tuple[str, bool]
 
@@ -68,12 +73,16 @@ def classify(
 
     Severity is the worst of the version-state severity and the auxiliary
     checks (any unsatisfied check is ``ERROR``).
+
+    Raises:
+        ValueError: *dep* has an active pin with an unsupported constraint.
     """
     check_sev = ERROR if any(not ok for _, ok in check_results) else OK
     if installed is None:
         return "missing", max(ERROR, check_sev)
     if dep.pin is not None and dep.pin.state == "active":
-        return "pinned", max(WARN if _behind(installed, dep.pin.constraint) else OK, check_sev)
+        held = pin_satisfied(installed, dep.pin.constraint)
+        return "pinned", max(OK if held else WARN, check_sev)
     if latest is hm.UNMANAGED:
         return "latest-unmanaged", max(OK, check_sev)
     if latest is None:
@@ -81,6 +90,33 @@ def classify(
     if _behind(installed, str(latest)):
         return "behind", max(WARN, check_sev)
     return "current", max(OK, check_sev)
+
+
+def pin_satisfied(installed: str, constraint: str) -> bool:
+    """Return whether *installed* lies within the pin *constraint*.
+
+    A constraint is a dotted version prefix whose trailing components may be
+    the wildcard ``x`` — ``1.x``, ``2.40.x`` or an exact ``2.40.0`` (spec §5:
+    pin the least-specific version that solves the problem). Trailing ``x``
+    components are dropped and the remaining components must equal the
+    installed version's leading components: ``2.40.0`` satisfies ``2.x``,
+    ``2.40.x`` and ``2.40.0``; ``2.41.0`` does not satisfy ``2.40.x``; ``1.9``
+    does not satisfy ``1.9.2``.
+
+    Raises:
+        ValueError: *constraint* uses any other syntax (operators such as
+            ``<=``/``>=``/``~=``, empty components, a non-trailing ``x``, or
+            no concrete component at all). It is refused, never guessed at.
+    """
+    parts = constraint.split(".")
+    while parts and parts[-1] == "x":
+        parts.pop()
+    if not parts or not all(_PIN_COMPONENT.fullmatch(p) and p != "x" for p in parts):
+        raise ValueError(
+            f"unsupported pin constraint {constraint!r}: expected a dotted version "
+            "prefix with optional trailing 'x' wildcards (e.g. '1.x', '2.40.x', '2.40.0')"
+        )
+    return installed.split(".")[: len(parts)] == parts
 
 
 def _behind(installed: str, latest: str) -> bool:

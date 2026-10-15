@@ -8,7 +8,7 @@ import pytest
 
 from vergil_tooling.bin import vrg_host
 from vergil_tooling.lib import host_methods as hm
-from vergil_tooling.lib.host_deps import AuxCheck, HostDependency, ManifestError
+from vergil_tooling.lib.host_deps import AuxCheck, HostDependency, HostPin, ManifestError
 
 
 def _dep(**kw: Any) -> HostDependency:
@@ -24,6 +24,18 @@ def _dep(**kw: Any) -> HostDependency:
     }
     base.update(kw)
     return HostDependency(**base)
+
+
+def _pin(constraint: str) -> HostPin:
+    return HostPin(
+        constraint=constraint,
+        inducing_release="2.0",
+        deterministic=True,
+        reason="breaks us",
+        state="active",
+        tracking_issue=None,
+        pinned_date="2026-10-01",
+    )
 
 
 def _stub(
@@ -110,6 +122,28 @@ def test_probe_error_is_reported_per_dep_without_crashing(
     assert "[ERROR] weird" in out and "error: ManifestError:" in out
     assert "[OK   ] ok" in out  # the healthy dep is still reported
     assert out.count("probe-error") == 3
+
+
+def test_unsupported_pin_constraint_is_error_line(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    deps = (
+        _dep(name="gh", pin=_pin("<=1.x")),
+        _dep(name="uv", method="uv-tool", pin=_pin("0.5.x")),
+        _dep(name="ok"),
+    )
+    _stub(
+        monkeypatch,
+        deps,
+        {"gh": "1.0", "uv": "0.5.2", "ok": "1.0"},
+        {"gh": "2.0", "uv": "0.6.0", "ok": "1.0"},
+    )
+    assert vrg_host.main(["status"]) == 2
+    out = capsys.readouterr().out
+    assert "[ERROR] gh" in out and "probe-error" in out
+    assert "error: ValueError: unsupported pin constraint '<=1.x'" in out
+    assert "[OK   ] uv" in out and "pinned (tracked debt)" in out
+    assert "[OK   ] ok" in out
 
 
 def test_check_probe_refused_is_probe_error(
