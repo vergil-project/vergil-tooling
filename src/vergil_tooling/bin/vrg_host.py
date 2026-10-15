@@ -7,7 +7,9 @@ Subcommands (epic vergil-project/.github#167, spec §6):
   and latest versions, version state, auxiliary-check results, pin and
   severity. The exit code is the worst severity: ``0`` all OK, ``1`` warnings
   (drift, latest-unknown), ``2`` errors (missing, unsatisfied check, probe
-  error, or an unreadable manifest or pins file).
+  error, or an unreadable manifest or pins file). ``status --fix`` first runs
+  the remediation of each installed dependency's unsatisfied auxiliary checks
+  (spec §7.4); a failed remediation is reported and forces exit ``2``.
 - ``vrg-host pin <dep> --constraint <c> --inducing-release <v> --reason <text>
   [--tracking-issue <url>] [--deterministic]`` — hold a declared dependency
   back (epic #155 doctrine). ``--reason`` is required — the justification
@@ -51,13 +53,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description="Observe and manage Vergil-critical macOS host dependencies.",
     )
     sub = parser.add_subparsers(dest="cmd", metavar="{status,pin,unpin}")
-    sub.add_parser(
+    status = sub.add_parser(
         "status",
         help="report installed-vs-latest gaps and health (default)",
         description=(
             "Report each host dependency's installed and latest version, version "
             "state, auxiliary checks and pin. Exit 0 = all OK, 1 = warnings, "
             "2 = errors."
+        ),
+    )
+    status.add_argument(
+        "--fix",
+        action="store_true",
+        help=(
+            "first run the remediation of each installed dependency's unsatisfied "
+            "auxiliary checks (unprivileged; never prompts for a password)"
         ),
     )
     _add_pin_parsers(sub)
@@ -134,6 +144,76 @@ def _run_check(check: AuxCheck) -> tuple[str, bool]:
     return check.name, ok
 
 
+class RemediationFailedError(Exception):
+    """A check's remediation failed, or the check is still unsatisfied after it ran."""
+
+
+def remediate_checks(dep: HostDependency) -> list[str]:
+    """Run the remediation of each of *dep*'s unsatisfied auxiliary checks.
+
+    A satisfied check is never touched. An unsatisfied check that declares no
+    remediation is left for ``status`` to report as ERROR. Every remediation
+    that runs is verified by re-probing its check. Remediations go through the
+    same unprivileged :func:`host_methods._run` seam as every probe, so a
+    privilege-escalating command is refused (``ValueError``).
+
+    Returns:
+        The names of the checks whose remediation ran and now pass.
+
+    Raises:
+        RemediationFailedError: a remediation command failed, or its check is
+            still unsatisfied afterwards.
+        ValueError: a probe or remediation would escalate privilege.
+    """
+    remediated: list[str] = []
+    for check in dep.checks:
+        _, ok = _run_check(check)
+        if ok or check.remediation is None:
+            continue
+        if host_methods._run(check.remediation) is None:  # noqa: SLF001 - the shell-out seam
+            raise RemediationFailedError(
+                f"{dep.name}: remediation for check {check.name!r} failed: "
+                f"{' '.join(check.remediation)}"
+            )
+        if not _run_check(check)[1]:
+            raise RemediationFailedError(
+                f"{dep.name}: check {check.name!r} is still unsatisfied after its remediation ran"
+            )
+        remediated.append(check.name)
+    return remediated
+
+
+def _fix_checks(deps: tuple[HostDependency, ...]) -> bool:
+    """Remediate the auxiliary checks of every installed dependency.
+
+    A missing dependency is skipped (``status`` reports it as ``missing``).
+    Each fixed check is printed; each failure is printed to stderr.
+
+    Returns:
+        ``True`` when every attempted remediation succeeded.
+    """
+    all_ok = True
+    for dep in deps:
+        if not dep.checks:
+            continue
+        try:
+            if host_methods.installed_version(dep) is None:
+                continue
+            fixed = remediate_checks(dep)
+        except (
+            RemediationFailedError,
+            host_methods.ProbeError,
+            host_deps.ManifestError,
+            ValueError,
+        ) as exc:
+            print(f"vrg-host: fix {dep.name}: {type(exc).__name__}: {exc}", file=sys.stderr)
+            all_ok = False
+            continue
+        for name in fixed:
+            print(f"fixed: {dep.name} check {name}")
+    return all_ok
+
+
 def _report(dep: HostDependency) -> Report:
     """Probe and classify one dependency.
 
@@ -154,7 +234,7 @@ def _report(dep: HostDependency) -> Report:
     return Report(dep, installed, latest, state, severity, checks)
 
 
-def _status(_args: argparse.Namespace) -> int:
+def _status(args: argparse.Namespace) -> int:
     try:
         deps = host_pins.load_effective_manifest()
     except host_pins.PinsError as exc:
@@ -163,9 +243,12 @@ def _status(_args: argparse.Namespace) -> int:
     except host_deps.ManifestError as exc:
         print(f"vrg-host: invalid host-dependency manifest: {exc}", file=sys.stderr)
         return host_status.ERROR
+    # A bare `vrg-host` never parses the status subparser, so `fix` may be absent.
+    fixes_ok = _fix_checks(deps) if getattr(args, "fix", False) else True
     reports = [_report(dep) for dep in deps]
     print(host_status.render(reports))
-    return host_status.worst_severity(reports)
+    worst = host_status.worst_severity(reports)
+    return worst if fixes_ok else host_status.ERROR
 
 
 _COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
