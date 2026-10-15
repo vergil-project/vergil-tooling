@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from vergil_tooling.lib import github, identity_mode
+from vergil_tooling.lib import github, host_pins, identity_mode
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -47,6 +47,19 @@ def _hermetic_identity(
     monkeypatch.setattr(identity_mode, "_APP_KEY_FILE", str(absent / "app.pem"))
     monkeypatch.delenv("VRG_IDENTITY_MODE", raising=False)
     monkeypatch.delenv("VRG_APP_ID", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_host_pins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point the host-local vrg-host pins file at a per-test path.
+
+    ``host_pins.default_pins_path()`` resolves under the real ``~/.config``;
+    no test may read or write a developer's actual pins. Tests that exercise
+    the real resolver import it before this fixture patches the module.
+    """
+    monkeypatch.setattr(
+        host_pins, "default_pins_path", lambda: tmp_path / "vergil-config" / "host-pins.toml"
+    )
 
 
 @dataclass

@@ -8,6 +8,7 @@ import pytest
 
 from vergil_tooling.bin import vrg_host
 from vergil_tooling.lib import host_methods as hm
+from vergil_tooling.lib import host_pins
 from vergil_tooling.lib.host_deps import AuxCheck, HostDependency, HostPin, ManifestError
 
 
@@ -209,6 +210,91 @@ def test_status_against_packaged_manifest(
     assert vrg_host.main([]) == 2
     out = capsys.readouterr().out
     assert "[ERROR] uv" in out and "[ERROR] gh" in out
+
+
+_PIN_ARGS = [
+    "pin",
+    "gh",
+    "--constraint",
+    "2.40.x",
+    "--inducing-release",
+    "2.41.0",
+    "--reason",
+    "2.41.0 breaks vrg-gh auth",
+]
+
+
+def test_pin_records_in_pins_file_and_status_shows_debt(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    args = [*_PIN_ARGS, "--tracking-issue", "https://github.com/o/r/issues/3", "--deterministic"]
+    assert vrg_host.main(args) == 0
+    out = capsys.readouterr().out
+    assert "pinned gh at 2.40.x (inducing release 2.41.0)" in out
+    pin = host_pins.load_pins()["gh"]
+    assert pin.deterministic is True
+    assert pin.tracking_issue == "https://github.com/o/r/issues/3"
+    assert pin.state == "active"
+
+    monkeypatch.setattr(vrg_host.host_methods, "installed_version", lambda d: "2.40.1")
+    monkeypatch.setattr(vrg_host.host_methods, "latest_version", lambda d: "2.42.0")
+    monkeypatch.setattr(vrg_host.host_methods, "_run", lambda cmd: None)
+    assert vrg_host.main(["status"]) == 1  # gh pinned but re-evaluation due -> WARN
+    out = capsys.readouterr().out
+    assert "pinned (tracked debt)" in out
+    assert "pin: 2.40.x, holding back from 2.42.0 (inducing release 2.41.0)" in out
+    assert "!! RE-EVALUATION DUE" in out
+
+
+@pytest.mark.parametrize(
+    ("extra", "match"),
+    [
+        (["--reason", "  "], "reason"),
+        (["--constraint", "<=2.40"], "unsupported pin constraint '<=2.40'"),
+    ],
+)
+def test_pin_refuses_invalid_input(
+    capsys: pytest.CaptureFixture[str], extra: list[str], match: str
+) -> None:
+    assert vrg_host.main([*_PIN_ARGS, *extra]) == 1
+    assert match in capsys.readouterr().err
+    assert host_pins.load_pins() == {}
+
+
+def test_pin_refuses_undeclared_dependency(capsys: pytest.CaptureFixture[str]) -> None:
+    args = list(_PIN_ARGS)
+    args[1] = "nope"
+    assert vrg_host.main(args) == 1
+    assert "vrg-host pin: refused: 'nope' is not a dependency declared" in capsys.readouterr().err
+
+
+def test_pin_requires_reason_flag(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc:
+        vrg_host.main(_PIN_ARGS[:-2])
+    assert exc.value.code == 2
+    assert "--reason" in capsys.readouterr().err
+
+
+def test_unpin_frees_pin(capsys: pytest.CaptureFixture[str]) -> None:
+    assert vrg_host.main(_PIN_ARGS) == 0
+    assert vrg_host.main(["unpin", "gh"]) == 0
+    assert "freed pin on gh (kept as history" in capsys.readouterr().out
+    assert host_pins.load_pins()["gh"].state == "freed"
+
+
+def test_unpin_refuses_unpinned(capsys: pytest.CaptureFixture[str]) -> None:
+    assert vrg_host.main(["unpin", "gh"]) == 1
+    assert "vrg-host unpin: refused: 'gh' has no pin" in capsys.readouterr().err
+
+
+def test_status_invalid_pins_file_exits_error(capsys: pytest.CaptureFixture[str]) -> None:
+    path = host_pins.default_pins_path()
+    path.parent.mkdir(parents=True)
+    path.write_text("[pin.gh]\nconstraint = 1\n")
+    assert vrg_host.main(["status"]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "vrg-host: invalid host pins file:" in captured.err
 
 
 def test_help_exits_zero(capsys: pytest.CaptureFixture[str]) -> None:

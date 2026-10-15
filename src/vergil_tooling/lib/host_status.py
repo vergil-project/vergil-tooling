@@ -15,7 +15,10 @@ Version states (spec §8):
 - ``behind`` — installed differs from latest, unpinned (WARN).
 - ``pinned`` — an active pin holds the dep: OK (tracked debt) while the
   installed version satisfies the pin constraint (see :func:`pin_satisfied`),
-  WARN once it has drifted off it. An unsupported constraint raises
+  WARN once it has drifted off it. It is also WARN when the #155
+  re-evaluation trigger has fired (the leading edge is past the pin's
+  ``inducing_release``) or cannot be evaluated (latest unknown, or versions
+  not comparable) — see :func:`pin_review`. An unsupported constraint raises
   ``ValueError``, which ``vrg-host status`` reports as ``probe-error``.
 - ``latest-unmanaged`` — the manifest declares no latest feed (OK, info).
 - ``latest-unknown`` — a latest probe that should work failed (WARN).
@@ -29,16 +32,17 @@ rest of the report, and it is never treated as ``current`` or ``missing``.
 
 from __future__ import annotations
 
-import re
+import datetime
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Final
 
 from vergil_tooling.lib import host_methods as hm
+from vergil_tooling.lib import host_pins
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from vergil_tooling.lib.host_deps import HostDependency
+    from vergil_tooling.lib.host_deps import HostDependency, HostPin
 
 OK: Final = 0
 WARN: Final = 1
@@ -57,7 +61,6 @@ _DISPLAY: Final = {
     "latest-unmanaged": "info: no latest feed",
 }
 
-_PIN_COMPONENT: Final = re.compile(r"[0-9A-Za-z]+")
 
 type Latest = str | hm._Unmanaged | None  # noqa: SLF001 - the sentinel's type
 type CheckResult = tuple[str, bool]
@@ -82,7 +85,9 @@ def classify(
         return "missing", max(ERROR, check_sev)
     if dep.pin is not None and dep.pin.state == "active":
         held = pin_satisfied(installed, dep.pin.constraint)
-        return "pinned", max(OK if held else WARN, check_sev)
+        review, _ = pin_review(dep.pin, latest)
+        review_sev = WARN if review in {"due", "unknown"} else OK
+        return "pinned", max(OK if held else WARN, review_sev, check_sev)
     if latest is hm.UNMANAGED:
         return "latest-unmanaged", max(OK, check_sev)
     if latest is None:
@@ -108,15 +113,67 @@ def pin_satisfied(installed: str, constraint: str) -> bool:
             ``<=``/``>=``/``~=``, empty components, a non-trailing ``x``, or
             no concrete component at all). It is refused, never guessed at.
     """
-    parts = constraint.split(".")
-    while parts and parts[-1] == "x":
-        parts.pop()
-    if not parts or not all(_PIN_COMPONENT.fullmatch(p) and p != "x" for p in parts):
-        raise ValueError(
-            f"unsupported pin constraint {constraint!r}: expected a dotted version "
-            "prefix with optional trailing 'x' wildcards (e.g. '1.x', '2.40.x', '2.40.0')"
-        )
+    parts = host_pins.parse_constraint(constraint)
     return installed.split(".")[: len(parts)] == parts
+
+
+def pin_review(pin: HostPin, latest: Latest) -> tuple[str, str | None]:
+    """Evaluate the #155 re-evaluation trigger for *pin* against *latest*.
+
+    Returns ``(review, message)`` where *review* is one of:
+
+    - ``"not-due"`` — the leading edge is still at or before ``inducing_release``
+      (no message).
+    - ``"due"`` — the leading edge has moved past ``inducing_release``.
+    - ``"unknown"`` — the trigger cannot be evaluated: the latest version is
+      unknown, or the two versions are not comparable. Never guessed at.
+    - ``"no-feed"`` — the dependency declares no latest feed, so the trigger
+      can only be checked by hand.
+    """
+    inducing = pin.inducing_release
+    if latest is hm.UNMANAGED:
+        return "no-feed", (
+            f"re-evaluation: no latest feed; check the leading edge by hand "
+            f"against inducing release {inducing}"
+        )
+    if latest is None:
+        return "unknown", (
+            f"!! RE-EVALUATION UNKNOWN: latest version unknown, cannot tell whether "
+            f"the leading edge is past inducing release {inducing} !!"
+        )
+    try:
+        due = host_pins.is_reevaluation_due(pin, str(latest))
+    except host_pins.IncomparableVersionError as exc:
+        return "unknown", f"!! RE-EVALUATION UNKNOWN: {exc} !!"
+    if due:
+        return "due", (
+            f"!! RE-EVALUATION DUE: leading edge {latest} is past inducing release "
+            f"{inducing} (#155: re-test and free or re-anchor) !!"
+        )
+    return "not-due", None
+
+
+def _pin_age(pinned_date: str, today: datetime.date) -> str:
+    days = (today - datetime.date.fromisoformat(pinned_date)).days
+    if days < 0:
+        return f"pinned_date {pinned_date} is in the future"
+    return f"{days} day{'' if days == 1 else 's'} (pinned {pinned_date})"
+
+
+def _pin_lines(pin: HostPin, latest: Latest, today: datetime.date) -> list[str]:
+    """Render an active pin as tracked debt (spec §9)."""
+    pad = "          "
+    lines = [
+        f"{pad}pin: {pin.constraint}, holding back from {_fmt_latest(latest)} "
+        f"(inducing release {pin.inducing_release})",
+        f"{pad}  reason: {pin.reason}",
+        f"{pad}  tracking issue: {pin.tracking_issue or 'none'}",
+        f"{pad}  age: {_pin_age(pin.pinned_date, today)}",
+    ]
+    _, message = pin_review(pin, latest)
+    if message is not None:
+        lines.append(f"{pad}  {message}")
+    return lines
 
 
 def _behind(installed: str, latest: str) -> bool:
@@ -164,8 +221,12 @@ def _fmt_latest(latest: Latest) -> str:
     return str(latest)
 
 
-def render(reports: Sequence[Report]) -> str:
-    """Render *reports* as a human-readable table plus per-dep detail lines."""
+def render(reports: Sequence[Report], *, today: datetime.date | None = None) -> str:
+    """Render *reports* as a human-readable table plus per-dep detail lines.
+
+    *today* anchors pin ages (defaults to the current date).
+    """
+    today = today or datetime.date.today()
     lines: list[str] = []
     for r in reports:
         tag = SEVERITY_LABELS[r.severity]
@@ -180,7 +241,12 @@ def render(reports: Sequence[Report]) -> str:
         if r.error is not None:
             lines.append(f"          error: {r.error}")
         if r.dep.pin is not None and r.dep.pin.state == "active":
-            lines.append(f"          pin: {r.dep.pin.constraint} ({r.dep.pin.reason})")
+            lines.extend(_pin_lines(r.dep.pin, r.latest, today))
+        elif r.dep.pin is not None and r.dep.pin.state == "under-evaluation":
+            lines.append(
+                f"          pin under evaluation (not holding): {r.dep.pin.constraint} "
+                f"({r.dep.pin.reason}); tracking issue: {r.dep.pin.tracking_issue or 'none'}"
+            )
         for name, ok in r.check_results:
             lines.append(f"          check {name}: {'satisfied' if ok else 'UNSATISFIED'}")
     worst = worst_severity(reports)
