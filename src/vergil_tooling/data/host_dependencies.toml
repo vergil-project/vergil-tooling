@@ -1,0 +1,21 @@
+# macOS host-dependency manifest for vrg-host (epic vergil-project/.github#167).
+#
+# Tooling-owned. NEVER repo-overridable (spec §10): this file is read only
+# from the installed vergil_tooling.data package, and any `custom` probe
+# commands it carries are trusted, tooling-authored content.
+#
+# Minimal seed; the authoritative curation is plan Task 7.
+
+[[dependency]]
+name = "uv"
+why = "Python build/runtime tool manager; installs the vrg-* host tools."
+method = "uv-tool"
+upgrade = "auto"
+latest = "probe"
+
+[[dependency]]
+name = "gh"
+why = "GitHub CLI; underpins vrg-gh and all PR/issue workflows."
+method = "brew-formula"
+upgrade = "auto"
+latest = "probe"
