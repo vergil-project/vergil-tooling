@@ -238,7 +238,8 @@ def test_pin_records_in_pins_file_and_status_shows_debt(
 
     monkeypatch.setattr(vrg_host.host_methods, "installed_version", lambda d: "2.40.1")
     monkeypatch.setattr(vrg_host.host_methods, "latest_version", lambda d: "2.42.0")
-    monkeypatch.setattr(vrg_host.host_methods, "_run", lambda cmd: None)
+    # Only auxiliary-check probes reach _run here; satisfy them (gcloud's numpy check).
+    monkeypatch.setattr(vrg_host.host_methods, "_run", lambda cmd: "")
     assert vrg_host.main(["status"]) == 1  # gh pinned but re-evaluation due -> WARN
     out = capsys.readouterr().out
     assert "pinned (tracked debt)" in out
