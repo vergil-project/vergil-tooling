@@ -97,7 +97,7 @@ get the fix on the next normal action:
 
 | Consumer | When the patch lands |
 |---|---|
-| Developer host | Manual `uv tool upgrade vergil-tooling` |
+| Developer host | Manual `uv tool upgrade vergil-tooling` (or `vrg-host upgrade vergil-tooling` on macOS) |
 | Python repo `.venv` | `uv lock --upgrade-package vergil-tooling` (typically batched with other dep bumps) |
 | Dev container image | Already rebuilt by `repository_dispatch`; new pulls of `dev-base` etc. carry the patch within the rebuild window (minutes) |
 | Agent VM (Lima/cloud) | `vrg-vm update`: an apt upgrade of the packaged install within its pin, once the patch is in the package index. A `vX.Y` line pin picks the patch up; an exact `vX.Y.Z` pin stays put |

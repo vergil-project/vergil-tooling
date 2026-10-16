@@ -57,6 +57,10 @@ You do **not** need to install language runtimes, linters, test
 frameworks, markdownlint, or shellcheck on the host. All of those
 live inside the container.
 
+Once vergil-tooling is installed (Step 2), `vrg-host` on macOS
+checks these prerequisites — and the agent-VM tools `vrg-vm` needs —
+for you; see [Keeping up to date](#keeping-up-to-date).
+
 ## Step 2: Install vergil-tooling
 
 ```bash
@@ -414,6 +418,21 @@ uv tool upgrade vergil-tooling
 `uv tool upgrade` re-resolves the git reference, pulls the current
 tip of the rolling minor tag, and rebuilds the isolated tool venv.
 No need to repeat the full git URL.
+
+On macOS, `vrg-host` covers vergil-tooling and the other host
+prerequisites together (`uv`, `gh`, Docker, and the `vrg-vm` tools
+such as Lima, `gcloud` and OpenTofu):
+
+```bash
+vrg-host                   # report drift, missing tools and failed health checks
+vrg-host upgrade --all     # upgrade every auto-managed tool, respecting pins
+```
+
+`vrg-host upgrade vergil-tooling` runs the same `uv tool upgrade`.
+Docker Desktop and macOS itself are reported but never upgraded by
+`vrg-host`. When a new release of a host tool breaks your workflow,
+pin it with `vrg-host pin` rather than skipping upgrades — see the
+[vrg-host reference](../reference/dev/host.md#pinning-host-dependencies).
 
 The dev container images auto-update on `vrg-container-run` pulls — the
 tag is a minor version (`3.12`, `1.26`, etc.) that tracks upstream
