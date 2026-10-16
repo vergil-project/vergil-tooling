@@ -240,7 +240,7 @@ itself. Current entries:
 | `vergil-tooling` | uv-tool | auto | unmanaged | The `vrg-*` host tools themselves |
 | `claude-code` | brew-cask | auto | probe | The host-side agent for out-of-sandbox work, such as reattaching an agent session with human access |
 | `macos` | custom | manual | probe | The host OS; a pending update is surfaced, never applied |
-| `xcode-clt` | custom | manual | probe | Xcode Command Line Tools: Homebrew needs them, and `/usr/bin/git` is a CLT shim; a pending update is surfaced, never applied |
+| `xcode-clt` | custom | manual | probe | Xcode Command Line Tools: Homebrew needs them, even when full Xcode is installed; a pending update is surfaced, never applied |
 
 Notes on the entries:
 
@@ -268,10 +268,11 @@ Notes on the entries:
   `vrg-host`. The `macos` probe reads `softwareupdate --list` and reports
   every pending [update level](#update-levels-macos).
 - **`git` and `bash` are Homebrew's.** On a Homebrew-first Mac, `git` resolves
-  to `/opt/homebrew/bin/git` ahead of the Command Line Tools shim
-  `/usr/bin/git`, and `bash` to Homebrew's bash 5 ahead of Apple's `/bin/bash`
-  3.2. The copies that actually run are therefore not updated with macOS, so
-  `vrg-host` tracks and upgrades them through `brew`.
+  to `/opt/homebrew/bin/git` ahead of Apple's `/usr/bin/git` shim (which runs
+  the CLT's or Xcode.app's git, whichever `xcode-select -p` selects), and
+  `bash` to Homebrew's bash 5 ahead of Apple's `/bin/bash` 3.2. The copies
+  that actually run are therefore not updated with macOS, so `vrg-host`
+  tracks and upgrades them through `brew`.
 - **`xcode-clt` is report-only.** Homebrew cannot work without the Xcode
   Command Line Tools, so a missing CLT is an ERROR. Apple ships CLT updates
   through Software Update, separately from macOS. The installed version comes
