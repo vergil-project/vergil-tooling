@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.242/">
       
       
         <link rel="next" href="../v2.1.240/">
@@ -1287,6 +1287,8 @@
       
         
       
+        
+      
     
     
     
@@ -1342,6 +1344,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.242/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.242
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -12105,6 +12135,8 @@
       
         
       
+        
+      
     
     
     
@@ -12277,6 +12309,34 @@
     
   
     vrg-finalize-pr
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/dev/host/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-host
   
 
     
@@ -15149,6 +15209,7 @@ Move main() to be the first top-level function in each src/vergil_tooling/bin mo
 lib/github.py no longer installs a global sys.excepthook at import time. A new lib/cli.py provides the cli_main decorator, applied to the main() of every [project.scripts] entry point: AppAuthError, NoInstallationError and MissingGitHubTokenError that escape main are printed as '<prog>: <message>' on stderr with exit status 1; every other exception propagates unchanged, and handlers already inside main keep their command-specific messages. lib.github is imported lazily on the failure path so commands that never reach GitHub (vrg-hook-guard) pay no import cost. A structural test enforces the decorator on every console script, and the #3214 subprocess test now runs vrg-roadmap end to end against a broken App key.</p>
 </li>
 </ul>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.241/v2.1.241-ci-evidence.tar.gz">Download →</a></p>
 
 
 

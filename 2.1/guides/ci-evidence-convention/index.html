@@ -1280,6 +1280,8 @@
       
         
       
+        
+      
     
     
     
@@ -1332,6 +1334,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.242/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.242
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -12026,6 +12056,8 @@
       
         
       
+        
+      
     
     
     
@@ -12198,6 +12230,34 @@
     
   
     vrg-finalize-pr
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/dev/host/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-host
   
 
     
@@ -15634,6 +15694,14 @@ demands evidence for exactly the gates it actually gates on. It cannot
 spuriously fail for a gate it never ran. Adding a future required gate
 automatically pulls it into the evidence set via the shared config; the
 harvester never changes.</p>
+<p>The config the set is derived from is always the <strong>release repo's own</strong>
+<code>vergil.toml</code>, read at the release PR's validated head through the GitHub
+contents API (Contents: read) — the same commit whose CI run is being
+evidenced. <code>vrg-ci-evidence harvest</code> (and <code>bundle</code>) never read the
+<code>vergil.toml</code> in the current directory, so the command gives the same result
+from any directory and can never judge one repo's checks against another
+repo's config. A <code>vergil.toml</code> that is absent or unparseable at that commit
+fails the harvest with an actionable error; there is no fallback.</p>
 <h2 id="producer-prerequisite-real-report-files">Producer prerequisite: real report files<a class="headerlink" href="#producer-prerequisite-real-report-files" title="Permanent link">&para;</a></h2>
 <p>The evidence layer only has value if the gates emit <strong>machine-readable report
 files with real data.</strong> A bundle whose <code>test</code> / <code>audit</code> / <code>quality</code> entries

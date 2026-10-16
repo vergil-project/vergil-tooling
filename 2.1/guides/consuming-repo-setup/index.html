@@ -1280,6 +1280,8 @@
       
         
       
+        
+      
     
     
     
@@ -1332,6 +1334,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.242/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.242
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -12026,6 +12056,8 @@
       
         
       
+        
+      
     
     
     
@@ -12198,6 +12230,34 @@
     
   
     vrg-finalize-pr
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/dev/host/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-host
   
 
     
@@ -15450,7 +15510,8 @@ for how they fit together.</p>
 Docker Engine on Linux works too.</p>
 <p><strong>uv</strong> — Python package manager. Used to install <code>vergil-tooling</code>
 on the host and (inside the container) to manage Python
-dependencies. Install via the
+dependencies. On macOS, install it with Homebrew (<code>brew install uv</code>),
+which is how <code>vrg-host</code> reads and upgrades it. On Linux, use the
 <a href="https://docs.astral.sh/uv/getting-started/installation/">official installer</a>.</p>
 <p><strong>gh</strong> — GitHub CLI. Both the human and agent GitHub accounts must
 be logged into <code>gh auth</code> on the developer's machine. Credential
@@ -15463,12 +15524,16 @@ Linux.</p>
 <p>You do <strong>not</strong> need to install language runtimes, linters, test
 frameworks, markdownlint, or shellcheck on the host. All of those
 live inside the container.</p>
+<p>Once vergil-tooling is installed (Step 2), <code>vrg-host</code> on macOS
+checks these prerequisites — and the agent-VM tools <code>vrg-vm</code> needs —
+for you; see <a href="#keeping-up-to-date">Keeping up to date</a>.</p>
 <h2 id="step-2-install-vergil-tooling">Step 2: Install vergil-tooling<a class="headerlink" href="#step-2-install-vergil-tooling" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>tool<span class="w"> </span>install<span class="w"> </span><span class="s1">'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.1'</span>
 </code></pre></div>
-<p>This installs all <code>vrg-*</code> console scripts into <code>~/.local/bin/</code>,
-which <code>uv</code>'s official installer already configures on <code>PATH</code>. No
-sibling checkout, no custom PATH entries, no venv bootstrapping.</p>
+<p>This installs all <code>vrg-*</code> console scripts into <code>~/.local/bin/</code>.
+<code>uv</code>'s official installer already puts that directory on <code>PATH</code>; with
+a Homebrew-installed <code>uv</code>, run <code>uv tool update-shell</code> once to add it.
+No sibling checkout, no custom PATH entries, no venv bootstrapping.</p>
 <p>Verify:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>which<span class="w"> </span>vrg-container-run<span class="w">    </span><span class="c1"># should resolve to ~/.local/bin/vrg-container-run</span>
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>vrg-container-run<span class="w"> </span>--help<span class="w">   </span><span class="c1"># should print usage</span>
@@ -15799,14 +15864,25 @@ Code session loaded.</p>
 <p><code>uv tool upgrade</code> re-resolves the git reference, pulls the current
 tip of the rolling minor tag, and rebuilds the isolated tool venv.
 No need to repeat the full git URL.</p>
+<p>On macOS, <code>vrg-host</code> covers vergil-tooling and the other host
+prerequisites together (<code>uv</code>, <code>gh</code>, Docker, and the <code>vrg-vm</code> tools
+such as Lima, <code>gcloud</code> and OpenTofu):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>vrg-host<span class="w">                   </span><span class="c1"># report drift, missing tools and failed health checks</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>vrg-host<span class="w"> </span>upgrade<span class="w"> </span>--all<span class="w">     </span><span class="c1"># upgrade every auto-managed tool, respecting pins</span>
+</code></pre></div>
+<p><code>vrg-host upgrade vergil-tooling</code> runs the same <code>uv tool upgrade</code>.
+Docker Desktop and macOS itself are reported but never upgraded by
+<code>vrg-host</code>. When a new release of a host tool breaks your workflow,
+pin it with <code>vrg-host pin</code> rather than skipping upgrades — see the
+<a href="../../reference/dev/host/#pinning-host-dependencies">vrg-host reference</a>.</p>
 <p>The dev container images auto-update on <code>vrg-container-run</code> pulls — the
 tag is a minor version (<code>3.12</code>, <code>1.26</code>, etc.) that tracks upstream
 releases. If you need a fresh image, <code>docker pull
 ghcr.io/vergil-project/dev-&lt;lang&gt;:&lt;version&gt;</code> forces a refresh.</p>
 <p>The Claude Code plugin can be stale after a release; manual
 refresh:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>git<span class="w"> </span>-C<span class="w"> </span>~/.claude/plugins/marketplaces/vergil-tooling-marketplace<span class="w"> </span>pull
-<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="c1"># then restart Claude Code</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>git<span class="w"> </span>-C<span class="w"> </span>~/.claude/plugins/marketplaces/vergil-tooling-marketplace<span class="w"> </span>pull
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="c1"># then restart Claude Code</span>
 </code></pre></div>
 <h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
 <ul>

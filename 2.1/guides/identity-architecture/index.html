@@ -1280,6 +1280,8 @@
       
         
       
+        
+      
     
     
     
@@ -1332,6 +1334,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.242/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.242
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -12026,6 +12056,8 @@
       
         
       
+        
+      
     
     
     
@@ -12198,6 +12230,34 @@
     
   
     vrg-finalize-pr
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/dev/host/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-host
   
 
     
@@ -15550,7 +15610,8 @@ Workflows access, so neither can push changes under
 <ul>
 <li>Commit and push to feature branches (<code>contents: write</code>)</li>
 <li>Create and comment on issues (<code>issues: write</code>)</li>
-<li>Read PR and CI status (<code>pull_requests: read</code>)</li>
+<li>Read PR and CI status (<code>pull_requests: read</code>, plus <code>checks: read</code>,
+  <code>statuses: read</code> and <code>actions: read</code>)</li>
 <li>Record PR metadata in <code>.vergil/pr-workflow.json</code> (via <code>vrg-pr-workflow</code>)
   to stage a PR for the human</li>
 </ul>
@@ -15567,6 +15628,7 @@ Workflows access, so neither can push changes under
 <ul>
 <li>Read code and issues (<code>contents: read</code>, <code>issues: read</code>)</li>
 <li>Write PR reviews and comments (<code>pull_requests: write</code>)</li>
+<li>Read CI status (<code>checks: read</code>, <code>statuses: read</code>, <code>actions: read</code>)</li>
 </ul>
 <h3 id="what-the-audit-agent-cannot-do">What the audit agent cannot do<a class="headerlink" href="#what-the-audit-agent-cannot-do" title="Permanent link">&para;</a></h3>
 <ul>

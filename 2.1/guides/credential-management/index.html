@@ -1280,6 +1280,8 @@
       
         
       
+        
+      
     
     
     
@@ -1332,6 +1334,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.242/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.242
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -12026,6 +12056,8 @@
       
         
       
+        
+      
     
     
     
@@ -12198,6 +12230,34 @@
     
   
     vrg-finalize-pr
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/dev/host/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-host
   
 
     
@@ -15598,8 +15658,8 @@ is present, these two cases stop the command rather than fall back
 to ambient <code>gh</code>/<code>git</code> auth:</p>
 <ul>
 <li><strong>No target org.</strong> The target org comes from an explicit owner
-  (<code>-R owner/repo</code> for <code>vrg-gh</code>, the owner a command explicitly
-  scopes its token to, or a <code>vrg-git clone</code> URL) or else from the
+  (<code>-R owner/repo</code> for <code>vrg-gh</code>, a command's own target argument
+  such as <code>--repo owner/repo</code>, or a <code>vrg-git clone</code> URL) or else from the
   current repo's GitHub <code>origin</code> remote. If neither yields an org (for
   example, <code>vrg-gh</code> without <code>-R</code> run outside a repo), the command
   stops with <code>GitHub App mode is configured ... but no target org
