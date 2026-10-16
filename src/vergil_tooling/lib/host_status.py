@@ -28,8 +28,8 @@ Version states (spec §8):
 - ``latest-unknown`` — a latest probe that should work failed (WARN).
 
 Update levels (issue #3269): a dependency whose latest probe offers several
-versions (:class:`~vergil_tooling.lib.host_methods.Offers`, today only
-``macos``) is classified against its **leading edge** — the highest offer, or
+versions (:class:`~vergil_tooling.lib.host_methods.Offers`, today
+``macos`` and ``xcode-clt``) is classified against its **leading edge** — the highest offer, or
 the installed version when nothing newer is offered — exactly as a single
 latest would be, so ``behind``, ``current`` and the pin rules are unchanged.
 The row additionally lists every level that is behind (see

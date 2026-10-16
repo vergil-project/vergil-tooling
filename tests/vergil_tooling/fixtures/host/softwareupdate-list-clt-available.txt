@@ -1,0 +1,8 @@
+Software Update Tool
+
+Finding available software
+Software Update found the following new or updated software:
+* Label: Command Line Tools for Xcode 26.7-26.7
+	Title: Command Line Tools for Xcode 26.7, Version: 26.7, Size: 912345KiB, Recommended: YES, 
+* Label: macOS Tahoe 26.7.1-25G241
+	Title: macOS Tahoe 26.7.1, Version: 26.7.1, Size: 3852999KiB, Recommended: YES, Action: restart, 
