@@ -4,6 +4,7 @@ import contextlib
 import json
 import subprocess
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
@@ -13,9 +14,13 @@ from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.preflight import (
     PendingDepsPr,
     _compute_release_version,
+    fix_task_status,
     pending_deps_prs,
     preflight,
 )
+
+if TYPE_CHECKING:
+    from vergil_tooling.lib.release.context import ReleaseContext
 
 _MOD = "vergil_tooling.lib.release.preflight"
 
@@ -587,6 +592,8 @@ def test_preflight_refuses_on_pending_deps_pr() -> None:
     with contextlib.ExitStack() as stack:
         for p in _fresh_patches(pending):
             stack.enter_context(p)
+        stack.enter_context(patch(_MOD + ".fix_task_status", return_value=("OPEN", None)))
+        m_run = stack.enter_context(patch(_MOD + ".github.run"))
         m_wt = stack.enter_context(patch(_MOD + "._acquire_release_worktree"))
         with pytest.raises(ReleaseError, match="dependency-update") as info:
             preflight(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
@@ -597,6 +604,8 @@ def test_preflight_refuses_on_pending_deps_pr() -> None:
     assert info.value.phase == "preflight"
     # The gate refuses before the release branch/worktree (the release lock) exists.
     m_wt.assert_not_called()
+    # An open fix task and a missing fix-task line both keep blocking: nothing closed.
+    m_run.assert_not_called()
 
 
 def test_preflight_allow_pending_deps_records_bypass(capsys: pytest.CaptureFixture[str]) -> None:
@@ -647,3 +656,266 @@ def test_preflight_resume_skips_pending_deps_gate() -> None:
         )
     m_pending.assert_not_called()
     assert ctx.bypassed_deps_prs == []
+    assert ctx.cleared_deps_prs == []
+
+
+# --- auto-clear a dependency-update PR whose fix task completed (#3286) ---
+
+_PR9 = "https://github.com/o/r/pull/9"
+_PR11 = "https://github.com/o/r/pull/11"
+_TASK10 = "https://github.com/o/r/issues/10"
+_TASK12 = "https://github.com/o/r/issues/12"
+
+
+def test_fix_task_status_reads_state_and_reason() -> None:
+    raw = {"state": "CLOSED", "stateReason": "COMPLETED"}
+    with patch(_MOD + ".github.read_json", return_value=raw) as m:
+        assert fix_task_status("https://github.com/other/repo/issues/3282") == (
+            "CLOSED",
+            "COMPLETED",
+        )
+    args = list(m.call_args.args)
+    assert args[:3] == ["issue", "view", "3282"]
+    assert args[args.index("--repo") + 1] == "other/repo"
+    assert args[args.index("--json") + 1] == "state,stateReason"
+
+
+def test_fix_task_status_open_issue_has_no_reason() -> None:
+    raw = {"state": "OPEN", "stateReason": ""}
+    with patch(_MOD + ".github.read_json", return_value=raw):
+        assert fix_task_status(_TASK10) == ("OPEN", None)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://github.com/o/r/pull/10",
+        "https://example.com/o/r/issues/10",
+        "o/r#10",
+        "https://github.com/o/r/issues/ten",
+    ],
+)
+def test_fix_task_status_rejects_unparseable_url(url: str) -> None:
+    with (
+        patch(_MOD + ".github.read_json") as m,
+        pytest.raises(ReleaseError, match="Cannot parse fix task URL") as info,
+    ):
+        fix_task_status(url)
+    m.assert_not_called()
+    assert info.value.phase == "preflight"
+
+
+def test_fix_task_status_fails_loud_on_gh_error() -> None:
+    err = subprocess.CalledProcessError(1, ["gh"], output="", stderr="HTTP 502")
+    with (
+        patch(_MOD + ".github.read_json", side_effect=err),
+        pytest.raises(ReleaseError, match="Could not look up fix task") as info,
+    ):
+        fix_task_status(_TASK10)
+    assert info.value.detail is not None
+    assert "502" in info.value.detail
+
+
+def test_fix_task_status_fails_loud_on_bad_json() -> None:
+    with (
+        patch(_MOD + ".github.read_json", side_effect=json.JSONDecodeError("x", "doc", 0)),
+        pytest.raises(ReleaseError, match="Could not look up fix task"),
+    ):
+        fix_task_status(_TASK10)
+
+
+@pytest.mark.parametrize("raw", [[], {"stateReason": "COMPLETED"}, {"state": ""}])
+def test_fix_task_status_rejects_malformed_answer(raw: object) -> None:
+    with (
+        patch(_MOD + ".github.read_json", return_value=raw),
+        pytest.raises(ReleaseError, match="no state"),
+    ):
+        fix_task_status(_TASK10)
+
+
+def _run_preflight_with_tasks(
+    pending: list[PendingDepsPr],
+    statuses: dict[str, tuple[str, str | None]],
+    *,
+    allow: bool = False,
+    run_side_effect: object = None,
+) -> tuple[ReleaseContext, list[list[str]]]:
+    calls: list[list[str]] = []
+
+    def fake_run(*args: str) -> None:
+        calls.append(list(args))
+        if callable(run_side_effect):
+            run_side_effect(list(args))
+
+    with contextlib.ExitStack() as stack:
+        for p in _fresh_patches(pending):
+            stack.enter_context(p)
+        stack.enter_context(patch(_MOD + ".fix_task_status", side_effect=statuses.__getitem__))
+        stack.enter_context(patch(_MOD + ".github.run", side_effect=fake_run))
+        ctx = preflight(
+            version_override=None,
+            repo_root=Path("/tmp/repo"),  # noqa: S108
+            allow_pending_deps=allow,
+        )
+    return ctx, calls
+
+
+def test_preflight_clears_pr_whose_fix_task_completed(capsys: pytest.CaptureFixture[str]) -> None:
+    pending = [PendingDepsPr(url=_PR9, fix_task=_TASK10)]
+    ctx, calls = _run_preflight_with_tasks(pending, {_TASK10: ("CLOSED", "COMPLETED")})
+    assert ctx.cleared_deps_prs == [_PR9]
+    assert ctx.bypassed_deps_prs == []
+    # Comment first (naming the fix task and the preflight), then close.
+    assert [c[:3] for c in calls] == [["pr", "comment", _PR9], ["pr", "close", _PR9]]
+    comment = calls[0][calls[0].index("--body") + 1]
+    assert _TASK10 in comment
+    assert "vrg-release" in comment
+    assert "preflight" in comment
+    out = capsys.readouterr().out
+    assert _PR9 in out
+    assert _TASK10 in out
+
+
+def test_preflight_not_planned_fix_task_keeps_blocking() -> None:
+    pending = [PendingDepsPr(url=_PR9, fix_task=_TASK10)]
+    with pytest.raises(ReleaseError, match="dependency-update") as info:
+        _run_preflight_with_tasks(pending, {_TASK10: ("CLOSED", "NOT_PLANNED")})
+    msg = str(info.value)
+    assert _PR9 in msg
+    assert f"fix task {_TASK10} closed without completing (NOT_PLANNED)" in msg
+    assert "human" in msg
+
+
+def test_preflight_closed_fix_task_without_reason_keeps_blocking() -> None:
+    pending = [PendingDepsPr(url=_PR9, fix_task=_TASK10)]
+    with pytest.raises(ReleaseError, match="closed without completing") as info:
+        _run_preflight_with_tasks(pending, {_TASK10: ("CLOSED", None)})
+    assert "(no state reason)" in str(info.value)
+
+
+def test_preflight_not_planned_does_not_close_pr() -> None:
+    pending = [PendingDepsPr(url=_PR9, fix_task=_TASK10)]
+    with contextlib.ExitStack() as stack:
+        for p in _fresh_patches(pending):
+            stack.enter_context(p)
+        stack.enter_context(
+            patch(_MOD + ".fix_task_status", return_value=("CLOSED", "NOT_PLANNED"))
+        )
+        m_run = stack.enter_context(patch(_MOD + ".github.run"))
+        with pytest.raises(ReleaseError):
+            preflight(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
+    m_run.assert_not_called()
+
+
+def test_preflight_allow_pending_deps_applies_after_clear_step(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    pending = [
+        PendingDepsPr(url=_PR9, fix_task=_TASK10),
+        PendingDepsPr(url=_PR11, fix_task=_TASK12),
+    ]
+    ctx, calls = _run_preflight_with_tasks(
+        pending,
+        {_TASK10: ("CLOSED", "COMPLETED"), _TASK12: ("CLOSED", "NOT_PLANNED")},
+        allow=True,
+    )
+    assert ctx.cleared_deps_prs == [_PR9]
+    assert ctx.bypassed_deps_prs == [_PR11]
+    assert [c[2] for c in calls] == [_PR9, _PR9]
+    warning = next(line for line in capsys.readouterr().out.splitlines() if "WARNING" in line)
+    assert _PR11 in warning
+    assert _PR9 not in warning
+
+
+def test_preflight_refusal_after_clear_names_only_blocking_prs() -> None:
+    pending = [
+        PendingDepsPr(url=_PR9, fix_task=_TASK10),
+        PendingDepsPr(url=_PR11, fix_task=None),
+    ]
+    with pytest.raises(ReleaseError) as info:
+        _run_preflight_with_tasks(pending, {_TASK10: ("CLOSED", "COMPLETED")})
+    msg = str(info.value)
+    assert _PR11 in msg
+    assert _PR9 not in msg
+
+
+def test_preflight_looks_up_every_fix_task_before_closing_any() -> None:
+    pending = [
+        PendingDepsPr(url=_PR9, fix_task=_TASK10),
+        PendingDepsPr(url=_PR11, fix_task=_TASK12),
+    ]
+    boom = ReleaseError(phase="preflight", command="gh issue view", message="lookup failed")
+
+    def status(url: str) -> tuple[str, str | None]:
+        if url == _TASK12:
+            raise boom
+        return ("CLOSED", "COMPLETED")
+
+    with contextlib.ExitStack() as stack:
+        for p in _fresh_patches(pending):
+            stack.enter_context(p)
+        stack.enter_context(patch(_MOD + ".fix_task_status", side_effect=status))
+        m_run = stack.enter_context(patch(_MOD + ".github.run"))
+        with pytest.raises(ReleaseError, match="lookup failed"):
+            preflight(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
+    m_run.assert_not_called()
+
+
+def test_preflight_comment_failure_raises_and_leaves_pr_untouched() -> None:
+    pending = [PendingDepsPr(url=_PR9, fix_task=_TASK10)]
+
+    def fail_comment(args: list[str]) -> None:
+        if args[1] == "comment":
+            raise subprocess.CalledProcessError(1, ["gh"], output="", stderr="HTTP 403")
+
+    with pytest.raises(ReleaseError, match="Could not comment on") as info:
+        _run_preflight_with_tasks(
+            pending, {_TASK10: ("CLOSED", "COMPLETED")}, run_side_effect=fail_comment
+        )
+    msg = str(info.value)
+    assert _PR9 in msg
+    assert "still open" in msg
+    assert info.value.detail is not None
+    assert "403" in info.value.detail
+
+
+def test_preflight_close_failure_after_comment_raises_with_pr_state() -> None:
+    pending = [PendingDepsPr(url=_PR9, fix_task=_TASK10)]
+
+    def fail_close(args: list[str]) -> None:
+        if args[1] == "close":
+            raise subprocess.CalledProcessError(1, ["gh"], output="", stderr="HTTP 502")
+
+    with pytest.raises(ReleaseError, match="Could not close") as info:
+        _run_preflight_with_tasks(
+            pending, {_TASK10: ("CLOSED", "COMPLETED")}, run_side_effect=fail_close
+        )
+    msg = str(info.value)
+    assert _PR9 in msg
+    assert "commented" in msg
+    assert "still open" in msg
+    assert info.value.command == f"gh pr close {_PR9}"
+
+
+def test_preflight_clear_step_end_to_end_with_gh_mocked() -> None:
+    """The real fix_task_status path, gh mocked: #3281 / #3282 shaped."""
+    pending = [
+        PendingDepsPr(
+            url="https://github.com/o/r/pull/3281",
+            fix_task="https://github.com/o/r/issues/3282",
+        )
+    ]
+    with contextlib.ExitStack() as stack:
+        for p in _fresh_patches(pending):
+            stack.enter_context(p)
+        m_json = stack.enter_context(
+            patch(
+                _MOD + ".github.read_json",
+                return_value={"state": "CLOSED", "stateReason": "COMPLETED"},
+            )
+        )
+        m_run = stack.enter_context(patch(_MOD + ".github.run"))
+        ctx = preflight(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
+    assert ctx.cleared_deps_prs == ["https://github.com/o/r/pull/3281"]
+    assert m_json.call_args.args[:3] == ("issue", "view", "3282")
+    assert m_run.call_args.args[:3] == ("pr", "close", "https://github.com/o/r/pull/3281")

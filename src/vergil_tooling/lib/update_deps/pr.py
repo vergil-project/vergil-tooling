@@ -152,9 +152,9 @@ def build_fix_task_body(ctx: UpdateDepsContext) -> str:
                 "",
                 "Cut the fix branch from the failed update, so it starts from its "
                 f"commits: `chore/<this issue number>-dep-update-{ctx.version}` from "
-                f"`origin/deps/update-{ctx.version}`. Fix, then hand off as usual. When "
-                "the fix PR merges, GitHub marks the dependency-update PR merged and "
-                "the gate clears.",
+                f"`origin/deps/update-{ctx.version}`. Fix, then hand off as usual. Once "
+                "the fix PR merges and closes this issue as completed, the next "
+                "`vrg-release` closes the dependency-update PR and the gate clears.",
                 "",
                 failure_markdown(failure),
             ]

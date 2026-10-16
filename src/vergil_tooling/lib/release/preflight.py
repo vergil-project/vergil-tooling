@@ -28,6 +28,9 @@ _VERSION_OVERRIDE_FIELDS = ("minor", "major")
 # The "Fix task: <url>" line vrg-update-deps writes into a failed PR's body.
 _FIX_TASK_RE = re.compile(rf"^{re.escape(FIX_TASK_PREFIX)}(\S+)\s*$", re.MULTILINE)
 _PENDING_DEPS_COMMAND = f"gh pr list --state open --label {DEPS_LABEL}"
+# A fix task is an issue URL; it may live in another repo, so the repo comes
+# from the URL rather than from the release's own repo (#3286).
+_ISSUE_URL_RE = re.compile(r"^https://github\.com/([^/\s]+/[^/\s]+)/issues/(\d+)/?$")
 
 
 @dataclass(frozen=True)
@@ -36,6 +39,14 @@ class PendingDepsPr:
 
     url: str
     fix_task: str | None
+
+
+@dataclass(frozen=True)
+class _DepsGateOutcome:
+    """What the dependency-update gate did: PRs it closed, and PRs it let through."""
+
+    cleared: list[str]
+    bypassed: list[str]
 
 
 def preflight(
@@ -59,8 +70,11 @@ def preflight(
     A fresh start also refuses while any open PR carries the
     ``dependency-update`` label (spec §5.3, epic vergil-project/.github#381);
     *allow_pending_deps* bypasses that gate, and the bypassed PR URLs are
-    recorded on the context so the prepare-stage comment names them. A resume
-    skips the gate — the release it adopts already passed it.
+    recorded on the context so the prepare-stage comment names them. Before
+    the gate, a PR whose fix task closed as completed is closed (its update
+    landed through the fix PR) and recorded as cleared (#3286); the bypass
+    applies only to what still blocks after that. A resume skips the gate —
+    the release it adopts already passed it.
     """
     _check_host_prerequisites()
     repo = check_gh_auth()
@@ -84,11 +98,11 @@ def preflight(
         else:
             release_version = current_version
 
-    bypassed_deps_prs: list[str] = []
+    deps_gate = _DepsGateOutcome(cleared=[], bypassed=[])
     if not resume:
         _check_version_not_tagged(release_version)
         _check_no_existing_tracking_issue(repo, release_version)
-        bypassed_deps_prs = _check_pending_deps(repo, allow=allow_pending_deps)
+        deps_gate = _check_pending_deps(repo, allow=allow_pending_deps)
 
     branch = f"release/{release_version}"
     worktree = _acquire_release_worktree(repo_root, branch, resume=resume)
@@ -102,7 +116,8 @@ def preflight(
         version_override=version_override,
         release_branch=branch,
         worktree_path=worktree,
-        bypassed_deps_prs=bypassed_deps_prs,
+        bypassed_deps_prs=deps_gate.bypassed,
+        cleared_deps_prs=deps_gate.cleared,
     )
     if resume_issue_number is not None:
         ctx.issue_number = resume_issue_number
@@ -160,24 +175,139 @@ def pending_deps_prs(repo: str) -> list[PendingDepsPr]:
     return found
 
 
-def _check_pending_deps(repo: str, *, allow: bool) -> list[str]:
-    """Refuse while a dependency-update PR is open, unless *allow* (spec §5.3).
+def _gh_error_detail(exc: Exception) -> str:
+    """A gh failure's stderr when it has one, else the exception text."""
+    stderr = getattr(exc, "stderr", None)
+    return f"{exc}\n{stderr}" if stderr else str(exc)
 
-    Returns the bypassed PR URLs (empty when none are open).
+
+def fix_task_status(url: str) -> tuple[str, str | None]:
+    """The fix task issue's ``(state, stateReason)``; the reason is None when unset.
+
+    The issue may live in any repo, so *url* must be a full GitHub issue URL.
+    An unparseable URL or a lookup that cannot complete raises
+    :class:`ReleaseError` — an unknown fix task never clears a PR.
+    """
+    match = _ISSUE_URL_RE.match(url)
+    if match is None:
+        raise ReleaseError(
+            phase="preflight",
+            command="parse fix task URL",
+            message=(
+                f"Cannot parse fix task URL {url!r}: expected "
+                "https://github.com/<owner>/<repo>/issues/<number>."
+            ),
+        )
+    issue_repo, number = match.groups()
+    command = f"gh issue view {number} --repo {issue_repo} --json state,stateReason"
+    try:
+        raw = github.read_json(
+            "issue", "view", number, "--repo", issue_repo, "--json", "state,stateReason"
+        )
+    except (subprocess.CalledProcessError, ValueError) as exc:
+        raise ReleaseError(
+            phase="preflight",
+            command=command,
+            message=f"Could not look up fix task {url}; refusing to release blind.",
+            detail=_gh_error_detail(exc),
+        ) from exc
+    state = raw.get("state") if isinstance(raw, dict) else None
+    if not isinstance(state, str) or not state:
+        raise ReleaseError(
+            phase="preflight",
+            command=command,
+            message=f"gh issue view returned no state for fix task {url}: {raw!r}",
+        )
+    reason = raw.get("stateReason") if isinstance(raw, dict) else None
+    return state, reason if isinstance(reason, str) and reason else None
+
+
+def _close_landed_deps_pr(pr: PendingDepsPr) -> None:
+    """Comment on, then close, a deps PR whose fix task completed (#3286).
+
+    Any failure raises :class:`ReleaseError` naming the state the PR was left in.
+    """
+    comment = (
+        f"Closed by the `vrg-release` preflight: fix task {pr.fix_task} closed as "
+        "completed, so this dependency update landed through its fix PR. A "
+        "squash-merged fix PR never marks this PR merged, so the release closes it "
+        "to clear the dependency-update gate."
+    )
+    try:
+        github.run("pr", "comment", pr.url, "--body", comment)
+    except subprocess.CalledProcessError as exc:
+        raise ReleaseError(
+            phase="preflight",
+            command=f"gh pr comment {pr.url}",
+            message=(
+                f"Could not comment on dependency-update PR {pr.url} before closing it; "
+                "it is still open and unchanged, so it still blocks the release."
+            ),
+            detail=_gh_error_detail(exc),
+        ) from exc
+    try:
+        github.run("pr", "close", pr.url)
+    except subprocess.CalledProcessError as exc:
+        raise ReleaseError(
+            phase="preflight",
+            command=f"gh pr close {pr.url}",
+            message=(
+                f"Could not close dependency-update PR {pr.url}: preflight commented "
+                "that it was closing it, but the PR is still open. Close it by hand "
+                "(its fix task completed) and re-run vrg-release."
+            ),
+            detail=_gh_error_detail(exc),
+        ) from exc
+
+
+def _check_pending_deps(repo: str, *, allow: bool) -> _DepsGateOutcome:
+    """Clear landed deps PRs, then refuse on what still blocks unless *allow*.
+
+    A PR whose fix task closed as completed is closed (#3286). Every fix task
+    is looked up before any PR is closed, so a lookup failure leaves nothing
+    changed. What remains open blocks (spec §5.3) unless *allow* bypasses it.
     """
     pending = pending_deps_prs(repo)
-    if not pending:
-        return []
+    landed: list[PendingDepsPr] = []
+    blocking: list[tuple[PendingDepsPr, str]] = []
+    for pr in pending:
+        if pr.fix_task is None:
+            blocking.append((pr, ""))
+            continue
+        state, reason = fix_task_status(pr.fix_task)
+        if state == "CLOSED" and reason == "COMPLETED":
+            landed.append(pr)
+        elif state == "CLOSED":
+            blocking.append(
+                (
+                    pr,
+                    f" (fix task {pr.fix_task} closed without completing "
+                    f"({reason or 'no state reason'}) — the update did not land; "
+                    "deciding what to do with this PR is a human call)",
+                )
+            )
+        else:
+            blocking.append((pr, f" (fix task: {pr.fix_task})"))
+
+    cleared: list[str] = []
+    for pr in landed:
+        _close_landed_deps_pr(pr)
+        print(
+            f"Closed dependency-update PR {pr.url}: fix task {pr.fix_task} closed as "
+            "completed, so the update landed."
+        )
+        cleared.append(pr.url)
+
+    if not blocking:
+        return _DepsGateOutcome(cleared=cleared, bypassed=[])
     if allow:
-        urls = [p.url for p in pending]
+        urls = [pr.url for pr, _ in blocking]
         print(
             "WARNING: --allow-pending-deps is bypassing open dependency-update "
             f"PR(s): {', '.join(urls)}"
         )
-        return urls
-    described = "; ".join(
-        p.url + (f" (fix task: {p.fix_task})" if p.fix_task else "") for p in pending
-    )
+        return _DepsGateOutcome(cleared=cleared, bypassed=urls)
+    described = "; ".join(pr.url + note for pr, note in blocking)
     raise ReleaseError(
         phase="preflight",
         command=_PENDING_DEPS_COMMAND,

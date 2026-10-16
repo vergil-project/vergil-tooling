@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.244] - 2026-10-16
+
+### Bug fixes
+
+- land 2.1.244 dependency update with ty 0.0.89 typing fixes (#3284)
+- carry the failing validation stage's output, count a deps-only failure once (#3285)
+- close a dependency-update PR at preflight once its fix task completes (#3287)
+
 ## [2.1.243] - 2026-10-16
 
 ### Features

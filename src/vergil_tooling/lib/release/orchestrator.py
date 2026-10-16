@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib.progress import Stage
+from vergil_tooling.lib.progress import Stage, mark_warn
 from vergil_tooling.lib.promote import promote
 from vergil_tooling.lib.release.bump import back_merge_and_bump
 from vergil_tooling.lib.release.confirm import confirm_develop, confirm_main
@@ -216,27 +216,34 @@ def _publish_status_stage(state: ReleaseState) -> None:
     the release is already complete. No-op when nothing deferred. A failed
     dependency update (spec §5.2) is repeated here so it is never lost in the
     stage list; it never affects the release itself.
+
+    The update-deps stage has already failed (and counted) for a recorded deps
+    failure, so on its own it is repeated as a warning on this row, not raised
+    as a second failure (#3283): the summary counts one failure, and the
+    warnings list still carries it. Alongside a deferred publish it rides in
+    the raised message.
     """
     ctx = state.ctx
     if ctx is None:
         return
-    problems: list[str] = []
-    if ctx.deferred_publish_failures:
-        jobs = ", ".join(ctx.deferred_publish_failures)
-        problems.append(
-            f"Release v{ctx.version} is published (tag + GitHub Release), but these "
-            f"CD publish jobs did not succeed: {jobs}. Re-run the CD publish to "
-            "deliver the artifacts — do NOT use vrg-release --resume (the version "
-            "is already tagged)."
-        )
+    if not ctx.deferred_publish_failures:
+        if ctx.deps_failure:
+            mark_warn(f"repeats the update-deps failure: {ctx.deps_failure}")
+        return
+    jobs = ", ".join(ctx.deferred_publish_failures)
+    problems = [
+        f"Release v{ctx.version} is published (tag + GitHub Release), but these "
+        f"CD publish jobs did not succeed: {jobs}. Re-run the CD publish to "
+        "deliver the artifacts — do NOT use vrg-release --resume (the version "
+        "is already tagged)."
+    ]
     if ctx.deps_failure:
         problems.append(ctx.deps_failure)
-    if problems:
-        raise ReleaseError(
-            phase="publish-status",
-            command="publish-status",
-            message=" ".join(problems),
-        )
+    raise ReleaseError(
+        phase="publish-status",
+        command="publish-status",
+        message=" ".join(problems),
+    )
 
 
 def _phase_details(ctx: ReleaseContext, phase: str) -> str:
@@ -249,6 +256,10 @@ def _phase_details(ctx: ReleaseContext, phase: str) -> str:
             lines.append(f"PR: {ctx.release_pr_url}")
         if ctx.issue_url:
             lines.append(f"Tracking issue: {ctx.issue_url}")
+        if ctx.cleared_deps_prs:
+            # #3286: closing a landed dependency-update PR is recorded, never silent.
+            prs = ", ".join(ctx.cleared_deps_prs)
+            lines.append(f"**Closed landed dependency-update PR(s)** (fix task completed): {prs}")
         if ctx.bypassed_deps_prs:
             # spec §5.3: bypassing the dependency-update gate is never silent.
             prs = ", ".join(ctx.bypassed_deps_prs)

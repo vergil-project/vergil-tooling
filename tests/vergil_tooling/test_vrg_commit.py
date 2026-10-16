@@ -13,7 +13,7 @@ import pytest
 from vergil_tooling.bin.vrg_commit import _validate_commit_context, main, parse_args
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
 
 
 _TEST_TOML_TEMPLATE = """\
@@ -42,7 +42,7 @@ def _commit_environment(
     has_staged: bool = True,
     write_config: bool = True,
     co_author: str = "test-agent <test-agent@test.com>",
-) -> Iterator[None]:
+) -> Generator[None]:
     if write_config:
         (tmp_path / "vergil.toml").write_text(
             _TEST_TOML_TEMPLATE.format(branching_model=branching_model)
