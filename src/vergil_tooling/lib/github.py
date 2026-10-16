@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any, cast
 from vergil_tooling.lib import retry
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Collection, Iterator, Sequence
+    from collections.abc import Callable, Collection, Generator, Iterator, Sequence
 
 log = logging.getLogger(__name__)
 
@@ -423,7 +423,7 @@ def is_app_mode() -> bool:
 
 
 @contextlib.contextmanager
-def target_org(org: str | None) -> Iterator[None]:
+def target_org(org: str | None) -> Generator[None]:
     """Scope App-token minting to an explicit target *org* for the block.
 
     Within the context, every lib call that mints an App installation token

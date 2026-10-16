@@ -212,7 +212,7 @@ def test_find_existing_tracking_issue_picks_exact_match_among_multiple() -> None
     assert result == "https://github.com/owner/repo/issues/300"
 
 
-def test_comment_phase_complete() -> None:
+def test_comment_phase_complete(monkeypatch: pytest.MonkeyPatch) -> None:
     ctx = _ctx()
     ctx.issue_number = 42
     ctx.release_pr_url = "https://github.com/owner/repo/pull/100"
@@ -228,7 +228,7 @@ def test_comment_phase_complete() -> None:
             written_bodies.append(data)
             return original_write(data)
 
-        f.write = write_and_capture  # type: ignore[method-assign]
+        monkeypatch.setattr(f, "write", write_and_capture)
         return f
 
     with (
@@ -240,7 +240,7 @@ def test_comment_phase_complete() -> None:
     assert any("Branch: release/2.1.0" in b for b in written_bodies)
 
 
-def test_comment_phase_failed() -> None:
+def test_comment_phase_failed(monkeypatch: pytest.MonkeyPatch) -> None:
     ctx = _ctx()
     ctx.issue_number = 42
     exc = ReleaseError(
@@ -261,7 +261,7 @@ def test_comment_phase_failed() -> None:
             written_bodies.append(data)
             return original_write(data)
 
-        f.write = write_and_capture  # type: ignore[method-assign]
+        monkeypatch.setattr(f, "write", write_and_capture)
         return f
 
     with (
@@ -311,7 +311,7 @@ def test_truncate_for_comment_shrinks_oversized_body_below_limit() -> None:
     assert "characters truncated" in result
 
 
-def test_comment_phase_failed_truncates_oversized_detail() -> None:
+def test_comment_phase_failed_truncates_oversized_detail(monkeypatch: pytest.MonkeyPatch) -> None:
     ctx = _ctx()
     ctx.issue_number = 42
     exc = ReleaseError(
@@ -332,7 +332,7 @@ def test_comment_phase_failed_truncates_oversized_detail() -> None:
             written_bodies.append(data)
             return original_write(data)
 
-        f.write = write_and_capture  # type: ignore[method-assign]
+        monkeypatch.setattr(f, "write", write_and_capture)
         return f
 
     with (

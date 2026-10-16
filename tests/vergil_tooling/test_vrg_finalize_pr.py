@@ -41,7 +41,7 @@ from vergil_tooling.lib.worktrees import Worktree, WorktreeState, WorktreeStatus
 _MOD = "vergil_tooling.bin.vrg_finalize_pr"
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator, Iterator
 
 
 @pytest.fixture(autouse=True)
@@ -196,7 +196,7 @@ _PR_EVIDENCE = {"number": "9", "url": "https://github.com/o/r/pull/9", "title": 
 
 
 @contextmanager
-def _sweep_guards_pass() -> Iterator[None]:
+def _sweep_guards_pass() -> Generator[None]:
     """Make the ancestry-sweep guards (issue #1445) pass.
 
     The candidate branch resolves to a different SHA than the target
@@ -1040,7 +1040,7 @@ _WT8 = Worktree(path=Path("/repo/.worktrees/issue-8-bar"), branch="feature/8-bar
 
 
 @contextmanager
-def _cleanup_path_mocks(root: Path) -> Iterator[None]:
+def _cleanup_path_mocks(root: Path) -> Generator[None]:
     """Neutralize the post-merge cleanup path for inference-focused tests.
 
     Keeps main() off real git/config/gh calls after the part under test.
@@ -2064,7 +2064,7 @@ def _stuck_status(
 
 
 @contextmanager
-def _sweep_with_stuck(tmp_path: Path, status: WorktreeStatus) -> Iterator[list[tuple[str, ...]]]:
+def _sweep_with_stuck(tmp_path: Path, status: WorktreeStatus) -> Generator[list[tuple[str, ...]]]:
     """Drive a cleanup-only run whose single worktree classifies as *status*.
 
     Yields the captured git.run call list so a test can assert on (or against)

@@ -65,7 +65,7 @@ from vergil_tooling.lib.github_config import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Generator, Iterator
 
 
 def _paginated_via_read_json(endpoint: str, key: str | None = None) -> list[object]:
@@ -99,7 +99,7 @@ def _route_paginated_rulesets() -> Iterator[None]:
 
 
 @contextlib.contextmanager
-def _real_pagination(fake_read_output: Callable[..., str]) -> Iterator[None]:
+def _real_pagination(fake_read_output: Callable[..., str]) -> Generator[None]:
     """Undo the autouse shim: run the real helper over a faked ``gh api`` stream."""
     with (
         patch(

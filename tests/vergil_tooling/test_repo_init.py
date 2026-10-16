@@ -901,7 +901,7 @@ class TestContainerHelpers:
         # suffix/tag are family-aware; a bare "latest" would render a base image.
         default = _default_ci_versions("cpp")
         assert default == "clang-20"
-        versions = [v.strip() for v in default.split(",")]
+        versions: list[str] = [v.strip() for v in default.split(",")]
         assert _container_suffix("cpp", versions) == "cpp-clang"
         assert _container_tag("cpp", versions) == "20"
 
@@ -936,7 +936,7 @@ class TestContainerHelpers:
         # a base image.
         default = _default_ci_versions("typescript")
         assert default == "node-24, node-22"
-        versions = [v.strip() for v in default.split(",")]
+        versions: list[str] = [v.strip() for v in default.split(",")]
         assert _container_suffix("typescript", versions) == "ts-node"
         assert _container_tag("typescript", versions) == "24"
 
