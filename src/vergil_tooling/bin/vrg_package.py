@@ -18,6 +18,14 @@ Subcommands:
           Stages into --staging (wiped first) and writes the .deb/.rpm
           artifacts to --out, printing each artifact path. Needs nfpm on PATH.
 
+  check-unpublished  Refuse (exit 1) when a release at --version of --repo
+          (default: $GITHUB_REPOSITORY) would publish a package — same name,
+          full version, arch and format — that an earlier stable release of
+          the repo already published (#3309). Read-only; needs gh. vrg-release
+          runs the same check in preflight; this is the CD backstop, to run
+          before building. A repo without [package] passes. Any gh error
+          refuses: the check never skips.
+
   index   Build the signed apt/dnf package-repository site (spec §7.2): collect
           and verify the stable releases of every product in --config, apply
           retention, write and sign the metadata, and size-check the result in
@@ -42,7 +50,7 @@ from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.package import PackageError, build, matrix
 from vergil_tooling.lib.package import python_builder as _python_builder  # noqa: F401
 from vergil_tooling.lib.package import staged as _staged  # noqa: F401  (registers the builder)
-from vergil_tooling.lib.package.index import site
+from vergil_tooling.lib.package.index import published, site
 
 
 @cli_main
@@ -108,6 +116,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Staging root, wiped before the build (default: .vergil/package-staging)",
     )
     b.set_defaults(func=_cmd_build)
+    c = sub.add_parser(
+        "check-unpublished",
+        help="Refuse a release that would re-publish an already published package version",
+        description=(
+            "Refuse when any package a release at --version would publish has the same "
+            "(name, full version, arch, format) as one an earlier release already "
+            "published (#3309). Read-only."
+        ),
+    )
+    c.add_argument("--version", required=True, help="Repo version being released (e.g. 2.1.240)")
+    c.add_argument(
+        "--repo",
+        default="",
+        metavar="OWNER/NAME",
+        help="Repository whose releases to check (default: $GITHUB_REPOSITORY)",
+    )
+    c.set_defaults(func=_cmd_check_unpublished)
     p = sub.add_parser(
         "index",
         help="Build the signed apt/dnf package-repository site",
@@ -191,6 +216,22 @@ def _cmd_build(args: argparse.Namespace) -> int:
     )
     for path in artifacts:
         print(path)
+    return 0
+
+
+def _cmd_check_unpublished(args: argparse.Namespace) -> int:
+    repo = args.repo or os.environ.get("GITHUB_REPOSITORY", "")
+    if not repo:
+        msg = "check-unpublished: pass --repo OWNER/NAME (GITHUB_REPOSITORY is not set)"
+        raise PackageError(msg)
+    cwd = Path.cwd()
+    cfg = config.read_config(cwd)
+    identities = published.check_release(cwd, cfg.package, repo, args.version)
+    if not identities:
+        print(f"vrg-package: no [package] section; {repo} v{args.version} publishes no packages")
+        return 0
+    for ident in identities:
+        print(f"vrg-package: {ident}: not yet published by {repo}")
     return 0
 
 

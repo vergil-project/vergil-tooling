@@ -512,6 +512,13 @@ workflows; `matrix` is also useful locally. See the
   `--version` (required), `--out` (default `dist/packages`),
   `--staging` (default `.vergil/package-staging`, wiped first). Needs
   `nfpm` on `PATH`.
+- `check-unpublished` — refuse (exit 1) when a release at `--version`
+  (required) would publish a package with the same name, full version,
+  architecture and format as one an earlier stable release of `--repo`
+  (default `$GITHUB_REPOSITORY`) already published. Read-only; needs
+  `gh`. This is the CD backstop for the same check `vrg-release` runs in
+  preflight. See
+  [the re-publish check](package-config.md#the-re-publish-check).
 - `install-test` — in a clean container, install one test cell's
   artifact, verify shipped systemd units, run the smoke command and
   shim checks under a sanitized environment, remove the package and
@@ -525,7 +532,7 @@ workflows; `matrix` is also useful locally. See the
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_package` |
-| Args | Subcommand (`matrix`, `build`, `install-test`, `index`) with the flags above |
+| Args | Subcommand (`matrix`, `build`, `check-unpublished`, `install-test`, `index`) with the flags above |
 | Preconditions | `vergil.toml` in the current directory (`index`: a `packages.toml`) |
 | Failure mode | `ERROR:` diagnostic on stderr for config, package, or missing-file errors |
 | Exit codes | 0 success, 1 error |

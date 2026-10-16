@@ -9,7 +9,8 @@ import pytest
 
 from vergil_tooling.bin import vrg_package
 from vergil_tooling.lib.package import PackageError
-from vergil_tooling.lib.package.index import site
+from vergil_tooling.lib.package.index import published, site
+from vergil_tooling.lib.package.index.collect import Identity
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -392,3 +393,73 @@ def test_install_test_requires_all_options(capsys: pytest.CaptureFixture[str]) -
         vrg_package.main(["install-test", "--cell", "c", "--artifacts", "a"])
     assert exc.value.code == 2
     assert "--report" in capsys.readouterr().err
+
+
+def _record_check_release(
+    monkeypatch: pytest.MonkeyPatch, result: list[Identity] | Exception
+) -> list[tuple[Any, ...]]:
+    calls: list[tuple[Any, ...]] = []
+
+    def fake(repo_root: Path, pkg: Any, product: str, version: str) -> list[Identity]:
+        calls.append((repo_root, pkg is not None, product, version))
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    monkeypatch.setattr(published, "check_release", fake)
+    return calls
+
+
+def _packaged_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "vergil.toml").write_text(_PKG_PY_TOML)
+    (tmp_path / "uv.lock").write_text("version = 1\n")
+    monkeypatch.chdir(tmp_path)
+
+
+def test_check_unpublished_lists_what_would_be_published(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _packaged_repo(tmp_path, monkeypatch)
+    calls = _record_check_release(monkeypatch, [Identity("deb", "p", "1.0.0-1", "amd64")])
+    assert vrg_package.main(["check-unpublished", "--version", "1.0.0", "--repo", "o/r"]) == 0
+    assert calls == [(tmp_path, True, "o/r", "1.0.0")]
+    assert "p 1.0.0-1 amd64 (deb): not yet published by o/r" in capsys.readouterr().out
+
+
+def test_check_unpublished_repo_defaults_from_github_repository(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _packaged_repo(tmp_path, monkeypatch)
+    monkeypatch.setenv("GITHUB_REPOSITORY", "o/from-env")
+    calls = _record_check_release(monkeypatch, [Identity("deb", "p", "1.0.0-1", "amd64")])
+    assert vrg_package.main(["check-unpublished", "--version", "1.0.0"]) == 0
+    assert calls[0][2] == "o/from-env"
+
+
+def test_check_unpublished_without_a_repo_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _packaged_repo(tmp_path, monkeypatch)
+    monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
+    calls = _record_check_release(monkeypatch, [])
+    assert vrg_package.main(["check-unpublished", "--version", "1.0.0"]) == 1
+    assert "pass --repo OWNER/NAME" in capsys.readouterr().err
+    assert calls == []
+
+
+def test_check_unpublished_conflict_exits_1_with_the_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _packaged_repo(tmp_path, monkeypatch)
+    _record_check_release(monkeypatch, PackageError("o/r@v1.0.1 would re-publish 1 package(s)"))
+    assert vrg_package.main(["check-unpublished", "--version", "1.0.1", "--repo", "o/r"]) == 1
+    assert "ERROR: o/r@v1.0.1 would re-publish" in capsys.readouterr().err
+
+
+def test_check_unpublished_without_package_section_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML_TEXT)
+    monkeypatch.chdir(tmp_path)
+    assert vrg_package.main(["check-unpublished", "--version", "1.0.0", "--repo", "o/r"]) == 0
+    assert "no [package] section; o/r v1.0.0 publishes no packages" in capsys.readouterr().out

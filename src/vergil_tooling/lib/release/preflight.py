@@ -15,6 +15,8 @@ from vergil_tooling.lib.managed_worktree import (
     adopt_worktree,
     create_worktree,
 )
+from vergil_tooling.lib.package import PackageError
+from vergil_tooling.lib.package.index import published
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 from vergil_tooling.lib.release.tracking import find_existing_tracking_issue
 from vergil_tooling.lib.update_deps.context import DEPS_LABEL
@@ -102,6 +104,7 @@ def preflight(
     if not resume:
         _check_version_not_tagged(release_version)
         _check_no_existing_tracking_issue(repo, release_version)
+        _check_packages_unpublished(repo, repo_root, release_version)
         deps_gate = _check_pending_deps(repo, allow=allow_pending_deps)
 
     branch = f"release/{release_version}"
@@ -483,6 +486,34 @@ def _check_version_not_tagged(ver: str) -> None:
                 f"The post-publish version bump may not have run."
             ),
         )
+
+
+def _check_packages_unpublished(repo: str, repo_root: Path, ver: str) -> None:
+    """Refuse a release that would re-publish an already published package (#3309).
+
+    Package builds are not byte-reproducible, so rebuilding a ``(name, full
+    version, arch, format)`` an earlier release published yields different
+    files at the same identity — which the shared package index refuses, failing
+    every repo's index publish until the duplicate assets are removed by hand.
+
+    This is the earliest point that can know: the full package versions follow
+    from ``[package]`` and the release version alone, and nothing is branched,
+    tagged or published yet. It runs before the dependency-update gate, which
+    may close PRs, so a refusal here changes nothing. ``vrg-package
+    check-unpublished`` runs the same check in the CD packaging path as the
+    backstop. Any failure to read the published state refuses; it never skips.
+    """
+    try:
+        cfg = config.read_config(repo_root)
+        identities = published.check_release(repo_root, cfg.package, repo, ver)
+    except (PackageError, config.ConfigError) as exc:
+        raise ReleaseError(
+            phase="preflight",
+            command=f"vrg-package check-unpublished --repo {repo} --version {ver}",
+            message=str(exc),
+        ) from exc
+    if identities:
+        print(f"Package check passed: {len(identities)} package(s) not yet published by {repo}")
 
 
 def _check_no_existing_tracking_issue(repo: str, ver: str) -> None:

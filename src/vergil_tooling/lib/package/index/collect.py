@@ -21,7 +21,7 @@ import json
 import re
 import subprocess
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from vergil_tooling.lib import retry
 from vergil_tooling.lib.package import PackageError
@@ -41,11 +41,29 @@ RELEASE_LIST_LIMIT = 1000
 _STABLE_TAG = re.compile(r"v\d+\.\d+\.\d+")
 _FMTS = ("deb", "rpm")
 _MANIFEST_ARCHES = ("amd64", "arm64", "all")
-_RPM_ARCH_TO_ARCH = {"x86_64": "amd64", "aarch64": "arm64", "noarch": "all"}
-_ARCH_TO_RPM_ARCH = {v: k for k, v in _RPM_ARCH_TO_ARCH.items()}
+RPM_ARCH_TO_ARCH = {"x86_64": "amd64", "aarch64": "arm64", "noarch": "all"}
+_ARCH_TO_RPM_ARCH = {v: k for k, v in RPM_ARCH_TO_ARCH.items()}
 _RPM_QF_FIELDS = 4
 
 Metadata = tuple[str, str, str, str, tuple[str, ...]]
+
+
+class Identity(NamedTuple):
+    """What makes two packages "the same package" to apt/dnf and to the index.
+
+    ``arch`` is in deb terms (``amd64``/``arm64``/``all``) for both formats.
+    Two collected artifacts with one identity must be byte-identical
+    (:mod:`.retention`); a build is not byte-reproducible, so a rebuild at a
+    published identity never is (:mod:`.published`).
+    """
+
+    fmt: str
+    name: str
+    full_version: str
+    arch: str
+
+    def __str__(self) -> str:
+        return f"{self.name} {self.full_version} {self.arch} ({self.fmt})"
 
 
 @dataclass(frozen=True)
@@ -65,9 +83,13 @@ class Artifact:
     def full_version(self) -> str:
         return f"{self.version}-{self.release}"
 
+    @property
+    def identity(self) -> Identity:
+        return Identity(self.fmt, self.name, self.full_version, self.arch)
+
 
 @dataclass(frozen=True)
-class _Entry:
+class ManifestEntry:
     """One ``packages-manifest.json`` artifact: the shape ``matrix.manifest`` emits."""
 
     fmt: str
@@ -162,6 +184,18 @@ def _asset_names(gh: Run, where: str, product: str, tag: str) -> list[str]:
     return [a["name"] for a in data["assets"]]
 
 
+def release_packages(product: str, tag: str, gh: Run = local_run) -> list[str] | None:
+    """The ``.deb``/``.rpm`` asset names of ``product@tag``; ``None`` without a manifest.
+
+    A release without ``packages-manifest.json`` is pre-packaging history the
+    index never collects; ``None`` says so, distinct from an empty list.
+    """
+    names = _asset_names(gh, f"{product}@{tag}", product, tag)
+    if MANIFEST not in names:
+        return None
+    return [n for n in names if n.endswith((".deb", ".rpm"))]
+
+
 def _download(gh: Run, where: str, product: str, tag: str, name: str, dest: Path) -> Path:
     _call(
         gh,
@@ -185,7 +219,7 @@ def _download(gh: Run, where: str, product: str, tag: str, name: str, dest: Path
     return path
 
 
-def _manifest_entries(path: Path, where: str) -> list[_Entry]:
+def _manifest_entries(path: Path, where: str) -> list[ManifestEntry]:
     bad = f"{where}: {MANIFEST} is malformed"
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -196,7 +230,7 @@ def _manifest_entries(path: Path, where: str) -> list[_Entry]:
     if not isinstance(arts, list) or not arts:
         msg = f"{bad}: expected a non-empty 'artifacts' list"
         raise PackageError(msg)
-    entries: list[_Entry] = []
+    entries: list[ManifestEntry] = []
     for raw in arts:
         if (
             not isinstance(raw, dict)
@@ -206,13 +240,15 @@ def _manifest_entries(path: Path, where: str) -> list[_Entry]:
         ):
             msg = f"{bad}: bad artifact entry {raw!r}"
             raise PackageError(msg)
-        entries.append(_Entry(raw["fmt"], raw["arch"], raw.get("suite")))
+        entries.append(ManifestEntry(raw["fmt"], raw["arch"], raw.get("suite")))
     return entries
 
 
-def _match(entries: list[_Entry], packages: list[str], where: str) -> list[tuple[_Entry, str]]:
+def _match(
+    entries: list[ManifestEntry], packages: list[str], where: str
+) -> list[tuple[ManifestEntry, str]]:
     """Pair each manifest entry with exactly one attached package; nothing left over."""
-    pairs: list[tuple[_Entry, str]] = []
+    pairs: list[tuple[ManifestEntry, str]] = []
     claimed: set[str] = set()
     for e in entries:
         hits = [p for p in packages if e.pattern().fullmatch(p)]
@@ -287,7 +323,7 @@ def rpm_metadata(path: Path, gh: Run = local_run) -> Metadata:
         msg = f"{path.name}: unexpected rpm header query output {lines!r}"
         raise PackageError(msg)
     name, version, release, rpm_arch = lines
-    arch = _RPM_ARCH_TO_ARCH.get(rpm_arch)
+    arch = RPM_ARCH_TO_ARCH.get(rpm_arch)
     if arch is None:
         msg = f"{path.name}: unsupported rpm arch {rpm_arch!r}"
         raise PackageError(msg)
@@ -310,14 +346,13 @@ def _sha256(path: Path) -> str:
 def _release_artifacts(product: str, tag: str, workdir: Path, gh: Run) -> list[Artifact] | None:
     """The artifacts of one release, or ``None`` when it has no manifest."""
     where = f"{product}@{tag}"
-    names = _asset_names(gh, where, product, tag)
-    if MANIFEST not in names:
+    packages = release_packages(product, tag, gh)
+    if packages is None:
         print(f"{where}: no {MANIFEST} (pre-packaging release) — skipped")
         return None
     dest = workdir / product / tag
     dest.mkdir(parents=True, exist_ok=True)
     entries = _manifest_entries(_download(gh, where, product, tag, MANIFEST, dest), where)
-    packages = [n for n in names if n.endswith((".deb", ".rpm"))]
     arts: list[Artifact] = []
     for entry, file in _match(entries, packages, where):
         path = _download(gh, where, product, tag, file, dest)
