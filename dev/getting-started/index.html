@@ -15435,6 +15435,10 @@ CI config, and troubleshooting, see
 <h2 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h2>
 <p>Install these on your host:</p>
 <ul>
+<li><strong>Homebrew</strong> (macOS) — with the Xcode Command Line Tools, which Homebrew
+  needs (<code>xcode-select --install</code>). Install the host tools below with it.</li>
+<li><strong>git</strong> — <code>brew install git</code> on macOS; <code>vrg-git</code>, <code>vrg-commit</code> and the PR
+  workflow run it on the host</li>
 <li><strong>Docker</strong> — the dev container engine</li>
 <li><strong>uv</strong> — Python package manager
   (<a href="https://docs.astral.sh/uv/getting-started/installation/">install</a>)</li>
@@ -15446,6 +15450,10 @@ CI config, and troubleshooting, see
 most <code>vrg-*</code> tools — lives inside the dev container. The host-side
 <code>vrg-*</code> tools (<code>vrg-container-run</code>, <code>vrg-commit</code>, <code>vrg-submit-pr</code>, etc.)
 are installed via <code>uv tool install</code>.</p>
+<p>This list is the minimum to get started. On macOS, once vergil-tooling is
+installed (step 1), <code>vrg-host status</code> is the complete host-dependency check: it
+reports every tool Vergil needs on the host, including the Command Line Tools,
+git and the agent-VM tools, and flags anything missing or out of date.</p>
 <h2 id="1-install-vergil-tooling-on-the-host">1. Install vergil-tooling on the host<a class="headerlink" href="#1-install-vergil-tooling-on-the-host" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>tool<span class="w"> </span>install<span class="w"> </span><span class="s1">'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.1'</span>
 </code></pre></div>

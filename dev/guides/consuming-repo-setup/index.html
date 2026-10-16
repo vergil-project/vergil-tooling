@@ -15661,8 +15661,11 @@ selection is handled automatically by <code>vrg-gh</code>. See the credential
 management design
 (<code>docs/specs/2026-05-14-credential-management-design.md</code>) for the
 full setup details.</p>
-<p><strong>Git and Bash</strong> — ship with macOS by default and are standard on
-Linux.</p>
+<p><strong>Git and Bash</strong> — standard on Linux. On macOS, install the Xcode
+Command Line Tools (<code>xcode-select --install</code>; Homebrew needs them)
+and then Homebrew's <code>git</code> and <code>bash</code> (<code>brew install git bash</code>).
+Apple's <code>/bin/bash</code> is 3.2 and is never updated, and the Homebrew
+copies are what <code>vrg-host</code> tracks and upgrades.</p>
 <p>You do <strong>not</strong> need to install language runtimes, linters, test
 frameworks, markdownlint, or shellcheck on the host. All of those
 live inside the container.</p>
