@@ -54,7 +54,7 @@ runtime = "3.14.8"            # exact vergil-python CPython patch to build again
 | `summary` | string | *(required)* | One-line package description |
 | `smoke` | string | *(required)* | Shell command the install test runs after installing the package |
 | `name` | string | see semantics | Package name. Required for `staged`; `python` defaults to `pyproject.toml` `[project].name` |
-| `version` | string | repo version | Explicit package version (`[0-9][0-9A-Za-z.+~]*`), for when it is not the repo's semver (e.g. `vergil-python`) |
+| `version` | string | repo version | Explicit package version (`[0-9][0-9A-Za-z.+~]*`), for when it is not the repo's semver (e.g. `vergil-python`). A release refuses a version an earlier release already published; see [the re-publish check](#the-re-publish-check) |
 | `noarch` | boolean | `false` | Architecture-independent: one build cell on amd64, emitting deb `all` / rpm `noarch` |
 | `exclude` | list of globs | `[]` | Targets to drop from the default set |
 | `targets` | list of globs | *(unset)* | Explicit subset replacing the default set |
@@ -317,6 +317,48 @@ After the release is tagged, `cd-release` dispatches to the org's `packages`
 repository with the org's GitHub App token (`APP_CLIENT_ID` /
 `APP_PRIVATE_KEY`, also reached through `inherit`), which indexes the new
 packages. A dispatch failure is deferred: it does not fail the release.
+
+### The re-publish check
+
+A package's identity is its name, full version (`<version>-<revision>`),
+architecture and format. Builds are not byte-reproducible, so a release
+that rebuilds an identity an earlier release already published ships
+different bytes under the same identity. The package index refuses that
+(the same identity must be byte-identical), and since the index is built
+from every release of every repo, the refusal fails every repo's index
+publish. The index refusal stays as the last line of defence, but two
+earlier checks stop such a release before it publishes:
+
+1. **`vrg-release` preflight**, on a fresh start, before anything is
+   tagged. This is the earliest point that knows the full versions: the
+   package name, `version` (or the release version) and the revision of
+   every artifact in the release manifest are all known without
+   building. See
+   [Releasing](../guides/releasing.md#the-package-re-publish-check).
+2. **`vrg-package check-unpublished`**, for the CD packaging path to run
+   before it builds, as a backstop for a release that did not go through
+   `vrg-release`:
+
+   ```bash
+   vrg-package check-unpublished --version "$(vrg-version show)"
+   ```
+
+   `--repo` defaults to `$GITHUB_REPOSITORY`. It needs `gh` with read
+   access to the repo's releases.
+
+Both compare the identities the release would publish against those
+attached to every earlier stable release that carries a
+`packages-manifest.json`, which are the releases the index collects. The
+published identities are read from the attached file names, which nFPM
+derives from the same metadata the index reads. The release's own tag is
+never counted as an earlier release. Any failure to read the releases
+refuses the release; the check never skips. A repo without `[package]`
+passes.
+
+To fix a refusal, bump `[package].version`. For example, use a new
+`+<date>` build suffix, or add a rebuild counter
+(`3.14.8+20261003` → `3.14.8+20261003.1`). The revision (`-1`) is set by
+the tooling and cannot be configured.
 
 ## Inspecting the matrix
 

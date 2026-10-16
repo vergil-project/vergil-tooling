@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 from vergil_tooling.lib.package import PackageError
 
 if TYPE_CHECKING:
-    from vergil_tooling.lib.package.index.collect import Artifact
+    from vergil_tooling.lib.package.index.collect import Artifact, Identity
 
 _STABLE_TAG = re.compile(r"v(\d+)\.(\d+)\.(\d+)")
 
@@ -41,14 +41,10 @@ def version_key(full_version: str) -> tuple[int, ...]:
     return tuple(int(x) for x in re.split(r"[.+~:-]", full_version) if x.isdigit())
 
 
-def _identity(a: Artifact) -> tuple[str, str, str, str]:
-    return a.fmt, a.name, a.full_version, a.arch
-
-
 def _check_conflicts(artifacts: list[Artifact]) -> None:
-    first: dict[tuple[str, str, str, str], Artifact] = {}
+    first: dict[Identity, Artifact] = {}
     for a in artifacts:
-        prev = first.setdefault(_identity(a), a)
+        prev = first.setdefault(a.identity, a)
         if prev.sha256 != a.sha256:
             msg = (
                 f"{a.name} {a.full_version} {a.arch} ({a.fmt}) differs between "
@@ -99,9 +95,9 @@ def select(artifacts: list[Artifact], keep: int, lines: int) -> list[Artifact]:
     _check_conflicts(artifacts)
     kept = _close(artifacts, _by_lines(artifacts, keep, lines))
     out: list[Artifact] = []
-    seen: set[tuple[str, str, str, str]] = set()
+    seen: set[Identity] = set()
     for i, a in enumerate(artifacts):
-        if i in kept and _identity(a) not in seen:
-            seen.add(_identity(a))
+        if i in kept and a.identity not in seen:
+            seen.add(a.identity)
             out.append(a)
     return out

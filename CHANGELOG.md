@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.246] - 2026-10-16
+
+### Chores
+
+- uv lock --upgrade
+
+### Documentation
+
+- describe /usr/bin/git as the xcode-select shim, not a CLT shim (#3310)
+
+### Features
+
+- refuse to release a package version an earlier release already published (#3311)
+
 ## [2.1.245] - 2026-10-16
 
 ### Bug fixes

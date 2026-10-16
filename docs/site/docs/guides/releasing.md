@@ -102,7 +102,7 @@ issue and ticks its box in the issue's stage checklist.
 | Stage | Mode | What it does |
 |---|---|---|
 | `audit` | fail-fast | Runs `vrg-github-repo-config audit` on the repo. `--skip-audit` skips it |
-| `preflight` | fail-fast | Checks the host prerequisites, `gh` auth, `vergil.toml`, and that the root checkout is a clean `develop` matching `origin/develop`. On a fresh start it also checks the version is not tagged, that no tracking issue exists for it, and runs the [dependency-update gate](#the-dependency-update-gate). Creates the `release/<version>` managed worktree |
+| `preflight` | fail-fast | Checks the host prerequisites, `gh` auth, `vergil.toml`, and that the root checkout is a clean `develop` matching `origin/develop`. On a fresh start it also checks the version is not tagged, that no tracking issue exists for it, runs the [package re-publish check](#the-package-re-publish-check), and runs the [dependency-update gate](#the-dependency-update-gate). Creates the `release/<version>` managed worktree |
 | `prepare` | fail-fast | Creates the `release: <version>` tracking issue, generates the changelog and release notes, and opens the release PR to `main` |
 | `merge-release` | fail-fast | Waits for the release PR's checks and merges it |
 | `confirm-main` | fail-fast | Watches CD on `main`. The release job must succeed; other failed publish jobs are recorded as deferred publish failures |
@@ -311,6 +311,37 @@ and the `prepare` comment lists the bypassed PRs.
 If preflight cannot list the PRs or look up a fix task, it refuses to
 release rather than guess. Every fix task is looked up before any PR is
 closed, so a failed lookup changes nothing.
+
+### The package re-publish check
+
+For a repo with `[package]`, a fresh start (not `--resume`) refuses to
+release when a package it would publish has the same name, full
+version, architecture and format as a package an earlier stable
+release of the repo already published. Package builds are not
+byte-reproducible, so the rebuilt file would differ from the published
+one. The shared package index refuses that, and because the index is
+built from every release of every repo, the refusal would fail every
+repo's index publish until the duplicate assets were removed by hand.
+
+The check runs in `preflight`, before anything is branched, tagged or
+published. That is the earliest point that knows the full package
+versions: they follow from `[package]` (its `version`, or the release
+version when unset) and the build matrix, without building anything.
+It runs before the dependency-update gate, so a refusal changes
+nothing. The refusal names each conflicting package and the release
+that first published it:
+
+```text
+vergil-project/vergil-python@v1.0.1 would re-publish 4 package(s) at a version an earlier release already published:
+  - vergil-python3.14.8 3.14.8+20261003-1 amd64 (deb): already published by vergil-project/vergil-python@v1.0.0
+  ...
+```
+
+To fix it, bump `[package].version` in `vergil.toml`, for example to a
+new `+<date>` build suffix. If the check cannot read the repo's
+releases, it refuses rather than skipping. CD runs the same check as a
+backstop; see the
+[package reference](../reference/package-config.md#the-re-publish-check).
 
 ## Documentation publication
 
