@@ -1,0 +1,24 @@
+{
+  "formulae": [],
+  "casks": [
+    {
+      "token": "docker",
+      "full_token": "docker",
+      "old_tokens": [],
+      "tap": "homebrew/cask",
+      "name": [
+        "Docker Desktop",
+        "Docker Community Edition",
+        "Docker CE"
+      ],
+      "desc": "App to build and share containerised applications and microservices",
+      "homepage": "https://www.docker.com/products/docker-desktop",
+      "version": "4.34.2,167172",
+      "installed": null,
+      "outdated": false,
+      "auto_updates": true,
+      "deprecated": false,
+      "disabled": false
+    }
+  ]
+}

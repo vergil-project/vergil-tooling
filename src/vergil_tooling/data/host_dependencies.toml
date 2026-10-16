@@ -4,14 +4,49 @@
 # from the installed vergil_tooling.data package, and any `custom` probe
 # commands it carries are trusted, tooling-authored content.
 #
-# Minimal seed; the authoritative curation is plan Task 7.
+# Scope (spec §4): a tool earns an entry only if Vergil development needs it
+# on the macOS host itself. The list was curated (plan Task 7, spec §11) by
+# cross-checking what vergil-tooling actually invokes host-side: vrg-container-run
+# (docker), vrg-vm (limactl, gcloud, tofu), vrg-release (git-cliff), vrg-gh and
+# the PR workflow (gh), and the documented host prerequisites (Docker, uv, gh).
+#
+# Deliberately OUT, with the reason:
+#   - shellcheck, hadolint, yamllint, actionlint, markdownlint: run only by
+#     vrg-validate inside the dev container (vrg-container-run); the host never
+#     invokes them, and the setup guides say not to install them on the host.
+#   - git, bash, ssh, ssh-keygen, sysctl, PlistBuddy: part of macOS / the
+#     Command Line Tools, updated with the OS (see the `macos` entry).
+#   - jq: used only by the hook-guard shim's fallback when vergil-tooling is
+#     absent; macOS ships /usr/bin/jq.
+#   - az (Azure CLI): needed only by `vrg-vm --provider azure`, an optional
+#     alternate cloud provider; gcp is the provider in use. Add an entry if
+#     Azure becomes a working provider on this host.
+#   - nfpm, npm, language toolchains: container / CI only (vrg-package,
+#     vrg-validate), never host-side.
+#   - Homebrew itself: the install mechanism for the brew-formula entries, not a
+#     Vergil dependency; it keeps its own metadata fresh via auto-update.
+#   - Editors, Claude Code, voice-to-text and other personal tools (spec §4).
+#
+# Method assumptions: each entry's `method` reflects the documented install
+# path (setup guides, specs). A tool installed some other way on a given host
+# reads as `missing` for brew/uv methods, never as a false `current`.
 
+# uv: the setup guides install it with Astral's standalone installer
+# (curl … | sh), not Homebrew, so its lifecycle is `uv self update` and it is not
+# a `uv tool`. The latest probe reads the newest astral-sh/uv GitHub release via
+# gh (already a host dependency). On a Homebrew-installed uv, `uv self update`
+# refuses, which vrg-host reports as a failed upgrade rather than hiding.
 [[dependency]]
 name = "uv"
-why = "Python build/runtime tool manager; installs the vrg-* host tools."
-method = "uv-tool"
+why = "Python tool manager; installs and upgrades the vrg-* host tools (vergil-tooling)."
+method = "custom"
 upgrade = "auto"
 latest = "probe"
+
+[dependency.probes]
+installed_version = ["uv", "--version"]
+latest_version = ["gh", "api", "repos/astral-sh/uv/releases/latest", "--jq", ".tag_name"]
+upgrade = ["uv", "self", "update"]
 
 [[dependency]]
 name = "gh"
@@ -54,4 +89,95 @@ probe = [
 remediation = [
   "bash", "-c",
   "py=\"$(gcloud info --format='value(basic.python_location)')\" && [ -n \"$py\" ] && exec \"$py\" -m pip install --disable-pip-version-check numpy",
+]
+
+# Lima: vrg-vm drives local agent VMs through limactl. Upgrading the formula
+# under running VMs is safe for the VMs themselves; a running instance keeps
+# its old host agent until it is next restarted.
+[[dependency]]
+name = "lima"
+why = "Lima (limactl) runs the local agent VMs that vrg-vm creates and enters."
+method = "brew-formula"
+upgrade = "auto"
+latest = "probe"
+
+# Docker: vrg-container-run / vrg-container-test exec the `docker` CLI for
+# every validation run. The installed probe reads the CLI version
+# (`docker --version`), which needs no running daemon and does not care which
+# engine backs it. Today that engine is Docker Desktop, a GUI app with its own
+# in-app updater and no programmatic latest feed, so the entry is `manual` and
+# `unmanaged`: status reports the installed CLI version as info and upgrade
+# leaves it to the human. This is an artifact of the Docker Desktop choice,
+# not of Docker: moving to a headless/OSS engine (Colima, podman, or
+# docker-engine over the Lima already installed) would make this an `auto`
+# brew-formula entry. That migration is out of scope here and is a designated
+# topic for the epic's follow-on brainstorm (vergil-project/.github#169).
+[[dependency]]
+name = "docker"
+why = "Container engine CLI that vrg-container-run execs for every dev-container run (Docker Desktop today)."
+method = "custom"
+upgrade = "manual"
+latest = "unmanaged"
+
+[dependency.probes]
+installed_version = ["docker", "--version"]
+
+# OpenTofu: vrg-vm's cloud path provisions VMs with `tofu` and its preflight
+# requires >= 1.8.0. The Homebrew formula is `opentofu`; its binary is `tofu`.
+[[dependency]]
+name = "opentofu"
+why = "OpenTofu (tofu) provisions the cloud agent VMs for vrg-vm; preflight requires >= 1.8.0."
+method = "brew-formula"
+upgrade = "auto"
+latest = "probe"
+
+[[dependency]]
+name = "git-cliff"
+why = "Changelog generator that vrg-release requires on the host (release preflight)."
+method = "brew-formula"
+upgrade = "auto"
+latest = "probe"
+
+# vergil-tooling (the vrg-* tools): installed host-side with
+# `uv tool install 'vergil-tooling @ git+…@v<line>'` and upgraded within the
+# pinned release line with `uv tool upgrade vergil-tooling` (the documented
+# host upgrade). Its latest is `unmanaged`: it is git-sourced, so uv's
+# `--outdated` feed (a package index) cannot see new releases, and reading
+# "not listed as outdated" as current would be a silent false `current`.
+[[dependency]]
+name = "vergil-tooling"
+why = "The vrg-* host tools themselves (vrg-container-run, vrg-commit, vrg-vm, vrg-host, …)."
+method = "uv-tool"
+upgrade = "auto"
+latest = "unmanaged"
+
+# macOS itself: reported, never applied (spec §4, §6). The latest probe parses
+# `softwareupdate --list` (unprivileged, read-only): the newest listed macOS
+# update's Version, or — when Software Update answers but lists no macOS
+# update — the installed version. Any other output fails the probe, so it
+# reports latest-unknown instead of a false `current`.
+[[dependency]]
+name = "macos"
+why = "The host OS; a pending macOS update is surfaced so it is applied deliberately, never by vrg-host."
+method = "custom"
+upgrade = "manual"
+latest = "probe"
+
+[dependency.probes]
+installed_version = ["sw_vers", "-productVersion"]
+latest_version = [
+  "bash", "-c",
+  '''
+out="$(softwareupdate --list 2>&1)" || exit 1
+latest="$(printf '%s\n' "$out" \
+  | sed -nE 's/.*Title: macOS[^,]*, Version: ([0-9][0-9.]*),.*/\1/p' \
+  | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1)"
+if [ -n "$latest" ]; then
+  printf '%s\n' "$latest"
+elif printf '%s\n' "$out" | grep -qE 'No new software available|Software Update found the following'; then
+  sw_vers -productVersion
+else
+  exit 1
+fi
+''',
 ]

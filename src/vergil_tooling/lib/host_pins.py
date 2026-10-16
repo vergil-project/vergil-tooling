@@ -47,14 +47,13 @@ import tomllib
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from vergil_tooling.lib import host_deps
+from vergil_tooling.lib import host_deps, host_versions
 from vergil_tooling.lib.host_deps import HostPin, ManifestError
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.host_deps import HostDependency
 
 _PIN_COMPONENT = re.compile(r"[0-9A-Za-z]+")
-_NUMERIC_VERSION = re.compile(r"v?([0-9]+(?:\.[0-9]+)*)")
 
 # Field order for the written file (stable, human-readable diffs).
 _FIELD_ORDER = (
@@ -70,10 +69,6 @@ _FIELD_ORDER = (
 
 class PinsError(ManifestError):
     """The host pins file is malformed or inconsistent with the manifest."""
-
-
-class IncomparableVersionError(ValueError):
-    """Two versions cannot be ordered by the narrow numeric comparator."""
 
 
 def default_pins_path() -> Path:
@@ -110,41 +105,18 @@ def parse_constraint(constraint: str) -> list[str]:
 # -- #155 re-evaluation trigger -------------------------------------------------------
 
 
-def _numeric_key(version: str) -> tuple[int, ...]:
-    match = _NUMERIC_VERSION.fullmatch(version.strip())
-    if match is None:
-        raise IncomparableVersionError(
-            f"cannot compare version {version!r}: only dotted numeric versions "
-            "(e.g. '2.41.0') are comparable"
-        )
-    return tuple(int(part) for part in match.group(1).split("."))
-
-
-def compare_versions(left: str, right: str) -> int:
-    """Return -1/0/1 as *left* is older than/equal to/newer than *right*.
-
-    Deliberately narrow: only dotted numeric versions (optional leading ``v``)
-    are ordered, with missing trailing components treated as ``0`` (``2.0`` ==
-    ``2.0.0``). Anything else raises :class:`IncomparableVersionError` rather
-    than being guessed at; the general per-tool comparator is plan Task 7's.
-    """
-    a, b = _numeric_key(left), _numeric_key(right)
-    width = max(len(a), len(b))
-    a += (0,) * (width - len(a))
-    b += (0,) * (width - len(b))
-    return (a > b) - (a < b)
-
-
 def is_reevaluation_due(pin: HostPin, current_leading: str) -> bool:
     """Return whether the leading edge has moved past the pin's inducing release.
 
     This is the #155 trigger: a pin is valid only while its ``inducing_release``
-    is the leading edge.
+    is the leading edge. Versions are ordered by the single host comparator,
+    :func:`vergil_tooling.lib.host_versions.compare`.
 
     Raises:
-        IncomparableVersionError: either version is not a dotted numeric version.
+        host_versions.IncomparableVersionError: either version is outside the
+            comparable grammar; the trigger is never guessed at.
     """
-    return compare_versions(current_leading, pin.inducing_release) > 0
+    return host_versions.compare(current_leading, pin.inducing_release) > 0
 
 
 # -- pin creation ---------------------------------------------------------------------

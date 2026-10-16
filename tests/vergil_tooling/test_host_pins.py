@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from vergil_tooling.lib import host_deps, host_pins
+from vergil_tooling.lib import host_deps, host_pins, host_versions
 from vergil_tooling.lib.host_deps import HostPin, ManifestError
 
 if TYPE_CHECKING:
@@ -69,23 +69,8 @@ def test_parse_constraint_refuses_unsupported(constraint: str) -> None:
 # -- #155 trigger ------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("left", "right", "expected"),
-    [
-        ("2.0", "2.0.0", 0),
-        ("v2.1", "2.0", 1),
-        ("1.9.9", "2.0", -1),
-        ("2.10", "2.9", 1),
-    ],
-)
-def test_compare_versions(left: str, right: str, expected: int) -> None:
-    assert host_pins.compare_versions(left, right) == expected
-
-
-@pytest.mark.parametrize(("left", "right"), [("2.0-beta", "2.0"), ("2.0", "2.0_1"), ("", "1")])
-def test_compare_versions_refuses_non_numeric(left: str, right: str) -> None:
-    with pytest.raises(host_pins.IncomparableVersionError, match="cannot compare version"):
-        host_pins.compare_versions(left, right)
+# Version ordering itself is tested in test_host_versions.py: the trigger uses
+# the single host comparator, host_versions.compare.
 
 
 def test_reevaluation_due_when_leading_past_inducing() -> None:
@@ -95,8 +80,15 @@ def test_reevaluation_due_when_leading_past_inducing() -> None:
     assert host_pins.is_reevaluation_due(pin, current_leading="1.9") is False
 
 
+def test_reevaluation_uses_the_host_comparator() -> None:
+    # A Homebrew revision rebuild of the inducing release is past it.
+    pin = _pin(constraint="1.x", inducing_release="2.0")
+    assert host_pins.is_reevaluation_due(pin, current_leading="2.0_1") is True
+    assert host_pins.is_reevaluation_due(pin, current_leading="2.0.0") is False
+
+
 def test_reevaluation_incomparable_raises() -> None:
-    with pytest.raises(host_pins.IncomparableVersionError):
+    with pytest.raises(host_versions.IncomparableVersionError):
         host_pins.is_reevaluation_due(_pin(), current_leading="nightly")
 
 

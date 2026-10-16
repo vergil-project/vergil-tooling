@@ -1,0 +1,41 @@
+{
+  "formulae": [
+    {
+      "name": "gh",
+      "full_name": "gh",
+      "tap": "homebrew/core",
+      "oldnames": [],
+      "aliases": [],
+      "versioned_formulae": [],
+      "desc": "GitHub command-line tool",
+      "license": "MIT",
+      "homepage": "https://cli.github.com/",
+      "versions": {
+        "stable": "2.62.0",
+        "head": "HEAD",
+        "bottle": true
+      },
+      "revision": 0,
+      "version_scheme": 0,
+      "keg_only": false,
+      "installed": [
+        {
+          "version": "2.61.0",
+          "used_options": [],
+          "built_as_bottle": true,
+          "poured_from_bottle": true,
+          "time": 1729000000,
+          "runtime_dependencies": [],
+          "installed_as_dependency": false,
+          "installed_on_request": true
+        }
+      ],
+      "linked_keg": "2.61.0",
+      "pinned": false,
+      "outdated": true,
+      "deprecated": false,
+      "disabled": false
+    }
+  ],
+  "casks": []
+}

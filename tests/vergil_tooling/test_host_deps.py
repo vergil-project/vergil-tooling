@@ -40,14 +40,55 @@ def _load_error(monkeypatch: pytest.MonkeyPatch, text: str, match: str) -> None:
 # -- packaged manifest ---------------------------------------------------------
 
 
-def test_load_manifest_parses_seed_entries() -> None:
+def test_load_manifest_parses_curated_entries() -> None:
+    """The curated working set (plan Task 7, spec §4/§11): name → (method, upgrade, latest)."""
     deps = host_deps.load_manifest()
-    by_name = {d.name: d for d in deps}
-    assert "uv" in by_name
-    assert by_name["uv"].method == "uv-tool"
-    assert by_name["uv"].upgrade == "auto"
-    assert by_name["gh"].method == "brew-formula"
+    by_name = {d.name: (d.method, d.upgrade, d.latest) for d in deps}
+    assert by_name == {
+        "uv": ("custom", "auto", "probe"),
+        "gh": ("brew-formula", "auto", "probe"),
+        "gcloud": ("custom", "auto", "probe"),
+        "lima": ("brew-formula", "auto", "probe"),
+        "docker": ("custom", "manual", "unmanaged"),
+        "opentofu": ("brew-formula", "auto", "probe"),
+        "git-cliff": ("brew-formula", "auto", "probe"),
+        "vergil-tooling": ("uv-tool", "auto", "unmanaged"),
+        "macos": ("custom", "manual", "probe"),
+    }
     assert all(d.why for d in deps)
+    assert all(d.pin is None for d in deps)  # pins live in the host-local file
+
+
+@pytest.mark.parametrize(
+    "excluded",
+    ["shellcheck", "hadolint", "yamllint", "actionlint", "markdownlint", "az", "jq", "git"],
+)
+def test_container_only_and_optional_tools_are_out_of_scope(excluded: str) -> None:
+    # Spec §4: linters run only inside the dev container; az is an optional
+    # provider; git/jq ship with macOS. None earns a host manifest entry.
+    assert excluded not in {d.name for d in host_deps.load_manifest()}
+
+
+def test_custom_entries_declare_the_probes_they_need() -> None:
+    for dep in host_deps.load_manifest():
+        if dep.method != "custom":
+            continue
+        assert "installed_version" in dep.probes, dep.name
+        assert ("latest_version" in dep.probes) == (dep.latest == "probe"), dep.name
+        assert ("upgrade" in dep.probes) == (dep.upgrade == "auto"), dep.name
+
+
+def test_no_manifest_command_escalates_privilege() -> None:
+    """Spec §10: every manifest argv runs unprivileged."""
+    for dep in host_deps.load_manifest():
+        argvs = list(dep.probes.values())
+        for check in dep.checks:
+            argvs.append(check.probe)
+            if check.remediation is not None:
+                argvs.append(check.remediation)
+        for argv in argvs:
+            assert argv[0] not in {"sudo", "doas", "su", "pkexec"}, dep.name
+            assert "sudo " not in " ".join(argv), dep.name
 
 
 def test_manifest_read_only_from_package_not_cwd(
