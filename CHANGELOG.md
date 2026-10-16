@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.242] - 2026-10-16
+
+### Bug fixes
+
+- scope vrg-docs-stage, vrg-ci-evidence and vrg-github-repo-config tokens to their --repo owner (#3228)
+- read the --repo target's vergil.toml at the release PR head in harvest (#3229)
+
+### Documentation
+
+- document the Actions, Checks and Commit statuses read grants on both agent Apps (#3227)
+- document vrg-host and the host dependency pinning workflow (#3262)
+
+### Features
+
+- add host-dependency manifest schema and TOML loader (#3243)
+- add install-method handler registry (#3244)
+- add vrg-host status with two-axis classification (#3246)
+- add vrg-host pin/unpin with #155 lifecycle surfacing (#3247)
+- add auxiliary-check remediation and gcloud numpy check (#3248)
+- add vrg-host upgrade (auto/manual, pin-respecting, no escalation) (#3249)
+- enumerate and curate the host-dependency manifest (#3250)
+- add held-back report, [dependency-update] config and the repo-hook updater (#3263)
+- keep failed dependency updates open as labelled PRs with a fix task (#3265)
+- report direct Python dependencies held back by their declared bounds (#3266)
+- normalize action.yml refs and bump the vergil-python runtime from every serving index (#3267)
+- add the images updater: bump exact tags within their major, report newer series (#3268)
+- run the dependency update as the last vrg-release stage (#3270)
+- fold live macOS captures into the probe fixtures and correct uv/Docker install methods (#3271)
+- gate vrg-release on open dependency-update PRs, with --allow-pending-deps (#3272)
+
+### Refactoring
+
+- derive the vergil series for new-repo templates from the installed tooling (#3264)
+
 ## [2.1.241] - 2026-10-14
 
 ### Bug fixes
