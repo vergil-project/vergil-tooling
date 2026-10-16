@@ -238,7 +238,8 @@ def test_pin_records_in_pins_file_and_status_shows_debt(
 
     monkeypatch.setattr(vrg_host.host_methods, "installed_version", lambda d: "2.40.1")
     monkeypatch.setattr(vrg_host.host_methods, "latest_version", lambda d: "2.42.0")
-    monkeypatch.setattr(vrg_host.host_methods, "_run", lambda cmd: None)
+    # Only auxiliary-check probes reach _run here; satisfy them (gcloud's numpy check).
+    monkeypatch.setattr(vrg_host.host_methods, "_run", lambda cmd: "")
     assert vrg_host.main(["status"]) == 1  # gh pinned but re-evaluation due -> WARN
     out = capsys.readouterr().out
     assert "pinned (tracked debt)" in out
@@ -302,3 +303,187 @@ def test_help_exits_zero(capsys: pytest.CaptureFixture[str]) -> None:
         vrg_host.main(["--help"])
     assert exc.value.code == 0
     assert "status" in capsys.readouterr().out
+
+
+# -- auxiliary-check remediation (spec §7.4; absorbs vergil-project/.github#166) --
+
+
+def test_gcloud_entry_has_numpy_check() -> None:
+    from vergil_tooling.lib import host_deps
+
+    gcloud = {d.name: d for d in host_deps.load_manifest()}["gcloud"]
+    assert gcloud.method == "custom"
+    assert set(gcloud.probes) == {"installed_version", "latest_version", "upgrade"}
+    # Installed and latest come from the same (core component) version scheme.
+    assert "value(core)" in " ".join(gcloud.probes["installed_version"])
+    assert "--filter=id=core" in gcloud.probes["latest_version"]
+    (check,) = gcloud.checks
+    assert check.name == "numpy-in-interpreter"
+    assert "basic.python_location" in check.probe[-1]
+    assert "import numpy" in check.probe[-1]
+    assert check.remediation is not None
+    assert "-m pip install" in check.remediation[-1] and "numpy" in check.remediation[-1]
+    assert not any(part in {"sudo", "doas", "su", "pkexec"} for part in check.remediation)
+
+
+class _Host:
+    """A stateful fake of the ``_run`` seam: probes pass once their fix has run."""
+
+    def __init__(self, satisfied: set[str], fixes: dict[str, str | None]) -> None:
+        self.satisfied = set(satisfied)
+        self.fixes = fixes  # remediation cmd -> probe it satisfies (None = fix fails)
+        self.calls: list[list[str]] = []
+
+    def run(self, cmd: list[str]) -> str | None:
+        self.calls.append(cmd)
+        (word,) = cmd
+        if word in self.fixes:
+            probe = self.fixes[word]
+            if probe is None:
+                return None
+            self.satisfied.add(probe)
+            return "fixed"
+        return "" if word in self.satisfied else None
+
+
+def _checked_dep(name: str = "gc") -> HostDependency:
+    return _dep(
+        name=name,
+        method="custom",
+        probes={"installed_version": ["installed"], "latest_version": ["installed"]},
+        checks=(
+            AuxCheck("good", ["probe-good"], ["fix-good"]),
+            AuxCheck("bad", ["probe-bad"], ["fix-bad"]),
+            AuxCheck("manual", ["probe-manual"], None),
+        ),
+    )
+
+
+def test_remediate_checks_runs_only_unsatisfied(monkeypatch: pytest.MonkeyPatch) -> None:
+    host = _Host({"probe-good"}, {"fix-good": "probe-good", "fix-bad": "probe-bad"})
+    monkeypatch.setattr(vrg_host.host_methods, "_run", host.run)
+    assert vrg_host.remediate_checks(_checked_dep()) == ["bad"]
+    assert ["fix-good"] not in host.calls
+    assert host.calls == [
+        ["probe-good"],
+        ["probe-bad"],
+        ["fix-bad"],
+        ["probe-bad"],
+        ["probe-manual"],
+    ]
+
+
+def test_remediate_checks_nothing_to_do(monkeypatch: pytest.MonkeyPatch) -> None:
+    host = _Host({"probe-good", "probe-bad", "probe-manual"}, {})
+    monkeypatch.setattr(vrg_host.host_methods, "_run", host.run)
+    assert vrg_host.remediate_checks(_checked_dep()) == []
+
+
+def test_remediate_checks_failed_command_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    host = _Host({"probe-good"}, {"fix-bad": None})
+    monkeypatch.setattr(vrg_host.host_methods, "_run", host.run)
+    with pytest.raises(vrg_host.RemediationFailedError, match="remediation for check 'bad' failed"):
+        vrg_host.remediate_checks(_checked_dep())
+
+
+def test_remediate_checks_still_unsatisfied_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The fix "succeeds" but satisfies some other probe: never reported as fixed.
+    host = _Host({"probe-good"}, {"fix-bad": "elsewhere"})
+    monkeypatch.setattr(vrg_host.host_methods, "_run", host.run)
+    with pytest.raises(vrg_host.RemediationFailedError, match="still unsatisfied"):
+        vrg_host.remediate_checks(_checked_dep())
+
+
+def test_remediate_checks_refuses_privilege_escalation(monkeypatch: pytest.MonkeyPatch) -> None:
+    import subprocess
+
+    def unsatisfied(cmd: list[str], **_kw: Any) -> Any:
+        raise subprocess.CalledProcessError(1, cmd)
+
+    # Real _run (so the privilege guard is exercised), with a failing probe.
+    monkeypatch.setattr(hm.subprocess, "run", unsatisfied)
+    dep = _dep(checks=(AuxCheck("root", ["probe"], ["sudo", "fix"]),))
+    with pytest.raises(ValueError, match="refusing to escalate privilege"):
+        vrg_host.remediate_checks(dep)
+
+
+def test_status_fix_remediates_then_reports(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    dep = _dep(
+        name="gc",
+        method="custom",
+        probes={"installed_version": ["installed"], "latest_version": ["installed"]},
+        checks=(AuxCheck("numpy", ["probe-numpy"], ["fix-numpy"]),),
+    )
+    plain = _dep(name="gh")
+    monkeypatch.setattr(vrg_host.host_deps, "load_manifest", lambda: (dep, plain))
+    host = _Host(set(), {"fix-numpy": "probe-numpy"})
+    monkeypatch.setattr(vrg_host.host_methods, "_run", host.run)
+    monkeypatch.setattr(
+        vrg_host.host_methods,
+        "installed_version",
+        lambda d: "1.0" if d.name == "gc" else "2.0",
+    )
+    monkeypatch.setattr(vrg_host.host_methods, "latest_version", lambda d: "2.0")
+    assert vrg_host.main(["status", "--fix"]) == 1  # gc behind 1.0 -> 2.0: WARN only
+    out = capsys.readouterr().out
+    assert "fixed: gc check numpy" in out
+    assert "check numpy: satisfied" in out
+
+
+def test_status_fix_skips_missing_dependency(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    dep = _checked_dep()
+    _stub(monkeypatch, (dep,), {"gc": None}, {"gc": "1.0"})
+    host = _Host(set(), {"fix-good": "probe-good", "fix-bad": "probe-bad"})
+    monkeypatch.setattr(vrg_host.host_methods, "_run", host.run)
+    assert vrg_host.main(["status", "--fix"]) == 2
+    assert not any(cmd[0].startswith("fix-") for cmd in host.calls)
+    captured = capsys.readouterr()
+    assert "fixed:" not in captured.out
+    assert "missing" in captured.out
+    assert captured.err == ""
+
+
+def test_status_fix_failure_reported_and_forces_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    dep = _dep(name="gc", checks=(AuxCheck("numpy", ["probe-numpy"], ["fix-numpy"]),))
+    _stub(monkeypatch, (dep,), {"gc": "1.0"}, {"gc": "1.0"})
+    # The remediation command fails, yet the check happens to pass on the
+    # status re-probe: the failed fix must still not be reported as OK.
+    calls = {"probe-numpy": 0}
+
+    def flaky(cmd: list[str]) -> str | None:
+        if cmd == ["fix-numpy"]:
+            return None
+        calls["probe-numpy"] += 1
+        return "" if calls["probe-numpy"] > 1 else None
+
+    monkeypatch.setattr(vrg_host.host_methods, "_run", flaky)
+    assert vrg_host.main(["status", "--fix"]) == 2
+    captured = capsys.readouterr()
+    assert "vrg-host: fix gc: RemediationFailedError:" in captured.err
+    assert "[OK   ] gc" in captured.out
+
+
+def test_status_fix_probe_error_reported(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    dep = _dep(name="gc", checks=(AuxCheck("numpy", ["probe-numpy"], ["fix-numpy"]),))
+    _stub(monkeypatch, (dep,), {"gc": hm.ProbeError("garbled")}, {"gc": "1.0"})
+    monkeypatch.setattr(vrg_host.host_methods, "_run", lambda cmd: None)
+    assert vrg_host.main(["status", "--fix"]) == 2
+    captured = capsys.readouterr()
+    assert "vrg-host: fix gc: ProbeError: garbled" in captured.err
+
+
+def test_status_without_fix_never_remediates(monkeypatch: pytest.MonkeyPatch) -> None:
+    dep = _checked_dep()
+    _stub(monkeypatch, (dep,), {"gc": "1.0"}, {"gc": "1.0"})
+    host = _Host(set(), {"fix-good": "probe-good", "fix-bad": "probe-bad"})
+    monkeypatch.setattr(vrg_host.host_methods, "_run", host.run)
+    assert vrg_host.main(["status"]) == 2
+    assert not any(cmd[0].startswith("fix-") for cmd in host.calls)

@@ -19,3 +19,39 @@ why = "GitHub CLI; underpins vrg-gh and all PR/issue workflows."
 method = "brew-formula"
 upgrade = "auto"
 latest = "probe"
+
+# gcloud's installed and latest versions are both read from its `core`
+# component, so the two compare in the same (date-stamped) version scheme;
+# the SDK release number `gcloud version` prints first is a different scheme.
+#
+# Check numpy-in-interpreter (absorbs vergil-project/.github#166): gcloud's
+# IAP tunnel imports numpy from the interpreter gcloud itself runs on (on a
+# Homebrew install, its managed virtualenv). Without it every IAP session
+# prints an "install NumPy" warning and the tunnel is slower. The remediation
+# pip-installs numpy into that interpreter, unprivileged; an externally
+# managed (PEP 668) interpreter makes pip refuse, which vrg-host reports as a
+# failed remediation rather than working around it.
+[[dependency]]
+name = "gcloud"
+why = "Google Cloud CLI; IAP tunnel for vrg-vm cloud sessions."
+method = "custom"
+upgrade = "auto"
+latest = "probe"
+
+[dependency.probes]
+installed_version = ["gcloud", "version", "--format=value(core)"]
+latest_version = [
+  "gcloud", "components", "list", "--filter=id=core", "--format=value(latest_version_string)",
+]
+upgrade = ["gcloud", "components", "update", "--quiet"]
+
+[[dependency.check]]
+name = "numpy-in-interpreter"
+probe = [
+  "bash", "-c",
+  "py=\"$(gcloud info --format='value(basic.python_location)')\" && [ -n \"$py\" ] && exec \"$py\" -c 'import numpy'",
+]
+remediation = [
+  "bash", "-c",
+  "py=\"$(gcloud info --format='value(basic.python_location)')\" && [ -n \"$py\" ] && exec \"$py\" -m pip install --disable-pip-version-check numpy",
+]
