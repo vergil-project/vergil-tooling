@@ -40,7 +40,8 @@ Docker Engine on Linux works too.
 
 **uv** — Python package manager. Used to install `vergil-tooling`
 on the host and (inside the container) to manage Python
-dependencies. Install via the
+dependencies. On macOS, install it with Homebrew (`brew install uv`),
+which is how `vrg-host` reads and upgrades it. On Linux, use the
 [official installer](https://docs.astral.sh/uv/getting-started/installation/).
 
 **gh** — GitHub CLI. Both the human and agent GitHub accounts must
@@ -67,9 +68,10 @@ for you; see [Keeping up to date](#keeping-up-to-date).
 uv tool install 'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.1'
 ```
 
-This installs all `vrg-*` console scripts into `~/.local/bin/`,
-which `uv`'s official installer already configures on `PATH`. No
-sibling checkout, no custom PATH entries, no venv bootstrapping.
+This installs all `vrg-*` console scripts into `~/.local/bin/`.
+`uv`'s official installer already puts that directory on `PATH`; with
+a Homebrew-installed `uv`, run `uv tool update-shell` once to add it.
+No sibling checkout, no custom PATH entries, no venv bootstrapping.
 
 Verify:
 

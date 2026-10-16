@@ -1,0 +1,12 @@
+Software Update Tool
+
+Finding available software
+Software Update found the following new or updated software:
+* Label: Safari27.0TahoeAuto-27.0
+	Title: Safari, Version: 27.0, Size: 249465KiB, Recommended: YES, 
+* Label: ProVideoFormats-3.2
+	Title: Pro Video Formats, Version: 3.2, Size: 8971KiB, Recommended: YES, 
+* Label: macOS Tahoe 26.7.1-25G241
+	Title: macOS Tahoe 26.7.1, Version: 26.7.1, Size: 3852999KiB, Recommended: YES, Action: restart, 
+* Label: macOS 27.0.1-26A434
+	Title: macOS 27.0.1, Version: 27.0.1, Size: 11852702KiB, Recommended: YES, Action: restart, 

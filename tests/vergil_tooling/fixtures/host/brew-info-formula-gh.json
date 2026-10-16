@@ -11,30 +11,96 @@
       "license": "MIT",
       "homepage": "https://cli.github.com/",
       "versions": {
-        "stable": "2.62.0",
+        "stable": "2.102.0",
         "head": "HEAD",
         "bottle": true
       },
+      "urls": {
+        "stable": {
+          "url": "https://github.com/cli/cli/archive/refs/tags/v2.102.0.tar.gz",
+          "tag": null,
+          "revision": null,
+          "using": null,
+          "checksum": "08bf0ef8b4409893889175e0f5279d30d6edd96465816042c0d7c72eac598158"
+        },
+        "head": {
+          "url": "https://github.com/cli/cli.git",
+          "branch": "trunk",
+          "using": null
+        }
+      },
+      "patches": [],
       "revision": 0,
       "version_scheme": 0,
+      "compatibility_version": null,
+      "autobump": true,
+      "no_autobump_message": null,
+      "skip_livecheck": false,
+      "bottle": {
+        "stable": {
+          "rebuild": 0,
+          "root_url": "https://ghcr.io/v2/homebrew/core",
+          "files": {
+            "arm64_tahoe": {
+              "cellar": ":any_skip_relocation",
+              "url": "https://ghcr.io/v2/homebrew/core/gh/blobs/sha256:c2ca0cdf515e105bfc29ed033e0399a7f2cb394350a8846eec13c24025c39ad8",
+              "sha256": "c2ca0cdf515e105bfc29ed033e0399a7f2cb394350a8846eec13c24025c39ad8"
+            }
+          }
+        }
+      },
+      "pour_bottle_only_if": null,
       "keg_only": false,
+      "keg_only_reason": null,
+      "options": [],
+      "build_dependencies": [
+        "go"
+      ],
+      "dependencies": [],
+      "test_dependencies": [],
+      "recommended_dependencies": [],
+      "optional_dependencies": [],
+      "uses_from_macos": [],
+      "uses_from_macos_bounds": [],
+      "requirements": [],
+      "conflicts_with": [],
+      "conflicts_with_reasons": [],
+      "link_overwrite": [],
+      "caveats": null,
       "installed": [
         {
-          "version": "2.61.0",
+          "version": "2.102.0",
           "used_options": [],
           "built_as_bottle": true,
           "poured_from_bottle": true,
-          "time": 1729000000,
+          "time": 1791630658,
           "runtime_dependencies": [],
-          "installed_as_dependency": false,
           "installed_on_request": true
         }
       ],
-      "linked_keg": "2.61.0",
+      "linked_keg": "2.102.0",
       "pinned": false,
-      "outdated": true,
+      "outdated": false,
       "deprecated": false,
-      "disabled": false
+      "deprecation_date": null,
+      "deprecation_reason": null,
+      "deprecation_replacement_formula": null,
+      "deprecation_replacement_cask": null,
+      "deprecate_args": null,
+      "disabled": false,
+      "disable_date": null,
+      "disable_reason": null,
+      "disable_replacement_formula": null,
+      "disable_replacement_cask": null,
+      "disable_args": null,
+      "post_install_steps": [],
+      "post_install_defined": false,
+      "service": null,
+      "tap_git_head": "b58b8b55ad7e9ff2f36cece8c269b50a085e0e8a",
+      "ruby_source_path": "Formula/g/gh.rb",
+      "ruby_source_checksum": {
+        "sha256": "a55e1dbfe432c75de79a0eae6baa6294941a603e22789465084b7ce639e2a3ef"
+      }
     }
   ],
   "casks": []

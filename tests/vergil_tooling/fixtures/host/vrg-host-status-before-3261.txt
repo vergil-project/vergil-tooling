@@ -1,0 +1,11 @@
+[WARN ] uv               custom              0.11.8 -> 0.13.1       behind (drift)
+[OK   ] gh               brew-formula       2.102.0 -> 2.102.0      current
+[WARN ] gcloud           custom          2026.09.25 -> 2026.10.09   behind (drift)
+          check numpy-in-interpreter: satisfied
+[WARN ] lima             brew-formula         2.1.1 -> 2.2.1        behind (drift)
+[OK   ] docker           custom              29.4.1 -> unmanaged    latest-unmanaged (info: no latest feed)
+[WARN ] opentofu         brew-formula        1.12.3 -> 1.13.1       behind (drift)
+[WARN ] git-cliff        brew-formula        2.13.1 -> 2.14.2       behind (drift)
+[OK   ] vergil-tooling   uv-tool            2.1.241 -> unmanaged    latest-unmanaged (info: no latest feed)
+[WARN ] macos            custom              26.5.2 -> 27.0.1       behind (drift)
+overall: WARN (9 dependencies)

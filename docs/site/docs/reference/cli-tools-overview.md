@@ -399,7 +399,7 @@ manages).
 ### vrg-host
 
 Observe and manage the Vergil-critical macOS host dependencies (`uv`,
-`gh`, `gcloud`, Lima, Docker, OpenTofu, `git-cliff`, vergil-tooling,
+`gh`, `gcloud`, Lima, Docker Desktop, OpenTofu, `git-cliff`, vergil-tooling,
 macOS) declared in the packaged, tooling-owned manifest
 `src/vergil_tooling/data/host_dependencies.toml` (never
 repo-overridable). `status` (the default) reports installed-vs-latest
@@ -415,7 +415,7 @@ refuses `sudo`/`doas`/`su`/`pkexec`. See the
 |---|---|
 | Source | `vergil_tooling.bin.vrg_host` |
 | Args | `status [--fix]` (default); `upgrade <dep>…` or `upgrade --all`, each with optional `--force`; `pin <dep> --constraint --inducing-release --reason [--tracking-issue] [--deterministic]`; `unpin <dep>` |
-| Preconditions | macOS host with each dependency installed by its documented method; `gh` on PATH for the `uv` latest probe |
+| Preconditions | macOS host with each dependency installed by its documented method (Homebrew for the `brew-formula` and `brew-cask` entries, including `uv`) |
 | Failure mode | Per-dependency `probe-error` rows (never fatal to the report); loud error on an unreadable manifest or pins file; refused pins and upgrades print the reason |
 | Exit codes | `status`: 0 OK, 1 warnings, 2 errors; `upgrade`: 0 done, 1 a named dependency refused, 2 failure; `pin`/`unpin`: 0 success, 1 refused |
 | Status | Active |

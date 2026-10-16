@@ -1,2 +1,0 @@
-ruff v0.7.1 [latest: 0.7.2]
-- ruff

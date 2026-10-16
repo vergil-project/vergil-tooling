@@ -1,0 +1,385 @@
+{
+  "formulae": [
+    {
+      "name": "python@3.14",
+      "full_name": "python@3.14",
+      "tap": "homebrew/core",
+      "oldnames": [],
+      "aliases": [],
+      "versioned_formulae": [
+        "python@3.15",
+        "python@3.13",
+        "python@3.12",
+        "python@3.11",
+        "python@3.10",
+        "python@3.9"
+      ],
+      "desc": "Interpreted, interactive, object-oriented programming language",
+      "license": "Python-2.0",
+      "homepage": "https://www.python.org/",
+      "versions": {
+        "stable": "3.14.8",
+        "head": null,
+        "bottle": true
+      },
+      "urls": {
+        "stable": {
+          "url": "https://www.python.org/ftp/python/3.14.8/Python-3.14.8.tgz",
+          "tag": null,
+          "revision": null,
+          "using": null,
+          "checksum": "a65b20a728f169f4e66ae143f40b1bd3d33c38d770251663f627c9767b79b210"
+        }
+      },
+      "patches": [
+        {
+          "strip": "p1",
+          "url": "https://github.com/python/cpython/commit/3364e7e62fa24d0e19133fb0f90b1c24ef1110c5.patch?full_index=1",
+          "sha256": "3b52614eea77dfdb527ace4e734dfe396c99af9176f7ee9ae0ab03a70df2de3f",
+          "resolves": [
+            {
+              "type": "defect",
+              "id": "https://github.com/python/cpython/pull/146217"
+            }
+          ]
+        },
+        {
+          "strip": "p1",
+          "url": "https://github.com/python/cpython/commit/c5e4ae03004767104dcf2d2c7b19f663700cc129.patch?full_index=1",
+          "sha256": "f2f6c479b6251cef684c71a5c89ca2fbae0180f813e5a84f1d88b735f3a6e171",
+          "resolves": [
+            {
+              "type": "defect",
+              "id": "https://github.com/python/cpython/pull/148601"
+            }
+          ]
+        },
+        {
+          "strip": "p1",
+          "url": "https://github.com/python/cpython/commit/3c2a3014af7d73cc34f2498f60fdf863d9bc7c6c.patch?full_index=1",
+          "sha256": "8a8cdbeb9fd127926599ff0fe8d25a28325cf31dba041de7c1dd9ed69efd327d",
+          "resolves": [
+            {
+              "type": "defect",
+              "id": "https://github.com/python/cpython/pull/149102"
+            }
+          ]
+        },
+        {
+          "strip": "p1",
+          "url": "https://github.com/python/cpython/commit/1e21cf6fee3830012e458c0fe5dbc6fcd45ace92.patch?full_index=1",
+          "sha256": "5526b5b6158e07d18c3c657dc4ad6753321c81f7b6c08c1d005e7625764d6f6d",
+          "resolves": [
+            {
+              "type": "defect",
+              "id": "https://github.com/python/cpython/pull/149366"
+            }
+          ]
+        },
+        {
+          "strip": "p1",
+          "url": "https://github.com/python/cpython/commit/4974d8e8f387df97abd2521067f9b7a31c9c78fe.patch?full_index=1",
+          "sha256": "e9da44793e0c2bd4bc719846b2557883e5d2367ddcb341f067fdb4dd54c4aec8",
+          "resolves": [
+            {
+              "type": "defect",
+              "id": "https://github.com/python/cpython/pull/149356"
+            }
+          ]
+        },
+        {
+          "strip": "p1",
+          "file": "Patches/python/3.13-sysconfig.diff",
+          "resolves": [
+            {
+              "type": "defect",
+              "id": "https://bugs.python.org/issue43976"
+            }
+          ]
+        }
+      ],
+      "revision": 2,
+      "version_scheme": 0,
+      "compatibility_version": null,
+      "autobump": true,
+      "no_autobump_message": null,
+      "skip_livecheck": false,
+      "bottle": {
+        "stable": {
+          "rebuild": 0,
+          "root_url": "https://ghcr.io/v2/homebrew/core",
+          "files": {
+            "arm64_tahoe": {
+              "cellar": "/opt/homebrew/Cellar",
+              "url": "https://ghcr.io/v2/homebrew/core/python/3.14/blobs/sha256:27af98cd11442db97e282d965572617ed686219e2e86d06f795425723cfcccaa",
+              "sha256": "27af98cd11442db97e282d965572617ed686219e2e86d06f795425723cfcccaa"
+            }
+          }
+        }
+      },
+      "pour_bottle_only_if": null,
+      "keg_only": false,
+      "keg_only_reason": null,
+      "options": [],
+      "build_dependencies": [
+        "pkgconf"
+      ],
+      "dependencies": [
+        "ca-certificates",
+        "mpdecimal",
+        "openssl@4",
+        "sqlite",
+        "xz",
+        "zstd"
+      ],
+      "test_dependencies": [],
+      "recommended_dependencies": [],
+      "optional_dependencies": [],
+      "uses_from_macos": [
+        "bzip2",
+        "expat",
+        "libedit",
+        "libffi",
+        "ncurses"
+      ],
+      "uses_from_macos_bounds": [
+        {},
+        {
+          "since": "sequoia"
+        },
+        {},
+        {},
+        {}
+      ],
+      "requirements": [],
+      "conflicts_with": [],
+      "conflicts_with_reasons": [],
+      "link_overwrite": [
+        "lib/python3.14/site-packages/pip*",
+        "lib/python3.14/site-packages/wheel*"
+      ],
+      "caveats": "Python is installed as\n  $HOMEBREW_PREFIX/bin/python3.14\n\nUnversioned and major-versioned symlinks `python`, `python3`, `python-config`, `python3-config`, `pip`, `pip3`, etc. pointing to\n`python3.14`, `python3.14-config`, `pip3.14` etc., respectively, are installed into\n  $HOMEBREW_PREFIX/opt/python@3.14/libexec/bin\n\nIf you do not need a specific version of Python, and always want Homebrew's `python3` in your PATH:\n  brew install python3\n\n`idle3.14` requires tkinter, which is available separately:\n  brew install python-tk@3.14\n\n`dbm.gnu` is available separately:\n  brew install python-gdbm@3.14\n\nFor more information about Homebrew and Python, see: https://docs.brew.sh/Homebrew-and-Python\n",
+      "installed": [
+        {
+          "version": "3.14.4_1",
+          "used_options": [],
+          "built_as_bottle": true,
+          "poured_from_bottle": true,
+          "time": 1777649884,
+          "runtime_dependencies": [
+            {
+              "full_name": "mpdecimal",
+              "version": "4.0.1",
+              "revision": 0,
+              "bottle_rebuild": 0,
+              "pkg_version": "4.0.1",
+              "declared_directly": true
+            },
+            {
+              "full_name": "ca-certificates",
+              "version": "2026-03-19",
+              "revision": 0,
+              "bottle_rebuild": 0,
+              "pkg_version": "2026-03-19",
+              "declared_directly": false
+            },
+            {
+              "full_name": "openssl@3",
+              "version": "3.6.2",
+              "revision": 0,
+              "bottle_rebuild": 0,
+              "pkg_version": "3.6.2",
+              "declared_directly": true
+            },
+            {
+              "full_name": "readline",
+              "version": "8.3.3",
+              "revision": 0,
+              "bottle_rebuild": 0,
+              "pkg_version": "8.3.3",
+              "declared_directly": false
+            },
+            {
+              "full_name": "sqlite",
+              "version": "3.53.0",
+              "revision": 0,
+              "bottle_rebuild": 0,
+              "pkg_version": "3.53.0",
+              "declared_directly": true
+            },
+            {
+              "full_name": "xz",
+              "version": "5.8.3",
+              "revision": 0,
+              "bottle_rebuild": 0,
+              "pkg_version": "5.8.3",
+              "declared_directly": true
+            },
+            {
+              "full_name": "lz4",
+              "version": "1.10.0",
+              "revision": 0,
+              "bottle_rebuild": 1,
+              "pkg_version": "1.10.0",
+              "declared_directly": false
+            },
+            {
+              "full_name": "zstd",
+              "version": "1.5.7",
+              "revision": 1,
+              "bottle_rebuild": 0,
+              "pkg_version": "1.5.7_1",
+              "declared_directly": true
+            }
+          ],
+          "installed_on_request": true
+        },
+        {
+          "version": "3.14.6",
+          "used_options": [],
+          "built_as_bottle": true,
+          "poured_from_bottle": true,
+          "time": 1785668801,
+          "runtime_dependencies": [
+            {
+              "full_name": "mpdecimal",
+              "version": "4.0.1",
+              "revision": 0,
+              "bottle_rebuild": 0,
+              "pkg_version": "4.0.1",
+              "declared_directly": true
+            },
+            {
+              "full_name": "ca-certificates",
+              "version": "2026-07-16",
+              "revision": 0,
+              "bottle_rebuild": 2,
+              "pkg_version": "2026-07-16",
+              "declared_directly": false
+            },
+            {
+              "full_name": "openssl@3",
+              "version": "3.6.3",
+              "revision": 0,
+              "bottle_rebuild": 1,
+              "pkg_version": "3.6.3",
+              "declared_directly": true
+            },
+            {
+              "full_name": "readline",
+              "version": "8.3.3",
+              "revision": 0,
+              "bottle_rebuild": 0,
+              "pkg_version": "8.3.3",
+              "declared_directly": false
+            },
+            {
+              "full_name": "sqlite",
+              "version": "3.53.4",
+              "revision": 0,
+              "bottle_rebuild": 0,
+              "pkg_version": "3.53.4",
+              "declared_directly": true
+            },
+            {
+              "full_name": "xz",
+              "version": "5.8.3",
+              "revision": 0,
+              "bottle_rebuild": 0,
+              "pkg_version": "5.8.3",
+              "declared_directly": true
+            },
+            {
+              "full_name": "lz4",
+              "version": "1.10.0",
+              "revision": 0,
+              "bottle_rebuild": 1,
+              "pkg_version": "1.10.0",
+              "declared_directly": false
+            },
+            {
+              "full_name": "zstd",
+              "version": "1.5.7",
+              "revision": 1,
+              "bottle_rebuild": 0,
+              "pkg_version": "1.5.7_1",
+              "declared_directly": true
+            }
+          ],
+          "installed_on_request": true
+        }
+      ],
+      "linked_keg": "3.14.6",
+      "pinned": false,
+      "outdated": true,
+      "deprecated": false,
+      "deprecation_date": "2030-11-01",
+      "deprecation_reason": null,
+      "deprecation_replacement_formula": null,
+      "deprecation_replacement_cask": null,
+      "deprecate_args": {
+        "date": "2030-11-01",
+        "because": "deprecated_upstream",
+        "replacement_formula": null,
+        "replacement_cask": null
+      },
+      "disabled": false,
+      "disable_date": "2031-11-01",
+      "disable_reason": null,
+      "disable_replacement_formula": null,
+      "disable_replacement_cask": null,
+      "disable_args": {
+        "date": "2031-11-01",
+        "because": "deprecated_upstream",
+        "replacement_formula": null,
+        "replacement_cask": null
+      },
+      "post_install_steps": [
+        {
+          "paths": [
+            {
+              "base": "frameworks",
+              "path": "Python.framework/Versions/{{version.major_minor}}/lib/python{{version.major_minor}}/venv/scripts/**/*"
+            }
+          ],
+          "permissions": "u+w",
+          "non_recursive": true,
+          "guards": [
+            {
+              "condition": "on",
+              "value": "macos",
+              "id": "1"
+            }
+          ],
+          "type": "set_permissions"
+        },
+        {
+          "paths": [
+            {
+              "base": "lib",
+              "path": "python{{version.major_minor}}/venv/scripts/**/*"
+            }
+          ],
+          "permissions": "u+w",
+          "non_recursive": true,
+          "guards": [
+            {
+              "condition": "on",
+              "value": "linux",
+              "id": "2"
+            }
+          ],
+          "type": "set_permissions"
+        }
+      ],
+      "post_install_defined": false,
+      "service": null,
+      "tap_git_head": "b58b8b55ad7e9ff2f36cece8c269b50a085e0e8a",
+      "ruby_source_path": "Formula/p/python@3.14.rb",
+      "ruby_source_checksum": {
+        "sha256": "2d533cbd3bf1931dabb2302627b88dc917b1c6c12dc5f41ece766ef17f82162e"
+      }
+    }
+  ],
+  "casks": []
+}

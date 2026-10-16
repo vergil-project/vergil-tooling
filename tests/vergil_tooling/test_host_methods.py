@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -15,9 +16,9 @@ from vergil_tooling.lib import host_methods as hm
 from vergil_tooling.lib import host_versions as hv
 from vergil_tooling.lib.host_deps import HostDependency, ManifestError
 
-# Probe-output fixtures. All are CONSTRUCTED from documented formats, not
-# captured from a live Mac — see fixtures/host/README.md for provenance and the
-# re-capture list.
+# Probe-output fixtures. Most were captured on a live macOS host (#3261); the
+# few that could not be are CONSTRUCTED and labelled so. See
+# fixtures/host/README.md for each fixture's provenance.
 _FIXTURES = Path(__file__).parent / "fixtures" / "host"
 
 
@@ -106,6 +107,13 @@ def test_run_returns_stripped_stdout_with_closed_stdin(monkeypatch: pytest.Monke
     assert seen["cmd"] == ["tool", "--version"]
     assert seen["stdin"] is subprocess.DEVNULL
     assert seen["check"] is True
+
+
+def test_run_returns_stdout_only_never_stderr() -> None:
+    # gcloud prints an SDK-version notice on stderr next to the version on
+    # stdout (#3261); only stdout may reach a parser. A real child process.
+    code = "import sys; print('2026.10.09'); print('Updates are available', file=sys.stderr)"
+    assert hm._run([sys.executable, "-c", code]) == "2026.10.09"
 
 
 def test_run_returns_none_on_nonzero_exit(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -213,10 +221,68 @@ def test_brew_formula_upgrade(monkeypatch: pytest.MonkeyPatch) -> None:
     assert fake.calls == [["brew", "upgrade", "gh"]]
 
 
+_CASK_INFO = ("brew", "info", "--json=v2", "--cask", "app")
+
+
+def _cask_info(auto_updates: object) -> str:
+    return json.dumps({"formulae": [], "casks": [{"version": "4.2", "auto_updates": auto_updates}]})
+
+
 def test_brew_cask_upgrade(monkeypatch: pytest.MonkeyPatch) -> None:
-    fake = _stub(monkeypatch, {("brew", "upgrade", "--cask", "app"): ""})
+    fake = _stub(
+        monkeypatch, {_CASK_INFO: _cask_info(None), ("brew", "upgrade", "--cask", "app"): ""}
+    )
     hm.upgrade(_dep(name="app", method="brew-cask"))
-    assert fake.calls == [["brew", "upgrade", "--cask", "app"]]
+    assert fake.calls == [list(_CASK_INFO), ["brew", "upgrade", "--cask", "app"]]
+
+
+@pytest.mark.parametrize(
+    ("info", "match"),
+    [
+        (_cask_info(True), "auto_updates \\(the app updates itself\\)"),
+        (None, "cannot read cask metadata"),
+        ("not json", "not JSON"),
+        (_cask_info("yes"), "not a boolean"),
+    ],
+)
+def test_brew_cask_upgrade_refuses_self_updating_or_unreadable_cask(
+    monkeypatch: pytest.MonkeyPatch, info: str | None, match: str
+) -> None:
+    # A self-updating cask is never pushed through brew (brew would silently
+    # skip it without --greedy); unreadable metadata is a failure, not a guess.
+    fake = _stub(monkeypatch, {_CASK_INFO: info})
+    with pytest.raises(hm.UpgradeFailedError, match=match):
+        hm.upgrade(_dep(name="app", method="brew-cask"))
+    assert fake.calls == [list(_CASK_INFO)]  # brew upgrade never ran
+
+
+@pytest.mark.parametrize("method", ["brew-formula", "brew-cask", "uv-tool"])
+def test_builtin_method_installed_probe_override(
+    monkeypatch: pytest.MonkeyPatch, method: str
+) -> None:
+    # A self-updating app reads its installed version from its own probe, never
+    # from the package manager's (stale) record.
+    dep = _dep(name="app", method=method, probes={"installed_version": ["app-version"]})
+    fake = _stub(monkeypatch, {("app-version",): "App 4.71.0"})
+    assert hm.installed_version(dep) == "4.71.0"
+    assert fake.calls == [["app-version"]]
+
+
+def test_builtin_method_installed_probe_override_failure_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dep = _dep(name="app", method="brew-cask", probes={"installed_version": ["app-version"]})
+    _stub(monkeypatch, {("app-version",): None})
+    assert hm.installed_version(dep) is None
+
+
+def test_builtin_method_installed_probe_override_empty_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dep = _dep(name="app", method="brew-cask", probes={"installed_version": ["app-version"]})
+    _stub(monkeypatch, {("app-version",): ""})
+    with pytest.raises(hm.ProbeError, match="printed nothing"):
+        hm.installed_version(dep)
 
 
 def test_upgrade_failure_raises(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -412,16 +478,34 @@ def test_unknown_method_fails_loudly(monkeypatch: pytest.MonkeyPatch, func: Any)
     assert fake.calls == []
 
 
-# -- fixture-backed parsing (plan Task 7) ---------------------------------------------
+# -- fixture-backed parsing ---------------------------------------------------------
+# Unless a test says otherwise, these fixtures were captured on a live macOS
+# host on 2026-10-16 (#3261); see fixtures/host/README.md.
 
 
 def test_fixture_brew_list_versions() -> None:
-    assert hm._parse_brew_list_versions("gh", _fixture("brew-list-versions-gh.txt")) == "2.62.0"
+    assert hm._parse_brew_list_versions("gh", _fixture("brew-list-versions-gh.txt")) == "2.102.0"
 
 
-def test_fixture_brew_list_picks_newest_keg_not_last_listed() -> None:
-    out = _fixture("brew-list-versions-multi-keg.txt")
-    assert hm._parse_brew_list_versions("python@3.12", out) == "3.12.7_1"
+def test_fixture_brew_list_picks_newest_keg_from_unsorted_list() -> None:
+    # Real multi-keg output is NOT sorted (3.14.6 is listed before 3.14.4_1),
+    # so the newest keg is chosen by the comparator, never by position.
+    out = _fixture("brew-list-versions-multi-keg-python314.txt")
+    assert out.split()[1:] == ["3.14.6", "3.14.4_1"]
+    assert hm._parse_brew_list_versions("python@3.14", out) == "3.14.6"
+
+
+@pytest.mark.parametrize(
+    ("output", "expected"),
+    [
+        # Constructed: order independence, and a `_N` rebuild beating its base.
+        ("python@3.14 3.14.4_1 3.14.6", "3.14.6"),
+        ("python@3.14 3.14.6_1 3.14.6", "3.14.6_1"),
+        ("python@3.14 3.14.6 3.14.6_2 3.14.6_1", "3.14.6_2"),
+    ],
+)
+def test_brew_list_newest_keg_includes_rebuild_suffix(output: str, expected: str) -> None:
+    assert hm._parse_brew_list_versions("python@3.14", output) == expected
 
 
 def test_brew_list_unreadable_keg_raises() -> None:
@@ -431,22 +515,53 @@ def test_brew_list_unreadable_keg_raises() -> None:
 
 def test_fixture_brew_info_formula() -> None:
     out = _fixture("brew-info-formula-gh.json")
-    assert hm._parse_brew_info_latest("gh", "brew-formula", out) == "2.62.0"
+    assert hm._parse_brew_info_latest("gh", "brew-formula", out) == "2.102.0"
 
 
-def test_fixture_brew_info_revision_matches_installed_keg() -> None:
-    latest = hm._parse_brew_info_latest(
-        "python@3.12", "brew-formula", _fixture("brew-info-formula-revision.json")
-    )
-    installed = hm._parse_brew_list_versions(
-        "python@3.12", _fixture("brew-list-versions-multi-keg.txt")
-    )
-    assert latest == installed == "3.12.7_1"
+def test_fixture_brew_info_revision_is_suffixed_and_installed_kegs_are_behind() -> None:
+    info = _fixture("brew-info-formula-python314.json")
+    formula = json.loads(info)["formulae"][0]
+    assert (formula["versions"]["stable"], formula["revision"]) == ("3.14.8", 2)
+    latest = hm._parse_brew_info_latest("python@3.14", "brew-formula", info)
+    assert latest == "3.14.8_2"
+    listed = _fixture("brew-list-versions-multi-keg-python314.txt")
+    # brew info records the same kegs brew list printed.
+    assert sorted(k["version"] for k in formula["installed"]) == sorted(listed.split()[1:])
+    installed = hm._parse_brew_list_versions("python@3.14", listed)
+    assert hv.compare(installed, latest) < 0
+
+
+def test_brew_revision_only_rebuild_reads_as_drift() -> None:
+    # Constructed: the same upstream version at an older revision is behind.
+    info = json.dumps({"formulae": [{"versions": {"stable": "3.14.8"}, "revision": 2}]})
+    latest = hm._parse_brew_info_latest("python@3.14", "brew-formula", info)
+    assert hv.compare("3.14.8_1", latest) < 0
+    assert hv.compare("3.14.8_2", latest) == 0
 
 
 def test_fixture_brew_info_cask_drops_build_suffix() -> None:
-    out = _fixture("brew-info-cask-docker.json")
-    assert hm._parse_brew_info_latest("docker", "brew-cask", out) == "4.34.2"
+    out = _fixture("brew-info-cask-docker-desktop.json")
+    cask = json.loads(out)["casks"][0]
+    assert (cask["version"], cask["installed"]) == ("4.94.0,241994", "4.71.0,225177")
+    assert hm._parse_brew_info_latest("docker-desktop", "brew-cask", out) == "4.94.0"
+    assert hm._parse_brew_cask_auto_updates("docker-desktop", out) is True
+
+
+@pytest.mark.parametrize(("value", "expected"), [(None, False), (False, False), (True, True)])
+def test_brew_cask_auto_updates(value: bool | None, expected: bool) -> None:
+    out = json.dumps({"formulae": [], "casks": [{"version": "1.0", "auto_updates": value}]})
+    assert hm._parse_brew_cask_auto_updates("app", out) is expected
+
+
+def test_brew_cask_auto_updates_absent_is_false() -> None:
+    out = json.dumps({"formulae": [], "casks": [{"version": "1.0"}]})
+    assert hm._parse_brew_cask_auto_updates("app", out) is False
+
+
+def test_brew_cask_auto_updates_not_boolean_raises() -> None:
+    out = json.dumps({"formulae": [], "casks": [{"version": "1.0", "auto_updates": "yes"}]})
+    with pytest.raises(hm.ProbeError, match="not a boolean"):
+        hm._parse_brew_cask_auto_updates("app", out)
 
 
 def test_fixture_brew_formula_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -459,53 +574,96 @@ def test_fixture_brew_formula_end_to_end(monkeypatch: pytest.MonkeyPatch) -> Non
             ("brew", "info", "--json=v2", "--formula", "gh"): info,
         },
     )
-    assert hm.installed_version(_dep()) == "2.62.0"
-    assert hm.latest_version(_dep()) == "2.62.0"
+    assert hm.installed_version(_dep()) == "2.102.0"
+    assert hm.latest_version(_dep()) == "2.102.0"
 
 
 def test_fixture_uv_tool_list() -> None:
     out = _fixture("uv-tool-list.txt")
-    assert hm._parse_uv_tool_installed("vergil-tooling", out) == "2.1.240"
-    assert hm._parse_uv_tool_installed("ruff", out) == "0.7.1"
+    assert hm._parse_uv_tool_installed("vergil-tooling", out) == "2.1.241"
     assert hm._parse_uv_tool_installed("vrg-commit", out) is None  # an entry point, not a tool
+    assert hm._parse_uv_tool_installed("ruff", out) is None
 
 
-def test_fixture_uv_tool_list_outdated() -> None:
+def test_fixture_uv_tool_list_outdated_empty() -> None:
+    # The real host printed nothing (exit 0): nothing outdated.
     out = _fixture("uv-tool-list-outdated.txt")
+    assert out == ""
+    assert hm._parse_uv_tool_outdated("vergil-tooling", out) is None
+
+
+def test_fixture_uv_tool_latest_from_empty_outdated_is_installed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub(
+        monkeypatch,
+        {
+            ("uv", "tool", "list", "--outdated"): _fixture("uv-tool-list-outdated.txt"),
+            ("uv", "tool", "list"): _fixture("uv-tool-list.txt"),
+        },
+    )
+    assert hm.latest_version(_uv()) == "2.1.241"
+
+
+def test_fixture_uv_tool_list_outdated_listed() -> None:
+    # CONSTRUCTED fixture: no real host has listed an outdated tool yet.
+    out = _fixture("uv-tool-list-outdated-listed.txt")
     assert hm._parse_uv_tool_outdated("ruff", out) == "0.7.2"
     assert hm._parse_uv_tool_outdated("vergil-tooling", out) is None
 
 
 def test_fixture_gh_version_prose_matches_brew_version(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Spec §8: gh's own "gh version 2.40.0 (...)" output equals brew's bare "2.40.0"."""
+    """Spec §8: gh's own "gh version 2.102.0 (...)" output equals brew's bare "2.102.0"."""
     _stub(monkeypatch, {("gh", "--version"): _fixture("gh-version.txt")})
     dep = _dep(method="custom", probes={"installed_version": ["gh", "--version"]})
     installed = hm.installed_version(dep)
-    assert installed == "2.40.0"
-    assert hv.compare(installed, "2.40.0") == 0
+    assert installed == "2.102.0"
+    brew = hm._parse_brew_list_versions("gh", _fixture("brew-list-versions-gh.txt"))
+    assert hv.compare(installed, brew) == 0
 
 
-# -- the curated manifest's custom probes, against fixtures -------------------------
+def test_fixture_uv_version_shows_homebrew_install() -> None:
+    # The evidence for managing uv as a brew formula (#3261).
+    out = _fixture("uv-version.txt")
+    assert "(Homebrew " in out
+    brew = hm._parse_brew_list_versions("uv", _fixture("brew-list-versions-uv.txt"))
+    assert hv.normalize(out) == brew == "0.11.8"
+
+
+def test_fixture_docker_cli_version_is_not_the_desktop_version() -> None:
+    # Why the entry tracks Docker Desktop's Info.plist, not `docker --version`.
+    assert hv.normalize(_fixture("docker-version.txt")) == "29.4.1"
+    assert hv.normalize(_fixture("docker-desktop-info-plist-version.txt")) == "4.71.0"
+
+
+# -- the curated manifest's entries, against fixtures --------------------------------
 
 
 def _probe_stub(
     monkeypatch: pytest.MonkeyPatch, dep: HostDependency, outputs: dict[str, str]
-) -> None:
-    _stub(monkeypatch, {tuple(dep.probes[key]): value for key, value in outputs.items()})
+) -> _FakeRun:
+    return _stub(monkeypatch, {tuple(dep.probes[key]): value for key, value in outputs.items()})
 
 
-def test_manifest_uv_probes(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_manifest_uv_is_a_brew_formula(monkeypatch: pytest.MonkeyPatch) -> None:
     uv = _manifest_dep("uv")
-    _probe_stub(
+    assert (uv.method, uv.upgrade, uv.latest, uv.probes) == ("brew-formula", "auto", "probe", {})
+    listed, info = _fixture("brew-list-versions-uv.txt"), _fixture("brew-info-formula-uv.json")
+    fake = _stub(
         monkeypatch,
-        uv,
         {
-            "installed_version": _fixture("uv-version.txt"),
-            "latest_version": _fixture("gh-api-uv-latest.txt"),
+            ("brew", "list", "--formula", "--versions", "uv"): listed,
+            ("brew", "info", "--json=v2", "--formula", "uv"): info,
+            ("brew", "upgrade", "uv"): "",
         },
     )
-    assert hm.installed_version(uv) == "0.9.5"
-    assert hm.latest_version(uv) == "0.9.6"
+    installed, latest = hm.installed_version(uv), hm.latest_version(uv)
+    assert (installed, latest) == ("0.11.8", "0.13.0")  # Homebrew stable, not upstream 0.13.1
+    assert isinstance(installed, str)
+    assert isinstance(latest, str)
+    assert hv.compare(installed, latest) < 0
+    hm.upgrade(uv)
+    assert fake.calls[-1] == ["brew", "upgrade", "uv"]  # never `uv self update`
 
 
 def test_manifest_gcloud_probes(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -518,15 +676,32 @@ def test_manifest_gcloud_probes(monkeypatch: pytest.MonkeyPatch) -> None:
             "latest_version": _fixture("gcloud-components-list-core-latest.txt"),
         },
     )
-    assert hm.installed_version(gcloud) == "2024.10.04"
-    assert hm.latest_version(gcloud) == "2024.10.18"
+    assert hm.installed_version(gcloud) == "2026.09.25"
+    assert hm.latest_version(gcloud) == "2026.10.09"
+    assert "--greedy" in gcloud.why  # the never-`brew upgrade --greedy` warning
 
 
-def test_manifest_docker_is_report_only(monkeypatch: pytest.MonkeyPatch) -> None:
-    docker = _manifest_dep("docker")
-    _probe_stub(monkeypatch, docker, {"installed_version": _fixture("docker-version.txt")})
-    assert hm.installed_version(docker) == "27.3.1"
-    assert hm.latest_version(docker) is hm.UNMANAGED
+def test_manifest_docker_desktop_tracks_the_app(monkeypatch: pytest.MonkeyPatch) -> None:
+    docker = _manifest_dep("docker-desktop")
+    assert (docker.method, docker.upgrade, docker.latest) == ("brew-cask", "manual", "probe")
+    fake = _stub(
+        monkeypatch,
+        {
+            tuple(docker.probes["installed_version"]): _fixture(
+                "docker-desktop-info-plist-version.txt"
+            ),
+            ("brew", "info", "--json=v2", "--cask", "docker-desktop"): _fixture(
+                "brew-info-cask-docker-desktop.json"
+            ),
+        },
+    )
+    installed, latest = hm.installed_version(docker), hm.latest_version(docker)
+    assert (installed, latest) == ("4.71.0", "4.94.0")
+    assert isinstance(installed, str)
+    assert isinstance(latest, str)
+    assert hv.compare(installed, latest) < 0
+    assert fake.calls[0][:2] == ["defaults", "read"]
+    assert not any(call[:2] == ["brew", "list"] for call in fake.calls)  # never the stale record
     with pytest.raises(hm.UpgradeUnsupportedError):
         hm.upgrade(docker)
 
@@ -534,7 +709,7 @@ def test_manifest_docker_is_report_only(monkeypatch: pytest.MonkeyPatch) -> None
 def test_manifest_vergil_tooling_latest_is_unmanaged(monkeypatch: pytest.MonkeyPatch) -> None:
     vt = _manifest_dep("vergil-tooling")
     fake = _stub(monkeypatch, {("uv", "tool", "list"): _fixture("uv-tool-list.txt")})
-    assert hm.installed_version(vt) == "2.1.240"
+    assert hm.installed_version(vt) == "2.1.241"
     assert hm.latest_version(vt) is hm.UNMANAGED
     assert fake.calls == [["uv", "tool", "list"]]  # never asks uv's index feed
 
@@ -542,7 +717,7 @@ def test_manifest_vergil_tooling_latest_is_unmanaged(monkeypatch: pytest.MonkeyP
 def test_manifest_macos_installed(monkeypatch: pytest.MonkeyPatch) -> None:
     macos = _manifest_dep("macos")
     _probe_stub(monkeypatch, macos, {"installed_version": _fixture("sw-vers-product-version.txt")})
-    assert hm.installed_version(macos) == "15.1"
+    assert hm.installed_version(macos) == "26.5.2"
     with pytest.raises(hm.UpgradeUnsupportedError):
         hm.upgrade(macos)
 
@@ -567,9 +742,12 @@ def _fake_macos_tools(
 @pytest.mark.parametrize(
     ("fixture", "expected"),
     [
-        ("softwareupdate-list-macos-available.txt", "15.1.1"),
-        ("softwareupdate-list-none.txt", "15.1"),
-        ("softwareupdate-list-non-macos-only.txt", "15.1"),
+        # Captured: 26.7.1 (same major) and 27.0.1 (next major) plus non-OS
+        # items; the single-"latest" probe reports the newest, 27.0.1.
+        ("softwareupdate-list-minor-and-major-available.txt", "27.0.1"),
+        # Constructed: nothing pending / only a non-OS update -> installed.
+        ("softwareupdate-list-none.txt", "26.5.2"),
+        ("softwareupdate-list-non-macos-only.txt", "26.5.2"),
     ],
 )
 def test_manifest_macos_latest_script(
