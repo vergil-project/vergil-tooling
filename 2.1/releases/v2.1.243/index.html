@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.244/">
       
       
         <link rel="next" href="../v2.1.242/">
@@ -1291,6 +1291,8 @@
       
         
       
+        
+      
     
     
     
@@ -1346,6 +1348,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.244/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.244
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15199,6 +15229,7 @@
 <li><strong>report every pending macOS update level (patch, minor, major) (#3277)</strong>
 The macos probe now prints every macOS version softwareupdate offers (new custom probe key latest_versions, one bare version per line). vrg-host status classifies each offer against the installed version by the first differing component and renders each level that is behind, e.g. 'behind (drift): minor 26.7.1, major 27.0.1'. Classification and pins use the leading edge (the highest offer), so severity, exit codes and every other dependency are unchanged. An unreadable macOS offer is a probe error, never dropped.</li>
 </ul>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.243/v2.1.243-ci-evidence.tar.gz">Download →</a></p>
 
 
 
