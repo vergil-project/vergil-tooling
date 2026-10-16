@@ -77,6 +77,11 @@ class ReleaseContext:
     deps_fix_issue_url: str | None = None
     deps_failure: str | None = None
 
+    # Open dependency-update PRs this release bypassed with --allow-pending-deps
+    # (spec §5.3); named in the prepare-stage tracking comment so the bypass is
+    # never silent.
+    bypassed_deps_prs: list[str] = field(default_factory=list)
+
     @property
     def work_root(self) -> Path:
         """Directory release artifacts are written into and git runs in.

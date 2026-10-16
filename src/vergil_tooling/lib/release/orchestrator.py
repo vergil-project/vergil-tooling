@@ -43,6 +43,7 @@ class ReleaseState:
     resume_version: str | None = None
     resume_issue_number: int | None = None
     without_deps: bool = False
+    allow_pending_deps: bool = False
 
 
 def _audit_stage(_state: ReleaseState) -> None:
@@ -56,6 +57,7 @@ def _preflight_stage(state: ReleaseState) -> None:
         resume=state.resume,
         resume_version=state.resume_version,
         resume_issue_number=state.resume_issue_number,
+        allow_pending_deps=state.allow_pending_deps,
     )
     ctx.promote = state.promote
     ctx.without_deps = state.without_deps
@@ -247,6 +249,12 @@ def _phase_details(ctx: ReleaseContext, phase: str) -> str:
             lines.append(f"PR: {ctx.release_pr_url}")
         if ctx.issue_url:
             lines.append(f"Tracking issue: {ctx.issue_url}")
+        if ctx.bypassed_deps_prs:
+            # spec §5.3: bypassing the dependency-update gate is never silent.
+            prs = ", ".join(ctx.bypassed_deps_prs)
+            lines.append(
+                f"**Bypassed pending dependency-update PR(s)** with `--allow-pending-deps`: {prs}"
+            )
     elif phase == "merge-release":
         if ctx.release_pr_url:
             lines.append(f"Merged: {ctx.release_pr_url}")

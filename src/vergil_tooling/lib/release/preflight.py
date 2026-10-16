@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, cast
 
 from vergil_tooling.lib import config, git, github, version
 from vergil_tooling.lib.managed_worktree import (
@@ -15,11 +17,25 @@ from vergil_tooling.lib.managed_worktree import (
 )
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 from vergil_tooling.lib.release.tracking import find_existing_tracking_issue
+from vergil_tooling.lib.update_deps.context import DEPS_LABEL
+from vergil_tooling.lib.update_deps.pr import FIX_TASK_PREFIX
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 _VERSION_OVERRIDE_FIELDS = ("minor", "major")
+
+# The "Fix task: <url>" line vrg-update-deps writes into a failed PR's body.
+_FIX_TASK_RE = re.compile(rf"^{re.escape(FIX_TASK_PREFIX)}(\S+)\s*$", re.MULTILINE)
+_PENDING_DEPS_COMMAND = f"gh pr list --state open --label {DEPS_LABEL}"
+
+
+@dataclass(frozen=True)
+class PendingDepsPr:
+    """An open ``dependency-update`` PR, with its fix task when one is linked."""
+
+    url: str
+    fix_task: str | None
 
 
 def preflight(
@@ -29,6 +45,7 @@ def preflight(
     resume: bool = False,
     resume_version: str | None = None,
     resume_issue_number: int | None = None,
+    allow_pending_deps: bool = False,
 ) -> ReleaseContext:
     """Run all preflight checks and return an initialized ReleaseContext.
 
@@ -38,6 +55,12 @@ def preflight(
     is expected to be tagged and the tracking issue is expected to exist — an
     existing release branch is adopted rather than refused, and the adopted
     issue (*resume_issue_number*) is pre-set on the context.
+
+    A fresh start also refuses while any open PR carries the
+    ``dependency-update`` label (spec §5.3, epic vergil-project/.github#381);
+    *allow_pending_deps* bypasses that gate, and the bypassed PR URLs are
+    recorded on the context so the prepare-stage comment names them. A resume
+    skips the gate — the release it adopts already passed it.
     """
     _check_host_prerequisites()
     repo = check_gh_auth()
@@ -61,9 +84,11 @@ def preflight(
         else:
             release_version = current_version
 
+    bypassed_deps_prs: list[str] = []
     if not resume:
         _check_version_not_tagged(release_version)
         _check_no_existing_tracking_issue(repo, release_version)
+        bypassed_deps_prs = _check_pending_deps(repo, allow=allow_pending_deps)
 
     branch = f"release/{release_version}"
     worktree = _acquire_release_worktree(repo_root, branch, resume=resume)
@@ -77,11 +102,92 @@ def preflight(
         version_override=version_override,
         release_branch=branch,
         worktree_path=worktree,
+        bypassed_deps_prs=bypassed_deps_prs,
     )
     if resume_issue_number is not None:
         ctx.issue_number = resume_issue_number
         ctx.issue_url = f"https://github.com/{repo}/issues/{resume_issue_number}"
     return ctx
+
+
+def pending_deps_prs(repo: str) -> list[PendingDepsPr]:
+    """Open PRs labelled ``dependency-update`` in *repo*, with their fix task if linked.
+
+    A lookup that cannot complete raises :class:`ReleaseError` — an unknown
+    answer must never read as "no pending PRs" and let the release through.
+    """
+    try:
+        raw = github.read_json(
+            "pr",
+            "list",
+            "--repo",
+            repo,
+            "--state",
+            "open",
+            "--label",
+            DEPS_LABEL,
+            "--json",
+            "url,body",
+            "--limit",
+            "100",
+        )
+    except (subprocess.CalledProcessError, ValueError) as exc:
+        raise ReleaseError(
+            phase="preflight",
+            command=_PENDING_DEPS_COMMAND,
+            message="Could not list open dependency-update PRs; refusing to release blind.",
+            detail=str(exc),
+        ) from exc
+    if not isinstance(raw, list):
+        raise ReleaseError(
+            phase="preflight",
+            command=_PENDING_DEPS_COMMAND,
+            message=f"gh pr list returned {type(raw).__name__}, expected a list.",
+        )
+    found: list[PendingDepsPr] = []
+    for item in raw:
+        entry = cast("dict[str, object]", item) if isinstance(item, dict) else {}
+        url = entry.get("url")
+        if not isinstance(url, str) or not url:
+            raise ReleaseError(
+                phase="preflight",
+                command=_PENDING_DEPS_COMMAND,
+                message=f"gh pr list returned an entry without a url: {item!r}",
+            )
+        body = entry.get("body")
+        match = _FIX_TASK_RE.search(body if isinstance(body, str) else "")
+        found.append(PendingDepsPr(url=url, fix_task=match.group(1) if match else None))
+    return found
+
+
+def _check_pending_deps(repo: str, *, allow: bool) -> list[str]:
+    """Refuse while a dependency-update PR is open, unless *allow* (spec §5.3).
+
+    Returns the bypassed PR URLs (empty when none are open).
+    """
+    pending = pending_deps_prs(repo)
+    if not pending:
+        return []
+    if allow:
+        urls = [p.url for p in pending]
+        print(
+            "WARNING: --allow-pending-deps is bypassing open dependency-update "
+            f"PR(s): {', '.join(urls)}"
+        )
+        return urls
+    described = "; ".join(
+        p.url + (f" (fix task: {p.fix_task})" if p.fix_task else "") for p in pending
+    )
+    raise ReleaseError(
+        phase="preflight",
+        command=_PENDING_DEPS_COMMAND,
+        message=(
+            f"Open dependency-update PR(s) block this release: {described}. Clear the "
+            "gate by landing the fix task, merging the PR, or closing it deliberately. "
+            "For an urgent release, pass --allow-pending-deps (the bypass is logged on "
+            "the tracking issue)."
+        ),
+    )
 
 
 def _acquire_release_worktree(repo_root: Path, branch: str, *, resume: bool) -> Path:
