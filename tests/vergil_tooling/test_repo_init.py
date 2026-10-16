@@ -56,6 +56,69 @@ from vergil_tooling.lib.repo_init import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _pin_installed_series(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the installed tooling to the v2.1 series.
+
+    The template ``uses:`` refs and the ``vergil`` dependency default derive
+    from the installed vergil-tooling (issue #3252); pinning it keeps the
+    ``@v2.1`` assertions below independent of the version under test.
+    """
+    monkeypatch.setattr(repo_init.metadata, "version", lambda _name: "2.1.0")
+
+
+class TestDefaultVergilSeries:
+    def test_series_from_installed_version(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(repo_init.metadata, "version", lambda _name: "9.4.17")
+        assert repo_init.default_vergil_series() == "v9.4"
+
+    def test_reads_the_vergil_tooling_distribution(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        seen: list[str] = []
+
+        def _version(name: str) -> str:
+            seen.append(name)
+            return "2.1.242"
+
+        monkeypatch.setattr(repo_init.metadata, "version", _version)
+        assert repo_init.default_vergil_series() == "v2.1"
+        assert seen == ["vergil-tooling"]
+
+    def test_context_default_tracks_tooling(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(repo_init.metadata, "version", lambda _name: "3.0.1")
+        assert RepoInitContext(org="o", name="r").vergil_version == "v3.0"
+
+    def test_templates_use_context_series_not_literal(self) -> None:
+        ctx = RepoInitContext(org="o", name="r")
+        ctx.primary_language = "python"
+        ctx.ci_versions = ["3.14"]
+        ctx.release_model = "tagged-release"
+        ctx.publish_docs = True
+        ctx.publish_release = True
+        ctx.package = True
+        ctx.vergil_version = "v9.4"
+        rendered = (
+            render_ci_workflow(ctx)
+            + render_cd_workflow(ctx)
+            + repo_init.render_ops_workflow(ctx)
+            + render_epic_rollup_workflow("v9.4")
+        )
+        assert "@v2.1\n" not in rendered
+        for workflow in (
+            "ci-audit",
+            "ci-quality",
+            "ci-security",
+            "ci-docs",
+            "ci-test",
+            "ci-version-bump",
+            "ci-package",
+            "cd-docs",
+            "cd-release",
+            "ops-github-config",
+            "ops-epic-rollup",
+        ):
+            assert f"{workflow}.yml@v9.4\n" in rendered, workflow
+
+
 class TestPromptChoice:
     def test_valid_selection(self) -> None:
         options = ["alpha", "beta", "gamma"]
@@ -1704,7 +1767,7 @@ class TestStepCiCdWorkflows:
 
 class TestRenderEpicRollupWorkflow:
     def test_is_a_thin_caller_to_the_reusable_workflow(self) -> None:
-        content = render_epic_rollup_workflow()
+        content = render_epic_rollup_workflow("v2.1")
         assert "on:\n  issues:\n    types: [closed]" in content
         assert "ops-epic-rollup.yml@v2.1" in content
         assert "APP_CLIENT_ID: ${{ secrets.APP_CLIENT_ID }}" in content
