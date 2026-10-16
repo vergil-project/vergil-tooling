@@ -60,7 +60,16 @@ chore/256-bump-dependency-versions
 Pattern: `^(feature|bugfix|hotfix|chore)/[0-9]+-[a-z0-9][a-z0-9-]*$`.
 
 The `release/*` and `promotion/*` prefixes are created by automated
-workflows and are exempt from the issue-number rule.
+workflows and are exempt from the issue-number rule. So is
+`deps/update-<version>`, the branch `vrg-update-deps` (and the
+`vrg-release` `update-deps` stage) creates for a dependency update; only
+that driver commits to it.
+
+When a dependency update fails, its fix task's branch follows the
+issue-number rule but starts from the failed update:
+`chore/<fix-issue>-dep-update-<version>`, cut from
+`origin/deps/update-<version>`. See
+[When the dependency update fails](releasing.md#when-the-dependency-update-fails).
 
 ## Two enforcement layers
 
@@ -322,12 +331,15 @@ Release flow is covered in its own guide:
 High-level summary:
 
 1. Accumulate feature PRs on `develop`.
-2. Run `vrg-prepare-release --issue <N>` to cut a `release/<version>`
-   branch, generate the changelog, and open a PR to `main`.
-3. Merge the release PR manually. CI auto-tags, creates the GitHub
-   Release, publishes the package artifact, and opens a
-   version-bump PR back to `develop`.
-4. `vrg-finalize-pr` as usual.
+2. Run `vrg-release` from the root checkout. It creates the tracking
+   issue and the `release/<version>` branch, generates the changelog,
+   merges the release PR to `main`, waits for CD to tag and publish,
+   merges the version bump back to `develop`, and cleans up.
+3. As its last step, `vrg-release` runs the dependency update on the
+   new `develop` version and opens a `dependency-update` PR when
+   anything changed. If its validation or merge fails, the PR stays open
+with a fix task, and the next
+   release refuses to start until it is dealt with.
 
 ## Adoption for a new repo
 

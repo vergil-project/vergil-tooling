@@ -70,6 +70,7 @@ nav:
       - Container Config ([container]): reference/container-config.md
       - Test Config ([test]): reference/test-config.md
       - Package Config ([package]): reference/package-config.md
+      - Dependency Update ([dependency-update]): reference/dependency-update-config.md
       - Hook Guard:
           - Claude Code Hook Guard: reference/hooks/pre-commit.md
       - Validators:
@@ -79,7 +80,8 @@ nav:
           - vrg-commit: reference/dev/commit.md
           - vrg-submit-pr: reference/dev/submit-pr.md
           - vrg-pr-fix-body: reference/dev/pr-fix-body.md
-          - vrg-prepare-release: reference/dev/prepare-release.md
+          - vrg-release: reference/dev/release.md
+          - vrg-update-deps: reference/dev/update-deps.md
           - vrg-finalize-pr: reference/dev/finalize-pr.md
           - vrg-host: reference/dev/host.md
   - Standards:

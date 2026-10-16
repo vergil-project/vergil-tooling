@@ -69,6 +69,14 @@ Valid only with `builder = "python"`, and required there.
 | `runtime` | string | *(required)* | Exact CPython patch (`3.Y.Z`) of the `vergil-python` runtime to build against and depend on |
 | `commands` | list of strings | all of `[project.scripts]` | The commands to shim into `/usr/bin`; each must be in `[project.scripts]` |
 
+You do not need to edit `runtime` to pick up a new CPython patch. The
+`vergil` updater, which every `vrg-release` runs in its `update-deps`
+stage, bumps it to the newest patch on the same minor line once every
+index the build and install test read it from serves that patch. A
+newer minor line is only reported, in the held-back report; moving to it
+is a deliberate edit. See the
+[dependency-update reference](dependency-update-config.md#vergil).
+
 ### `[package.staged]`
 
 Valid only with `builder = "staged"`.

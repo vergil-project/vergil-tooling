@@ -51,8 +51,11 @@ management design
 (`docs/specs/2026-05-14-credential-management-design.md`) for the
 full setup details.
 
-**Git and Bash** — ship with macOS by default and are standard on
-Linux.
+**Git and Bash** — standard on Linux. On macOS, install the Xcode
+Command Line Tools (`xcode-select --install`; Homebrew needs them)
+and then Homebrew's `git` and `bash` (`brew install git bash`).
+Apple's `/bin/bash` is 3.2 and is never updated, and the Homebrew
+copies are what `vrg-host` tracks and upgrades.
 
 You do **not** need to install language runtimes, linters, test
 frameworks, markdownlint, or shellcheck on the host. All of those
@@ -335,6 +338,33 @@ To ship signed `.deb`/`.rpm` packages from releases:
    `PACKAGE_SIGNING_KEY` and `PACKAGE_SIGNING_PASSPHRASE`.
 4. Make sure the org's GitHub App can dispatch to `<org>/packages`, which
    indexes each released package.
+
+### Optional: dependency-update hook
+
+Every `vrg-release` ends by updating the repo's dependencies (see
+[Dependency updates](releasing.md#dependency-updates)). The built-in
+updaters cover Python (`uv.lock`), vergil ecosystem refs, the packaged
+runtime, and container image tags. If the repo has other dependencies
+to keep current, such as binary tool versions or provider pins, add a
+hook to `vergil.toml`:
+
+```toml
+[dependency-update]
+hook = "scripts/dev/update-deps.sh"
+```
+
+The hook runs in the dev container after the built-in updaters. It
+edits files but never commits, and it reports anything it holds back as
+JSON lines in `$VRG_DEPS_REPORT`. The full contract is in the
+[dependency-update reference](../reference/dependency-update-config.md).
+
+Dependency-update PRs carry the `dependency-update` label. The update
+creates the label the first time it needs it, but provisioning the full
+label set up front keeps the repo in line with the registry:
+
+```bash
+vrg-ensure-label --sync --repo <owner>/<repo>
+```
 
 ## Step 8: Managed `.gitignore` fence and config audit
 

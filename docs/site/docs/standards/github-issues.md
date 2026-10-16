@@ -348,6 +348,44 @@ requires it to sit with the epic roster instead. (This `.github` default
 supersedes the earlier current-repo default for `vrg-triage-create`.) Grooming
 an intake item into an epic or a task is a separate, periodic review step.
 
+## Labels
+
+Every managed repo carries the same label set. The canonical registry is
+`src/vergil_tooling/data/labels.json` in vergil-tooling.
+`vrg-github-repo-init` provisions it into a new repo, and
+`vrg-ensure-label --sync --repo <owner>/<repo>` brings an existing repo
+up to date (see
+[`vrg-ensure-label`](../reference/cli-tools-overview.md#vrg-ensure-label)).
+
+| Label | Meaning |
+|---|---|
+| `bug` | Defect or incorrect behavior to fix |
+| `feature` | New feature or capability |
+| `docs` | Documentation-only change |
+| `style` | Formatting, whitespace, no code change |
+| `refactor` | Code restructuring, no behavior change |
+| `test` | Adding or updating tests |
+| `chore` | Maintenance, tooling, configuration |
+| `ci` | CI/CD pipeline changes |
+| `build` | Build system or dependencies |
+| `research` | Investigation or spike |
+| `rtfm` | Resolved by reading existing docs |
+| `observability` | Monitoring, reporting, health checks |
+| `dependency-update` | Mechanized dependency update; an open one gates the next release (see [Dependency updates](../guides/releasing.md#dependency-updates)) |
+| `epic` | Umbrella issue; finite epics close when all sub-issues close |
+| `ad-hoc` | Perpetual umbrella for ad-hoc work; never auto-closes |
+| `archive` | Terminal per-quarter archive of closed ad-hoc work; historical record |
+| `triage` | Uncurated intake; not yet folded into the epic/task model |
+| `idea` | Seed to be expanded into an epic |
+| `hotfix` | Emergency fix that skipped formal planning; flagged for retroactive review |
+| `validation` | Post-merge validation: run the checklist, record PASS/FAIL as a comment; never auto-closed |
+| `deployment` | Deployment task: install/sync merged changes so they are usable; never auto-closed |
+| `retrospective` | Epic retrospective bookend; PR-workable, its docs PR publishes `retrospective.md` |
+
+`dependency-update` goes on PRs, not issues: `vrg-update-deps` and the
+`vrg-release` `update-deps` stage put it on every dependency-update PR
+they open, and create the label first if the repo does not have it.
+
 ## Closing behavior
 
 - Default: auto-close issues via PR closing keywords.

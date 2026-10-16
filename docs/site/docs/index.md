@@ -8,7 +8,7 @@ commits, PRs, releases, and validation alongside bash validators and git hooks
 ## Components
 
 **Python CLI tools** (`src/vergil_tooling/`):
-`vrg-commit`, `vrg-submit-pr`, `vrg-prepare-release`,
+`vrg-commit`, `vrg-submit-pr`, `vrg-release`, `vrg-update-deps`,
 `vrg-finalize-pr`, `vrg-validate`
 
 **Lint tools** (installed as `vrg-*`):

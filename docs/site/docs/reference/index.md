@@ -14,8 +14,8 @@ the dev-tree override venv.
 | ---- | ------- |
 | [vrg-commit](dev/commit.md) | Standards-compliant commit wrapper |
 | [vrg-submit-pr](dev/submit-pr.md) | Standards-compliant PR submission wrapper |
-| [vrg-merge-when-green](cli-tools-overview.md#vrg-merge-when-green) | Poll PR checks, then merge |
-| [vrg-prepare-release](dev/prepare-release.md) | Automated release preparation |
+| [vrg-release](dev/release.md) | Run the full release workflow, ending with the dependency update |
+| [vrg-update-deps](dev/update-deps.md) | Update dependencies within their declared bounds and merge the result |
 | [vrg-finalize-pr](dev/finalize-pr.md) | Merge a PR and run post-merge cleanup |
 | [vrg-ensure-label](cli-tools-overview.md#vrg-ensure-label) | Ensure GitHub labels exist |
 | [vrg-github-repo-config](config-audit.md) | Audit/reconcile a repo against canonical config |

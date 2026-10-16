@@ -2,6 +2,54 @@
 
 **Issue:** #1379
 **Date:** 2026-06-10
+**Status:** Partly superseded by epic
+[vergil-project/.github#381](https://github.com/vergil-project/.github/issues/381)
+(spec `epics/381-release-dep-updates/spec.md` §10). The current behaviour
+is documented in the site docs: the
+[dependency-update reference](../site/docs/reference/dependency-update-config.md)
+and [Releasing → Dependency updates](../site/docs/guides/releasing.md#dependency-updates).
+The implementation plan for the first phase is
+[`2026-06-10-vrg-update-deps-phase1-plan.md`](2026-06-10-vrg-update-deps-phase1-plan.md).
+
+> **Superseded sections.** Read these as history, not as current behaviour:
+>
+> - [Overview](#overview): the `chore/dep-update-<date>` branch is now
+>   `deps/update-<new-develop-version>`, and a failure no longer aborts and
+>   leaves the worktree (see below).
+> - [Invocation and evolution](#invocation-and-evolution): there was no opt-in
+>   `--with-deps` stage. The update is a default-on `vrg-release` stage now,
+>   skipped with `--without-deps`.
+> - [Third-party GitHub Actions to SHA](#third-party-github-actions-to-sha) and
+>   open decision 1: out of scope; Actions are not updated.
+> - [Language libraries](#language-libraries), for languages other than Python:
+>   deferred to a later epic.
+> - [Vergil ecosystem dependency](#vergil-ecosystem-dependency): extended to
+>   `action.yml` files and the `[package.python] runtime` patch.
+> - [Repo-specific extensions](#repo-specific-extensions): replaced by a
+>   repo-owned hook, `[dependency-update].hook`; tooling carries no
+>   repo-specific logic.
+> - [Warn-only dependencies](#warn-only-dependencies): replaced by the held-back
+>   report.
+> - [Configuration: the `[dependency-update]` section](#configuration-the-dependency-update-section)
+>   and open decision 2: there is no override or pin schema; the table has one
+>   key, `hook`, and bounds live in the native manifests.
+> - [Run semantics](#run-semantics-no-op-idempotency-abort), "Abort leaves the
+>   worktree", and [Error handling](#error-handling): a validation or merge
+>   failure pushes the branch, keeps the labelled PR open and files a fix task;
+>   an updater failure opens no PR. The worktree is always removed.
+> - [Validation and merge gates](#validation-and-merge-gates): a red local
+>   validation still opens the PR. After a red validation or a failed merge,
+>   the PR stays open with a fix task, and while it is open the next
+>   `vrg-release` refuses to start.
+> - [Relationship to `vrg-release`](#relationship-to-vrg-release-and-the-core-version-file):
+>   the update now runs inside `vrg-release`, as the first change on the new
+>   `develop` version.
+> - The pin-metadata non-goal in [Goals and non-goals](#goals-and-non-goals).
+> - [Work breakdown](#work-breakdown) items 4, 5, 6 and 8.
+>
+> **Still current:** the generic driver and stage pipeline, the updater
+> interface and registry, the single validation run, the no-op run as a
+> first-class outcome, and human-only invocation.
 
 ## Table of Contents
 

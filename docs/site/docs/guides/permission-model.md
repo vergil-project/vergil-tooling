@@ -178,8 +178,8 @@ operations under the human account.
 
 ### VRG Tools That Bypass the Wrapper
 
-Mechanized VRG tools (`vrg-submit-pr`, `vrg-merge-when-green`,
-`vrg-ensure-label`, `vrg-github-repo-config`, `vrg-finalize-pr`)
+Mechanized VRG tools (`vrg-submit-pr`, `vrg-release`,
+`vrg-update-deps`, `vrg-ensure-label`, `vrg-github-repo-config`, `vrg-finalize-pr`)
 call `gh` directly in their Python code. They bypass the wrapper
 because they are already validated — the wrapper only constrains
 agent-initiated `gh` calls via the Bash tool.

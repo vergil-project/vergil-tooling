@@ -38,31 +38,28 @@ adding new public surface. Versions: `v1.3.0` → `v1.3.1`.
 ### Producer steps
 
 1. Land all the patch's changes via normal feature PRs to `develop`.
-2. Cut the release:
+2. From the root checkout, on a clean `develop` that matches
+   `origin/develop`, run the release:
 
    ```bash
-   vrg-prepare-release --issue <release-tracking-issue>
+   vrg-release
    ```
 
-   This creates `release/{version}`, merges `main` to pick up prior
-   tags, generates `CHANGELOG.md` and `releases/v{version}.md`,
-   commits, pushes, opens a PR to `main`.
-3. Wait for CI green, then merge:
-
-   ```bash
-   vrg-merge-when-green https://github.com/vergil-project/vergil-tooling/pull/<release-pr>
-   ```
-
-4. Post-merge automation runs:
-   - `tag-and-release` creates the release tag (`v1.3.1`).
+   `vrg-release` is a human-only command: it refuses to run under an
+   agent identity. It needs `git-cliff` on `PATH` and an authenticated
+   `gh`. It drives the whole release through the stages listed in
+   [The `vrg-release` pipeline](#the-vrg-release-pipeline) below, in a
+   managed worktree, so the root checkout is never switched off
+   `develop`. See the [`vrg-release` reference](../reference/dev/release.md)
+   for every flag.
+3. While `vrg-release` waits on CD, the post-merge automation runs:
+   - CD on `main` creates the release tag (`v1.3.1`).
    - The rolling minor tag (`v1.3`) is **force-updated** to point at
      the new release.
    - The boundary tag (`develop-v1.3.1`) is created on `develop`.
    - `repository_dispatch` fires a `vergil-tooling-released`
      event at `vergil-containers`, which rebuilds the dev
      images against the now-current `v1.3` tag.
-   - `version-bump-pr` opens an auto-bump PR on `develop`
-     (e.g., `1.3.1` → `1.3.2`). Merge it.
    - The Documentation workflow publishes the new release notes to
      the docs site under `releases/v1.3.1`.
    - **Repos with `[package]`** (vergil-tooling is one) also publish
@@ -87,7 +84,43 @@ adding new public surface. Versions: `v1.3.0` → `v1.3.1`.
      commands), the stage error tells you to re-run the `publish-index`
      workflow in `<org>/packages`, and `vrg-release` exits 1. See the
      [package config reference](../reference/package-config.md#cd).
-5. Run `vrg-finalize-pr` to clean up local state.
+4. Act on the consumer-refresh commands `vrg-release` prints at the end
+   (or pass `--install` to have it run them after a clean release).
+5. Check the end of the run for the `update-deps` result. A failed
+   dependency update does not fail the release, but it leaves an open
+   PR that blocks the next one; see
+   [Dependency updates](#dependency-updates).
+
+### The `vrg-release` pipeline
+
+`vrg-release` runs these stages in order. A *fail-fast* stage stops the
+run when it fails. A *deferred* stage records its failure and lets the
+later stages run; the run then exits 1 with a summary. Every tracked
+stage posts a completion or failure comment on the release tracking
+issue and ticks its box in the issue's stage checklist.
+
+| Stage | Mode | What it does |
+|---|---|---|
+| `audit` | fail-fast | Runs `vrg-github-repo-config audit` on the repo. `--skip-audit` skips it |
+| `preflight` | fail-fast | Checks the host prerequisites, `gh` auth, `vergil.toml`, and that the root checkout is a clean `develop` matching `origin/develop`. On a fresh start it also checks the version is not tagged, that no tracking issue exists for it, and runs the [dependency-update gate](#the-dependency-update-gate). Creates the `release/<version>` managed worktree |
+| `prepare` | fail-fast | Creates the `release: <version>` tracking issue, generates the changelog and release notes, and opens the release PR to `main` |
+| `merge-release` | fail-fast | Waits for the release PR's checks and merges it |
+| `confirm-main` | fail-fast | Watches CD on `main`. The release job must succeed; other failed publish jobs are recorded as deferred publish failures |
+| `back-merge-bump` | fail-fast | Creates `release/post-<version>` from `main`, bumps the version, and merges it to `develop` |
+| `teardown-worktree` | deferred | Removes the release worktree and returns to the root checkout |
+| `confirm-develop` | deferred | Watches CD on `develop`; a failed docs publish is deferred |
+| `promote` | deferred | Moves the rolling `vX.Y` tag to the new release (skipped with `--no-promote`) |
+| `close-finalize` | deferred | Closes the tracking issue with a summary and runs `vrg-finalize-pr --cleanup-only` |
+| `package-index` | deferred | For repos with `[package]`, waits for the new version in the package index |
+| `consumer-refresh` | deferred | Prints the `[publish].consumer-refresh` commands |
+| `update-deps` | deferred | Runs the dependency update on the new `develop` version (skipped with `--without-deps`); see [Dependency updates](#dependency-updates) |
+| `publish-status` | deferred | Repeats any deferred publish failure, and any dependency-update failure, so neither is lost |
+
+`close-finalize` leaves the tracking issue open, and skips the cleanup,
+when an earlier stage has failed, so the release can be resumed with
+`vrg-release --resume`. A deferred publish failure also leaves the
+issue open, but the release itself is complete: re-run the CD publish
+rather than resuming.
 
 ### Consumer steps
 
@@ -109,13 +142,15 @@ A minor release adds backwards-compatible new features. Versions:
 
 ### Producer steps
 
-Same five steps as patch, with one important addition: the rolling
+Same steps as patch, with one important addition: the rolling
 minor tag changes from `v1.3` to `v1.4`. The image's pin in
 `vergil-containers` and any per-repo dev-dep declarations
 **must be bumped manually** — the rolling-tag mechanism only handles
 patches within a minor.
 
-1. Cut and merge `release/v1.4.0` exactly like a patch release.
+1. Run `vrg-release minor`. It bumps the version to the next minor
+   (`1.4.0`) on the release branch instead of releasing the current
+   `develop` version. Everything else matches a patch release.
 2. **Bump `vergil-containers`'s pin** in
    [`docker/common/vergil-tooling-uv.dockerfile`][docker-frag]:
 
@@ -164,7 +199,7 @@ communication and migration window:
 1. Document the breaking changes BEFORE cutting the release. A
    `docs/specs/v2-migration.md` (or similar) describing what
    breaks, what to update, and how to recover from common issues.
-2. Cut and merge `release/v2.0.0` like a minor release. The
+2. Run `vrg-release major` to release `v2.0.0`. The
    release notes prominently call out the breaking-change list and
    link to the migration guide.
 3. Bump `vergil-containers`'s `ARG ST_TOOLING_TAG=` to `v2`
@@ -185,6 +220,97 @@ edits its `v1.x` pin to `v2` deliberately. The difference is
 - Stage the bump in a feature branch, run validation, fix any
   breakages from removed APIs / changed behaviors.
 - Merge the bump PR per the consumer's normal review flow.
+
+## Dependency updates
+
+Every release ends by updating the repo's dependencies to the newest
+versions their declared bounds allow. This is the `update-deps` stage,
+and it is the first change on the new `develop` version. It runs after
+`consumer-refresh`, once the release is tagged and published, so it can
+never affect the release itself. Pass `--without-deps` to skip it.
+
+The stage brings the root checkout's `develop` up to date with
+`origin/develop` (the root checkout must be on `develop`), then runs the
+same pipeline as [`vrg-update-deps`](../reference/dev/update-deps.md):
+
+1. Create the `deps/update-<version>` branch in a managed worktree,
+   where `<version>` is the new `develop` version.
+2. Run each applicable updater, committing each one's changes
+   separately. The built-in updaters and the per-repo hook are described
+   in the [dependency-update reference](../reference/dependency-update-config.md).
+3. If nothing changed, stop: no branch is pushed and no PR is opened.
+   The tracking-issue comment says "No dependency changes; no PR opened."
+4. Otherwise run `vrg-container-run -- vrg-validate` once, push the
+   branch, and open a PR to `develop` labelled `dependency-update`.
+5. If validation passed, wait for the PR's checks and merge it.
+
+The stage's comment on the tracking issue always carries a
+**Held back by declared bounds** table: the dependencies whose newest
+release is outside the bounds the repo declares. These are reported,
+never bumped. A dependency on that list moves only when someone widens
+its bound deliberately.
+
+### When the dependency update fails
+
+A failed dependency update never fails the release, but it cannot be
+ignored. What it leaves behind depends on where it failed:
+
+- **An updater or the repo hook failed** (`update`), for example a
+  lookup error, a non-zero hook exit, or a hook that committed: this
+  happens before validation, so nothing is pushed, no PR is opened, and
+  no fix task is filed. The worktree is removed and the failure is
+  reported on the tracking issue and in the run summary. With no
+  labelled PR, it does not gate the next release.
+- **Validation failed** (`validation`), or **the PR's checks or merge
+  failed** (`merge`): the PR stays open with its `dependency-update`
+  label, and a task titled "Fix failed dependency update for
+  `<version>`" is filed under the repo's ad-hoc epic. The PR body gets a
+  `Fix task: <url>` line and a failure section. For a validation
+  failure, that section shows the output of the failing `vrg-validate`
+  stage, or, when that stage cannot be isolated, a labelled tail of the
+  raw output. It ends with the command to reproduce the failure.
+
+Either way `vrg-release` exits 1, and the failure counts once in its
+summary: the `update-deps` stage fails, and `publish-status` repeats it
+as a warning. If a publish job also failed, `publish-status` fails with
+both.
+
+To fix a failed update, work the fix task like any other task, but cut
+its branch from the failed update so it starts from those commits:
+
+```bash
+vrg-git fetch origin
+vrg-git worktree add -b chore/<fix-issue>-dep-update-<version> \
+  .worktrees/issue-<fix-issue>-dep-update origin/deps/update-<version>
+```
+
+Fix the cause, then hand off and merge as usual. When the fix PR merges
+and closes the fix task as completed, the next `vrg-release` closes the
+dependency-update PR for you.
+
+### The dependency-update gate
+
+On a fresh start (not `--resume`), `preflight` lists the open PRs
+labelled `dependency-update`. For each one:
+
+- **The PR's fix task is closed as completed.** The update landed
+  through the fix PR. A squash-merged fix PR never marks the deps PR as
+  merged, so preflight comments on the deps PR, closes it, and records
+  it in the `prepare` comment on the tracking issue.
+- **The fix task is still open, the PR has no fix task, or the fix task
+  was closed without being completed.** The PR blocks the release and
+  preflight refuses, naming each PR and why it blocks. A fix task
+  closed without being completed means the update did not land; whether
+  to close the PR or fix it is a human decision.
+
+Clear a blocking PR by landing its fix task, merging the PR, or closing
+it deliberately. For an urgent release, `--allow-pending-deps` lets the
+release go ahead anyway. The bypass is not silent: it prints a warning
+and the `prepare` comment lists the bypassed PRs.
+
+If preflight cannot list the PRs or look up a fix task, it refuses to
+release rather than guess. Every fix task is looked up before any PR is
+closed, so a failed lookup changes nothing.
 
 ## Documentation publication
 
@@ -213,14 +339,30 @@ gh run list --repo vergil-project/vergil-tooling \
 
 ## Release tracking artifacts
 
-Each release has a tracking issue (referenced as `--issue N` to
-`vrg-prepare-release`). Use it to:
+Each release has a tracking issue, `release: <version>`, which
+`vrg-release` creates in its `prepare` stage. Its body carries the
+stage checklist, and each tracked stage adds a comment when it
+completes or fails:
 
-- Capture the rationale for the release (what's in it, what's not).
-- Document any consumer coordination required (especially for
-  minor / major bumps).
-- Link to the release PR and any follow-up issues surfaced during
-  release prep.
+- The `prepare` comment names the release branch, the release PR and
+  the tracking issue. It also lists any dependency-update PRs the gate
+  closed because their fix task completed, and any it let through with
+  `--allow-pending-deps`.
+- Later comments record the merge, the tag and GitHub Release, the CD
+  runs, the back-merge PR and next version, and the promotion.
+- The `update-deps` comment carries the held-back table and either the
+  dependency-update PR or "No dependency changes; no PR opened."
+  (or "Dependency update skipped (--without-deps)."). A failed update
+  posts a failure comment with the same table and the failure section
+  instead.
 
-The tracking issue closes when the release PR merges; follow-ups
-move to their own issues.
+The `close-finalize` stage closes the issue with a summary, which
+happens before the last few stages run, so their comments land on the
+closed issue. It stays open when an earlier stage failed (so the
+release can be resumed) or a publish job was deferred. `vrg-release
+--resume` finds the open tracking issue and runs the pipeline again,
+adopting the branches, PRs and tag the earlier run already created.
+
+Use the issue as well to capture the rationale for the release and any
+consumer coordination it needs, especially for minor and major bumps.
+Follow-ups move to their own issues.

@@ -44,7 +44,10 @@ export PATH="$(pwd)/.venv/bin:$PATH"
 
 - `vrg-commit` — Standards-compliant conventional commits
 - `vrg-submit-pr` — Standards-compliant PR creation (manual merge)
-- `vrg-release` — Mechanized end-to-end release workflow
+- `vrg-release` — Mechanized end-to-end release workflow, ending with
+  the dependency update
+- `vrg-update-deps` — Update dependencies within their declared bounds,
+  validate, and merge the result (also run by every `vrg-release`)
 - `vrg-finalize-pr` — Merge a PR and run post-merge cleanup
 - `vrg-validate` — Unified validation driver (via vrg-container-run)
 - `vrg-ensure-label` — Idempotent GitHub label creation
