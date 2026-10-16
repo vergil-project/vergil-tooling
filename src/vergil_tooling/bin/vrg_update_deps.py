@@ -2,7 +2,9 @@
 
 Runs on a clean, synced develop: upgrades dependencies in a managed worktree,
 validates once, and drives the PR through merge and finalize. A no-op run
-creates no PR.
+creates no PR. A failed validation or merge keeps the ``dependency-update``
+labelled PR open, files a fix task, and exits non-zero; every run prints the
+held-back report.
 """
 
 from __future__ import annotations
