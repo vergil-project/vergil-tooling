@@ -15398,6 +15398,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#the-package-re-publish-check" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The package re-publish check
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -15640,6 +15651,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#the-package-re-publish-check" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The package re-publish check
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -15811,7 +15833,7 @@ issue and ticks its box in the issue's stage checklist.</p>
 <tr>
 <td><code>preflight</code></td>
 <td>fail-fast</td>
-<td>Checks the host prerequisites, <code>gh</code> auth, <code>vergil.toml</code>, and that the root checkout is a clean <code>develop</code> matching <code>origin/develop</code>. On a fresh start it also checks the version is not tagged, that no tracking issue exists for it, and runs the <a href="#the-dependency-update-gate">dependency-update gate</a>. Creates the <code>release/&lt;version&gt;</code> managed worktree</td>
+<td>Checks the host prerequisites, <code>gh</code> auth, <code>vergil.toml</code>, and that the root checkout is a clean <code>develop</code> matching <code>origin/develop</code>. On a fresh start it also checks the version is not tagged, that no tracking issue exists for it, runs the <a href="#the-package-re-publish-check">package re-publish check</a>, and runs the <a href="#the-dependency-update-gate">dependency-update gate</a>. Creates the <code>release/&lt;version&gt;</code> managed worktree</td>
 </tr>
 <tr>
 <td><code>prepare</code></td>
@@ -16079,6 +16101,31 @@ and the <code>prepare</code> comment lists the bypassed PRs.</p>
 <p>If preflight cannot list the PRs or look up a fix task, it refuses to
 release rather than guess. Every fix task is looked up before any PR is
 closed, so a failed lookup changes nothing.</p>
+<h3 id="the-package-re-publish-check">The package re-publish check<a class="headerlink" href="#the-package-re-publish-check" title="Permanent link">&para;</a></h3>
+<p>For a repo with <code>[package]</code>, a fresh start (not <code>--resume</code>) refuses to
+release when a package it would publish has the same name, full
+version, architecture and format as a package an earlier stable
+release of the repo already published. Package builds are not
+byte-reproducible, so the rebuilt file would differ from the published
+one. The shared package index refuses that, and because the index is
+built from every release of every repo, the refusal would fail every
+repo's index publish until the duplicate assets were removed by hand.</p>
+<p>The check runs in <code>preflight</code>, before anything is branched, tagged or
+published. That is the earliest point that knows the full package
+versions: they follow from <code>[package]</code> (its <code>version</code>, or the release
+version when unset) and the build matrix, without building anything.
+It runs before the dependency-update gate, so a refusal changes
+nothing. The refusal names each conflicting package and the release
+that first published it:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>vergil-project/vergil-python@v1.0.1 would re-publish 4 package(s) at a version an earlier release already published:
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>  - vergil-python3.14.8 3.14.8+20261003-1 amd64 (deb): already published by vergil-project/vergil-python@v1.0.0
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>  ...
+</code></pre></div>
+<p>To fix it, bump <code>[package].version</code> in <code>vergil.toml</code>, for example to a
+new <code>+&lt;date&gt;</code> build suffix. If the check cannot read the repo's
+releases, it refuses rather than skipping. CD runs the same check as a
+backstop; see the
+<a href="../../reference/package-config/#the-re-publish-check">package reference</a>.</p>
 <h2 id="documentation-publication">Documentation publication<a class="headerlink" href="#documentation-publication" title="Permanent link">&para;</a></h2>
 <p>The Documentation workflow (<code>.github/workflows/docs.yml</code>) deploys
 the MkDocs site to GitHub Pages on every push to <code>develop</code> and
@@ -16095,8 +16142,8 @@ succeed, finalize prints the failure with a direct link to the log and
 exits non-zero, so you investigate before moving on. The wait is
 bounded by timeouts and <code>--no-wait-cd</code> opts out (issue #2753).</p>
 <p>For deeper investigation, view recent runs directly:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>gh<span class="w"> </span>run<span class="w"> </span>list<span class="w"> </span>--repo<span class="w"> </span>vergil-project/vergil-tooling<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>--workflow<span class="o">=</span><span class="s2">"Documentation"</span><span class="w"> </span>--limit<span class="w"> </span><span class="m">5</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>gh<span class="w"> </span>run<span class="w"> </span>list<span class="w"> </span>--repo<span class="w"> </span>vergil-project/vergil-tooling<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span>--workflow<span class="o">=</span><span class="s2">"Documentation"</span><span class="w"> </span>--limit<span class="w"> </span><span class="m">5</span>
 </code></pre></div>
 <h2 id="release-tracking-artifacts">Release tracking artifacts<a class="headerlink" href="#release-tracking-artifacts" title="Permanent link">&para;</a></h2>
 <p>Each release has a tracking issue, <code>release: &lt;version&gt;</code>, which

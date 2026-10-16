@@ -12170,6 +12170,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#the-re-publish-check" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The re-publish check
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -15718,6 +15729,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#the-re-publish-check" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The re-publish check
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -15837,7 +15859,7 @@ sees no change in CI or CD.</p>
 <td><code>version</code></td>
 <td>string</td>
 <td>repo version</td>
-<td>Explicit package version (<code>[0-9][0-9A-Za-z.+~]*</code>), for when it is not the repo's semver (e.g. <code>vergil-python</code>)</td>
+<td>Explicit package version (<code>[0-9][0-9A-Za-z.+~]*</code>), for when it is not the repo's semver (e.g. <code>vergil-python</code>). A release refuses a version an earlier release already published; see <a href="#the-re-publish-check">the re-publish check</a></td>
 </tr>
 <tr>
 <td><code>noarch</code></td>
@@ -16165,8 +16187,44 @@ fatal before tagging. The caller has two requirements:</p>
 repository with the org's GitHub App token (<code>APP_CLIENT_ID</code> /
 <code>APP_PRIVATE_KEY</code>, also reached through <code>inherit</code>), which indexes the new
 packages. A dispatch failure is deferred: it does not fail the release.</p>
+<h3 id="the-re-publish-check">The re-publish check<a class="headerlink" href="#the-re-publish-check" title="Permanent link">&para;</a></h3>
+<p>A package's identity is its name, full version (<code>&lt;version&gt;-&lt;revision&gt;</code>),
+architecture and format. Builds are not byte-reproducible, so a release
+that rebuilds an identity an earlier release already published ships
+different bytes under the same identity. The package index refuses that
+(the same identity must be byte-identical), and since the index is built
+from every release of every repo, the refusal fails every repo's index
+publish. The index refusal stays as the last line of defence, but two
+earlier checks stop such a release before it publishes:</p>
+<ol>
+<li><strong><code>vrg-release</code> preflight</strong>, on a fresh start, before anything is
+   tagged. This is the earliest point that knows the full versions: the
+   package name, <code>version</code> (or the release version) and the revision of
+   every artifact in the release manifest are all known without
+   building. See
+   <a href="../../guides/releasing/#the-package-re-publish-check">Releasing</a>.</li>
+<li><strong><code>vrg-package check-unpublished</code></strong>, for the CD packaging path to run
+   before it builds, as a backstop for a release that did not go through
+   <code>vrg-release</code>:</li>
+</ol>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>vrg-package<span class="w"> </span>check-unpublished<span class="w"> </span>--version<span class="w"> </span><span class="s2">"</span><span class="k">$(</span>vrg-version<span class="w"> </span>show<span class="k">)</span><span class="s2">"</span>
+</code></pre></div>
+<p><code>--repo</code> defaults to <code>$GITHUB_REPOSITORY</code>. It needs <code>gh</code> with read
+   access to the repo's releases.</p>
+<p>Both compare the identities the release would publish against those
+attached to every earlier stable release that carries a
+<code>packages-manifest.json</code>, which are the releases the index collects. The
+published identities are read from the attached file names, which nFPM
+derives from the same metadata the index reads. The release's own tag is
+never counted as an earlier release. Any failure to read the releases
+refuses the release; the check never skips. A repo without <code>[package]</code>
+passes.</p>
+<p>To fix a refusal, bump <code>[package].version</code>. For example, use a new
+<code>+&lt;date&gt;</code> build suffix, or add a rebuild counter
+(<code>3.14.8+20261003</code> → <code>3.14.8+20261003.1</code>). The revision (<code>-1</code>) is set by
+the tooling and cannot be configured.</p>
 <h2 id="inspecting-the-matrix">Inspecting the matrix<a class="headerlink" href="#inspecting-the-matrix" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>vrg-container-run<span class="w"> </span>--<span class="w"> </span>vrg-package<span class="w"> </span>matrix
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>vrg-container-run<span class="w"> </span>--<span class="w"> </span>vrg-package<span class="w"> </span>matrix
 </code></pre></div>
 <p>prints the resolved build and test cells as JSON without building anything.
 Add <code>--tier reduced</code> to see the reduced feature-PR matrix.</p>
