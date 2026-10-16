@@ -6,7 +6,7 @@ import subprocess
 
 from vergil_tooling.lib import progress
 from vergil_tooling.lib.update_deps.context import UpdateDepsError
-from vergil_tooling.lib.update_deps.failure import combined_output
+from vergil_tooling.lib.update_deps.failure import validation_failure_output
 
 _VALIDATE_CMD = ["vrg-container-run", "--", "vrg-validate"]
 
@@ -16,9 +16,11 @@ def run_validation() -> None:
     try:
         progress.run(_VALIDATE_CMD)
     except subprocess.CalledProcessError as exc:
+        output = validation_failure_output(exc)
         raise UpdateDepsError(
             phase="validate",
             command=" ".join(_VALIDATE_CMD),
             message="Validation failed after dependency updates.",
-            detail=combined_output(exc),
+            detail=output.text,
+            detail_heading=output.heading,
         ) from exc

@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from vergil_tooling.lib.update_deps.context import (
+    TAIL_HEADING,
     DepsFailure,
     FailureKind,
     UpdateDepsContext,
@@ -237,6 +238,7 @@ def test_updater_error_without_detail(monkeypatch) -> None:
     run_updaters_stage(state)
     assert ctx.failure is not None
     assert ctx.failure.output_tail == ""
+    assert ctx.failure.output_heading == TAIL_HEADING
 
 
 def test_updater_process_error_is_recorded(monkeypatch) -> None:
@@ -259,6 +261,7 @@ def test_validation_failure_is_recorded_not_raised(monkeypatch) -> None:
             command="vrg-container-run -- vrg-validate",
             message="Validation failed.",
             detail="E assert 1 == 2",
+            detail_heading="Output of the failing vrg-validate stage (test):",
         )
 
     monkeypatch.setattr(_MOD + ".validate.run_validation", _red)
@@ -269,6 +272,7 @@ def test_validation_failure_is_recorded_not_raised(monkeypatch) -> None:
     assert ctx.failure.kind == "validation"
     assert ctx.failure.message == "Validation failed."
     assert "E assert 1 == 2" in ctx.failure.output_tail
+    assert ctx.failure.output_heading == "Output of the failing vrg-validate stage (test):"
     assert ctx.failure.reproduce == "vrg-container-run -- vrg-validate"
 
 
@@ -282,6 +286,7 @@ def test_validation_failure_without_detail(monkeypatch) -> None:
     validate_stage(state)
     assert ctx.failure is not None
     assert ctx.failure.output_tail == ""
+    assert ctx.failure.output_heading == TAIL_HEADING
 
 
 def test_validate_stage_runs_on_green(monkeypatch) -> None:
