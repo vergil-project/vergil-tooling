@@ -11661,6 +11661,8 @@
       
         
       
+        
+      
     
     
     
@@ -11889,6 +11891,34 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="../../reference/dependency-update-config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dependency Update ([dependency-update])
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
     
     
       
@@ -11907,10 +11937,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_8" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_9" >
         
           
-          <label class="md-nav__link" for="__nav_4_8" id="__nav_4_8_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_9" id="__nav_4_9_label" tabindex="0">
             
   
   
@@ -11928,8 +11958,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_8_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_8">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_9">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -12001,10 +12031,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_9" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_10" >
         
           
-          <label class="md-nav__link" for="__nav_4_9" id="__nav_4_9_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_10" id="__nav_4_10_label" tabindex="0">
             
   
   
@@ -12022,8 +12052,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_9_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_9">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_10">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -12118,6 +12148,8 @@
       
         
       
+        
+      
     
     
     
@@ -12131,10 +12163,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_10" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_11" >
         
           
-          <label class="md-nav__link" for="__nav_4_10" id="__nav_4_10_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_11" id="__nav_4_11_label" tabindex="0">
             
   
   
@@ -12152,8 +12184,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_10_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_10">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_11">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -12254,14 +12286,42 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/dev/prepare-release/" class="md-nav__link">
+      <a href="../../reference/dev/release/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    vrg-prepare-release
+    vrg-release
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/dev/update-deps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-update-deps
   
 
     
@@ -15125,6 +15185,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#optional-dependency-update-hook" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Optional: dependency-update hook
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -15433,6 +15504,17 @@
     <span class="md-ellipsis">
       
         Optional: OS packages
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#optional-dependency-update-hook" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Optional: dependency-update hook
       
     </span>
   </a>
@@ -15853,6 +15935,25 @@ per-language test/lint/audit tiers.</p>
 <li>Make sure the org's GitHub App can dispatch to <code>&lt;org&gt;/packages</code>, which
    indexes each released package.</li>
 </ol>
+<h3 id="optional-dependency-update-hook">Optional: dependency-update hook<a class="headerlink" href="#optional-dependency-update-hook" title="Permanent link">&para;</a></h3>
+<p>Every <code>vrg-release</code> ends by updating the repo's dependencies (see
+<a href="../releasing/#dependency-updates">Dependency updates</a>). The built-in
+updaters cover Python (<code>uv.lock</code>), vergil ecosystem refs, the packaged
+runtime, and container image tags. If the repo has other dependencies
+to keep current, such as binary tool versions or provider pins, add a
+hook to <code>vergil.toml</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="k">[dependency-update]</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">hook</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"scripts/dev/update-deps.sh"</span>
+</code></pre></div>
+<p>The hook runs in the dev container after the built-in updaters. It
+edits files but never commits, and it reports anything it holds back as
+JSON lines in <code>$VRG_DEPS_REPORT</code>. The full contract is in the
+<a href="../../reference/dependency-update-config/">dependency-update reference</a>.</p>
+<p>Dependency-update PRs carry the <code>dependency-update</code> label. The update
+creates the label the first time it needs it, but provisioning the full
+label set up front keeps the repo in line with the registry:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>vrg-ensure-label<span class="w"> </span>--sync<span class="w"> </span>--repo<span class="w"> </span>&lt;owner&gt;/&lt;repo&gt;
+</code></pre></div>
 <h2 id="step-8-managed-gitignore-fence-and-config-audit">Step 8: Managed <code>.gitignore</code> fence and config audit<a class="headerlink" href="#step-8-managed-gitignore-fence-and-config-audit" title="Permanent link">&para;</a></h2>
 <p>Every managed repo owes two things to the fleet's self-policing config
 audit, and both are checked nightly:</p>
@@ -15890,28 +15991,28 @@ rolling <code>vergil-tooling@vX.Y</code> tag, so an updated fragment released un
 that line is picked up on the next <code>vrg-gitignore-sync</code> run — and the
 nightly audit flags the drift until you run it.</p>
 <p>Check your repo locally before relying on the nightly run:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>vrg-github-repo-config<span class="w"> </span>audit<span class="w">   </span><span class="c1"># exit 0 compliant, 1 drift, 2 could-not-complete</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>vrg-github-repo-config<span class="w"> </span>audit<span class="w">   </span><span class="c1"># exit 0 compliant, 1 drift, 2 could-not-complete</span>
 </code></pre></div>
 <p>See the <a href="../../reference/config-audit/">GitHub Config Audit reference</a>
 for the full check list and the managed-fence propagation model.</p>
 <h2 id="step-9-verify-end-to-end">Step 9: Verify end-to-end<a class="headerlink" href="#step-9-verify-end-to-end" title="Permanent link">&para;</a></h2>
 <p>Once the above is in place, sanity-check each layer:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="c1"># 1. Host tools — should print vrg-container-run help</span>
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>vrg-container-run<span class="w"> </span>--help
-<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>
-<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="c1"># 2. Dev container — pulls an image on first run and runs a</span>
-<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="c1">#    tiny command inside it</span>
-<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>vrg-container-run<span class="w"> </span>--<span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">"container ok"</span>
-<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>
-<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="c1"># 3. Repo profile — runs vrg-repo-profile inside the container</span>
-<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>vrg-container-run<span class="w"> </span>--<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>vrg-repo-profile
-<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>
-<a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a><span class="c1"># 4. Hook guard shim is present and executable</span>
-<a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a>ls<span class="w"> </span>-la<span class="w"> </span>.claude/hooks/guard.sh
-<a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a>
-<a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a><span class="c1"># 5. Hook guard (requires Claude Code session) — in a Claude</span>
-<a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a><span class="c1">#    Code session in this repo, have Claude try to run a raw</span>
-<a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a><span class="c1">#    `git commit`. The hook guard should block it.</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="c1"># 1. Host tools — should print vrg-container-run help</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>vrg-container-run<span class="w"> </span>--help
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="c1"># 2. Dev container — pulls an image on first run and runs a</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="c1">#    tiny command inside it</span>
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>vrg-container-run<span class="w"> </span>--<span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">"container ok"</span>
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="c1"># 3. Repo profile — runs vrg-repo-profile inside the container</span>
+<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a>vrg-container-run<span class="w"> </span>--<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>vrg-repo-profile
+<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a>
+<a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a><span class="c1"># 4. Hook guard shim is present and executable</span>
+<a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a>ls<span class="w"> </span>-la<span class="w"> </span>.claude/hooks/guard.sh
+<a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a>
+<a id="__codelineno-10-14" name="__codelineno-10-14" href="#__codelineno-10-14"></a><span class="c1"># 5. Hook guard (requires Claude Code session) — in a Claude</span>
+<a id="__codelineno-10-15" name="__codelineno-10-15" href="#__codelineno-10-15"></a><span class="c1">#    Code session in this repo, have Claude try to run a raw</span>
+<a id="__codelineno-10-16" name="__codelineno-10-16" href="#__codelineno-10-16"></a><span class="c1">#    `git commit`. The hook guard should block it.</span>
 </code></pre></div>
 <p>If any step fails, check the corresponding section above, then
 re-run. Common causes: <code>uv tool install</code> not run,
@@ -15919,7 +16020,7 @@ re-run. Common causes: <code>uv tool install</code> not run,
 Code session loaded.</p>
 <h2 id="keeping-up-to-date">Keeping up to date<a class="headerlink" href="#keeping-up-to-date" title="Permanent link">&para;</a></h2>
 <p>After each <code>vergil-tooling</code> release, upgrade the host tools:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>uv<span class="w"> </span>tool<span class="w"> </span>upgrade<span class="w"> </span>vergil-tooling
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>uv<span class="w"> </span>tool<span class="w"> </span>upgrade<span class="w"> </span>vergil-tooling
 </code></pre></div>
 <p><code>uv tool upgrade</code> re-resolves the git reference, pulls the current
 tip of the rolling minor tag, and rebuilds the isolated tool venv.
@@ -15927,8 +16028,8 @@ No need to repeat the full git URL.</p>
 <p>On macOS, <code>vrg-host</code> covers vergil-tooling and the other host
 prerequisites together (<code>uv</code>, <code>gh</code>, Docker, and the <code>vrg-vm</code> tools
 such as Lima, <code>gcloud</code> and OpenTofu):</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>vrg-host<span class="w">                   </span><span class="c1"># report drift, missing tools and failed health checks</span>
-<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>vrg-host<span class="w"> </span>upgrade<span class="w"> </span>--all<span class="w">     </span><span class="c1"># upgrade every auto-managed tool, respecting pins</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>vrg-host<span class="w">                   </span><span class="c1"># report drift, missing tools and failed health checks</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>vrg-host<span class="w"> </span>upgrade<span class="w"> </span>--all<span class="w">     </span><span class="c1"># upgrade every auto-managed tool, respecting pins</span>
 </code></pre></div>
 <p><code>vrg-host upgrade vergil-tooling</code> runs the same <code>uv tool upgrade</code>.
 Docker Desktop and macOS itself are reported but never upgraded by
@@ -15941,8 +16042,8 @@ releases. If you need a fresh image, <code>docker pull
 ghcr.io/vergil-project/dev-&lt;lang&gt;:&lt;version&gt;</code> forces a refresh.</p>
 <p>The Claude Code plugin can be stale after a release; manual
 refresh:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>git<span class="w"> </span>-C<span class="w"> </span>~/.claude/plugins/marketplaces/vergil-tooling-marketplace<span class="w"> </span>pull
-<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="c1"># then restart Claude Code</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>git<span class="w"> </span>-C<span class="w"> </span>~/.claude/plugins/marketplaces/vergil-tooling-marketplace<span class="w"> </span>pull
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="c1"># then restart Claude Code</span>
 </code></pre></div>
 <h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
 <ul>

@@ -11663,6 +11663,8 @@
       
         
       
+        
+      
     
     
     
@@ -11891,6 +11893,34 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="../../reference/dependency-update-config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dependency Update ([dependency-update])
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
     
     
       
@@ -11909,10 +11939,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_8" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_9" >
         
           
-          <label class="md-nav__link" for="__nav_4_8" id="__nav_4_8_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_9" id="__nav_4_9_label" tabindex="0">
             
   
   
@@ -11930,8 +11960,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_8_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_8">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_9">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -12003,10 +12033,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_9" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_10" >
         
           
-          <label class="md-nav__link" for="__nav_4_9" id="__nav_4_9_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_10" id="__nav_4_10_label" tabindex="0">
             
   
   
@@ -12024,8 +12054,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_9_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_9">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_10">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -12120,6 +12150,8 @@
       
         
       
+        
+      
     
     
     
@@ -12133,10 +12165,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_10" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_11" >
         
           
-          <label class="md-nav__link" for="__nav_4_10" id="__nav_4_10_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_11" id="__nav_4_11_label" tabindex="0">
             
   
   
@@ -12154,8 +12186,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_10_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_10">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_11">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -12256,14 +12288,42 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/dev/prepare-release/" class="md-nav__link">
+      <a href="../../reference/dev/release/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    vrg-prepare-release
+    vrg-release
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/dev/update-deps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-update-deps
   
 
     
@@ -13064,6 +13124,17 @@
     <span class="md-ellipsis">
       
         Intake queues
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#labels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Labels
       
     </span>
   </a>
@@ -15697,6 +15768,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#labels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Labels
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#closing-behavior" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -16064,6 +16146,114 @@ single-PR task, so the "member repos hold only single-PR tasks" invariant
 requires it to sit with the epic roster instead. (This <code>.github</code> default
 supersedes the earlier current-repo default for <code>vrg-triage-create</code>.) Grooming
 an intake item into an epic or a task is a separate, periodic review step.</p>
+<h2 id="labels">Labels<a class="headerlink" href="#labels" title="Permanent link">&para;</a></h2>
+<p>Every managed repo carries the same label set. The canonical registry is
+<code>src/vergil_tooling/data/labels.json</code> in vergil-tooling.
+<code>vrg-github-repo-init</code> provisions it into a new repo, and
+<code>vrg-ensure-label --sync --repo &lt;owner&gt;/&lt;repo&gt;</code> brings an existing repo
+up to date (see
+<a href="../../reference/cli-tools-overview/#vrg-ensure-label"><code>vrg-ensure-label</code></a>).</p>
+<table>
+<thead>
+<tr>
+<th>Label</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>bug</code></td>
+<td>Defect or incorrect behavior to fix</td>
+</tr>
+<tr>
+<td><code>feature</code></td>
+<td>New feature or capability</td>
+</tr>
+<tr>
+<td><code>docs</code></td>
+<td>Documentation-only change</td>
+</tr>
+<tr>
+<td><code>style</code></td>
+<td>Formatting, whitespace, no code change</td>
+</tr>
+<tr>
+<td><code>refactor</code></td>
+<td>Code restructuring, no behavior change</td>
+</tr>
+<tr>
+<td><code>test</code></td>
+<td>Adding or updating tests</td>
+</tr>
+<tr>
+<td><code>chore</code></td>
+<td>Maintenance, tooling, configuration</td>
+</tr>
+<tr>
+<td><code>ci</code></td>
+<td>CI/CD pipeline changes</td>
+</tr>
+<tr>
+<td><code>build</code></td>
+<td>Build system or dependencies</td>
+</tr>
+<tr>
+<td><code>research</code></td>
+<td>Investigation or spike</td>
+</tr>
+<tr>
+<td><code>rtfm</code></td>
+<td>Resolved by reading existing docs</td>
+</tr>
+<tr>
+<td><code>observability</code></td>
+<td>Monitoring, reporting, health checks</td>
+</tr>
+<tr>
+<td><code>dependency-update</code></td>
+<td>Mechanized dependency update; an open one gates the next release (see <a href="../../guides/releasing/#dependency-updates">Dependency updates</a>)</td>
+</tr>
+<tr>
+<td><code>epic</code></td>
+<td>Umbrella issue; finite epics close when all sub-issues close</td>
+</tr>
+<tr>
+<td><code>ad-hoc</code></td>
+<td>Perpetual umbrella for ad-hoc work; never auto-closes</td>
+</tr>
+<tr>
+<td><code>archive</code></td>
+<td>Terminal per-quarter archive of closed ad-hoc work; historical record</td>
+</tr>
+<tr>
+<td><code>triage</code></td>
+<td>Uncurated intake; not yet folded into the epic/task model</td>
+</tr>
+<tr>
+<td><code>idea</code></td>
+<td>Seed to be expanded into an epic</td>
+</tr>
+<tr>
+<td><code>hotfix</code></td>
+<td>Emergency fix that skipped formal planning; flagged for retroactive review</td>
+</tr>
+<tr>
+<td><code>validation</code></td>
+<td>Post-merge validation: run the checklist, record PASS/FAIL as a comment; never auto-closed</td>
+</tr>
+<tr>
+<td><code>deployment</code></td>
+<td>Deployment task: install/sync merged changes so they are usable; never auto-closed</td>
+</tr>
+<tr>
+<td><code>retrospective</code></td>
+<td>Epic retrospective bookend; PR-workable, its docs PR publishes <code>retrospective.md</code></td>
+</tr>
+</tbody>
+</table>
+<p><code>dependency-update</code> goes on PRs, not issues: <code>vrg-update-deps</code> and the
+<code>vrg-release</code> <code>update-deps</code> stage put it on every dependency-update PR
+they open, and create the label first if the repo does not have it.</p>
 <h2 id="closing-behavior">Closing behavior<a class="headerlink" href="#closing-behavior" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Default: auto-close issues via PR closing keywords.</li>

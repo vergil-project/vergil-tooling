@@ -11663,6 +11663,8 @@
       
         
       
+        
+      
     
     
     
@@ -11891,6 +11893,34 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="../../../../reference/dependency-update-config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dependency Update ([dependency-update])
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
     
     
       
@@ -11909,10 +11939,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_8" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_9" >
         
           
-          <label class="md-nav__link" for="__nav_4_8" id="__nav_4_8_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_9" id="__nav_4_9_label" tabindex="0">
             
   
   
@@ -11930,8 +11960,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_8_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_8">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_9">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -12003,10 +12033,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_9" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_10" >
         
           
-          <label class="md-nav__link" for="__nav_4_9" id="__nav_4_9_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_10" id="__nav_4_10_label" tabindex="0">
             
   
   
@@ -12024,8 +12054,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_9_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_9">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_10">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -12120,6 +12150,8 @@
       
         
       
+        
+      
     
     
     
@@ -12133,10 +12165,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_10" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_11" >
         
           
-          <label class="md-nav__link" for="__nav_4_10" id="__nav_4_10_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_11" id="__nav_4_11_label" tabindex="0">
             
   
   
@@ -12154,8 +12186,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_10_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_10">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_11">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -12256,14 +12288,42 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../reference/dev/prepare-release/" class="md-nav__link">
+      <a href="../../../../reference/dev/release/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    vrg-prepare-release
+    vrg-release
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../reference/dev/update-deps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-update-deps
   
 
     
@@ -15627,6 +15687,12 @@ production deployments.</p>
 <p>If the patch upgrade fails, determine root cause before pinning. If the failure
 is attributable to the runtime, anchor to the prior patch and document the
 failure evidence.</p>
+<p>For a packaged product (<code>[package.python] runtime</code> in <code>vergil.toml</code>), steps 1
+and 2 are automated: the <code>vergil</code> updater in the <code>vrg-release</code> <code>update-deps</code>
+stage bumps the runtime to the newest <code>vergil-python</code> patch on the same minor
+line that the package indexes serve, and the update's single validation run
+covers step 3. A newer minor line is only reported. See the
+<a href="../../../../reference/dependency-update-config/#vergil">dependency-update reference</a>.</p>
 <h3 id="minor-or-major-level">Minor- or major-level<a class="headerlink" href="#minor-or-major-level" title="Permanent link">&para;</a></h3>
 <p>When incrementing the application <code>MINOR</code> or <code>MAJOR</code> version:</p>
 <ol>
