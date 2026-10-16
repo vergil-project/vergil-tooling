@@ -34,7 +34,8 @@ When a deprecation warning is encountered:
 4. Attempt to remove the warning by code changes if the fix does not require a
    dependency upgrade.
 5. If removing the warning requires a dependency upgrade, defer it to the
-   start-of-cycle dependency update.
+   [start-of-cycle dependency update](../../guides/releasing.md#dependency-updates)
+   that every `vrg-release` runs.
 6. When revisiting an open warning issue, update it with the latest attempt and
    outcome; close it when the warning is resolved.
 
