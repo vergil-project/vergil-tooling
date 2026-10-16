@@ -17,6 +17,7 @@ from vergil_tooling.lib.config import (
     ConfigError,
     ContainerConfig,
     CppConfig,
+    DependencyUpdateConfig,
     MarkdownlintConfig,
     TestConfig,
     TypeScriptConfig,
@@ -28,6 +29,7 @@ from vergil_tooling.lib.config import (
     container_env_prefixes,
     container_system_packages,
     declared_primary_language,
+    dependency_update_hook,
     parse_vm_stanza,
     primary_ci_version,
     read_config,
@@ -947,6 +949,53 @@ def test_validation_container_command_no_file(tmp_path: Path) -> None:
 def test_validation_container_command_no_section(tmp_path: Path) -> None:
     (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     assert validation_container_command(tmp_path) == DEFAULT_VALIDATION_COMMAND
+
+
+# -- [dependency-update] section (epic vergil-project/.github#381) ------------
+
+
+def test_dependency_update_absent_defaults_to_no_hook(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    cfg = read_config(tmp_path)
+    assert cfg.dependency_update == DependencyUpdateConfig(hook=None)
+    assert dependency_update_hook(tmp_path) is None
+
+
+def test_dependency_update_hook_parsed(tmp_path: Path) -> None:
+    toml = _VALID_TOML + '\n[dependency-update]\nhook = "scripts/dev/update-deps.sh"\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    assert dependency_update_hook(tmp_path) == "scripts/dev/update-deps.sh"
+
+
+def test_dependency_update_hook_no_file_raises(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError):
+        dependency_update_hook(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("toml", "match"),
+    [
+        (_VALID_TOML + '\n[dependency-update]\nhook = ""\n', "must be a non-empty string"),
+        (_VALID_TOML + '\n[dependency-update]\nhook = "   "\n', "must be a non-empty string"),
+        (_VALID_TOML + "\n[dependency-update]\nhook = 3\n", "must be a non-empty string"),
+        (_VALID_TOML + "\n[dependency-update]\n", "missing required field 'hook'"),
+        # A bare top-level key must precede every table header, so it leads.
+        ('dependency-update = "x"\n' + _VALID_TOML, r"\[dependency-update\] must be a table"),
+    ],
+)
+def test_dependency_update_invalid(tmp_path: Path, toml: str, match: str) -> None:
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=match):
+        read_config(tmp_path)
+
+
+def test_dependency_update_unknown_key_warns(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    toml = _VALID_TOML + '\n[dependency-update]\nhook = "h"\nschedule = "x"\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    read_config(tmp_path)
+    assert "unrecognized key 'schedule' in [dependency-update]" in capsys.readouterr().err
 
 
 # -- [vm] cascade (issue #99) -------------------------------------------------
