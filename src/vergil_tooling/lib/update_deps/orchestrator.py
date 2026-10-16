@@ -14,7 +14,12 @@ from typing import TYPE_CHECKING
 from vergil_tooling.lib import git
 from vergil_tooling.lib.progress import Stage
 from vergil_tooling.lib.update_deps import pr, report, validate
-from vergil_tooling.lib.update_deps.context import DepsFailure, UpdateDepsContext, UpdateDepsError
+from vergil_tooling.lib.update_deps.context import (
+    TAIL_HEADING,
+    DepsFailure,
+    UpdateDepsContext,
+    UpdateDepsError,
+)
 from vergil_tooling.lib.update_deps.failure import (
     combined_output,
     command_text,
@@ -119,6 +124,7 @@ def validate_stage(state: UpdateDepsState) -> None:
             message=str(exc),
             output_tail=tail_output(exc.detail or ""),
             reproduce=exc.command,
+            output_heading=exc.detail_heading or TAIL_HEADING,
         )
 
 

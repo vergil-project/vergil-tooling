@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -7,6 +8,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from vergil_tooling.lib import progress
+from vergil_tooling.lib.progress import Stage
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 from vergil_tooling.lib.release.orchestrator import (
     ReleaseState,
@@ -587,14 +590,47 @@ def test_phase_details_update_deps_skipped() -> None:
     assert text == "Dependency update skipped (--without-deps)."
 
 
-def test_publish_status_reports_deps_failure() -> None:
+def test_publish_status_reports_deps_only_failure_as_a_warning() -> None:
+    # update-deps already failed (and counted); publish-status repeats it as a
+    # warning on its own row rather than a second failure (#3283).
     state = _state()
     assert state.ctx is not None
     state.ctx.deps_failure = "Dependency update for 2.1.243 failed (validation)"
-    with pytest.raises(ReleaseError, match="2.1.243 failed") as info:
-        _publish_status_stage(state)
-    assert info.value.phase == "publish-status"
-    assert "CD publish" not in str(info.value)
+    with patch(_MOD + ".mark_warn") as m_warn:
+        _publish_status_stage(state)  # no raise
+    reason = m_warn.call_args.args[0]
+    assert "Dependency update for 2.1.243 failed (validation)" in reason
+    assert "update-deps" in reason
+    assert "CD publish" not in reason
+
+
+def test_release_summary_counts_a_deps_only_failure_once(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    state = _state()
+    deps = "Dependency update for 2.1.243 failed (validation): red."
+
+    def _failed_update_deps(st: ReleaseState) -> None:
+        assert st.ctx is not None
+        st.ctx.deps_failure = deps
+        raise ReleaseError(phase="update-deps", command="vrg-update-deps", message=deps)
+
+    stages = [
+        Stage("update-deps", _failed_update_deps, mode="fail_defer"),
+        Stage("publish-status", _publish_status_stage, mode="fail_defer"),
+    ]
+    args = argparse.Namespace(output_format="plain", output_window=None)
+    rc = progress.run_pipeline(
+        state, stages, command="vrg-release", label="vrg-release", args=args, repo_root=tmp_path
+    )
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "PipelineError: 1 stage failed (update-deps) · exit 1" in out
+    # Never dropped: publish-status still carries the deps failure.
+    assert "⚠ publish-status  " in out
+    warnings = out.split("⚠  warnings (non-fatal):", 1)[1].split("✗  failures:", 1)[0]
+    assert "publish-status — " in warnings
+    assert deps in warnings
 
 
 def test_publish_status_reports_both_failures() -> None:

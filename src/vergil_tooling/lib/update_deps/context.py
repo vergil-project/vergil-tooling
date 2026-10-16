@@ -16,6 +16,9 @@ DEPS_LABEL = "dependency-update"
 
 FailureKind = Literal["update", "validation", "merge"]
 
+# What a failure's output section shows unless the recorder says otherwise.
+TAIL_HEADING = "Last lines of output:"
+
 
 @dataclass
 class DepsFailure:
@@ -30,6 +33,8 @@ class DepsFailure:
     message: str
     output_tail: str
     reproduce: str
+    # Says what ``output_tail`` is: the failing validation stage, or a raw tail.
+    output_heading: str = TAIL_HEADING
 
 
 @dataclass
@@ -68,8 +73,11 @@ class UpdateDepsError(Exception):
         command: str,
         message: str,
         detail: str | None = None,
+        detail_heading: str | None = None,
     ) -> None:
         self.phase = phase
         self.command = command
         self.detail = detail
+        # Says what ``detail`` is when it is not a plain output tail (#3283).
+        self.detail_heading = detail_heading
         super().__init__(message)

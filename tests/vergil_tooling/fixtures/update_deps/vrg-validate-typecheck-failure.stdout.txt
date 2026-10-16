@@ -1,0 +1,330 @@
+→ common  starting...
+Running: repo-profile
+Running: markdownlint (77 files in docs/site/, README.md)
+Running: markdownlint (3 files in epics/, MD013 relaxed)
+Running: yamllint (5 files in .github/, repo root, docs/site/mkdocs.yml)
+/workspace/.github/workflows/cd.yml
+  9:17      warning  too few spaces before comment: expected 2  (comments)
+
+Running: actionlint
+✓ common  1.0s
+
+→ install  starting...
+Running (install): uv sync --frozen --group dev
+Checked 51 packages in 1ms
+✓ install  0.0s
+
+→ lint  starting...
+Running (lint): ruff check src/ tests/
+All checks passed!
+Running (lint): ruff format --check src/ tests/
+421 files already formatted
+Running (lint): ruff check --output-format=json --output-file=quality-ruff.json src/ tests/
+✓ lint  0.4s
+
+→ typecheck  starting...
+Running (typecheck): mypy src/ --junit-xml quality-mypy.xml
+Success: no issues found in 207 source files
+Running (typecheck): ty check src tests
+warning[deprecated]: The overload of `contextmanager` is deprecated
+   --> src/vergil_tooling/lib/github.py:425:2
+    |
+425 | @contextlib.contextmanager
+    |  ^^^^^^^^^^^^^^^^^^^^^^^^^ Annotating the return type as `-> Iterator[Foo]` with `@contextmanager` is deprecated. Use `-> Generator[Foo]` instead.
+
+error[invalid-assignment]: Object of type `def write_and_capture(data: str) -> int` is not assignable to attribute `write` of type `Overload[(self: _TemporaryFileWrapper[str], s: str, /) -> int, (self: _TemporaryFileWrapper[bytes], s: Buffer, /) -> int, (self, s: Unknown, /) -> int]`
+   --> tests/vergil_tooling/test_release_tracking.py:231:9
+    |
+231 |         f.write = write_and_capture  # type: ignore[method-assign]
+    |         ^^^^^^^
+
+error[invalid-argument-type]: Argument to function `_container_suffix` is incorrect
+   --> tests/vergil_tooling/test_repo_init.py:905:41
+    |
+905 |         assert _container_suffix("cpp", versions) == "cpp-clang"
+    |                                         ^^^^^^^^ Expected `list[str] | None`, found `list[LiteralString]`
+info: Function defined here
+   --> src/vergil_tooling/lib/repo_init.py:576:5
+    |
+576 | def _container_suffix(language: str | None, versions: list[str] | None = None) -> str:
+    |     ^^^^^^^^^^^^^^^^^                       --------------------------------- Parameter declared here
+
+warning[deprecated]: The overload of `contextmanager` is deprecated
+    --> tests/vergil_tooling/test_vrg_finalize_pr.py:2066:2
+     |
+2066 | @contextmanager
+     |  ^^^^^^^^^^^^^^ Annotating the return type as `-> Iterator[Foo]` with `@contextmanager` is deprecated. Use `-> Generator[Foo]` instead.
+
+Found 14 diagnostics
+✗ typecheck  6.0s — ValidationError: 1 of 2 typecheck command(s) failed
+
+→ test  starting...
+Running (test): pytest --cov=src --cov-branch --cov-fail-under=100 --cov-report=term-missing --cov-report=xml:coverage.xml --junitxml=junit.xml -n auto --dist worksteal
+============================= test session starts ==============================
+platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.7.0
+rootdir: /workspace
+configfile: pyproject.toml
+testpaths: tests
+plugins: platformdirs-4.13.3, xdist-3.8.0, cov-7.1.0
+created: 12/12 workers
+12 workers [7305 items]
+
+........................................................................ [  0%]
+........................................................................ [  1%]
+........................................................................ [  2%]
+........................................................................ [  3%]
+........................................................................ [  4%]
+........................................................................ [  5%]
+........................................................................ [  6%]
+........................................................................ [  7%]
+........................................................................ [  8%]
+........................................................................ [  9%]
+........................................................................ [ 10%]
+........................................................................ [ 11%]
+........................................................................ [ 12%]
+=============================== warnings summary ===============================
+tests/vergil_tooling/test_retry.py::TestRunWithRetry::test_raises_after_max_retries
+  /workspace/.venv/lib/python3.12/site-packages/_pytest/raises.py:613: PytestWarning: matching against an empty string will *always* pass. If you want to check for an empty message you need to pass '^$'. If you don't want to match you should pass `None` or leave out the parameter.
+    super().__init__(match=match, check=check)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+------------------- generated xml file: /workspace/junit.xml -------------------
+================================ tests coverage ================================
+_______________ coverage: platform linux, python 3.12.14-final-0 _______________
+
+Name                                                        Stmts   Miss Branch BrPart  Cover   Missing
+-------------------------------------------------------------------------------------------------------
+src/vergil_tooling/__init__.py                                  0      0      0      0   100%
+src/vergil_tooling/bin/__init__.py                              0      0      0      0   100%
+src/vergil_tooling/bin/validate_common.py                     154      0     84      0   100%
+src/vergil_tooling/bin/vrg_activity_log.py                     21      0      0      0   100%
+src/vergil_tooling/bin/vrg_adhoc_epic.py                       72      0     14      0   100%
+src/vergil_tooling/bin/vrg_adhoc_migrate.py                    26      0      6      0   100%
+src/vergil_tooling/bin/vrg_audit_approve.py                    26      0      2      0   100%
+src/vergil_tooling/bin/vrg_await.py                            17      0      0      0   100%
+src/vergil_tooling/bin/vrg_changelog.py                        30      0      4      0   100%
+src/vergil_tooling/bin/vrg_ci_evidence.py                      54      0      0      0   100%
+src/vergil_tooling/bin/vrg_ci_sync.py                          26      0      6      0   100%
+src/vergil_tooling/bin/vrg_commit.py                           86      0     28      0   100%
+src/vergil_tooling/bin/vrg_container_build_command.py          16      0      2      0   100%
+src/vergil_tooling/bin/vrg_container_cache.py                  80      0     20      0   100%
+src/vergil_tooling/bin/vrg_container_docs.py                   78      0     24      0   100%
+src/vergil_tooling/bin/vrg_container_run.py                    74      0     24      0   100%
+src/vergil_tooling/bin/vrg_container_system_packages.py        23      0      6      0   100%
+src/vergil_tooling/bin/vrg_container_test.py                   57      0     12      0   100%
+src/vergil_tooling/bin/vrg_docs_patch_nav.py                   21      0      4      0   100%
+src/vergil_tooling/bin/vrg_docs_stage.py                       61      0     14      0   100%
+src/vergil_tooling/bin/vrg_ecosystem_resolve.py                28      0      2      0   100%
+src/vergil_tooling/bin/vrg_ensure_label.py                     65      0     24      0   100%
+src/vergil_tooling/bin/vrg_epic_audit.py                       75      0     16      0   100%
+src/vergil_tooling/bin/vrg_epic_create.py                      29      0      2      0   100%
+src/vergil_tooling/bin/vrg_epic_link.py                        34      0      2      0   100%
+src/vergil_tooling/bin/vrg_epic_move.py                        42      0      8      0   100%
+src/vergil_tooling/bin/vrg_epic_rollup.py                      26      0      0      0   100%
+src/vergil_tooling/bin/vrg_epic_unlink.py                      30      0      2      0   100%
+src/vergil_tooling/bin/vrg_finalize_pr.py                     500      0    196      0   100%
+src/vergil_tooling/bin/vrg_fleet_sync.py                       30      0      4      0   100%
+src/vergil_tooling/bin/vrg_freeze_refs.py                      35      0     10      0   100%
+src/vergil_tooling/bin/vrg_generate_commands.py               452      0    130      0   100%
+src/vergil_tooling/bin/vrg_gh.py                              152      0     74      0   100%
+src/vergil_tooling/bin/vrg_git.py                             329      0    186      0   100%
+src/vergil_tooling/bin/vrg_github_repo_config.py              163      0     52      0   100%
+src/vergil_tooling/bin/vrg_github_repo_init.py                100      0     36      0   100%
+src/vergil_tooling/bin/vrg_gitignore_sync.py                   44      0     10      0   100%
+src/vergil_tooling/bin/vrg_hook_guard.py                       54      0     22      0   100%
+src/vergil_tooling/bin/vrg_host.py                            160      0     36      0   100%
+src/vergil_tooling/bin/vrg_issue_create.py                    100      0     18      0   100%
+src/vergil_tooling/bin/vrg_package.py                          89      0     10      0   100%
+src/vergil_tooling/bin/vrg_pr_await.py                         50      0      2      0   100%
+src/vergil_tooling/bin/vrg_pr_fix_body.py                      50      0     12      0   100%
+src/vergil_tooling/bin/vrg_pr_workflow.py                     118      0     22      0   100%
+src/vergil_tooling/bin/vrg_promote.py                          26      0      2      0   100%
+src/vergil_tooling/bin/vrg_release.py                          51      0     12      0   100%
+src/vergil_tooling/bin/vrg_release_validate_inputs.py          35      0     14      0   100%
+src/vergil_tooling/bin/vrg_repo_profile.py                     57      0     22      0   100%
+src/vergil_tooling/bin/vrg_resolve_tooling_version.py          19      0      0      0   100%
+src/vergil_tooling/bin/vrg_resolve_tracking_issue.py           77      0     22      0   100%
+src/vergil_tooling/bin/vrg_reword.py                          158      0     56      0   100%
+src/vergil_tooling/bin/vrg_roadmap.py                          31      0      6      0   100%
+src/vergil_tooling/bin/vrg_sarif_evaluate.py                   30      0     10      0   100%
+src/vergil_tooling/bin/vrg_sarif_filter.py                     41      0      0      0   100%
+src/vergil_tooling/bin/vrg_scorecard.py                        39      0     10      0   100%
+src/vergil_tooling/bin/vrg_semgrep_scan.py                     40      0     10      0   100%
+src/vergil_tooling/bin/vrg_submit_pr.py                       468      0    152      0   100%
+src/vergil_tooling/bin/vrg_triage_create.py                    32      0      4      0   100%
+src/vergil_tooling/bin/vrg_trivy_scan.py                       43      0     14      0   100%
+src/vergil_tooling/bin/vrg_update_deps.py                      26      0      2      0   100%
+src/vergil_tooling/bin/vrg_validate.py                        126      0     46      0   100%
+src/vergil_tooling/bin/vrg_version.py                          22      0      4      0   100%
+src/vergil_tooling/bin/vrg_version_divergence.py               25      0      4      0   100%
+src/vergil_tooling/bin/vrg_vm.py                             1301      0    362      0   100%
+src/vergil_tooling/bin/vrg_vm_resolve_session.py              380      0    120      0   100%
+src/vergil_tooling/bin/vrg_wait_until_green.py                 53      0     20      0   100%
+src/vergil_tooling/bin/vrg_whoami.py                           56      0     16      0   100%
+src/vergil_tooling/bin/vrg_worktree_status.py                  83      0     26      0   100%
+src/vergil_tooling/bin/vrg_xdist_sync.py                       44      0      8      0   100%
+src/vergil_tooling/configs/__init__.py                          0      0      0      0   100%
+src/vergil_tooling/configs/cpp/__init__.py                      0      0      0      0   100%
+src/vergil_tooling/configs/ruby/__init__.py                     0      0      0      0   100%
+src/vergil_tooling/configs/typescript/__init__.py               0      0      0      0   100%
+src/vergil_tooling/data/__init__.py                             0      0      0      0   100%
+src/vergil_tooling/lib/__init__.py                              0      0      0      0   100%
+src/vergil_tooling/lib/activity_log.py                         39      0     16      0   100%
+src/vergil_tooling/lib/adhoc_migrate.py                        53      0     14      0   100%
+src/vergil_tooling/lib/await_file.py                           31      0      4      0   100%
+src/vergil_tooling/lib/branch_names.py                         28      0      4      0   100%
+src/vergil_tooling/lib/changelog.py                            41      0     12      0   100%
+src/vergil_tooling/lib/ci_evidence.py                         282      0     44      0   100%
+src/vergil_tooling/lib/ci_yml_applicator.py                    25      0      6      0   100%
+src/vergil_tooling/lib/cli.py                                  28      0      8      0   100%
+src/vergil_tooling/lib/commit_message.py                       17      0      4      0   100%
+src/vergil_tooling/lib/config.py                              580      0    186      0   100%
+src/vergil_tooling/lib/confirm.py                              23      0      8      0   100%
+src/vergil_tooling/lib/container.py                           154      0     68      0   100%
+src/vergil_tooling/lib/container_cache.py                     236      0     84      0   100%
+src/vergil_tooling/lib/dev_deps.py                             32      0     14      0   100%
+src/vergil_tooling/lib/docs.py                                101      0     38      0   100%
+src/vergil_tooling/lib/epic_audit.py                          240      0    102      0   100%
+src/vergil_tooling/lib/epics.py                               374      0    114      0   100%
+src/vergil_tooling/lib/fleet_sweep.py                          85      0     10      0   100%
+src/vergil_tooling/lib/freeze_refs.py                          41      0     20      0   100%
+src/vergil_tooling/lib/git.py                                 113      0     24      0   100%
+src/vergil_tooling/lib/github.py                              630      0    204      0   100%
+src/vergil_tooling/lib/github_config.py                       566      0    218      0   100%
+src/vergil_tooling/lib/gitignore.py                            92      0     30      0   100%
+src/vergil_tooling/lib/host_deps.py                           150      0     52      0   100%
+src/vergil_tooling/lib/host_methods.py                        189      0     82      0   100%
+src/vergil_tooling/lib/host_pins.py                           130      0     44      0   100%
+src/vergil_tooling/lib/host_status.py                         126      0     48      0   100%
+src/vergil_tooling/lib/host_versions.py                        53      0     16      0   100%
+src/vergil_tooling/lib/identity.py                            147      0     60      0   100%
+src/vergil_tooling/lib/identity_mode.py                        62      0      6      0   100%
+src/vergil_tooling/lib/labels.py                                9      0      0      0   100%
+src/vergil_tooling/lib/lang_scaffold.py                        71      0     26      0   100%
+src/vergil_tooling/lib/languages.py                            94      0     24      0   100%
+src/vergil_tooling/lib/lima.py                                218      0     68      0   100%
+src/vergil_tooling/lib/linkage.py                              49      0     16      0   100%
+src/vergil_tooling/lib/managed_worktree.py                     21      0      4      0   100%
+src/vergil_tooling/lib/output.py                               36      0     12      0   100%
+src/vergil_tooling/lib/package/__init__.py                      1      0      0      0   100%
+src/vergil_tooling/lib/package/build.py                        94      0     24      0   100%
+src/vergil_tooling/lib/package/elf.py                          48      0     24      0   100%
+src/vergil_tooling/lib/package/index/__init__.py                0      0      0      0   100%
+src/vergil_tooling/lib/package/index/apt.py                    68      0     12      0   100%
+src/vergil_tooling/lib/package/index/collect.py               239      0     76      0   100%
+src/vergil_tooling/lib/package/index/config.py                 63      0     18      0   100%
+src/vergil_tooling/lib/package/index/retention.py              60      0     28      0   100%
+src/vergil_tooling/lib/package/index/rpm.py                    46      0     16      0   100%
+src/vergil_tooling/lib/package/index/sign.py                   39      0      2      0   100%
+src/vergil_tooling/lib/package/index/site.py                   85      0     24      0   100%
+src/vergil_tooling/lib/package/install_test.py                 90      0     24      0   100%
+src/vergil_tooling/lib/package/matrix.py                      101      0     28      0   100%
+src/vergil_tooling/lib/package/naming.py                       22      0      4      0   100%
+src/vergil_tooling/lib/package/nfpm.py                        135      0     62      0   100%
+src/vergil_tooling/lib/package/orgs.py                         16      0      2      0   100%
+src/vergil_tooling/lib/package/python_builder.py               98      0     24      0   100%
+src/vergil_tooling/lib/package/repo_setup.py                  135      0     36      0   100%
+src/vergil_tooling/lib/package/staged.py                       16      0      4      0   100%
+src/vergil_tooling/lib/package/targets.py                      37      0      6      0   100%
+src/vergil_tooling/lib/platform_env.py                         78      0     10      0   100%
+src/vergil_tooling/lib/pr_await.py                             74      0     16      0   100%
+src/vergil_tooling/lib/pr_body.py                              24      0      8      0   100%
+src/vergil_tooling/lib/pr_merge.py                            113      0     36      0   100%
+src/vergil_tooling/lib/pr_provenance.py                        64      0     26      0   100%
+src/vergil_tooling/lib/pr_workflow/__init__.py                  0      0      0      0   100%
+src/vergil_tooling/lib/pr_workflow/batch.py                    72      0     22      0   100%
+src/vergil_tooling/lib/pr_workflow/engine.py                   30      0      8      0   100%
+src/vergil_tooling/lib/pr_workflow/errors.py                    8      0      0      0   100%
+src/vergil_tooling/lib/pr_workflow/freeze.py                   58      0     12      0   100%
+src/vergil_tooling/lib/pr_workflow/github_transport.py         47      0      8      0   100%
+src/vergil_tooling/lib/pr_workflow/local_transport.py          25      0      2      0   100%
+src/vergil_tooling/lib/pr_workflow/state.py                    48      0      8      0   100%
+src/vergil_tooling/lib/pr_workflow/submission.py               37      0     10      0   100%
+src/vergil_tooling/lib/pr_workflow/transport.py                12      0      0      0   100%
+src/vergil_tooling/lib/progress.py                            313      0     66      0   100%
+src/vergil_tooling/lib/promote.py                              50      0     14      0   100%
+src/vergil_tooling/lib/release/__init__.py                     11      0      2      0   100%
+src/vergil_tooling/lib/release/bump.py                         43      0      4      0   100%
+src/vergil_tooling/lib/release/checklist.py                    54      0     16      0   100%
+src/vergil_tooling/lib/release/confirm.py                     117      0     36      0   100%
+src/vergil_tooling/lib/release/context.py                      45      0      0      0   100%
+src/vergil_tooling/lib/release/finalize.py                     47      0     18      0   100%
+src/vergil_tooling/lib/release/handoff.py                      35      0      6      0   100%
+src/vergil_tooling/lib/release/merge.py                        32      0      8      0   100%
+src/vergil_tooling/lib/release/orchestrator.py                149      0     72      0   100%
+src/vergil_tooling/lib/release/package_index.py               129      0     46      0   100%
+src/vergil_tooling/lib/release/preflight.py                   135      0     42      0   100%
+src/vergil_tooling/lib/release/prepare.py                      73      0     20      0   100%
+src/vergil_tooling/lib/release/resume.py                       35      0     14      0   100%
+src/vergil_tooling/lib/release/subprocess.py                   23      0      4      0   100%
+src/vergil_tooling/lib/release/tracking.py                     87      0     16      0   100%
+src/vergil_tooling/lib/release/update_deps_stage.py            26      0      6      0   100%
+src/vergil_tooling/lib/remote_config.py                        38      0      8      0   100%
+src/vergil_tooling/lib/repo_config.py                         171      0     64      0   100%
+src/vergil_tooling/lib/repo_init.py                           608      0    168      0   100%
+src/vergil_tooling/lib/retry.py                                63      0      6      0   100%
+src/vergil_tooling/lib/roadmap.py                              60      0     18      0   100%
+src/vergil_tooling/lib/sarif.py                               111      0     46      0   100%
+src/vergil_tooling/lib/semgrep.py                              36      0     16      0   100%
+src/vergil_tooling/lib/session.py                             181      0     82      0   100%
+src/vergil_tooling/lib/session_store.py                       131      0     34      0   100%
+src/vergil_tooling/lib/test_layout.py                          29      0      8      0   100%
+src/vergil_tooling/lib/trivy.py                                33      0      4      0   100%
+src/vergil_tooling/lib/update_deps/__init__.py                  0      0      0      0   100%
+src/vergil_tooling/lib/update_deps/context.py                  33      0      0      0   100%
+src/vergil_tooling/lib/update_deps/failure.py                  37      0     14      0   100%
+src/vergil_tooling/lib/update_deps/orchestrator.py             97      0     24      0   100%
+src/vergil_tooling/lib/update_deps/pr.py                       96      0     24      0   100%
+src/vergil_tooling/lib/update_deps/preflight.py                33      0      8      0   100%
+src/vergil_tooling/lib/update_deps/pypi.py                     25      0      2      0   100%
+src/vergil_tooling/lib/update_deps/registry.py                102      0     26      0   100%
+src/vergil_tooling/lib/update_deps/report.py                   57      0     24      0   100%
+src/vergil_tooling/lib/update_deps/updater.py                  36      0     10      0   100%
+src/vergil_tooling/lib/update_deps/updaters/__init__.py         0      0      0      0   100%
+src/vergil_tooling/lib/update_deps/updaters/images.py         121      0     38      0   100%
+src/vergil_tooling/lib/update_deps/updaters/python_uv.py       71      0     14      0   100%
+src/vergil_tooling/lib/update_deps/updaters/repo_hook.py       40      0      6      0   100%
+src/vergil_tooling/lib/update_deps/updaters/vergil_eco.py     113      0     30      0   100%
+src/vergil_tooling/lib/update_deps/validate.py                 11      0      0      0   100%
+src/vergil_tooling/lib/update_deps/vergil_index.py             50      0     12      0   100%
+src/vergil_tooling/lib/vergil_refs.py                          34      0      8      0   100%
+src/vergil_tooling/lib/version.py                             178      0     84      0   100%
+src/vergil_tooling/lib/version_divergence.py                   18      0      4      0   100%
+src/vergil_tooling/lib/vm_backend.py                           14      0      4      0   100%
+src/vergil_tooling/lib/vm_cloud.py                            539      0    142      0   100%
+src/vergil_tooling/lib/vm_guest.py                            240      0     66      0   100%
+src/vergil_tooling/lib/vm_lima.py                               9      0      0      0   100%
+src/vergil_tooling/lib/vm_memory.py                            46      0     10      0   100%
+src/vergil_tooling/lib/vm_packages.py                          92      0     16      0   100%
+src/vergil_tooling/lib/vm_provider.py                         181      0     42      0   100%
+src/vergil_tooling/lib/vm_spec.py                             267      0    120      0   100%
+src/vergil_tooling/lib/vm_transport.py                        210      0     26      0   100%
+src/vergil_tooling/lib/worktrees.py                           249      0     82      0   100%
+src/vergil_tooling/lib/xdist_applicator.py                    141      0     52      0   100%
+-------------------------------------------------------------------------------------------------------
+TOTAL                                                       20194      0   6070      0   100%
+Coverage XML written to file coverage.xml
+Required test coverage of 100% reached. Total coverage: 100.00%
+================= 7304 passed, 1 skipped, 1 warning in 25.00s ==================
+✓ test  25.8s
+
+→ audit  starting...
+Running (audit): uv sync --check --frozen --group dev
+Would use project environment at: .venv
+Checked 51 packages in 0.78ms
+Would make no changes
+Running (audit): uv lock --check
+Resolved 52 packages in 0.61ms
+Running (audit): pip-audit --format=json --output=pip-audit.json
+No known vulnerabilities found
+Running (audit): pip-licenses --allow-only=Apache-2.0;Apache-2.0 AND CNRI-Python;Apache-2.0 OR BSD-2-Clause;Apache-2.0 OR BSD-3-Clause;Apache Software License;BSD License;BSD-2-Clause;BSD-3-Clause;GPL-3.0-only;GPL-3.0-or-later;ISC License (ISCL);MIT;MIT License;Mozilla Public License 2.0 (MPL 2.0);MPL-1.1 OR GPL-2.0-only OR LGPL-2.1-or-later;PSF-2.0;Public Domain;Python Software Foundation License --format=json --output-file=licenses.json
+created path: licenses.json
+✓ audit  1.6s
+
+─────────────────────────────────────────────
+✗  failures:
+   typecheck — ValidationError: 1 of 2 typecheck command(s) failed
+
+vrg-validate completed with errors  (total: 00:34)
+PipelineError: 1 stage failed (typecheck) · exit 1
+   full log → /workspace/.vergil/vrg-validate-20261016-163145.log
