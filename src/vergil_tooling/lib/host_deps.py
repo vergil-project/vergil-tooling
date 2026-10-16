@@ -30,6 +30,13 @@ _UPGRADE = frozenset({"auto", "manual"})
 _LATEST = frozenset({"probe", "unmanaged"})
 _PIN_STATES = frozenset({"active", "under-evaluation", "freed"})
 
+# Probe keys each method accepts. A ``custom`` entry supplies its own commands;
+# any other method has built-in commands and may override only how the
+# installed version is read (e.g. a self-updating app whose package-manager
+# record goes stale). An unknown key is refused, never silently ignored.
+_CUSTOM_PROBES = frozenset({"installed_version", "latest_version", "upgrade"})
+_OVERRIDE_PROBES = frozenset({"installed_version"})
+
 _DEP_KEYS = frozenset({"name", "why", "method", "upgrade", "latest", "probes", "check", "pin"})
 _CHECK_KEYS = frozenset({"name", "probe", "remediation"})
 _PIN_KEYS = frozenset(
@@ -193,6 +200,13 @@ def _parse_dep(raw: Any, index: int) -> HostDependency:
     probes_raw = raw.get("probes", {})
     if not isinstance(probes_raw, dict):
         raise ManifestError(f"{where}: probes must be a table")
+    allowed = _CUSTOM_PROBES if method == "custom" else _OVERRIDE_PROBES
+    unknown = sorted(set(probes_raw) - allowed)
+    if unknown:
+        raise ManifestError(
+            f"{where}: probe(s) {', '.join(unknown)} not allowed for method {method!r} "
+            f"(allowed: {', '.join(sorted(allowed))})"
+        )
     probes = {key: _argv(cmd, f"{where}: probe {key!r}") for key, cmd in probes_raw.items()}
     checks_raw = raw.get("check", [])
     if not isinstance(checks_raw, list):

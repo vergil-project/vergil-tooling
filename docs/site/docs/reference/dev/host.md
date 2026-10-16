@@ -8,7 +8,7 @@
 
 Observes and manages the tools Vergil development needs **on the macOS host
 itself** — the ones that cannot live in a dev container or an agent VM, such as
-`gh`, `uv`, `gcloud`, Lima and Docker. It reports how far each one has drifted
+`gh`, `uv`, `gcloud`, Lima and Docker Desktop. It reports how far each one has drifted
 from its latest release, upgrades the ones it is allowed to upgrade, and records
 deliberate **pins** as tracked technical debt rather than silent freezes.
 
@@ -84,8 +84,12 @@ Name one or more dependencies **or** pass `--all`, not both.
 
 - Only `upgrade = "auto"` dependencies are upgraded, through their install
   method (`brew upgrade`, `uv tool upgrade`, or the manifest's own upgrade
-  command). A `manual` dependency (`docker`, `macos`) is refused when named, and
-  listed as skipped under `--all`; upgrade it by hand.
+  command). A `manual` dependency (`docker-desktop`, `macos`) is refused when
+  named, and listed as skipped under `--all`; upgrade it by hand.
+- A Homebrew cask that updates itself (its `brew info` JSON says
+  `auto_updates: true`) is never upgraded through `brew`. Without `--greedy`,
+  `brew upgrade` skips such a cask without saying so, so `vrg-host` reports the
+  upgrade as failed instead.
 - An **actively pinned** dependency is **held**: the package managers cannot
   upgrade *to* a constraint, so the pin is a real hold. Run `vrg-host unpin
   <dep>` first, or pass `--force` to upgrade past it. An active pin whose
@@ -139,18 +143,21 @@ execution surface on the host. Changing the list means a vergil-tooling PR.
 Each entry declares the dependency's `method` (`brew-formula`, `brew-cask`,
 `uv-tool` or `custom`), whether `vrg-host` may upgrade it (`upgrade = "auto"` or
 `"manual"`), whether it has a latest-version feed (`latest = "probe"` or
-`"unmanaged"`), and any auxiliary checks.
+`"unmanaged"`), and any auxiliary checks. A `custom` entry supplies its own
+installed, latest and upgrade commands. An entry with any other method can
+override only how its installed version is read. This is for a self-updating
+app, whose package-manager record goes stale.
 
 A tool earns an entry only if Vergil development needs it on the macOS host
 itself. Current entries:
 
 | Dependency | Method | Upgrade | Latest | Why it is on the host |
 | --- | --- | --- | --- | --- |
-| `uv` | custom (`uv self update`) | auto | probe | Installs and upgrades the `vrg-*` host tools |
+| `uv` | brew-formula | auto | probe | Installs and upgrades the `vrg-*` host tools |
 | `gh` | brew-formula | auto | probe | GitHub CLI under `vrg-gh` and the PR/issue workflows |
 | `gcloud` | custom (`gcloud components update`) | auto | probe | IAP tunnel for `vrg-vm` cloud sessions |
 | `lima` | brew-formula | auto | probe | Runs the local agent VMs `vrg-vm` creates |
-| `docker` | custom | manual | unmanaged | The container CLI `vrg-container-run` execs (Docker Desktop today) |
+| `docker-desktop` | brew-cask (installed version from the app) | manual | probe | The container engine and `docker` CLI that `vrg-container-run` execs |
 | `opentofu` | brew-formula | auto | probe | Provisions cloud agent VMs for `vrg-vm` (preflight requires >= 1.8.0) |
 | `git-cliff` | brew-formula | auto | probe | Changelog generator `vrg-release` requires |
 | `vergil-tooling` | uv-tool | auto | unmanaged | The `vrg-*` host tools themselves |
@@ -158,11 +165,25 @@ itself. Current entries:
 
 Notes on the entries:
 
-- **`docker` and `macos` are report-only.** Docker Desktop is a GUI app with its
-  own updater and no programmatic latest feed, so `status` shows the installed
-  CLI version as info and `upgrade` leaves it to you. Moving to a headless engine
-  (Colima, podman, docker-engine over Lima) would make Docker an `auto` entry;
-  that is follow-on work
+- **`uv` is a Homebrew formula.** On the macOS host uv is installed with
+  Homebrew (`brew install uv`), and Homebrew builds have no `uv self update`, so
+  `vrg-host` reads and upgrades it through `brew`. Its latest is Homebrew's
+  stable version, which can trail Astral's newest release by a few days.
+- **`gcloud` updates itself.** It is installed from the Homebrew `gcloud-cli`
+  cask, but the SDK's component manager owns its updates: `vrg-host` reads its
+  `core` component version and upgrades it with `gcloud components update`. The
+  SDK lives in a user-owned directory, so this needs no `sudo`. Homebrew's
+  recorded cask version goes stale as the SDK updates itself. Never upgrade it
+  with `brew upgrade --greedy`.
+- **`docker-desktop` and `macos` are report-only.** `vrg-host` tracks the
+  Docker Desktop app, not the `docker` CLI (their version numbers differ). The
+  installed version comes from the app's `Info.plist`, because Desktop updates
+  itself and Homebrew's record goes stale. The latest comes from the
+  `docker-desktop` cask (its `4.94.0,241994` reads as `4.94.0`). So `status`
+  shows when Desktop is behind, but `upgrade` leaves it to Desktop's own updater,
+  which may install privileged helpers. Moving to a headless engine (Colima,
+  podman, docker-engine over Lima) would make Docker an `auto` entry; that is
+  follow-on work
   ([vergil-project/.github#169](https://github.com/vergil-project/.github/issues/169)).
   A pending macOS update is reported so it is applied deliberately, never by
   `vrg-host`.
@@ -171,10 +192,10 @@ Notes on the entries:
   `latest-unmanaged` rather than a false `current`. `vrg-host upgrade
   vergil-tooling` runs `uv tool upgrade vergil-tooling`, which moves within the
   release line you installed.
-- **Install method matters.** Each entry assumes the documented install path. A
-  tool installed some other way reads as `missing` for the brew and `uv-tool`
-  methods; it is never reported as a false `current`. A Homebrew-installed `uv`
-  refuses `uv self update`, which `vrg-host` reports as a failed upgrade.
+- **Install method matters.** Each entry assumes the install path verified on a
+  real macOS host. A tool installed some other way (for example, uv from
+  Astral's standalone installer) reads as `missing` for the brew and `uv-tool`
+  methods; it is never reported as a false `current`.
 
 Deliberately **not** in the manifest:
 
@@ -300,11 +321,12 @@ as needing manual action and is never retried elevated.
 
 ## Known limitations
 
-- The version parsers are tested against hand-written output fixtures, not yet
-  output captured on a real Mac (see
-  `tests/vergil_tooling/fixtures/host/README.md`). Re-capturing them on macOS is
-  tracked as a follow-up; until then, a `probe-error` row may mean a parser
-  mismatch rather than a broken tool.
+- The version parsers are tested against output captured on a real Mac. A few
+  cases could not be captured there and are still hand-written: `softwareupdate`
+  with nothing pending or only non-OS updates pending, and `uv tool list
+  --outdated` listing an outdated tool. See
+  `tests/vergil_tooling/fixtures/host/README.md`. If one of those cases shows a
+  `probe-error` row, it may be a parser mismatch rather than a broken tool.
 - `vrg-host` reports and acts only when you run it. Scheduled or automatic runs
   are follow-on work
   ([vergil-project/.github#169](https://github.com/vergil-project/.github/issues/169)).

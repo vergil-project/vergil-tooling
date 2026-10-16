@@ -45,11 +45,11 @@ def test_load_manifest_parses_curated_entries() -> None:
     deps = host_deps.load_manifest()
     by_name = {d.name: (d.method, d.upgrade, d.latest) for d in deps}
     assert by_name == {
-        "uv": ("custom", "auto", "probe"),
+        "uv": ("brew-formula", "auto", "probe"),
         "gh": ("brew-formula", "auto", "probe"),
         "gcloud": ("custom", "auto", "probe"),
         "lima": ("brew-formula", "auto", "probe"),
-        "docker": ("custom", "manual", "unmanaged"),
+        "docker-desktop": ("brew-cask", "manual", "probe"),
         "opentofu": ("brew-formula", "auto", "probe"),
         "git-cliff": ("brew-formula", "auto", "probe"),
         "vergil-tooling": ("uv-tool", "auto", "unmanaged"),
@@ -298,6 +298,40 @@ def test_invalid_toml_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_probes_not_table_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     _load_error(monkeypatch, _DEP + 'probes = ["x"]\n', "probes must be a table")
+
+
+@pytest.mark.parametrize("key", ["latest", "upgrade_cmd", "installed"])
+def test_custom_unknown_probe_key_raises(monkeypatch: pytest.MonkeyPatch, key: str) -> None:
+    # A typo'd probe key is refused, never silently ignored.
+    _load_error(
+        monkeypatch,
+        _DEP + f'[dependency.probes]\n{key} = ["x"]\n',
+        f"probe\\(s\\) {key} not allowed for method 'custom'",
+    )
+
+
+@pytest.mark.parametrize("method", ["brew-formula", "brew-cask", "uv-tool"])
+@pytest.mark.parametrize("key", ["latest_version", "upgrade"])
+def test_builtin_method_may_override_only_installed_probe(
+    monkeypatch: pytest.MonkeyPatch, method: str, key: str
+) -> None:
+    head = f'[[dependency]]\nname = "x"\nwhy = "w"\nmethod = "{method}"\n'
+    _load_error(
+        monkeypatch,
+        head + f'[dependency.probes]\n{key} = ["x"]\n',
+        f"probe\\(s\\) {key} not allowed for method '{method}' \\(allowed: installed_version\\)",
+    )
+
+
+def test_builtin_method_installed_probe_override_parses(monkeypatch: pytest.MonkeyPatch) -> None:
+    text = (
+        '[[dependency]]\nname = "x"\nwhy = "w"\nmethod = "brew-cask"\nupgrade = "manual"\n'
+        '[dependency.probes]\ninstalled_version = ["x", "--version"]\n'
+    )
+    _use(monkeypatch, text)
+    (dep,) = host_deps.load_manifest()
+    assert dep.method == "brew-cask"
+    assert dep.probes == {"installed_version": ["x", "--version"]}
 
 
 @pytest.mark.parametrize("cmd", ['"x --version"', "[]", '["x", ""]', '["x", 1]'])

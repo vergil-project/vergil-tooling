@@ -44,12 +44,13 @@ from __future__ import annotations
 import functools
 import json
 import subprocess
-from typing import Final
+from typing import Any, Final
 
 from vergil_tooling.lib import host_versions
 from vergil_tooling.lib.host_deps import HostDependency, ManifestError
 
 _BREW_METHODS: Final = frozenset({"brew-formula", "brew-cask"})
+_BUILTIN_METHODS: Final = _BREW_METHODS | {"uv-tool"}
 _ESCALATORS: Final = frozenset({"sudo", "doas", "su", "pkexec"})
 
 
@@ -82,6 +83,10 @@ class ProbeError(Exception):
 
 def _run(cmd: list[str]) -> str | None:
     """Run *cmd* unprivileged; return stripped stdout, or ``None`` on failure.
+
+    Only stdout is returned. stderr is captured and dropped, so a notice a
+    tool prints there (gcloud's SDK-version notice, for one) never reaches a
+    parser.
 
     Raises:
         ValueError: *cmd* is empty or would escalate privilege.
@@ -129,16 +134,11 @@ def _parse_brew_list_versions(name: str, output: str) -> str:
     return max(versions, key=functools.cmp_to_key(host_versions.compare))
 
 
-def _parse_brew_info_latest(name: str, method: str, output: str) -> str:
-    """Parse ``brew info --json=v2`` → the current stable (formula) or cask version.
-
-    A formula's latest carries its Homebrew ``revision`` as ``_<n>`` (``3.12.7``
-    with revision 1 is ``3.12.7_1``), matching how ``brew list --versions``
-    names the installed keg, so a revision-only rebuild still reads as drift.
+def _brew_info_entry(name: str, method: str, output: str) -> dict[str, Any]:
+    """Return the first formula (or cask) entry of ``brew info --json=v2`` output.
 
     Raises:
-        ProbeError: the output is not the expected JSON shape, or its version
-            is unreadable. ``brew info`` answered, so this is never "unknown".
+        ProbeError: the output is not JSON or has no such entry.
     """
     try:
         data = json.loads(output)
@@ -148,7 +148,24 @@ def _parse_brew_info_latest(name: str, method: str, output: str) -> str:
     entries = data.get(key) if isinstance(data, dict) else None
     if not isinstance(entries, list) or not entries or not isinstance(entries[0], dict):
         raise ProbeError(f"{name}: 'brew info --json=v2' has no {key} entry")
-    entry = entries[0]
+    return entries[0]
+
+
+def _parse_brew_info_latest(name: str, method: str, output: str) -> str:
+    """Parse ``brew info --json=v2`` → the current stable (formula) or cask version.
+
+    A formula's latest carries its Homebrew ``revision`` as ``_<n>`` (``3.14.8``
+    with revision 2 is ``3.14.8_2``), matching how ``brew list --versions``
+    names the installed keg, so a revision-only rebuild still reads as drift.
+    A cask's ``<version>,<build>`` (``4.94.0,241994``) reads as its leading
+    version (see :func:`host_versions.normalize`).
+
+    Raises:
+        ProbeError: the output is not the expected JSON shape, or its version
+            is unreadable. ``brew info`` answered, so this is never "unknown".
+    """
+    entry = _brew_info_entry(name, method, output)
+    key = "casks" if method == "brew-cask" else "formulae"
     if method == "brew-cask":
         version = entry.get("version")
         revision = 0
@@ -162,6 +179,24 @@ def _parse_brew_info_latest(name: str, method: str, output: str) -> str:
         raise ProbeError(f"{name}: 'brew info --json=v2' revision {revision!r} is not a count")
     bare = _normalized(name, version, "brew info --json=v2")
     return f"{bare}_{revision}" if revision else bare
+
+
+def _parse_brew_cask_auto_updates(name: str, output: str) -> bool:
+    """Parse ``brew info --json=v2 --cask`` → whether the cask updates itself.
+
+    Homebrew prints ``"auto_updates": true`` for a self-updating app and
+    ``null`` (or ``false``) otherwise.
+
+    Raises:
+        ProbeError: the output is not the expected JSON shape, or
+            ``auto_updates`` is neither a boolean nor null.
+    """
+    value = _brew_info_entry(name, "brew-cask", output).get("auto_updates")
+    if value is None:
+        return False
+    if not isinstance(value, bool):
+        raise ProbeError(f"{name}: 'brew info --json=v2' auto_updates {value!r} is not a boolean")
+    return value
 
 
 def _uv_tool_line(name: str, output: str) -> list[str] | None:
@@ -235,14 +270,20 @@ def installed_version(dep: HostDependency) -> str | None:
     Raises:
         ProbeError: the probe succeeded but its output is unparseable.
         ManifestError: unknown method, or a ``custom`` entry lacks the probe.
+
+    A non-``custom`` entry that declares an ``installed_version`` probe reads
+    its installed version from that probe instead of the package manager's
+    record — for a self-updating app (e.g. Docker Desktop) whose Homebrew
+    record goes stale. Its latest and upgrade still come from the method.
     """
-    if dep.method in _BREW_METHODS:
+    overridden = dep.method in _BUILTIN_METHODS and "installed_version" in dep.probes
+    if dep.method in _BREW_METHODS and not overridden:
         out = _run(["brew", "list", *_brew_kind_flag(dep), "--versions", dep.name])
         return _parse_brew_list_versions(dep.name, out) if out else None
-    if dep.method == "uv-tool":
+    if dep.method == "uv-tool" and not overridden:
         out = _run(["uv", "tool", "list"])
         return _parse_uv_tool_installed(dep.name, out) if out is not None else None
-    if dep.method == "custom":
+    if dep.method == "custom" or overridden:
         out = _run(_custom(dep, "installed_version"))
         if out is None:
             return None
@@ -289,16 +330,45 @@ def latest_version(dep: HostDependency) -> str | _Unmanaged | None:
     raise _unknown_method(dep)
 
 
+def _refuse_self_updating_cask(dep: HostDependency) -> None:
+    """Refuse to ``brew upgrade`` a cask that Homebrew marks ``auto_updates``.
+
+    Such an app updates itself; ``brew upgrade --cask`` silently skips it
+    (unless ``--greedy``), and forcing it through brew fights the app's own
+    updater. Either outcome would be a silent non-upgrade, so it fails loudly.
+
+    Raises:
+        UpgradeFailedError: the cask is self-updating, or its metadata could
+            not be read to tell.
+    """
+    out = _run(["brew", "info", "--json=v2", "--cask", dep.name])
+    if out is None:
+        raise UpgradeFailedError(f"{dep.name}: cannot read cask metadata (brew info failed)")
+    try:
+        self_updating = _parse_brew_cask_auto_updates(dep.name, out)
+    except ProbeError as exc:
+        raise UpgradeFailedError(str(exc)) from exc
+    if self_updating:
+        raise UpgradeFailedError(
+            f"{dep.name}: the cask is auto_updates (the app updates itself), so vrg-host "
+            "never upgrades it through brew; use the app's own updater "
+            '(the manifest entry should be upgrade = "manual")'
+        )
+
+
 def upgrade(dep: HostDependency) -> None:
     """Upgrade *dep* via its method handler.
 
     Raises:
         UpgradeUnsupportedError: *dep* is ``upgrade = "manual"``.
-        UpgradeFailedError: the upgrade command did not succeed.
+        UpgradeFailedError: the upgrade command did not succeed, or *dep* is
+            a self-updating (``auto_updates``) cask that brew must not upgrade.
         ManifestError: unknown method, or a ``custom`` entry lacks the probe.
     """
     if dep.upgrade == "manual":
         raise UpgradeUnsupportedError(dep.name)
+    if dep.method == "brew-cask":
+        _refuse_self_updating_cask(dep)
     if dep.method in _BREW_METHODS:
         cmd = ["brew", "upgrade", *_brew_cask_flag(dep), dep.name]
     elif dep.method == "uv-tool":

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import shlex
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -745,3 +748,104 @@ def test_upgrade_invalid_pins_file_exits_error(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "vrg-host: invalid host pins file:" in captured.err
+
+
+# -- end to end against the live-host captures (#3261) ---------------------------
+
+_FIXTURES = Path(__file__).parent / "fixtures" / "host"
+
+# What each stub tool prints, per exact argv (after the tool name), for the
+# fixtures captured on the maintainer's Mac on 2026-10-16. Any other argv exits 1.
+_HOST_TOOLS: dict[str, dict[str, str]] = {
+    "brew": {
+        "list --formula --versions uv": "brew-list-versions-uv.txt",
+        "info --json=v2 --formula uv": "brew-info-formula-uv.json",
+        "list --formula --versions gh": "brew-list-versions-gh.txt",
+        "info --json=v2 --formula gh": "brew-info-formula-gh.json",
+        "info --json=v2 --cask docker-desktop": "brew-info-cask-docker-desktop.json",
+    },
+    "defaults": {
+        "read /Applications/Docker.app/Contents/Info.plist CFBundleShortVersionString": (
+            "docker-desktop-info-plist-version.txt"
+        ),
+    },
+    "gcloud": {
+        "version --format=value(core)": "gcloud-version-core.txt",
+        "components list --filter=id=core --format=value(latest_version_string)": (
+            "gcloud-components-list-core-latest.txt"
+        ),
+    },
+    "uv": {"tool list": "uv-tool-list.txt", "tool list --outdated": "uv-tool-list-outdated.txt"},
+    "sw_vers": {"-productVersion": "sw-vers-product-version.txt"},
+    "softwareupdate": {"--list": "softwareupdate-list-minor-and-major-available.txt"},
+}
+
+# lima, opentofu and git-cliff have no captured probe output (only their rows
+# in vrg-host-status-before-3261.txt), so they are left out of this harness.
+_UNCAPTURED = frozenset({"lima", "opentofu", "git-cliff"})
+
+
+def _install_captured_host(bin_dir: Path) -> None:
+    """Install stub host tools on *bin_dir* that replay the captured fixtures."""
+    bin_dir.mkdir()
+    python = bin_dir / "gcloud-python"
+    python.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")  # imports numpy
+    python.chmod(0o755)
+    for tool, routes in _HOST_TOOLS.items():
+        arms = [
+            f"  {shlex.quote(args)}) cat {shlex.quote(str(_FIXTURES / name))} ;;"
+            for args, name in routes.items()
+        ]
+        if tool == "gcloud":
+            # gcloud's SDK-version notice goes to stderr (CONSTRUCTED wording;
+            # the capture recorded only stdout). It must never reach a parser.
+            arms[1] = arms[1].replace(" ;;", "; echo 'Updates are available.' >&2 ;;")
+            arms.append(
+                f"  {shlex.quote('info --format=value(basic.python_location)')}) "
+                f"echo {shlex.quote(str(python))} ;;"
+            )
+        script = "\n".join(
+            ["#!/usr/bin/env bash", 'case "$*" in', *arms, "  *) exit 1 ;;", "esac", ""]
+        )
+        path = bin_dir / tool
+        path.write_text(script, encoding="utf-8")
+        path.chmod(0o755)
+
+
+def _row(line: str) -> list[str]:
+    return line.split()
+
+
+def _rows_by_name(lines: list[str]) -> dict[str, str]:
+    """Map each dependency's name to its status table row."""
+    return {line.split("]", 1)[1].split()[0]: line for line in lines if line.startswith("[")}
+
+
+def test_status_classifies_the_captured_host(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Drive `vrg-host status` through the real probes and the live-host captures."""
+    from vergil_tooling.lib import host_deps
+
+    deps = tuple(d for d in host_deps.load_manifest() if d.name not in _UNCAPTURED)
+    monkeypatch.setattr(vrg_host.host_deps, "load_manifest", lambda: deps)
+    bin_dir = tmp_path / "bin"
+    _install_captured_host(bin_dir)
+    monkeypatch.setenv("PATH", os.pathsep.join([str(bin_dir), os.environ["PATH"]]))
+
+    assert vrg_host.main(["status"]) == 1  # overall WARN
+    lines = capsys.readouterr().out.splitlines()
+    rows = _rows_by_name(lines)
+
+    # Entries #3261 changed: uv via Homebrew, Docker Desktop via its Info.plist.
+    assert _row(rows["uv"]) == _row("[WARN ] uv brew-formula 0.11.8 -> 0.13.0 behind (drift)")
+    assert _row(rows["docker-desktop"]) == _row(
+        "[WARN ] docker-desktop brew-cask 4.71.0 -> 4.94.0 behind (drift)"
+    )
+    # Entries #3261 left alone render exactly as the real host printed them.
+    before = (_FIXTURES / "vrg-host-status-before-3261.txt").read_text(encoding="utf-8")
+    real = _rows_by_name(before.splitlines())
+    for name in ("gh", "gcloud", "vergil-tooling", "macos"):
+        assert rows[name] == real[name], name
+    assert "          check numpy-in-interpreter: satisfied" in lines
+    assert lines[-1] == f"overall: WARN ({len(deps)} dependencies)"
