@@ -11918,6 +11918,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-host" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-host
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-generate-commands" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -12471,6 +12482,8 @@
       
         
       
+        
+      
     
     
     
@@ -12646,6 +12659,34 @@
     
   
     vrg-finalize-pr
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/host/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-host
   
 
     
@@ -15677,6 +15718,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-host" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-host
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-generate-commands" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -16682,6 +16734,53 @@ manages).</p>
 <tr>
 <td>Exit codes</td>
 <td>0 success, non-zero on runtime or build failure</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-host">vrg-host<a class="headerlink" href="#vrg-host" title="Permanent link">&para;</a></h3>
+<p>Observe and manage the Vergil-critical macOS host dependencies (<code>uv</code>,
+<code>gh</code>, <code>gcloud</code>, Lima, Docker, OpenTofu, <code>git-cliff</code>, vergil-tooling,
+macOS) declared in the packaged, tooling-owned manifest
+<code>src/vergil_tooling/data/host_dependencies.toml</code> (never
+repo-overridable). <code>status</code> (the default) reports installed-vs-latest
+drift, auxiliary-check health and pins; <code>status --fix</code> first runs the
+remediations of unsatisfied checks. <code>upgrade</code> upgrades only <code>auto</code>
+dependencies and holds actively pinned ones unless <code>--force</code>. <code>pin</code> /
+<code>unpin</code> record holds in the user's <code>~/.config/vergil/host-pins.toml</code>
+under the epic #155 pin-as-tech-debt doctrine. Runs unprivileged and
+refuses <code>sudo</code>/<code>doas</code>/<code>su</code>/<code>pkexec</code>. See the
+<a href="../dev/host/">vrg-host reference</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_host</code></td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>status [--fix]</code> (default); <code>upgrade &lt;dep&gt;…</code> or <code>upgrade --all</code>, each with optional <code>--force</code>; <code>pin &lt;dep&gt; --constraint --inducing-release --reason [--tracking-issue] [--deterministic]</code>; <code>unpin &lt;dep&gt;</code></td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>macOS host with each dependency installed by its documented method; <code>gh</code> on PATH for the <code>uv</code> latest probe</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td>Per-dependency <code>probe-error</code> rows (never fatal to the report); loud error on an unreadable manifest or pins file; refused pins and upgrades print the reason</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td><code>status</code>: 0 OK, 1 warnings, 2 errors; <code>upgrade</code>: 0 done, 1 a named dependency refused, 2 failure; <code>pin</code>/<code>unpin</code>: 0 success, 1 refused</td>
 </tr>
 <tr>
 <td>Status</td>

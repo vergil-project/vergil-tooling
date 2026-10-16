@@ -12200,6 +12200,8 @@
       
         
       
+        
+      
     
     
     
@@ -12375,6 +12377,34 @@
     
   
     vrg-finalize-pr
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/host/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-host
   
 
     
@@ -15663,7 +15693,11 @@ design spec is
 <strong>no public IP</strong> and no operator-IP allow-list; authentication is the
 operator's existing cloud IAM/ADC. Host prerequisites are therefore
 OpenTofu (≥ 1.8.0) and the provider CLI (<code>gcloud</code>, with ADC); cloud
-verbs preflight both and fail with a clear remediation. The in-guest
+verbs preflight both and fail with a clear remediation. On a macOS host,
+<a href="../dev/host/"><code>vrg-host</code></a> tracks both tools' versions and checks that the
+interpreter <code>gcloud</code> runs on can import NumPy, without which every IAP
+tunnel session warns and runs slower (<code>vrg-host status --fix</code> installs it).
+The in-guest
 login user defaults to the cloud image's default user and can be
 overridden with <code>VRG_OFF_PLATFORM_SSH_USER</code>.</p>
 <h2 id="port-forwards-port_forwards">Port forwards (<code>port_forwards</code>)<a class="headerlink" href="#port-forwards-port_forwards" title="Permanent link">&para;</a></h2>
