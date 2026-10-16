@@ -65,8 +65,8 @@ latest = "probe"
 # git: vergil-tooling runs `git` host-side throughout (lib/git.py: vrg-git,
 # vrg-commit, vrg-submit-pr, vrg-finalize-pr, vrg-release, worktrees). On the
 # macOS host it resolves to Homebrew's /opt/homebrew/bin/git ahead of the
-# Command Line Tools shim /usr/bin/git (git 2.54.0 at capture, 2026-10-16,
-# #3300), so Homebrew owns the copy that runs.
+# Apple's /usr/bin/git shim (git 2.54.0 at capture, 2026-10-16, #3300), so
+# Homebrew owns the copy that runs.
 [[dependency]]
 name = "git"
 why = "Git; vrg-git, vrg-commit, vrg-submit-pr, vrg-finalize-pr, vrg-release and the worktree workflow run it on the host (Homebrew's git, ahead of /usr/bin/git)."
@@ -261,7 +261,11 @@ fi
 ]
 
 # Xcode Command Line Tools: an implicit host dependency. Homebrew needs the
-# CLT (compilers, headers) to work at all, and /usr/bin/git is a CLT shim.
+# CLT (compilers, headers) to work at all, even on a Mac that also has full
+# Xcode installed. Apple's /usr/bin tool shims (git, clang, ...) run whichever
+# developer directory `xcode-select -p` selects: the CLT, or Xcode.app's own
+# toolchain (the maintainer's host selects Xcode.app, 2026-10-16). Full Xcode
+# is updated by the App Store and is not tracked here.
 # Apple ships CLT updates through Software Update, separately from macOS, so
 # this is a report-only entry modelled on `macos`: reported, never applied.
 #
@@ -286,7 +290,7 @@ fi
 #   like any other offer that is not an update.
 [[dependency]]
 name = "xcode-clt"
-why = "Xcode Command Line Tools; Homebrew needs them (compilers, headers) and /usr/bin/git is a CLT shim. A pending update is surfaced so it is applied deliberately, never by vrg-host."
+why = "Xcode Command Line Tools; Homebrew needs them (compilers, headers), even when full Xcode is installed. A pending update is surfaced so it is applied deliberately, never by vrg-host."
 method = "custom"
 upgrade = "manual"
 latest = "probe"
