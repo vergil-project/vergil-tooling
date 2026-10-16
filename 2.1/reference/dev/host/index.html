@@ -1282,6 +1282,8 @@
       
         
       
+        
+      
     
     
     
@@ -1334,6 +1336,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.243/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.243
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -12346,6 +12376,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="status">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#update-levels-macos" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Update levels (macOS)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
           <li class="md-nav__item">
@@ -15312,6 +15359,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="status">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#update-levels-macos" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Update levels (macOS)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
           <li class="md-nav__item">
@@ -15584,6 +15648,31 @@ state and severity, followed by any pin and auxiliary-check detail lines, and an
 </tr>
 </tbody>
 </table>
+<h4 id="update-levels-macos">Update levels (macOS)<a class="headerlink" href="#update-levels-macos" title="Permanent link">&para;</a></h4>
+<p>Software Update can offer more than one macOS update at once, for example an
+update within the current major <strong>and</strong> the next major. For <code>macos</code>, <code>status</code>
+reports every level that is behind instead of only the newest:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>[WARN ] macos            custom              26.5.2 -&gt; 27.0.1       behind (drift): minor 26.7.1, major 27.0.1
+</code></pre></div>
+<ul>
+<li>Each offered version is classified against the installed one by the first
+  component that differs: the first is a <strong>major</strong> update, the second a
+  <strong>minor</strong>, and any later one a <strong>patch</strong> (<code>26.5.2</code> with only <code>26.5.3</code> offered
+  reads <code>behind (drift): patch 26.5.3</code>).</li>
+<li>An offer that is not newer than the installed version is ignored. When
+  several offers fall in the same level, the highest is shown.</li>
+<li>The <code>latest</code> column shows the <strong>leading edge</strong>: the highest offer, or the
+  installed version when nothing newer is offered (<code>current</code>).</li>
+<li>Any level behind is WARN (drift); severity and exit codes are as for every
+  other dependency. Only what Apple actually lists is reported. If a patch
+  release has been superseded, Software Update stops listing it, and <code>status</code>
+  does not invent it.</li>
+<li>A macOS offer the probe cannot read (a title with no <code>Version</code>, or a version
+  that is not dotted numeric, such as <code>26.7.1 (a)</code>) is a <code>probe-error</code>, never
+  dropped.</li>
+</ul>
+<p>Only <code>macos</code> reports update levels. Every other dependency compares against a
+single latest version.</p>
 <p>A broken probe for one dependency becomes a <code>probe-error</code> row for that
 dependency only; the rest of the report still runs. Nothing is ever guessed at:
 an unreadable version is an error, never a false <code>current</code> or <code>missing</code>.</p>
@@ -15616,9 +15705,9 @@ and reported as <code>missing</code>). Each remediation is verified by re-runnin
 A remediation that fails, or leaves its check unsatisfied, is printed to stderr
 and forces exit <code>2</code>. Remediations run unprivileged like every other command.</p>
 <h3 id="upgrade">upgrade<a class="headerlink" href="#upgrade" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>vrg-host<span class="w"> </span>upgrade<span class="w"> </span>gh<span class="w"> </span>lima<span class="w">       </span><span class="c1"># named dependencies</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>vrg-host<span class="w"> </span>upgrade<span class="w"> </span>--all<span class="w">         </span><span class="c1"># every auto dependency</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>vrg-host<span class="w"> </span>upgrade<span class="w"> </span>--all<span class="w"> </span>--force<span class="w"> </span><span class="c1"># also upgrade past active pins</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>vrg-host<span class="w"> </span>upgrade<span class="w"> </span>gh<span class="w"> </span>lima<span class="w">       </span><span class="c1"># named dependencies</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>vrg-host<span class="w"> </span>upgrade<span class="w"> </span>--all<span class="w">         </span><span class="c1"># every auto dependency</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>vrg-host<span class="w"> </span>upgrade<span class="w"> </span>--all<span class="w"> </span>--force<span class="w"> </span><span class="c1"># also upgrade past active pins</span>
 </code></pre></div>
 <p>Name one or more dependencies <strong>or</strong> pass <code>--all</code>, not both.</p>
 <ul>
@@ -15643,14 +15732,14 @@ refused (<code>manual</code> or pinned); <code>2</code> on any failure — an un
 a failed or privilege-refused upgrade, an unsupported pin constraint, or an
 unreadable manifest or pins file.</p>
 <h3 id="pin-and-unpin">pin and unpin<a class="headerlink" href="#pin-and-unpin" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>vrg-host<span class="w"> </span>pin<span class="w"> </span>gh<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>--constraint<span class="w"> </span><span class="m">2</span>.40.x<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span>--inducing-release<span class="w"> </span><span class="m">2</span>.41.0<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span>--reason<span class="w"> </span><span class="s2">"2.41.0 breaks vrg-gh auth"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span>--tracking-issue<span class="w"> </span>https://github.com/vergil-project/vergil-tooling/issues/NNNN<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">  </span>--deterministic
-<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>
-<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>vrg-host<span class="w"> </span>unpin<span class="w"> </span>gh
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>vrg-host<span class="w"> </span>pin<span class="w"> </span>gh<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>--constraint<span class="w"> </span><span class="m">2</span>.40.x<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span>--inducing-release<span class="w"> </span><span class="m">2</span>.41.0<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span>--reason<span class="w"> </span><span class="s2">"2.41.0 breaks vrg-gh auth"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">  </span>--tracking-issue<span class="w"> </span>https://github.com/vergil-project/vergil-tooling/issues/NNNN<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">  </span>--deterministic
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>vrg-host<span class="w"> </span>unpin<span class="w"> </span>gh
 </code></pre></div>
 <table>
 <thead>
@@ -15709,7 +15798,12 @@ execution surface on the host. Changing the list means a vergil-tooling PR.</p>
 <code>uv-tool</code> or <code>custom</code>), whether <code>vrg-host</code> may upgrade it (<code>upgrade = "auto"</code> or
 <code>"manual"</code>), whether it has a latest-version feed (<code>latest = "probe"</code> or
 <code>"unmanaged"</code>), and any auxiliary checks. A <code>custom</code> entry supplies its own
-installed, latest and upgrade commands. An entry with any other method can
+installed, latest and upgrade commands. Its latest command is either
+<code>latest_version</code>, which prints one version, or <code>latest_versions</code>, which prints
+every offered version, one bare version per line, for
+<a href="#update-levels-macos">update-level reporting</a>. An entry may declare only one of
+the two, and <code>latest_versions</code> requires <code>latest = "probe"</code>; the manifest is
+refused at load otherwise. An entry with any other method can
 override only how its installed version is read. This is for a self-updating
 app, whose package-manager record goes stale.</p>
 <p>A tool earns an entry only if Vergil development needs it on the macOS host
@@ -15813,7 +15907,8 @@ itself. Current entries:</p>
   follow-on work
   (<a href="https://github.com/vergil-project/.github/issues/169">vergil-project/.github#169</a>).
   A pending macOS update is reported so it is applied deliberately, never by
-  <code>vrg-host</code>.</li>
+  <code>vrg-host</code>. The <code>macos</code> probe reads <code>softwareupdate --list</code> and reports
+  every pending <a href="#update-levels-macos">update level</a>.</li>
 <li><strong><code>vergil-tooling</code> has no latest feed.</strong> It is installed from git, so <code>uv</code>'s
   outdated feed cannot see new releases; <code>status</code> reports it as
   <code>latest-unmanaged</code> rather than a false <code>current</code>. <code>vrg-host upgrade
@@ -15885,14 +15980,14 @@ onto the packaged manifest when <code>status</code> and <code>upgrade</code> run
 written into the packaged manifest: that would modify the installed package and
 be lost on every reinstall.)</p>
 <p><code>vrg-host pin</code> and <code>unpin</code> manage the file; it looks like this:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">[pin.gh]</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">constraint</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"2.40.x"</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">inducing_release</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"2.41.0"</span>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="n">deterministic</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="n">reason</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"2.41.0 breaks vrg-gh auth"</span>
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="n">state</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"active"</span>
-<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="n">tracking_issue</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"https://github.com/vergil-project/vergil-tooling/issues/NNNN"</span>
-<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="n">pinned_date</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"2026-10-15"</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">[pin.gh]</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">constraint</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"2.40.x"</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">inducing_release</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"2.41.0"</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">deterministic</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="n">reason</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"2.41.0 breaks vrg-gh auth"</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="n">state</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"active"</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="n">tracking_issue</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"https://github.com/vergil-project/vergil-tooling/issues/NNNN"</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="n">pinned_date</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"2026-10-15"</span>
 </code></pre></div>
 <p>The fields are #155's pin schema plus one host extension, <code>pinned_date</code>, so
 <code>status</code> can show how long a pin has stood. A pin's <code>state</code> is <code>active</code> (holds
@@ -15934,11 +16029,14 @@ components — is refused when you run <code>vrg-host pin</code>, never guessed 
 <h3 id="how-a-pin-is-surfaced">How a pin is surfaced<a class="headerlink" href="#how-a-pin-is-surfaced" title="Permanent link">&para;</a></h3>
 <p><code>status</code> renders each active pin as tracked debt under its dependency's row:
 the constraint, the latest version it is holding back from (the size of the
-debt), the inducing release, the reason, the tracking issue, and the pin's age.</p>
+debt), the inducing release, the reason, the tracking issue, and the pin's age.
+For <code>macos</code>, the row still lists every pending update level, so an update the
+pin allows (such as <code>26.7.1</code> under a <code>26.x</code> pin) stays visible.</p>
 <h3 id="re-evaluation">Re-evaluation<a class="headerlink" href="#re-evaluation" title="Permanent link">&para;</a></h3>
 <p>A pin is valid only while its inducing release is the leading edge. When the
 latest available version moves past <code>inducing_release</code>, <code>status</code> marks the pin
-<code>RE-EVALUATION DUE</code> and the row becomes WARN. If the latest version is unknown,
+<code>RE-EVALUATION DUE</code> and the row becomes WARN. For <code>macos</code>, the latest is the
+leading edge: the highest version Software Update offers. If the latest version is unknown,
 or the two versions cannot be compared, it shows <code>RE-EVALUATION UNKNOWN</code> (also
 WARN). For a dependency with no latest feed, it reminds you to check the leading
 edge by hand.</p>
@@ -15960,8 +16058,8 @@ as needing manual action and is never retried elevated.</p>
 <ul>
 <li>The version parsers are tested against output captured on a real Mac. A few
   cases could not be captured there and are still hand-written: <code>softwareupdate</code>
-  with nothing pending or only non-OS updates pending, and <code>uv tool list
-  --outdated</code> listing an outdated tool. See
+  with nothing pending, only non-OS updates pending, or only a patch update
+  pending, and <code>uv tool list --outdated</code> listing an outdated tool. See
   <code>tests/vergil_tooling/fixtures/host/README.md</code>. If one of those cases shows a
   <code>probe-error</code> row, it may be a parser mismatch rather than a broken tool.</li>
 <li><code>vrg-host</code> reports and acts only when you run it. Scheduled or automatic runs
