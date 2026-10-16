@@ -100,34 +100,45 @@ cannot be unfrozen. `status` prints the current state.
 | Exit codes | 0 success, 1 error |
 | Status | Active |
 
-### vrg-merge-when-green
+### vrg-release
 
-Poll a PR's CI checks, then merge when they all pass. Designed for
-release-workflow PRs where the agent is both author and reviewer.
+Run the full release workflow from `develop` to `main`: tracking issue,
+changelog, release PR and merge, CD confirmation, back-merge and version
+bump, rolling-tag promotion, cleanup, consumer refresh, and finally the
+`update-deps` stage, which runs the dependency update on the new
+`develop` version. On a fresh start, preflight refuses while an open PR
+carries the `dependency-update` label, after first closing any whose fix
+task completed. Human-only. See the [vrg-release reference](dev/release.md)
+and the [Releasing guide](../guides/releasing.md).
 
 | Attribute | Value |
 |---|---|
-| Source | `vergil_tooling.bin.vrg_merge_when_green` |
-| Args | `pr` (positional, required), `--strategy` (merge/squash/rebase), `--no-delete-branch` |
-| Preconditions | `gh` CLI on PATH, worktree-aware (skips `--delete-branch` in secondary worktrees) |
-| Failure mode | `subprocess.CalledProcessError` from `gh pr checks --fail-fast` on first red check |
-| Exit codes | 0 success, non-zero on check failure or merge failure |
+| Source | `vergil_tooling.bin.vrg_release` |
+| Args | `minor`/`major` (optional positional), `--no-promote`, `--without-deps`, `--allow-pending-deps`, `--install`, `--resume [X.Y.Z]`, `--skip-audit`, `--output-window`, `--output-format` |
+| Preconditions | Human identity; on `develop`, clean working tree, local develop matches `origin/develop`; `gh` authenticated and `git-cliff` on PATH |
+| Failure mode | Fail-fast stages stop the run; deferred stages (including `update-deps`) record the failure, let later stages run, and are summarized at the end |
+| Exit codes | 0 success, 1 any failure or refusal, 130 interrupted |
 | Status | Active |
 
-### vrg-prepare-release
+### vrg-update-deps
 
-Automate release preparation: create release branch from develop,
-merge main, generate changelog and release notes, push, and open PR.
-Auto-detects the ecosystem (Python, Maven, Go, Ruby, Cargo,
-Claude plugin, VERSION file) to find the version.
+Update the repo's dependencies to the newest versions their declared
+bounds allow, in a `deps/update-<version>` managed worktree: run the
+applicable updaters (`python`, `vergil`, `images`, then the repo
+`hook`), validate once, open a `dependency-update`-labelled PR, and
+merge it. A no-op run opens no PR. A validation or merge failure leaves
+the PR open and files a fix task. Every run prints the held-back report.
+`vrg-release` runs the same pipeline as its `update-deps` stage.
+Human-only. See the [vrg-update-deps reference](dev/update-deps.md) and
+the [dependency-update reference](dependency-update-config.md).
 
 | Attribute | Value |
 |---|---|
-| Source | `vergil_tooling.bin.vrg_prepare_release` |
-| Args | `--issue` (required) |
-| Preconditions | On `develop` branch, clean working tree, local develop matches `origin/develop`, `gh` and `git-cliff` on PATH |
-| Failure mode | `SystemExit` with clear message for each precondition |
-| Exit codes | 0 success, 1 error |
+| Source | `vergil_tooling.bin.vrg_update_deps` |
+| Args | `--only NAME[,NAME]`, `--skip NAME[,NAME]`, `--vergil X.Y` (mutually exclusive), `--output-window`, `--output-format` |
+| Preconditions | Human identity; on `develop`, clean working tree, local develop matches `origin/develop`; `gh` authenticated; no existing `deps/update-<version>` branch |
+| Failure mode | Updater, validation and merge failures are recorded, the worktree is cleaned up, then the run exits non-zero |
+| Exit codes | 0 success or no-op, 1 failure or refusal, 130 interrupted |
 | Status | Active |
 
 ### vrg-finalize-pr
@@ -184,7 +195,10 @@ behind a "0 cruft" message (issue #2347).
 
 Ensure GitHub labels exist. Three modes: single-label (create/update
 one label), sync (provision all labels from the canonical registry),
-and project (discover repos via a GitHub Project and sync each).
+and project (discover repos via a GitHub Project and sync each). The
+registry is `src/vergil_tooling/data/labels.json`; the labels it
+defines are listed in
+[GitHub Issue Standards](../standards/github-issues.md#labels).
 
 | Attribute | Value |
 |---|---|
@@ -226,6 +240,11 @@ CI/CD/epic-rollup/`ops.yml` workflows, the docs site, branch structure,
 GitHub config, and Pages. The scaffolded `base + <language>`
 `.gitignore` fence and staggered-cron `ops.yml` make a new repo pass the
 config audit's two local checks from day one.
+
+The vergil series a new repo uses comes from the installed
+vergil-tooling: `[dependencies].vergil` defaults to its `vX.Y`, and the
+generated workflows pin the vergil-actions reusable workflows to that
+series. A new repo therefore starts on the series that created it.
 
 **Born-green language skeleton.** A dedicated scaffolding step (step 5,
 `lib/lang_scaffold.py`) renders the language's packaged skeleton
