@@ -27,6 +27,7 @@ from vergil_tooling.lib.update_deps.updater import (
     applicable_updaters,
     select_updaters,
 )
+from vergil_tooling.lib.update_deps.updaters.images import ImagesUpdater
 from vergil_tooling.lib.update_deps.updaters.python_uv import PythonUvUpdater
 from vergil_tooling.lib.update_deps.updaters.repo_hook import RepoHookUpdater
 from vergil_tooling.lib.update_deps.updaters.vergil_eco import VergilUpdater
@@ -35,7 +36,12 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 # The repo hook is always last: it sees what the built-in updaters produced (spec §6.2).
-DEFAULT_REGISTRY: list[Updater] = [PythonUvUpdater(), VergilUpdater(), RepoHookUpdater()]
+DEFAULT_REGISTRY: list[Updater] = [
+    PythonUvUpdater(),
+    VergilUpdater(),
+    ImagesUpdater(),
+    RepoHookUpdater(),
+]
 
 
 @dataclass

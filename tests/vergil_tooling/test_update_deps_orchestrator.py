@@ -64,7 +64,7 @@ def _state() -> tuple[UpdateDepsState, UpdateDepsContext]:
 
 
 def test_default_registry_names() -> None:
-    assert [u.name for u in DEFAULT_REGISTRY] == ["python", "vergil", "hook"]
+    assert [u.name for u in DEFAULT_REGISTRY] == ["python", "vergil", "images", "hook"]
 
 
 def test_require_ctx_raises_when_missing() -> None:
