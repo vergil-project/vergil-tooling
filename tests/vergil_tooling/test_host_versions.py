@@ -100,3 +100,48 @@ def test_compare_refuses_non_numeric(left: str, right: str) -> None:
 )
 def test_upstream_drops_brew_revision(version: str, expected: str) -> None:
     assert hv.upstream(version) == expected
+
+
+# -- parse_bare and update_level (#3269) ---------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [("26.7.1", "26.7.1"), ("v27.0.1", "27.0.1"), (" 15 ", "15"), ("3.12.7_1", "3.12.7_1")],
+)
+def test_parse_bare(raw: str, expected: str) -> None:
+    assert hv.parse_bare(raw) == expected
+
+
+@pytest.mark.parametrize("raw", ["", "  ", "macOS 26.7.1", "26.7.1 (a)", "2.0-beta", "4.94.0,1"])
+def test_parse_bare_refuses_anything_but_a_bare_version(raw: str) -> None:
+    with pytest.raises(hv.UnrecognizedVersionError, match="is not a bare version"):
+        hv.parse_bare(raw)
+
+
+@pytest.mark.parametrize(
+    ("installed", "offered", "expected"),
+    [
+        ("26.5.2", "26.5.3", "patch"),
+        ("26.5.2", "26.7.1", "minor"),
+        ("26.5.2", "27.0.1", "major"),
+        ("26.5.2", "27.0", "major"),
+        ("26", "26.0.1", "patch"),  # missing components are 0
+        ("26.5.2", "26.5.2.1", "patch"),  # a fourth component is below minor
+        ("3.12.7", "3.12.7_1", "patch"),  # a revision-only rebuild
+        ("26.5.2", "26.5.2", None),  # equal is not an update
+        ("26.5.2", "26.5.0", None),  # older is not an update
+        ("26.5.2", "25.9.9", None),
+    ],
+)
+def test_update_level(installed: str, offered: str, expected: str | None) -> None:
+    assert hv.update_level(installed, offered) == expected
+
+
+def test_update_level_incomparable_raises() -> None:
+    with pytest.raises(hv.IncomparableVersionError):
+        hv.update_level("26.5.2", "27.0-beta")
+
+
+def test_levels_are_least_to_most_significant() -> None:
+    assert hv.LEVELS == ("patch", "minor", "major")

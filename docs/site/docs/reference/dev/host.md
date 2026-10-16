@@ -54,6 +54,35 @@ Each dependency is classified on two axes, its **version state** and its
 | `probe-error` | A probe answered but its output could not be read, two versions could not be ordered, or the entry could not be probed | ERROR |
 | any state + an unsatisfied auxiliary check | The tool is present but a health check fails | ERROR |
 
+#### Update levels (macOS)
+
+Software Update can offer more than one macOS update at once, for example an
+update within the current major **and** the next major. For `macos`, `status`
+reports every level that is behind instead of only the newest:
+
+```text
+[WARN ] macos            custom              26.5.2 -> 27.0.1       behind (drift): minor 26.7.1, major 27.0.1
+```
+
+- Each offered version is classified against the installed one by the first
+  component that differs: the first is a **major** update, the second a
+  **minor**, and any later one a **patch** (`26.5.2` with only `26.5.3` offered
+  reads `behind (drift): patch 26.5.3`).
+- An offer that is not newer than the installed version is ignored. When
+  several offers fall in the same level, the highest is shown.
+- The `latest` column shows the **leading edge**: the highest offer, or the
+  installed version when nothing newer is offered (`current`).
+- Any level behind is WARN (drift); severity and exit codes are as for every
+  other dependency. Only what Apple actually lists is reported. If a patch
+  release has been superseded, Software Update stops listing it, and `status`
+  does not invent it.
+- A macOS offer the probe cannot read (a title with no `Version`, or a version
+  that is not dotted numeric, such as `26.7.1 (a)`) is a `probe-error`, never
+  dropped.
+
+Only `macos` reports update levels. Every other dependency compares against a
+single latest version.
+
 A broken probe for one dependency becomes a `probe-error` row for that
 dependency only; the rest of the report still runs. Nothing is ever guessed at:
 an unreadable version is an error, never a false `current` or `missing`.
@@ -144,7 +173,12 @@ Each entry declares the dependency's `method` (`brew-formula`, `brew-cask`,
 `uv-tool` or `custom`), whether `vrg-host` may upgrade it (`upgrade = "auto"` or
 `"manual"`), whether it has a latest-version feed (`latest = "probe"` or
 `"unmanaged"`), and any auxiliary checks. A `custom` entry supplies its own
-installed, latest and upgrade commands. An entry with any other method can
+installed, latest and upgrade commands. Its latest command is either
+`latest_version`, which prints one version, or `latest_versions`, which prints
+every offered version, one bare version per line, for
+[update-level reporting](#update-levels-macos). An entry may declare only one of
+the two, and `latest_versions` requires `latest = "probe"`; the manifest is
+refused at load otherwise. An entry with any other method can
 override only how its installed version is read. This is for a self-updating
 app, whose package-manager record goes stale.
 
@@ -186,7 +220,8 @@ Notes on the entries:
   follow-on work
   ([vergil-project/.github#169](https://github.com/vergil-project/.github/issues/169)).
   A pending macOS update is reported so it is applied deliberately, never by
-  `vrg-host`.
+  `vrg-host`. The `macos` probe reads `softwareupdate --list` and reports
+  every pending [update level](#update-levels-macos).
 - **`vergil-tooling` has no latest feed.** It is installed from git, so `uv`'s
   outdated feed cannot see new releases; `status` reports it as
   `latest-unmanaged` rather than a false `current`. `vrg-host upgrade
@@ -293,12 +328,15 @@ components — is refused when you run `vrg-host pin`, never guessed at.
 `status` renders each active pin as tracked debt under its dependency's row:
 the constraint, the latest version it is holding back from (the size of the
 debt), the inducing release, the reason, the tracking issue, and the pin's age.
+For `macos`, the row still lists every pending update level, so an update the
+pin allows (such as `26.7.1` under a `26.x` pin) stays visible.
 
 ### Re-evaluation
 
 A pin is valid only while its inducing release is the leading edge. When the
 latest available version moves past `inducing_release`, `status` marks the pin
-`RE-EVALUATION DUE` and the row becomes WARN. If the latest version is unknown,
+`RE-EVALUATION DUE` and the row becomes WARN. For `macos`, the latest is the
+leading edge: the highest version Software Update offers. If the latest version is unknown,
 or the two versions cannot be compared, it shows `RE-EVALUATION UNKNOWN` (also
 WARN). For a dependency with no latest feed, it reminds you to check the leading
 edge by hand.
@@ -323,8 +361,8 @@ as needing manual action and is never retried elevated.
 
 - The version parsers are tested against output captured on a real Mac. A few
   cases could not be captured there and are still hand-written: `softwareupdate`
-  with nothing pending or only non-OS updates pending, and `uv tool list
-  --outdated` listing an outdated tool. See
+  with nothing pending, only non-OS updates pending, or only a patch update
+  pending, and `uv tool list --outdated` listing an outdated tool. See
   `tests/vergil_tooling/fixtures/host/README.md`. If one of those cases shows a
   `probe-error` row, it may be a parser mismatch rather than a broken tool.
 - `vrg-host` reports and acts only when you run it. Scheduled or automatic runs

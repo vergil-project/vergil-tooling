@@ -166,11 +166,16 @@ method = "uv-tool"
 upgrade = "auto"
 latest = "unmanaged"
 
-# macOS itself: reported, never applied (spec §4, §6). The latest probe parses
-# `softwareupdate --list` (unprivileged, read-only): the newest listed macOS
-# update's Version, or — when Software Update answers but lists no macOS
-# update — the installed version. Any other output fails the probe, so it
-# reports latest-unknown instead of a false `current`.
+# macOS itself: reported, never applied (spec §4, §6). Software Update can
+# offer several macOS updates at once (an update within the current major and
+# the next major, #3269), so the probe is `latest_versions`: it parses
+# `softwareupdate --list` (unprivileged, read-only) and prints the Version of
+# every listed macOS update, one per line, and `status` reports each level
+# (patch / minor / major) that is behind. A macOS title whose Version cannot
+# be extracted is printed as-is, so vrg-host reports a probe error instead of
+# dropping the offer. When Software Update answers but lists no macOS update
+# it prints the installed version (nothing newer: current). Any other output
+# fails the probe, so it reports latest-unknown instead of a false `current`.
 [[dependency]]
 name = "macos"
 why = "The host OS; a pending macOS update is surfaced so it is applied deliberately, never by vrg-host."
@@ -180,15 +185,19 @@ latest = "probe"
 
 [dependency.probes]
 installed_version = ["sw_vers", "-productVersion"]
-latest_version = [
+latest_versions = [
   "bash", "-c",
   '''
 out="$(softwareupdate --list 2>&1)" || exit 1
-latest="$(printf '%s\n' "$out" \
-  | sed -nE 's/.*Title: macOS[^,]*, Version: ([0-9][0-9.]*),.*/\1/p' \
-  | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1)"
-if [ -n "$latest" ]; then
-  printf '%s\n' "$latest"
+offers="$(printf '%s\n' "$out" | awk '
+  /^[[:space:]]*Title: macOS/ {
+    version = ""
+    if (match($0, /, Version: [^,]*,/)) version = substr($0, RSTART + 11, RLENGTH - 12)
+    if (version ~ /^[[:space:]]*$/) print "unreadable macOS offer: " $0
+    else print version
+  }')" || exit 1
+if [ -n "$offers" ]; then
+  printf '%s\n' "$offers"
 elif printf '%s\n' "$out" | grep -qE 'No new software available|Software Update found the following'; then
   sw_vers -productVersion
 else

@@ -1,0 +1,6 @@
+Software Update Tool
+
+Finding available software
+Software Update found the following new or updated software:
+* Label: macOS Tahoe 26.5.3-25F84
+	Title: macOS Tahoe 26.5.3, Version: 26.5.3, Size: 1852999KiB, Recommended: YES, Action: restart,

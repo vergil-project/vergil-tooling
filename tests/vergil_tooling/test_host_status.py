@@ -304,7 +304,7 @@ def test_render_empty() -> None:
         (hm.UNMANAGED, "no-feed", "re-evaluation: no latest feed"),
     ],
 )
-def test_pin_review(latest: hs.Latest, review: str, fragment: str | None) -> None:
+def test_pin_review(latest: hs.Edge, review: str, fragment: str | None) -> None:
     got, message = hs.pin_review(_pin(), latest)
     assert got == review
     if fragment is None:
@@ -353,3 +353,119 @@ def test_render_under_evaluation_pin() -> None:
     out = hs.render([report])
     assert "pin under evaluation (not holding): 1.0 (2.0 breaks us); tracking issue: none" in out
     assert "holding back from" not in out
+
+
+# -- update levels (#3269) ---------------------------------------------------------
+# Offer sets mirror the captured softwareupdate fixture (26.5.2 installed, 26.7.1
+# and 27.0.1 offered) plus CONSTRUCTED variants (patch-only, nothing newer, and
+# several offers within one level).
+
+_MAC = _dep(name="macos", method="custom", upgrade="manual")
+
+
+@pytest.mark.parametrize(
+    ("offers", "expected"),
+    [
+        (("26.7.1", "27.0.1"), [("minor", "26.7.1"), ("major", "27.0.1")]),
+        (("26.5.3",), [("patch", "26.5.3")]),
+        (("26.5.2",), []),
+        (("26.5.0", "25.0"), []),  # older offers are ignored
+        # Several offers in one level report the highest; order is irrelevant.
+        (
+            ("27.0.1", "26.5.4", "26.6", "26.5.3", "26.7.1", "28.1"),
+            [("patch", "26.5.4"), ("minor", "26.7.1"), ("major", "28.1")],
+        ),
+    ],
+)
+def test_levels_behind(offers: tuple[str, ...], expected: list[tuple[str, str]]) -> None:
+    assert hs.levels_behind("26.5.2", hm.Offers(offers)) == expected
+
+
+def test_levels_behind_incomparable_raises() -> None:
+    with pytest.raises(hv.IncomparableVersionError):
+        hs.levels_behind("26.5.2", hm.Offers(("27.0-beta",)))
+
+
+@pytest.mark.parametrize(
+    ("installed", "latest", "expected"),
+    [
+        ("26.5.2", hm.Offers(("27.0.1", "26.7.1")), "27.0.1"),
+        ("26.5.2", hm.Offers(("26.5.0",)), "26.5.2"),  # nothing newer: installed
+        (None, hm.Offers(("26.7.1", "27.0.1")), "27.0.1"),
+        ("26.5.2", "27.0.1", "27.0.1"),  # a single latest passes through
+        ("26.5.2", None, None),
+        ("26.5.2", hm.UNMANAGED, hm.UNMANAGED),
+    ],
+)
+def test_leading_edge(installed: str | None, latest: hs.Latest, expected: hs.Edge) -> None:
+    assert hs.leading_edge(installed, latest) == expected
+
+
+@pytest.mark.parametrize(
+    ("offers", "expected"),
+    [
+        (("26.7.1", "27.0.1"), ("behind", hs.WARN)),
+        (("26.5.3",), ("behind", hs.WARN)),
+        (("26.5.2",), ("current", hs.OK)),
+        (("26.5.0",), ("current", hs.OK)),
+    ],
+)
+def test_classify_offers(offers: tuple[str, ...], expected: tuple[str, int]) -> None:
+    got = hs.classify(_MAC, installed="26.5.2", latest=hm.Offers(offers), check_results=[])
+    assert got == expected
+
+
+def test_classify_offers_missing_is_error() -> None:
+    got = hs.classify(_MAC, installed=None, latest=hm.Offers(("27.0.1",)), check_results=[])
+    assert got == ("missing", hs.ERROR)
+
+
+def _mac_pin(constraint: str, inducing: str) -> HostPin:
+    return dataclasses.replace(_pin(constraint=constraint), inducing_release=inducing)
+
+
+@pytest.mark.parametrize(
+    ("pin", "offers", "severity"),
+    [
+        # The re-evaluation trigger reads the leading edge: the highest offer.
+        (_mac_pin("26.x", "27.0.1"), ("26.7.1", "27.0.1"), hs.OK),
+        (_mac_pin("26.x", "27.0.0"), ("26.7.1", "27.0.1"), hs.WARN),
+        # An offer below the inducing release never hides a newer one.
+        (_mac_pin("26.x", "26.7.1"), ("26.7.1", "27.0.1"), hs.WARN),
+        # Drifted off the constraint is WARN, as for any pinned dependency.
+        (_mac_pin("25.x", "27.0.1"), ("27.0.1",), hs.WARN),
+    ],
+)
+def test_classify_offers_pinned(pin: HostPin, offers: tuple[str, ...], severity: int) -> None:
+    dep = dataclasses.replace(_MAC, pin=pin)
+    got = hs.classify(dep, installed="26.5.2", latest=hm.Offers(offers), check_results=[])
+    assert got == ("pinned", severity)
+
+
+def test_render_offers_lists_every_level_behind() -> None:
+    reports = [
+        hs.Report(_MAC, "26.5.2", hm.Offers(("26.7.1", "27.0.1")), "behind", hs.WARN),
+        hs.Report(_MAC, "26.5.2", hm.Offers(("26.5.3",)), "behind", hs.WARN),
+        hs.Report(_MAC, "26.5.2", hm.Offers(("26.5.2",)), "current", hs.OK),
+        hs.Report(_MAC, None, hm.Offers(("27.0.1",)), "missing", hs.ERROR),
+    ]
+    lines = hs.render(reports).splitlines()
+    assert lines[0] == (
+        "[WARN ] macos            custom              26.5.2 -> 27.0.1       "
+        "behind (drift): minor 26.7.1, major 27.0.1"
+    )
+    assert lines[1] == (
+        "[WARN ] macos            custom              26.5.2 -> 26.5.3       "
+        "behind (drift): patch 26.5.3"
+    )
+    assert lines[2] == "[OK   ] macos            custom              26.5.2 -> 26.5.2       current"
+    assert lines[3] == "[ERROR] macos            custom                   - -> 27.0.1       missing"
+
+
+def test_render_pinned_offers_show_levels_and_leading_edge() -> None:
+    dep = dataclasses.replace(_MAC, pin=_mac_pin("26.x", "27.0.0"))
+    report = hs.Report(dep, "26.5.2", hm.Offers(("26.7.1", "27.0.1")), "pinned", hs.WARN)
+    out = hs.render([report], today=datetime.date(2026, 10, 15))
+    assert "pinned (tracked debt): minor 26.7.1, major 27.0.1" in out
+    assert "pin: 26.x, holding back from 27.0.1 (inducing release 27.0.0)" in out
+    assert "!! RE-EVALUATION DUE: leading edge 27.0.1 is past inducing release 27.0.0" in out
