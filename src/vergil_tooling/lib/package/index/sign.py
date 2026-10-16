@@ -23,7 +23,7 @@ from vergil_tooling.lib.package import PackageError
 from vergil_tooling.lib.package.index.collect import _call
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
 
     from vergil_tooling.lib.package.repo_setup import Run
 
@@ -40,7 +40,7 @@ def _env(name: str) -> str:
 
 
 @contextlib.contextmanager
-def _secret_file(content: str) -> Iterator[Path]:
+def _secret_file(content: str) -> Generator[Path]:
     """A ``0600`` temporary file holding ``content``, deleted on exit."""
     fd, name = tempfile.mkstemp(prefix="vrg-sign-")
     path = Path(name)
