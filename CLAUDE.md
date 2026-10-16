@@ -367,7 +367,15 @@ CLI tools installed as `vrg-*` console scripts:
   the validated builder; the agent-safe path to fix body-level standards
   failures on its own PR during pr-watch (pushes an empty commit to
   re-trigger CI)
-- **`vrg-release`** — Mechanized end-to-end release workflow (develop to main)
+- **`vrg-release`** — Mechanized end-to-end release workflow (develop to main),
+  ending with the `update-deps` stage (`--without-deps` skips it); a fresh
+  start refuses while a `dependency-update` PR is open
+  (`--allow-pending-deps` bypasses, logged on the tracking issue)
+- **`vrg-update-deps`** — Mechanized dependency update within declared bounds:
+  built-in updaters (`python`, `vergil`, `images`) plus the
+  `[dependency-update].hook`, one validation, a `dependency-update`-labelled
+  PR merged when green, a fix task when validation or merge fails, and the
+  held-back report (`--only`/`--skip`/`--vergil X.Y`). Human-only
 - **`vrg-resolve-tracking-issue`** — Extract tracking issue number from a merge commit's PR linkage
 - **`vrg-finalize-pr`** — Merge a PR and run post-merge cleanup (branch/worktree deletion, remote pruning)
 - **`vrg-validate`** — Unified validation driver (runs inside dev container)
@@ -403,7 +411,11 @@ Shared libraries under `src/vergil_tooling/lib/`:
 - **`github.py`** — gh CLI subprocess wrappers
 - **`config.py`** — Parse `vergil.toml`
 - **`release/`** — Mechanized release workflow (preflight, prepare, merge,
-  bump, confirm, finalize, handoff, orchestrator, package-index wait)
+  bump, confirm, finalize, handoff, orchestrator, package-index wait, and
+  the `update-deps` stage); preflight holds the dependency-update gate
+- **`update_deps/`** — `vrg-update-deps` pipeline (preflight, orchestrator,
+  PR and fix task, failure output, held-back report, registry and package
+  index lookups) and its updaters under `updaters/`
 - **`package/`** — Binary package builds (matrix, python and staged
   builders, nFPM, install-test, repository bootstrap, `index/` for the
   apt/dnf site)
