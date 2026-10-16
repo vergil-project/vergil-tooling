@@ -221,7 +221,7 @@ def _pin_lines(pin: HostPin, latest: Edge, today: datetime.date) -> list[str]:
     """Render an active pin as tracked debt (spec §9)."""
     pad = "          "
     lines = [
-        f"{pad}pin: {pin.constraint}, holding back from {_fmt_latest(latest)} "
+        f"{pad}pin: {pin.constraint}, holding back from {fmt_latest(latest)} "
         f"(inducing release {pin.inducing_release})",
         f"{pad}  reason: {pin.reason}",
         f"{pad}  tracking issue: {pin.tracking_issue or 'none'}",
@@ -282,7 +282,8 @@ def worst_severity(reports: Sequence[Report]) -> int:
     return max((r.severity for r in reports), default=OK)
 
 
-def _fmt_latest(latest: Edge) -> str:
+def fmt_latest(latest: Edge) -> str:
+    """Render a leading edge for display: a version, ``unmanaged`` or ``unknown``."""
     if latest is hm.UNMANAGED:
         return "unmanaged"
     if latest is None:
@@ -301,7 +302,7 @@ def render(reports: Sequence[Report], *, today: datetime.date | None = None) -> 
         tag = SEVERITY_LABELS[r.severity]
         installed = r.installed if r.installed is not None else "-"
         edge = None if r.state == PROBE_ERROR else leading_edge(r.installed, r.latest)
-        latest = "-" if r.state == PROBE_ERROR else _fmt_latest(edge)
+        latest = "-" if r.state == PROBE_ERROR else fmt_latest(edge)
         state = r.state
         if r.state in _DISPLAY:
             state = f"{r.state} ({_DISPLAY[r.state]})"

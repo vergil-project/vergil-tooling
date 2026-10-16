@@ -18,11 +18,20 @@ Subcommands (epic vergil-project/.github#167, spec §6):
   the package managers cannot upgrade *to a constraint*, so a pin is a real
   hold, unless ``--force`` overrides it. An upgrade that would need privilege
   escalation is reported as needing manual action, never retried elevated.
-  The exit code is ``0`` when everything requested was upgraded (or, under
-  ``--all``, deliberately skipped or held), ``1`` when an explicitly named
-  dependency was refused (``manual`` or pinned), and ``2`` on any failure (an
-  unknown dependency name, a failed or privilege-refused upgrade, an
-  unsupported pin constraint, or an unreadable manifest or pins file).
+  Each ``auto`` dependency is probed and classified first, as ``status``
+  would (issue #3301): a ``current`` one is skipped without running its
+  upgrade; a ``behind`` one is upgraded and its installed version re-probed,
+  reporting the real ``before -> after`` (an unchanged version is a WARN,
+  never ``upgraded``); one with no latest to compare against is upgraded and
+  reported ``before -> after``; a missing one or a probe error is an ERROR
+  and is not attempted.
+  The exit code is ``0`` when everything requested was upgraded or already
+  current (or, under ``--all``, deliberately skipped or held), ``1`` when an
+  explicitly named dependency was refused (``manual`` or pinned) or an upgrade
+  left a dependency behind or its latest unknown, and ``2`` on any failure (an
+  unknown dependency name, a missing dependency, a probe error, a failed or
+  privilege-refused upgrade, an unsupported pin constraint, or an unreadable
+  manifest or pins file).
 - ``vrg-host pin <dep> --constraint <c> --inducing-release <v> --reason <text>
   [--tracking-issue <url>] [--deterministic]`` — hold a declared dependency
   back (epic #155 doctrine). ``--reason`` is required — the justification
@@ -41,10 +50,11 @@ and ``unpin`` exit ``0`` on success and ``1`` when refused.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final, NamedTuple
 
-from vergil_tooling.lib import host_deps, host_methods, host_pins, host_status
+from vergil_tooling.lib import host_deps, host_methods, host_pins, host_status, host_versions
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.host_status import Report
 
@@ -281,39 +291,172 @@ def _status(args: argparse.Namespace) -> int:
     return worst if fixes_ok else host_status.ERROR
 
 
-def _upgrade_one(dep: HostDependency, *, force: bool) -> tuple[str, int]:
-    """Upgrade one ``auto`` dependency; return ``(outcome line, severity)``.
+class _Outcome(NamedTuple):
+    """One dependency's upgrade outcome: its report line and severity."""
 
-    An active pin holds the dependency (WARN) unless *force*; an unsupported
-    pin constraint is an ERROR even under *force*. Every handler failure — a
-    failed command, a privilege-escalation refusal, an unupgradeable manifest
-    entry — is reported for this dependency (ERROR) and never retried.
+    line: str
+    severity: int
+    held: bool = False
+
+
+_PROBE_ERRORS: Final = (host_methods.ProbeError, host_deps.ManifestError, ValueError)
+
+
+def _probe_versions(dep: HostDependency) -> tuple[str | None, host_status.Latest, str]:
+    """Probe *dep*'s installed and latest versions and classify them as ``status`` would.
+
+    The version state is classified *without* the pin (the hold is decided by
+    the caller) and without auxiliary checks (``upgrade`` does not run them),
+    so it is one of ``missing``, ``current``, ``behind``, ``latest-unmanaged``
+    or ``latest-unknown``.
+
+    Raises:
+        host_methods.ProbeError: a probe answered unreadably.
+        host_deps.ManifestError: the entry cannot be probed.
+        ValueError: a probe would escalate privilege, or the versions cannot
+            be ordered.
     """
-    pin = dep.pin
-    if pin is not None and pin.state == "active":
-        try:
-            host_pins.parse_constraint(pin.constraint)
-        except ValueError as exc:
-            return f"ERROR    {dep.name}: {exc}", host_status.ERROR
-        if not force:
-            return (
-                f"held     {dep.name}: pinned to {pin.constraint} ({pin.reason}); "
-                f"run 'vrg-host unpin {dep.name}' or pass --force to upgrade past the pin",
-                host_status.WARN,
-            )
+    installed = host_methods.installed_version(dep)
+    latest = host_methods.latest_version(dep)
+    state, _ = host_status.classify(dataclasses.replace(dep, pin=None), installed, latest, [])
+    return installed, latest, state
+
+
+def _run_upgrade(dep: HostDependency) -> _Outcome | None:
+    """Run *dep*'s upgrade command; return a failure outcome, or ``None`` on success."""
     try:
         host_methods.upgrade(dep)
     except ValueError as exc:
-        return (
+        return _Outcome(
             f"MANUAL   {dep.name}: upgrade refused, needs manual action ({exc})",
             host_status.ERROR,
         )
     except (host_methods.UpgradeFailedError, host_deps.ManifestError) as exc:
-        return (
+        return _Outcome(
             f"FAILED   {dep.name}: {exc} (if it needs elevated privileges, upgrade it manually)",
             host_status.ERROR,
         )
-    return f"upgraded {dep.name}", host_status.OK
+    return None
+
+
+def _reprobe(dep: HostDependency) -> str | _Outcome:
+    """Re-probe *dep*'s installed version after its upgrade ran.
+
+    Returns the new installed version, or an ERROR outcome when it cannot be
+    read or the dependency is no longer detected — never the expected latest.
+    """
+    try:
+        after = host_methods.installed_version(dep)
+    except _PROBE_ERRORS as exc:
+        return _Outcome(
+            f"ERROR    {dep.name}: upgrade ran but the installed version could not be "
+            f"re-probed ({type(exc).__name__}: {exc})",
+            host_status.ERROR,
+        )
+    if after is None:
+        return _Outcome(
+            f"ERROR    {dep.name}: upgrade ran but {dep.name} is no longer detected as installed",
+            host_status.ERROR,
+        )
+    return after
+
+
+def _upgrade_behind(dep: HostDependency, before: str, edge: str) -> _Outcome:
+    """Upgrade a dependency that is behind *edge* and report the real transition."""
+    outcome = _run_upgrade(dep)
+    if outcome is not None:
+        return outcome
+    after = _reprobe(dep)
+    if isinstance(after, _Outcome):
+        return after
+    if after == before:
+        return _Outcome(
+            f"unchanged {dep.name}: still {before}, latest {edge} "
+            "(the upgrade command succeeded but did not change the installed version)",
+            host_status.WARN,
+        )
+    try:
+        still_behind = host_versions.compare(after, edge) < 0
+    except ValueError as exc:
+        return _Outcome(
+            f"upgraded {dep.name}: {before} -> {after} (cannot order against latest {edge}: {exc})",
+            host_status.WARN,
+        )
+    if still_behind:
+        return _Outcome(
+            f"upgraded {dep.name}: {before} -> {after} (still behind latest {edge})",
+            host_status.WARN,
+        )
+    return _Outcome(f"upgraded {dep.name}: {before} -> {after}", host_status.OK)
+
+
+def _upgrade_no_latest(dep: HostDependency, before: str, state: str) -> _Outcome:
+    """Upgrade a dependency with no latest to compare against; report before -> after.
+
+    An ``unmanaged`` latest is by design, so the outcome is informational (OK).
+    A ``latest-unknown`` probe failed, so the outcome keeps ``status``'s WARN.
+    """
+    outcome = _run_upgrade(dep)
+    if outcome is not None:
+        return outcome
+    after = _reprobe(dep)
+    if isinstance(after, _Outcome):
+        return after
+    unmanaged = state == "latest-unmanaged"
+    why = "no latest feed" if unmanaged else "latest unknown: its latest probe did not answer"
+    note = f" (unchanged; {why})" if after == before else f" ({why})"
+    severity = host_status.OK if unmanaged else host_status.WARN
+    return _Outcome(f"ran      {dep.name}: {before} -> {after}{note}", severity)
+
+
+def _upgrade_one(dep: HostDependency, *, force: bool) -> _Outcome:
+    """Probe, then upgrade one ``auto`` dependency only if it needs it.
+
+    An unsupported pin constraint is an ERROR even under *force*. The
+    dependency is then probed and classified as ``status`` would: a probe
+    error or a missing dependency is an ERROR and is never upgraded. An active
+    pin holds the dependency (WARN) unless *force*. A ``current`` dependency
+    is skipped (OK) — ``--force`` crosses a pin, it never forces a no-op. A
+    ``behind`` one is upgraded and its installed version re-probed: an
+    unchanged version is WARN, never ``upgraded``. With no latest to compare
+    against, the upgrade runs and before -> after is reported. Every handler
+    failure — a failed command, a privilege-escalation refusal, an
+    unupgradeable manifest entry — is an ERROR and never retried.
+    """
+    pin = dep.pin
+    active = pin is not None and pin.state == "active"
+    if pin is not None and active:
+        try:
+            host_pins.parse_constraint(pin.constraint)
+        except ValueError as exc:
+            return _Outcome(f"ERROR    {dep.name}: {exc}", host_status.ERROR)
+    try:
+        before, latest, state = _probe_versions(dep)
+        edge = host_status.leading_edge(before, latest)
+    except _PROBE_ERRORS as exc:
+        return _Outcome(
+            f"ERROR    {dep.name}: probe-error ({type(exc).__name__}: {exc}); not upgraded",
+            host_status.ERROR,
+        )
+    if before is None:
+        return _Outcome(
+            f"ERROR    {dep.name}: missing (not installed by {dep.method}); "
+            "vrg-host upgrades, it does not install",
+            host_status.ERROR,
+        )
+    if pin is not None and active and not force:
+        return _Outcome(
+            f"held     {dep.name}: pinned to {pin.constraint} ({pin.reason}) at {before}, "
+            f"holding back from {host_status.fmt_latest(edge)}; "
+            f"run 'vrg-host unpin {dep.name}' or pass --force to upgrade past the pin",
+            host_status.WARN,
+            held=True,
+        )
+    if state == "current":
+        return _Outcome(f"skipped  {dep.name}: current ({before})", host_status.OK)
+    if state == "behind":
+        return _upgrade_behind(dep, before, str(edge))
+    return _upgrade_no_latest(dep, before, state)
 
 
 def _upgrade(args: argparse.Namespace) -> int:
@@ -347,11 +490,11 @@ def _upgrade(args: argparse.Namespace) -> int:
             )
             worst = max(worst, host_status.WARN)
             continue
-        line, severity = _upgrade_one(dep, force=args.force)
-        print(line)
+        outcome = _upgrade_one(dep, force=args.force)
+        print(outcome.line)
         # Under --all a pin hold is the intended outcome, not a refused request.
-        if not (args.all and severity == host_status.WARN):
-            worst = max(worst, severity)
+        if not (args.all and outcome.held):
+            worst = max(worst, outcome.severity)
     if skipped_manual:
         print(f"skipped (upgrade = manual, upgrade by hand): {', '.join(skipped_manual)}")
     return worst

@@ -495,23 +495,56 @@ def test_status_without_fix_never_remediates(monkeypatch: pytest.MonkeyPatch) ->
 # -- upgrade -------------------------------------------------------------------
 
 
-def _stub_upgrade(
+def _fake_host(
     monkeypatch: pytest.MonkeyPatch,
-    deps: tuple[HostDependency, ...],
     errors: dict[str, Exception] | None = None,
+    *,
+    installed: dict[str, Any] | None = None,
+    latest: dict[str, Any] | None = None,
+    after: dict[str, Any] | None = None,
 ) -> list[str]:
-    """Stub the manifest and ``host_methods.upgrade``; return the upgraded names."""
+    """Stub the version probes and ``host_methods.upgrade``; return the upgraded names.
+
+    Unlisted dependencies are installed at ``1.0`` with latest ``2.0``, and an
+    upgrade moves the installed version to *after* (default: the latest). A
+    probe value that is an exception is raised.
+    """
     calls: list[str] = []
     failing = errors or {}
+    have = dict(installed or {})
+    newest = latest or {}
+    moves = after or {}
+
+    def _value(value: Any) -> Any:
+        if isinstance(value, Exception):
+            raise value
+        return value
 
     def fake_upgrade(dep: HostDependency) -> None:
         calls.append(dep.name)
         if dep.name in failing:
             raise failing[dep.name]
+        have[dep.name] = moves.get(dep.name, newest.get(dep.name, "2.0"))
 
-    monkeypatch.setattr(vrg_host.host_deps, "load_manifest", lambda: deps)
+    monkeypatch.setattr(
+        vrg_host.host_methods, "installed_version", lambda d: _value(have.get(d.name, "1.0"))
+    )
+    monkeypatch.setattr(
+        vrg_host.host_methods, "latest_version", lambda d: _value(newest.get(d.name, "2.0"))
+    )
     monkeypatch.setattr(vrg_host.host_methods, "upgrade", fake_upgrade)
     return calls
+
+
+def _stub_upgrade(
+    monkeypatch: pytest.MonkeyPatch,
+    deps: tuple[HostDependency, ...],
+    errors: dict[str, Exception] | None = None,
+    **versions: dict[str, Any],
+) -> list[str]:
+    """Stub the manifest, the probes and ``host_methods.upgrade`` (see :func:`_fake_host`)."""
+    monkeypatch.setattr(vrg_host.host_deps, "load_manifest", lambda: deps)
+    return _fake_host(monkeypatch, errors, **versions)
 
 
 def test_upgrade_all_skips_manual_and_reports(
@@ -626,10 +659,14 @@ def test_upgrade_privilege_refusal_is_manual_action_never_retried(
     # A custom upgrade command that escalates hits the real _run guard.
     dep = _dep(name="tool", method="custom", probes={"upgrade": ["sudo", "tool", "update"]})
     monkeypatch.setattr(vrg_host.host_deps, "load_manifest", lambda: (dep, _dep(name="gh")))
+    have = {"tool": "1.0", "gh": "1.0"}
+    monkeypatch.setattr(vrg_host.host_methods, "installed_version", lambda d: have[d.name])
+    monkeypatch.setattr(vrg_host.host_methods, "latest_version", lambda d: "2.0")
     runs: list[list[str]] = []
 
     def fake_subprocess_run(cmd: list[str], **_kw: Any) -> Any:
         runs.append(cmd)
+        have[cmd[-1]] = "2.0"
         return type("Done", (), {"stdout": ""})()
 
     monkeypatch.setattr(hm.subprocess, "run", fake_subprocess_run)
@@ -683,7 +720,10 @@ def test_upgrade_requires_names_xor_all(
 def test_upgrade_against_packaged_manifest(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # Real manifest, stubbed shell-out seam: every upgrade command fails.
+    # Real manifest, every dependency behind, stubbed shell-out seam: every
+    # upgrade command fails.
+    monkeypatch.setattr(vrg_host.host_methods, "installed_version", lambda d: "1.0")
+    monkeypatch.setattr(vrg_host.host_methods, "latest_version", lambda d: "2.0")
     monkeypatch.setattr(vrg_host.host_methods, "_run", lambda cmd: None)
     assert vrg_host.main(["upgrade", "--all"]) == 2
     out = capsys.readouterr().out
@@ -696,13 +736,15 @@ def test_upgrade_honors_pin_from_pins_file(
     # A pin recorded with `vrg-host pin` (host-local pins file, not the packaged
     # manifest) is a real hold for upgrade.
     assert vrg_host.main(_PIN_ARGS) == 0
-    calls: list[str] = []
-    monkeypatch.setattr(vrg_host.host_methods, "upgrade", lambda d: calls.append(d.name))
+    calls = _fake_host(monkeypatch)  # every dependency 1.0, latest 2.0
     capsys.readouterr()
 
     assert vrg_host.main(["upgrade", "gh"]) == 1
     assert calls == []
-    assert "held     gh: pinned to 2.40.x (2.41.0 breaks vrg-gh auth)" in capsys.readouterr().out
+    assert (
+        "held     gh: pinned to 2.40.x (2.41.0 breaks vrg-gh auth) at 1.0, holding back from 2.0"
+        in capsys.readouterr().out
+    )
 
     # Every other auto dependency in the packaged manifest, in manifest order.
     unpinned_auto = [
@@ -722,10 +764,13 @@ def test_upgrade_honors_pin_from_pins_file(
 
     assert vrg_host.main(["upgrade", "--force", "gh"]) == 0
     assert calls == [*unpinned_auto, "gh"]
+    assert "upgraded gh: 1.0 -> 2.0" in capsys.readouterr().out
 
     assert vrg_host.main(["unpin", "gh"]) == 0  # a freed pin no longer holds
     assert vrg_host.main(["upgrade", "gh"]) == 0
-    assert calls == [*unpinned_auto, "gh", "gh"]
+    assert calls == [*unpinned_auto, "gh"]  # now current: skipped, not held
+    out = capsys.readouterr().out
+    assert "skipped  gh: current (2.0)" in out and "held" not in out
 
 
 def test_upgrade_honors_pin_written_via_host_pins(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -739,8 +784,7 @@ def test_upgrade_honors_pin_written_via_host_pins(monkeypatch: pytest.MonkeyPatc
             tracking_issue=None,
         ),
     )
-    calls: list[str] = []
-    monkeypatch.setattr(vrg_host.host_methods, "upgrade", lambda d: calls.append(d.name))
+    calls = _fake_host(monkeypatch)
     assert vrg_host.main(["upgrade", "uv"]) == 1
     assert calls == []
 
@@ -758,6 +802,252 @@ def test_upgrade_invalid_pins_file_exits_error(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "vrg-host: invalid host pins file:" in captured.err
+
+
+# -- upgrade: probe first, report before -> after (#3301) ----------------------
+
+
+def test_upgrade_skips_current_dependency(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    deps = (_dep(name="uv", method="uv-tool"), _dep(name="git"))
+    calls = _stub_upgrade(
+        monkeypatch,
+        deps,
+        installed={"uv": "0.13.1", "git": "2.54.0"},
+        latest={"uv": "0.13.1", "git": "2.56.0_1"},
+    )
+    assert vrg_host.main(["upgrade", "--all"]) == 0
+    assert calls == ["git"]  # the current dependency's upgrade never runs
+    out = capsys.readouterr().out.splitlines()
+    assert out == ["skipped  uv: current (0.13.1)", "upgraded git: 2.54.0 -> 2.56.0_1"]
+
+
+def test_upgrade_newer_than_latest_is_current(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _stub_upgrade(
+        monkeypatch, (_dep(name="gh"),), installed={"gh": "2.1"}, latest={"gh": "2.0"}
+    )
+    assert vrg_host.main(["upgrade", "gh"]) == 0
+    assert calls == []
+
+
+@pytest.mark.parametrize("argv", [["upgrade", "bash"], ["upgrade", "--all"]])
+def test_upgrade_unchanged_while_behind_is_warn(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], argv: list[str]
+) -> None:
+    calls = _stub_upgrade(
+        monkeypatch,
+        (_dep(name="bash"),),
+        installed={"bash": "5.3.9"},
+        latest={"bash": "5.3.20"},
+        after={"bash": "5.3.9"},
+    )
+    assert vrg_host.main(argv) == 1  # WARN even under --all: not a deliberate hold
+    assert calls == ["bash"]
+    out = capsys.readouterr().out
+    assert "unchanged bash: still 5.3.9, latest 5.3.20" in out
+    assert "upgraded" not in out
+
+
+def test_upgrade_that_falls_short_of_latest_is_warn(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _stub_upgrade(
+        monkeypatch,
+        (_dep(name="git"),),
+        installed={"git": "2.54.0"},
+        latest={"git": "2.56.0"},
+        after={"git": "2.55.0"},
+    )
+    assert vrg_host.main(["upgrade", "git"]) == 1
+    assert "upgraded git: 2.54.0 -> 2.55.0 (still behind latest 2.56.0)" in capsys.readouterr().out
+
+
+def test_upgrade_result_not_orderable_against_latest_is_warn(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _stub_upgrade(
+        monkeypatch,
+        (_dep(name="git"),),
+        installed={"git": "2.54.0"},
+        latest={"git": "2.56.0"},
+        after={"git": "2.56.0-rc1"},
+    )
+    assert vrg_host.main(["upgrade", "git"]) == 1
+    out = capsys.readouterr().out
+    assert "upgraded git: 2.54.0 -> 2.56.0-rc1 (cannot order against latest 2.56.0:" in out
+
+
+def test_upgrade_reports_reprobed_version_not_expected_latest(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _stub_upgrade(
+        monkeypatch,
+        (_dep(name="git"),),
+        installed={"git": "2.54.0"},
+        latest={"git": "2.56.0"},
+        after={"git": "2.56.0_1"},  # a newer rebuild than the latest feed knew of
+    )
+    assert vrg_host.main(["upgrade", "git"]) == 0
+    assert capsys.readouterr().out.strip() == "upgraded git: 2.54.0 -> 2.56.0_1"
+
+
+def test_upgrade_multi_level_offers_compare_against_leading_edge(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _stub_upgrade(
+        monkeypatch,
+        (_dep(name="tool", method="custom"),),
+        installed={"tool": "26.5.2"},
+        latest={"tool": hm.Offers(("26.7.1", "27.0.1"))},
+        after={"tool": "27.0.1"},
+    )
+    assert vrg_host.main(["upgrade", "tool"]) == 0
+    assert "upgraded tool: 26.5.2 -> 27.0.1" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("after", "line"),
+    [
+        ("2.1.244", "ran      vergil-tooling: 2.1.244 -> 2.1.244 (unchanged; no latest feed)"),
+        ("2.1.245", "ran      vergil-tooling: 2.1.244 -> 2.1.245 (no latest feed)"),
+    ],
+)
+def test_upgrade_unmanaged_latest_runs_and_reports_before_after(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], after: str, line: str
+) -> None:
+    dep = _dep(name="vergil-tooling", method="uv-tool", latest="unmanaged")
+    calls = _stub_upgrade(
+        monkeypatch,
+        (dep,),
+        installed={"vergil-tooling": "2.1.244"},
+        latest={"vergil-tooling": hm.UNMANAGED},
+        after={"vergil-tooling": after},
+    )
+    assert vrg_host.main(["upgrade", "vergil-tooling"]) == 0  # informational
+    assert calls == ["vergil-tooling"]
+    assert capsys.readouterr().out.strip() == line
+
+
+def test_upgrade_latest_unknown_runs_and_warns(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls = _stub_upgrade(
+        monkeypatch,
+        (_dep(name="lima"),),
+        installed={"lima": "1.0"},
+        latest={"lima": None},
+        after={"lima": "1.0"},
+    )
+    assert vrg_host.main(["upgrade", "--all"]) == 1  # a failed latest probe stays WARN
+    assert calls == ["lima"]
+    assert capsys.readouterr().out.strip() == (
+        "ran      lima: 1.0 -> 1.0 (unchanged; latest unknown: its latest probe did not answer)"
+    )
+
+
+def test_upgrade_held_reports_installed_and_held_back_latest(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    deps = (_dep(name="gh", pin=_pin("2.40.x")), _dep(name="vt", pin=_pin("1.x")))
+    calls = _stub_upgrade(
+        monkeypatch,
+        deps,
+        installed={"gh": "2.40.1", "vt": "1.2"},
+        latest={"gh": "2.42.0", "vt": hm.UNMANAGED},
+    )
+    assert vrg_host.main(["upgrade", "--all"]) == 0
+    assert calls == []
+    out = capsys.readouterr().out
+    assert "held     gh: pinned to 2.40.x (breaks us) at 2.40.1, holding back from 2.42.0;" in out
+    assert "held     vt: pinned to 1.x (breaks us) at 1.2, holding back from unmanaged;" in out
+
+
+def test_upgrade_force_does_not_upgrade_current_pinned_dependency(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls = _stub_upgrade(
+        monkeypatch,
+        (_dep(name="gh", pin=_pin("2.40.x")),),
+        installed={"gh": "2.42.0"},
+        latest={"gh": "2.42.0"},
+    )
+    assert vrg_host.main(["upgrade", "--force", "gh"]) == 0
+    assert calls == []
+    assert "skipped  gh: current (2.42.0)" in capsys.readouterr().out
+
+
+def test_upgrade_missing_dependency_is_error_and_not_attempted(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    deps = (_dep(name="lima"), _dep(name="gh"))
+    calls = _stub_upgrade(monkeypatch, deps, installed={"lima": None})
+    assert vrg_host.main(["upgrade", "--all"]) == 2
+    assert calls == ["gh"]  # one missing dependency never stops the rest
+    out = capsys.readouterr().out
+    assert "ERROR    lima: missing (not installed by brew-formula)" in out
+    assert "upgraded gh: 1.0 -> 2.0" in out
+
+
+@pytest.mark.parametrize(
+    ("installed", "latest", "message"),
+    [
+        (hm.ProbeError("lima: unreadable"), "2.0", "ProbeError: lima: unreadable"),
+        ("1.0", hm.ProbeError("lima: no json"), "ProbeError: lima: no json"),
+        ("1.0", ManifestError("bad entry"), "ManifestError: bad entry"),
+        ("2.0-beta", "2.0", "IncomparableVersionError: "),
+    ],
+)
+def test_upgrade_probe_error_is_error_and_not_attempted(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    installed: Any,
+    latest: Any,
+    message: str,
+) -> None:
+    calls = _stub_upgrade(
+        monkeypatch, (_dep(name="lima"),), installed={"lima": installed}, latest={"lima": latest}
+    )
+    assert vrg_host.main(["upgrade", "lima"]) == 2
+    assert calls == []
+    out = capsys.readouterr().out
+    assert f"ERROR    lima: probe-error ({message}" in out and "not upgraded" in out
+
+
+@pytest.mark.parametrize(
+    ("after", "message"),
+    [
+        (
+            hm.ProbeError("gh: garbled"),
+            "ERROR    gh: upgrade ran but the installed version could not be re-probed "
+            "(ProbeError: gh: garbled)",
+        ),
+        (None, "ERROR    gh: upgrade ran but gh is no longer detected as installed"),
+    ],
+)
+@pytest.mark.parametrize("latest", ["2.0", hm.UNMANAGED])
+def test_upgrade_reprobe_failure_is_error(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    after: Any,
+    message: str,
+    latest: Any,
+) -> None:
+    calls = _stub_upgrade(
+        monkeypatch, (_dep(name="gh"),), latest={"gh": latest}, after={"gh": after}
+    )
+    assert vrg_host.main(["upgrade", "gh"]) == 2
+    assert calls == ["gh"]
+    assert capsys.readouterr().out.strip() == message
+
+
+def test_upgrade_failure_with_no_latest_is_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    errors: dict[str, Exception] = {"vt": hm.UpgradeFailedError("vt: upgrade command failed")}
+    _stub_upgrade(monkeypatch, (_dep(name="vt"),), errors, latest={"vt": hm.UNMANAGED})
+    assert vrg_host.main(["upgrade", "vt"]) == 2
+    assert "FAILED   vt: vt: upgrade command failed" in capsys.readouterr().out
 
 
 # -- end to end against the live-host captures (#3261) ---------------------------
