@@ -8,14 +8,21 @@
 # on the macOS host itself. The list was curated (plan Task 7, spec §11) by
 # cross-checking what vergil-tooling actually invokes host-side: vrg-container-run
 # (docker), vrg-vm (limactl, gcloud, tofu), vrg-release (git-cliff), vrg-gh and
-# the PR workflow (gh), and the documented host prerequisites (Docker, uv, gh).
+# the PR workflow (gh), git and bash throughout, and the documented host
+# prerequisites (Docker, uv, gh). #3300 added git, bash, the Xcode Command Line
+# Tools and Claude Code after the first real `vrg-host upgrade --all` showed
+# they were missing.
 #
 # Deliberately OUT, with the reason:
 #   - shellcheck, hadolint, yamllint, actionlint, markdownlint: run only by
 #     vrg-validate inside the dev container (vrg-container-run); the host never
 #     invokes them, and the setup guides say not to install them on the host.
-#   - git, bash, ssh, ssh-keygen, sysctl, PlistBuddy: part of macOS / the
-#     Command Line Tools, updated with the OS (see the `macos` entry).
+#   - ssh, ssh-keygen, sysctl, PlistBuddy: part of macOS, updated with the OS
+#     (see the `macos` entry). git and bash used to be listed here as well, but
+#     on a Homebrew-first host both resolve to Homebrew formulae ahead of the
+#     Apple copies (/opt/homebrew/bin/git before /usr/bin/git, Homebrew bash 5
+#     before /bin/bash 3.2), so the binaries that actually run are NOT updated
+#     with the OS and have their own entries (#3300).
 #   - jq: used only by the hook-guard shim's fallback when vergil-tooling is
 #     absent; macOS ships /usr/bin/jq.
 #   - az (Azure CLI): needed only by `vrg-vm --provider azure`, an optional
@@ -25,7 +32,10 @@
 #     vrg-validate), never host-side.
 #   - Homebrew itself: the install mechanism for the brew-formula entries, not a
 #     Vergil dependency; it keeps its own metadata fresh via auto-update.
-#   - Editors, Claude Code, voice-to-text and other personal tools (spec §4).
+#   - Editors, voice-to-text and other personal tools (spec §4). Claude Code
+#     was on this list until #3300 deliberately reversed that; see its entry.
+#   - Full Xcode: nothing on the host needs more than the Command Line Tools
+#     (the `xcode-clt` entry).
 #
 # Method assumptions: each entry's `method` reflects the documented install
 # path (setup guides, specs). A tool installed some other way on a given host
@@ -48,6 +58,29 @@ latest = "probe"
 [[dependency]]
 name = "gh"
 why = "GitHub CLI; underpins vrg-gh and all PR/issue workflows."
+method = "brew-formula"
+upgrade = "auto"
+latest = "probe"
+
+# git: vergil-tooling runs `git` host-side throughout (lib/git.py: vrg-git,
+# vrg-commit, vrg-submit-pr, vrg-finalize-pr, vrg-release, worktrees). On the
+# macOS host it resolves to Homebrew's /opt/homebrew/bin/git ahead of the
+# Command Line Tools shim /usr/bin/git (git 2.54.0 at capture, 2026-10-16,
+# #3300), so Homebrew owns the copy that runs.
+[[dependency]]
+name = "git"
+why = "Git; vrg-git, vrg-commit, vrg-submit-pr, vrg-finalize-pr, vrg-release and the worktree workflow run it on the host (Homebrew's git, ahead of /usr/bin/git)."
+method = "brew-formula"
+upgrade = "auto"
+latest = "probe"
+
+# bash: the host-side vrg-* tools and the hook-guard shim run `bash`. On the
+# macOS host it resolves to Homebrew's bash 5 (/opt/homebrew/bin/bash) ahead
+# of Apple's /bin/bash 3.2, which Apple never moves past 3.2 (bash 5.3.9 at
+# capture, 2026-10-16, #3300).
+[[dependency]]
+name = "bash"
+why = "Bash; the host-side vrg-* tools and the hook-guard shim run it (Homebrew's bash 5, ahead of Apple's /bin/bash 3.2)."
 method = "brew-formula"
 upgrade = "auto"
 latest = "probe"
@@ -166,6 +199,27 @@ method = "uv-tool"
 upgrade = "auto"
 latest = "unmanaged"
 
+# Claude Code: the host-side agent for out-of-sandbox work, for example
+# reattaching an agent session on the Mac with human access (Appendix A of the
+# #167 retrospective). The tooling never runs `claude` itself. The #167 spec
+# (§4) excluded Claude Code as a personal tool; #3300 deliberately reverses
+# that, because the maintainer's workflow depends on it on the host.
+#
+# Installed from the Homebrew `claude-code` cask (~/.local/bin/claude is a
+# symlink to /opt/homebrew/bin/claude; 2.1.280 at capture, 2026-10-16, #3300).
+# Upgrade is `auto`: the cask does NOT declare `auto_updates` (the Homebrew API,
+# https://formulae.brew.sh/api/cask/claude-code.json, returned
+# "auto_updates": null on 2026-10-16, cask version 2.1.292), so Homebrew owns
+# its updates and `brew upgrade --cask claude-code` is the upgrade. vrg-host
+# re-reads `auto_updates` before every cask upgrade and refuses if the cask
+# ever becomes self-updating; the entry must then become `manual`.
+[[dependency]]
+name = "claude-code"
+why = "Claude Code; the host-side agent used for out-of-sandbox work, such as reattaching an agent session on the Mac with human access."
+method = "brew-cask"
+upgrade = "auto"
+latest = "probe"
+
 # macOS itself: reported, never applied (spec §4, §6). Software Update can
 # offer several macOS updates at once (an update within the current major and
 # the next major, #3269), so the probe is `latest_versions`: it parses
@@ -200,6 +254,92 @@ if [ -n "$offers" ]; then
   printf '%s\n' "$offers"
 elif printf '%s\n' "$out" | grep -qE 'No new software available|Software Update found the following'; then
   sw_vers -productVersion
+else
+  exit 1
+fi
+''',
+]
+
+# Xcode Command Line Tools: an implicit host dependency. Homebrew needs the
+# CLT (compilers, headers) to work at all, and /usr/bin/git is a CLT shim.
+# Apple ships CLT updates through Software Update, separately from macOS, so
+# this is a report-only entry modelled on `macos`: reported, never applied.
+#
+# - Installed: `pkgutil --pkg-info=com.apple.pkg.CLTools_Executables` prints
+#   `version: 26.6.0.0.1781586589` (captured 2026-10-16, #3300). The trailing
+#   `.0.<build>` part is a build stamp that Software Update never shows, so the
+#   probe keeps only the first three components (26.6.0). That compares
+#   directly with Software Update's `Version: 26.6` (missing components are 0)
+#   and reports a real update (26.6.1, 26.7, 27.0) at its proper level. A
+#   pkgutil answer without exactly one dotted-numeric version line prints a
+#   fixed message with no version in it, so vrg-host reports a probe error
+#   rather than fishing a version out of it. When the package receipt is
+#   absent, pkgutil fails and the CLT reads as `missing` (ERROR), since
+#   Homebrew cannot work without it.
+# - Latest: `latest_versions`, parsing every "Command Line Tools" item that
+#   `softwareupdate --list` (unprivileged, read-only) lists, the same rules as
+#   `macos`: an item whose Version cannot be extracted is printed as-is, so it
+#   is a probe error, never dropped. When Software Update answers but lists no
+#   CLT item, the CLT is current and the probe prints the installed version.
+#   Any other output fails the probe (latest-unknown, never a false current).
+#   A listed item that is not newer than the installed version is ignored,
+#   like any other offer that is not an update.
+[[dependency]]
+name = "xcode-clt"
+why = "Xcode Command Line Tools; Homebrew needs them (compilers, headers) and /usr/bin/git is a CLT shim. A pending update is surfaced so it is applied deliberately, never by vrg-host."
+method = "custom"
+upgrade = "manual"
+latest = "probe"
+
+[dependency.probes]
+installed_version = [
+  "bash", "-c",
+  '''
+out="$(pkgutil --pkg-info=com.apple.pkg.CLTools_Executables)" || exit 1
+printf '%s\n' "$out" | awk '
+  /^version: / { count++; version = $2 }
+  END {
+    if (count == 1 && version ~ /^[0-9]+(\.[0-9]+)*$/) {
+      n = split(version, part, ".")
+      printf "%s", part[1]
+      for (i = 2; i <= n && i <= 3; i++) printf ".%s", part[i]
+      printf "\n"
+    } else {
+      print "unreadable pkgutil CLTools_Executables version"
+    }
+  }'
+''',
+]
+latest_versions = [
+  "bash", "-c",
+  '''
+clt_version() {
+  pkg="$(pkgutil --pkg-info=com.apple.pkg.CLTools_Executables)" || return 1
+  printf '%s\n' "$pkg" | awk '
+    /^version: / { count++; version = $2 }
+    END {
+      if (count == 1 && version ~ /^[0-9]+(\.[0-9]+)*$/) {
+        n = split(version, part, ".")
+        printf "%s", part[1]
+        for (i = 2; i <= n && i <= 3; i++) printf ".%s", part[i]
+        printf "\n"
+      } else {
+        print "unreadable pkgutil CLTools_Executables version"
+      }
+    }'
+}
+out="$(softwareupdate --list 2>&1)" || exit 1
+offers="$(printf '%s\n' "$out" | awk '
+  /^[[:space:]]*Title: Command Line Tools/ {
+    version = ""
+    if (match($0, /, Version: [^,]*,/)) version = substr($0, RSTART + 11, RLENGTH - 12)
+    if (version ~ /^[[:space:]]*$/) print "unreadable Command Line Tools offer: " $0
+    else print version
+  }')" || exit 1
+if [ -n "$offers" ]; then
+  printf '%s\n' "$offers"
+elif printf '%s\n' "$out" | grep -qE 'No new software available|Software Update found the following'; then
+  clt_version
 else
   exit 1
 fi

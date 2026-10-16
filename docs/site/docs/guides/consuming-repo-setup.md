@@ -51,8 +51,11 @@ management design
 (`docs/specs/2026-05-14-credential-management-design.md`) for the
 full setup details.
 
-**Git and Bash** — ship with macOS by default and are standard on
-Linux.
+**Git and Bash** — standard on Linux. On macOS, install the Xcode
+Command Line Tools (`xcode-select --install`; Homebrew needs them)
+and then Homebrew's `git` and `bash` (`brew install git bash`).
+Apple's `/bin/bash` is 3.2 and is never updated, and the Homebrew
+copies are what `vrg-host` tracks and upgrades.
 
 You do **not** need to install language runtimes, linters, test
 frameworks, markdownlint, or shellcheck on the host. All of those

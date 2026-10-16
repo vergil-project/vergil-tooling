@@ -1,0 +1,11 @@
+{
+  "formulae": [],
+  "casks": [
+    {
+      "token": "claude-code",
+      "version": "2.1.292",
+      "installed": "2.1.280",
+      "auto_updates": null
+    }
+  ]
+}

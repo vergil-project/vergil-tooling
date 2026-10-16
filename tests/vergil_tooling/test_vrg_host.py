@@ -705,7 +705,17 @@ def test_upgrade_honors_pin_from_pins_file(
     assert "held     gh: pinned to 2.40.x (2.41.0 breaks vrg-gh auth)" in capsys.readouterr().out
 
     # Every other auto dependency in the packaged manifest, in manifest order.
-    unpinned_auto = ["uv", "gcloud", "lima", "opentofu", "git-cliff", "vergil-tooling"]
+    unpinned_auto = [
+        "uv",
+        "git",
+        "bash",
+        "gcloud",
+        "lima",
+        "opentofu",
+        "git-cliff",
+        "vergil-tooling",
+        "claude-code",
+    ]
     assert vrg_host.main(["upgrade", "--all"]) == 0
     assert calls == unpinned_auto  # gh held, the rest upgraded
     assert "held     gh" in capsys.readouterr().out
@@ -755,7 +765,9 @@ def test_upgrade_invalid_pins_file_exits_error(
 _FIXTURES = Path(__file__).parent / "fixtures" / "host"
 
 # What each stub tool prints, per exact argv (after the tool name), for the
-# fixtures captured on the maintainer's Mac on 2026-10-16. Any other argv exits 1.
+# fixtures captured (#3261) or recorded (#3300) on the maintainer's Mac on
+# 2026-10-16. Any other argv exits 1. git, bash and claude-code have only their
+# installed versions recorded, so their latest probes fail here (latest-unknown).
 _HOST_TOOLS: dict[str, dict[str, str]] = {
     "brew": {
         "list --formula --versions uv": "brew-list-versions-uv.txt",
@@ -763,6 +775,12 @@ _HOST_TOOLS: dict[str, dict[str, str]] = {
         "list --formula --versions gh": "brew-list-versions-gh.txt",
         "info --json=v2 --formula gh": "brew-info-formula-gh.json",
         "info --json=v2 --cask docker-desktop": "brew-info-cask-docker-desktop.json",
+        "list --formula --versions git": "brew-list-versions-git.txt",
+        "list --formula --versions bash": "brew-list-versions-bash.txt",
+        "list --cask --versions claude-code": "brew-list-versions-cask-claude-code.txt",
+    },
+    "pkgutil": {
+        "--pkg-info=com.apple.pkg.CLTools_Executables": "pkgutil-pkg-info-clt-version-line.txt",
     },
     "defaults": {
         "read /Applications/Docker.app/Contents/Info.plist CFBundleShortVersionString": (
@@ -856,5 +874,15 @@ def test_status_classifies_the_captured_host(
         "[WARN ] macos            custom              26.5.2 -> 27.0.1       "
         "behind (drift): minor 26.7.1, major 27.0.1"
     )
+    # #3300: Homebrew's git and bash and the claude-code cask read from their
+    # recorded installs; no latest was recorded for them.
+    assert _row(rows["git"]) == _row("[WARN ] git brew-formula 2.54.0 -> unknown latest-unknown")
+    assert _row(rows["bash"]) == _row("[WARN ] bash brew-formula 5.3.9 -> unknown latest-unknown")
+    assert _row(rows["claude-code"]) == _row(
+        "[WARN ] claude-code brew-cask 2.1.280 -> unknown latest-unknown"
+    )
+    # The captured Software Update listing has no CLT item: the CLT is current,
+    # its 26.6.0.0.1781586589 receipt read as 26.6.0.
+    assert _row(rows["xcode-clt"]) == _row("[OK   ] xcode-clt custom 26.6.0 -> 26.6.0 current")
     assert "          check numpy-in-interpreter: satisfied" in lines
     assert lines[-1] == f"overall: WARN ({len(deps)} dependencies)"

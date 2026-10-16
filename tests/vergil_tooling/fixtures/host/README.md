@@ -44,6 +44,23 @@ since #3269 the same capture renders every pending level
 (it printed `0.13.1`). It is not kept, because no probe uses it once uv is
 managed as a Homebrew formula.
 
+## Recorded on a live host (#3300)
+
+Recorded on 2026-10-16 (#3300) by a read-only probe of the same macOS host, for
+the git, bash, Xcode Command Line Tools and Claude Code entries. The issue
+records the values these commands printed, not whole output files, so each file
+holds the recorded value in the command's output format. Where the issue
+quotes a line verbatim, the file is that line exactly; for a `brew list` value
+the file is the line Homebrew prints for it (`<name> <version>`).
+
+| Fixture | Command | Tool version / notes |
+| --- | --- | --- |
+| `brew-list-versions-git.txt` | `brew list --versions git` | git 2.54.0 (`/opt/homebrew/bin/git`, ahead of `/usr/bin/git`) |
+| `brew-list-versions-bash.txt` | `brew list --versions bash` | bash 5.3.9 (`/opt/homebrew/bin/bash`, ahead of `/bin/bash` 3.2) |
+| `brew-list-versions-cask-claude-code.txt` | `brew list --cask --versions claude-code` | Claude Code 2.1.280 |
+| `claude-version.txt` | `claude --version` | Verbatim: `2.1.280 (Claude Code)` |
+| `pkgutil-pkg-info-clt-version-line.txt` | `pkgutil --pkg-info=com.apple.pkg.CLTools_Executables` | Verbatim, the `version:` line only (`26.6.0.0.1781586589`); the other lines were not recorded |
+
 ## Constructed, not captured
 
 These have no real counterpart on the capture host, so they were written by
@@ -55,6 +72,9 @@ hand from the documented output format.
 | `softwareupdate-list-non-macos-only.txt` | `softwareupdate --list 2>&1` with only a non-OS update pending | The host had macOS updates pending |
 | `softwareupdate-list-patch-only.txt` | `softwareupdate --list 2>&1` offering only a patch update (26.5.3 on 26.5.2) | The host's pending macOS updates were a minor and a major (#3269) |
 | `uv-tool-list-outdated-listed.txt` | `uv tool list --outdated` listing an outdated tool | The real output was empty, so the `[latest: …]` line format is still unverified |
+| `softwareupdate-list-clt-available.txt` | `softwareupdate --list 2>&1` offering a Command Line Tools update (26.7) and a macOS update | The host had no CLT update pending. The title follows the newer `Command Line Tools for Xcode <version>` form; `softwareupdate-list-non-macos-only.txt` has the older title without a version |
+| `pkgutil-pkg-info-clt.txt` | `pkgutil --pkg-info=com.apple.pkg.CLTools_Executables`, full output | Only the `version:` line was recorded (#3300); the other lines and the install time are written from pkgutil's documented format |
+| `brew-info-cask-claude-code.json` | `brew info --json=v2 --cask claude-code` | Not run on the host. Built from the Homebrew API record (<https://formulae.brew.sh/api/cask/claude-code.json>, fetched 2026-10-16: `version` 2.1.292, `auto_updates` null) wrapped in the `brew info` shape, with the host's installed 2.1.280, and trimmed to the keys the parsers read |
 
 Tests also build a few synthetic edge cases inline (for example an unreadable
 keg name, or a revision-only rebuild). They are labelled where they appear.

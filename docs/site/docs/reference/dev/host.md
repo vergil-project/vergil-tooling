@@ -8,7 +8,8 @@
 
 Observes and manages the tools Vergil development needs **on the macOS host
 itself** — the ones that cannot live in a dev container or an agent VM, such as
-`gh`, `uv`, `gcloud`, Lima and Docker Desktop. It reports how far each one has drifted
+`gh`, `git`, `uv`, `gcloud`, Lima, Docker Desktop and the Xcode Command Line
+Tools. It reports how far each one has drifted
 from its latest release, upgrades the ones it is allowed to upgrade, and records
 deliberate **pins** as tracked technical debt rather than silent freezes.
 
@@ -80,8 +81,16 @@ reports every level that is behind instead of only the newest:
   that is not dotted numeric, such as `26.7.1 (a)`) is a `probe-error`, never
   dropped.
 
-Only `macos` reports update levels. Every other dependency compares against a
-single latest version.
+The Xcode Command Line Tools (`xcode-clt`) also come from Software Update, so
+they report update levels the same way, from the "Command Line Tools" items
+that `softwareupdate --list` lists:
+
+```text
+[WARN ] xcode-clt        custom              26.6.0 -> 26.7         behind (drift): minor 26.7
+```
+
+Only `macos` and `xcode-clt` report update levels. Every other dependency
+compares against a single latest version.
 
 A broken probe for one dependency becomes a `probe-error` row for that
 dependency only; the rest of the report still runs. Nothing is ever guessed at:
@@ -113,7 +122,7 @@ Name one or more dependencies **or** pass `--all`, not both.
 
 - Only `upgrade = "auto"` dependencies are upgraded, through their install
   method (`brew upgrade`, `uv tool upgrade`, or the manifest's own upgrade
-  command). A `manual` dependency (`docker-desktop`, `macos`) is refused when
+  command). A `manual` dependency (`docker-desktop`, `macos`, `xcode-clt`) is refused when
   named, and listed as skipped under `--all`; upgrade it by hand.
 - A Homebrew cask that updates itself (its `brew info` JSON says
   `auto_updates: true`) is never upgraded through `brew`. Without `--greedy`,
@@ -189,13 +198,17 @@ itself. Current entries:
 | --- | --- | --- | --- | --- |
 | `uv` | brew-formula | auto | probe | Installs and upgrades the `vrg-*` host tools |
 | `gh` | brew-formula | auto | probe | GitHub CLI under `vrg-gh` and the PR/issue workflows |
+| `git` | brew-formula | auto | probe | `vrg-git`, `vrg-commit`, the PR workflow, `vrg-release` and worktrees run it on the host |
+| `bash` | brew-formula | auto | probe | The host-side `vrg-*` tools and the hook-guard shim run it |
 | `gcloud` | custom (`gcloud components update`) | auto | probe | IAP tunnel for `vrg-vm` cloud sessions |
 | `lima` | brew-formula | auto | probe | Runs the local agent VMs `vrg-vm` creates |
 | `docker-desktop` | brew-cask (installed version from the app) | manual | probe | The container engine and `docker` CLI that `vrg-container-run` execs |
 | `opentofu` | brew-formula | auto | probe | Provisions cloud agent VMs for `vrg-vm` (preflight requires >= 1.8.0) |
 | `git-cliff` | brew-formula | auto | probe | Changelog generator `vrg-release` requires |
 | `vergil-tooling` | uv-tool | auto | unmanaged | The `vrg-*` host tools themselves |
+| `claude-code` | brew-cask | auto | probe | The host-side agent for out-of-sandbox work, such as reattaching an agent session with human access |
 | `macos` | custom | manual | probe | The host OS; a pending update is surfaced, never applied |
+| `xcode-clt` | custom | manual | probe | Xcode Command Line Tools: Homebrew needs them, and `/usr/bin/git` is a CLT shim; a pending update is surfaced, never applied |
 
 Notes on the entries:
 
@@ -222,6 +235,33 @@ Notes on the entries:
   A pending macOS update is reported so it is applied deliberately, never by
   `vrg-host`. The `macos` probe reads `softwareupdate --list` and reports
   every pending [update level](#update-levels-macos).
+- **`git` and `bash` are Homebrew's.** On a Homebrew-first Mac, `git` resolves
+  to `/opt/homebrew/bin/git` ahead of the Command Line Tools shim
+  `/usr/bin/git`, and `bash` to Homebrew's bash 5 ahead of Apple's `/bin/bash`
+  3.2. The copies that actually run are therefore not updated with macOS, so
+  `vrg-host` tracks and upgrades them through `brew`.
+- **`xcode-clt` is report-only.** Homebrew cannot work without the Xcode
+  Command Line Tools, so a missing CLT is an ERROR. Apple ships CLT updates
+  through Software Update, separately from macOS. The installed version comes
+  from `pkgutil --pkg-info=com.apple.pkg.CLTools_Executables`, which prints a
+  version with a trailing build stamp (`26.6.0.0.1781586589`). `vrg-host` keeps
+  only the first three components (`26.6.0`), the precision Software Update
+  uses, so its `Version: 26.6` reads as current and `26.7` as a minor update.
+  The latest comes from the "Command Line Tools" items in `softwareupdate
+  --list`. When Software Update lists none, the CLT is current. An item the
+  probe cannot read is a `probe-error`, never dropped. A listed item that is
+  not newer than the installed version is ignored, like any offer that is not
+  an update. Install CLT updates with Software Update; `vrg-host` never
+  applies them.
+- **`claude-code` is upgraded through Homebrew.** It is installed from the
+  `claude-code` cask, which does not declare `auto_updates` (Homebrew API,
+  checked 2026-10-16), so `vrg-host upgrade claude-code` runs `brew upgrade
+  --cask claude-code`. If the cask ever becomes self-updating, the upgrade is
+  refused (see [upgrade](#upgrade)) and the entry must become `manual`. It is
+  on the host as the agent for out-of-sandbox work, such as reattaching an
+  agent session on the Mac with human access. The original design excluded it
+  as a personal tool; that was reversed in
+  [#3300](https://github.com/vergil-project/vergil-tooling/issues/3300).
 - **`vergil-tooling` has no latest feed.** It is installed from git, so `uv`'s
   outdated feed cannot see new releases; `status` reports it as
   `latest-unmanaged` rather than a false `current`. `vrg-host upgrade
@@ -237,12 +277,16 @@ Deliberately **not** in the manifest:
 - **Linters** (shellcheck, hadolint, yamllint, actionlint, markdownlint) — they
   run only inside the dev container via `vrg-validate`. Do not install them on
   the host.
-- **git, bash, ssh** and other OS-provided tools — updated with macOS (the
-  `macos` entry). **jq** ships with macOS.
+- **ssh** and other OS-provided tools — updated with macOS (the `macos`
+  entry). **jq** ships with macOS. (git and bash are tracked, because the
+  copies that run are Homebrew's.)
+- **Full Xcode** — nothing on the host needs more than the Command Line Tools.
 - **az** (Azure CLI) — only `vrg-vm --provider azure` needs it, and GCP is the
   provider in use. It gets an entry if Azure becomes a working provider.
 - **nfpm, npm, language toolchains** — container and CI only.
-- **Homebrew** itself, editors, Claude Code and other personal tools.
+- **Homebrew** itself, editors and other personal tools.
+- **Everything else installed with Homebrew** — only the curated entries above
+  are tracked or upgraded, never a blanket `brew upgrade`.
 
 ### Auxiliary checks
 
@@ -362,7 +406,10 @@ as needing manual action and is never retried elevated.
 - The version parsers are tested against output captured on a real Mac. A few
   cases could not be captured there and are still hand-written: `softwareupdate`
   with nothing pending, only non-OS updates pending, or only a patch update
-  pending, and `uv tool list --outdated` listing an outdated tool. See
+  pending, and `uv tool list --outdated` listing an outdated tool. The
+  Command Line Tools update offer (`softwareupdate --list` listing a CLT item
+  newer than the installed one) and the full `pkgutil --pkg-info` output are
+  hand-written as well: only the CLT `version:` line was recorded. See
   `tests/vergil_tooling/fixtures/host/README.md`. If one of those cases shows a
   `probe-error` row, it may be a parser mismatch rather than a broken tool.
 - `vrg-host` reports and acts only when you run it. Scheduled or automatic runs

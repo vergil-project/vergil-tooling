@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from vergil_tooling.lib import host_deps
+from vergil_tooling.lib import host_deps, host_status
 from vergil_tooling.lib import host_methods as hm
 from vergil_tooling.lib import host_versions as hv
 from vergil_tooling.lib.host_deps import HostDependency, ManifestError
@@ -849,3 +849,258 @@ def test_manifest_macos_latest_unknown_when_unrecognized(
     _fake_macos_tools(bin_dir, fixture, exit_code=exit_code)
     monkeypatch.setenv("PATH", os.pathsep.join([str(bin_dir), os.environ["PATH"]]))
     assert hm.latest_version(_manifest_dep("macos")) is None
+
+
+# -- git, bash, Claude Code and the Xcode Command Line Tools (#3300) ---------------
+
+
+@pytest.mark.parametrize(("name", "expected"), [("git", "2.54.0"), ("bash", "5.3.9")])
+def test_manifest_git_and_bash_are_brew_formulae(
+    monkeypatch: pytest.MonkeyPatch, name: str, expected: str
+) -> None:
+    # Homebrew's git and bash run ahead of the Apple copies, so Homebrew owns them.
+    dep = _manifest_dep(name)
+    assert (dep.method, dep.upgrade, dep.latest, dep.probes) == (
+        "brew-formula",
+        "auto",
+        "probe",
+        {},
+    )
+    fake = _stub(
+        monkeypatch,
+        {
+            ("brew", "list", "--formula", "--versions", name): _fixture(
+                f"brew-list-versions-{name}.txt"
+            ),
+            ("brew", "upgrade", name): "",
+        },
+    )
+    assert hm.installed_version(dep) == expected
+    hm.upgrade(dep)
+    assert fake.calls[-1] == ["brew", "upgrade", name]
+
+
+def test_manifest_claude_code_is_an_auto_brew_cask(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The cask does not declare auto_updates (Homebrew API, 2026-10-16), so brew
+    # owns its updates; vrg-host still re-reads auto_updates before upgrading.
+    claude = _manifest_dep("claude-code")
+    assert (claude.method, claude.upgrade, claude.latest, claude.probes) == (
+        "brew-cask",
+        "auto",
+        "probe",
+        {},
+    )
+    assert "out-of-sandbox" in claude.why
+    info = _fixture("brew-info-cask-claude-code.json")
+    assert hm._parse_brew_cask_auto_updates("claude-code", info) is False
+    fake = _stub(
+        monkeypatch,
+        {
+            ("brew", "list", "--cask", "--versions", "claude-code"): _fixture(
+                "brew-list-versions-cask-claude-code.txt"
+            ),
+            ("brew", "info", "--json=v2", "--cask", "claude-code"): info,
+            ("brew", "upgrade", "--cask", "claude-code"): "",
+        },
+    )
+    installed, latest = hm.installed_version(claude), hm.latest_version(claude)
+    assert (installed, latest) == ("2.1.280", "2.1.292")
+    # `claude --version` agrees with Homebrew's record of the installed cask.
+    assert hv.normalize(_fixture("claude-version.txt")) == installed
+    hm.upgrade(claude)
+    assert fake.calls[-2:] == [
+        ["brew", "info", "--json=v2", "--cask", "claude-code"],
+        ["brew", "upgrade", "--cask", "claude-code"],
+    ]
+
+
+def _fake_clt_tools(
+    bin_dir: Path,
+    *,
+    pkgutil: str | None = "pkgutil-pkg-info-clt.txt",
+    softwareupdate: str | None = None,
+    softwareupdate_exit: int = 0,
+) -> None:
+    """Install stub ``pkgutil`` / ``softwareupdate`` scripts serving fixtures.
+
+    A ``None`` fixture makes that tool exit 1 with no output (pkgutil does so
+    when the package receipt is absent).
+    """
+    bin_dir.mkdir()
+    pkgutil_body = (
+        "exit 1\n"
+        if pkgutil is None
+        else (
+            '[ "$*" = "--pkg-info=com.apple.pkg.CLTools_Executables" ] || exit 1\n'
+            f"cat '{_FIXTURES / pkgutil}'\n"
+        )
+    )
+    if softwareupdate is None:
+        softwareupdate_body = f"exit {softwareupdate_exit or 1}\n"
+    else:
+        softwareupdate_body = f"cat '{_FIXTURES / softwareupdate}'\nexit {softwareupdate_exit}\n"
+    for name, script in {"pkgutil": pkgutil_body, "softwareupdate": softwareupdate_body}.items():
+        path = bin_dir / name
+        path.write_text(f"#!/usr/bin/env bash\n{script}", encoding="utf-8")
+        path.chmod(0o755)
+
+
+def _clt_host(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, **kw: Any) -> HostDependency:
+    bin_dir = tmp_path / "bin"
+    _fake_clt_tools(bin_dir, **kw)
+    monkeypatch.setenv("PATH", os.pathsep.join([str(bin_dir), os.environ["PATH"]]))
+    return _manifest_dep("xcode-clt")
+
+
+def test_manifest_xcode_clt_is_report_only() -> None:
+    clt = _manifest_dep("xcode-clt")
+    assert (clt.method, clt.upgrade, clt.latest) == ("custom", "manual", "probe")
+    assert set(clt.probes) == {"installed_version", "latest_versions"}
+    with pytest.raises(hm.UpgradeUnsupportedError):
+        hm.upgrade(clt)
+
+
+@pytest.mark.parametrize(
+    "fixture",
+    [
+        # Recorded (#3300): the version line pkgutil printed on the host.
+        "pkgutil-pkg-info-clt-version-line.txt",
+        # Constructed: the same version in pkgutil's full multi-line output.
+        "pkgutil-pkg-info-clt.txt",
+    ],
+)
+def test_manifest_xcode_clt_installed_drops_the_build_stamp(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, fixture: str
+) -> None:
+    # 26.6.0.0.1781586589 keeps its first three components, the precision
+    # Software Update's offers use.
+    clt = _clt_host(monkeypatch, tmp_path, pkgutil=fixture)
+    assert hm.installed_version(clt) == "26.6.0"
+
+
+@pytest.mark.parametrize(("version", "expected"), [("26.6", "26.6"), ("27", "27")])
+def test_manifest_xcode_clt_installed_short_versions_kept(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, version: str, expected: str
+) -> None:
+    # CONSTRUCTED: a pkgutil version with fewer than three components.
+    listing = tmp_path / "pkgutil.txt"
+    listing.write_text(f"version: {version}\n", encoding="utf-8")
+    clt = _clt_host(monkeypatch, tmp_path, pkgutil=str(listing))
+    assert hm.installed_version(clt) == expected
+
+
+def test_manifest_xcode_clt_missing_when_no_receipt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # No CLT package receipt: pkgutil fails, so the CLT is missing (an ERROR).
+    clt = _clt_host(monkeypatch, tmp_path, pkgutil=None)
+    assert hm.installed_version(clt) is None
+
+
+@pytest.mark.parametrize(
+    "listing",
+    [
+        "package-id: com.apple.pkg.CLTools_Executables\nvolume: /\n",  # no version line
+        "version: 26.6.0.0.1\nversion: 26.7.0.0.2\n",  # two version lines
+        "version: 26.6-beta\n",  # not dotted numeric
+        "version: 26.6+build\n",  # a version is never fished out of it
+        "version: \n",  # blank
+    ],
+)
+def test_manifest_xcode_clt_installed_unreadable_is_a_probe_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, listing: str
+) -> None:
+    # CONSTRUCTED pkgutil answers the probe cannot read: a loud probe error,
+    # never a version guessed out of the text, and never `missing`.
+    path = tmp_path / "pkgutil.txt"
+    path.write_text(listing, encoding="utf-8")
+    clt = _clt_host(monkeypatch, tmp_path, pkgutil=str(path))
+    with pytest.raises(hm.ProbeError, match="unreadable pkgutil CLTools_Executables version"):
+        hm.installed_version(clt)
+
+
+@pytest.mark.parametrize(
+    ("fixture", "expected"),
+    [
+        # Constructed: a CLT 26.7 offer (newer title form) beside a macOS offer.
+        ("softwareupdate-list-clt-available.txt", ("26.7",)),
+        # Constructed: a CLT 16.1 offer (older title form); the offer is listed
+        # as-is, and status ignores it because it is not newer than 26.6.0.
+        ("softwareupdate-list-non-macos-only.txt", ("16.1",)),
+        # Captured: macOS and other updates, but no CLT item -> installed.
+        ("softwareupdate-list-minor-and-major-available.txt", ("26.6.0",)),
+        # Constructed: nothing pending / only a macOS update -> installed.
+        ("softwareupdate-list-none.txt", ("26.6.0",)),
+        ("softwareupdate-list-patch-only.txt", ("26.6.0",)),
+    ],
+)
+def test_manifest_xcode_clt_latest_script(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, fixture: str, expected: tuple[str, ...]
+) -> None:
+    """Run the manifest's real softwareupdate-parsing CLT probe against fixtures."""
+    clt = _clt_host(monkeypatch, tmp_path, softwareupdate=fixture)
+    assert hm.latest_version(clt) == hm.Offers(expected)
+
+
+@pytest.mark.parametrize(
+    ("title", "fragment"),
+    [
+        # Constructed: a CLT title whose Version is not a bare version.
+        ("Title: Command Line Tools for Xcode 26.7, Version: 26.7 beta, Size: 1KiB, ", "26.7 beta"),
+        # Constructed: a CLT title with no Version field at all.
+        ("Title: Command Line Tools for Xcode 26.7, Size: 1KiB, ", "unreadable Command Line"),
+        # Constructed: a blank Version (never silently dropped).
+        ("Title: Command Line Tools for Xcode, Version:  , Size: 1KiB, ", "unreadable Command"),
+    ],
+)
+def test_manifest_xcode_clt_unreadable_offer_is_a_probe_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, title: str, fragment: str
+) -> None:
+    """A CLT offer the probe cannot read is a loud probe error, never dropped."""
+    listing = tmp_path / "softwareupdate.txt"
+    listing.write_text(
+        "Software Update found the following new or updated software:\n"
+        "* Label: Command Line Tools-odd\n"
+        f"\t{title}\n",
+        encoding="utf-8",
+    )
+    clt = _clt_host(monkeypatch, tmp_path, softwareupdate=str(listing))
+    with pytest.raises(hm.ProbeError, match="unreadable offer") as exc:
+        hm.latest_version(clt)
+    assert fragment in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    ("kw"),
+    [
+        {"softwareupdate": None},  # softwareupdate fails
+        {"softwareupdate": "sw-vers-product-version.txt"},  # unrecognized answer
+        # Software Update lists no CLT item, but there is no CLT to report.
+        {"softwareupdate": "softwareupdate-list-none.txt", "pkgutil": None},
+    ],
+)
+def test_manifest_xcode_clt_latest_unknown_when_unrecognized(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, kw: dict[str, Any]
+) -> None:
+    """A failing or unrecognized probe is latest-unknown, never current."""
+    clt = _clt_host(monkeypatch, tmp_path, **kw)
+    assert hm.latest_version(clt) is None
+
+
+def test_manifest_xcode_clt_classifies_against_offers() -> None:
+    clt = _manifest_dep("xcode-clt")
+    assert host_status.classify(clt, "26.6.0", hm.Offers(("26.7",)), []) == (
+        "behind",
+        host_status.WARN,
+    )
+    assert host_status.levels_behind("26.6.0", hm.Offers(("26.7",))) == [("minor", "26.7")]
+    # Software Update's 26.6 is the installed 26.6.0; an older listed CLT is no update.
+    assert host_status.classify(clt, "26.6.0", hm.Offers(("26.6",)), []) == (
+        "current",
+        host_status.OK,
+    )
+    assert host_status.classify(clt, "26.6.0", hm.Offers(("16.1",)), []) == (
+        "current",
+        host_status.OK,
+    )
+    assert host_status.classify(clt, None, None, []) == ("missing", host_status.ERROR)

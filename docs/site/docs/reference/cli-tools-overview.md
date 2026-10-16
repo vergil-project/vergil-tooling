@@ -418,8 +418,9 @@ manages).
 ### vrg-host
 
 Observe and manage the Vergil-critical macOS host dependencies (`uv`,
-`gh`, `gcloud`, Lima, Docker Desktop, OpenTofu, `git-cliff`, vergil-tooling,
-macOS) declared in the packaged, tooling-owned manifest
+`gh`, `git`, `bash`, `gcloud`, Lima, Docker Desktop, OpenTofu, `git-cliff`,
+vergil-tooling, Claude Code, macOS, the Xcode Command Line Tools) declared in
+the packaged, tooling-owned manifest
 `src/vergil_tooling/data/host_dependencies.toml` (never
 repo-overridable). `status` (the default) reports installed-vs-latest
 drift, auxiliary-check health and pins; `status --fix` first runs the

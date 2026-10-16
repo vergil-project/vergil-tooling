@@ -47,13 +47,17 @@ def test_load_manifest_parses_curated_entries() -> None:
     assert by_name == {
         "uv": ("brew-formula", "auto", "probe"),
         "gh": ("brew-formula", "auto", "probe"),
+        "git": ("brew-formula", "auto", "probe"),
+        "bash": ("brew-formula", "auto", "probe"),
         "gcloud": ("custom", "auto", "probe"),
         "lima": ("brew-formula", "auto", "probe"),
         "docker-desktop": ("brew-cask", "manual", "probe"),
         "opentofu": ("brew-formula", "auto", "probe"),
         "git-cliff": ("brew-formula", "auto", "probe"),
         "vergil-tooling": ("uv-tool", "auto", "unmanaged"),
+        "claude-code": ("brew-cask", "auto", "probe"),
         "macos": ("custom", "manual", "probe"),
+        "xcode-clt": ("custom", "manual", "probe"),
     }
     assert all(d.why for d in deps)
     assert all(d.pin is None for d in deps)  # pins live in the host-local file
@@ -61,11 +65,12 @@ def test_load_manifest_parses_curated_entries() -> None:
 
 @pytest.mark.parametrize(
     "excluded",
-    ["shellcheck", "hadolint", "yamllint", "actionlint", "markdownlint", "az", "jq", "git"],
+    ["shellcheck", "hadolint", "yamllint", "actionlint", "markdownlint", "az", "jq", "xcode"],
 )
 def test_container_only_and_optional_tools_are_out_of_scope(excluded: str) -> None:
     # Spec §4: linters run only inside the dev container; az is an optional
-    # provider; git/jq ship with macOS. None earns a host manifest entry.
+    # provider; jq ships with macOS; full Xcode is not needed beyond the
+    # Command Line Tools (#3300). None earns a host manifest entry.
     assert excluded not in {d.name for d in host_deps.load_manifest()}
 
 
@@ -324,11 +329,12 @@ def test_builtin_method_may_override_only_installed_probe(
     )
 
 
-def test_only_macos_reports_update_levels() -> None:
-    # #3269: macos opts in to multi-level reporting; every other entry keeps
-    # its single-latest behaviour.
+def test_only_software_update_entries_report_update_levels() -> None:
+    # #3269: macos opts in to multi-level reporting, and the Xcode Command Line
+    # Tools (#3300), also fed by `softwareupdate --list`, do too; every other
+    # entry keeps its single-latest behaviour.
     deps = host_deps.load_manifest()
-    assert {d.name for d in deps if "latest_versions" in d.probes} == {"macos"}
+    assert {d.name for d in deps if "latest_versions" in d.probes} == {"macos", "xcode-clt"}
 
 
 def test_custom_latest_versions_parses(monkeypatch: pytest.MonkeyPatch) -> None:
