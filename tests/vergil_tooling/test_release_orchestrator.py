@@ -250,6 +250,20 @@ def test_phase_details_prepare_names_bypassed_deps_prs() -> None:
     assert "https://github.com/o/r/pull/11" in details
 
 
+def test_phase_details_prepare_names_cleared_deps_prs() -> None:
+    ctx = _ctx()
+    ctx.cleared_deps_prs = ["https://github.com/o/r/pull/9"]
+    details = _phase_details(ctx, "prepare")
+    assert "Closed landed dependency-update PR(s)" in details
+    assert "https://github.com/o/r/pull/9" in details
+    assert "--allow-pending-deps" not in details
+
+
+def test_phase_details_prepare_omits_cleared_line_when_none() -> None:
+    details = _phase_details(_ctx(), "prepare")
+    assert "dependency-update" not in details
+
+
 def test_phase_details_merge_release() -> None:
     from vergil_tooling.lib.release.orchestrator import _phase_details
 

@@ -218,6 +218,17 @@ def test_fix_task_body_explains_branch_and_reproduce() -> None:
     assert "`vrg-container-run -- vrg-validate`" in body
 
 
+def test_fix_task_body_says_release_closes_the_pr_not_github() -> None:
+    # Squash-merged fix PRs never mark the deps PR merged (#3286): the next
+    # vrg-release preflight closes it once this fix task closes as completed.
+    ctx = _ctx()
+    ctx.pr_url = "https://github.com/o/r/pull/9"
+    ctx.failure = _failed()
+    body = " ".join(pr.build_fix_task_body(ctx).split())
+    assert "marks the dependency-update PR merged" not in body
+    assert "the next `vrg-release` closes the dependency-update PR and the gate clears" in body
+
+
 def test_fix_task_body_requires_failure() -> None:
     with pytest.raises(ValueError, match="without a recorded failure"):
         pr.build_fix_task_body(_ctx())
