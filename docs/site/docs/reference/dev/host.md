@@ -135,11 +135,43 @@ Name one or more dependencies **or** pass `--all`, not both.
 - An upgrade that fails, or that would need elevated privileges, is reported for
   that dependency and never retried elevated. Upgrade it manually.
 
-**Exit code:** `0` when everything requested was upgraded (or, under `--all`,
-deliberately skipped or held); `1` when an explicitly named dependency was
-refused (`manual` or pinned); `2` on any failure — an unknown dependency name,
-a failed or privilege-refused upgrade, an unsupported pin constraint, or an
-unreadable manifest or pins file.
+Before upgrading anything, `upgrade` probes each `auto` dependency's installed
+and latest versions and classifies them exactly as `status` does. It then
+prints one line per dependency saying what it actually did:
+
+```text
+skipped  uv: current (0.13.1)
+upgraded git: 2.54.0 -> 2.56.0_1
+unchanged bash: still 5.3.9, latest 5.3.20 (the upgrade command succeeded but did not change the installed version)
+ran      vergil-tooling: 2.1.244 -> 2.1.244 (unchanged; no latest feed)
+held     gh: pinned to 2.40.x (2.41.0 breaks vrg-gh auth) at 2.40.1, holding back from 2.42.0; run 'vrg-host unpin gh' or pass --force to upgrade past the pin
+ERROR    lima: missing (not installed by brew-formula); vrg-host upgrades, it does not install
+skipped (upgrade = manual, upgrade by hand): docker-desktop, macos
+```
+
+| Outcome | When | Severity |
+| --- | --- | --- |
+| `skipped … current (<v>)` | Already current; the upgrade command is **not** run | OK |
+| `upgraded … <before> -> <after>` | Was behind; upgraded and reached the latest | OK |
+| `upgraded … (still behind latest <v>)` | Was behind; the version moved but is still older than the latest (or cannot be ordered against it) | WARN |
+| `unchanged …` | Was behind; the upgrade command succeeded but the installed version did not change | WARN |
+| `ran … <before> -> <after> (no latest feed)` | `latest = "unmanaged"`: nothing to compare with, so the upgrade runs and the change is reported | OK |
+| `ran … (latest unknown: …)` | The latest probe did not answer (as `status`'s `latest-unknown`) | WARN |
+| `held …` | Actively pinned and no `--force`; shows the installed version and the latest it holds back from | WARN (not counted under `--all`) |
+| `ERROR … missing` / `ERROR … probe-error` | Not installed, or a probe failed, as `status` reports it; the upgrade is not attempted | ERROR |
+| `ERROR … upgrade ran but …` | The installed version could not be re-probed after the upgrade | ERROR |
+
+The `after` version is always **re-probed** after the upgrade runs, never
+assumed to be the latest. `--force` only upgrades past a pin. It never forces
+the upgrade of a dependency that is already current.
+
+**Exit code:** `0` when everything requested was upgraded or already current
+(or, under `--all`, deliberately skipped or held); `1` when an explicitly named
+dependency was refused (`manual` or pinned), or an upgrade left a dependency
+behind (or ran with its latest unknown); `2` on any failure: an unknown
+dependency name, a missing dependency, a probe error, a failed or
+privilege-refused upgrade, an unsupported pin constraint, or an unreadable
+manifest or pins file.
 
 ### pin and unpin
 
