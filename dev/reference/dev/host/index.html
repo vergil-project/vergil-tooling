@@ -15446,7 +15446,7 @@
 <code>host_status.py</code>, <code>host_versions.py</code>)</p>
 <p>Observes and manages the tools Vergil development needs <strong>on the macOS host
 itself</strong> — the ones that cannot live in a dev container or an agent VM, such as
-<code>gh</code>, <code>uv</code>, <code>gcloud</code>, Lima and Docker. It reports how far each one has drifted
+<code>gh</code>, <code>uv</code>, <code>gcloud</code>, Lima and Docker Desktop. It reports how far each one has drifted
 from its latest release, upgrades the ones it is allowed to upgrade, and records
 deliberate <strong>pins</strong> as tracked technical debt rather than silent freezes.</p>
 <p><code>vrg-host</code> is a host tool: run it on the Mac, not inside <code>vrg-container-run</code>.
@@ -15594,8 +15594,12 @@ and forces exit <code>2</code>. Remediations run unprivileged like every other c
 <ul>
 <li>Only <code>upgrade = "auto"</code> dependencies are upgraded, through their install
   method (<code>brew upgrade</code>, <code>uv tool upgrade</code>, or the manifest's own upgrade
-  command). A <code>manual</code> dependency (<code>docker</code>, <code>macos</code>) is refused when named, and
-  listed as skipped under <code>--all</code>; upgrade it by hand.</li>
+  command). A <code>manual</code> dependency (<code>docker-desktop</code>, <code>macos</code>) is refused when
+  named, and listed as skipped under <code>--all</code>; upgrade it by hand.</li>
+<li>A Homebrew cask that updates itself (its <code>brew info</code> JSON says
+  <code>auto_updates: true</code>) is never upgraded through <code>brew</code>. Without <code>--greedy</code>,
+  <code>brew upgrade</code> skips such a cask without saying so, so <code>vrg-host</code> reports the
+  upgrade as failed instead.</li>
 <li>An <strong>actively pinned</strong> dependency is <strong>held</strong>: the package managers cannot
   upgrade <em>to</em> a constraint, so the pin is a real hold. Run <code>vrg-host unpin
   &lt;dep&gt;</code> first, or pass <code>--force</code> to upgrade past it. An active pin whose
@@ -15674,7 +15678,10 @@ execution surface on the host. Changing the list means a vergil-tooling PR.</p>
 <p>Each entry declares the dependency's <code>method</code> (<code>brew-formula</code>, <code>brew-cask</code>,
 <code>uv-tool</code> or <code>custom</code>), whether <code>vrg-host</code> may upgrade it (<code>upgrade = "auto"</code> or
 <code>"manual"</code>), whether it has a latest-version feed (<code>latest = "probe"</code> or
-<code>"unmanaged"</code>), and any auxiliary checks.</p>
+<code>"unmanaged"</code>), and any auxiliary checks. A <code>custom</code> entry supplies its own
+installed, latest and upgrade commands. An entry with any other method can
+override only how its installed version is read. This is for a self-updating
+app, whose package-manager record goes stale.</p>
 <p>A tool earns an entry only if Vergil development needs it on the macOS host
 itself. Current entries:</p>
 <table>
@@ -15690,7 +15697,7 @@ itself. Current entries:</p>
 <tbody>
 <tr>
 <td><code>uv</code></td>
-<td>custom (<code>uv self update</code>)</td>
+<td>brew-formula</td>
 <td>auto</td>
 <td>probe</td>
 <td>Installs and upgrades the <code>vrg-*</code> host tools</td>
@@ -15717,11 +15724,11 @@ itself. Current entries:</p>
 <td>Runs the local agent VMs <code>vrg-vm</code> creates</td>
 </tr>
 <tr>
-<td><code>docker</code></td>
-<td>custom</td>
+<td><code>docker-desktop</code></td>
+<td>brew-cask (installed version from the app)</td>
 <td>manual</td>
-<td>unmanaged</td>
-<td>The container CLI <code>vrg-container-run</code> execs (Docker Desktop today)</td>
+<td>probe</td>
+<td>The container engine and <code>docker</code> CLI that <code>vrg-container-run</code> execs</td>
 </tr>
 <tr>
 <td><code>opentofu</code></td>
@@ -15755,11 +15762,25 @@ itself. Current entries:</p>
 </table>
 <p>Notes on the entries:</p>
 <ul>
-<li><strong><code>docker</code> and <code>macos</code> are report-only.</strong> Docker Desktop is a GUI app with its
-  own updater and no programmatic latest feed, so <code>status</code> shows the installed
-  CLI version as info and <code>upgrade</code> leaves it to you. Moving to a headless engine
-  (Colima, podman, docker-engine over Lima) would make Docker an <code>auto</code> entry;
-  that is follow-on work
+<li><strong><code>uv</code> is a Homebrew formula.</strong> On the macOS host uv is installed with
+  Homebrew (<code>brew install uv</code>), and Homebrew builds have no <code>uv self update</code>, so
+  <code>vrg-host</code> reads and upgrades it through <code>brew</code>. Its latest is Homebrew's
+  stable version, which can trail Astral's newest release by a few days.</li>
+<li><strong><code>gcloud</code> updates itself.</strong> It is installed from the Homebrew <code>gcloud-cli</code>
+  cask, but the SDK's component manager owns its updates: <code>vrg-host</code> reads its
+  <code>core</code> component version and upgrades it with <code>gcloud components update</code>. The
+  SDK lives in a user-owned directory, so this needs no <code>sudo</code>. Homebrew's
+  recorded cask version goes stale as the SDK updates itself. Never upgrade it
+  with <code>brew upgrade --greedy</code>.</li>
+<li><strong><code>docker-desktop</code> and <code>macos</code> are report-only.</strong> <code>vrg-host</code> tracks the
+  Docker Desktop app, not the <code>docker</code> CLI (their version numbers differ). The
+  installed version comes from the app's <code>Info.plist</code>, because Desktop updates
+  itself and Homebrew's record goes stale. The latest comes from the
+  <code>docker-desktop</code> cask (its <code>4.94.0,241994</code> reads as <code>4.94.0</code>). So <code>status</code>
+  shows when Desktop is behind, but <code>upgrade</code> leaves it to Desktop's own updater,
+  which may install privileged helpers. Moving to a headless engine (Colima,
+  podman, docker-engine over Lima) would make Docker an <code>auto</code> entry; that is
+  follow-on work
   (<a href="https://github.com/vergil-project/.github/issues/169">vergil-project/.github#169</a>).
   A pending macOS update is reported so it is applied deliberately, never by
   <code>vrg-host</code>.</li>
@@ -15768,10 +15789,10 @@ itself. Current entries:</p>
   <code>latest-unmanaged</code> rather than a false <code>current</code>. <code>vrg-host upgrade
   vergil-tooling</code> runs <code>uv tool upgrade vergil-tooling</code>, which moves within the
   release line you installed.</li>
-<li><strong>Install method matters.</strong> Each entry assumes the documented install path. A
-  tool installed some other way reads as <code>missing</code> for the brew and <code>uv-tool</code>
-  methods; it is never reported as a false <code>current</code>. A Homebrew-installed <code>uv</code>
-  refuses <code>uv self update</code>, which <code>vrg-host</code> reports as a failed upgrade.</li>
+<li><strong>Install method matters.</strong> Each entry assumes the install path verified on a
+  real macOS host. A tool installed some other way (for example, uv from
+  Astral's standalone installer) reads as <code>missing</code> for the brew and <code>uv-tool</code>
+  methods; it is never reported as a false <code>current</code>.</li>
 </ul>
 <p>Deliberately <strong>not</strong> in the manifest:</p>
 <ul>
@@ -15907,11 +15928,12 @@ prompting. An upgrade or remediation that needs elevated privileges is reported
 as needing manual action and is never retried elevated.</p>
 <h2 id="known-limitations">Known limitations<a class="headerlink" href="#known-limitations" title="Permanent link">&para;</a></h2>
 <ul>
-<li>The version parsers are tested against hand-written output fixtures, not yet
-  output captured on a real Mac (see
-  <code>tests/vergil_tooling/fixtures/host/README.md</code>). Re-capturing them on macOS is
-  tracked as a follow-up; until then, a <code>probe-error</code> row may mean a parser
-  mismatch rather than a broken tool.</li>
+<li>The version parsers are tested against output captured on a real Mac. A few
+  cases could not be captured there and are still hand-written: <code>softwareupdate</code>
+  with nothing pending or only non-OS updates pending, and <code>uv tool list
+  --outdated</code> listing an outdated tool. See
+  <code>tests/vergil_tooling/fixtures/host/README.md</code>. If one of those cases shows a
+  <code>probe-error</code> row, it may be a parser mismatch rather than a broken tool.</li>
 <li><code>vrg-host</code> reports and acts only when you run it. Scheduled or automatic runs
   are follow-on work
   (<a href="https://github.com/vergil-project/.github/issues/169">vergil-project/.github#169</a>).</li>

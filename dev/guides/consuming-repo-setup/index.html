@@ -15480,7 +15480,8 @@ for how they fit together.</p>
 Docker Engine on Linux works too.</p>
 <p><strong>uv</strong> — Python package manager. Used to install <code>vergil-tooling</code>
 on the host and (inside the container) to manage Python
-dependencies. Install via the
+dependencies. On macOS, install it with Homebrew (<code>brew install uv</code>),
+which is how <code>vrg-host</code> reads and upgrades it. On Linux, use the
 <a href="https://docs.astral.sh/uv/getting-started/installation/">official installer</a>.</p>
 <p><strong>gh</strong> — GitHub CLI. Both the human and agent GitHub accounts must
 be logged into <code>gh auth</code> on the developer's machine. Credential
@@ -15499,9 +15500,10 @@ for you; see <a href="#keeping-up-to-date">Keeping up to date</a>.</p>
 <h2 id="step-2-install-vergil-tooling">Step 2: Install vergil-tooling<a class="headerlink" href="#step-2-install-vergil-tooling" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>tool<span class="w"> </span>install<span class="w"> </span><span class="s1">'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.1'</span>
 </code></pre></div>
-<p>This installs all <code>vrg-*</code> console scripts into <code>~/.local/bin/</code>,
-which <code>uv</code>'s official installer already configures on <code>PATH</code>. No
-sibling checkout, no custom PATH entries, no venv bootstrapping.</p>
+<p>This installs all <code>vrg-*</code> console scripts into <code>~/.local/bin/</code>.
+<code>uv</code>'s official installer already puts that directory on <code>PATH</code>; with
+a Homebrew-installed <code>uv</code>, run <code>uv tool update-shell</code> once to add it.
+No sibling checkout, no custom PATH entries, no venv bootstrapping.</p>
 <p>Verify:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>which<span class="w"> </span>vrg-container-run<span class="w">    </span><span class="c1"># should resolve to ~/.local/bin/vrg-container-run</span>
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>vrg-container-run<span class="w"> </span>--help<span class="w">   </span><span class="c1"># should print usage</span>

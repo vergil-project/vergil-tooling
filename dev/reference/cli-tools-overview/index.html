@@ -16743,7 +16743,7 @@ manages).</p>
 </table>
 <h3 id="vrg-host">vrg-host<a class="headerlink" href="#vrg-host" title="Permanent link">&para;</a></h3>
 <p>Observe and manage the Vergil-critical macOS host dependencies (<code>uv</code>,
-<code>gh</code>, <code>gcloud</code>, Lima, Docker, OpenTofu, <code>git-cliff</code>, vergil-tooling,
+<code>gh</code>, <code>gcloud</code>, Lima, Docker Desktop, OpenTofu, <code>git-cliff</code>, vergil-tooling,
 macOS) declared in the packaged, tooling-owned manifest
 <code>src/vergil_tooling/data/host_dependencies.toml</code> (never
 repo-overridable). <code>status</code> (the default) reports installed-vs-latest
@@ -16772,7 +16772,7 @@ refuses <code>sudo</code>/<code>doas</code>/<code>su</code>/<code>pkexec</code>.
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>macOS host with each dependency installed by its documented method; <code>gh</code> on PATH for the <code>uv</code> latest probe</td>
+<td>macOS host with each dependency installed by its documented method (Homebrew for the <code>brew-formula</code> and <code>brew-cask</code> entries, including <code>uv</code>)</td>
 </tr>
 <tr>
 <td>Failure mode</td>
