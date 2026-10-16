@@ -1288,6 +1288,8 @@
       
         
       
+        
+      
     
     
     
@@ -1340,6 +1342,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.246/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.246
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17125,6 +17155,13 @@ workflows; <code>matrix</code> is also useful locally. See the
   <code>--version</code> (required), <code>--out</code> (default <code>dist/packages</code>),
   <code>--staging</code> (default <code>.vergil/package-staging</code>, wiped first). Needs
   <code>nfpm</code> on <code>PATH</code>.</li>
+<li><code>check-unpublished</code> — refuse (exit 1) when a release at <code>--version</code>
+  (required) would publish a package with the same name, full version,
+  architecture and format as one an earlier stable release of <code>--repo</code>
+  (default <code>$GITHUB_REPOSITORY</code>) already published. Read-only; needs
+  <code>gh</code>. This is the CD backstop for the same check <code>vrg-release</code> runs in
+  preflight. See
+  <a href="../package-config/#the-re-publish-check">the re-publish check</a>.</li>
 <li><code>install-test</code> — in a clean container, install one test cell's
   artifact, verify shipped systemd units, run the smoke command and
   shim checks under a sanitized environment, remove the package and
@@ -17149,7 +17186,7 @@ workflows; <code>matrix</code> is also useful locally. See the
 </tr>
 <tr>
 <td>Args</td>
-<td>Subcommand (<code>matrix</code>, <code>build</code>, <code>install-test</code>, <code>index</code>) with the flags above</td>
+<td>Subcommand (<code>matrix</code>, <code>build</code>, <code>check-unpublished</code>, <code>install-test</code>, <code>index</code>) with the flags above</td>
 </tr>
 <tr>
 <td>Preconditions</td>
