@@ -10,7 +10,7 @@ import subprocess
 import sys
 import textwrap
 from dataclasses import dataclass, field
-from importlib import resources
+from importlib import metadata, resources
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -24,6 +24,25 @@ from vergil_tooling.lib.config import _ENUMS
 from vergil_tooling.lib.vergil_refs import EXPECTED_MARKETPLACE_REF
 
 _CHECKPOINT_RE = re.compile(r"chore\(init\): step (\d+) -")
+
+
+def default_vergil_series() -> str:
+    """``vX.Y`` of the installed vergil-tooling: new repos pin the series that made them.
+
+    Replaces the hard-coded ``v2.1`` pin (issue #3252) so generated
+    ``uses:`` refs and the ``[dependencies] vergil`` default follow the
+    tooling's own release line.
+    """
+    major, minor = metadata.version("vergil-tooling").split(".")[:2]
+    return f"v{major}.{minor}"
+
+
+def _uses_line(workflow: str, vergil_version: str) -> str:
+    """A ``uses:`` line calling a vergil-actions reusable workflow at *vergil_version*."""
+    return (
+        "    uses: vergil-project/vergil-actions/.github/workflows/"
+        f"{workflow}.yml@{vergil_version}\n"
+    )
 
 
 @dataclass
@@ -53,7 +72,7 @@ class RepoInitContext:
     integration_tests: bool = False
     publish_release: bool = False
     publish_docs: bool = True
-    vergil_version: str = "v2.1"
+    vergil_version: str = field(default_factory=default_vergil_series)
     license_type: str = "MIT"
     initial_version: str = "0.1.0"
     # True when vergil.toml declares ``[package]`` (epic
@@ -686,7 +705,7 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
         lines.extend(
             [
                 "  audit:\n",
-                "    uses: vergil-project/vergil-actions/.github/workflows/ci-audit.yml@v2.1\n",
+                _uses_line("ci-audit", ctx.vergil_version),
                 "    with:\n",
                 lang_line,
                 f"      container-suffix: {suffix}\n",
@@ -697,13 +716,13 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
     lines.extend(
         [
             "  quality:\n",
-            "    uses: vergil-project/vergil-actions/.github/workflows/ci-quality.yml@v2.1\n",
+            _uses_line("ci-quality", ctx.vergil_version),
             "    with:\n",
             lang_line,
             f"      container-suffix: {suffix}\n",
             "\n",
             "  security:\n",
-            "    uses: vergil-project/vergil-actions/.github/workflows/ci-security.yml@v2.1\n",
+            _uses_line("ci-security", ctx.vergil_version),
             "    permissions:\n",
             "      contents: read\n",
             "      security-events: write\n",
@@ -747,7 +766,7 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
             [
                 "\n",
                 "  docs:\n",
-                "    uses: vergil-project/vergil-actions/.github/workflows/ci-docs.yml@v2.1\n",
+                _uses_line("ci-docs", ctx.vergil_version),
             ]
         )
 
@@ -756,7 +775,7 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
             [
                 "\n",
                 "  test:\n",
-                "    uses: vergil-project/vergil-actions/.github/workflows/ci-test.yml@v2.1\n",
+                _uses_line("ci-test", ctx.vergil_version),
                 "    with:\n",
                 lang_line,
                 f"      container-suffix: {suffix}\n",
@@ -768,8 +787,7 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
             [
                 "\n",
                 "  version:\n",
-                "    uses: vergil-project/vergil-actions/"
-                ".github/workflows/ci-version-bump.yml@v2.1\n",
+                _uses_line("ci-version-bump", ctx.vergil_version),
                 "    with:\n",
                 lang_line,
                 "      run-release: ${{ inputs.run-release != 'false' }}\n",
@@ -790,7 +808,7 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
                 "  # Build and install-test the .deb/.rpm on every default target\n",
                 "  # (spec §8.1). Surfaces as the `package / evidence` gate.\n",
                 "  package:\n",
-                "    uses: vergil-project/vergil-actions/.github/workflows/ci-package.yml@v2.1\n",
+                _uses_line("ci-package", ctx.vergil_version),
             ]
         )
 
@@ -833,7 +851,7 @@ def render_cd_workflow(ctx: RepoInitContext) -> str:
         lines.extend(
             [
                 "  docs:\n",
-                "    uses: vergil-project/vergil-actions/.github/workflows/cd-docs.yml@v2.1\n",
+                _uses_line("cd-docs", ctx.vergil_version),
                 "    permissions:\n",
                 "      contents: write\n",
             ]
@@ -847,7 +865,7 @@ def render_cd_workflow(ctx: RepoInitContext) -> str:
             [
                 "  release:\n",
                 "    if: github.ref == 'refs/heads/main'\n",
-                "    uses: vergil-project/vergil-actions/.github/workflows/cd-release.yml@v2.1\n",
+                _uses_line("cd-release", ctx.vergil_version),
                 "    with:\n",
                 f"      language: {suffix}\n",
                 f'      container-tag: "{tag}"\n',
@@ -884,7 +902,7 @@ def render_cd_workflow(ctx: RepoInitContext) -> str:
     return "".join(lines)
 
 
-def render_epic_rollup_workflow() -> str:
+def render_epic_rollup_workflow(vergil_version: str) -> str:
     """Render .github/workflows/epic-rollup.yml — the event-driven rollup caller.
 
     Thin caller (epic vergil-project/.github#75): on any issue close it hands off
@@ -892,7 +910,8 @@ def render_epic_rollup_workflow() -> str:
     all its sibling tasks are closed. Static across repos and orgs — the reusable
     workflow reads the event and resolves the epic repo (``.github``) within the
     caller's own org, so managed tasks auto-close on merge and their epics roll
-    up with no per-command step.
+    up with no per-command step. The only per-repo input is *vergil_version*,
+    the vergil-actions series tag the caller pins (issue #3252).
     """
     return (
         "name: Epic Rollup\n"
@@ -906,7 +925,7 @@ def render_epic_rollup_workflow() -> str:
         "\n"
         "jobs:\n"
         "  epic-rollup:\n"
-        "    uses: vergil-project/vergil-actions/.github/workflows/ops-epic-rollup.yml@v2.1\n"
+        f"{_uses_line('ops-epic-rollup', vergil_version)}"
         "    permissions:\n"
         "      contents: read\n"
         "    secrets:\n"
@@ -930,7 +949,8 @@ def render_ops_workflow(ctx: RepoInitContext) -> str:
     """Render .github/workflows/ops.yml — the daily config-audit caller.
 
     Scheduled minute is staggered per repo (`_ops_cron_minute`); the reusable
-    workflow is pinned to the rolling @v2.1 tag (epic vergil-project/.github#311).
+    workflow is pinned to the rolling ``ctx.vergil_version`` series tag (epic
+    vergil-project/.github#311; derived from the installed tooling, issue #3252).
     """
     minute = _ops_cron_minute(ctx.org, ctx.name)
     return (
@@ -947,7 +967,7 @@ def render_ops_workflow(ctx: RepoInitContext) -> str:
         "\n"
         "jobs:\n"
         "  github-config:\n"
-        "    uses: vergil-project/vergil-actions/.github/workflows/ops-github-config.yml@v2.1\n"
+        f"{_uses_line('ops-github-config', ctx.vergil_version)}"
         "    permissions:\n"
         "      contents: read\n"
         "      issues: write\n"
@@ -1289,7 +1309,7 @@ def step_generate_config(ctx: RepoInitContext) -> None:
         prompt=lambda: prompt_yes_no("Publish docs?", default=pd_default),
     )
 
-    vv_default = deps.get("vergil", "v2.1")
+    vv_default = deps.get("vergil", default_vergil_series())
     ctx.vergil_version = _resolve(
         ctx.opt_vergil_version,
         non_interactive=ni,
@@ -1418,7 +1438,7 @@ def step_ci_cd_workflows(ctx: RepoInitContext) -> None:
     # Event-driven epic rollup ships in every managed repo (epic
     # vergil-project/.github#75) so a merged task closes and its epic rolls up
     # with no per-command step.
-    (workflows_dir / "epic-rollup.yml").write_text(render_epic_rollup_workflow())
+    (workflows_dir / "epic-rollup.yml").write_text(render_epic_rollup_workflow(ctx.vergil_version))
 
     # Daily config-audit caller so every managed repo is born self-policing
     # (epic vergil-project/.github#311). Staggered per-repo cron avoids a
