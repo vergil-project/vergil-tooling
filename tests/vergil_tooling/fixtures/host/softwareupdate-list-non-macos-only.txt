@@ -1,0 +1,6 @@
+Software Update Tool
+
+Finding available software
+Software Update found the following new or updated software:
+* Label: Command Line Tools for Xcode-16.1
+	Title: Command Line Tools for Xcode, Version: 16.1, Size: 751383KiB, Recommended: YES, 

@@ -1,0 +1,41 @@
+{
+  "formulae": [
+    {
+      "name": "python@3.12",
+      "full_name": "python@3.12",
+      "tap": "homebrew/core",
+      "oldnames": [],
+      "aliases": [],
+      "versioned_formulae": [],
+      "desc": "Interpreted, interactive, object-oriented programming language",
+      "license": "Python-2.0",
+      "homepage": "https://www.python.org/",
+      "versions": {
+        "stable": "3.12.7",
+        "head": null,
+        "bottle": true
+      },
+      "revision": 1,
+      "version_scheme": 0,
+      "keg_only": false,
+      "installed": [
+        {
+          "version": "3.12.7_1",
+          "used_options": [],
+          "built_as_bottle": true,
+          "poured_from_bottle": true,
+          "time": 1729000000,
+          "runtime_dependencies": [],
+          "installed_as_dependency": true,
+          "installed_on_request": false
+        }
+      ],
+      "linked_keg": "3.12.7_1",
+      "pinned": false,
+      "outdated": false,
+      "deprecated": false,
+      "disabled": false
+    }
+  ],
+  "casks": []
+}

@@ -11,8 +11,12 @@ dep) are display distinctions carrying ``OK`` severity, never separate levels.
 Version states (spec §8):
 
 - ``missing`` — not installed (ERROR).
-- ``current`` — installed == latest (OK).
-- ``behind`` — installed differs from latest, unpinned (WARN).
+- ``current`` — installed is at or newer than latest (OK).
+- ``behind`` — installed is older than latest, unpinned (WARN). Versions are
+  ordered by :func:`vergil_tooling.lib.host_versions.compare`; an install
+  newer than latest is ``current``, and two versions that differ but cannot
+  be ordered raise ``IncomparableVersionError`` (a ``ValueError``), which
+  ``vrg-host status`` reports as ``probe-error`` — never guessed at.
 - ``pinned`` — an active pin holds the dep: OK (tracked debt) while the
   installed version satisfies the pin constraint (see :func:`pin_satisfied`),
   WARN once it has drifted off it. It is also WARN when the #155
@@ -37,7 +41,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Final
 
 from vergil_tooling.lib import host_methods as hm
-from vergil_tooling.lib import host_pins
+from vergil_tooling.lib import host_pins, host_versions
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -78,7 +82,9 @@ def classify(
     checks (any unsatisfied check is ``ERROR``).
 
     Raises:
-        ValueError: *dep* has an active pin with an unsupported constraint.
+        ValueError: *dep* has an active pin with an unsupported constraint, or
+            its installed and latest versions differ and cannot be ordered
+            (``host_versions.IncomparableVersionError``).
     """
     check_sev = ERROR if any(not ok for _, ok in check_results) else OK
     if installed is None:
@@ -106,7 +112,9 @@ def pin_satisfied(installed: str, constraint: str) -> bool:
     components are dropped and the remaining components must equal the
     installed version's leading components: ``2.40.0`` satisfies ``2.x``,
     ``2.40.x`` and ``2.40.0``; ``2.41.0`` does not satisfy ``2.40.x``; ``1.9``
-    does not satisfy ``1.9.2``.
+    does not satisfy ``1.9.2``. A Homebrew revision suffix on the installed
+    version is a rebuild of the same upstream release, so ``2.40.0_1``
+    satisfies ``2.40.0``.
 
     Raises:
         ValueError: *constraint* uses any other syntax (operators such as
@@ -114,7 +122,7 @@ def pin_satisfied(installed: str, constraint: str) -> bool:
             no concrete component at all). It is refused, never guessed at.
     """
     parts = host_pins.parse_constraint(constraint)
-    return installed.split(".")[: len(parts)] == parts
+    return host_versions.upstream(installed).split(".")[: len(parts)] == parts
 
 
 def pin_review(pin: HostPin, latest: Latest) -> tuple[str, str | None]:
@@ -143,7 +151,7 @@ def pin_review(pin: HostPin, latest: Latest) -> tuple[str, str | None]:
         )
     try:
         due = host_pins.is_reevaluation_due(pin, str(latest))
-    except host_pins.IncomparableVersionError as exc:
+    except host_versions.IncomparableVersionError as exc:
         return "unknown", f"!! RE-EVALUATION UNKNOWN: {exc} !!"
     if due:
         return "due", (
@@ -177,9 +185,21 @@ def _pin_lines(pin: HostPin, latest: Latest, today: datetime.date) -> list[str]:
 
 
 def _behind(installed: str, latest: str) -> bool:
-    # Heterogeneous version schemes: treat "differs" as behind unless a
-    # tool-specific comparator is registered (refined in plan Task 7).
-    return installed != latest
+    """Return whether *installed* is strictly older than *latest*.
+
+    Both are the bare versions the method handlers normalized. Identical
+    strings are current without needing to be ordered; otherwise the single
+    host comparator decides, so an install *newer* than latest (a pre-release
+    or HEAD build) is ``current``, never ``behind``. Versions it cannot order
+    raise rather than fall back to "differs" (spec §8: never guessed at).
+
+    Raises:
+        host_versions.IncomparableVersionError: the two versions differ and
+            cannot be ordered.
+    """
+    if installed == latest:
+        return False
+    return host_versions.compare(installed, latest) < 0
 
 
 @dataclass(frozen=True)

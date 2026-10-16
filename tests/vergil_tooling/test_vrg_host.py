@@ -701,16 +701,18 @@ def test_upgrade_honors_pin_from_pins_file(
     assert calls == []
     assert "held     gh: pinned to 2.40.x (2.41.0 breaks vrg-gh auth)" in capsys.readouterr().out
 
+    # Every other auto dependency in the packaged manifest, in manifest order.
+    unpinned_auto = ["uv", "gcloud", "lima", "opentofu", "git-cliff", "vergil-tooling"]
     assert vrg_host.main(["upgrade", "--all"]) == 0
-    assert calls == ["uv", "gcloud"]  # gh held, the rest upgraded
+    assert calls == unpinned_auto  # gh held, the rest upgraded
     assert "held     gh" in capsys.readouterr().out
 
     assert vrg_host.main(["upgrade", "--force", "gh"]) == 0
-    assert calls == ["uv", "gcloud", "gh"]
+    assert calls == [*unpinned_auto, "gh"]
 
     assert vrg_host.main(["unpin", "gh"]) == 0  # a freed pin no longer holds
     assert vrg_host.main(["upgrade", "gh"]) == 0
-    assert calls == ["uv", "gcloud", "gh", "gh"]
+    assert calls == [*unpinned_auto, "gh", "gh"]
 
 
 def test_upgrade_honors_pin_written_via_host_pins(monkeypatch: pytest.MonkeyPatch) -> None:

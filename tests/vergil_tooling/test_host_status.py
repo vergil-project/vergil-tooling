@@ -10,6 +10,7 @@ import pytest
 
 from vergil_tooling.lib import host_methods as hm
 from vergil_tooling.lib import host_status as hs
+from vergil_tooling.lib import host_versions as hv
 from vergil_tooling.lib.host_deps import AuxCheck, HostDependency, HostPin
 
 
@@ -56,6 +57,41 @@ def test_behind_is_warn() -> None:
 def test_current_is_ok() -> None:
     state, sev = hs.classify(_dep(), installed="2.0", latest="2.0", check_results=[])
     assert (state, sev) == ("current", hs.OK)
+
+
+def test_normalized_prose_and_bare_versions_are_current() -> None:
+    """Spec §8: "gh version 2.40.0" == "2.40.0" once normalized — no false behind."""
+    installed = hv.normalize("gh version 2.40.0")
+    state, sev = hs.classify(_dep(), installed=installed, latest="2.40.0", check_results=[])
+    assert (state, sev) == ("current", hs.OK)
+
+
+@pytest.mark.parametrize(
+    ("installed", "latest"),
+    [("2.41.0", "2.40.0"), ("2.40.0_1", "2.40.0"), ("2.10", "2.9"), ("2024.10.18", "2024.10.4")],
+)
+def test_installed_newer_than_latest_is_current(installed: str, latest: str) -> None:
+    state, sev = hs.classify(_dep(), installed=installed, latest=latest, check_results=[])
+    assert (state, sev) == ("current", hs.OK)
+
+
+@pytest.mark.parametrize(
+    ("installed", "latest"),
+    [("2.9", "2.10"), ("2.40.0", "2.40.0_1"), ("2024.10.04", "2024.10.18")],
+)
+def test_installed_older_than_latest_is_behind(installed: str, latest: str) -> None:
+    state, sev = hs.classify(_dep(), installed=installed, latest=latest, check_results=[])
+    assert (state, sev) == ("behind", hs.WARN)
+
+
+def test_identical_unorderable_versions_are_current() -> None:
+    state, _ = hs.classify(_dep(), installed="4.34.2,1", latest="4.34.2,1", check_results=[])
+    assert state == "current"
+
+
+def test_differing_unorderable_versions_raise_not_guess() -> None:
+    with pytest.raises(hv.IncomparableVersionError, match="cannot compare version"):
+        hs.classify(_dep(), installed="4.34.2,1", latest="4.35.0,2", check_results=[])
 
 
 def test_latest_unmanaged_is_info_not_warn() -> None:
@@ -136,6 +172,9 @@ def test_missing_wins_over_unsupported_pin() -> None:
         ("2.40.0", "2.x", True),
         ("2.40.0", "2.40.x", True),
         ("2.40.0", "2.40.0", True),
+        ("2.40.0_1", "2.40.0", True),
+        ("2.40.0_1", "2.40.x", True),
+        ("2.41.0_1", "2.40.x", False),
         ("2.40.0", "2.x.x", True),
         ("2.41.0", "2.40.x", False),
         ("1.9", "1.9.2", False),

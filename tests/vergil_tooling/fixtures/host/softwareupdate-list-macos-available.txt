@@ -1,0 +1,8 @@
+Software Update Tool
+
+Finding available software
+Software Update found the following new or updated software:
+* Label: Command Line Tools for Xcode-16.1
+	Title: Command Line Tools for Xcode, Version: 16.1, Size: 751383KiB, Recommended: YES, 
+* Label: macOS Sequoia 15.1.1-24B91
+	Title: macOS Sequoia 15.1.1, Version: 15.1.1, Size: 1489135KiB, Recommended: YES, Action: restart, 

@@ -3,13 +3,31 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+from pathlib import Path
 from typing import Any
 
 import pytest
 
+from vergil_tooling.lib import host_deps
 from vergil_tooling.lib import host_methods as hm
+from vergil_tooling.lib import host_versions as hv
 from vergil_tooling.lib.host_deps import HostDependency, ManifestError
+
+# Probe-output fixtures. All are CONSTRUCTED from documented formats, not
+# captured from a live Mac — see fixtures/host/README.md for provenance and the
+# re-capture list.
+_FIXTURES = Path(__file__).parent / "fixtures" / "host"
+
+
+def _fixture(name: str) -> str:
+    """Return a fixture as ``_run`` would: stdout with surrounding whitespace stripped."""
+    return (_FIXTURES / name).read_text(encoding="utf-8").strip()
+
+
+def _manifest_dep(name: str) -> HostDependency:
+    return {d.name: d for d in host_deps.load_manifest()}[name]
 
 
 def _dep(**kw: Any) -> HostDependency:
@@ -125,7 +143,7 @@ def test_run_refuses_empty_command() -> None:
 
 
 def test_brew_formula_installed(monkeypatch: pytest.MonkeyPatch) -> None:
-    _stub(monkeypatch, {("brew", "list", "--versions", "gh"): "gh 2.40.0 2.40.1"})
+    _stub(monkeypatch, {("brew", "list", "--formula", "--versions", "gh"): "gh 2.40.0 2.40.1"})
     assert hm.installed_version(_dep()) == "2.40.1"
 
 
@@ -135,20 +153,20 @@ def test_brew_cask_installed_uses_cask_flag(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_brew_installed_empty_output_is_missing(monkeypatch: pytest.MonkeyPatch) -> None:
-    _stub(monkeypatch, {("brew", "list", "--versions", "gh"): ""})
+    _stub(monkeypatch, {("brew", "list", "--formula", "--versions", "gh"): ""})
     assert hm.installed_version(_dep()) is None
 
 
 @pytest.mark.parametrize("output", ["gh", "other 1.0"])
 def test_brew_installed_unparseable_raises(monkeypatch: pytest.MonkeyPatch, output: str) -> None:
-    _stub(monkeypatch, {("brew", "list", "--versions", "gh"): output})
+    _stub(monkeypatch, {("brew", "list", "--formula", "--versions", "gh"): output})
     with pytest.raises(hm.ProbeError, match="brew list"):
         hm.installed_version(_dep())
 
 
 def test_brew_formula_latest(monkeypatch: pytest.MonkeyPatch) -> None:
     info = json.dumps({"formulae": [{"versions": {"stable": "2.41.0"}}], "casks": []})
-    _stub(monkeypatch, {("brew", "info", "--json=v2", "gh"): info})
+    _stub(monkeypatch, {("brew", "info", "--json=v2", "--formula", "gh"): info})
     assert hm.latest_version(_dep()) == "2.41.0"
 
 
@@ -158,25 +176,35 @@ def test_brew_cask_latest(monkeypatch: pytest.MonkeyPatch) -> None:
     assert hm.latest_version(_dep(name="app", method="brew-cask")) == "4.2"
 
 
+def test_brew_latest_unknown_when_probe_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    _stub(monkeypatch, {("brew", "info", "--json=v2", "--formula", "gh"): None})
+    assert hm.latest_version(_dep()) is None
+
+
 @pytest.mark.parametrize(
-    "output",
+    ("output", "match"),
     [
-        None,
-        "",
-        "not json",
-        "[]",
-        json.dumps({"formulae": []}),
-        json.dumps({"formulae": ["x"]}),
-        json.dumps({"formulae": [{"versions": "x"}]}),
-        json.dumps({"formulae": [{"versions": {"stable": ""}}]}),
-        json.dumps({"formulae": [{"versions": {"stable": None}}]}),
+        ("", "not JSON"),
+        ("not json", "not JSON"),
+        ("[]", "no formulae entry"),
+        (json.dumps({"formulae": []}), "no formulae entry"),
+        (json.dumps({"formulae": ["x"]}), "no formulae entry"),
+        (json.dumps({"formulae": [{"versions": "x"}]}), "has no version"),
+        (json.dumps({"formulae": [{"versions": {"stable": ""}}]}), "has no version"),
+        (json.dumps({"formulae": [{"versions": {"stable": None}}]}), "has no version"),
+        (json.dumps({"formulae": [{"versions": {"stable": "1.0"}, "revision": "1"}]}), "revision"),
+        (json.dumps({"formulae": [{"versions": {"stable": "1.0"}, "revision": True}]}), "revision"),
+        (json.dumps({"formulae": [{"versions": {"stable": "1.0"}, "revision": -1}]}), "revision"),
+        (json.dumps({"formulae": [{"versions": {"stable": "HEAD-abc"}}]}), "no version"),
     ],
 )
-def test_brew_latest_unknown_when_probe_fails_or_unparseable(
-    monkeypatch: pytest.MonkeyPatch, output: str | None
+def test_brew_latest_unparseable_answer_is_probe_error(
+    monkeypatch: pytest.MonkeyPatch, output: str, match: str
 ) -> None:
-    _stub(monkeypatch, {("brew", "info", "--json=v2", "gh"): output})
-    assert hm.latest_version(_dep()) is None
+    # brew info answered, so this is a probe-error (ERROR), never latest-unknown.
+    _stub(monkeypatch, {("brew", "info", "--json=v2", "--formula", "gh"): output})
+    with pytest.raises(hm.ProbeError, match=match):
+        hm.latest_version(_dep())
 
 
 def test_brew_formula_upgrade(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -255,15 +283,21 @@ def test_uv_latest_unknown_when_probe_fails(monkeypatch: pytest.MonkeyPatch) -> 
     assert hm.latest_version(_uv()) is None
 
 
-@pytest.mark.parametrize("line", ["vergil-tooling v2.1.240", "vergil-tooling v2.1.240 [latest: ]"])
-def test_uv_outdated_line_without_latest_falls_back(
-    monkeypatch: pytest.MonkeyPatch, line: str
+@pytest.mark.parametrize(
+    ("line", "match"),
+    [
+        ("vergil-tooling v2.1.240", "has no latest"),
+        ("vergil-tooling v2.1.240 [latest: ]", "no version"),
+        ("vergil-tooling v2.1.240 [latest: soon]", "no version"),
+    ],
+)
+def test_uv_outdated_listed_without_readable_latest_raises(
+    monkeypatch: pytest.MonkeyPatch, line: str, match: str
 ) -> None:
-    _stub(
-        monkeypatch,
-        {("uv", "tool", "list", "--outdated"): line, ("uv", "tool", "list"): _UV_LIST},
-    )
-    assert hm.latest_version(_uv()) == "2.1.240"
+    # Listed as outdated but unreadable: never silently read as current.
+    _stub(monkeypatch, {("uv", "tool", "list", "--outdated"): line})
+    with pytest.raises(hm.ProbeError, match=match):
+        hm.latest_version(_uv())
 
 
 def test_uv_upgrade(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -306,10 +340,36 @@ def test_custom_latest(monkeypatch: pytest.MonkeyPatch) -> None:
     assert hm.latest_version(_custom()) == "521.0.0"
 
 
-@pytest.mark.parametrize("output", [None, ""])
-def test_custom_latest_unknown(monkeypatch: pytest.MonkeyPatch, output: str | None) -> None:
-    _stub(monkeypatch, {tuple(_PROBES["latest_version"]): output})
+def test_custom_latest_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
+    _stub(monkeypatch, {tuple(_PROBES["latest_version"]): None})
     assert hm.latest_version(_custom()) is None
+
+
+@pytest.mark.parametrize(("output", "match"), [("", "printed nothing"), ("no idea", "no version")])
+def test_custom_latest_unreadable_answer_raises(
+    monkeypatch: pytest.MonkeyPatch, output: str, match: str
+) -> None:
+    _stub(monkeypatch, {tuple(_PROBES["latest_version"]): output})
+    with pytest.raises(hm.ProbeError, match=match):
+        hm.latest_version(_custom())
+
+
+def test_custom_versions_are_normalized(monkeypatch: pytest.MonkeyPatch) -> None:
+    _stub(
+        monkeypatch,
+        {
+            tuple(_PROBES["installed_version"]): "tool version 520.0.0 (2025-01-01)",
+            tuple(_PROBES["latest_version"]): "v521.0.0",
+        },
+    )
+    assert hm.installed_version(_custom()) == "520.0.0"
+    assert hm.latest_version(_custom()) == "521.0.0"
+
+
+def test_custom_installed_unreadable_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    _stub(monkeypatch, {tuple(_PROBES["installed_version"]): "a 1.0 b 2.0"})
+    with pytest.raises(hm.ProbeError, match="several versions"):
+        hm.installed_version(_custom())
 
 
 def test_custom_upgrade(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -350,3 +410,187 @@ def test_unknown_method_fails_loudly(monkeypatch: pytest.MonkeyPatch, func: Any)
     with pytest.raises(ManifestError, match="unknown method 'pipx'"):
         func(_dep(method="pipx"))
     assert fake.calls == []
+
+
+# -- fixture-backed parsing (plan Task 7) ---------------------------------------------
+
+
+def test_fixture_brew_list_versions() -> None:
+    assert hm._parse_brew_list_versions("gh", _fixture("brew-list-versions-gh.txt")) == "2.62.0"
+
+
+def test_fixture_brew_list_picks_newest_keg_not_last_listed() -> None:
+    out = _fixture("brew-list-versions-multi-keg.txt")
+    assert hm._parse_brew_list_versions("python@3.12", out) == "3.12.7_1"
+
+
+def test_brew_list_unreadable_keg_raises() -> None:
+    with pytest.raises(hm.ProbeError, match="no version"):
+        hm._parse_brew_list_versions("gh", "gh 2.40.0 HEAD-1a2b3c")
+
+
+def test_fixture_brew_info_formula() -> None:
+    out = _fixture("brew-info-formula-gh.json")
+    assert hm._parse_brew_info_latest("gh", "brew-formula", out) == "2.62.0"
+
+
+def test_fixture_brew_info_revision_matches_installed_keg() -> None:
+    latest = hm._parse_brew_info_latest(
+        "python@3.12", "brew-formula", _fixture("brew-info-formula-revision.json")
+    )
+    installed = hm._parse_brew_list_versions(
+        "python@3.12", _fixture("brew-list-versions-multi-keg.txt")
+    )
+    assert latest == installed == "3.12.7_1"
+
+
+def test_fixture_brew_info_cask_drops_build_suffix() -> None:
+    out = _fixture("brew-info-cask-docker.json")
+    assert hm._parse_brew_info_latest("docker", "brew-cask", out) == "4.34.2"
+
+
+def test_fixture_brew_formula_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
+    listed = _fixture("brew-list-versions-gh.txt")
+    info = _fixture("brew-info-formula-gh.json")
+    _stub(
+        monkeypatch,
+        {
+            ("brew", "list", "--formula", "--versions", "gh"): listed,
+            ("brew", "info", "--json=v2", "--formula", "gh"): info,
+        },
+    )
+    assert hm.installed_version(_dep()) == "2.62.0"
+    assert hm.latest_version(_dep()) == "2.62.0"
+
+
+def test_fixture_uv_tool_list() -> None:
+    out = _fixture("uv-tool-list.txt")
+    assert hm._parse_uv_tool_installed("vergil-tooling", out) == "2.1.240"
+    assert hm._parse_uv_tool_installed("ruff", out) == "0.7.1"
+    assert hm._parse_uv_tool_installed("vrg-commit", out) is None  # an entry point, not a tool
+
+
+def test_fixture_uv_tool_list_outdated() -> None:
+    out = _fixture("uv-tool-list-outdated.txt")
+    assert hm._parse_uv_tool_outdated("ruff", out) == "0.7.2"
+    assert hm._parse_uv_tool_outdated("vergil-tooling", out) is None
+
+
+def test_fixture_gh_version_prose_matches_brew_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Spec §8: gh's own "gh version 2.40.0 (...)" output equals brew's bare "2.40.0"."""
+    _stub(monkeypatch, {("gh", "--version"): _fixture("gh-version.txt")})
+    dep = _dep(method="custom", probes={"installed_version": ["gh", "--version"]})
+    installed = hm.installed_version(dep)
+    assert installed == "2.40.0"
+    assert hv.compare(installed, "2.40.0") == 0
+
+
+# -- the curated manifest's custom probes, against fixtures -------------------------
+
+
+def _probe_stub(
+    monkeypatch: pytest.MonkeyPatch, dep: HostDependency, outputs: dict[str, str]
+) -> None:
+    _stub(monkeypatch, {tuple(dep.probes[key]): value for key, value in outputs.items()})
+
+
+def test_manifest_uv_probes(monkeypatch: pytest.MonkeyPatch) -> None:
+    uv = _manifest_dep("uv")
+    _probe_stub(
+        monkeypatch,
+        uv,
+        {
+            "installed_version": _fixture("uv-version.txt"),
+            "latest_version": _fixture("gh-api-uv-latest.txt"),
+        },
+    )
+    assert hm.installed_version(uv) == "0.9.5"
+    assert hm.latest_version(uv) == "0.9.6"
+
+
+def test_manifest_gcloud_probes(monkeypatch: pytest.MonkeyPatch) -> None:
+    gcloud = _manifest_dep("gcloud")
+    _probe_stub(
+        monkeypatch,
+        gcloud,
+        {
+            "installed_version": _fixture("gcloud-version-core.txt"),
+            "latest_version": _fixture("gcloud-components-list-core-latest.txt"),
+        },
+    )
+    assert hm.installed_version(gcloud) == "2024.10.04"
+    assert hm.latest_version(gcloud) == "2024.10.18"
+
+
+def test_manifest_docker_is_report_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    docker = _manifest_dep("docker")
+    _probe_stub(monkeypatch, docker, {"installed_version": _fixture("docker-version.txt")})
+    assert hm.installed_version(docker) == "27.3.1"
+    assert hm.latest_version(docker) is hm.UNMANAGED
+    with pytest.raises(hm.UpgradeUnsupportedError):
+        hm.upgrade(docker)
+
+
+def test_manifest_vergil_tooling_latest_is_unmanaged(monkeypatch: pytest.MonkeyPatch) -> None:
+    vt = _manifest_dep("vergil-tooling")
+    fake = _stub(monkeypatch, {("uv", "tool", "list"): _fixture("uv-tool-list.txt")})
+    assert hm.installed_version(vt) == "2.1.240"
+    assert hm.latest_version(vt) is hm.UNMANAGED
+    assert fake.calls == [["uv", "tool", "list"]]  # never asks uv's index feed
+
+
+def test_manifest_macos_installed(monkeypatch: pytest.MonkeyPatch) -> None:
+    macos = _manifest_dep("macos")
+    _probe_stub(monkeypatch, macos, {"installed_version": _fixture("sw-vers-product-version.txt")})
+    assert hm.installed_version(macos) == "15.1"
+    with pytest.raises(hm.UpgradeUnsupportedError):
+        hm.upgrade(macos)
+
+
+def _fake_macos_tools(
+    bin_dir: Path, softwareupdate_fixture: str | None, *, exit_code: int = 0
+) -> None:
+    """Install stub ``softwareupdate`` / ``sw_vers`` scripts serving fixtures."""
+    bin_dir.mkdir()
+    if softwareupdate_fixture is None:
+        body = f"exit {exit_code}\n"
+    else:
+        body = f"cat '{_FIXTURES / softwareupdate_fixture}'\nexit {exit_code}\n"
+    sw_vers = _FIXTURES / "sw-vers-product-version.txt"
+    scripts = {"softwareupdate": body, "sw_vers": f"cat '{sw_vers}'\n"}
+    for name, script in scripts.items():
+        path = bin_dir / name
+        path.write_text(f"#!/usr/bin/env bash\n{script}", encoding="utf-8")
+        path.chmod(0o755)
+
+
+@pytest.mark.parametrize(
+    ("fixture", "expected"),
+    [
+        ("softwareupdate-list-macos-available.txt", "15.1.1"),
+        ("softwareupdate-list-none.txt", "15.1"),
+        ("softwareupdate-list-non-macos-only.txt", "15.1"),
+    ],
+)
+def test_manifest_macos_latest_script(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, fixture: str, expected: str
+) -> None:
+    """Run the manifest's real softwareupdate-parsing probe against fixtures."""
+    bin_dir = tmp_path / "bin"
+    _fake_macos_tools(bin_dir, fixture)
+    monkeypatch.setenv("PATH", os.pathsep.join([str(bin_dir), os.environ["PATH"]]))
+    assert hm.latest_version(_manifest_dep("macos")) == expected
+
+
+@pytest.mark.parametrize(
+    ("fixture", "exit_code"),
+    [(None, 1), ("sw-vers-product-version.txt", 0)],
+)
+def test_manifest_macos_latest_unknown_when_unrecognized(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, fixture: str | None, exit_code: int
+) -> None:
+    """A failing or unrecognized softwareupdate is latest-unknown, never current."""
+    bin_dir = tmp_path / "bin"
+    _fake_macos_tools(bin_dir, fixture, exit_code=exit_code)
+    monkeypatch.setenv("PATH", os.pathsep.join([str(bin_dir), os.environ["PATH"]]))
+    assert hm.latest_version(_manifest_dep("macos")) is None
