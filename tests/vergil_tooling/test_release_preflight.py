@@ -37,6 +37,7 @@ def test_preflight_success() -> None:
         patch(_MOD + ".version.show", return_value="2.1.0"),
         patch(_MOD + "._check_version_not_tagged"),
         patch(_MOD + "._check_no_existing_tracking_issue"),
+        patch(_MOD + "._check_packages_unpublished"),
         patch(_MOD + ".pending_deps_prs", return_value=[]),
         patch(_MOD + "._acquire_release_worktree", return_value=wt) as m_wt,
         patch(_MOD + ".os.chdir") as m_chdir,
@@ -63,6 +64,7 @@ def test_preflight_resume_skips_fresh_checks_and_adopts() -> None:
         patch(_MOD + ".version.show", return_value="2.1.0"),
         patch(_MOD + "._check_version_not_tagged") as m_tagged,
         patch(_MOD + "._check_no_existing_tracking_issue") as m_issue,
+        patch(_MOD + "._check_packages_unpublished"),
         patch(_MOD + "._acquire_release_worktree", return_value=wt) as m_wt,
         patch(_MOD + ".os.chdir"),
     ):
@@ -109,6 +111,7 @@ def test_preflight_with_minor_override() -> None:
         patch(_MOD + ".version.show", return_value="2.0.34"),
         patch(_MOD + "._check_version_not_tagged"),
         patch(_MOD + "._check_no_existing_tracking_issue"),
+        patch(_MOD + "._check_packages_unpublished"),
         patch(_MOD + ".pending_deps_prs", return_value=[]),
         patch(_MOD + "._acquire_release_worktree", return_value=wt),
         patch(_MOD + ".os.chdir"),
@@ -131,6 +134,7 @@ def test_preflight_with_major_override() -> None:
         patch(_MOD + ".version.show", return_value="2.0.34"),
         patch(_MOD + "._check_version_not_tagged"),
         patch(_MOD + "._check_no_existing_tracking_issue"),
+        patch(_MOD + "._check_packages_unpublished"),
         patch(_MOD + ".pending_deps_prs", return_value=[]),
         patch(_MOD + "._acquire_release_worktree", return_value=wt),
         patch(_MOD + ".os.chdir"),
@@ -383,6 +387,7 @@ def test_preflight_never_audits() -> None:
         patch(_MOD + ".version.show", return_value="2.1.0"),
         patch(_MOD + "._check_version_not_tagged"),
         patch(_MOD + "._check_no_existing_tracking_issue"),
+        patch(_MOD + "._check_packages_unpublished"),
         patch(_MOD + ".pending_deps_prs", return_value=[]),
         patch(_MOD + "._acquire_release_worktree", return_value=wt),
         patch(_MOD + ".os.chdir"),
@@ -575,6 +580,7 @@ def _fresh_patches(pending: list[PendingDepsPr]) -> list[contextlib.AbstractCont
         patch(_MOD + ".version.show", return_value="2.1.0"),
         patch(_MOD + "._check_version_not_tagged"),
         patch(_MOD + "._check_no_existing_tracking_issue"),
+        patch(_MOD + "._check_packages_unpublished"),
         patch(_MOD + "._acquire_release_worktree", return_value=wt),
         patch(_MOD + ".os.chdir"),
         patch(_MOD + ".pending_deps_prs", return_value=pending),
@@ -969,3 +975,111 @@ def test_preflight_clear_step_end_to_end_with_gh_mocked() -> None:
     assert ctx.cleared_deps_prs == ["https://github.com/o/r/pull/3281"]
     assert m_json.call_args.args[:3] == ("issue", "view", "3282")
     assert m_run.call_args.args[:3] == ("pr", "close", "https://github.com/o/r/pull/3281")
+
+
+# --- package re-publish check (#3309) ----------------------------------------
+
+_VP_TOML = """\
+[project]
+repository-type = "infrastructure"
+versioning-scheme = "semver"
+branching-model = "library-release"
+release-model = "tagged-release"
+
+[dependencies]
+vergil = "v2.1"
+
+[ci]
+versions = ["latest"]
+
+[package]
+builder = "staged"
+vendor = "vergil"
+name = "vergil-python3.14.8"
+version = "3.14.8+20261003"
+summary = "Pinned CPython"
+smoke = "true"
+
+[package.staged]
+build-command = "packaging/build.sh"
+"""
+
+
+def test_check_packages_unpublished_passes_and_reports(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "vergil.toml").write_text(_VP_TOML)
+    with patch(_MOD + ".published.published", return_value={}) as m_pub:
+        preflight_module._check_packages_unpublished("o/r", tmp_path, "1.0.1")
+    m_pub.assert_called_once()
+    assert m_pub.call_args.args[:2] == ("o/r", "v1.0.1")
+    assert "Package check passed: 4 package(s) not yet published by o/r" in capsys.readouterr().out
+
+
+def test_check_packages_unpublished_refuses_the_incident_shape(tmp_path: Path) -> None:
+    """vergil-python v1.0.1 rebuilding v1.0.0's 3.14.8+20261003-1 is refused in preflight."""
+    from vergil_tooling.lib.package.index.collect import Identity
+
+    (tmp_path / "vergil.toml").write_text(_VP_TOML)
+    prior = {Identity("deb", "vergil-python3.14.8", "3.14.8+20261003-1", "amd64"): "v1.0.0"}
+    with (
+        patch(_MOD + ".published.published", return_value=prior),
+        pytest.raises(ReleaseError) as info,
+    ):
+        preflight_module._check_packages_unpublished("o/r", tmp_path, "1.0.1")
+    assert info.value.phase == "preflight"
+    assert info.value.command == "vrg-package check-unpublished --repo o/r --version 1.0.1"
+    assert "already published by o/r@v1.0.0" in str(info.value)
+
+
+def test_check_packages_unpublished_without_package_is_silent(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "vergil.toml").write_text(_VP_TOML.split("[package]")[0])
+    with patch(_MOD + ".published.published") as m_pub:
+        preflight_module._check_packages_unpublished("o/r", tmp_path, "1.0.1")
+    m_pub.assert_not_called()
+    assert capsys.readouterr().out == ""
+
+
+def test_check_packages_unpublished_refuses_when_state_is_unreadable(tmp_path: Path) -> None:
+    from vergil_tooling.lib.package import PackageError
+
+    (tmp_path / "vergil.toml").write_text(_VP_TOML)
+    with (
+        patch(_MOD + ".published.published", side_effect=PackageError("listing failed: 502")),
+        pytest.raises(ReleaseError, match="listing failed: 502"),
+    ):
+        preflight_module._check_packages_unpublished("o/r", tmp_path, "1.0.1")
+
+
+def test_check_packages_unpublished_wraps_config_error(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(
+        _VP_TOML.replace("[package]\n", '[package]\nexclude = ["*/*/*"]\n')
+    )
+    with pytest.raises(ReleaseError, match="selects no targets"):
+        preflight_module._check_packages_unpublished("o/r", tmp_path, "1.0.1")
+
+
+def test_preflight_package_refusal_precedes_deps_gate_and_worktree() -> None:
+    refusal = ReleaseError(phase="preflight", command="c", message="would re-publish")
+    with contextlib.ExitStack() as stack:
+        for p in _fresh_patches([]):
+            stack.enter_context(p)
+        stack.enter_context(patch(_MOD + "._check_packages_unpublished", side_effect=refusal))
+        m_deps = stack.enter_context(patch(_MOD + ".pending_deps_prs"))
+        m_wt = stack.enter_context(patch(_MOD + "._acquire_release_worktree"))
+        with pytest.raises(ReleaseError, match="would re-publish"):
+            preflight(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
+    m_deps.assert_not_called()
+    m_wt.assert_not_called()
+
+
+def test_preflight_runs_package_check_with_release_version() -> None:
+    root = Path("/tmp/repo")  # noqa: S108
+    with contextlib.ExitStack() as stack:
+        for p in _fresh_patches([]):
+            stack.enter_context(p)
+        m_check = stack.enter_context(patch(_MOD + "._check_packages_unpublished"))
+        preflight(version_override="minor", repo_root=root)
+    m_check.assert_called_once_with("o/r", root, "2.2.0")

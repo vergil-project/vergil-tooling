@@ -389,6 +389,7 @@ CLI tools installed as `vrg-*` console scripts:
 - **`vrg-container-test`** — Run repo test suite inside a dev container
 - **`vrg-package`** — Build, install-test and index binary OS packages
   (`.deb`/`.rpm`) from `[package]` in `vergil.toml`: `matrix`, `build`,
+  `check-unpublished` (refuse re-publishing a released package version),
   `install-test`, and `index` (the signed apt/dnf site)
 - **`vrg-sarif-filter`** — Copy a SARIF file without its
   accepted-suppressed results, for upload to GitHub code scanning
