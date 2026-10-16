@@ -231,9 +231,7 @@ def test_rpm_package_names_lists_every_package() -> None:
 
 
 def test_rpm_package_names_unpublished_repo_is_empty() -> None:
-    assert (
-        package_index.rpm_package_names("https://x", "el9", "x86_64", lambda _u: b"") == set()
-    )
+    assert package_index.rpm_package_names("https://x", "el9", "x86_64", lambda _u: b"") == set()
 
     def fetch(url: str) -> bytes:
         return _REPOMD if url.endswith("repomd.xml") else b""

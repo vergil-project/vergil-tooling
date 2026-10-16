@@ -37,9 +37,7 @@ def _deb(*names: str) -> bytes:
 def _rpm_primary(*names: str) -> bytes:
     primary = (
         '<metadata xmlns="http://linux.duke.edu/metadata/common">'
-        + "".join(
-            f'<package><name>{n}</name><version ver="1" rel="1"/></package>' for n in names
-        )
+        + "".join(f'<package><name>{n}</name><version ver="1" rel="1"/></package>' for n in names)
         + "</metadata>"
     )
     return gzip.compress(primary.encode())

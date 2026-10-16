@@ -128,14 +128,8 @@ def bump_runtime(base: Path, served: set[str]) -> tuple[str | None, HeldBack | N
     pattern = re.compile(_RUNTIME_LINE_RE.format(old=re.escape(current)), re.MULTILINE)
     new_text, count = pattern.subn(lambda m: m.group(1) + patch + m.group(3), text)
     if count != 1:
-        raise UpdateDepsError(
-            phase="update",
-            command="bump_runtime",
-            message=(
-                f'Expected exactly one runtime = "{current}" line in vergil.toml, '
-                f"found {count}."
-            ),
-        )
+        msg = f'Expected exactly one runtime = "{current}" line in vergil.toml, found {count}.'
+        raise UpdateDepsError(phase="update", command="bump_runtime", message=msg)
     path.write_text(new_text)
     return patch, entry
 
