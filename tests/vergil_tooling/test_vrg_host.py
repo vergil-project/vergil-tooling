@@ -487,3 +487,259 @@ def test_status_without_fix_never_remediates(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(vrg_host.host_methods, "_run", host.run)
     assert vrg_host.main(["status"]) == 2
     assert not any(cmd[0].startswith("fix-") for cmd in host.calls)
+
+
+# -- upgrade -------------------------------------------------------------------
+
+
+def _stub_upgrade(
+    monkeypatch: pytest.MonkeyPatch,
+    deps: tuple[HostDependency, ...],
+    errors: dict[str, Exception] | None = None,
+) -> list[str]:
+    """Stub the manifest and ``host_methods.upgrade``; return the upgraded names."""
+    calls: list[str] = []
+    failing = errors or {}
+
+    def fake_upgrade(dep: HostDependency) -> None:
+        calls.append(dep.name)
+        if dep.name in failing:
+            raise failing[dep.name]
+
+    monkeypatch.setattr(vrg_host.host_deps, "load_manifest", lambda: deps)
+    monkeypatch.setattr(vrg_host.host_methods, "upgrade", fake_upgrade)
+    return calls
+
+
+def test_upgrade_all_skips_manual_and_reports(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    deps = (
+        _dep(name="gh"),
+        _dep(name="macos", method="custom", upgrade="manual"),
+        _dep(name="xcode", method="custom", upgrade="manual"),
+    )
+    calls = _stub_upgrade(monkeypatch, deps)
+    assert vrg_host.main(["upgrade", "--all"]) == 0
+    out = capsys.readouterr().out
+    assert calls == ["gh"]  # only auto upgraded
+    assert "upgraded gh" in out
+    assert "skipped (upgrade = manual, upgrade by hand): macos, xcode" in out
+
+
+def test_upgrade_named_dep(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls = _stub_upgrade(monkeypatch, (_dep(name="gh"), _dep(name="uv", method="uv-tool")))
+    assert vrg_host.main(["upgrade", "uv", "uv"]) == 0
+    assert calls == ["uv"]  # deduplicated, and only what was named
+    out = capsys.readouterr().out
+    assert "upgraded uv" in out and "skipped" not in out
+
+
+def test_upgrade_named_manual_is_refused(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    deps = (_dep(name="gh"), _dep(name="macos", method="custom", upgrade="manual"))
+    calls = _stub_upgrade(monkeypatch, deps)
+    assert vrg_host.main(["upgrade", "macos", "gh"]) == 1
+    assert calls == ["gh"]
+    out = capsys.readouterr().out
+    assert "refused  macos: upgrade = manual" in out
+    assert "upgraded gh" in out
+
+
+def test_upgrade_unknown_dep_is_error_and_upgrades_nothing(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls = _stub_upgrade(monkeypatch, (_dep(name="gh"),))
+    assert vrg_host.main(["upgrade", "gh", "nope"]) == 2
+    assert calls == []
+    err = capsys.readouterr().err
+    assert "vrg-host: unknown dependency: nope (known: gh)" in err
+
+
+def test_upgrade_pinned_dep_is_held_without_force(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls = _stub_upgrade(monkeypatch, (_dep(name="gh", pin=_pin("2.40.x")),))
+    assert vrg_host.main(["upgrade", "gh"]) == 1
+    assert calls == []
+    out = capsys.readouterr().out
+    assert "held     gh: pinned to 2.40.x (breaks us)" in out
+    assert "vrg-host unpin gh" in out and "--force" in out
+
+
+def test_upgrade_all_holds_pin_without_failing(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    deps = (_dep(name="gh", pin=_pin("2.x")), _dep(name="uv", method="uv-tool"))
+    calls = _stub_upgrade(monkeypatch, deps)
+    assert vrg_host.main(["upgrade", "--all"]) == 0
+    assert calls == ["uv"]
+    assert "held     gh" in capsys.readouterr().out
+
+
+def test_upgrade_force_crosses_pin(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls = _stub_upgrade(monkeypatch, (_dep(name="gh", pin=_pin("2.40.x")),))
+    assert vrg_host.main(["upgrade", "--force", "gh"]) == 0
+    assert calls == ["gh"]
+    assert "upgraded gh" in capsys.readouterr().out
+
+
+def test_upgrade_inactive_pin_does_not_hold(monkeypatch: pytest.MonkeyPatch) -> None:
+    freed = HostPin(
+        constraint="2.x",
+        inducing_release="3.0",
+        deterministic=False,
+        reason="was broken",
+        state="freed",
+        tracking_issue=None,
+        pinned_date="2026-10-01",
+    )
+    calls = _stub_upgrade(monkeypatch, (_dep(name="gh", pin=freed),))
+    assert vrg_host.main(["upgrade", "gh"]) == 0
+    assert calls == ["gh"]
+
+
+@pytest.mark.parametrize("force", [[], ["--force"]])
+def test_upgrade_unsupported_pin_constraint_is_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], force: list[str]
+) -> None:
+    deps = (_dep(name="gh", pin=_pin("<=2.x")), _dep(name="uv", method="uv-tool"))
+    calls = _stub_upgrade(monkeypatch, deps)
+    assert vrg_host.main(["upgrade", "--all", *force]) == 2
+    assert calls == ["uv"]  # the bad pin fails gh alone
+    out = capsys.readouterr().out
+    assert "ERROR    gh: unsupported pin constraint '<=2.x'" in out
+    assert "upgraded uv" in out
+
+
+def test_upgrade_privilege_refusal_is_manual_action_never_retried(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A custom upgrade command that escalates hits the real _run guard.
+    dep = _dep(name="tool", method="custom", probes={"upgrade": ["sudo", "tool", "update"]})
+    monkeypatch.setattr(vrg_host.host_deps, "load_manifest", lambda: (dep, _dep(name="gh")))
+    runs: list[list[str]] = []
+
+    def fake_subprocess_run(cmd: list[str], **_kw: Any) -> Any:
+        runs.append(cmd)
+        return type("Done", (), {"stdout": ""})()
+
+    monkeypatch.setattr(hm.subprocess, "run", fake_subprocess_run)
+    assert vrg_host.main(["upgrade", "--all"]) == 2
+    assert runs == [["brew", "upgrade", "gh"]]  # sudo never executed, gh still upgraded
+    out = capsys.readouterr().out
+    assert "MANUAL   tool: upgrade refused, needs manual action" in out
+    assert "refusing to escalate privilege: 'sudo'" in out
+    assert "upgraded gh" in out
+
+
+def test_upgrade_failures_are_reported_per_dep(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    deps = (_dep(name="gh"), _dep(name="weird", method="custom"), _dep(name="uv", method="uv-tool"))
+    errors: dict[str, Exception] = {
+        "gh": hm.UpgradeFailedError("gh: upgrade command failed: brew upgrade gh"),
+        "weird": ManifestError("dependency 'weird': custom method requires probe 'upgrade'"),
+    }
+    calls = _stub_upgrade(monkeypatch, deps, errors)
+    assert vrg_host.main(["upgrade", "--all"]) == 2
+    assert calls == ["gh", "weird", "uv"]  # one failure never stops the rest
+    out = capsys.readouterr().out
+    assert "FAILED   gh: gh: upgrade command failed: brew upgrade gh" in out
+    assert "upgrade it manually" in out
+    assert "FAILED   weird: dependency 'weird': custom method requires probe 'upgrade'" in out
+    assert "upgraded uv" in out
+
+
+def test_upgrade_invalid_manifest_exits_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def boom() -> tuple[HostDependency, ...]:
+        raise ManifestError("bad")
+
+    monkeypatch.setattr(vrg_host.host_deps, "load_manifest", boom)
+    assert vrg_host.main(["upgrade", "--all"]) == 2
+    assert "vrg-host: invalid host-dependency manifest: bad" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("argv", [["upgrade"], ["upgrade", "--all", "gh"]])
+def test_upgrade_requires_names_xor_all(
+    argv: list[str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit) as exc:
+        vrg_host.main(argv)
+    assert exc.value.code == 2
+    assert "name one or more dependencies, or pass --all (not both)" in capsys.readouterr().err
+
+
+def test_upgrade_against_packaged_manifest(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Real manifest, stubbed shell-out seam: every upgrade command fails.
+    monkeypatch.setattr(vrg_host.host_methods, "_run", lambda cmd: None)
+    assert vrg_host.main(["upgrade", "--all"]) == 2
+    out = capsys.readouterr().out
+    assert "FAILED   uv" in out and "FAILED   gh" in out and "FAILED   gcloud" in out
+
+
+def test_upgrade_honors_pin_from_pins_file(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A pin recorded with `vrg-host pin` (host-local pins file, not the packaged
+    # manifest) is a real hold for upgrade.
+    assert vrg_host.main(_PIN_ARGS) == 0
+    calls: list[str] = []
+    monkeypatch.setattr(vrg_host.host_methods, "upgrade", lambda d: calls.append(d.name))
+    capsys.readouterr()
+
+    assert vrg_host.main(["upgrade", "gh"]) == 1
+    assert calls == []
+    assert "held     gh: pinned to 2.40.x (2.41.0 breaks vrg-gh auth)" in capsys.readouterr().out
+
+    assert vrg_host.main(["upgrade", "--all"]) == 0
+    assert calls == ["uv", "gcloud"]  # gh held, the rest upgraded
+    assert "held     gh" in capsys.readouterr().out
+
+    assert vrg_host.main(["upgrade", "--force", "gh"]) == 0
+    assert calls == ["uv", "gcloud", "gh"]
+
+    assert vrg_host.main(["unpin", "gh"]) == 0  # a freed pin no longer holds
+    assert vrg_host.main(["upgrade", "gh"]) == 0
+    assert calls == ["uv", "gcloud", "gh", "gh"]
+
+
+def test_upgrade_honors_pin_written_via_host_pins(monkeypatch: pytest.MonkeyPatch) -> None:
+    host_pins.write_pin(
+        "uv",
+        host_pins.make_pin(
+            constraint="0.5.x",
+            inducing_release="0.6.0",
+            deterministic=False,
+            reason="0.6 breaks the lockfile",
+            tracking_issue=None,
+        ),
+    )
+    calls: list[str] = []
+    monkeypatch.setattr(vrg_host.host_methods, "upgrade", lambda d: calls.append(d.name))
+    assert vrg_host.main(["upgrade", "uv"]) == 1
+    assert calls == []
+
+
+def test_upgrade_invalid_pins_file_exits_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = host_pins.default_pins_path()
+    path.parent.mkdir(parents=True)
+    path.write_text("[pin.gh]\nconstraint = 1\n")
+    calls: list[str] = []
+    monkeypatch.setattr(vrg_host.host_methods, "upgrade", lambda d: calls.append(d.name))
+    assert vrg_host.main(["upgrade", "--all"]) == 2
+    assert calls == []
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "vrg-host: invalid host pins file:" in captured.err
