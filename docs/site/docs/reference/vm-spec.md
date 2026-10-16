@@ -257,7 +257,11 @@ Access is via the provider's identity-aware tunnel (GCP IAP) — there is
 **no public IP** and no operator-IP allow-list; authentication is the
 operator's existing cloud IAM/ADC. Host prerequisites are therefore
 OpenTofu (≥ 1.8.0) and the provider CLI (`gcloud`, with ADC); cloud
-verbs preflight both and fail with a clear remediation. The in-guest
+verbs preflight both and fail with a clear remediation. On a macOS host,
+[`vrg-host`](dev/host.md) tracks both tools' versions and checks that the
+interpreter `gcloud` runs on can import NumPy, without which every IAP
+tunnel session warns and runs slower (`vrg-host status --fix` installs it).
+The in-guest
 login user defaults to the cloud image's default user and can be
 overridden with `VRG_OFF_PLATFORM_SSH_USER`.
 

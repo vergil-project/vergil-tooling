@@ -50,6 +50,8 @@ export PATH="$(pwd)/.venv/bin:$PATH"
 - `vrg-ensure-label` — Idempotent GitHub label creation
 - `vrg-package` — Build, install-test and index binary OS packages
   (`.deb`/`.rpm`) from `[package]` in `vergil.toml`
+- `vrg-host` — Report, upgrade and pin the macOS host dependencies
+  (`status`, `upgrade`, `pin`, `unpin`)
 
 Lima and cloud agent VMs install vergil-tooling as a signed apt package
 rather than with `uv`; see the

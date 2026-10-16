@@ -386,6 +386,13 @@ CLI tools installed as `vrg-*` console scripts:
   accepted-suppressed results, for upload to GitHub code scanning
 - **`vrg-vm`** — Create, start, update, rebuild and enter Lima/cloud agent
   VMs (`vrg-vm update` reinstalls vergil-tooling in a running VM)
+- **`vrg-host`** — Observe and manage the macOS host dependencies declared
+  in the packaged, never repo-overridable manifest
+  `src/vergil_tooling/data/host_dependencies.toml`: `status` (default;
+  `--fix` runs check remediations), `upgrade <dep>… | --all [--force]`,
+  `pin`/`unpin` (epic #155 doctrine; pins live in the user's
+  `~/.config/vergil/host-pins.toml`). Runs unprivileged — never escalates
+  privilege (`sudo` etc. are refused)
 
 This list highlights the main tools; `[project.scripts]` in
 `pyproject.toml` is the complete set of entry points.
@@ -400,6 +407,9 @@ Shared libraries under `src/vergil_tooling/lib/`:
 - **`package/`** — Binary package builds (matrix, python and staged
   builders, nFPM, install-test, repository bootstrap, `index/` for the
   apt/dnf site)
+- **`host_*.py`** — `vrg-host` manifest loading (`host_deps`), install-method
+  handlers (`host_methods`), host pins (`host_pins`), classification and
+  rendering (`host_status`), and version ordering (`host_versions`)
 
 ### Docker Dev Images
 
@@ -445,7 +455,7 @@ old `standard-tooling`/`st-*` naming):
 
 | Target | Install mechanism | Who uses it |
 |---|---|---|
-| **Developer host** (macOS) | `uv tool install` from git URL | Host-side commands: `vrg-container-run`, `vrg-commit`, `vrg-submit-pr`, `vrg-release`, `vrg-finalize-pr` |
+| **Developer host** (macOS) | `uv tool install` from git URL | Host-side commands: `vrg-container-run`, `vrg-commit`, `vrg-submit-pr`, `vrg-release`, `vrg-finalize-pr`, `vrg-host` |
 | **Container runtime** (all languages) | `vrg-container-run` cache-first install per `vergil.toml` | `vrg-*` inside the container for all consumers |
 | **Agent VM** (Lima/cloud) | Signed `vergil-tooling` package via `apt` from <https://vergil-project.github.io/packages>, pinned to the identity's release line or version | Agent sessions inside the VM |
 

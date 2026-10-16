@@ -27,6 +27,7 @@ the dev-tree override venv.
 | [vrg-container-system-packages](cli-tools-overview.md#vrg-container-system-packages) | Print the declared `[container].system-packages` (CI consumption) |
 | [vrg-container-cache](cli-tools-overview.md#vrg-container-cache) | Manage the per-branch cached dev image |
 | [vrg-generate-commands](cli-tools-overview.md#vrg-generate-commands) | Generate MQSC command methods |
+| [vrg-host](dev/host.md) | Report, upgrade and pin the macOS host dependencies |
 
 ## Container tools
 
