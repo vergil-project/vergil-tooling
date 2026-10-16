@@ -1286,6 +1286,8 @@
       
         
       
+        
+      
     
     
     
@@ -1338,6 +1340,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.245/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.245
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -11661,6 +11691,8 @@
       
         
       
+        
+      
     
     
     
@@ -11889,6 +11921,34 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="../../reference/dependency-update-config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dependency Update ([dependency-update])
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
     
     
       
@@ -11907,10 +11967,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_8" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_9" >
         
           
-          <label class="md-nav__link" for="__nav_4_8" id="__nav_4_8_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_9" id="__nav_4_9_label" tabindex="0">
             
   
   
@@ -11928,8 +11988,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_8_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_8">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_9">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -12001,10 +12061,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_9" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_10" >
         
           
-          <label class="md-nav__link" for="__nav_4_9" id="__nav_4_9_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_10" id="__nav_4_10_label" tabindex="0">
             
   
   
@@ -12022,8 +12082,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_9_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_9">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_10">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -12118,6 +12178,8 @@
       
         
       
+        
+      
     
     
     
@@ -12131,10 +12193,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_10" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_11" >
         
           
-          <label class="md-nav__link" for="__nav_4_10" id="__nav_4_10_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_11" id="__nav_4_11_label" tabindex="0">
             
   
   
@@ -12152,8 +12214,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_10_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_10">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_11">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -12254,14 +12316,42 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/dev/prepare-release/" class="md-nav__link">
+      <a href="../../reference/dev/release/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    vrg-prepare-release
+    vrg-release
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/dev/update-deps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-update-deps
   
 
     
@@ -15807,7 +15897,15 @@ through PRs against the appropriate integration branch (typically
 </code></pre></div>
 <p>Pattern: <code>^(feature|bugfix|hotfix|chore)/[0-9]+-[a-z0-9][a-z0-9-]*$</code>.</p>
 <p>The <code>release/*</code> and <code>promotion/*</code> prefixes are created by automated
-workflows and are exempt from the issue-number rule.</p>
+workflows and are exempt from the issue-number rule. So is
+<code>deps/update-&lt;version&gt;</code>, the branch <code>vrg-update-deps</code> (and the
+<code>vrg-release</code> <code>update-deps</code> stage) creates for a dependency update; only
+that driver commits to it.</p>
+<p>When a dependency update fails, its fix task's branch follows the
+issue-number rule but starts from the failed update:
+<code>chore/&lt;fix-issue&gt;-dep-update-&lt;version&gt;</code>, cut from
+<code>origin/deps/update-&lt;version&gt;</code>. See
+<a href="../releasing/#when-the-dependency-update-fails">When the dependency update fails</a>.</p>
 <h2 id="two-enforcement-layers">Two enforcement layers<a class="headerlink" href="#two-enforcement-layers" title="Permanent link">&para;</a></h2>
 <p>The branching, commit, and PR rules are enforced by two distinct
 mechanisms. Both exist; they complement each other.</p>
@@ -16037,12 +16135,15 @@ the cleanup above is automatic. To remove one by hand:</p>
 <p>High-level summary:</p>
 <ol>
 <li>Accumulate feature PRs on <code>develop</code>.</li>
-<li>Run <code>vrg-prepare-release --issue &lt;N&gt;</code> to cut a <code>release/&lt;version&gt;</code>
-   branch, generate the changelog, and open a PR to <code>main</code>.</li>
-<li>Merge the release PR manually. CI auto-tags, creates the GitHub
-   Release, publishes the package artifact, and opens a
-   version-bump PR back to <code>develop</code>.</li>
-<li><code>vrg-finalize-pr</code> as usual.</li>
+<li>Run <code>vrg-release</code> from the root checkout. It creates the tracking
+   issue and the <code>release/&lt;version&gt;</code> branch, generates the changelog,
+   merges the release PR to <code>main</code>, waits for CD to tag and publish,
+   merges the version bump back to <code>develop</code>, and cleans up.</li>
+<li>As its last step, <code>vrg-release</code> runs the dependency update on the
+   new <code>develop</code> version and opens a <code>dependency-update</code> PR when
+   anything changed. If its validation or merge fails, the PR stays open
+with a fix task, and the next
+   release refuses to start until it is dealt with.</li>
 </ol>
 <h2 id="adoption-for-a-new-repo">Adoption for a new repo<a class="headerlink" href="#adoption-for-a-new-repo" title="Permanent link">&para;</a></h2>
 <p>Onboarding a brand-new repository has two entry points:</p>

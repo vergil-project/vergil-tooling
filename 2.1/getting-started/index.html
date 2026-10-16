@@ -1286,6 +1286,8 @@
       
         
       
+        
+      
     
     
     
@@ -1338,6 +1340,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../releases/v2.1.245/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.245
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -11796,6 +11826,8 @@
       
         
       
+        
+      
     
     
     
@@ -12024,6 +12056,34 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="../reference/dependency-update-config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dependency Update ([dependency-update])
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
     
     
       
@@ -12042,10 +12102,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_8" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_9" >
         
           
-          <label class="md-nav__link" for="__nav_4_8" id="__nav_4_8_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_9" id="__nav_4_9_label" tabindex="0">
             
   
   
@@ -12063,8 +12123,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_8_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_8">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_9">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -12136,10 +12196,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_9" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_10" >
         
           
-          <label class="md-nav__link" for="__nav_4_9" id="__nav_4_9_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_10" id="__nav_4_10_label" tabindex="0">
             
   
   
@@ -12157,8 +12217,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_9_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_9">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_10">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -12253,6 +12313,8 @@
       
         
       
+        
+      
     
     
     
@@ -12266,10 +12328,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_10" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_11" >
         
           
-          <label class="md-nav__link" for="__nav_4_10" id="__nav_4_10_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_11" id="__nav_4_11_label" tabindex="0">
             
   
   
@@ -12287,8 +12349,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_10_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_10">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_11">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -12389,14 +12451,42 @@
   
   
     <li class="md-nav__item">
-      <a href="../reference/dev/prepare-release/" class="md-nav__link">
+      <a href="../reference/dev/release/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    vrg-prepare-release
+    vrg-release
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/dev/update-deps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-update-deps
   
 
     
@@ -15375,6 +15465,10 @@ CI config, and troubleshooting, see
 <h2 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h2>
 <p>Install these on your host:</p>
 <ul>
+<li><strong>Homebrew</strong> (macOS) — with the Xcode Command Line Tools, which Homebrew
+  needs (<code>xcode-select --install</code>). Install the host tools below with it.</li>
+<li><strong>git</strong> — <code>brew install git</code> on macOS; <code>vrg-git</code>, <code>vrg-commit</code> and the PR
+  workflow run it on the host</li>
 <li><strong>Docker</strong> — the dev container engine</li>
 <li><strong>uv</strong> — Python package manager
   (<a href="https://docs.astral.sh/uv/getting-started/installation/">install</a>)</li>
@@ -15386,6 +15480,10 @@ CI config, and troubleshooting, see
 most <code>vrg-*</code> tools — lives inside the dev container. The host-side
 <code>vrg-*</code> tools (<code>vrg-container-run</code>, <code>vrg-commit</code>, <code>vrg-submit-pr</code>, etc.)
 are installed via <code>uv tool install</code>.</p>
+<p>This list is the minimum to get started. On macOS, once vergil-tooling is
+installed (step 1), <code>vrg-host status</code> is the complete host-dependency check: it
+reports every tool Vergil needs on the host, including the Command Line Tools,
+git and the agent-VM tools, and flags anything missing or out of date.</p>
 <h2 id="1-install-vergil-tooling-on-the-host">1. Install vergil-tooling on the host<a class="headerlink" href="#1-install-vergil-tooling-on-the-host" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>tool<span class="w"> </span>install<span class="w"> </span><span class="s1">'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.1'</span>
 </code></pre></div>

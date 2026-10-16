@@ -1286,6 +1286,8 @@
       
         
       
+        
+      
     
     
     
@@ -1338,6 +1340,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.245/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.245
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -11663,6 +11693,8 @@
       
         
       
+        
+      
     
     
     
@@ -11894,6 +11926,34 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="../../dependency-update-config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dependency Update ([dependency-update])
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
     
     
       
@@ -11915,10 +11975,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_8" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_9" >
         
           
-          <label class="md-nav__link" for="__nav_4_8" id="__nav_4_8_label" tabindex="">
+          <label class="md-nav__link" for="__nav_4_9" id="__nav_4_9_label" tabindex="">
             
   
   
@@ -11936,8 +11996,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_8_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_8">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_9">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -12012,10 +12072,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_9" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_10" >
         
           
-          <label class="md-nav__link" for="__nav_4_9" id="__nav_4_9_label" tabindex="">
+          <label class="md-nav__link" for="__nav_4_10" id="__nav_4_10_label" tabindex="">
             
   
   
@@ -12033,8 +12093,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_9_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_9">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_10">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -12131,6 +12191,8 @@
       
         
       
+        
+      
     
     
     
@@ -12147,10 +12209,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_10" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_11" checked>
         
           
-          <label class="md-nav__link" for="__nav_4_10" id="__nav_4_10_label" tabindex="">
+          <label class="md-nav__link" for="__nav_4_11" id="__nav_4_11_label" tabindex="">
             
   
   
@@ -12168,8 +12230,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_10_label" aria-expanded="true">
-          <label class="md-nav__title" for="__nav_4_10">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_11_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4_11">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -12270,14 +12332,42 @@
   
   
     <li class="md-nav__item">
-      <a href="../prepare-release/" class="md-nav__link">
+      <a href="../release/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    vrg-prepare-release
+    vrg-release
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../update-deps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-update-deps
   
 
     
@@ -15570,7 +15660,8 @@
 <code>host_status.py</code>, <code>host_versions.py</code>)</p>
 <p>Observes and manages the tools Vergil development needs <strong>on the macOS host
 itself</strong> — the ones that cannot live in a dev container or an agent VM, such as
-<code>gh</code>, <code>uv</code>, <code>gcloud</code>, Lima and Docker Desktop. It reports how far each one has drifted
+<code>gh</code>, <code>git</code>, <code>uv</code>, <code>gcloud</code>, Lima, Docker Desktop and the Xcode Command Line
+Tools. It reports how far each one has drifted
 from its latest release, upgrades the ones it is allowed to upgrade, and records
 deliberate <strong>pins</strong> as tracked technical debt rather than silent freezes.</p>
 <p><code>vrg-host</code> is a host tool: run it on the Mac, not inside <code>vrg-container-run</code>.
@@ -15701,8 +15792,13 @@ reports every level that is behind instead of only the newest:</p>
   that is not dotted numeric, such as <code>26.7.1 (a)</code>) is a <code>probe-error</code>, never
   dropped.</li>
 </ul>
-<p>Only <code>macos</code> reports update levels. Every other dependency compares against a
-single latest version.</p>
+<p>The Xcode Command Line Tools (<code>xcode-clt</code>) also come from Software Update, so
+they report update levels the same way, from the "Command Line Tools" items
+that <code>softwareupdate --list</code> lists:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>[WARN ] xcode-clt        custom              26.6.0 -&gt; 26.7         behind (drift): minor 26.7
+</code></pre></div>
+<p>Only <code>macos</code> and <code>xcode-clt</code> report update levels. Every other dependency
+compares against a single latest version.</p>
 <p>A broken probe for one dependency becomes a <code>probe-error</code> row for that
 dependency only; the rest of the report still runs. Nothing is ever guessed at:
 an unreadable version is an error, never a false <code>current</code> or <code>missing</code>.</p>
@@ -15735,15 +15831,15 @@ and reported as <code>missing</code>). Each remediation is verified by re-runnin
 A remediation that fails, or leaves its check unsatisfied, is printed to stderr
 and forces exit <code>2</code>. Remediations run unprivileged like every other command.</p>
 <h3 id="upgrade">upgrade<a class="headerlink" href="#upgrade" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>vrg-host<span class="w"> </span>upgrade<span class="w"> </span>gh<span class="w"> </span>lima<span class="w">       </span><span class="c1"># named dependencies</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>vrg-host<span class="w"> </span>upgrade<span class="w"> </span>--all<span class="w">         </span><span class="c1"># every auto dependency</span>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>vrg-host<span class="w"> </span>upgrade<span class="w"> </span>--all<span class="w"> </span>--force<span class="w"> </span><span class="c1"># also upgrade past active pins</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>vrg-host<span class="w"> </span>upgrade<span class="w"> </span>gh<span class="w"> </span>lima<span class="w">       </span><span class="c1"># named dependencies</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>vrg-host<span class="w"> </span>upgrade<span class="w"> </span>--all<span class="w">         </span><span class="c1"># every auto dependency</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>vrg-host<span class="w"> </span>upgrade<span class="w"> </span>--all<span class="w"> </span>--force<span class="w"> </span><span class="c1"># also upgrade past active pins</span>
 </code></pre></div>
 <p>Name one or more dependencies <strong>or</strong> pass <code>--all</code>, not both.</p>
 <ul>
 <li>Only <code>upgrade = "auto"</code> dependencies are upgraded, through their install
   method (<code>brew upgrade</code>, <code>uv tool upgrade</code>, or the manifest's own upgrade
-  command). A <code>manual</code> dependency (<code>docker-desktop</code>, <code>macos</code>) is refused when
+  command). A <code>manual</code> dependency (<code>docker-desktop</code>, <code>macos</code>, <code>xcode-clt</code>) is refused when
   named, and listed as skipped under <code>--all</code>; upgrade it by hand.</li>
 <li>A Homebrew cask that updates itself (its <code>brew info</code> JSON says
   <code>auto_updates: true</code>) is never upgraded through <code>brew</code>. Without <code>--greedy</code>,
@@ -15756,20 +15852,92 @@ and forces exit <code>2</code>. Remediations run unprivileged like every other c
 <li>An upgrade that fails, or that would need elevated privileges, is reported for
   that dependency and never retried elevated. Upgrade it manually.</li>
 </ul>
-<p><strong>Exit code:</strong> <code>0</code> when everything requested was upgraded (or, under <code>--all</code>,
-deliberately skipped or held); <code>1</code> when an explicitly named dependency was
-refused (<code>manual</code> or pinned); <code>2</code> on any failure — an unknown dependency name,
-a failed or privilege-refused upgrade, an unsupported pin constraint, or an
-unreadable manifest or pins file.</p>
+<p>Before upgrading anything, <code>upgrade</code> probes each <code>auto</code> dependency's installed
+and latest versions and classifies them exactly as <code>status</code> does. It then
+prints one line per dependency saying what it actually did:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>skipped  uv: current (0.13.1)
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>upgraded git: 2.54.0 -&gt; 2.56.0_1
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>unchanged bash: still 5.3.9, latest 5.3.20 (the upgrade command succeeded but did not change the installed version)
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>ran      vergil-tooling: 2.1.244 -&gt; 2.1.244 (unchanged; no latest feed)
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>held     gh: pinned to 2.40.x (2.41.0 breaks vrg-gh auth) at 2.40.1, holding back from 2.42.0; run 'vrg-host unpin gh' or pass --force to upgrade past the pin
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>ERROR    lima: missing (not installed by brew-formula); vrg-host upgrades, it does not install
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>skipped (upgrade = manual, upgrade by hand): docker-desktop, macos
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Outcome</th>
+<th>When</th>
+<th>Severity</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>skipped … current (&lt;v&gt;)</code></td>
+<td>Already current; the upgrade command is <strong>not</strong> run</td>
+<td>OK</td>
+</tr>
+<tr>
+<td><code>upgraded … &lt;before&gt; -&gt; &lt;after&gt;</code></td>
+<td>Was behind; upgraded and reached the latest</td>
+<td>OK</td>
+</tr>
+<tr>
+<td><code>upgraded … (still behind latest &lt;v&gt;)</code></td>
+<td>Was behind; the version moved but is still older than the latest (or cannot be ordered against it)</td>
+<td>WARN</td>
+</tr>
+<tr>
+<td><code>unchanged …</code></td>
+<td>Was behind; the upgrade command succeeded but the installed version did not change</td>
+<td>WARN</td>
+</tr>
+<tr>
+<td><code>ran … &lt;before&gt; -&gt; &lt;after&gt; (no latest feed)</code></td>
+<td><code>latest = "unmanaged"</code>: nothing to compare with, so the upgrade runs and the change is reported</td>
+<td>OK</td>
+</tr>
+<tr>
+<td><code>ran … (latest unknown: …)</code></td>
+<td>The latest probe did not answer (as <code>status</code>'s <code>latest-unknown</code>)</td>
+<td>WARN</td>
+</tr>
+<tr>
+<td><code>held …</code></td>
+<td>Actively pinned and no <code>--force</code>; shows the installed version and the latest it holds back from</td>
+<td>WARN (not counted under <code>--all</code>)</td>
+</tr>
+<tr>
+<td><code>ERROR … missing</code> / <code>ERROR … probe-error</code></td>
+<td>Not installed, or a probe failed, as <code>status</code> reports it; the upgrade is not attempted</td>
+<td>ERROR</td>
+</tr>
+<tr>
+<td><code>ERROR … upgrade ran but …</code></td>
+<td>The installed version could not be re-probed after the upgrade</td>
+<td>ERROR</td>
+</tr>
+</tbody>
+</table>
+<p>The <code>after</code> version is always <strong>re-probed</strong> after the upgrade runs, never
+assumed to be the latest. <code>--force</code> only upgrades past a pin. It never forces
+the upgrade of a dependency that is already current.</p>
+<p><strong>Exit code:</strong> <code>0</code> when everything requested was upgraded or already current
+(or, under <code>--all</code>, deliberately skipped or held); <code>1</code> when an explicitly named
+dependency was refused (<code>manual</code> or pinned), or an upgrade left a dependency
+behind (or ran with its latest unknown); <code>2</code> on any failure: an unknown
+dependency name, a missing dependency, a probe error, a failed or
+privilege-refused upgrade, an unsupported pin constraint, or an unreadable
+manifest or pins file.</p>
 <h3 id="pin-and-unpin">pin and unpin<a class="headerlink" href="#pin-and-unpin" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>vrg-host<span class="w"> </span>pin<span class="w"> </span>gh<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>--constraint<span class="w"> </span><span class="m">2</span>.40.x<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span>--inducing-release<span class="w"> </span><span class="m">2</span>.41.0<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span>--reason<span class="w"> </span><span class="s2">"2.41.0 breaks vrg-gh auth"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">  </span>--tracking-issue<span class="w"> </span>https://github.com/vergil-project/vergil-tooling/issues/NNNN<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">  </span>--deterministic
-<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>
-<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>vrg-host<span class="w"> </span>unpin<span class="w"> </span>gh
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>vrg-host<span class="w"> </span>pin<span class="w"> </span>gh<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span>--constraint<span class="w"> </span><span class="m">2</span>.40.x<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span>--inducing-release<span class="w"> </span><span class="m">2</span>.41.0<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">  </span>--reason<span class="w"> </span><span class="s2">"2.41.0 breaks vrg-gh auth"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">  </span>--tracking-issue<span class="w"> </span>https://github.com/vergil-project/vergil-tooling/issues/NNNN<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">  </span>--deterministic
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>vrg-host<span class="w"> </span>unpin<span class="w"> </span>gh
 </code></pre></div>
 <table>
 <thead>
@@ -15864,6 +16032,20 @@ itself. Current entries:</p>
 <td>GitHub CLI under <code>vrg-gh</code> and the PR/issue workflows</td>
 </tr>
 <tr>
+<td><code>git</code></td>
+<td>brew-formula</td>
+<td>auto</td>
+<td>probe</td>
+<td><code>vrg-git</code>, <code>vrg-commit</code>, the PR workflow, <code>vrg-release</code> and worktrees run it on the host</td>
+</tr>
+<tr>
+<td><code>bash</code></td>
+<td>brew-formula</td>
+<td>auto</td>
+<td>probe</td>
+<td>The host-side <code>vrg-*</code> tools and the hook-guard shim run it</td>
+</tr>
+<tr>
 <td><code>gcloud</code></td>
 <td>custom (<code>gcloud components update</code>)</td>
 <td>auto</td>
@@ -15906,11 +16088,25 @@ itself. Current entries:</p>
 <td>The <code>vrg-*</code> host tools themselves</td>
 </tr>
 <tr>
+<td><code>claude-code</code></td>
+<td>brew-cask</td>
+<td>auto</td>
+<td>probe</td>
+<td>The host-side agent for out-of-sandbox work, such as reattaching an agent session with human access</td>
+</tr>
+<tr>
 <td><code>macos</code></td>
 <td>custom</td>
 <td>manual</td>
 <td>probe</td>
 <td>The host OS; a pending update is surfaced, never applied</td>
+</tr>
+<tr>
+<td><code>xcode-clt</code></td>
+<td>custom</td>
+<td>manual</td>
+<td>probe</td>
+<td>Xcode Command Line Tools: Homebrew needs them, and <code>/usr/bin/git</code> is a CLT shim; a pending update is surfaced, never applied</td>
 </tr>
 </tbody>
 </table>
@@ -15939,6 +16135,33 @@ itself. Current entries:</p>
   A pending macOS update is reported so it is applied deliberately, never by
   <code>vrg-host</code>. The <code>macos</code> probe reads <code>softwareupdate --list</code> and reports
   every pending <a href="#update-levels-macos">update level</a>.</li>
+<li><strong><code>git</code> and <code>bash</code> are Homebrew's.</strong> On a Homebrew-first Mac, <code>git</code> resolves
+  to <code>/opt/homebrew/bin/git</code> ahead of the Command Line Tools shim
+  <code>/usr/bin/git</code>, and <code>bash</code> to Homebrew's bash 5 ahead of Apple's <code>/bin/bash</code>
+  3.2. The copies that actually run are therefore not updated with macOS, so
+  <code>vrg-host</code> tracks and upgrades them through <code>brew</code>.</li>
+<li><strong><code>xcode-clt</code> is report-only.</strong> Homebrew cannot work without the Xcode
+  Command Line Tools, so a missing CLT is an ERROR. Apple ships CLT updates
+  through Software Update, separately from macOS. The installed version comes
+  from <code>pkgutil --pkg-info=com.apple.pkg.CLTools_Executables</code>, which prints a
+  version with a trailing build stamp (<code>26.6.0.0.1781586589</code>). <code>vrg-host</code> keeps
+  only the first three components (<code>26.6.0</code>), the precision Software Update
+  uses, so its <code>Version: 26.6</code> reads as current and <code>26.7</code> as a minor update.
+  The latest comes from the "Command Line Tools" items in <code>softwareupdate
+  --list</code>. When Software Update lists none, the CLT is current. An item the
+  probe cannot read is a <code>probe-error</code>, never dropped. A listed item that is
+  not newer than the installed version is ignored, like any offer that is not
+  an update. Install CLT updates with Software Update; <code>vrg-host</code> never
+  applies them.</li>
+<li><strong><code>claude-code</code> is upgraded through Homebrew.</strong> It is installed from the
+  <code>claude-code</code> cask, which does not declare <code>auto_updates</code> (Homebrew API,
+  checked 2026-10-16), so <code>vrg-host upgrade claude-code</code> runs <code>brew upgrade
+  --cask claude-code</code>. If the cask ever becomes self-updating, the upgrade is
+  refused (see <a href="#upgrade">upgrade</a>) and the entry must become <code>manual</code>. It is
+  on the host as the agent for out-of-sandbox work, such as reattaching an
+  agent session on the Mac with human access. The original design excluded it
+  as a personal tool; that was reversed in
+  <a href="https://github.com/vergil-project/vergil-tooling/issues/3300">#3300</a>.</li>
 <li><strong><code>vergil-tooling</code> has no latest feed.</strong> It is installed from git, so <code>uv</code>'s
   outdated feed cannot see new releases; <code>status</code> reports it as
   <code>latest-unmanaged</code> rather than a false <code>current</code>. <code>vrg-host upgrade
@@ -15954,12 +16177,16 @@ itself. Current entries:</p>
 <li><strong>Linters</strong> (shellcheck, hadolint, yamllint, actionlint, markdownlint) — they
   run only inside the dev container via <code>vrg-validate</code>. Do not install them on
   the host.</li>
-<li><strong>git, bash, ssh</strong> and other OS-provided tools — updated with macOS (the
-  <code>macos</code> entry). <strong>jq</strong> ships with macOS.</li>
+<li><strong>ssh</strong> and other OS-provided tools — updated with macOS (the <code>macos</code>
+  entry). <strong>jq</strong> ships with macOS. (git and bash are tracked, because the
+  copies that run are Homebrew's.)</li>
+<li><strong>Full Xcode</strong> — nothing on the host needs more than the Command Line Tools.</li>
 <li><strong>az</strong> (Azure CLI) — only <code>vrg-vm --provider azure</code> needs it, and GCP is the
   provider in use. It gets an entry if Azure becomes a working provider.</li>
 <li><strong>nfpm, npm, language toolchains</strong> — container and CI only.</li>
-<li><strong>Homebrew</strong> itself, editors, Claude Code and other personal tools.</li>
+<li><strong>Homebrew</strong> itself, editors and other personal tools.</li>
+<li><strong>Everything else installed with Homebrew</strong> — only the curated entries above
+  are tracked or upgraded, never a blanket <code>brew upgrade</code>.</li>
 </ul>
 <h3 id="auxiliary-checks">Auxiliary checks<a class="headerlink" href="#auxiliary-checks" title="Permanent link">&para;</a></h3>
 <p>A dependency can carry health checks beyond its version, each with an optional
@@ -16010,14 +16237,14 @@ onto the packaged manifest when <code>status</code> and <code>upgrade</code> run
 written into the packaged manifest: that would modify the installed package and
 be lost on every reinstall.)</p>
 <p><code>vrg-host pin</code> and <code>unpin</code> manage the file; it looks like this:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">[pin.gh]</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">constraint</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"2.40.x"</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">inducing_release</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"2.41.0"</span>
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">deterministic</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="n">reason</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"2.41.0 breaks vrg-gh auth"</span>
-<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="n">state</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"active"</span>
-<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="n">tracking_issue</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"https://github.com/vergil-project/vergil-tooling/issues/NNNN"</span>
-<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="n">pinned_date</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"2026-10-15"</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">[pin.gh]</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">constraint</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"2.40.x"</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">inducing_release</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"2.41.0"</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="n">deterministic</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="n">reason</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"2.41.0 breaks vrg-gh auth"</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="n">state</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"active"</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="n">tracking_issue</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"https://github.com/vergil-project/vergil-tooling/issues/NNNN"</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="n">pinned_date</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"2026-10-15"</span>
 </code></pre></div>
 <p>The fields are #155's pin schema plus one host extension, <code>pinned_date</code>, so
 <code>status</code> can show how long a pin has stood. A pin's <code>state</code> is <code>active</code> (holds
@@ -16089,7 +16316,10 @@ as needing manual action and is never retried elevated.</p>
 <li>The version parsers are tested against output captured on a real Mac. A few
   cases could not be captured there and are still hand-written: <code>softwareupdate</code>
   with nothing pending, only non-OS updates pending, or only a patch update
-  pending, and <code>uv tool list --outdated</code> listing an outdated tool. See
+  pending, and <code>uv tool list --outdated</code> listing an outdated tool. The
+  Command Line Tools update offer (<code>softwareupdate --list</code> listing a CLT item
+  newer than the installed one) and the full <code>pkgutil --pkg-info</code> output are
+  hand-written as well: only the CLT <code>version:</code> line was recorded. See
   <code>tests/vergil_tooling/fixtures/host/README.md</code>. If one of those cases shows a
   <code>probe-error</code> row, it may be a parser mismatch rather than a broken tool.</li>
 <li><code>vrg-host</code> reports and acts only when you run it. Scheduled or automatic runs

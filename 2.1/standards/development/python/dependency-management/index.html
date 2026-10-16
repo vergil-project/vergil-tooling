@@ -1288,6 +1288,8 @@
       
         
       
+        
+      
     
     
     
@@ -1340,6 +1342,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../releases/v2.1.245/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.245
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -11663,6 +11693,8 @@
       
         
       
+        
+      
     
     
     
@@ -11891,6 +11923,34 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="../../../../reference/dependency-update-config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dependency Update ([dependency-update])
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
     
     
       
@@ -11909,10 +11969,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_8" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_9" >
         
           
-          <label class="md-nav__link" for="__nav_4_8" id="__nav_4_8_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_9" id="__nav_4_9_label" tabindex="0">
             
   
   
@@ -11930,8 +11990,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_8_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_8">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_9">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -12003,10 +12063,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_9" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_10" >
         
           
-          <label class="md-nav__link" for="__nav_4_9" id="__nav_4_9_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_10" id="__nav_4_10_label" tabindex="0">
             
   
   
@@ -12024,8 +12084,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_9_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_9">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_10">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -12120,6 +12180,8 @@
       
         
       
+        
+      
     
     
     
@@ -12133,10 +12195,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_10" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_11" >
         
           
-          <label class="md-nav__link" for="__nav_4_10" id="__nav_4_10_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_11" id="__nav_4_11_label" tabindex="0">
             
   
   
@@ -12154,8 +12216,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_10_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_10">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_11">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -12256,14 +12318,42 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../reference/dev/prepare-release/" class="md-nav__link">
+      <a href="../../../../reference/dev/release/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    vrg-prepare-release
+    vrg-release
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../reference/dev/update-deps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-update-deps
   
 
     
@@ -15614,34 +15704,45 @@ exception in their repository overlay and remove the legacy tooling once
 <h2 id="upgrade-workflow">Upgrade workflow<a class="headerlink" href="#upgrade-workflow" title="Permanent link">&para;</a></h2>
 <h3 id="patch-level">Patch-level<a class="headerlink" href="#patch-level" title="Permanent link">&para;</a></h3>
 <p>The first action after incrementing the application <code>PATCH</code> version is to
-refresh dependencies.</p>
-<p>Workflow:</p>
+refresh dependencies. <code>vrg-release</code> does this automatically: its last stage,
+<code>update-deps</code>, runs on the new <code>develop</code> version (see
+<a href="../../../../guides/releasing/#dependency-updates">Dependency updates</a>).</p>
+<p>What the stage does for a Python repo:</p>
 <ol>
-<li>Increment <code>PATCH</code> per the application versioning scheme.</li>
-<li>Run <code>uv lock --upgrade</code> to refresh <code>uv.lock</code> within the existing constraints.</li>
-<li>Export requirements files from <code>uv.lock</code> where required (for example,
-   <code>uv export --format requirements.txt --output-file requirements.txt</code>).</li>
-<li>Run the full validation and test suite (define the canonical command per
-   repository).</li>
-<li>If validation passes, the lockfile versions remain fixed for the rest of the
-   <code>PATCH</code> cycle unless an exception is approved.</li>
+<li><code>vrg-release</code> has already incremented <code>PATCH</code> on <code>develop</code>.</li>
+<li>The <code>python</code> updater runs <code>uv lock --upgrade</code>, refreshing <code>uv.lock</code> within
+   the existing constraints.</li>
+<li>If anything changed, the full validation suite
+   (<code>vrg-container-run -- vrg-validate</code>) runs once.</li>
+<li>The change goes to <code>develop</code> as a PR labelled <code>dependency-update</code>, which
+   merges once validation and the PR's checks pass. The lockfile versions then
+   remain fixed for the rest of the <code>PATCH</code> cycle unless an exception is
+   approved.</li>
 </ol>
-<p>Do not change explicit version constraints in <code>pyproject.toml</code> as part of this
-cycle-opening update.</p>
+<p>The update never changes explicit version constraints in <code>pyproject.toml</code>.</p>
+<p>Requirements files exported from <code>uv.lock</code> are not regenerated by the built-in
+updater. A repo that keeps them should regenerate them in its
+<a href="../../../../reference/dependency-update-config/#the-hook-contract">dependency-update hook</a> (for example,
+<code>uv export --format requirements.txt --output-file requirements.txt</code>).</p>
 <h3 id="minor-or-major-level">Minor- or major-level<a class="headerlink" href="#minor-or-major-level" title="Permanent link">&para;</a></h3>
 <p>When incrementing the application <code>MINOR</code> or <code>MAJOR</code> version, perform the patch-level
 workflow and also attempt to move toward the latest available dependency
 releases when constraints have been tightened.</p>
+<p>The candidates come from the <strong>held-back report</strong>, which every dependency
+update produces (in the dependency-update PR body and on the release tracking
+issue). It lists each directly declared requirement whose latest PyPI release
+falls outside its own specifier, whether it is constrained below the current
+minor series (for example, <code>1.1</code> when <code>1.2</code> exists) or anchored to a major
+version when a newer major exists (for example, <code>&lt;4</code> when <code>5.x</code> is available).
+Relaxing a constraint is always a deliberate change; the update never does it.</p>
 <p>Workflow:</p>
 <ol>
-<li>Identify dependencies pinned below the current minor series (for example,
-   constrained to <code>1.1</code> when <code>1.2</code> exists).</li>
+<li>Take the minor-series candidates from the held-back report.</li>
 <li>For each dependency, relax the constraint individually and run the full
    validation and test suite.</li>
 <li>If multiple dependencies were relaxed successfully, run the full validation
    and test suite with all relaxations combined.</li>
-<li>Identify dependencies anchored to a major version when a newer major
-   release exists (for example, constrained to <code>&lt;4</code> when <code>5.x</code> is available).</li>
+<li>Take the major-version candidates from the held-back report.</li>
 <li>For each major upgrade candidate, expand the constraint individually and
    run the full validation and test suite.</li>
 <li>If multiple major upgrades are viable, run the full validation and test
@@ -15667,6 +15768,11 @@ introduces a blocking bug).</p>
 <li>complete the full validation and test suite</li>
 </ul>
 <h2 id="handling-regressions-and-non-latest-pins">Handling regressions and non-latest pins<a class="headerlink" href="#handling-regressions-and-non-latest-pins" title="Permanent link">&para;</a></h2>
+<p>When the dependency update's validation or merge fails, the
+<code>dependency-update</code> PR stays open, a fix task is filed under the repo's ad-hoc
+epic, and the next release refuses to start while that PR is open (see
+<a href="../../../../guides/releasing/#when-the-dependency-update-fails">When the dependency update fails</a>). Work the fix task on a
+branch cut from the failed update.</p>
 <p>When a <code>uv lock --upgrade</code> introduces failures:</p>
 <ul>
 <li>determine root cause before deciding to pin</li>
@@ -15731,8 +15837,10 @@ exceptions.</p>
 <li><code>pyproject.toml</code> must include a comment immediately above the dependency
   specification that includes the issue URL.</li>
 </ul>
-<p>During the start-of-cycle dependency update, always pause to confirm with a
-human owner that any pre-release dependency is still required.</p>
+<p>The start-of-cycle dependency update is automated and does not pause. Because
+a pre-release is pinned to an exact version, it appears in the held-back report
+once a newer release exists. When it does, confirm with a human owner that the
+pre-release dependency is still required.</p>
 <p>When removing a pre-release dependency:</p>
 <ul>
 <li>If the issue was created solely to track the dependency, close it.</li>
@@ -15750,7 +15858,9 @@ immediately:</p>
 <h2 id="locked-dependency-review">Locked dependency review<a class="headerlink" href="#locked-dependency-review" title="Permanent link">&para;</a></h2>
 <p>At the start of each upgrade cycle (<code>PATCH</code>, <code>MINOR</code>, or <code>MAJOR</code>), review any
 pinned or tightly constrained dependencies and confirm each pin is still
-required. Remove unnecessary pins before completing the cycle-opening update.</p>
+required. The held-back report from the cycle-opening dependency update lists
+every directly declared requirement whose constraint keeps it below its latest
+release. Remove unnecessary pins as a follow-up change.</p>
 <h2 id="enforcement">Enforcement<a class="headerlink" href="#enforcement" title="Permanent link">&para;</a></h2>
 <p>Violations are fatal exceptions that block merges, releases, and deployments.</p>
 <p>CI must fail when:</p>
