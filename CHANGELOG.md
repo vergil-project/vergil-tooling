@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.245] - 2026-10-16
+
+### Bug fixes
+
+- tailor the dependency-update gate refusal advice to each blocking PR (#3299)
+
+### Documentation
+
+- document release-integrated dependency updates (#3298)
+
+### Features
+
+- track git, bash, Xcode Command Line Tools and Claude Code (#3302)
+- skip current dependencies and report before -> after versions in vrg-host upgrade (#3303)
+
 ## [2.1.244] - 2026-10-16
 
 ### Bug fixes
@@ -2145,6 +2160,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - list live sessions named only in the VM roster
 
+### Documentation
+
+- rewrite onboarding docs to pure GitHub App identity model
+
 ### Features
 
 - add identity-aware allowlists, agent denials, and gh api gating
@@ -2163,10 +2182,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Bug fixes
 
 - treat ambient App installation tokens as app mode
-
-### Documentation
-
-- rewrite onboarding docs to pure GitHub App identity model
 
 ## [2.0.79] - 2026-06-02
 
@@ -2512,13 +2527,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Bug fixes
 
+- fall back to config vergil version when no tooling marker exists
 - use contains instead of startswith for CD job name matching
 
 ## [2.0.52] - 2026-05-25
-
-### Bug fixes
-
-- fall back to config vergil version when no tooling marker exists
 
 ### Chores
 
@@ -2607,6 +2619,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - bump version to 2.0.45
 
+### Documentation
+
+- add release workflow decomposition spec and implementation plan
+
 ## [2.0.44] - 2026-05-24
 
 ### Bug fixes
@@ -2626,10 +2642,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Chores
 
 - bump version to 2.0.43
-
-### Documentation
-
-- add release workflow decomposition spec and implementation plan
 
 ## [2.0.42] - 2026-05-24
 
@@ -2833,6 +2845,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Documentation
 
+- agent identity design: GitHub Apps + VM isolation
+- update VM plans and specs for GitHub App credential model
+- implementation plan for vergil-tooling identity changes
 - reconcile VM plans with single-account identity design
 - canonical VERSION file design for issue #970
 - apply pushback findings to canonical VERSION file design
@@ -2872,9 +2887,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Documentation
 
-- agent identity design: GitHub Apps + VM isolation
-- update VM plans and specs for GitHub App credential model
-- implementation plan for vergil-tooling identity changes
 - vrg-release mechanized release workflow design
 - add duplicate tracking issue guard to vrg-release spec
 - clarify resume semantics require explicit --resume flag
@@ -2923,9 +2935,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - bump version to 2.0.25
 
+### Documentation
+
+- vrg-github-repo-init design spec
+- incorporate pushback review findings into design spec
+- vrg-github-repo-init implementation plan
+
 ### Features
 
+- add template data files for repo init
+- add prompt helpers and RepoInitContext dataclass
+- add checkpoint detection for idempotent resume
+- add template rendering functions for all generated files
+- add wizard steps 1-2: repo creation and clone
+- add wizard step 3: interactive vergil.toml generation
+- add wizard step 4: scaffold config files
+- add wizard steps 5-6: CI/CD workflows and docs site
+- add wizard steps 7-9: branches, GitHub config, Pages
+- add wizard orchestrator with idempotent step skipping
+- add vrg-github-repo-init CLI entry point
 - add label to version selector in site header
+
+### Testing
+
+- add coverage tests for repo init wizard and CLI entry point
 
 ## [2.0.24] - 2026-05-20
 
@@ -2952,9 +2985,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - design spec for eliminating hardcoded mount in vrg-docker-docs
 - move design spec to docs/specs/
 - implementation plan for build_docker_args refactor
-- vrg-github-repo-init design spec
-- incorporate pushback review findings into design spec
-- vrg-github-repo-init implementation plan
 - implementation plans 2-6 for vergil-vm identity VM system
 - defer Plan 4 (egress filtering) to v2.2
 - multi-platform host support design spec
@@ -2965,17 +2995,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Features
 
 - replace hand-built docker args with build_docker_args in vrg-docker-docs
-- add template data files for repo init
-- add prompt helpers and RepoInitContext dataclass
-- add checkpoint detection for idempotent resume
-- add template rendering functions for all generated files
-- add wizard steps 1-2: repo creation and clone
-- add wizard step 3: interactive vergil.toml generation
-- add wizard step 4: scaffold config files
-- add wizard steps 5-6: CI/CD workflows and docs site
-- add wizard steps 7-9: branches, GitHub config, Pages
-- add wizard orchestrator with idempotent step skipping
-- add vrg-github-repo-init CLI entry point
 
 ### Refactoring
 
@@ -2989,7 +3008,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - add tests for build_docker_args delegation in vrg-docker-docs
 - update existing tests to mock build_docker_args, remove sibling mount test
-- add coverage tests for repo init wizard and CLI entry point
 
 ## [2.0.23] - 2026-05-20
 
@@ -3116,6 +3134,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Chores
 
+- remove co-authors section, normalize vergil dep to v2.0
 - bump version to 2.0.17
 
 ### Features
@@ -3138,19 +3157,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Chores
 
 - bump version to 2.0.16
-- remove co-authors section, normalize vergil dep to v2.0
 
 ## [2.0.15] - 2026-05-18
+
+### Bug fixes
+
+- fix validation: type errors, stale co-author refs, formatting, and coverage gaps
 
 ### Chores
 
 - bump version to 2.0.15
 
+### Documentation
+
+- add auto-discovery design spec
+- apply pushback review to auto-discovery design spec
+- add implementation plan for co-author auto-discovery
+- add cross-repo rollout task to implementation plan
+
+### Features
+
+- add resolve_co_author_trailer for dynamic co-author discovery
+- replace config-based co-author lookup with dynamic API resolution
+
+### Refactoring
+
+- replace local _discover_accounts with import from lib/github
+- remove co-author parsing from config.py
+
 ## [2.0.14] - 2026-05-18
 
 ### Bug fixes
 
-- fix validation: type errors, stale co-author refs, formatting, and coverage gaps
 - make desired_security_settings visibility-aware
 - record skipped fields in ConfigDiff during diff
 - omit None security fields from apply PATCH body
@@ -3172,22 +3210,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - add implementation plan for repo config audit
 - rewrite repo config audit plan in TDD red/green/refactor format
 - replace stale st-* references with vrg-* across docs and source
-- add auto-discovery design spec
-- apply pushback review to auto-discovery design spec
-- add implementation plan for co-author auto-discovery
-- add cross-repo rollout task to implementation plan
 - add implementation plan for private repo visibility gating (#826)
 
 ### Features
 
 - add local config audit library, shared CLAUDE.md template, and vrg-github-repo-config CLI
-- add resolve_co_author_trailer for dynamic co-author discovery
-- replace config-based co-author lookup with dynamic API resolution
-
-### Refactoring
-
-- replace local _discover_accounts with import from lib/github
-- remove co-author parsing from config.py
 
 ## [2.0.13] - 2026-05-15
 
@@ -3198,6 +3225,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Chores
 
 - bump version to 2.0.13
+
+### Features
+
+- move deny rules to project-level settings and deploy to vergil-tooling
 
 ### Refactoring
 
@@ -3222,10 +3253,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Chores
 
 - bump version to 2.0.11
-
-### Features
-
-- move deny rules to project-level settings and deploy to vergil-tooling
 
 ## [2.0.10] - 2026-05-14
 
@@ -3262,6 +3289,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - bump version to 2.0.9
 
+### Documentation
+
+- add Claude Code permission model design spec (#754)
+- apply pushback review fixes to permission model design spec
+- add permission model implementation plan (#754)
+- apply alignment review fixes to permission model implementation plan
+
 ## [2.0.8] - 2026-05-14
 
 ### Bug fixes
@@ -3274,23 +3308,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Documentation
 
-- add Claude Code permission model design spec (#754)
-- apply pushback review fixes to permission model design spec
-- add permission model implementation plan (#754)
-- apply alignment review fixes to permission model implementation plan
+- add .github profile repository design spec (#753)
+- apply pushback review fixes to .github profile repo design spec
+- add .github profile repository implementation plan (#753)
+- apply alignment review fixes to .github profile repo spec and plan
 
 ## [2.0.7] - 2026-05-14
 
 ### Chores
 
 - bump version to 2.0.7
-
-### Documentation
-
-- add .github profile repository design spec (#753)
-- apply pushback review fixes to .github profile repo design spec
-- add .github profile repository implementation plan (#753)
-- apply alignment review fixes to .github profile repo spec and plan
 
 ### Refactoring
 
@@ -3474,6 +3501,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - trigger CI re-run
 - rename source files to match st-* script names
 
+### Documentation
+
+- add design spec and pushback review for repo settings coverage (#610)
+- add implementation plan and alignment review for repo settings coverage (#610)
+
 ### Features
 
 - add 8 new fields to DesiredRepoSettings and derivation
@@ -3496,11 +3528,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - sweep post-1.4.26 dependency updates (#621)
 - replace st-validate-local references with st-validate in active docs and specs
 - add publish.release and publish.docs to standard-tooling.toml
-
-### Documentation
-
-- add design spec and pushback review for repo settings coverage (#610)
-- add implementation plan and alignment review for repo settings coverage (#610)
 
 ### Features
 
