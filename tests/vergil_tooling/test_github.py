@@ -127,6 +127,17 @@ def test_create_pr_passes_head_when_given() -> None:
     assert args[args.index("--head") + 1] == "feature/x"
 
 
+def test_create_pr_passes_labels() -> None:
+    """Labels are applied at creation so the PR is never visible unlabelled."""
+    with patch(
+        "vergil_tooling.lib.github.read_output", return_value="https://github.com/pr/3"
+    ) as mock_read:
+        github.create_pr(
+            base="develop", title="t", body_file="/b", labels=["dependency-update", "x"]
+        )
+    assert mock_read.call_args.args[-4:] == ("--label", "dependency-update", "--label", "x")
+
+
 def test_create_issue_returns_url_and_builds_command() -> None:
     with patch(
         "vergil_tooling.lib.github.read_output",

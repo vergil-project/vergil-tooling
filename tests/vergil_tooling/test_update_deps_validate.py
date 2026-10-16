@@ -22,5 +22,8 @@ def test_run_validation_raises_on_failure(monkeypatch) -> None:
         raise subprocess.CalledProcessError(1, cmd, output="boom-out", stderr="boom-err")
 
     monkeypatch.setattr(_MOD + ".progress.run", _boom)
-    with pytest.raises(UpdateDepsError, match="Validation failed"):
+    with pytest.raises(UpdateDepsError, match="Validation failed") as info:
         run_validation()
+    # Both streams: pytest failures land on stdout, tool noise on stderr.
+    assert info.value.detail == "boom-out\nboom-err"
+    assert info.value.command == "vrg-container-run -- vrg-validate"
