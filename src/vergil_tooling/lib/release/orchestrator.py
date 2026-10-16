@@ -256,6 +256,10 @@ def _phase_details(ctx: ReleaseContext, phase: str) -> str:
             lines.append(f"PR: {ctx.release_pr_url}")
         if ctx.issue_url:
             lines.append(f"Tracking issue: {ctx.issue_url}")
+        if ctx.cleared_deps_prs:
+            # #3286: closing a landed dependency-update PR is recorded, never silent.
+            prs = ", ".join(ctx.cleared_deps_prs)
+            lines.append(f"**Closed landed dependency-update PR(s)** (fix task completed): {prs}")
         if ctx.bypassed_deps_prs:
             # spec §5.3: bypassing the dependency-update gate is never silent.
             prs = ", ".join(ctx.bypassed_deps_prs)

@@ -82,6 +82,12 @@ class ReleaseContext:
     # never silent.
     bypassed_deps_prs: list[str] = field(default_factory=list)
 
+    # Open dependency-update PRs preflight closed because their fix task closed
+    # as completed — the update landed through a (squash-merged) fix PR, so
+    # GitHub never marked the deps PR merged (#3286). Named in the
+    # prepare-stage tracking comment alongside any bypass.
+    cleared_deps_prs: list[str] = field(default_factory=list)
+
     @property
     def work_root(self) -> Path:
         """Directory release artifacts are written into and git runs in.
