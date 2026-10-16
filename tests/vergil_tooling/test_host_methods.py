@@ -722,6 +722,49 @@ def test_manifest_macos_installed(monkeypatch: pytest.MonkeyPatch) -> None:
         hm.upgrade(macos)
 
 
+def test_parse_offers_reads_one_bare_version_per_line() -> None:
+    assert hm._parse_offers("macos", "26.7.1\nv27.0.1") == hm.Offers(("26.7.1", "27.0.1"))
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        "26.7.1\n\n27.0.1",  # a blank line is not silently skipped
+        "26.7.1\nmacOS Tahoe 26.7.1",  # prose is never fished for a version
+        "26.7.1 (a)",
+    ],
+)
+def test_parse_offers_unreadable_line_raises(output: str) -> None:
+    with pytest.raises(hm.ProbeError, match="unreadable offer"):
+        hm._parse_offers("macos", output)
+
+
+def _levels_dep() -> HostDependency:
+    return _dep(
+        name="macos",
+        method="custom",
+        upgrade="manual",
+        probes={"installed_version": ["sw_vers"], "latest_versions": ["offers"]},
+    )
+
+
+def test_custom_latest_versions_returns_offers(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = _stub(monkeypatch, {("offers",): "26.7.1\n27.0.1"})
+    assert hm.latest_version(_levels_dep()) == hm.Offers(("26.7.1", "27.0.1"))
+    assert fake.calls == [["offers"]]
+
+
+def test_custom_latest_versions_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
+    _stub(monkeypatch, {("offers",): None})
+    assert hm.latest_version(_levels_dep()) is None
+
+
+def test_custom_latest_versions_empty_output_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    _stub(monkeypatch, {("offers",): ""})
+    with pytest.raises(hm.ProbeError, match="latest_versions probe printed nothing"):
+        hm.latest_version(_levels_dep())
+
+
 def _fake_macos_tools(
     bin_dir: Path, softwareupdate_fixture: str | None, *, exit_code: int = 0
 ) -> None:
@@ -743,21 +786,55 @@ def _fake_macos_tools(
     ("fixture", "expected"),
     [
         # Captured: 26.7.1 (same major) and 27.0.1 (next major) plus non-OS
-        # items; the single-"latest" probe reports the newest, 27.0.1.
-        ("softwareupdate-list-minor-and-major-available.txt", "27.0.1"),
+        # items; every macOS offer is reported, in the order listed.
+        ("softwareupdate-list-minor-and-major-available.txt", ("26.7.1", "27.0.1")),
+        # Constructed: a single same-minor (patch) offer.
+        ("softwareupdate-list-patch-only.txt", ("26.5.3",)),
         # Constructed: nothing pending / only a non-OS update -> installed.
-        ("softwareupdate-list-none.txt", "26.5.2"),
-        ("softwareupdate-list-non-macos-only.txt", "26.5.2"),
+        ("softwareupdate-list-none.txt", ("26.5.2",)),
+        ("softwareupdate-list-non-macos-only.txt", ("26.5.2",)),
     ],
 )
 def test_manifest_macos_latest_script(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, fixture: str, expected: str
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, fixture: str, expected: tuple[str, ...]
 ) -> None:
     """Run the manifest's real softwareupdate-parsing probe against fixtures."""
     bin_dir = tmp_path / "bin"
     _fake_macos_tools(bin_dir, fixture)
     monkeypatch.setenv("PATH", os.pathsep.join([str(bin_dir), os.environ["PATH"]]))
-    assert hm.latest_version(_manifest_dep("macos")) == expected
+    assert hm.latest_version(_manifest_dep("macos")) == hm.Offers(expected)
+
+
+@pytest.mark.parametrize(
+    ("title", "fragment"),
+    [
+        # Constructed: a macOS title whose Version is not a bare version.
+        ("Title: macOS Tahoe 26.7.1 (a), Version: 26.7.1 (a), Size: 1KiB, ", "'26.7.1 (a)'"),
+        # Constructed: a macOS title with no Version field at all.
+        ("Title: macOS Tahoe 26.7.1, Size: 1KiB, ", "unreadable macOS offer"),
+        # Constructed: a blank Version (never silently dropped as an empty line).
+        ("Title: macOS Tahoe, Version:  , Size: 1KiB, ", "unreadable macOS offer"),
+    ],
+)
+def test_manifest_macos_unreadable_offer_is_a_probe_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, title: str, fragment: str
+) -> None:
+    """A macOS offer the probe cannot read is a loud probe error, never dropped."""
+    listing = tmp_path / "softwareupdate.txt"
+    listing.write_text(
+        "Software Update found the following new or updated software:\n"
+        "* Label: macOS 27.0.1-26A434\n"
+        "\tTitle: macOS 27.0.1, Version: 27.0.1, Size: 1KiB, Recommended: YES, \n"
+        "* Label: macOS-odd\n"
+        f"\t{title}\n",
+        encoding="utf-8",
+    )
+    bin_dir = tmp_path / "bin"
+    _fake_macos_tools(bin_dir, str(listing))
+    monkeypatch.setenv("PATH", os.pathsep.join([str(bin_dir), os.environ["PATH"]]))
+    with pytest.raises(hm.ProbeError, match="unreadable offer") as exc:
+        hm.latest_version(_manifest_dep("macos"))
+    assert fragment in str(exc.value)
 
 
 @pytest.mark.parametrize(

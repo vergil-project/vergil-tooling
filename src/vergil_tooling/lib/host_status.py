@@ -27,6 +27,16 @@ Version states (spec §8):
 - ``latest-unmanaged`` — the manifest declares no latest feed (OK, info).
 - ``latest-unknown`` — a latest probe that should work failed (WARN).
 
+Update levels (issue #3269): a dependency whose latest probe offers several
+versions (:class:`~vergil_tooling.lib.host_methods.Offers`, today only
+``macos``) is classified against its **leading edge** — the highest offer, or
+the installed version when nothing newer is offered — exactly as a single
+latest would be, so ``behind``, ``current`` and the pin rules are unchanged.
+The row additionally lists every level that is behind (see
+:func:`levels_behind`): ``behind (drift): minor 26.7.1, major 27.0.1``. An offer
+that is not newer than the installed version is ignored; several offers in one
+level report the highest.
+
 One further state is not a version state but a probe outcome:
 ``probe-error`` — a probe answered but its output was unreadable, or the
 dependency's manifest entry cannot be probed (ERROR). It is classified per
@@ -37,6 +47,7 @@ rest of the report, and it is never treated as ``current`` or ``missing``.
 from __future__ import annotations
 
 import datetime
+import functools
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Final
 
@@ -66,8 +77,45 @@ _DISPLAY: Final = {
 }
 
 
-type Latest = str | hm._Unmanaged | None  # noqa: SLF001 - the sentinel's type
+type Latest = str | hm.Offers | hm._Unmanaged | None  # noqa: SLF001 - the sentinel's type
+type Edge = str | hm._Unmanaged | None  # noqa: SLF001 - one leading-edge version
 type CheckResult = tuple[str, bool]
+
+_ORDER: Final = functools.cmp_to_key(host_versions.compare)
+
+
+def leading_edge(installed: str | None, latest: Latest) -> Edge:
+    """Return the single leading-edge version *latest* stands for.
+
+    For :class:`~host_methods.Offers` it is the highest offer — or *installed*
+    when that is higher (nothing newer is offered). Any other *latest* is
+    returned unchanged.
+
+    Raises:
+        host_versions.IncomparableVersionError: two versions cannot be ordered.
+    """
+    if not isinstance(latest, hm.Offers):
+        return latest
+    candidates = [*latest.versions, *([installed] if installed is not None else [])]
+    return max(candidates, key=_ORDER)
+
+
+def levels_behind(installed: str, offers: hm.Offers) -> list[tuple[str, str]]:
+    """Return ``(level, version)`` for every level at which *offers* lead *installed*.
+
+    Each offer is classified by :func:`host_versions.update_level`; one that is
+    not newer is ignored, and several in one level keep the highest. The result
+    is ordered patch, minor, major and is empty when nothing newer is offered.
+
+    Raises:
+        host_versions.IncomparableVersionError: two versions cannot be ordered.
+    """
+    best: dict[str, str] = {}
+    for version in offers.versions:
+        level = host_versions.update_level(installed, version)
+        if level is not None and (level not in best or _ORDER(version) > _ORDER(best[level])):
+            best[level] = version
+    return [(level, best[level]) for level in host_versions.LEVELS if level in best]
 
 
 def classify(
@@ -89,16 +137,17 @@ def classify(
     check_sev = ERROR if any(not ok for _, ok in check_results) else OK
     if installed is None:
         return "missing", max(ERROR, check_sev)
+    edge = leading_edge(installed, latest)  # the highest offer, for a multi-level probe
     if dep.pin is not None and dep.pin.state == "active":
         held = pin_satisfied(installed, dep.pin.constraint)
-        review, _ = pin_review(dep.pin, latest)
+        review, _ = pin_review(dep.pin, edge)
         review_sev = WARN if review in {"due", "unknown"} else OK
         return "pinned", max(OK if held else WARN, review_sev, check_sev)
-    if latest is hm.UNMANAGED:
+    if edge is hm.UNMANAGED:
         return "latest-unmanaged", max(OK, check_sev)
-    if latest is None:
+    if edge is None:
         return "latest-unknown", max(WARN, check_sev)
-    if _behind(installed, str(latest)):
+    if _behind(installed, str(edge)):
         return "behind", max(WARN, check_sev)
     return "current", max(OK, check_sev)
 
@@ -125,7 +174,7 @@ def pin_satisfied(installed: str, constraint: str) -> bool:
     return host_versions.upstream(installed).split(".")[: len(parts)] == parts
 
 
-def pin_review(pin: HostPin, latest: Latest) -> tuple[str, str | None]:
+def pin_review(pin: HostPin, latest: Edge) -> tuple[str, str | None]:
     """Evaluate the #155 re-evaluation trigger for *pin* against *latest*.
 
     Returns ``(review, message)`` where *review* is one of:
@@ -168,7 +217,7 @@ def _pin_age(pinned_date: str, today: datetime.date) -> str:
     return f"{days} day{'' if days == 1 else 's'} (pinned {pinned_date})"
 
 
-def _pin_lines(pin: HostPin, latest: Latest, today: datetime.date) -> list[str]:
+def _pin_lines(pin: HostPin, latest: Edge, today: datetime.date) -> list[str]:
     """Render an active pin as tracked debt (spec §9)."""
     pad = "          "
     lines = [
@@ -233,7 +282,7 @@ def worst_severity(reports: Sequence[Report]) -> int:
     return max((r.severity for r in reports), default=OK)
 
 
-def _fmt_latest(latest: Latest) -> str:
+def _fmt_latest(latest: Edge) -> str:
     if latest is hm.UNMANAGED:
         return "unmanaged"
     if latest is None:
@@ -251,17 +300,22 @@ def render(reports: Sequence[Report], *, today: datetime.date | None = None) -> 
     for r in reports:
         tag = SEVERITY_LABELS[r.severity]
         installed = r.installed if r.installed is not None else "-"
-        latest = "-" if r.state == PROBE_ERROR else _fmt_latest(r.latest)
+        edge = None if r.state == PROBE_ERROR else leading_edge(r.installed, r.latest)
+        latest = "-" if r.state == PROBE_ERROR else _fmt_latest(edge)
         state = r.state
         if r.state in _DISPLAY:
             state = f"{r.state} ({_DISPLAY[r.state]})"
+        if isinstance(r.latest, hm.Offers) and r.installed is not None:
+            levels = levels_behind(r.installed, r.latest)
+            if levels:
+                state += ": " + ", ".join(f"{level} {version}" for level, version in levels)
         lines.append(
             f"[{tag:5}] {r.dep.name:16} {r.dep.method:13} {installed:>12} -> {latest:<12} {state}"
         )
         if r.error is not None:
             lines.append(f"          error: {r.error}")
         if r.dep.pin is not None and r.dep.pin.state == "active":
-            lines.extend(_pin_lines(r.dep.pin, r.latest, today))
+            lines.extend(_pin_lines(r.dep.pin, edge, today))
         elif r.dep.pin is not None and r.dep.pin.state == "under-evaluation":
             lines.append(
                 f"          pin under evaluation (not holding): {r.dep.pin.constraint} "

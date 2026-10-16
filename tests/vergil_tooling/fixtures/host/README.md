@@ -35,7 +35,10 @@ its command. Nothing was edited, and the `brew info` JSON is untrimmed.
 The host-status reference shows the old `uv` (custom, `uv self update`, latest
 from GitHub releases) and `docker` (CLI version, no latest feed) entries.
 `test_vrg_host.py` checks that the rows #3261 did not change (gh, gcloud,
-vergil-tooling, macos) still render exactly as the real host printed them.
+vergil-tooling) still render exactly as the real host printed them. The macos
+row there is the old single-latest output (`26.5.2 -> 27.0.1 behind (drift)`);
+since #3269 the same capture renders every pending level
+(`behind (drift): minor 26.7.1, major 27.0.1`), and the test asserts both.
 
 `gh api repos/astral-sh/uv/releases/latest --jq .tag_name` was also captured
 (it printed `0.13.1`). It is not kept, because no probe uses it once uv is
@@ -50,6 +53,7 @@ hand from the documented output format.
 | --- | --- | --- |
 | `softwareupdate-list-none.txt` | `softwareupdate --list 2>&1` with nothing pending | The host had updates pending |
 | `softwareupdate-list-non-macos-only.txt` | `softwareupdate --list 2>&1` with only a non-OS update pending | The host had macOS updates pending |
+| `softwareupdate-list-patch-only.txt` | `softwareupdate --list 2>&1` offering only a patch update (26.5.3 on 26.5.2) | The host's pending macOS updates were a minor and a major (#3269) |
 | `uv-tool-list-outdated-listed.txt` | `uv tool list --outdated` listing an outdated tool | The real output was empty, so the `[latest: …]` line format is still unverified |
 
 Tests also build a few synthetic edge cases inline (for example an unreadable

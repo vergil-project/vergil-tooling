@@ -845,7 +845,16 @@ def test_status_classifies_the_captured_host(
     # Entries #3261 left alone render exactly as the real host printed them.
     before = (_FIXTURES / "vrg-host-status-before-3261.txt").read_text(encoding="utf-8")
     real = _rows_by_name(before.splitlines())
-    for name in ("gh", "gcloud", "vergil-tooling", "macos"):
+    for name in ("gh", "gcloud", "vergil-tooling"):
         assert rows[name] == real[name], name
+    # macos reports every pending level (#3269); before, only the newest
+    # (27.0.1) showed and the same-major 26.7.1 was hidden.
+    assert real["macos"] == (
+        "[WARN ] macos            custom              26.5.2 -> 27.0.1       behind (drift)"
+    )
+    assert rows["macos"] == (
+        "[WARN ] macos            custom              26.5.2 -> 27.0.1       "
+        "behind (drift): minor 26.7.1, major 27.0.1"
+    )
     assert "          check numpy-in-interpreter: satisfied" in lines
     assert lines[-1] == f"overall: WARN ({len(deps)} dependencies)"

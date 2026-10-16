@@ -10,6 +10,9 @@ merely different. That needs two things, both here:
 - :func:`compare` orders two bare versions. It is the **one** comparator used
   for the ``behind``/``current`` decision and for the #155 pin re-evaluation
   trigger (:func:`vergil_tooling.lib.host_pins.is_reevaluation_due`).
+- :func:`update_level` names how far an offered version is ahead of the
+  installed one — ``major``, ``minor`` or ``patch`` — for a dependency that
+  reports every pending update level (issue #3269).
 
 Both are deliberately narrow and refuse rather than guess (the tooling-wide
 no-silent-failure rule): a comparable version is dotted numeric with an
@@ -63,6 +66,52 @@ def normalize(raw: str) -> str:
         what = "no version" if not found else f"several versions ({', '.join(found)})"
         raise UnrecognizedVersionError(f"cannot read a version from {raw!r}: found {what}")
     return str(found[0])
+
+
+def parse_bare(raw: str) -> str:
+    """Return *raw* as a bare comparable version (no leading ``v``), strictly.
+
+    Unlike :func:`normalize`, prose is never searched for an embedded version:
+    *raw* must itself be a version (``"26.7.1"``, ``"v2.40.0"``, ``"3.12.7_1"``).
+    A multi-version probe prints one version per line, so anything else on a
+    line is an unreadable offer, never something to fish a version out of.
+
+    Raises:
+        UnrecognizedVersionError: *raw* is not a bare comparable version.
+    """
+    text = raw.strip()
+    if _BARE.fullmatch(text) is None:
+        raise UnrecognizedVersionError(f"{raw!r} is not a bare version")
+    return text.removeprefix("v")
+
+
+LEVELS: Final = ("patch", "minor", "major")
+"""Update levels, least to most significant (the order ``status`` renders them in)."""
+
+
+def update_level(installed: str, offered: str) -> str | None:
+    """Return the level at which *offered* is newer than *installed*.
+
+    The level is set by the first component that differs: the first is
+    ``major``, the second ``minor``, and any later one (a fourth component, or
+    only a Homebrew revision) is ``patch``. Missing trailing components are
+    ``0``, as in :func:`compare`. Returns ``None`` when *offered* is not newer
+    than *installed* (an equal or older offer is not an update).
+
+    Raises:
+        IncomparableVersionError: either version is outside the comparable
+            grammar described in the module docstring.
+    """
+    if compare(offered, installed) <= 0:
+        return None
+    (a, _), (b, _) = _key(installed), _key(offered)
+    width = max(len(a), len(b))
+    a += (0,) * (width - len(a))
+    b += (0,) * (width - len(b))
+    for index, (left, right) in enumerate(zip(a, b, strict=True)):
+        if left != right:
+            return LEVELS[max(0, 2 - index)]
+    return "patch"  # only the Homebrew revision differs
 
 
 def upstream(version: str) -> str:

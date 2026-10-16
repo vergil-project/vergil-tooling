@@ -24,6 +24,12 @@ No-silent-failure contract:
   not answer (the ``latest-unknown`` WARN). The two are never conflated. A
   latest probe that *did* answer but unreadably raises :class:`ProbeError`,
   exactly like the installed probe.
+- A ``custom`` entry that declares a ``latest_versions`` probe (instead of
+  ``latest_version``) reports **every** pending update rather than one latest
+  (issue #3269): its probe prints one bare version per line and
+  :func:`latest_version` returns them as :class:`Offers`. Every line must be a
+  bare version (:func:`host_versions.parse_bare`); an unreadable line is a
+  :class:`ProbeError`, never dropped.
 - :func:`upgrade` raises :class:`UpgradeUnsupportedError` (alias
   ``UpgradeUnsupported``) for a ``manual`` dependency and
   :class:`UpgradeFailedError` when the upgrade command fails.
@@ -44,6 +50,7 @@ from __future__ import annotations
 import functools
 import json
 import subprocess
+from dataclasses import dataclass
 from typing import Any, Final
 
 from vergil_tooling.lib import host_versions
@@ -63,6 +70,17 @@ class _Unmanaged:
 
 UNMANAGED: Final = _Unmanaged()
 """Returned by :func:`latest_version` for a dependency declared ``latest = "unmanaged"``."""
+
+
+@dataclass(frozen=True)
+class Offers:
+    """Every candidate version a ``latest_versions`` probe offered (normalized, as listed).
+
+    Offers are not filtered here: one that is not newer than the installed
+    version is simply not an update, which :mod:`host_status` decides.
+    """
+
+    versions: tuple[str, ...]
 
 
 class UpgradeUnsupportedError(Exception):
@@ -240,6 +258,22 @@ def _parse_uv_tool_outdated(name: str, output: str) -> str | None:
     return _normalized(name, line[start + len(marker) : end], "uv tool list --outdated")
 
 
+def _parse_offers(name: str, output: str) -> Offers:
+    """Parse a ``latest_versions`` probe's output: one bare version per line.
+
+    Raises:
+        ProbeError: a line (blank lines included) is not a bare version. An
+            offer the parser cannot read is never silently dropped.
+    """
+    versions: list[str] = []
+    for line in output.splitlines():
+        try:
+            versions.append(host_versions.parse_bare(line))
+        except host_versions.UnrecognizedVersionError as exc:
+            raise ProbeError(f"{name}: latest_versions probe: unreadable offer: {exc}") from exc
+    return Offers(tuple(versions))
+
+
 # -- dispatch -------------------------------------------------------------------
 
 
@@ -293,11 +327,13 @@ def installed_version(dep: HostDependency) -> str | None:
     raise _unknown_method(dep)
 
 
-def latest_version(dep: HostDependency) -> str | _Unmanaged | None:
+def latest_version(dep: HostDependency) -> str | Offers | _Unmanaged | None:
     """Return *dep*'s normalized latest available version.
 
     Returns :data:`UNMANAGED` when the manifest declares no latest feed, and
-    ``None`` when a probe that should work could not answer.
+    ``None`` when a probe that should work could not answer. A ``custom``
+    entry with a ``latest_versions`` probe returns every offered version as
+    :class:`Offers`.
 
     Raises:
         ProbeError: the probe answered but its output is unparseable.
@@ -320,6 +356,13 @@ def latest_version(dep: HostDependency) -> str | _Unmanaged | None:
         # (Only sound for a tool sourced from a package index; a git-sourced
         # tool has no index feed and must be declared `latest = "unmanaged"`.)
         return installed_version(dep)
+    if dep.method == "custom" and "latest_versions" in dep.probes:
+        out = _run(dep.probes["latest_versions"])
+        if out is None:
+            return None
+        if not out:
+            raise ProbeError(f"{dep.name}: latest_versions probe printed nothing")
+        return _parse_offers(dep.name, out)
     if dep.method == "custom":
         out = _run(_custom(dep, "latest_version"))
         if out is None:

@@ -34,7 +34,10 @@ _PIN_STATES = frozenset({"active", "under-evaluation", "freed"})
 # any other method has built-in commands and may override only how the
 # installed version is read (e.g. a self-updating app whose package-manager
 # record goes stale). An unknown key is refused, never silently ignored.
-_CUSTOM_PROBES = frozenset({"installed_version", "latest_version", "upgrade"})
+# A custom entry reports either one latest (``latest_version``) or every
+# pending update level (``latest_versions``, one version per line; issue
+# #3269), never both.
+_CUSTOM_PROBES = frozenset({"installed_version", "latest_version", "latest_versions", "upgrade"})
 _OVERRIDE_PROBES = frozenset({"installed_version"})
 
 _DEP_KEYS = frozenset({"name", "why", "method", "upgrade", "latest", "probes", "check", "pin"})
@@ -208,6 +211,14 @@ def _parse_dep(raw: Any, index: int) -> HostDependency:
             f"(allowed: {', '.join(sorted(allowed))})"
         )
     probes = {key: _argv(cmd, f"{where}: probe {key!r}") for key, cmd in probes_raw.items()}
+    latest = _enum(raw, "latest", "probe", _LATEST, where)
+    if "latest_versions" in probes:
+        if "latest_version" in probes:
+            raise ManifestError(
+                f"{where}: declare probe 'latest_version' or 'latest_versions', not both"
+            )
+        if latest != "probe":
+            raise ManifestError(f"{where}: probe 'latest_versions' requires latest = 'probe'")
     checks_raw = raw.get("check", [])
     if not isinstance(checks_raw, list):
         raise ManifestError(f"{where}: check must be an array of tables")
@@ -220,7 +231,7 @@ def _parse_dep(raw: Any, index: int) -> HostDependency:
         why=_opt_str(raw, "why", "", where) or "",
         method=str(method),
         upgrade=_enum(raw, "upgrade", "auto", _UPGRADE, where),
-        latest=_enum(raw, "latest", "probe", _LATEST, where),
+        latest=latest,
         probes=probes,
         checks=checks,
         pin=_parse_pin(raw["pin"], where) if "pin" in raw else None,

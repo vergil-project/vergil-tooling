@@ -74,7 +74,8 @@ def test_custom_entries_declare_the_probes_they_need() -> None:
         if dep.method != "custom":
             continue
         assert "installed_version" in dep.probes, dep.name
-        assert ("latest_version" in dep.probes) == (dep.latest == "probe"), dep.name
+        latest_probes = {"latest_version", "latest_versions"} & set(dep.probes)
+        assert len(latest_probes) == (1 if dep.latest == "probe" else 0), dep.name
         assert ("upgrade" in dep.probes) == (dep.upgrade == "auto"), dep.name
 
 
@@ -311,7 +312,7 @@ def test_custom_unknown_probe_key_raises(monkeypatch: pytest.MonkeyPatch, key: s
 
 
 @pytest.mark.parametrize("method", ["brew-formula", "brew-cask", "uv-tool"])
-@pytest.mark.parametrize("key", ["latest_version", "upgrade"])
+@pytest.mark.parametrize("key", ["latest_version", "latest_versions", "upgrade"])
 def test_builtin_method_may_override_only_installed_probe(
     monkeypatch: pytest.MonkeyPatch, method: str, key: str
 ) -> None:
@@ -320,6 +321,40 @@ def test_builtin_method_may_override_only_installed_probe(
         monkeypatch,
         head + f'[dependency.probes]\n{key} = ["x"]\n',
         f"probe\\(s\\) {key} not allowed for method '{method}' \\(allowed: installed_version\\)",
+    )
+
+
+def test_only_macos_reports_update_levels() -> None:
+    # #3269: macos opts in to multi-level reporting; every other entry keeps
+    # its single-latest behaviour.
+    deps = host_deps.load_manifest()
+    assert {d.name for d in deps if "latest_versions" in d.probes} == {"macos"}
+
+
+def test_custom_latest_versions_parses(monkeypatch: pytest.MonkeyPatch) -> None:
+    _use(monkeypatch, _DEP + '[dependency.probes]\nlatest_versions = ["x", "--offers"]\n')
+    (dep,) = host_deps.load_manifest()
+    assert (dep.latest, dep.probes) == ("probe", {"latest_versions": ["x", "--offers"]})
+
+
+def test_custom_latest_version_and_versions_both_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _load_error(
+        monkeypatch,
+        _DEP + '[dependency.probes]\nlatest_version = ["x"]\nlatest_versions = ["y"]\n',
+        "declare probe 'latest_version' or 'latest_versions', not both",
+    )
+
+
+def test_custom_latest_versions_with_unmanaged_latest_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An unmanaged latest would silently ignore the probe, so it is refused.
+    _load_error(
+        monkeypatch,
+        _DEP + 'latest = "unmanaged"\n[dependency.probes]\nlatest_versions = ["x"]\n',
+        "probe 'latest_versions' requires latest = 'probe'",
     )
 
 
