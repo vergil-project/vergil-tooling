@@ -57,6 +57,7 @@ def main(argv: list[str] | None = None) -> int:
         repo_root=repo_root,
         promote=not args.no_promote,
         without_deps=args.without_deps,
+        allow_pending_deps=args.allow_pending_deps,
         resume=resume_requested,
         resume_version=resume_version,
         resume_issue_number=resume_issue_number,
@@ -116,6 +117,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         default=False,
         help="Skip the post-release dependency update (the update-deps stage).",
+    )
+    parser.add_argument(
+        "--allow-pending-deps",
+        action="store_true",
+        default=False,
+        help=(
+            "Release even though a dependency-update PR is open (urgent fixes "
+            "only); the bypass is logged on the tracking issue."
+        ),
     )
     parser.add_argument(
         "--install",

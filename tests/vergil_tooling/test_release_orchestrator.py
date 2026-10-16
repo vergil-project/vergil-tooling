@@ -111,9 +111,22 @@ def test_preflight_stage_populates_ctx() -> None:
         resume=False,
         resume_version=None,
         resume_issue_number=None,
+        allow_pending_deps=False,
     )
     assert state.ctx is ctx
     assert ctx.promote is False
+
+
+def test_preflight_stage_passes_allow_pending_deps() -> None:
+    state = ReleaseState(
+        version_override=None,
+        repo_root=Path("/tmp/repo"),  # noqa: S108
+        promote=True,
+        allow_pending_deps=True,
+    )
+    with patch(_MOD + ".preflight", return_value=_ctx()) as m_preflight:
+        _preflight_stage(state)
+    assert m_preflight.call_args.kwargs["allow_pending_deps"] is True
 
 
 def test_audit_stage_runs_audit() -> None:
@@ -222,6 +235,16 @@ def test_phase_details_prepare() -> None:
     assert "release/2.1.0" in details
     assert "pull/100" in details
     assert "issues/42" in details
+    assert "--allow-pending-deps" not in details
+
+
+def test_phase_details_prepare_names_bypassed_deps_prs() -> None:
+    ctx = _ctx()
+    ctx.bypassed_deps_prs = ["https://github.com/o/r/pull/9", "https://github.com/o/r/pull/11"]
+    details = _phase_details(ctx, "prepare")
+    assert "--allow-pending-deps" in details
+    assert "https://github.com/o/r/pull/9" in details
+    assert "https://github.com/o/r/pull/11" in details
 
 
 def test_phase_details_merge_release() -> None:

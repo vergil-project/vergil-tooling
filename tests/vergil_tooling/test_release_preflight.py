@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import json
 import subprocess
 from pathlib import Path
 from unittest.mock import patch
@@ -9,7 +11,9 @@ import pytest
 from vergil_tooling.lib.release import preflight as preflight_module
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.preflight import (
+    PendingDepsPr,
     _compute_release_version,
+    pending_deps_prs,
     preflight,
 )
 
@@ -28,6 +32,7 @@ def test_preflight_success() -> None:
         patch(_MOD + ".version.show", return_value="2.1.0"),
         patch(_MOD + "._check_version_not_tagged"),
         patch(_MOD + "._check_no_existing_tracking_issue"),
+        patch(_MOD + ".pending_deps_prs", return_value=[]),
         patch(_MOD + "._acquire_release_worktree", return_value=wt) as m_wt,
         patch(_MOD + ".os.chdir") as m_chdir,
     ):
@@ -99,6 +104,7 @@ def test_preflight_with_minor_override() -> None:
         patch(_MOD + ".version.show", return_value="2.0.34"),
         patch(_MOD + "._check_version_not_tagged"),
         patch(_MOD + "._check_no_existing_tracking_issue"),
+        patch(_MOD + ".pending_deps_prs", return_value=[]),
         patch(_MOD + "._acquire_release_worktree", return_value=wt),
         patch(_MOD + ".os.chdir"),
     ):
@@ -120,6 +126,7 @@ def test_preflight_with_major_override() -> None:
         patch(_MOD + ".version.show", return_value="2.0.34"),
         patch(_MOD + "._check_version_not_tagged"),
         patch(_MOD + "._check_no_existing_tracking_issue"),
+        patch(_MOD + ".pending_deps_prs", return_value=[]),
         patch(_MOD + "._acquire_release_worktree", return_value=wt),
         patch(_MOD + ".os.chdir"),
     ):
@@ -371,6 +378,7 @@ def test_preflight_never_audits() -> None:
         patch(_MOD + ".version.show", return_value="2.1.0"),
         patch(_MOD + "._check_version_not_tagged"),
         patch(_MOD + "._check_no_existing_tracking_issue"),
+        patch(_MOD + ".pending_deps_prs", return_value=[]),
         patch(_MOD + "._acquire_release_worktree", return_value=wt),
         patch(_MOD + ".os.chdir"),
     ):
@@ -478,3 +486,164 @@ def test_preflight_wraps_version_sync_error() -> None:
         pytest.raises(ReleaseError, match="VERSION"),
     ):
         preflight(version_override=None, repo_root=root)
+
+
+# --- dependency-update release gate (epic vergil-project/.github#381, spec §5.3) ---
+
+_PRS = [
+    {
+        "url": "https://github.com/o/r/pull/9",
+        "body": "Mechanized update.\n\nFix task: https://github.com/o/r/issues/10\n",
+    },
+    {"url": "https://github.com/o/r/pull/11", "body": "no fix task yet"},
+    {"url": "https://github.com/o/r/pull/12", "body": None},
+]
+
+
+def test_pending_deps_prs_parses_fix_task() -> None:
+    with patch(_MOD + ".github.read_json", return_value=_PRS) as m:
+        prs = pending_deps_prs("o/r")
+    assert prs == [
+        PendingDepsPr(
+            url="https://github.com/o/r/pull/9",
+            fix_task="https://github.com/o/r/issues/10",
+        ),
+        PendingDepsPr(url="https://github.com/o/r/pull/11", fix_task=None),
+        PendingDepsPr(url="https://github.com/o/r/pull/12", fix_task=None),
+    ]
+    args = list(m.call_args.args)
+    assert args[:2] == ["pr", "list"]
+    assert args[args.index("--repo") + 1] == "o/r"
+    assert args[args.index("--state") + 1] == "open"
+    assert args[args.index("--label") + 1] == "dependency-update"
+
+
+def test_pending_deps_prs_fails_loud_on_gh_error() -> None:
+    err = subprocess.CalledProcessError(1, ["gh"], output="", stderr="HTTP 502")
+    with (
+        patch(_MOD + ".github.read_json", side_effect=err),
+        pytest.raises(ReleaseError, match="Could not list open dependency-update PRs") as info,
+    ):
+        pending_deps_prs("o/r")
+    assert info.value.phase == "preflight"
+
+
+def test_pending_deps_prs_fails_loud_on_bad_json() -> None:
+    with (
+        patch(_MOD + ".github.read_json", side_effect=json.JSONDecodeError("x", "doc", 0)),
+        pytest.raises(ReleaseError, match="Could not list open dependency-update PRs"),
+    ):
+        pending_deps_prs("o/r")
+
+
+def test_pending_deps_prs_rejects_non_list() -> None:
+    with (
+        patch(_MOD + ".github.read_json", return_value={"url": "x"}),
+        pytest.raises(ReleaseError, match="expected a list"),
+    ):
+        pending_deps_prs("o/r")
+
+
+def test_pending_deps_prs_rejects_entry_without_url() -> None:
+    with (
+        patch(_MOD + ".github.read_json", return_value=[{"body": "x"}]),
+        pytest.raises(ReleaseError, match="without a url"),
+    ):
+        pending_deps_prs("o/r")
+
+
+def test_pending_deps_prs_rejects_non_object_entry() -> None:
+    with (
+        patch(_MOD + ".github.read_json", return_value=["https://github.com/o/r/pull/9"]),
+        pytest.raises(ReleaseError, match="without a url"),
+    ):
+        pending_deps_prs("o/r")
+
+
+def _fresh_patches(pending: list[PendingDepsPr]) -> list[contextlib.AbstractContextManager[object]]:
+    wt = Path("/tmp/repo/.worktrees/release-2.1.0")  # noqa: S108
+    return [
+        patch(_MOD + "._check_host_prerequisites"),
+        patch(_MOD + ".check_gh_auth", return_value="o/r"),
+        patch(_MOD + "._read_and_validate_config"),
+        patch(_MOD + "._check_branch_and_tree"),
+        patch(_MOD + ".version.show", return_value="2.1.0"),
+        patch(_MOD + "._check_version_not_tagged"),
+        patch(_MOD + "._check_no_existing_tracking_issue"),
+        patch(_MOD + "._acquire_release_worktree", return_value=wt),
+        patch(_MOD + ".os.chdir"),
+        patch(_MOD + ".pending_deps_prs", return_value=pending),
+    ]
+
+
+def test_preflight_refuses_on_pending_deps_pr() -> None:
+    pending = [
+        PendingDepsPr(
+            url="https://github.com/o/r/pull/9",
+            fix_task="https://github.com/o/r/issues/10",
+        ),
+        PendingDepsPr(url="https://github.com/o/r/pull/11", fix_task=None),
+    ]
+    with contextlib.ExitStack() as stack:
+        for p in _fresh_patches(pending):
+            stack.enter_context(p)
+        m_wt = stack.enter_context(patch(_MOD + "._acquire_release_worktree"))
+        with pytest.raises(ReleaseError, match="dependency-update") as info:
+            preflight(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
+    msg = str(info.value)
+    assert "https://github.com/o/r/pull/9 (fix task: https://github.com/o/r/issues/10)" in msg
+    assert "https://github.com/o/r/pull/11" in msg
+    assert "--allow-pending-deps" in msg
+    assert info.value.phase == "preflight"
+    # The gate refuses before the release branch/worktree (the release lock) exists.
+    m_wt.assert_not_called()
+
+
+def test_preflight_allow_pending_deps_records_bypass(capsys: pytest.CaptureFixture[str]) -> None:
+    pending = [PendingDepsPr(url="https://github.com/o/r/pull/9", fix_task=None)]
+    with contextlib.ExitStack() as stack:
+        for p in _fresh_patches(pending):
+            stack.enter_context(p)
+        ctx = preflight(
+            version_override=None,
+            repo_root=Path("/tmp/repo"),  # noqa: S108
+            allow_pending_deps=True,
+        )
+    assert ctx.bypassed_deps_prs == ["https://github.com/o/r/pull/9"]
+    out = capsys.readouterr().out
+    assert "--allow-pending-deps" in out
+    assert "https://github.com/o/r/pull/9" in out
+
+
+def test_preflight_no_pending_deps_passes() -> None:
+    with contextlib.ExitStack() as stack:
+        for p in _fresh_patches([]):
+            stack.enter_context(p)
+        ctx = preflight(
+            version_override=None,
+            repo_root=Path("/tmp/repo"),  # noqa: S108
+            allow_pending_deps=True,
+        )
+    assert ctx.bypassed_deps_prs == []
+
+
+def test_preflight_resume_skips_pending_deps_gate() -> None:
+    wt = Path("/tmp/repo/.worktrees/release-2.1.0")  # noqa: S108
+    with (
+        patch(_MOD + "._check_host_prerequisites"),
+        patch(_MOD + ".check_gh_auth", return_value="o/r"),
+        patch(_MOD + "._read_and_validate_config"),
+        patch(_MOD + "._check_branch_and_tree"),
+        patch(_MOD + "._acquire_release_worktree", return_value=wt),
+        patch(_MOD + ".os.chdir"),
+        patch(_MOD + ".pending_deps_prs") as m_pending,
+    ):
+        ctx = preflight(
+            version_override=None,
+            repo_root=Path("/tmp/repo"),  # noqa: S108
+            resume=True,
+            resume_version="2.1.0",
+            resume_issue_number=7,
+        )
+    m_pending.assert_not_called()
+    assert ctx.bypassed_deps_prs == []
