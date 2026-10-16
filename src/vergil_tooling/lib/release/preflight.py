@@ -272,7 +272,14 @@ def _check_pending_deps(repo: str, *, allow: bool) -> _DepsGateOutcome:
     blocking: list[tuple[PendingDepsPr, str]] = []
     for pr in pending:
         if pr.fix_task is None:
-            blocking.append((pr, ""))
+            blocking.append(
+                (
+                    pr,
+                    " (no fix task linked — the update is still pending or was never "
+                    "linked to a fix task; merge this PR if it is green, or close it "
+                    "deliberately)",
+                )
+            )
             continue
         state, reason = fix_task_status(pr.fix_task)
         if state == "CLOSED" and reason == "COMPLETED":
@@ -283,11 +290,19 @@ def _check_pending_deps(repo: str, *, allow: bool) -> _DepsGateOutcome:
                     pr,
                     f" (fix task {pr.fix_task} closed without completing "
                     f"({reason or 'no state reason'}) — the update did not land; "
-                    "deciding what to do with this PR is a human call)",
+                    "deciding what to do with this PR is a human call: close it "
+                    "deliberately or reopen the fix task)",
                 )
             )
         else:
-            blocking.append((pr, f" (fix task: {pr.fix_task})"))
+            blocking.append(
+                (
+                    pr,
+                    f" (fix task {pr.fix_task} is open — finish the fix: merging its PR "
+                    "closes the fix task as completed, and the next release then "
+                    "closes this PR itself)",
+                )
+            )
 
     cleared: list[str] = []
     for pr in landed:
@@ -312,10 +327,9 @@ def _check_pending_deps(repo: str, *, allow: bool) -> _DepsGateOutcome:
         phase="preflight",
         command=_PENDING_DEPS_COMMAND,
         message=(
-            f"Open dependency-update PR(s) block this release: {described}. Clear the "
-            "gate by landing the fix task, merging the PR, or closing it deliberately. "
-            "For an urgent release, pass --allow-pending-deps (the bypass is logged on "
-            "the tracking issue)."
+            f"Open dependency-update PR(s) block this release: {described}. For an "
+            "urgent release, pass --allow-pending-deps (the bypass is logged on the "
+            "tracking issue)."
         ),
     )
 

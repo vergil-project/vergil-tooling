@@ -598,8 +598,8 @@ def test_preflight_refuses_on_pending_deps_pr() -> None:
         with pytest.raises(ReleaseError, match="dependency-update") as info:
             preflight(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
     msg = str(info.value)
-    assert "https://github.com/o/r/pull/9 (fix task: https://github.com/o/r/issues/10)" in msg
-    assert "https://github.com/o/r/pull/11" in msg
+    assert "https://github.com/o/r/pull/9 (fix task https://github.com/o/r/issues/10 is open" in msg
+    assert "https://github.com/o/r/pull/11 (no fix task linked" in msg
     assert "--allow-pending-deps" in msg
     assert info.value.phase == "preflight"
     # The gate refuses before the release branch/worktree (the release lock) exists.
@@ -784,6 +784,56 @@ def test_preflight_not_planned_fix_task_keeps_blocking() -> None:
     assert _PR9 in msg
     assert f"fix task {_TASK10} closed without completing (NOT_PLANNED)" in msg
     assert "human" in msg
+
+
+def test_preflight_refusal_advice_no_fix_task_linked() -> None:
+    pending = [PendingDepsPr(url=_PR11, fix_task=None)]
+    with pytest.raises(ReleaseError) as info:
+        _run_preflight_with_tasks(pending, {})
+    assert (
+        f"{_PR11} (no fix task linked — the update is still pending or was never "
+        "linked to a fix task; merge this PR if it is green, or close it deliberately)"
+    ) in str(info.value)
+
+
+def test_preflight_refusal_advice_fix_task_open() -> None:
+    pending = [PendingDepsPr(url=_PR9, fix_task=_TASK10)]
+    with pytest.raises(ReleaseError) as info:
+        _run_preflight_with_tasks(pending, {_TASK10: ("OPEN", None)})
+    assert (
+        f"{_PR9} (fix task {_TASK10} is open — finish the fix: merging its PR "
+        "closes the fix task as completed, and the next release then closes this "
+        "PR itself)"
+    ) in str(info.value)
+
+
+def test_preflight_refusal_advice_fix_task_closed_not_completed() -> None:
+    pending = [PendingDepsPr(url=_PR9, fix_task=_TASK10)]
+    with pytest.raises(ReleaseError) as info:
+        _run_preflight_with_tasks(pending, {_TASK10: ("CLOSED", "NOT_PLANNED")})
+    assert (
+        f"{_PR9} (fix task {_TASK10} closed without completing (NOT_PLANNED) — the "
+        "update did not land; deciding what to do with this PR is a human call: "
+        "close it deliberately or reopen the fix task)"
+    ) in str(info.value)
+
+
+def test_preflight_refusal_trailer_keeps_only_bypass_advice() -> None:
+    pending = [
+        PendingDepsPr(url=_PR9, fix_task=_TASK10),
+        PendingDepsPr(url=_PR11, fix_task=None),
+    ]
+    with pytest.raises(ReleaseError) as info:
+        _run_preflight_with_tasks(pending, {_TASK10: ("OPEN", None)})
+    msg = str(info.value)
+    # The per-PR advice is followed directly by the shared bypass-only trailer.
+    assert (
+        "or close it deliberately). For an urgent release, pass --allow-pending-deps "
+        "(the bypass is logged on the tracking issue)."
+    ) in msg
+    assert "Clear the gate" not in msg
+    assert "merging the PR" not in msg
+    assert "landing the fix task" not in msg
 
 
 def test_preflight_closed_fix_task_without_reason_keeps_blocking() -> None:
