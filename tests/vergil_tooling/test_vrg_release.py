@@ -73,6 +73,46 @@ def test_main_runs_pipeline() -> None:
     assert state.repo_root is m_git.repo_root.return_value
 
 
+def test_parse_args_default_with_deps() -> None:
+    assert parse_args([]).without_deps is False
+
+
+def test_main_without_deps_reaches_state() -> None:
+    with (
+        patch(_MOD + ".git"),
+        patch(_MOD + ".progress.run_pipeline", return_value=0) as m_pipeline,
+    ):
+        assert main(["--without-deps", "--output-format", "plain"]) == 0
+    state = m_pipeline.call_args.args[0]
+    assert state.without_deps is True
+    assert state.promote is True
+
+
+def test_main_defaults_to_running_deps() -> None:
+    with (
+        patch(_MOD + ".git"),
+        patch(_MOD + ".progress.run_pipeline", return_value=0) as m_pipeline,
+    ):
+        assert main(["--output-format", "plain"]) == 0
+    assert m_pipeline.call_args.args[0].without_deps is False
+    assert m_pipeline.call_args.args[0].allow_pending_deps is False
+
+
+def test_parse_args_default_gates_pending_deps() -> None:
+    assert parse_args([]).allow_pending_deps is False
+
+
+def test_main_allow_pending_deps_reaches_state() -> None:
+    with (
+        patch(_MOD + ".git"),
+        patch(_MOD + ".progress.run_pipeline", return_value=0) as m_pipeline,
+    ):
+        assert main(["--allow-pending-deps", "--output-format", "plain"]) == 0
+    state = m_pipeline.call_args.args[0]
+    assert state.allow_pending_deps is True
+    assert state.without_deps is False
+
+
 def test_main_returns_pipeline_exit_code() -> None:
     with (
         patch(_MOD + ".git"),

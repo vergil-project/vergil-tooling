@@ -18,6 +18,8 @@ from vergil_tooling.lib.github import GitHubAPIError
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from tests.vergil_tooling.conftest import FakeApp
+
 _MOD = "vergil_tooling.bin.vrg_docs_stage"
 
 
@@ -307,3 +309,94 @@ class TestIsAuthError:
     def test_no_stderr(self) -> None:
         exc = GitHubAPIError(1, "gh api", stderr=None)
         assert _is_auth_error(exc) is False
+
+
+# -- App-token scoping (#3220) ------------------------------------------------
+
+
+def _docs_with_release(tmp_path: Path) -> list[str]:
+    """argv staging one release page, so the evidence lookup runs."""
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    releases = tmp_path / "releases"
+    releases.mkdir()
+    (releases / "v1.0.0.md").write_text("# Release 1.0.0 (2026-01-01)\n")
+    return ["--docs-dir", str(docs), "--releases-dir", str(releases)]
+
+
+class TestTokenScopedToRepoOwner:
+    """The releases lookup runs under a token minted for the target repo's owner."""
+
+    @pytest.mark.parametrize("cwd_org", [None, "cwd-org"], ids=["outside-repo", "other-org"])
+    def test_explicit_repo_mints_for_repo_owner(
+        self, tmp_path: Path, fake_app: FakeApp, cwd_org: str | None
+    ) -> None:
+        fake_app.cwd_org = cwd_org
+        owners: list[str] = []
+
+        def _read_json(*_args: str) -> list[object]:
+            owners.append(fake_app.token_owner())
+            return []
+
+        with (
+            patch(f"{_MOD}.write_output"),
+            patch(f"{_MOD}.github.read_json", side_effect=_read_json),
+            patch(f"{_MOD}.github.current_repo") as mock_current,
+        ):
+            rc = main([*_docs_with_release(tmp_path), "--repo", "target-org/r"])
+        assert rc == 0
+        assert owners == ["target-org"]
+        mock_current.assert_not_called()
+
+    def test_default_repo_mints_for_resolved_repo_owner(
+        self, tmp_path: Path, fake_app: FakeApp
+    ) -> None:
+        fake_app.cwd_org = "cwd-org"
+        owners: list[str] = []
+
+        def _read_json(*_args: str) -> list[object]:
+            owners.append(fake_app.token_owner())
+            return []
+
+        with (
+            patch(f"{_MOD}.write_output"),
+            patch(f"{_MOD}.github.read_json", side_effect=_read_json),
+            patch(f"{_MOD}.github.current_repo", return_value="cwd-org/here"),
+        ):
+            rc = main(_docs_with_release(tmp_path))
+        assert rc == 0
+        assert owners == ["cwd-org"]
+
+    def test_default_repo_outside_checkout_stops_with_no_target_org(
+        self, tmp_path: Path, fake_app: FakeApp, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """No --repo and no cwd remote: NoTargetOrgError, never ambient auth."""
+        fake_app.cwd_org = None
+        with (
+            patch(f"{_MOD}.write_output") as mock_out,
+            patch("vergil_tooling.lib.retry.run_with_retry") as mock_run,
+            pytest.raises(SystemExit) as excinfo,
+        ):
+            main(_docs_with_release(tmp_path))
+        assert excinfo.value.code == 1
+        mock_run.assert_not_called()
+        mock_out.assert_not_called()
+        assert "no target org" in capsys.readouterr().err
+
+    def test_missing_installation_fails_loudly(
+        self, tmp_path: Path, fake_app: FakeApp, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """An uninstalled --repo owner is an error, not an ambient-auth fallback."""
+        fake_app.cwd_org = "cwd-org"
+        with (
+            patch(f"{_MOD}.write_output") as mock_out,
+            patch("vergil_tooling.lib.retry.run_with_retry") as mock_run,
+            pytest.raises(SystemExit) as excinfo,
+        ):
+            main([*_docs_with_release(tmp_path), "--repo", "lonely-org/r"])
+        assert excinfo.value.code == 1
+        mock_run.assert_not_called()
+        mock_out.assert_not_called()
+        err = capsys.readouterr().err
+        assert "vrg-docs-stage:" in err
+        assert "no installation for owner 'lonely-org'" in err

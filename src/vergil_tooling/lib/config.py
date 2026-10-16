@@ -86,6 +86,7 @@ _KNOWN_SECTIONS = frozenset(
         "test",
         "vm",
         "package",
+        "dependency-update",
     },
 )
 
@@ -103,6 +104,7 @@ _KNOWN_KEYS: dict[str, frozenset[str]] = {
     "cpp": frozenset({"std", "stdlib"}),
     "typescript": frozenset({"module", "target"}),
     "test": frozenset({"parallel"}),
+    "dependency-update": frozenset({"hook"}),
     "package": frozenset(
         {
             "builder",
@@ -228,6 +230,15 @@ class ValidationConfig:
 
 
 @dataclass
+class DependencyUpdateConfig:
+    # [dependency-update] (epic vergil-project/.github#381, spec §6.1): a
+    # repo-owned command vrg-update-deps runs in the dev container after the
+    # built-in updaters. None when the table is absent. Distinct from
+    # [dependencies], which declares *what* the repo depends on.
+    hook: str | None = None
+
+
+@dataclass
 class CppConfig:
     # The two cheap in-build C++ axes (epic vergil-project/.github#207 §3.3):
     # ``std`` is the ``-std=`` flag, ``stdlib`` selects the standard library.
@@ -324,6 +335,7 @@ class VergilConfig:
     test: TestConfig = field(default_factory=TestConfig)
     vm: VmStanza | None = None
     package: PackageConfig | None = None
+    dependency_update: DependencyUpdateConfig = field(default_factory=DependencyUpdateConfig)
 
 
 @dataclass
@@ -622,6 +634,25 @@ def _parse_typescript_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> 
             ts_raw, "target", _TYPESCRIPT_TARGET_VALUES, DEFAULT_TYPESCRIPT_TARGET, source
         ),
     )
+
+
+def _parse_dependency_update(
+    raw: dict[str, Any], source: str = CONFIG_FILE
+) -> DependencyUpdateConfig:
+    table = raw.get("dependency-update")
+    if table is None:
+        return DependencyUpdateConfig()
+    if not isinstance(table, dict):
+        msg = f"{source}: [dependency-update] must be a table"
+        raise ConfigError(msg)
+    if "hook" not in table:
+        msg = f"{source}: [dependency-update] missing required field 'hook'"
+        raise ConfigError(msg)
+    hook = table["hook"]
+    if not isinstance(hook, str) or not hook.strip():
+        msg = f"{source}: [dependency-update].hook must be a non-empty string"
+        raise ConfigError(msg)
+    return DependencyUpdateConfig(hook=hook)
 
 
 def _parse_test_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> TestConfig:
@@ -1005,6 +1036,7 @@ def _parse_raw_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> VergilC
         test=_parse_test_config(raw, source),
         vm=parse_vm_stanza(raw, source),
         package=_parse_package_config(raw, source),
+        dependency_update=_parse_dependency_update(raw, source),
     )
 
 
@@ -1133,6 +1165,15 @@ def container_build_cache_files(repo_root: Path) -> list[str]:
     except FileNotFoundError:
         return []
     return cfg.container.build_cache_files
+
+
+def dependency_update_hook(repo_root: Path) -> str | None:
+    """Return ``[dependency-update].hook`` from vergil.toml, or None when unset.
+
+    ``FileNotFoundError`` and ``ConfigError`` propagate: callers check for
+    vergil.toml first, and a malformed table must fail loud.
+    """
+    return read_config(repo_root).dependency_update.hook
 
 
 def validation_container_command(repo_root: Path) -> str:

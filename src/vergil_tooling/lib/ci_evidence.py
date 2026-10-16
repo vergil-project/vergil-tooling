@@ -39,10 +39,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from vergil_tooling.lib import git, github
-from vergil_tooling.lib.config import read_config
+from vergil_tooling.lib import github
 from vergil_tooling.lib.github_config import ghas_available, required_evidence_gates
 from vergil_tooling.lib.linkage import extract_merge_pr
+from vergil_tooling.lib.remote_config import require_config_at_ref
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -689,17 +689,27 @@ def read_gate_conclusions(repo: str, head_sha: str) -> dict[str, str]:
     return {str(run["name"]): str(run.get("conclusion") or "") for run in check_runs}
 
 
-def resolve_required_gates(repo: str, repo_root: Path) -> tuple[EvidenceGate, ...]:
-    """Derive the evidence gates *repo* MUST emit, from its ``vergil.toml``.
+def resolve_required_gates(repo: str, ref: str) -> tuple[EvidenceGate, ...]:
+    """Derive the evidence gates *repo* MUST emit, from its ``vergil.toml`` at *ref*.
 
-    Reads the repo's config and resolves its GHAS posture (a declared
+    The config is fetched for *repo* at *ref* through the contents API
+    (:func:`~vergil_tooling.lib.remote_config.require_config_at_ref`), never
+    read from the current directory, so one repo's checks can never be judged
+    against another repo's config and the command works from any directory
+    (#3226). :func:`run_harvest` passes the release PR's validated head SHA:
+    that commit's ``vergil.toml`` is the config its CI run was built from, so
+    the required set matches the run being evidenced. An absent or unparseable
+    file raises :class:`~vergil_tooling.lib.remote_config.RemoteConfigError`;
+    there is no fallback.
+
+    Resolves the repo's GHAS posture (a declared
     ``[project].ghas`` wins, else it is inferred from repo visibility via the
     GitHub API), then defers to
     :func:`~vergil_tooling.lib.github_config.required_evidence_gates` — the same
     required-status-check computation that drives branch protection, so the
     enforced gates and the evidence-required gates cannot drift apart.
     """
-    config = read_config(repo_root)
+    config = require_config_at_ref(repo, ref)
     ghas = ghas_available(config, visibility=github.repo_visibility(repo))
     return required_evidence_gates(
         config.project,
@@ -803,10 +813,14 @@ def run_harvest(repo: str, merge_sha: str, staging_dir: Path) -> HarvestState:
     gates_dest.mkdir(parents=True, exist_ok=True)
 
     release_pr = resolve_release_pr(repo, merge_sha)
-    head_sha = github.head_sha(str(release_pr))
+    # A bare PR number resolves against the cwd checkout's repo; the URL pins
+    # the lookup to *repo* so it reads the right PR from any directory (#3220).
+    head_sha = github.head_sha(f"https://github.com/{repo}/pull/{release_pr}")
     run = select_ci_run(repo, head_sha)
 
-    required = resolve_required_gates(repo, git.repo_root())
+    # The required set comes from *repo*'s own vergil.toml at the validated
+    # head — never the cwd checkout, which may be another repo or none (#3226).
+    required = resolve_required_gates(repo, head_sha)
     conclusions = read_gate_conclusions(repo, head_sha)
 
     gate_dirs = download_evidence_artifacts(repo, int(run["id"]), gates_dest, required)

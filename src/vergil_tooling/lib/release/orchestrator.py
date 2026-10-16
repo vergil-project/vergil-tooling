@@ -22,6 +22,7 @@ from vergil_tooling.lib.release.tracking import (
     ensure_checklist,
     tick_stage,
 )
+from vergil_tooling.lib.release.update_deps_stage import update_deps
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -41,6 +42,8 @@ class ReleaseState:
     resume: bool = False
     resume_version: str | None = None
     resume_issue_number: int | None = None
+    without_deps: bool = False
+    allow_pending_deps: bool = False
 
 
 def _audit_stage(_state: ReleaseState) -> None:
@@ -54,8 +57,10 @@ def _preflight_stage(state: ReleaseState) -> None:
         resume=state.resume,
         resume_version=state.resume_version,
         resume_issue_number=state.resume_issue_number,
+        allow_pending_deps=state.allow_pending_deps,
     )
     ctx.promote = state.promote
+    ctx.without_deps = state.without_deps
     state.ctx = ctx
 
 
@@ -143,6 +148,9 @@ def build_stages() -> list[Stage]:
             _tracked("consumer-refresh", consumer_refresh),
             mode="fail_defer",
         ),
+        # The first change on the new develop version, once the release is
+        # fully out (epic vergil-project/.github#381, spec §5.1).
+        Stage("update-deps", _tracked("update-deps", update_deps), mode="fail_defer"),
         Stage("publish-status", _publish_status_stage, mode="fail_defer"),
     ]
 
@@ -201,26 +209,34 @@ def _promote_phase(ctx: ReleaseContext) -> None:
 
 
 def _publish_status_stage(state: ReleaseState) -> None:
-    """Terminal fail_defer: surface deferred artifact-publish failures as exit 1.
+    """Terminal fail_defer: surface deferred publish and dependency-update failures as exit 1.
 
     Runs last, after every bookkeeping stage. Raising here marks the run failed
     (fail_defer → exit 1 with the deferred summary) without aborting anything —
-    the release is already complete. No-op when nothing deferred.
+    the release is already complete. No-op when nothing deferred. A failed
+    dependency update (spec §5.2) is repeated here so it is never lost in the
+    stage list; it never affects the release itself.
     """
     ctx = state.ctx
-    if ctx is None or not ctx.deferred_publish_failures:
+    if ctx is None:
         return
-    jobs = ", ".join(ctx.deferred_publish_failures)
-    raise ReleaseError(
-        phase="publish-status",
-        command="publish-status",
-        message=(
+    problems: list[str] = []
+    if ctx.deferred_publish_failures:
+        jobs = ", ".join(ctx.deferred_publish_failures)
+        problems.append(
             f"Release v{ctx.version} is published (tag + GitHub Release), but these "
             f"CD publish jobs did not succeed: {jobs}. Re-run the CD publish to "
             "deliver the artifacts — do NOT use vrg-release --resume (the version "
             "is already tagged)."
-        ),
-    )
+        )
+    if ctx.deps_failure:
+        problems.append(ctx.deps_failure)
+    if problems:
+        raise ReleaseError(
+            phase="publish-status",
+            command="publish-status",
+            message=" ".join(problems),
+        )
 
 
 def _phase_details(ctx: ReleaseContext, phase: str) -> str:
@@ -233,6 +249,12 @@ def _phase_details(ctx: ReleaseContext, phase: str) -> str:
             lines.append(f"PR: {ctx.release_pr_url}")
         if ctx.issue_url:
             lines.append(f"Tracking issue: {ctx.issue_url}")
+        if ctx.bypassed_deps_prs:
+            # spec §5.3: bypassing the dependency-update gate is never silent.
+            prs = ", ".join(ctx.bypassed_deps_prs)
+            lines.append(
+                f"**Bypassed pending dependency-update PR(s)** with `--allow-pending-deps`: {prs}"
+            )
     elif phase == "merge-release":
         if ctx.release_pr_url:
             lines.append(f"Merged: {ctx.release_pr_url}")
@@ -266,4 +288,16 @@ def _phase_details(ctx: ReleaseContext, phase: str) -> str:
             lines.append("No [package] block; no package index to wait for.")
     elif phase == "consumer-refresh":
         lines.append("Consumer refresh instructions displayed.")
+    elif phase == "update-deps":
+        if ctx.without_deps:
+            lines.append("Dependency update skipped (--without-deps).")
+        else:
+            lines.append("**Held back by declared bounds**")
+            lines.append("")
+            lines.append(ctx.deps_report or "")
+            lines.append("")
+            if ctx.deps_pr_url:
+                lines.append(f"Dependency-update PR: {ctx.deps_pr_url}")
+            else:
+                lines.append("No dependency changes; no PR opened.")
     return "\n".join(lines)

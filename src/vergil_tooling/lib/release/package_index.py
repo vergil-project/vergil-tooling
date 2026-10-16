@@ -56,11 +56,9 @@ def _rpm_dir(base_url: str, el: str, rpm_arch: str) -> str:
     return f"{base_url}/rpm/{el}/{rpm_arch}"
 
 
-def deb_has(
-    base_url: str, suite: str, arch: str, name: str, full_version: str, fetch: Fetch
-) -> bool:
-    """Whether the suite's ``binary-<arch>/Packages`` lists ``name`` at ``full_version``."""
-    text = fetch(_deb_url(base_url, suite, arch)).decode("utf-8")
+def _stanzas(text: str) -> list[dict[str, str]]:
+    """The top-level ``Key: value`` fields of each stanza of a deb ``Packages`` index."""
+    stanzas: list[dict[str, str]] = []
     for stanza in text.split("\n\n"):
         fields: dict[str, str] = {}
         for line in stanza.splitlines():
@@ -68,9 +66,25 @@ def deb_has(
                 continue
             key, _, value = line.partition(":")
             fields[key] = value.strip()
-        if fields.get("Package") == name and fields.get("Version") == full_version:
-            return True
-    return False
+        stanzas.append(fields)
+    return stanzas
+
+
+def deb_has(
+    base_url: str, suite: str, arch: str, name: str, full_version: str, fetch: Fetch
+) -> bool:
+    """Whether the suite's ``binary-<arch>/Packages`` lists ``name`` at ``full_version``."""
+    text = fetch(_deb_url(base_url, suite, arch)).decode("utf-8")
+    return any(
+        fields.get("Package") == name and fields.get("Version") == full_version
+        for fields in _stanzas(text)
+    )
+
+
+def deb_package_names(base_url: str, suite: str, arch: str, fetch: Fetch) -> set[str]:
+    """Every ``Package:`` name in the suite's ``binary-<arch>/Packages`` index."""
+    text = fetch(_deb_url(base_url, suite, arch)).decode("utf-8")
+    return {s["Package"] for s in _stanzas(text) if "Package" in s}
 
 
 def _local(tag: str) -> str:
@@ -78,23 +92,16 @@ def _local(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]
 
 
-def rpm_has(
-    base_url: str,
-    el: str,
-    rpm_arch: str,
-    name: str,
-    version: str,
-    release: str,
-    fetch: Fetch,
-) -> bool:
-    """Whether ``<el>/<rpm_arch>``'s primary metadata lists ``name`` at ``version-release``.
+def _rpm_primary(base_url: str, el: str, rpm_arch: str, fetch: Fetch) -> ET.Element | None:
+    """The parsed primary metadata of ``<el>/<rpm_arch>``; ``None`` if not published.
 
-    Reads ``repodata/repomd.xml`` to locate the primary metadata, then scans it.
+    Reads ``repodata/repomd.xml`` to locate the primary metadata. A ``repomd.xml``
+    without a primary location raises ``ReleaseError``.
     """
     repo = _rpm_dir(base_url, el, rpm_arch)
     repomd = fetch(f"{repo}/repodata/repomd.xml")
     if not repomd:
-        return False
+        return None
     # The index is the org's own signed Pages site, fetched over HTTPS.
     root = ET.fromstring(repomd)  # noqa: S314
     href = None
@@ -112,8 +119,36 @@ def rpm_has(
         )
     primary = fetch(f"{repo}/{href}")
     if not primary:
+        return None
+    return ET.fromstring(gzip.decompress(primary))  # noqa: S314
+
+
+def rpm_package_names(base_url: str, el: str, rpm_arch: str, fetch: Fetch) -> set[str]:
+    """Every package name in ``<el>/<rpm_arch>``'s primary metadata (empty if unpublished)."""
+    meta = _rpm_primary(base_url, el, rpm_arch, fetch)
+    if meta is None:
+        return set()
+    names: set[str] = set()
+    for pkg in meta:
+        name_el = next((c for c in pkg if _local(c.tag) == "name"), None)
+        if name_el is not None and name_el.text:
+            names.add(name_el.text)
+    return names
+
+
+def rpm_has(
+    base_url: str,
+    el: str,
+    rpm_arch: str,
+    name: str,
+    version: str,
+    release: str,
+    fetch: Fetch,
+) -> bool:
+    """Whether ``<el>/<rpm_arch>``'s primary metadata lists ``name`` at ``version-release``."""
+    meta = _rpm_primary(base_url, el, rpm_arch, fetch)
+    if meta is None:
         return False
-    meta = ET.fromstring(gzip.decompress(primary))  # noqa: S314
     for pkg in meta:
         fields = {_local(c.tag): c for c in pkg}
         name_el = fields.get("name")

@@ -10,6 +10,7 @@ import pytest
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 from vergil_tooling.lib.release.orchestrator import (
     ReleaseState,
+    _phase_details,
     _preflight_stage,
     _publish_status_stage,
     _tracked,
@@ -51,6 +52,7 @@ def test_build_stages_order_and_modes() -> None:
         "close-finalize",
         "package-index",
         "consumer-refresh",
+        "update-deps",
         "publish-status",
     ]
     assert stages[0].skip_flag == "skip_audit"
@@ -109,9 +111,22 @@ def test_preflight_stage_populates_ctx() -> None:
         resume=False,
         resume_version=None,
         resume_issue_number=None,
+        allow_pending_deps=False,
     )
     assert state.ctx is ctx
     assert ctx.promote is False
+
+
+def test_preflight_stage_passes_allow_pending_deps() -> None:
+    state = ReleaseState(
+        version_override=None,
+        repo_root=Path("/tmp/repo"),  # noqa: S108
+        promote=True,
+        allow_pending_deps=True,
+    )
+    with patch(_MOD + ".preflight", return_value=_ctx()) as m_preflight:
+        _preflight_stage(state)
+    assert m_preflight.call_args.kwargs["allow_pending_deps"] is True
 
 
 def test_audit_stage_runs_audit() -> None:
@@ -220,6 +235,16 @@ def test_phase_details_prepare() -> None:
     assert "release/2.1.0" in details
     assert "pull/100" in details
     assert "issues/42" in details
+    assert "--allow-pending-deps" not in details
+
+
+def test_phase_details_prepare_names_bypassed_deps_prs() -> None:
+    ctx = _ctx()
+    ctx.bypassed_deps_prs = ["https://github.com/o/r/pull/9", "https://github.com/o/r/pull/11"]
+    details = _phase_details(ctx, "prepare")
+    assert "--allow-pending-deps" in details
+    assert "https://github.com/o/r/pull/9" in details
+    assert "https://github.com/o/r/pull/11" in details
 
 
 def test_phase_details_merge_release() -> None:
@@ -506,3 +531,97 @@ def test_publish_status_is_terminal_fail_defer() -> None:
     stages = build_stages()
     assert stages[-1].name == "publish-status"
     assert stages[-1].mode == "fail_defer"
+
+
+# --- update-deps stage (epic vergil-project/.github#381) ---------------------
+
+
+def test_update_deps_stage_between_consumer_refresh_and_publish_status() -> None:
+    stages = build_stages()
+    names = [s.name for s in stages]
+    assert names[-3:] == ["consumer-refresh", "update-deps", "publish-status"]
+    assert stages[names.index("update-deps")].mode == "fail_defer"
+
+
+def test_update_deps_stage_is_tracked_and_runs_update_deps() -> None:
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
+    state.ctx = _ctx()
+    with (
+        patch(_MOD + ".update_deps") as m_update,
+        patch(_MOD + ".comment_phase_complete") as m_comment,
+        patch(_MOD + ".ensure_checklist"),
+        patch(_MOD + ".tick_stage") as m_tick,
+    ):
+        # build_stages binds update_deps when called, so build under the patch.
+        stage = next(s for s in build_stages() if s.name == "update-deps")
+        stage.fn(state)
+    m_update.assert_called_once_with(state.ctx)
+    assert m_comment.call_args.args[1] == "update-deps"
+    m_tick.assert_called_once_with(state.ctx, "update-deps")
+
+
+def test_phase_details_update_deps_with_pr() -> None:
+    ctx = _ctx()
+    ctx.deps_report = "REPORT"
+    ctx.deps_pr_url = "https://x/pull/9"
+    text = _phase_details(ctx, "update-deps")
+    assert "**Held back by declared bounds**" in text
+    assert "REPORT" in text
+    assert "Dependency-update PR: https://x/pull/9" in text
+    assert "No dependency changes" not in text
+
+
+def test_phase_details_update_deps_noop() -> None:
+    ctx = _ctx()
+    ctx.deps_report = "REPORT"
+    text = _phase_details(ctx, "update-deps")
+    assert "REPORT" in text
+    assert "No dependency changes; no PR opened." in text
+
+
+def test_phase_details_update_deps_skipped() -> None:
+    ctx = _ctx()
+    ctx.without_deps = True
+    ctx.deps_report = "Skipped (--without-deps)."
+    text = _phase_details(ctx, "update-deps")
+    assert text == "Dependency update skipped (--without-deps)."
+
+
+def test_publish_status_reports_deps_failure() -> None:
+    state = _state()
+    assert state.ctx is not None
+    state.ctx.deps_failure = "Dependency update for 2.1.243 failed (validation)"
+    with pytest.raises(ReleaseError, match="2.1.243 failed") as info:
+        _publish_status_stage(state)
+    assert info.value.phase == "publish-status"
+    assert "CD publish" not in str(info.value)
+
+
+def test_publish_status_reports_both_failures() -> None:
+    state = _state()
+    assert state.ctx is not None
+    state.ctx.deferred_publish_failures = ["docs"]
+    state.ctx.deps_failure = "Dependency update for 2.1.243 failed (merge)"
+    with pytest.raises(ReleaseError) as info:
+        _publish_status_stage(state)
+    msg = str(info.value)
+    assert "CD publish jobs did not succeed: docs" in msg
+    assert "2.1.243 failed" in msg
+
+
+def test_publish_status_noop_without_ctx() -> None:
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/r"), promote=True)  # noqa: S108
+    _publish_status_stage(state)  # no raise
+
+
+def test_preflight_stage_copies_without_deps() -> None:
+    state = ReleaseState(
+        version_override=None,
+        repo_root=Path("/tmp/repo"),  # noqa: S108
+        promote=True,
+        without_deps=True,
+    )
+    ctx = _ctx()
+    with patch(_MOD + ".preflight", return_value=ctx):
+        _preflight_stage(state)
+    assert ctx.without_deps is True

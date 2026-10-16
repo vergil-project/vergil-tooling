@@ -150,6 +150,7 @@ def test_main_names_permission_problem_on_403(capsys: pytest.CaptureFixture[str]
     expected = "vrg-pr-await: GitHub App permissions problem for other-org/repo"
     assert captured.err.startswith(expected)
     assert "checks: read" in captured.err
+    assert "statuses: read" in captured.err
     assert "actions: read" in captured.err
     # The underlying gh error is never swallowed.
     assert "Resource not accessible by integration" in captured.err

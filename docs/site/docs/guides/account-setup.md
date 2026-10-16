@@ -80,8 +80,19 @@ the permission model — set the permissions exactly as documented.
    | **Contents** | Read and write |
    | **Issues** | Read and write |
    | **Pull requests** | **Read-only** |
+   | **Actions** | Read-only |
+   | **Checks** | Read-only |
+   | **Commit statuses** | Read-only |
    | **Metadata** | Read-only (mandatory; usually auto-selected) |
    | **Workflows** | **No access** — leave untouched |
+
+   !!! note "Actions, Checks and Commit statuses are for reading CI"
+       `vrg-pr-await` and pr-watch read a PR's check runs, commit
+       statuses and workflow runs. On a **private** repo, an App
+       without these grants gets HTTP 403 "Resource not accessible by
+       integration". On a public repo the reads succeed anyway, which
+       hides a missing grant. All three are read-only and grant no
+       ability to trigger, re-run or change CI.
 
    !!! warning "Pull requests is Read-only on purpose"
        The user agent does not open or comment on PRs. Its workflow
@@ -201,8 +212,15 @@ Follow Step 1.1, changing:
   | **Contents** | **Read-only** |
   | **Issues** | **Read-only** |
   | **Pull requests** | **Read and write** |
+  | **Actions** | Read-only |
+  | **Checks** | Read-only |
+  | **Commit statuses** | Read-only |
   | **Metadata** | Read-only (mandatory) |
   | **Workflows** | **No access** — leave untouched |
+
+  Actions, Checks and Commit statuses are the same read-only CI
+  grants as the user App (see the note in Step 1.1); they are not
+  inverted.
 
 Everything else (Webhook unchecked, **Any account**, the "Make
 public" warning) is identical to Step 1.1.
@@ -291,7 +309,8 @@ After both Apps are registered, installed, and configured:
       the correct App ID and key path
 - [ ] Each App shows the correct **inverted** repository permissions
       (user: contents/issues write, PRs read; audit: contents/issues
-      read, PRs write; neither holds Workflows)
+      read, PRs write; both hold Actions, Checks and Commit statuses
+      read-only; neither holds Workflows)
 - [ ] Both Apps are installed on every account that owns repos the
       agents will operate on
 - [ ] The reserved `<username>-vergil-admin` App was **not** created

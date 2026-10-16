@@ -8,7 +8,6 @@ auditing.
 from __future__ import annotations
 
 import argparse
-import base64
 import sys
 import tomllib
 from pathlib import Path
@@ -29,13 +28,15 @@ from vergil_tooling.lib.github_config import (
     ghas_available,
 )
 from vergil_tooling.lib.output import emit_error
+from vergil_tooling.lib.remote_config import decode_contents as _decode_contents
+from vergil_tooling.lib.remote_config import fetch_config_from_ref as _fetch_config_from_ref
+from vergil_tooling.lib.remote_config import is_not_found as _is_not_found
 from vergil_tooling.lib.repo_config import audit_local_config
 
 
 @cli_main
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    all_compliant = True
 
     local_compliant = True
     if args.repo and not _cwd_matches_repo(args.repo):
@@ -51,10 +52,30 @@ def main(argv: list[str] | None = None) -> int:
         _print_local_diff(local_diff)
         local_compliant = local_diff.is_compliant()
 
-    if not local_compliant:
-        all_compliant = False
-
     repo = _resolve_repo(args)
+    # Every GitHub call below targets *repo*, so mint the App token for its
+    # owner rather than the cwd org (#3220). Under target_org a missing
+    # installation for that owner raises NoInstallationError instead of
+    # falling back to ambient auth.
+    try:
+        with github.target_org(repo.split("/", 1)[0]):
+            return _audit_and_apply(args, repo, local_compliant=local_compliant)
+    except (github.NoInstallationError, github.AppAuthError) as exc:
+        # The audit could not complete: exit 2, never the "non-compliant"
+        # exit 1 that cli_main would otherwise give an auth failure (#1691).
+        if isinstance(exc, github.NoInstallationError):
+            emit_error(f"Could not audit {repo}: {github.no_installation_message(exc)}")
+        else:
+            emit_error(f"Could not audit {repo}: {github.app_auth_message(exc)}")
+        return 2
+
+
+def _audit_and_apply(args: argparse.Namespace, repo: str, *, local_compliant: bool) -> int:
+    """Audit *repo*'s GitHub config and, for ``apply``, converge it.
+
+    Runs inside the caller's ``github.target_org`` scope for *repo*'s owner.
+    """
+    all_compliant = local_compliant
     # Exit codes are a contract for callers (e.g. vrg-release): 0 = compliant,
     # 1 = genuinely non-compliant, 2 = the audit could not complete. Config
     # resolution and the GitHub state fetch can fail operationally (missing
@@ -63,6 +84,9 @@ def main(argv: list[str] | None = None) -> int:
     # verdict or a raw traceback (#1691).
     try:
         config = _load_local_config(args.config) if args.config else _resolve_config(repo)
+    except github.GitHubAPIError as exc:
+        emit_error(f"Could not resolve vergil.toml for {repo}: {exc}")
+        return 2
     except RuntimeError as exc:
         emit_error(str(exc))
         return 2
@@ -141,51 +165,6 @@ def _load_local_config(path: str) -> VergilConfig:
 # Canonical config branches, in resolution order: the released/stable branch
 # first, then the integration branch as a bootstrap fallback.
 _DEFAULT_BRANCH = "develop"
-
-
-def _is_not_found(exc: github.GitHubAPIError) -> bool:
-    """Return True when a GitHub API error is an HTTP 404 (Not Found)."""
-    return "404" in (exc.stderr or "") or "404" in (exc.stdout or "")
-
-
-def _decode_contents(
-    repo: str, ref: str, what: str, content_data: dict[str, object] | list[object]
-) -> str:
-    """Decode a GitHub contents API response into the file's text."""
-    if not isinstance(content_data, dict):
-        msg = f"Unexpected response fetching {what} from {repo}@{ref}"
-        raise RuntimeError(msg)
-    content = content_data.get("content")
-    if not isinstance(content, str):
-        msg = f"No content field in {what} response from {repo}@{ref}"
-        raise RuntimeError(msg)
-    return base64.b64decode(content).decode()
-
-
-def _decode_config(
-    repo: str, ref: str, content_data: dict[str, object] | list[object]
-) -> VergilConfig:
-    """Decode a GitHub contents API response into a VergilConfig."""
-    raw = tomllib.loads(_decode_contents(repo, ref, "config", content_data))
-    return _parse_raw_config(raw, source=f"{repo}@{ref}:vergil.toml")
-
-
-def _fetch_config_from_ref(repo: str, ref: str) -> VergilConfig | None:
-    """Fetch and parse vergil.toml from a specific branch of a remote repo.
-
-    Returns ``None`` when the file is absent on that branch (HTTP 404).
-    Non-404 API errors propagate unchanged.
-    """
-    try:
-        content_data = github.read_json(
-            "api",
-            f"repos/{repo}/contents/vergil.toml?ref={ref}",
-        )
-    except github.GitHubAPIError as exc:
-        if _is_not_found(exc):
-            return None
-        raise
-    return _decode_config(repo, ref, content_data)
 
 
 _CI_WORKFLOW_PATH = ".github/workflows/ci.yml"

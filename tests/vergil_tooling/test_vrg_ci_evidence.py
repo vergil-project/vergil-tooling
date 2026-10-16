@@ -12,6 +12,7 @@ atomic ``bundle`` (issue #2330).
 
 from __future__ import annotations
 
+import base64
 import json
 import tarfile
 from typing import TYPE_CHECKING, Any
@@ -22,22 +23,27 @@ from vergil_tooling.bin import vrg_ci_evidence
 from vergil_tooling.bin.vrg_ci_evidence import main
 from vergil_tooling.lib import ci_evidence, git, github
 from vergil_tooling.lib.ci_evidence import NoQualifyingRunError
+from vergil_tooling.lib.github import GitHubAPIError
 from vergil_tooling.lib.github_config import EvidenceGate
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from tests.vergil_tooling.conftest import FakeApp
+
+
+# The real config-resolution stage, captured before any test stubs it.
+_REAL_RESOLVE_REQUIRED_GATES = ci_evidence.resolve_required_gates
+
 
 def _wire_github_stages(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
     *,
     required: tuple[EvidenceGate, ...],
     conclusions: dict[str, str],
     download: Any,
 ) -> None:
     """Mock every GitHub-touching stage the CLI invokes to in-memory fixtures."""
-    monkeypatch.setattr(git, "repo_root", lambda: tmp_path)
     monkeypatch.setattr(ci_evidence, "resolve_release_pr", lambda _repo, _sha: 2281)
     monkeypatch.setattr(github, "head_sha", lambda _pr: "cafef00d")
     monkeypatch.setattr(
@@ -45,7 +51,7 @@ def _wire_github_stages(
         "select_ci_run",
         lambda _repo, _sha: {"id": 123, "html_url": "https://github.com/o/r/actions/runs/123"},
     )
-    monkeypatch.setattr(ci_evidence, "resolve_required_gates", lambda _repo, _root: required)
+    monkeypatch.setattr(ci_evidence, "resolve_required_gates", lambda _repo, _ref: required)
     monkeypatch.setattr(ci_evidence, "read_gate_conclusions", lambda _repo, _sha: conclusions)
     monkeypatch.setattr(ci_evidence, "download_evidence_artifacts", download)
 
@@ -98,7 +104,6 @@ def test_bundle_writes_tarball_and_manifest(
     )
     _wire_github_stages(
         monkeypatch,
-        tmp_path,
         required=required,
         conclusions={"CodeQL": "success", "test / unit": "success"},
         download=_full_download(("security", "test")),
@@ -138,7 +143,6 @@ def test_bundle_writes_tarball_and_manifest(
 def test_bundle_includes_sbom_when_given(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     _wire_github_stages(
         monkeypatch,
-        tmp_path,
         required=(EvidenceGate(name="test", checks=("test / unit",)),),
         conclusions={"test / unit": "success"},
         download=_full_download(("test",)),
@@ -164,7 +168,6 @@ def test_bundle_missing_required_gate_errors(
     )
     _wire_github_stages(
         monkeypatch,
-        tmp_path,
         required=required,
         conclusions={"CodeQL": "success", "test / unit": "success"},
         download=_full_download(("test",)),  # security missing
@@ -183,7 +186,6 @@ def test_bundle_missing_required_gate_errors(
 def test_bundle_no_qualifying_run_errors(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(git, "repo_root", lambda: tmp_path)
     monkeypatch.setattr(ci_evidence, "resolve_release_pr", lambda _repo, _sha: 2281)
     monkeypatch.setattr(github, "head_sha", lambda _pr: "cafef00d")
 
@@ -211,7 +213,6 @@ def test_bundle_expired_evidence_artifact_errors(
 
     _wire_github_stages(
         monkeypatch,
-        tmp_path,
         required=(EvidenceGate(name="test", checks=("test / unit",)),),
         conclusions={"test / unit": "success"},
         download=_download,
@@ -281,7 +282,6 @@ def test_harvest_persists_tree_and_state(monkeypatch: pytest.MonkeyPatch, tmp_pa
     )
     _wire_github_stages(
         monkeypatch,
-        tmp_path,
         required=required,
         conclusions={"CodeQL": "success", "test / unit": "success"},
         download=_full_download(("security", "test")),
@@ -316,7 +316,6 @@ def test_harvest_missing_required_gate_errors(
     )
     _wire_github_stages(
         monkeypatch,
-        tmp_path,
         required=required,
         conclusions={"CodeQL": "success", "test / unit": "success"},
         download=_full_download(("test",)),  # security missing
@@ -342,7 +341,6 @@ def test_assemble_consumes_harvest_without_network(
     )
     _wire_github_stages(
         monkeypatch,
-        tmp_path,
         required=required,
         conclusions={"CodeQL": "success", "test / unit": "success"},
         download=_full_download(("security", "test")),
@@ -380,7 +378,6 @@ def test_assemble_consumes_harvest_without_network(
 def test_assemble_includes_sbom_when_given(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     _wire_github_stages(
         monkeypatch,
-        tmp_path,
         required=(EvidenceGate(name="test", checks=("test / unit",)),),
         conclusions={"test / unit": "success"},
         download=_full_download(("test",)),
@@ -409,7 +406,6 @@ def test_harvest_then_assemble_matches_bundle(
     )
     _wire_github_stages(
         monkeypatch,
-        tmp_path,
         required=required,
         conclusions={"CodeQL": "success", "test / unit": "success"},
         download=_full_download(("security", "test")),
@@ -524,3 +520,228 @@ def test_assemble_help_exits_zero(capsys: pytest.CaptureFixture[str]) -> None:
         vrg_ci_evidence.main(["assemble", "--help"])
     assert excinfo.value.code == 0
     assert "--staging" in capsys.readouterr().out
+
+
+# -- App-token scoping (#3220) ------------------------------------------------
+
+
+def test_harvest_reads_release_pr_head_from_the_target_repo(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The PR head lookup names --repo; a bare number would hit the cwd repo."""
+    _wire_github_stages(
+        monkeypatch,
+        required=(EvidenceGate(name="test", checks=("test / unit",)),),
+        conclusions={"test / unit": "success"},
+        download=_full_download(("test",)),
+    )
+    seen: list[str] = []
+
+    def _head_sha(pr: str) -> str:
+        seen.append(pr)
+        return "cafef00d"
+
+    monkeypatch.setattr(github, "head_sha", _head_sha)
+
+    assert main(_harvest_argv(tmp_path / "staging")) == 0
+    assert seen == ["https://github.com/o/r/pull/2281"]
+
+
+def _scoped_argv(command: str, repo: str, tmp_path: Path) -> list[str]:
+    argv = [command, "--repo", repo, "--merge-sha", "deadbeef", "--out-dir", str(tmp_path)]
+    if command == "bundle":
+        argv += ["--version", "2.1.129", "--generated-at", "2026-07-13T00:00:00Z"]
+    return argv
+
+
+@pytest.mark.parametrize("command", ["harvest", "bundle"])
+@pytest.mark.parametrize("cwd_org", [None, "cwd-org"], ids=["outside-repo", "other-org"])
+def test_token_minted_for_repo_owner(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fake_app: FakeApp,
+    command: str,
+    cwd_org: str | None,
+) -> None:
+    """Every harvest-time GitHub call runs under the --repo owner's installation."""
+    fake_app.cwd_org = cwd_org
+    owners: list[str] = []
+
+    def _record(repo: str, *_args: object, **_kwargs: object) -> None:
+        assert repo == "target-org/r"
+        owners.append(fake_app.token_owner())
+
+    monkeypatch.setattr(ci_evidence, f"run_{command}", _record)
+
+    assert main(_scoped_argv(command, "target-org/r", tmp_path)) == 0
+    assert owners == ["target-org"]
+
+
+@pytest.mark.parametrize("command", ["harvest", "bundle"])
+def test_missing_installation_for_repo_owner_fails_loudly(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fake_app: FakeApp,
+    capsys: pytest.CaptureFixture[str],
+    command: str,
+) -> None:
+    """An uninstalled --repo owner stops the command; no ambient-auth fallback."""
+    fake_app.cwd_org = "cwd-org"
+
+    def _first_gh_call(_repo: str, *_args: object, **_kwargs: object) -> None:
+        fake_app.token_owner()
+
+    monkeypatch.setattr(ci_evidence, f"run_{command}", _first_gh_call)
+
+    with pytest.raises(SystemExit) as excinfo:
+        main(_scoped_argv(command, "lonely-org/r", tmp_path))
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert "vrg-ci-evidence:" in err
+    assert "no installation for owner 'lonely-org'" in err
+
+
+# -- Config source: the --repo target's vergil.toml, never the cwd's (#3226) --
+
+
+def _vergil_toml(language: str) -> bytes:
+    return (
+        "[project]\n"
+        'repository-type = "library"\n'
+        'versioning-scheme = "semver"\n'
+        'branching-model = "library-release"\n'
+        'release-model = "tagged-release"\n'
+        f'primary-language = "{language}"\n'
+        "\n[dependencies]\n"
+        'vergil = "v2.0"\n'
+        "\n[ci]\n"
+        'versions = ["3.14"]\n'
+    ).encode()
+
+
+def _wire_remote_config(monkeypatch: pytest.MonkeyPatch, response: Any) -> dict[str, Any]:
+    """Wire every stage except config resolution, which runs for real.
+
+    The contents API answers with *response* (raised when an exception);
+    ``required_evidence_gates`` records the language of the config it was
+    handed, so a test can tell which repo's ``vergil.toml`` was evaluated.
+    """
+    required = (EvidenceGate(name="test", checks=("test / unit",)),)
+    _wire_github_stages(
+        monkeypatch,
+        required=required,
+        conclusions={"test / unit": "success"},
+        download=_full_download(("test",)),
+    )
+    monkeypatch.setattr(ci_evidence, "resolve_required_gates", _REAL_RESOLVE_REQUIRED_GATES)
+    monkeypatch.setattr(github, "repo_visibility", lambda _repo: "PUBLIC")
+    seen: dict[str, Any] = {"contents": []}
+
+    def _read_json(*args: str) -> Any:
+        seen["contents"].append(args)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    def _required(project: Any, _ci: Any, **_kwargs: Any) -> tuple[EvidenceGate, ...]:
+        seen["language"] = project.primary_language
+        return required
+
+    monkeypatch.setattr(github, "read_json", _read_json)
+    monkeypatch.setattr(ci_evidence, "required_evidence_gates", _required)
+    return seen
+
+
+def _contents_response(language: str) -> dict[str, object]:
+    return {"content": base64.b64encode(_vergil_toml(language)).decode()}
+
+
+_CONTENTS_AT_HEAD = ("api", "repos/o/r/contents/vergil.toml?ref=cafef00d")
+
+
+@pytest.mark.parametrize("command", ["harvest", "bundle"])
+def test_config_read_from_target_repo_outside_any_checkout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, command: str
+) -> None:
+    """Outside a repo the target's config is fetched at the release PR head."""
+
+    def _no_checkout() -> Path:
+        msg = "harvest must not consult the cwd checkout"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(git, "repo_root", _no_checkout)
+    monkeypatch.chdir(tmp_path)
+    seen = _wire_remote_config(monkeypatch, _contents_response("python"))
+
+    assert main(_scoped_argv(command, "o/r", tmp_path / "out")) == 0
+    assert seen["contents"] == [_CONTENTS_AT_HEAD]
+    assert seen["language"] == "python"
+
+
+def test_config_ignores_mismatched_checkout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A different repo's vergil.toml in the cwd is never evaluated."""
+    other_checkout = tmp_path / "other-repo"
+    other_checkout.mkdir()
+    (other_checkout / "vergil.toml").write_bytes(_vergil_toml("go"))
+    monkeypatch.chdir(other_checkout)
+    seen = _wire_remote_config(monkeypatch, _contents_response("python"))
+
+    assert main(_harvest_argv(tmp_path / "staging")) == 0
+    assert seen["contents"] == [_CONTENTS_AT_HEAD]
+    assert seen["language"] == "python"
+
+
+def test_config_in_target_checkout_uses_target_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The normal CI path: run from the target's own checkout, same config."""
+    checkout = tmp_path / "r"
+    checkout.mkdir()
+    (checkout / "vergil.toml").write_bytes(_vergil_toml("python"))
+    monkeypatch.chdir(checkout)
+    seen = _wire_remote_config(monkeypatch, _contents_response("python"))
+    staging = tmp_path / "staging"
+
+    assert main(_harvest_argv(staging)) == 0
+    assert seen["contents"] == [_CONTENTS_AT_HEAD]
+    assert seen["language"] == "python"
+    assert (staging / "evidence" / "gates" / "test" / "evidence.json").exists()
+
+
+def test_missing_remote_config_fails_loudly(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """No vergil.toml at the head → one-line actionable error; no cwd fallback."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    (tmp_path / "vergil.toml").write_bytes(_vergil_toml("python"))
+    monkeypatch.chdir(tmp_path)
+    not_found = GitHubAPIError(
+        1, ("gh", "api", _CONTENTS_AT_HEAD[1]), '{"status":"404"}', "gh: Not Found (HTTP 404)"
+    )
+    seen = _wire_remote_config(monkeypatch, not_found)
+    staging = tmp_path / "staging"
+
+    rc = main(_harvest_argv(staging))
+
+    assert rc == 1
+    assert "language" not in seen
+    err = capsys.readouterr().err
+    assert err.startswith("ERROR: vergil.toml not found in o/r at cafef00d.")
+    assert err.count("\n") == 1
+    assert not (staging / "harvest-state.json").exists()
+
+
+def test_unparseable_remote_config_fails_loudly(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.chdir(tmp_path)
+    _wire_remote_config(monkeypatch, {"content": base64.b64encode(b"[project").decode()})
+
+    rc = main(_harvest_argv(tmp_path / "staging"))
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert err.startswith("ERROR: vergil.toml of o/r@cafef00d could not be parsed:")

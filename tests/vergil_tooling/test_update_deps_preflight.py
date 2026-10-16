@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 
-from vergil_tooling.lib.update_deps import preflight as preflight_mod
 from vergil_tooling.lib.update_deps.context import UpdateDepsError
 from vergil_tooling.lib.update_deps.preflight import preflight
 
@@ -20,20 +19,16 @@ def _sync_ok(monkeypatch) -> None:
         lambda *a: "deadbeef" if "rev-parse" in a else "",
     )
     monkeypatch.setattr(_MOD + ".git.run", lambda *a: None)
-    monkeypatch.setattr(_MOD + "._today", lambda: "20260610")
-
-
-def test_today_returns_yyyymmdd() -> None:
-    stamp = preflight_mod._today()  # noqa: SLF001
-    assert len(stamp) == 8
-    assert stamp.isdigit()
+    monkeypatch.setattr(_MOD + ".version.show", lambda root: "2.1.243")
+    monkeypatch.setattr(_MOD + ".git.ref_exists", lambda ref: False)
+    monkeypatch.setattr(_MOD + ".git.remote_branches", lambda: {"develop", "main"})
 
 
 def test_preflight_creates_worktree_and_chdirs(monkeypatch) -> None:
     _sync_ok(monkeypatch)
     chdirs: list[Path] = []
     made: dict[str, object] = {}
-    wt_path = Path("/tmp/repo/.worktrees/chore-dep-update-20260610")  # noqa: S108
+    wt_path = Path("/tmp/repo/.worktrees/deps-update-2.1.243")  # noqa: S108
 
     def _fake_create(root, *, branch, base):  # noqa: ARG001
         made.update(branch=branch, base=base)
@@ -43,8 +38,9 @@ def test_preflight_creates_worktree_and_chdirs(monkeypatch) -> None:
     monkeypatch.setattr(_MOD + ".os.chdir", lambda p: chdirs.append(Path(p)))
     ctx = preflight(repo_root=Path("/tmp/repo"))  # noqa: S108
     assert ctx.repo == "owner/repo"
-    assert ctx.branch == "chore/dep-update-20260610"
-    assert made == {"branch": "chore/dep-update-20260610", "base": "develop"}
+    assert ctx.branch == "deps/update-2.1.243"
+    assert ctx.version == "2.1.243"
+    assert made == {"branch": "deps/update-2.1.243", "base": "develop"}
     assert ctx.worktree_path == wt_path
     assert chdirs == [wt_path]
 
@@ -62,6 +58,43 @@ def test_preflight_wraps_worktree_error(monkeypatch) -> None:
     monkeypatch.setattr(_MOD + ".create_worktree", _raise)
     monkeypatch.setattr(_MOD + ".os.chdir", lambda p: None)
     with pytest.raises(UpdateDepsError, match="path already exists"):
+        preflight(repo_root=Path("/tmp/repo"))  # noqa: S108
+
+
+def test_preflight_existing_deps_branch_fails_loud(monkeypatch) -> None:
+    """A second off-cycle run on the same develop version must not reuse or
+    clobber the in-flight deps/update-<version> branch (Review Focus 2)."""
+    from vergil_tooling.lib.managed_worktree import ManagedWorktreeError
+
+    _sync_ok(monkeypatch)
+
+    def collide(root, *, branch, base):  # noqa: ARG001
+        msg = f"branch {branch} already exists"
+        raise ManagedWorktreeError(msg)
+
+    monkeypatch.setattr(_MOD + ".create_worktree", collide)
+    monkeypatch.setattr(_MOD + ".os.chdir", lambda p: None)
+    with pytest.raises(UpdateDepsError, match=r"deps/update-2\.1\.243 already exists") as info:
+        preflight(repo_root=Path("/tmp/repo"))  # noqa: S108
+    assert "dependency-update PR" in str(info.value)
+
+
+def test_preflight_existing_local_deps_branch_fails_loud(monkeypatch) -> None:
+    _sync_ok(monkeypatch)
+    seen: list[str] = []
+    monkeypatch.setattr(_MOD + ".git.ref_exists", lambda ref: seen.append(ref) or True)
+    monkeypatch.setattr(_MOD + ".create_worktree", lambda *a, **kw: pytest.fail("created"))
+    with pytest.raises(UpdateDepsError, match=r"deps/update-2\.1\.243 already exists"):
+        preflight(repo_root=Path("/tmp/repo"))  # noqa: S108
+    assert seen == ["refs/heads/deps/update-2.1.243"]
+
+
+def test_preflight_deps_branch_on_origin_fails_loud(monkeypatch) -> None:
+    """A failed run deletes its local branch; the PR head survives on origin."""
+    _sync_ok(monkeypatch)
+    monkeypatch.setattr(_MOD + ".git.remote_branches", lambda: {"develop", "deps/update-2.1.243"})
+    monkeypatch.setattr(_MOD + ".create_worktree", lambda *a, **kw: pytest.fail("created"))
+    with pytest.raises(UpdateDepsError, match=r"deps/update-2\.1\.243 already exists"):
         preflight(repo_root=Path("/tmp/repo"))  # noqa: S108
 
 

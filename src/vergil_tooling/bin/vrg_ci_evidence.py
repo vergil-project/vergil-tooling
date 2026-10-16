@@ -7,7 +7,8 @@ the substantive failures
 :class:`~vergil_tooling.lib.ci_evidence.NoQualifyingRunError`,
 :class:`~vergil_tooling.lib.ci_evidence.ReleasePrUnresolvedError`,
 :class:`~vergil_tooling.lib.ci_evidence.HarvestStateError`,
-:class:`~vergil_tooling.lib.ci_evidence.EvidenceArtifactError`) to a single-line
+:class:`~vergil_tooling.lib.ci_evidence.EvidenceArtifactError`,
+:class:`~vergil_tooling.lib.remote_config.RemoteConfigError`) to a single-line
 error and exit 1 via :func:`~vergil_tooling.lib.output.emit_error` — never a
 traceback.
 
@@ -31,7 +32,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from vergil_tooling.lib import ci_evidence
+from vergil_tooling.lib import ci_evidence, github
 from vergil_tooling.lib.ci_evidence import (
     EvidenceArtifactError,
     HarvestStateError,
@@ -41,6 +42,7 @@ from vergil_tooling.lib.ci_evidence import (
 )
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.output import emit_error
+from vergil_tooling.lib.remote_config import RemoteConfigError
 
 
 @cli_main
@@ -54,6 +56,7 @@ def main(argv: list[str] | None = None) -> int:
         IncompleteEvidenceError,
         NoQualifyingRunError,
         ReleasePrUnresolvedError,
+        RemoteConfigError,
     ) as exc:
         emit_error(str(exc))
         return 1
@@ -104,6 +107,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def repo_owner(repo: str) -> str:
+    """Return the owner of an ``owner/name`` *repo*.
+
+    ``harvest`` and ``bundle`` run every GitHub call under
+    ``github.target_org(repo_owner(--repo))`` so the App token is minted for
+    the release repo's owner, not the cwd org (#3220). A missing installation
+    for that owner fails loudly (``NoInstallationError``, reported by
+    ``cli_main``) rather than falling back to ambient auth.
+    """
+    return repo.split("/", 1)[0]
+
+
 def cmd_harvest(args: argparse.Namespace) -> int:
     """Harvest the release's CI evidence into a staging dir (pre-publish gate).
 
@@ -112,7 +127,8 @@ def cmd_harvest(args: argparse.Namespace) -> int:
     evidence artifacts, enforces completeness, and persists the harvested tree
     plus a state file into ``--out-dir`` for a later network-free assemble.
     """
-    ci_evidence.run_harvest(args.repo, args.merge_sha, Path(args.out_dir))
+    with github.target_org(repo_owner(args.repo)):
+        ci_evidence.run_harvest(args.repo, args.merge_sha, Path(args.out_dir))
     return 0
 
 
@@ -140,14 +156,15 @@ def cmd_bundle(args: argparse.Namespace) -> int:
     composes ``harvest`` and ``assemble`` over a throwaway staging directory —
     the original atomic behaviour.
     """
-    ci_evidence.run_bundle(
-        args.repo,
-        version=args.version,
-        merge_sha=args.merge_sha,
-        generated_at=args.generated_at,
-        out_dir=Path(args.out_dir),
-        sbom_file=Path(args.sbom_file) if args.sbom_file else None,
-    )
+    with github.target_org(repo_owner(args.repo)):
+        ci_evidence.run_bundle(
+            args.repo,
+            version=args.version,
+            merge_sha=args.merge_sha,
+            generated_at=args.generated_at,
+            out_dir=Path(args.out_dir),
+            sbom_file=Path(args.sbom_file) if args.sbom_file else None,
+        )
     return 0
 
 

@@ -49,6 +49,8 @@ _RUNTIME_VENDOR = "vergil"
 
 # The apt suite of the shared build image (every non-native cell builds there).
 _SHARED_SUITE = next(t.suite for t in tg.all_targets() if t.image == matrix.SHARED_IMAGE)
+# Public alias: vrg-update-deps resolves served runtimes against this suite.
+SHARED_SUITE = _SHARED_SUITE
 
 
 def _run(

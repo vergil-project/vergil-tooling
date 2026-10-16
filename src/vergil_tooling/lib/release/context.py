@@ -68,6 +68,20 @@ class ReleaseContext:
 
     promote: bool = True
 
+    # update-deps stage (epic vergil-project/.github#381, spec §5.1). Skipped
+    # with --without-deps. deps_failure is the human summary when the update
+    # did not land; publish-status repeats it.
+    without_deps: bool = False
+    deps_report: str | None = None
+    deps_pr_url: str | None = None
+    deps_fix_issue_url: str | None = None
+    deps_failure: str | None = None
+
+    # Open dependency-update PRs this release bypassed with --allow-pending-deps
+    # (spec §5.3); named in the prepare-stage tracking comment so the bypass is
+    # never silent.
+    bypassed_deps_prs: list[str] = field(default_factory=list)
+
     @property
     def work_root(self) -> Path:
         """Directory release artifacts are written into and git runs in.

@@ -10,6 +10,7 @@ from unittest.mock import patch
 import pytest
 import yaml
 
+from vergil_tooling.lib import repo_init
 from vergil_tooling.lib.config import CiConfig, ProjectConfig
 from vergil_tooling.lib.github_config import (
     desired_ci_gates_ruleset,
@@ -31,6 +32,17 @@ _INHERIT_LINE = (
     "    secrets: inherit"
     "  # nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit\n"
 )
+
+
+@pytest.fixture(autouse=True)
+def _pin_installed_series(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the installed tooling to the v2.1 series (the hand-written workflows' pin).
+
+    Template ``uses:`` refs derive from the installed vergil-tooling (issue
+    #3252); pinning it keeps these comparisons independent of the version
+    under test.
+    """
+    monkeypatch.setattr(repo_init.metadata, "version", lambda _name: "2.1.0")
 
 
 def _packaged_python_ctx() -> RepoInitContext:

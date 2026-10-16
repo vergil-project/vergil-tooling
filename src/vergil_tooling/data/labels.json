@@ -12,6 +12,7 @@
     {"name": "research", "color": "d876e3", "description": "Investigation or spike"},
     {"name": "rtfm", "color": "f9d0c4", "description": "Resolved by reading existing docs"},
     {"name": "observability", "color": "1d76db", "description": "Monitoring, reporting, health checks"},
+    {"name": "dependency-update", "color": "0366d6", "description": "Mechanized dependency update; an open one gates the next release"},
     {"name": "epic", "color": "6f42c1", "description": "Umbrella issue; finite epics close when all sub-issues close"},
     {"name": "ad-hoc", "color": "5319e7", "description": "Perpetual umbrella for ad-hoc work; never auto-closes"},
     {"name": "archive", "color": "6a737d", "description": "Terminal per-quarter archive of closed ad-hoc work; historical record"},

@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any, cast
 from vergil_tooling.lib import retry
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Collection, Iterator
+    from collections.abc import Callable, Collection, Iterator, Sequence
 
 log = logging.getLogger(__name__)
 
@@ -775,7 +775,14 @@ def delete_if_exists(endpoint: str) -> bool:
     return not is_http_404(result)
 
 
-def create_pr(*, base: str, title: str, body_file: str, head: str | None = None) -> str:
+def create_pr(
+    *,
+    base: str,
+    title: str,
+    body_file: str,
+    head: str | None = None,
+    labels: Sequence[str] = (),
+) -> str:
     """Create a pull request and return its URL.
 
     *head* names the source branch explicitly (``gh pr create --head``). It is
@@ -783,10 +790,15 @@ def create_pr(*, base: str, title: str, body_file: str, head: str | None = None)
     worktree-free relay path in ``vrg-submit-pr`` runs from the main worktree, so
     ``gh``'s default "current branch" head would be wrong. The in-worktree paths
     leave it ``None`` and rely on the checked-out branch, unchanged.
+
+    *labels* are applied at creation (``--label``, repeatable), so the PR is never
+    visible unlabelled — the dependency-update release gate depends on that.
     """
     args = ["pr", "create", "--base", base, "--title", title, "--body-file", body_file]
     if head is not None:
         args += ["--head", head]
+    for label in labels:
+        args += ["--label", label]
     return read_output(*args)
 
 

@@ -35,6 +35,18 @@ which vrg-container-run    # should resolve to ~/.local/bin/vrg-container-run
 vrg-container-run --help   # should print usage
 ```
 
+On macOS, `vrg-host` then reports the health of every tool Vergil needs on
+the host (installed vs. latest, missing tools, health checks) and upgrades
+them:
+
+```bash
+vrg-host                   # read-only status report; exit 0 = all OK
+vrg-host upgrade --all     # upgrade the tools vrg-host manages
+```
+
+See the [vrg-host reference](reference/dev/host.md) for the dependency list
+and for pinning a tool that a new release has broken.
+
 On Linux, vergil-tooling is also published as a signed `.deb`/`.rpm`
 package (this is how Lima and cloud agent VMs get it). Follow the
 [`vergil-project/packages` README](https://github.com/vergil-project/packages#readme)

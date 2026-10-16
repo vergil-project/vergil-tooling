@@ -22,11 +22,12 @@ opt out (see ``_RESOLVER_TEST_MODULES``).
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import pytest
 
-from vergil_tooling.lib import identity_mode
+from vergil_tooling.lib import github, host_pins, identity_mode
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -46,3 +47,65 @@ def _hermetic_identity(
     monkeypatch.setattr(identity_mode, "_APP_KEY_FILE", str(absent / "app.pem"))
     monkeypatch.delenv("VRG_IDENTITY_MODE", raising=False)
     monkeypatch.delenv("VRG_APP_ID", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_host_pins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point the host-local vrg-host pins file at a per-test path.
+
+    ``host_pins.default_pins_path()`` resolves under the real ``~/.config``;
+    no test may read or write a developer's actual pins. Tests that exercise
+    the real resolver import it before this fixture patches the module.
+    """
+    monkeypatch.setattr(
+        host_pins, "default_pins_path", lambda: tmp_path / "vergil-config" / "host-pins.toml"
+    )
+
+
+@dataclass
+class FakeApp:
+    """A configured GitHub App with fake installations, for token-scoping tests.
+
+    ``installations`` maps owner -> installation ID; ``cwd_org`` is what the
+    cwd git remote resolves to (``None`` = outside any GitHub checkout). Every
+    minted token is ``ghs_fake_<owner>``, so :meth:`token_owner` reports which
+    installation the current context's ``gh`` calls would run under.
+    """
+
+    installations: dict[str, str] = field(
+        default_factory=lambda: {"target-org": "101", "cwd-org": "202"}
+    )
+    cwd_org: str | None = None
+
+    @staticmethod
+    def token_owner() -> str:
+        """Owner whose installation minted the token ``_gh_env`` hands to ``gh`` now."""
+        env = github._gh_env()
+        assert env is not None
+        return env["GH_TOKEN"].removeprefix("ghs_fake_")
+
+
+@pytest.fixture
+def fake_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakeApp:
+    """Put ``lib.github`` in App mode against :class:`FakeApp` installations.
+
+    Only the network edges are faked (JWT signing, the installations listing,
+    the token exchange, and cwd org detection); the real token selection in
+    ``get_installation_token`` / ``_gh_env`` / ``target_org`` runs unchanged.
+    """
+    app = FakeApp()
+
+    def _jwt_api_request(endpoint: str, _jwt: str, *, method: str = "GET") -> dict[str, str]:
+        assert method == "POST"
+        installation_id = endpoint.split("/")[3]  # /app/installations/<id>/access_tokens
+        owner = {iid: org for org, iid in app.installations.items()}[installation_id]
+        return {"token": f"ghs_fake_{owner}"}
+
+    monkeypatch.setattr(github, "_load_app_config", lambda: ("12345", tmp_path / "app.pem"))
+    monkeypatch.setattr(github, "_generate_jwt", lambda _app_id, _key: "fake-jwt")
+    monkeypatch.setattr(github, "_resolve_installations", lambda _jwt: dict(app.installations))
+    monkeypatch.setattr(github, "_jwt_api_request", _jwt_api_request)
+    monkeypatch.setattr(github, "detect_org", lambda: app.cwd_org)
+    monkeypatch.setattr(github, "_token_cache", {})
+    monkeypatch.setattr(github, "_warned_no_installation", set())
+    return app

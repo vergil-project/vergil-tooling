@@ -648,7 +648,7 @@ def test_qualifying_run_predicate_is_reusable() -> None:
 
 
 def test_resolve_required_gates_wires_config_ghas_and_derivation(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from types import SimpleNamespace
 
@@ -657,10 +657,14 @@ def test_resolve_required_gates_wires_config_ghas_and_derivation(
     cfg = SimpleNamespace(
         project="PROJECT", ci="CI", publish=SimpleNamespace(docs=False), package=None
     )
-    monkeypatch.setattr(ci_evidence, "read_config", lambda _root: cfg)
-    monkeypatch.setattr(github, "repo_visibility", lambda _repo: "public")
-
     captured: dict[str, Any] = {}
+
+    def fake_config(repo: str, ref: str) -> Any:
+        captured["config_at"] = (repo, ref)
+        return cfg
+
+    monkeypatch.setattr(ci_evidence, "require_config_at_ref", fake_config)
+    monkeypatch.setattr(github, "repo_visibility", lambda _repo: "public")
 
     def fake_ghas(config: Any, *, visibility: str) -> bool:
         captured["ghas_config"] = config
@@ -677,9 +681,11 @@ def test_resolve_required_gates_wires_config_ghas_and_derivation(
 
     monkeypatch.setattr(ci_evidence, "required_evidence_gates", fake_required)
 
-    result = ci_evidence.resolve_required_gates("o/r", tmp_path)
+    result = ci_evidence.resolve_required_gates("o/r", "cafef00d")
 
     assert result is sentinel
+    # The config is the --repo target's, fetched at the given ref (#3226).
+    assert captured["config_at"] == ("o/r", "cafef00d")
     assert captured["ghas_config"] is cfg
     assert captured["visibility"] == "public"
     # docs is wired from config.publish.docs (here False) alongside ghas, and
@@ -713,11 +719,11 @@ def test_package_section_makes_harvest_download_ci_evidence_package(
         publish=SimpleNamespace(docs=True),
         package=SimpleNamespace(builder="python"),
     )
-    monkeypatch.setattr(ci_evidence, "read_config", lambda _root: cfg)
+    monkeypatch.setattr(ci_evidence, "require_config_at_ref", lambda _repo, _ref: cfg)
     monkeypatch.setattr(github, "repo_visibility", lambda _repo: "public")
     monkeypatch.setattr(ci_evidence, "ghas_available", lambda _c, *, visibility: True)
 
-    required = ci_evidence.resolve_required_gates("o/r", tmp_path)
+    required = ci_evidence.resolve_required_gates("o/r", "cafef00d")
     assert "package" in {g.name for g in required}
 
     monkeypatch.setattr(

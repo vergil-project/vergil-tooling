@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from vergil_tooling.lib.update_deps.context import UpdateDepsContext
+    from vergil_tooling.lib.update_deps.report import HeldBack
 
 
 @dataclass
@@ -26,6 +27,9 @@ class UpdateResult:
     summary: str
     commit_message: str
     warnings: list[str] = field(default_factory=list)
+    # Dependencies newer than the declared bounds allow (spec §7, epic
+    # vergil-project/.github#381). Reported, never bumped.
+    held_back: list[HeldBack] = field(default_factory=list)
 
 
 @runtime_checkable

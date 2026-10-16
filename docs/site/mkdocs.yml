@@ -81,6 +81,7 @@ nav:
           - vrg-pr-fix-body: reference/dev/pr-fix-body.md
           - vrg-prepare-release: reference/dev/prepare-release.md
           - vrg-finalize-pr: reference/dev/finalize-pr.md
+          - vrg-host: reference/dev/host.md
   - Standards:
       - Authoring:
           - Markdown Authoring: standards/markdown-authoring.md
