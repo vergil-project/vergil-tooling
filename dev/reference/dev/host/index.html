@@ -16106,7 +16106,7 @@ itself. Current entries:</p>
 <td>custom</td>
 <td>manual</td>
 <td>probe</td>
-<td>Xcode Command Line Tools: Homebrew needs them, and <code>/usr/bin/git</code> is a CLT shim; a pending update is surfaced, never applied</td>
+<td>Xcode Command Line Tools: Homebrew needs them, even when full Xcode is installed; a pending update is surfaced, never applied</td>
 </tr>
 </tbody>
 </table>
@@ -16136,10 +16136,11 @@ itself. Current entries:</p>
   <code>vrg-host</code>. The <code>macos</code> probe reads <code>softwareupdate --list</code> and reports
   every pending <a href="#update-levels-macos">update level</a>.</li>
 <li><strong><code>git</code> and <code>bash</code> are Homebrew's.</strong> On a Homebrew-first Mac, <code>git</code> resolves
-  to <code>/opt/homebrew/bin/git</code> ahead of the Command Line Tools shim
-  <code>/usr/bin/git</code>, and <code>bash</code> to Homebrew's bash 5 ahead of Apple's <code>/bin/bash</code>
-  3.2. The copies that actually run are therefore not updated with macOS, so
-  <code>vrg-host</code> tracks and upgrades them through <code>brew</code>.</li>
+  to <code>/opt/homebrew/bin/git</code> ahead of Apple's <code>/usr/bin/git</code> shim (which runs
+  the CLT's or Xcode.app's git, whichever <code>xcode-select -p</code> selects), and
+  <code>bash</code> to Homebrew's bash 5 ahead of Apple's <code>/bin/bash</code> 3.2. The copies
+  that actually run are therefore not updated with macOS, so <code>vrg-host</code>
+  tracks and upgrades them through <code>brew</code>.</li>
 <li><strong><code>xcode-clt</code> is report-only.</strong> Homebrew cannot work without the Xcode
   Command Line Tools, so a missing CLT is an ERROR. Apple ships CLT updates
   through Software Update, separately from macOS. The installed version comes
