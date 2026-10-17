@@ -16019,6 +16019,20 @@ failure is caught here rather than discovered later. <code>--no-wait-cd</code> i
 the conscious opt-out from blocking. When the repo has no CD workflow,
 or no run is dispatched for the merge within the dispatch window (a
 change CD legitimately skips), finalize does not block.</p>
+<p><strong>Watch deadline.</strong> The watch defaults to 90 minutes (5400 seconds),
+about twice the longest known CD: vergil-containers' CD routinely takes
+around 43 minutes, because its rust image jobs alone take about 40. Set
+<code>VRG_CD_TIMEOUT</code> (seconds, a positive whole number) to change it. It
+mirrors <code>VRG_CHECKS_TIMEOUT</code>: a malformed value is an error rather than a
+silent fallback, and the deadline cannot be disabled.</p>
+<p><strong>Timeout is not failure.</strong> A run that concludes non-success fails the
+stage with "the CD workflow run triggered by this merge did not
+succeed". A run still going at the deadline gets a different headline:
+"CD run still in progress after Ns; result unknown". It comes with the
+run URL, a <code>gh run view &lt;id&gt;</code> command to re-check it, and a pointer to
+<code>vrg-finalize-pr --cleanup-only</code> to re-confirm once the run has
+finished. It still fails the stage, because an unknown result is not a
+pass, but it never claims the run failed (issue #3316).</p>
 <h2 id="batch-mode-comma-list-all">Batch mode (comma-list / <code>--all</code>)<a class="headerlink" href="#batch-mode-comma-list-all" title="Permanent link">&para;</a></h2>
 <p>A comma-separated PR argument (<code>vrg-finalize-pr 123,124,125</code>) or <code>--all</code>
 (every open PR in <code>.worktrees/</code>) finalizes several PRs as a single
@@ -16027,6 +16041,11 @@ serialized batch (issue #1673). Each item runs
 the post-merge checks); after every item merges, one end-of-batch
 <code>vrg-finalize-pr --cleanup-only</code> runs validation and the CD check, then
 — with <code>--release</code>/<code>--install</code> — a single <code>vrg-release</code>.</p>
+<p>The batch summary reports that end-of-batch step as <code>post-checks</code>. Its
+exit code cannot say which of the two checks failed, so a failure reads
+"end-of-batch post-checks (validation + CD check) exited N" and never
+blames validation alone. The <code>--cleanup-only</code> stage summary printed just
+above it names the failing stage (issue #3316).</p>
 <p>Unlike <code>vrg-submit-pr</code>'s batch, these PRs are already open, so each one
 that lands behind another will <code>update-branch</code> and re-run its gate
 (the normal serialized-merge cost). For zero-waste CI, submit the batch
@@ -16054,7 +16073,7 @@ release — the batch runs those once at the end.</p>
 </tr>
 <tr>
 <td>1</td>
-<td>Provenance violation, unmergeable PR (draft, conflicts, failed checks, stuck behind, orphaned check-run, or wait timeout), not run from main worktree, non-TTY stdin or stdout in inference mode, dirty working tree, failed validation, failed CD run, or a batch item failed</td>
+<td>Provenance violation, unmergeable PR (draft, conflicts, failed checks, stuck behind, orphaned check-run, or wait timeout), not run from main worktree, non-TTY stdin or stdout in inference mode, dirty working tree, failed validation, failed CD run, CD watch timeout (result unknown), or a batch item failed</td>
 </tr>
 </tbody>
 </table>

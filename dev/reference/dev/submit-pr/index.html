@@ -15713,10 +15713,11 @@ cleans up a branch with no local worktree).</p>
 </code></pre></div>
 <p>It uses the same batch semantics as the worktree batch (<code>--all</code> / <code>--select</code>):
 each PR is finalized in turn, then — only if every branch merged — a single
-end-of-batch validation runs, followed by <strong>one</strong> <code>vrg-release</code> (never one per
-branch). A branch that already carries a submitted PR is fail-fast in the
-cascade (finalize it directly with <code>vrg-finalize-pr &lt;url&gt;</code>); without a cascade
-flag it is simply reported and skipped, as before.</p>
+end-of-batch post-checks step (validation + CD check) runs, followed by <strong>one</strong>
+<code>vrg-release</code> (never one per branch). A branch that already carries a
+submitted PR is fail-fast in the cascade (finalize it directly with
+<code>vrg-finalize-pr &lt;url&gt;</code>); without a cascade flag it is simply reported and
+skipped, as before.</p>
 <h2 id="arguments">Arguments<a class="headerlink" href="#arguments" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
