@@ -113,10 +113,11 @@ vrg-submit-pr --install feature/123-x feature/124-y
 
 It uses the same batch semantics as the worktree batch (`--all` / `--select`):
 each PR is finalized in turn, then — only if every branch merged — a single
-end-of-batch validation runs, followed by **one** `vrg-release` (never one per
-branch). A branch that already carries a submitted PR is fail-fast in the
-cascade (finalize it directly with `vrg-finalize-pr <url>`); without a cascade
-flag it is simply reported and skipped, as before.
+end-of-batch post-checks step (validation + CD check) runs, followed by **one**
+`vrg-release` (never one per branch). A branch that already carries a
+submitted PR is fail-fast in the cascade (finalize it directly with
+`vrg-finalize-pr <url>`); without a cascade flag it is simply reported and
+skipped, as before.
 
 ## Arguments
 

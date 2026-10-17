@@ -359,7 +359,11 @@ triggered** — identified by the merge commit SHA, not "the latest run
 on the branch" — and waits for it to complete. If that run does not
 succeed, finalize prints the failure with a direct link to the log and
 exits non-zero, so you investigate before moving on. The wait is
-bounded by timeouts and `--no-wait-cd` opts out (issue #2753).
+bounded by timeouts and `--no-wait-cd` opts out (issue #2753). The watch
+deadline defaults to 90 minutes and can be changed with `VRG_CD_TIMEOUT`
+(seconds). A run still going at the deadline is reported as "still in
+progress; result unknown", with the run URL and how to re-check it, not
+as a failed run. It still fails finalize (issue #3316).
 
 For deeper investigation, view recent runs directly:
 

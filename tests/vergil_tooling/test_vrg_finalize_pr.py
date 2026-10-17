@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vergil_tooling.bin.vrg_finalize_pr import (
+    CDRunProblem,
     FinalizeContext,
     FinalizeError,
     _delete_branch_and_worktree,
@@ -31,6 +32,7 @@ from vergil_tooling.bin.vrg_finalize_pr import (
     _wait_for_cd_run,
     _worktree_is_dirty,
     build_stages,
+    cd_timeout_secs,
     main,
     parse_args,
 )
@@ -486,12 +488,15 @@ def test_wait_fails_on_non_success_conclusion() -> None:
             ],
         ),
     ):
-        msg = _wait_for_cd_run("develop", _HEAD_SHA)
-    assert msg is not None
+        problem = _wait_for_cd_run("develop", _HEAD_SHA)
+    assert problem is not None
+    assert problem.timed_out is False
+    assert problem.conclusion == "failure"
+    msg = problem.describe()
     assert "12345" in msg
     assert "develop" in msg
     assert "abc123d" in msg  # short sha
-    assert "failure" in msg
+    assert "ended with conclusion 'failure'" in msg
     assert "actions/runs/12345" in msg
 
 
@@ -553,10 +558,16 @@ def test_wait_times_out_watching_run() -> None:
             ],
         ),
     ):
-        msg = _wait_for_cd_run("develop", _HEAD_SHA, watch_timeout=0.0)
-    assert msg is not None
-    assert "did not complete" in msg
+        problem = _wait_for_cd_run("develop", _HEAD_SHA, watch_timeout=0.0)
+    assert problem is not None
+    assert problem.timed_out is True
+    assert problem.conclusion is None
+    msg = problem.describe()
+    assert "still in progress after 0s; result unknown" in msg
     assert "12345" in msg
+    # A run still in progress is not a failed run (issue #3316).
+    assert "conclusion" not in msg
+    assert "did not succeed" not in msg
 
 
 def test_wait_tolerates_view_errors_until_timeout() -> None:
@@ -572,9 +583,9 @@ def test_wait_tolerates_view_errors_until_timeout() -> None:
             ],
         ),
     ):
-        msg = _wait_for_cd_run("develop", _HEAD_SHA, watch_timeout=0.0)
-    assert msg is not None
-    assert "did not complete" in msg
+        problem = _wait_for_cd_run("develop", _HEAD_SHA, watch_timeout=0.0)
+    assert problem is not None
+    assert problem.timed_out is True
 
 
 def test_wait_tolerates_malformed_view_json() -> None:
@@ -589,9 +600,9 @@ def test_wait_tolerates_malformed_view_json() -> None:
             ],
         ),
     ):
-        msg = _wait_for_cd_run("develop", _HEAD_SHA, watch_timeout=0.0)
-    assert msg is not None
-    assert "did not complete" in msg
+        problem = _wait_for_cd_run("develop", _HEAD_SHA, watch_timeout=0.0)
+    assert problem is not None
+    assert problem.timed_out is True
 
 
 def test_wait_handles_run_without_url() -> None:
@@ -626,9 +637,7 @@ def test_main_returns_one_on_docs_failure(
         patch(_MOD + ".git.read_output", return_value="deadbeefcafe"),
         patch(
             _MOD + "._wait_for_cd_run",
-            return_value=(
-                "CD workflow run 999 on develop (deadbee) ended with conclusion 'failure'."
-            ),
+            return_value=CDRunProblem(999, "develop", "deadbeefcafe", "https://u", "failure", 5400),
         ),
     ):
         result = main([])
@@ -1845,15 +1854,109 @@ def test_stage_cd_check_raises_on_failure(
 ) -> None:
     ctx = _stage_ctx([], root=tmp_path)
     ctx.merge_commit_sha = _HEAD_SHA
+    problem = CDRunProblem(999, "develop", _HEAD_SHA, "https://u/999", "failure", 5400)
     with (
-        patch(
-            _MOD + "._wait_for_cd_run",
-            return_value="CD workflow run 999 on develop (deadbee) ended with 'failure'.",
+        patch(_MOD + "._wait_for_cd_run", return_value=problem),
+        pytest.raises(
+            FinalizeError, match="^CD workflow run triggered by the merge did not succeed$"
         ),
-        pytest.raises(FinalizeError, match="CD workflow"),
     ):
         _stage_cd_check(ctx)
-    assert "CD workflow" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "ERROR: the CD workflow run triggered by this merge did not succeed." in err
+    assert "CD workflow run 999 on develop (abc123d) ended with conclusion 'failure'." in err
+    assert "https://u/999" in err
+    assert "investigate the run above" in err
+    assert "result unknown" not in err
+
+
+def test_stage_cd_check_timeout_is_reported_as_unknown_not_failed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A watch timeout gets its own headline (issue #3316): still in progress,
+    # result unknown, with the URL and how to re-check — and it still fails
+    # the stage, because an unknown result is not a pass.
+    ctx = _stage_ctx([], root=tmp_path)
+    ctx.merge_commit_sha = _HEAD_SHA
+    problem = CDRunProblem(38973347564, "develop", _HEAD_SHA, "https://u/389", None, 5400)
+    with (
+        patch(_MOD + "._wait_for_cd_run", return_value=problem),
+        pytest.raises(
+            FinalizeError, match="^CD run still in progress after 5400s; result unknown$"
+        ),
+    ):
+        _stage_cd_check(ctx)
+    err = capsys.readouterr().err
+    assert "ERROR: CD run still in progress after 5400s; result unknown." in err
+    assert "https://u/389" in err
+    assert "this is not a CD failure" in err
+    assert "gh run view 38973347564" in err
+    assert "vrg-finalize-pr --cleanup-only" in err
+    assert "VRG_CD_TIMEOUT=<seconds> (currently 5400s)" in err
+    assert "did not succeed" not in err
+    assert "investigate the run above" not in err
+
+
+# -- CD watch deadline: default + $VRG_CD_TIMEOUT (issue #3316) ---------------
+
+
+def test_cd_timeout_default_covers_longest_known_cd(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("VRG_CD_TIMEOUT", raising=False)
+    assert cd_timeout_secs() == 5400
+    # vergil-containers run 38973347564 took 43m31s; the default must clear it.
+    assert cd_timeout_secs() > 43 * 60 + 31
+
+
+def test_cd_timeout_blank_override_uses_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VRG_CD_TIMEOUT", "  ")
+    assert cd_timeout_secs() == 5400
+
+
+def test_cd_timeout_valid_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VRG_CD_TIMEOUT", " 7200 ")
+    assert cd_timeout_secs() == 7200
+
+
+@pytest.mark.parametrize("raw", ["abc", "0", "-5", "1.5", "90m"])
+def test_cd_timeout_invalid_override_fails_loudly(
+    monkeypatch: pytest.MonkeyPatch, raw: str
+) -> None:
+    monkeypatch.setenv("VRG_CD_TIMEOUT", raw)
+    with pytest.raises(ValueError, match="VRG_CD_TIMEOUT must be a positive whole number"):
+        cd_timeout_secs()
+
+
+def test_wait_uses_cd_timeout_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    # No explicit watch_timeout: the deadline comes from $VRG_CD_TIMEOUT and
+    # is reported back on a timeout.
+    monkeypatch.setenv("VRG_CD_TIMEOUT", "1")
+    clock = iter([0.0, 0.0, 0.5, 2.0])
+    with (
+        patch(_MOD + ".time.sleep"),
+        patch(_MOD + ".time.monotonic", side_effect=lambda: next(clock)),
+        patch(
+            _MOD + ".subprocess.run",
+            side_effect=[
+                _cd_list_resp([_cd_run()]),
+                _cd_view_resp("in_progress", None),
+                _cd_view_resp("in_progress", None),
+            ],
+        ),
+    ):
+        problem = _wait_for_cd_run("develop", _HEAD_SHA)
+    assert problem is not None
+    assert problem.timed_out is True
+    assert problem.waited_secs == 1
+
+
+def test_wait_invalid_cd_timeout_fails_before_waiting(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VRG_CD_TIMEOUT", "soon")
+    with (
+        patch(_MOD + ".subprocess.run") as run,
+        pytest.raises(ValueError, match="VRG_CD_TIMEOUT"),
+    ):
+        _wait_for_cd_run("develop", _HEAD_SHA)
+    run.assert_not_called()
 
 
 def test_stage_cd_check_dry_run_skips(tmp_path: Path) -> None:
@@ -2531,7 +2634,9 @@ def test_resolve_open_prs_skips_worktrees_without_pr() -> None:
         assert _resolve_open_prs(Path("/r")) == ["https://x/feature/1-a"]
 
 
-def test_finalize_batch_validation_failure_reported() -> None:
+def test_finalize_batch_validation_failure_reported(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     def fake_run(cmd, **_kwargs):
         rc = 1 if tuple(cmd)[:2] == ("vrg-finalize-pr", "--cleanup-only") else 0
         return MagicMock(returncode=rc)
@@ -2544,6 +2649,14 @@ def test_finalize_batch_validation_failure_reported() -> None:
             ["123"], root=Path("/repo"), release=False, install=False, assume_yes=True
         )
     assert rc == 1
+    out = capsys.readouterr().out
+    # --cleanup-only runs validation *and* the CD check; a non-zero exit must
+    # not be blamed on validation alone (issue #3316).
+    assert "then: run post-checks (validation + CD check) on develop once" in out
+    assert "Post-step failed: post-checks: end-of-batch post-checks (validation + CD check)" in (
+        out
+    )
+    assert "validation exited" not in out
 
 
 def test_finalize_batch_release_failure_reported() -> None:

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -12,6 +13,7 @@ from vergil_tooling.lib.pr_workflow.batch import (
     ItemOutcome,
     ItemResult,
     PostStep,
+    finalize_post_checks_step,
     format_report,
     run_batch,
 )
@@ -217,3 +219,45 @@ def test_run_batch_rejects_non_completion_outcome() -> None:
             assume_yes=True,
             completed=ItemOutcome.FAILED,
         )
+
+
+# -- end-of-batch post-checks step (issue #3316) ------------------------------
+
+
+def test_finalize_post_checks_step_runs_cleanup_only_in_cwd() -> None:
+    with patch(_MOD + ".subprocess.run", return_value=MagicMock(returncode=0)) as run:
+        step = finalize_post_checks_step(Path("/repo"))
+        step.run()
+    assert step.name == "post-checks"
+    run.assert_called_once_with(
+        ("vrg-finalize-pr", "--cleanup-only"), cwd=Path("/repo"), check=False
+    )
+
+
+def test_finalize_post_checks_failure_names_both_stages_not_just_validation() -> None:
+    """``--cleanup-only`` runs validation *and* the CD check, and its exit code
+    cannot say which failed — so the label must never blame validation alone
+    (a cd-check timeout was once summarized as "validation exited 1")."""
+    with (
+        patch(_MOD + ".subprocess.run", return_value=MagicMock(returncode=1)),
+        _confirm_yes(),
+    ):
+        report = run_batch(
+            ["a"],
+            lambda _it: None,
+            label=str,
+            plan=["x"],
+            assume_yes=True,
+            completed=ItemOutcome.MERGED,
+            post_steps=[finalize_post_checks_step(Path("/repo"))],
+        )
+    assert report.post_failure is not None
+    assert report.post_failure.startswith(
+        "post-checks: end-of-batch post-checks (validation + CD check) exited 1"
+    )
+    assert "stage summary above" in report.post_failure
+    assert "validation exited" not in report.post_failure
+    assert (
+        "Post-step failed: post-checks: end-of-batch post-checks (validation + CD check)"
+        in format_report(report)
+    )
