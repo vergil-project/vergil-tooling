@@ -1288,6 +1288,8 @@
       
         
       
+        
+      
     
     
     
@@ -1340,6 +1342,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.247/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.247
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -16170,7 +16200,11 @@ triggered</strong> — identified by the merge commit SHA, not "the latest run
 on the branch" — and waits for it to complete. If that run does not
 succeed, finalize prints the failure with a direct link to the log and
 exits non-zero, so you investigate before moving on. The wait is
-bounded by timeouts and <code>--no-wait-cd</code> opts out (issue #2753).</p>
+bounded by timeouts and <code>--no-wait-cd</code> opts out (issue #2753). The watch
+deadline defaults to 90 minutes and can be changed with <code>VRG_CD_TIMEOUT</code>
+(seconds). A run still going at the deadline is reported as "still in
+progress; result unknown", with the run URL and how to re-check it, not
+as a failed run. It still fails finalize (issue #3316).</p>
 <p>For deeper investigation, view recent runs directly:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>gh<span class="w"> </span>run<span class="w"> </span>list<span class="w"> </span>--repo<span class="w"> </span>vergil-project/vergil-tooling<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span>--workflow<span class="o">=</span><span class="s2">"Documentation"</span><span class="w"> </span>--limit<span class="w"> </span><span class="m">5</span>
