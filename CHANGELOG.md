@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.247] - 2026-10-17
+
+### Bug fixes
+
+- report a CD watch timeout as result-unknown and name both batch post-checks (#3317)
+
+### Chores
+
+- uv lock --upgrade
+
 ## [2.1.246] - 2026-10-16
 
 ### Chores
