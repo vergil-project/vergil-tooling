@@ -5,7 +5,8 @@ time, stopping at the first failure (fail-fast). Completed items are
 reported with the caller's ``completed`` outcome — SUBMITTED when the batch
 only opens PRs, MERGED when it also finalizes them — the failed one FAILED
 with its reason, and the rest NOT_STARTED. Post-steps (end-of-batch
-validation, a single release) run only when every item completed cleanly.
+post-checks — validation + CD check — and a single release) run only when
+every item completed cleanly.
 
 The whole run is gated by exactly one up-front confirmation: per-item
 prompts are pre-suppressed by the callers (they thread ``assume_yes``), so
@@ -14,6 +15,7 @@ once confirmed the batch runs unattended. (Issue #1673.)
 
 from __future__ import annotations
 
+import subprocess
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
@@ -22,6 +24,16 @@ from vergil_tooling.lib.confirm import confirm
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
+    from pathlib import Path
+
+# The end-of-batch ``vrg-finalize-pr --cleanup-only`` runs *both* post-merge
+# checks (validation and the CD check). Its exit code cannot say which one
+# failed, so the post-step is named for the pair rather than blaming
+# validation — a cd-check timeout was once summarized as "end-of-batch
+# validation exited 1" (issue #3316). The child's own stage summary, printed
+# just above the batch summary, names the failing stage.
+POST_CHECKS_STEP_NAME = "post-checks"
+POST_CHECKS_PLAN_LINE = "then: run post-checks (validation + CD check) on develop once"
 
 
 class BatchAbortError(Exception):
@@ -58,6 +70,31 @@ class ItemResult:
 class PostStep:
     name: str
     run: Callable[[], None]
+
+
+def finalize_post_checks_step(cwd: Path) -> PostStep:
+    """The shared end-of-batch post-step: one ``vrg-finalize-pr --cleanup-only``.
+
+    Used by every batch that finalizes PRs (``vrg-finalize-pr`` and
+    ``vrg-submit-pr --finalize``, including the relay cascade) so the failure
+    label is defined once (issue #3316).
+    """
+
+    def _run() -> None:
+        result = subprocess.run(  # noqa: S603
+            ("vrg-finalize-pr", "--cleanup-only"),  # noqa: S607
+            cwd=cwd,
+            check=False,
+        )
+        if result.returncode != 0:
+            msg = (
+                "end-of-batch post-checks (validation + CD check) exited "
+                f"{result.returncode} — the vrg-finalize-pr --cleanup-only "
+                "stage summary above names which stage failed"
+            )
+            raise BatchAbortError(msg)
+
+    return PostStep(POST_CHECKS_STEP_NAME, _run)
 
 
 @dataclass

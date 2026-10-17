@@ -527,7 +527,8 @@ _PROGRESS_INTERVAL_SECS = 60
 # Ceiling for how long the check-poll waiters block on still-PENDING checks
 # before giving up. Real CI here runs 3-8 min, so 180s guaranteed a spurious
 # finalize-merge failure on normal PRs (#2809); 1800s (30 min) comfortably
-# clears real CI and matches vrg_finalize_pr._CD_WATCH_TIMEOUT_SECS (#2753). A
+# clears real CI (the post-merge CD watch has its own, longer deadline,
+# vrg_finalize_pr.cd_timeout_secs / $VRG_CD_TIMEOUT — CD is slower, #3316). A
 # merely-pending check is recoverable and is waited out to this deadline; a
 # *failed* check (pr_merge.failed_check_names) or an *orphaned* check
 # (OrphanedCheckError) still aborts earlier, so this ceiling never lets a

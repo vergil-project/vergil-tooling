@@ -592,7 +592,8 @@ def _run_submit_batch(
     Per item: rebase the branch on the latest *base* (the zero-waste-CI step),
     chdir in, submit, chdir back, and — when *finalize* — shell out to
     ``vrg-finalize-pr <url> --skip-post-checks``. On full success, one
-    end-of-batch validation and a single release run if requested (#1673).
+    end-of-batch post-checks (validation + CD check) and a single release run
+    if requested (#1673).
 
     A branch carrying merge commits is refused rather than rebased (a rebase
     would drop them), and the summary reports each item as Submitted — or
@@ -623,15 +624,6 @@ def _run_submit_batch(
                     f"vrg-finalize-pr {pr_url} --skip-post-checks exited {result.returncode}"
                 )
 
-    def _validate() -> None:
-        result = subprocess.run(  # noqa: S603
-            ("vrg-finalize-pr", "--cleanup-only"),  # noqa: S607
-            cwd=main_root,
-            check=False,
-        )
-        if result.returncode != 0:
-            raise batch.BatchAbortError(f"end-of-batch validation exited {result.returncode}")
-
     def _release() -> None:
         cmd = ("vrg-release", "--install") if install else ("vrg-release",)
         result = subprocess.run(cmd, cwd=main_root, check=False)  # noqa: S603,S607
@@ -640,7 +632,7 @@ def _run_submit_batch(
 
     post_steps: list[batch.PostStep] = []
     if finalize:
-        post_steps.append(batch.PostStep("validation", _validate))
+        post_steps.append(batch.finalize_post_checks_step(main_root))
         if release:
             post_steps.append(batch.PostStep("release", _release))
 
@@ -648,7 +640,7 @@ def _run_submit_batch(
         f"rebase + submit {wt.path.name}" + (" + finalize" if finalize else "") for wt in selected
     ]
     if finalize:
-        plan.append("then: validate develop once" + (", then release" if release else ""))
+        plan.append(batch.POST_CHECKS_PLAN_LINE + (", then release" if release else ""))
 
     report = batch.run_batch(
         selected,
@@ -1062,10 +1054,11 @@ def _run_relay_cascade(
     the same batch semantics because they are the *correct* ones for multiple
     PRs: each branch is opened and finalized (``vrg-finalize-pr <url>
     --skip-post-checks``) in turn, then — only if every branch merged — a single
-    end-of-batch validation runs, followed by **one** ``vrg-release`` (never one
-    per branch). It differs from ``_run_submit_batch`` only in the parts a
-    worktree provided: there is no local branch to rebase, and the PR is opened
-    via the relay core (``push=False``) rather than from a checked-out worktree.
+    end-of-batch post-checks run (validation + CD check), followed by **one**
+    ``vrg-release`` (never one per branch). It differs from
+    ``_run_submit_batch`` only in the parts a worktree provided: there is no
+    local branch to rebase, and the PR is opened via the relay core
+    (``push=False``) rather than from a checked-out worktree.
     ``vrg-finalize-pr`` already merges and cleans up a branch that is not checked
     out locally — the cloud→Mac case the relay exists for — so no local fetch is
     needed here.
@@ -1104,27 +1097,18 @@ def _run_relay_cascade(
                 f"vrg-finalize-pr {pr_url} --skip-post-checks exited {result.returncode}"
             )
 
-    def _validate() -> None:
-        result = subprocess.run(  # noqa: S603
-            ("vrg-finalize-pr", "--cleanup-only"),  # noqa: S607
-            cwd=main_root,
-            check=False,
-        )
-        if result.returncode != 0:
-            raise batch.BatchAbortError(f"end-of-batch validation exited {result.returncode}")
-
     def _release() -> None:
         cmd = ("vrg-release", "--install") if install else ("vrg-release",)
         result = subprocess.run(cmd, cwd=main_root, check=False)  # noqa: S603,S607
         if result.returncode != 0:
             raise batch.BatchAbortError(f"{' '.join(cmd)} exited {result.returncode}")
 
-    post_steps: list[batch.PostStep] = [batch.PostStep("validation", _validate)]
+    post_steps: list[batch.PostStep] = [batch.finalize_post_checks_step(main_root)]
     if release:
         post_steps.append(batch.PostStep("release", _release))
 
     plan = [f"relay-submit + finalize {branch}" for branch in branches]
-    plan.append("then: validate develop once" + (", then release" if release else ""))
+    plan.append(batch.POST_CHECKS_PLAN_LINE + (", then release" if release else ""))
 
     report = batch.run_batch(
         branches,

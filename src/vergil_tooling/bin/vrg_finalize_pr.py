@@ -25,7 +25,10 @@ After cleanup succeeds, validation runs in the dev container, then
 finalize blocks on the CD workflow run its merge triggered — identified
 by the merge commit SHA, not "latest run on branch" — and fails if that
 run does not succeed (issue #2753; supersedes the non-blocking #303
-check). ``--no-wait-cd`` is the conscious opt-out from blocking.
+check). The watch is bounded by ``$VRG_CD_TIMEOUT`` (default 5400s); a run
+still in progress at the deadline is reported as "result unknown", never as a
+failed run, and still fails the stage (issue #3316). ``--no-wait-cd`` is the
+conscious opt-out from blocking.
 
 ``--release`` chains straight into ``vrg-release`` after the finalize
 pipeline completes **successfully** (issue #1634) — the fast-turnaround
@@ -40,6 +43,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -77,10 +81,19 @@ _CD_WORKFLOW_NAME = "CD"
 # _CD_DISPATCH_TIMEOUT_SECS for the run whose headSha matches the merge commit
 # to appear; if none has by then, treat it as "this change triggered no CD run"
 # (path filters / skip) and move on without failing. Once found, watch it up to
-# _CD_WATCH_TIMEOUT_SECS before bailing with a timeout so finalize never hangs
+# cd_timeout_secs() before bailing with a timeout so finalize never hangs
 # indefinitely. _CD_POLL_INTERVAL_SECS paces both loops.
 _CD_DISPATCH_TIMEOUT_SECS = 120
-_CD_WATCH_TIMEOUT_SECS = 1800
+# Default CD watch ceiling: 90 minutes. The longest known CD is vergil-containers'
+# (rust image jobs alone take ~40 min); run 38973347564 took 43m31s and was
+# misreported as a failure under the old fixed 1800s (issue #3316). 90 min is
+# roughly 2x that run — headroom for a slow-runner day without letting a truly
+# hung run block finalize for hours. A timeout is "result unknown", not a CD
+# failure, and is cheap to recover from (re-check the run, then re-run
+# ``vrg-finalize-pr --cleanup-only``); override per invocation with
+# $VRG_CD_TIMEOUT, mirroring $VRG_CHECKS_TIMEOUT for the merge-gate wait.
+_CD_WATCH_TIMEOUT_SECS = 5400
+CD_TIMEOUT_ENV = "VRG_CD_TIMEOUT"
 _CD_POLL_INTERVAL_SECS = 10
 
 _ETERNAL_BY_MODEL: dict[str, list[str]] = {
@@ -313,27 +326,18 @@ def _run_finalize_batch(
             msg = f"vrg-finalize-pr {pr} --skip-post-checks exited {result.returncode}"
             raise batch.BatchAbortError(msg)
 
-    def _validate() -> None:
-        result = subprocess.run(  # noqa: S603
-            ("vrg-finalize-pr", "--cleanup-only"),  # noqa: S607
-            cwd=root,
-            check=False,
-        )
-        if result.returncode != 0:
-            raise batch.BatchAbortError(f"end-of-batch validation exited {result.returncode}")
-
     def _release() -> None:
         cmd = ("vrg-release", "--install") if install else ("vrg-release",)
         result = subprocess.run(cmd, cwd=root, check=False)  # noqa: S603,S607
         if result.returncode != 0:
             raise batch.BatchAbortError(f"{' '.join(cmd)} exited {result.returncode}")
 
-    post_steps = [batch.PostStep("validation", _validate)]
+    post_steps = [batch.finalize_post_checks_step(root)]
     if release:
         post_steps.append(batch.PostStep("release", _release))
 
     plan = [f"finalize PR {pr}" for pr in prs]
-    plan.append("then: validate develop once" + (", then release" if release else ""))
+    plan.append(batch.POST_CHECKS_PLAN_LINE + (", then release" if release else ""))
 
     report = batch.run_batch(
         prs,
@@ -758,14 +762,58 @@ def _view_cd_run(run_id: object) -> dict[str, object] | None:
     return data if isinstance(data, dict) else None
 
 
-def _cd_failure_message(
-    run_id: object, target_branch: str, head_sha: str, conclusion: str, url: str
-) -> str:
-    return (
-        f"CD workflow run {run_id} on {target_branch} ({head_sha[:7]}) "
-        f"ended with conclusion '{conclusion}'.\n"
-        f"  {url}"
-    )
+def cd_timeout_secs() -> int:
+    """The CD watch deadline in seconds: ``$VRG_CD_TIMEOUT`` or 5400.
+
+    Mirrors :func:`vergil_tooling.lib.github.checks_timeout_secs`: a malformed
+    or non-positive override is a configuration error and raises rather than
+    silently falling back — the deadline is what keeps a hung CD run from
+    blocking finalize forever, so it cannot be disabled (issue #3316).
+    """
+    raw = os.environ.get(CD_TIMEOUT_ENV, "").strip()
+    if not raw:
+        return _CD_WATCH_TIMEOUT_SECS
+    try:
+        secs = int(raw)
+    except ValueError:
+        secs = 0
+    if secs <= 0:
+        msg = f"{CD_TIMEOUT_ENV} must be a positive whole number of seconds, got {raw!r}"
+        raise ValueError(msg)
+    return secs
+
+
+@dataclass(frozen=True)
+class CDRunProblem:
+    """Why the CD run this merge triggered did not confirm a pass.
+
+    Either the run *concluded* non-success (``conclusion`` set — a real CD
+    failure) or the watch deadline elapsed while it was still running
+    (``conclusion`` is ``None`` — result unknown, never reported as a failed
+    run; issue #3316).
+    """
+
+    run_id: object
+    target_branch: str
+    head_sha: str
+    url: str
+    conclusion: str | None
+    waited_secs: int
+
+    @property
+    def timed_out(self) -> bool:
+        return self.conclusion is None
+
+    @property
+    def run_ref(self) -> str:
+        return f"CD workflow run {self.run_id} on {self.target_branch} ({self.head_sha[:7]})"
+
+    def describe(self) -> str:
+        if self.timed_out:
+            detail = f"is still in progress after {self.waited_secs}s; result unknown."
+        else:
+            detail = f"ended with conclusion '{self.conclusion}'."
+        return f"{self.run_ref} {detail}\n  {self.url}"
 
 
 def _wait_for_cd_run(
@@ -773,24 +821,29 @@ def _wait_for_cd_run(
     head_sha: str,
     *,
     dispatch_timeout: float = _CD_DISPATCH_TIMEOUT_SECS,
-    watch_timeout: float = _CD_WATCH_TIMEOUT_SECS,
+    watch_timeout: float | None = None,
     poll_interval: float = _CD_POLL_INTERVAL_SECS,
-) -> str | None:
+) -> CDRunProblem | None:
     """Block until the CD run triggered by ``head_sha`` completes.
 
     The merge's base-branch push dispatches CD asynchronously, so this first
     polls ``gh run list`` (up to ``dispatch_timeout``) for the run whose
     ``headSha`` matches the merge commit — not "latest run on branch," which
     can be a stale or unrelated run (issue #2753). Once the run registers it
-    watches it (up to ``watch_timeout``) until it concludes.
+    watches it (up to ``watch_timeout``, default :func:`cd_timeout_secs` —
+    resolved up front so a malformed ``$VRG_CD_TIMEOUT`` fails before any
+    waiting) until it concludes.
 
-    Returns a one-line failure message when the run concludes non-success or
-    the watch times out. Returns ``None`` — do not fail finalize — when:
+    Returns a :class:`CDRunProblem` when the run concludes non-success or the
+    watch times out (``timed_out``). Returns ``None`` — do not fail finalize —
+    when:
       - the CD workflow does not exist / cannot be queried,
       - no run was dispatched for this SHA within ``dispatch_timeout``
         (a change CD legitimately skips, e.g. path filters), or
       - the run concluded success / skipped / neutral.
     """
+    if watch_timeout is None:
+        watch_timeout = cd_timeout_secs()
     # Phase 1: wait for the run this merge triggered to register.
     dispatch_deadline = time.monotonic() + dispatch_timeout
     run: dict[str, object] | None = None
@@ -829,15 +882,16 @@ def _wait_for_cd_run(
                 conclusion = str(view.get("conclusion") or "")
                 if conclusion in _CD_PASSING_CONCLUSIONS:
                     return None
-                return _cd_failure_message(
-                    run_id, target_branch, head_sha, conclusion or "unknown", url
+                return CDRunProblem(
+                    run_id,
+                    target_branch,
+                    head_sha,
+                    url,
+                    conclusion or "unknown",
+                    int(watch_timeout),
                 )
         if time.monotonic() >= watch_deadline:
-            return (
-                f"CD workflow run {run_id} on {target_branch} ({head_sha[:7]}) "
-                f"did not complete within {int(watch_timeout)}s.\n"
-                f"  {url}"
-            )
+            return CDRunProblem(run_id, target_branch, head_sha, url, None, int(watch_timeout))
         time.sleep(poll_interval)
 
 
@@ -1238,14 +1292,35 @@ def _stage_cd_check(ctx: FinalizeContext) -> None:
         )
         return
 
-    failure = _wait_for_cd_run(args.target_branch, head_sha)
-    if failure is None:
+    problem = _wait_for_cd_run(args.target_branch, head_sha)
+    if problem is None:
         return
+    if problem.timed_out:
+        # Still running is not failed: say so, and say how to find out. The
+        # stage still fails — an unknown result is not a pass (issue #3316).
+        secs = problem.waited_secs
+        print(
+            f"ERROR: CD run still in progress after {secs}s; result unknown.",
+            file=sys.stderr,
+        )
+        print(f"  {problem.describe()}", file=sys.stderr)
+        print(
+            "  Finalize stopped watching before the run finished — this is not "
+            "a CD failure.\n"
+            f"  Re-check the run with: gh run view {problem.run_id}  (or open the "
+            "URL above).\n"
+            "  Once it has succeeded, re-run: vrg-finalize-pr --cleanup-only\n"
+            f"  If this CD is legitimately slower, raise the watch limit with "
+            f"{CD_TIMEOUT_ENV}=<seconds> (currently {secs}s).",
+            file=sys.stderr,
+        )
+        msg = f"CD run still in progress after {secs}s; result unknown"
+        raise FinalizeError(msg)
     print(
         "ERROR: the CD workflow run triggered by this merge did not succeed.",
         file=sys.stderr,
     )
-    print(f"  {failure}", file=sys.stderr)
+    print(f"  {problem.describe()}", file=sys.stderr)
     print(
         "  The post-merge publish did not complete — investigate the run above.",
         file=sys.stderr,
