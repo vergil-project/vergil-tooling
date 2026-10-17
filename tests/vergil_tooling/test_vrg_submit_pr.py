@@ -2513,14 +2513,14 @@ class TestRelayBranchPath:
     def test_relay_cascade_validation_failure_reported(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """Every PR finalizes, but the end-of-batch validation fails: reported as a
+        """Every PR finalizes, but the end-of-batch post-checks fail: reported as a
         post-step failure with a non-zero exit."""
         state = _ready_state(branch="feature/x", head_sha="abc123")
         transport = MagicMock()
         transport.read.return_value = state
 
         def fake_run(cmd: tuple[str, ...], **_kwargs: object) -> MagicMock:
-            # Per-PR finalize passes; the --cleanup-only validation fails.
+            # Per-PR finalize passes; the --cleanup-only post-checks fail.
             failed = tuple(cmd) == ("vrg-finalize-pr", "--cleanup-only")
             return MagicMock(returncode=1 if failed else 0)
 
@@ -2536,7 +2536,11 @@ class TestRelayBranchPath:
         ):
             rc = main(["feature/x", "--finalize", "--yes"])
         assert rc == 1
-        assert "Post-step failed: validation" in capsys.readouterr().out
+        out = capsys.readouterr().out
+        # Names both checks --cleanup-only runs, never blaming validation alone (#3316).
+        label = "Post-step failed: post-checks: end-of-batch post-checks (validation + CD check)"
+        assert label in out
+        assert "validation exited" not in out
 
     def test_relay_cascade_release_failure_reported(
         self, capsys: pytest.CaptureFixture[str]

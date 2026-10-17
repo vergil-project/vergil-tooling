@@ -262,6 +262,22 @@ the conscious opt-out from blocking. When the repo has no CD workflow,
 or no run is dispatched for the merge within the dispatch window (a
 change CD legitimately skips), finalize does not block.
 
+**Watch deadline.** The watch defaults to 90 minutes (5400 seconds),
+about twice the longest known CD: vergil-containers' CD routinely takes
+around 43 minutes, because its rust image jobs alone take about 40. Set
+`VRG_CD_TIMEOUT` (seconds, a positive whole number) to change it. It
+mirrors `VRG_CHECKS_TIMEOUT`: a malformed value is an error rather than a
+silent fallback, and the deadline cannot be disabled.
+
+**Timeout is not failure.** A run that concludes non-success fails the
+stage with "the CD workflow run triggered by this merge did not
+succeed". A run still going at the deadline gets a different headline:
+"CD run still in progress after Ns; result unknown". It comes with the
+run URL, a `gh run view <id>` command to re-check it, and a pointer to
+`vrg-finalize-pr --cleanup-only` to re-confirm once the run has
+finished. It still fails the stage, because an unknown result is not a
+pass, but it never claims the run failed (issue #3316).
+
 ## Batch mode (comma-list / `--all`)
 
 A comma-separated PR argument (`vrg-finalize-pr 123,124,125`) or `--all`
@@ -271,6 +287,12 @@ serialized batch (issue #1673). Each item runs
 the post-merge checks); after every item merges, one end-of-batch
 `vrg-finalize-pr --cleanup-only` runs validation and the CD check, then
 — with `--release`/`--install` — a single `vrg-release`.
+
+The batch summary reports that end-of-batch step as `post-checks`. Its
+exit code cannot say which of the two checks failed, so a failure reads
+"end-of-batch post-checks (validation + CD check) exited N" and never
+blames validation alone. The `--cleanup-only` stage summary printed just
+above it names the failing stage (issue #3316).
 
 Unlike `vrg-submit-pr`'s batch, these PRs are already open, so each one
 that lands behind another will `update-branch` and re-run its gate
@@ -292,4 +314,4 @@ release — the batch runs those once at the end.
 | Code | Meaning |
 | ---- | ------- |
 | 0 | Finalization complete, or declined at a confirmation prompt |
-| 1 | Provenance violation, unmergeable PR (draft, conflicts, failed checks, stuck behind, orphaned check-run, or wait timeout), not run from main worktree, non-TTY stdin or stdout in inference mode, dirty working tree, failed validation, failed CD run, or a batch item failed |
+| 1 | Provenance violation, unmergeable PR (draft, conflicts, failed checks, stuck behind, orphaned check-run, or wait timeout), not run from main worktree, non-TTY stdin or stdout in inference mode, dirty working tree, failed validation, failed CD run, CD watch timeout (result unknown), or a batch item failed |
