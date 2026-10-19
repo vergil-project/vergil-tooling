@@ -167,6 +167,25 @@ build/validation output, after showing the paths and confirming
 | Exit codes | 0 success, 1 provenance/worktree/validation/CD failure or unrecognized branching model |
 | Status | Active |
 
+### vrg-branch-sweep
+
+Report, or with `--apply` delete, a repo's finished remote branches: the
+newest PR is merged or closed, none is open, and the branch tip still equals
+that PR's head. The safety net behind the delete-on-merge repo setting and
+the delete-on-close rule (issue #3332). Never deletes the default branch,
+`develop`, `main`, `gh-pages`, a protected branch (branch protection or any
+ruleset rule), a branch with no PR, or a branch whose name was reused
+(issue #1719). See [vrg-branch-sweep](dev/branch-sweep.md).
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_branch_sweep` |
+| Args | `--repo OWNER/NAME` (default: the current repo), `--apply` (default: dry run) |
+| Preconditions | `gh` authenticated with read access (delete access for `--apply`) to the target repo |
+| Failure mode | A per-branch `gh` error is reported on that branch's line, the rest are processed, then exit 1 |
+| Exit codes | 0 success, 1 any branch error, listing failure or auth failure, 2 bad arguments |
+| Status | Active |
+
 ### vrg-worktree-status
 
 List canonical `.worktrees/` worktrees with their derived lifecycle

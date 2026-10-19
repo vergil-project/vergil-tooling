@@ -378,6 +378,11 @@ CLI tools installed as `vrg-*` console scripts:
   held-back report (`--only`/`--skip`/`--vergil X.Y`). Human-only
 - **`vrg-resolve-tracking-issue`** — Extract tracking issue number from a merge commit's PR linkage
 - **`vrg-finalize-pr`** — Merge a PR and run post-merge cleanup (branch/worktree deletion, remote pruning)
+- **`vrg-branch-sweep`** — Report (dry run) or delete (`--apply`) a repo's
+  finished remote branches: newest PR merged or closed, none open, tip
+  unchanged. The safety net behind the delete-on-merge repo setting and the
+  delete-on-close rule (#3332); never touches protected, reserved or no-PR
+  branches
 - **`vrg-validate`** — Unified validation driver (runs inside dev container)
 - **`vrg-ensure-label`** — Idempotent GitHub label creation
 - **`vrg-hook-guard`** — Claude Code PreToolUse hook guard (blocks raw git/gh)
