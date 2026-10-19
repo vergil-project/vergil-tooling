@@ -500,13 +500,16 @@ def test_preflight_wraps_version_sync_error() -> None:
 
 # --- dependency-update release gate (epic vergil-project/.github#381, spec §5.3) ---
 
+_HEAD = "deps/update-2.1.0"
+
 _PRS = [
     {
         "url": "https://github.com/o/r/pull/9",
         "body": "Mechanized update.\n\nFix task: https://github.com/o/r/issues/10\n",
+        "headRefName": _HEAD,
     },
-    {"url": "https://github.com/o/r/pull/11", "body": "no fix task yet"},
-    {"url": "https://github.com/o/r/pull/12", "body": None},
+    {"url": "https://github.com/o/r/pull/11", "body": "no fix task yet", "headRefName": _HEAD},
+    {"url": "https://github.com/o/r/pull/12", "body": None, "headRefName": _HEAD},
 ]
 
 
@@ -515,17 +518,29 @@ def test_pending_deps_prs_parses_fix_task() -> None:
         prs = pending_deps_prs("o/r")
     assert prs == [
         PendingDepsPr(
+            head=_HEAD,
             url="https://github.com/o/r/pull/9",
             fix_task="https://github.com/o/r/issues/10",
         ),
-        PendingDepsPr(url="https://github.com/o/r/pull/11", fix_task=None),
-        PendingDepsPr(url="https://github.com/o/r/pull/12", fix_task=None),
+        PendingDepsPr(head=_HEAD, url="https://github.com/o/r/pull/11", fix_task=None),
+        PendingDepsPr(head=_HEAD, url="https://github.com/o/r/pull/12", fix_task=None),
     ]
     args = list(m.call_args.args)
     assert args[:2] == ["pr", "list"]
     assert args[args.index("--repo") + 1] == "o/r"
     assert args[args.index("--state") + 1] == "open"
     assert args[args.index("--label") + 1] == "dependency-update"
+    assert "headRefName" in args[args.index("--json") + 1].split(",")
+
+
+@pytest.mark.parametrize("head", [None, ""])
+def test_pending_deps_prs_rejects_entry_without_head(head: str | None) -> None:
+    entry = {"url": "https://github.com/o/r/pull/9", "body": "", "headRefName": head}
+    with (
+        patch(_MOD + ".github.read_json", return_value=[entry]),
+        pytest.raises(ReleaseError, match="without a head branch"),
+    ):
+        pending_deps_prs("o/r")
 
 
 def test_pending_deps_prs_fails_loud_on_gh_error() -> None:
@@ -590,10 +605,11 @@ def _fresh_patches(pending: list[PendingDepsPr]) -> list[contextlib.AbstractCont
 def test_preflight_refuses_on_pending_deps_pr() -> None:
     pending = [
         PendingDepsPr(
+            head=_HEAD,
             url="https://github.com/o/r/pull/9",
             fix_task="https://github.com/o/r/issues/10",
         ),
-        PendingDepsPr(url="https://github.com/o/r/pull/11", fix_task=None),
+        PendingDepsPr(head=_HEAD, url="https://github.com/o/r/pull/11", fix_task=None),
     ]
     with contextlib.ExitStack() as stack:
         for p in _fresh_patches(pending):
@@ -615,7 +631,7 @@ def test_preflight_refuses_on_pending_deps_pr() -> None:
 
 
 def test_preflight_allow_pending_deps_records_bypass(capsys: pytest.CaptureFixture[str]) -> None:
-    pending = [PendingDepsPr(url="https://github.com/o/r/pull/9", fix_task=None)]
+    pending = [PendingDepsPr(head=_HEAD, url="https://github.com/o/r/pull/9", fix_task=None)]
     with contextlib.ExitStack() as stack:
         for p in _fresh_patches(pending):
             stack.enter_context(p)
@@ -767,12 +783,19 @@ def _run_preflight_with_tasks(
 
 
 def test_preflight_clears_pr_whose_fix_task_completed(capsys: pytest.CaptureFixture[str]) -> None:
-    pending = [PendingDepsPr(url=_PR9, fix_task=_TASK10)]
+    pending = [PendingDepsPr(head=_HEAD, url=_PR9, fix_task=_TASK10)]
     ctx, calls = _run_preflight_with_tasks(pending, {_TASK10: ("CLOSED", "COMPLETED")})
     assert ctx.cleared_deps_prs == [_PR9]
     assert ctx.bypassed_deps_prs == []
-    # Comment first (naming the fix task and the preflight), then close.
-    assert [c[:3] for c in calls] == [["pr", "comment", _PR9], ["pr", "close", _PR9]]
+    # Comment first (naming the fix task and the preflight), close, then delete
+    # the head branch (#3332): delete-on-merge never covers a closed PR.
+    assert calls == [
+        calls[0],
+        ["pr", "close", _PR9],
+        ["api", "-X", "DELETE", f"repos/o/r/git/refs/heads/{_HEAD}"],
+    ]
+    assert calls[0][:3] == ["pr", "comment", _PR9]
+    assert ctx.undeleted_deps_branches == []
     comment = calls[0][calls[0].index("--body") + 1]
     assert _TASK10 in comment
     assert "vrg-release" in comment
@@ -780,10 +803,69 @@ def test_preflight_clears_pr_whose_fix_task_completed(capsys: pytest.CaptureFixt
     out = capsys.readouterr().out
     assert _PR9 in out
     assert _TASK10 in out
+    assert f"Deleted branch {_HEAD}" in out
+
+
+def test_preflight_branch_delete_failure_records_and_still_clears(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The PR is closed, so the gate clears; the leftover branch is recorded, not silent."""
+    pending = [PendingDepsPr(head=_HEAD, url=_PR9, fix_task=_TASK10)]
+
+    def fail_delete(args: list[str]) -> None:
+        if args[0] == "api":
+            raise subprocess.CalledProcessError(1, ["gh"], output="", stderr="HTTP 403")
+
+    ctx, _ = _run_preflight_with_tasks(
+        pending, {_TASK10: ("CLOSED", "COMPLETED")}, run_side_effect=fail_delete
+    )
+    assert ctx.cleared_deps_prs == [_PR9]
+    assert ctx.undeleted_deps_branches == [_HEAD]
+    out = capsys.readouterr().out
+    assert "WARNING" in out
+    assert "403" in out
+    assert f"git push origin --delete {_HEAD}" in out
+
+
+def test_preflight_branch_already_deleted_counts_as_deleted(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    pending = [PendingDepsPr(head=_HEAD, url=_PR9, fix_task=_TASK10)]
+
+    def gone(args: list[str]) -> None:
+        if args[0] == "api":
+            raise subprocess.CalledProcessError(
+                1, ["gh"], output="", stderr="gh: Reference does not exist (HTTP 422)"
+            )
+
+    ctx, _ = _run_preflight_with_tasks(
+        pending, {_TASK10: ("CLOSED", "COMPLETED")}, run_side_effect=gone
+    )
+    assert ctx.undeleted_deps_branches == []
+    assert "already deleted" in capsys.readouterr().out
+
+
+def test_every_pr_close_in_src_deletes_its_branch() -> None:
+    """A PR closed without merging keeps its branch unless the closer deletes it (#3332).
+
+    Every `gh pr close` in src/ must pass `--delete-branch`, or carry a comment
+    naming `--delete-branch` in the lines just above it saying why not.
+    """
+    src = Path(preflight_module.__file__).resolve().parents[2]
+    offenders: list[str] = []
+    for path in sorted(src.rglob("*.py")):
+        lines = path.read_text().splitlines()
+        for i, line in enumerate(lines):
+            if '"pr", "close"' not in line:
+                continue
+            window = "\n".join(lines[max(0, i - 5) : i + 1])
+            if "--delete-branch" not in window:
+                offenders.append(f"{path.relative_to(src)}:{i + 1}")
+    assert offenders == []
 
 
 def test_preflight_not_planned_fix_task_keeps_blocking() -> None:
-    pending = [PendingDepsPr(url=_PR9, fix_task=_TASK10)]
+    pending = [PendingDepsPr(head=_HEAD, url=_PR9, fix_task=_TASK10)]
     with pytest.raises(ReleaseError, match="dependency-update") as info:
         _run_preflight_with_tasks(pending, {_TASK10: ("CLOSED", "NOT_PLANNED")})
     msg = str(info.value)
@@ -793,7 +875,7 @@ def test_preflight_not_planned_fix_task_keeps_blocking() -> None:
 
 
 def test_preflight_refusal_advice_no_fix_task_linked() -> None:
-    pending = [PendingDepsPr(url=_PR11, fix_task=None)]
+    pending = [PendingDepsPr(head=_HEAD, url=_PR11, fix_task=None)]
     with pytest.raises(ReleaseError) as info:
         _run_preflight_with_tasks(pending, {})
     assert (
@@ -803,7 +885,7 @@ def test_preflight_refusal_advice_no_fix_task_linked() -> None:
 
 
 def test_preflight_refusal_advice_fix_task_open() -> None:
-    pending = [PendingDepsPr(url=_PR9, fix_task=_TASK10)]
+    pending = [PendingDepsPr(head=_HEAD, url=_PR9, fix_task=_TASK10)]
     with pytest.raises(ReleaseError) as info:
         _run_preflight_with_tasks(pending, {_TASK10: ("OPEN", None)})
     assert (
@@ -814,7 +896,7 @@ def test_preflight_refusal_advice_fix_task_open() -> None:
 
 
 def test_preflight_refusal_advice_fix_task_closed_not_completed() -> None:
-    pending = [PendingDepsPr(url=_PR9, fix_task=_TASK10)]
+    pending = [PendingDepsPr(head=_HEAD, url=_PR9, fix_task=_TASK10)]
     with pytest.raises(ReleaseError) as info:
         _run_preflight_with_tasks(pending, {_TASK10: ("CLOSED", "NOT_PLANNED")})
     assert (
@@ -826,8 +908,8 @@ def test_preflight_refusal_advice_fix_task_closed_not_completed() -> None:
 
 def test_preflight_refusal_trailer_keeps_only_bypass_advice() -> None:
     pending = [
-        PendingDepsPr(url=_PR9, fix_task=_TASK10),
-        PendingDepsPr(url=_PR11, fix_task=None),
+        PendingDepsPr(head=_HEAD, url=_PR9, fix_task=_TASK10),
+        PendingDepsPr(head=_HEAD, url=_PR11, fix_task=None),
     ]
     with pytest.raises(ReleaseError) as info:
         _run_preflight_with_tasks(pending, {_TASK10: ("OPEN", None)})
@@ -843,14 +925,14 @@ def test_preflight_refusal_trailer_keeps_only_bypass_advice() -> None:
 
 
 def test_preflight_closed_fix_task_without_reason_keeps_blocking() -> None:
-    pending = [PendingDepsPr(url=_PR9, fix_task=_TASK10)]
+    pending = [PendingDepsPr(head=_HEAD, url=_PR9, fix_task=_TASK10)]
     with pytest.raises(ReleaseError, match="closed without completing") as info:
         _run_preflight_with_tasks(pending, {_TASK10: ("CLOSED", None)})
     assert "(no state reason)" in str(info.value)
 
 
 def test_preflight_not_planned_does_not_close_pr() -> None:
-    pending = [PendingDepsPr(url=_PR9, fix_task=_TASK10)]
+    pending = [PendingDepsPr(head=_HEAD, url=_PR9, fix_task=_TASK10)]
     with contextlib.ExitStack() as stack:
         for p in _fresh_patches(pending):
             stack.enter_context(p)
@@ -867,8 +949,8 @@ def test_preflight_allow_pending_deps_applies_after_clear_step(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     pending = [
-        PendingDepsPr(url=_PR9, fix_task=_TASK10),
-        PendingDepsPr(url=_PR11, fix_task=_TASK12),
+        PendingDepsPr(head=_HEAD, url=_PR9, fix_task=_TASK10),
+        PendingDepsPr(head=_HEAD, url=_PR11, fix_task=_TASK12),
     ]
     ctx, calls = _run_preflight_with_tasks(
         pending,
@@ -877,7 +959,7 @@ def test_preflight_allow_pending_deps_applies_after_clear_step(
     )
     assert ctx.cleared_deps_prs == [_PR9]
     assert ctx.bypassed_deps_prs == [_PR11]
-    assert [c[2] for c in calls] == [_PR9, _PR9]
+    assert [c[:3] for c in calls[1:]] == [["pr", "close", _PR9], ["api", "-X", "DELETE"]]
     warning = next(line for line in capsys.readouterr().out.splitlines() if "WARNING" in line)
     assert _PR11 in warning
     assert _PR9 not in warning
@@ -885,8 +967,8 @@ def test_preflight_allow_pending_deps_applies_after_clear_step(
 
 def test_preflight_refusal_after_clear_names_only_blocking_prs() -> None:
     pending = [
-        PendingDepsPr(url=_PR9, fix_task=_TASK10),
-        PendingDepsPr(url=_PR11, fix_task=None),
+        PendingDepsPr(head=_HEAD, url=_PR9, fix_task=_TASK10),
+        PendingDepsPr(head=_HEAD, url=_PR11, fix_task=None),
     ]
     with pytest.raises(ReleaseError) as info:
         _run_preflight_with_tasks(pending, {_TASK10: ("CLOSED", "COMPLETED")})
@@ -897,8 +979,8 @@ def test_preflight_refusal_after_clear_names_only_blocking_prs() -> None:
 
 def test_preflight_looks_up_every_fix_task_before_closing_any() -> None:
     pending = [
-        PendingDepsPr(url=_PR9, fix_task=_TASK10),
-        PendingDepsPr(url=_PR11, fix_task=_TASK12),
+        PendingDepsPr(head=_HEAD, url=_PR9, fix_task=_TASK10),
+        PendingDepsPr(head=_HEAD, url=_PR11, fix_task=_TASK12),
     ]
     boom = ReleaseError(phase="preflight", command="gh issue view", message="lookup failed")
 
@@ -918,7 +1000,7 @@ def test_preflight_looks_up_every_fix_task_before_closing_any() -> None:
 
 
 def test_preflight_comment_failure_raises_and_leaves_pr_untouched() -> None:
-    pending = [PendingDepsPr(url=_PR9, fix_task=_TASK10)]
+    pending = [PendingDepsPr(head=_HEAD, url=_PR9, fix_task=_TASK10)]
 
     def fail_comment(args: list[str]) -> None:
         if args[1] == "comment":
@@ -936,7 +1018,7 @@ def test_preflight_comment_failure_raises_and_leaves_pr_untouched() -> None:
 
 
 def test_preflight_close_failure_after_comment_raises_with_pr_state() -> None:
-    pending = [PendingDepsPr(url=_PR9, fix_task=_TASK10)]
+    pending = [PendingDepsPr(head=_HEAD, url=_PR9, fix_task=_TASK10)]
 
     def fail_close(args: list[str]) -> None:
         if args[1] == "close":
@@ -957,6 +1039,7 @@ def test_preflight_clear_step_end_to_end_with_gh_mocked() -> None:
     """The real fix_task_status path, gh mocked: #3281 / #3282 shaped."""
     pending = [
         PendingDepsPr(
+            head=_HEAD,
             url="https://github.com/o/r/pull/3281",
             fix_task="https://github.com/o/r/issues/3282",
         )
@@ -974,7 +1057,10 @@ def test_preflight_clear_step_end_to_end_with_gh_mocked() -> None:
         ctx = preflight(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
     assert ctx.cleared_deps_prs == ["https://github.com/o/r/pull/3281"]
     assert m_json.call_args.args[:3] == ("issue", "view", "3282")
-    assert m_run.call_args.args[:3] == ("pr", "close", "https://github.com/o/r/pull/3281")
+    assert [c.args[:3] for c in m_run.call_args_list[1:]] == [
+        ("pr", "close", "https://github.com/o/r/pull/3281"),
+        ("api", "-X", "DELETE"),
+    ]
 
 
 # --- package re-publish check (#3309) ----------------------------------------

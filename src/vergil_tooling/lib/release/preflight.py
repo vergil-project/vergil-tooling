@@ -39,16 +39,22 @@ _ISSUE_URL_RE = re.compile(r"^https://github\.com/([^/\s]+/[^/\s]+)/issues/(\d+)
 class PendingDepsPr:
     """An open ``dependency-update`` PR, with its fix task when one is linked."""
 
+    head: str
     url: str
     fix_task: str | None
 
 
 @dataclass(frozen=True)
 class _DepsGateOutcome:
-    """What the dependency-update gate did: PRs it closed, and PRs it let through."""
+    """What the dependency-update gate did: PRs it closed, and PRs it let through.
+
+    ``undeleted`` names the head branches of closed PRs whose deletion failed
+    (#3332), so the leftover is recorded rather than silent.
+    """
 
     cleared: list[str]
     bypassed: list[str]
+    undeleted: list[str]
 
 
 def preflight(
@@ -100,7 +106,7 @@ def preflight(
         else:
             release_version = current_version
 
-    deps_gate = _DepsGateOutcome(cleared=[], bypassed=[])
+    deps_gate = _DepsGateOutcome(cleared=[], bypassed=[], undeleted=[])
     if not resume:
         _check_version_not_tagged(release_version)
         _check_no_existing_tracking_issue(repo, release_version)
@@ -121,6 +127,7 @@ def preflight(
         worktree_path=worktree,
         bypassed_deps_prs=deps_gate.bypassed,
         cleared_deps_prs=deps_gate.cleared,
+        undeleted_deps_branches=deps_gate.undeleted,
     )
     if resume_issue_number is not None:
         ctx.issue_number = resume_issue_number
@@ -145,7 +152,7 @@ def pending_deps_prs(repo: str) -> list[PendingDepsPr]:
             "--label",
             DEPS_LABEL,
             "--json",
-            "url,body",
+            "url,body,headRefName",
             "--limit",
             "100",
         )
@@ -172,9 +179,16 @@ def pending_deps_prs(repo: str) -> list[PendingDepsPr]:
                 command=_PENDING_DEPS_COMMAND,
                 message=f"gh pr list returned an entry without a url: {item!r}",
             )
+        head = entry.get("headRefName")
+        if not isinstance(head, str) or not head:
+            raise ReleaseError(
+                phase="preflight",
+                command=_PENDING_DEPS_COMMAND,
+                message=f"gh pr list returned an entry without a head branch: {item!r}",
+            )
         body = entry.get("body")
         match = _FIX_TASK_RE.search(body if isinstance(body, str) else "")
-        found.append(PendingDepsPr(url=url, fix_task=match.group(1) if match else None))
+        found.append(PendingDepsPr(head=head, url=url, fix_task=match.group(1) if match else None))
     return found
 
 
@@ -249,6 +263,9 @@ def _close_landed_deps_pr(pr: PendingDepsPr) -> None:
             detail=_gh_error_detail(exc),
         ) from exc
     try:
+        # Deliberately not `--delete-branch`: gh exits non-zero when the PR
+        # closed but the branch delete failed, which would read as "still
+        # open" here. The branch is deleted as its own step instead (#3332).
         github.run("pr", "close", pr.url)
     except subprocess.CalledProcessError as exc:
         raise ReleaseError(
@@ -263,10 +280,36 @@ def _close_landed_deps_pr(pr: PendingDepsPr) -> None:
         ) from exc
 
 
+def _delete_deps_branch(repo: str, pr: PendingDepsPr) -> bool:
+    """Delete a closed deps PR's head branch on origin; False if that failed (#3332).
+
+    GitHub's delete-on-merge setting never applies to a PR closed without
+    merging, so the closer deletes the branch. A branch already gone counts as
+    deleted. A failure does not undo the close — the gate is cleared — but it
+    is printed loudly and recorded on the tracking issue by the caller.
+    """
+    try:
+        github.run("api", "-X", "DELETE", f"repos/{repo}/git/refs/heads/{pr.head}")
+    except subprocess.CalledProcessError as exc:
+        detail = _gh_error_detail(exc)
+        if "Reference does not exist" in detail:
+            print(f"Branch {pr.head} of {pr.url} is already deleted.")
+            return True
+        print(
+            f"WARNING: closed dependency-update PR {pr.url}, but could not delete its "
+            f"branch {pr.head}: {detail}\nDelete it by hand: "
+            f"git push origin --delete {pr.head}"
+        )
+        return False
+    print(f"Deleted branch {pr.head} of closed dependency-update PR {pr.url}.")
+    return True
+
+
 def _check_pending_deps(repo: str, *, allow: bool) -> _DepsGateOutcome:
     """Clear landed deps PRs, then refuse on what still blocks unless *allow*.
 
-    A PR whose fix task closed as completed is closed (#3286). Every fix task
+    A PR whose fix task closed as completed is closed (#3286) and its head
+    branch deleted (#3332); a failed delete is recorded, not fatal. Every fix task
     is looked up before any PR is closed, so a lookup failure leaves nothing
     changed. What remains open blocks (spec §5.3) unless *allow* bypasses it.
     """
@@ -308,6 +351,7 @@ def _check_pending_deps(repo: str, *, allow: bool) -> _DepsGateOutcome:
             )
 
     cleared: list[str] = []
+    undeleted: list[str] = []
     for pr in landed:
         _close_landed_deps_pr(pr)
         print(
@@ -315,16 +359,18 @@ def _check_pending_deps(repo: str, *, allow: bool) -> _DepsGateOutcome:
             "completed, so the update landed."
         )
         cleared.append(pr.url)
+        if not _delete_deps_branch(repo, pr):
+            undeleted.append(pr.head)
 
     if not blocking:
-        return _DepsGateOutcome(cleared=cleared, bypassed=[])
+        return _DepsGateOutcome(cleared=cleared, bypassed=[], undeleted=undeleted)
     if allow:
         urls = [pr.url for pr, _ in blocking]
         print(
             "WARNING: --allow-pending-deps is bypassing open dependency-update "
             f"PR(s): {', '.join(urls)}"
         )
-        return _DepsGateOutcome(cleared=cleared, bypassed=urls)
+        return _DepsGateOutcome(cleared=cleared, bypassed=urls, undeleted=undeleted)
     described = "; ".join(pr.url + note for pr, note in blocking)
     raise ReleaseError(
         phase="preflight",

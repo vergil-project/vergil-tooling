@@ -259,6 +259,16 @@ def test_phase_details_prepare_names_cleared_deps_prs() -> None:
     assert "--allow-pending-deps" not in details
 
 
+def test_phase_details_prepare_names_undeleted_deps_branches() -> None:
+    """A closed deps PR whose branch could not be deleted is named (#3332)."""
+    ctx = _ctx()
+    ctx.cleared_deps_prs = ["https://github.com/o/r/pull/9"]
+    ctx.undeleted_deps_branches = ["deps/update-2.1.0"]
+    details = _phase_details(ctx, "prepare")
+    assert "Could not delete the branch(es)" in details
+    assert "`deps/update-2.1.0`" in details
+
+
 def test_phase_details_prepare_omits_cleared_line_when_none() -> None:
     details = _phase_details(_ctx(), "prepare")
     assert "dependency-update" not in details
