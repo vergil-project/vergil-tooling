@@ -15608,8 +15608,9 @@ under an agent identity.</p>
 <h2 id="the-dependency-update-gate">The dependency-update gate<a class="headerlink" href="#the-dependency-update-gate" title="Permanent link">&para;</a></h2>
 <p>On a fresh start (not on <code>--resume</code>), preflight refuses while an open
 PR carries the <code>dependency-update</code> label. First it closes, with a
-comment, any such PR whose linked fix task was closed as completed: the
-update landed through the fix PR. <code>--allow-pending-deps</code> lets the
+comment, any such PR whose linked fix task was closed as completed (the
+update landed through the fix PR), and deletes its head branch. A failed
+branch delete is reported, not fatal. <code>--allow-pending-deps</code> lets the
 release past whatever still blocks. Lookup failures refuse the release.
 See <a href="../../../guides/releasing/#the-dependency-update-gate">The dependency-update gate</a>.</p>
 <h2 id="exit-codes">Exit codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>
