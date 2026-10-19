@@ -21,9 +21,10 @@ def back_merge_and_bump(ctx: ReleaseContext) -> None:
     ``develop`` is fast-forwarded to the back-merge later, by the
     finalize cleanup stage, from the root checkout.
 
-    Resume-safe (#1612): if the back-merge PR already exists it is adopted —
-    skipped when merged, merged when still open — and ``bump_pr_url`` /
-    ``next_version`` are hydrated rather than re-creating the branch.
+    Resume-safe (#1612, #3328): if the back-merge PR already exists it is
+    adopted — merged when still open, skipped when already merged — and
+    ``bump_pr_url`` / ``next_version`` are hydrated rather than re-creating
+    the branch. A closed, unmerged PR is not adopted.
     """
     branch = f"release/post-{ctx.version}"
 
@@ -36,6 +37,20 @@ def back_merge_and_bump(ctx: ReleaseContext) -> None:
             print(f"Back-merge PR already open — merging: {ctx.bump_pr_url}")
             wait_and_merge(ctx.bump_pr_url, phase="back-merge-bump")
         ctx.next_version = _post_branch_version(ctx, branch)
+        return
+
+    # Resume-safe against an already-merged back-merge PR (#3328), the bump
+    # counterpart of prepare's #2998. `pr_for_branch` returns open PRs only, so
+    # a failure after the back-merge merged (e.g. a confirm-develop failure)
+    # leaves the merged PR invisible to the check above, and `checkout -b`
+    # below fails on the existing branch. Adopt it instead. A merged PR's head
+    # branch may already be deleted, so the bumped version is read from the
+    # PR's own pull ref, which GitHub keeps.
+    merged = github.closed_pr_for_branch(branch)
+    if merged is not None and known_pr_state(str(merged["url"])) == "MERGED":
+        ctx.bump_pr_url = str(merged["url"])
+        print(f"Back-merge PR already merged: {ctx.bump_pr_url}")
+        ctx.next_version = _merged_pr_version(ctx, str(merged["number"]))
         return
 
     print("Fetching main...")
@@ -63,6 +78,16 @@ def back_merge_and_bump(ctx: ReleaseContext) -> None:
 def _post_branch_version(ctx: ReleaseContext, branch: str) -> str:
     """The version the back-merge bumped to — read from the post branch's VERSION."""
     git.run("fetch", "origin", branch)
+    return version.show(ctx.repo_root, ref="FETCH_HEAD")
+
+
+def _merged_pr_version(ctx: ReleaseContext, number: str) -> str:
+    """The version a merged back-merge PR bumped to — read from its pull ref.
+
+    ``pull/<N>/head`` outlives the head branch, which finalize cleanup (or
+    GitHub's auto-delete) may already have removed.
+    """
+    git.run("fetch", "origin", f"pull/{number}/head")
     return version.show(ctx.repo_root, ref="FETCH_HEAD")
 
 
