@@ -2,12 +2,29 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from unittest.mock import patch
+from typing import TYPE_CHECKING
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from vergil_tooling.lib.release.bump import back_merge_and_bump
 from vergil_tooling.lib.release.context import ReleaseContext
 
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
 _MOD = "vergil_tooling.lib.release.bump"
+
+
+@pytest.fixture(autouse=True)
+def _no_closed_pr() -> Iterator[MagicMock]:
+    """No closed back-merge PR unless a test says otherwise.
+
+    The real ``pr_for_branch`` returns open PRs only, so every fresh-path test
+    also reaches the closed-PR lookup (#3328); default it to "none".
+    """
+    with patch(_MOD + ".github.closed_pr_for_branch", return_value=None) as m:
+        yield m
 
 
 def _ctx() -> ReleaseContext:
@@ -146,7 +163,8 @@ def test_back_merge_waits_and_merges() -> None:
     )
 
 
-def test_back_merge_skips_when_pr_already_merged() -> None:
+def test_back_merge_skips_when_listed_open_pr_merged_since() -> None:
+    """Listed as open, then merged before its state was read: skip the merge."""
     ctx = _ctx()
     with (
         patch(
@@ -165,6 +183,88 @@ def test_back_merge_skips_when_pr_already_merged() -> None:
     m_bump.assert_not_called()
     m_pr.assert_not_called()
     m_wm.assert_not_called()
+
+
+def test_back_merge_adopts_already_merged_pr_on_resume(_no_closed_pr: MagicMock) -> None:
+    """Resume after the back-merge merged: adopt it, never re-create the branch (#3328).
+
+    The real ``pr_for_branch`` returns open PRs only, so a merged back-merge PR
+    is found through the closed-PR lookup. The version is read from its pull
+    ref, which outlives a deleted head branch.
+    """
+    ctx = _ctx()
+    _no_closed_pr.return_value = {
+        "number": "951",
+        "url": "https://github.com/owner/repo/pull/951",
+        "headRefOid": "3bd942f2",
+    }
+    git_run_calls: list[tuple[str, ...]] = []
+
+    def capture_git_run(*args: str) -> None:
+        git_run_calls.append(args)
+
+    with (
+        patch(_MOD + ".git.run", side_effect=capture_git_run),
+        patch(_MOD + ".github.pr_for_branch", return_value=None),
+        patch(_MOD + ".github.pr_state", return_value="MERGED"),
+        patch(_MOD + ".version.show", return_value="2.1.1") as m_show,
+        patch(_MOD + ".version.bump") as m_bump,
+        patch(_MOD + ".github.create_pr") as m_pr,
+        patch(_MOD + ".wait_and_merge") as m_wm,
+    ):
+        back_merge_and_bump(ctx)
+
+    _no_closed_pr.assert_called_once_with("release/post-2.1.0")
+    assert ctx.bump_pr_url == "https://github.com/owner/repo/pull/951"
+    assert ctx.next_version == "2.1.1"
+    assert git_run_calls == [("fetch", "origin", "pull/951/head")]
+    m_show.assert_called_once_with(ctx.repo_root, ref="FETCH_HEAD")
+    m_bump.assert_not_called()
+    m_pr.assert_not_called()
+    m_wm.assert_not_called()
+
+
+def test_back_merge_ignores_closed_unmerged_pr(_no_closed_pr: MagicMock) -> None:
+    """A closed but unmerged back-merge PR is not adopted: the fresh path runs."""
+    ctx = _ctx()
+    _no_closed_pr.return_value = {
+        "number": "950",
+        "url": "https://github.com/owner/repo/pull/950",
+        "headRefOid": "abc123",
+    }
+    with (
+        patch(_MOD + ".git.run"),
+        patch(_MOD + ".github.pr_for_branch", return_value=None),
+        patch(_MOD + ".github.pr_state", return_value="CLOSED"),
+        patch(_MOD + ".version.bump", return_value="2.1.1"),
+        patch(
+            _MOD + ".github.create_pr",
+            return_value="https://github.com/owner/repo/pull/101",
+        ) as m_pr,
+        patch(_MOD + ".wait_and_merge") as m_wm,
+    ):
+        back_merge_and_bump(ctx)
+
+    m_pr.assert_called_once()
+    m_wm.assert_called_once_with("https://github.com/owner/repo/pull/101", phase="back-merge-bump")
+    assert ctx.bump_pr_url == "https://github.com/owner/repo/pull/101"
+    assert ctx.next_version == "2.1.1"
+
+
+def test_back_merge_open_pr_skips_closed_lookup(_no_closed_pr: MagicMock) -> None:
+    """An open back-merge PR is adopted directly; the closed lookup never runs."""
+    ctx = _ctx()
+    with (
+        patch(
+            _MOD + ".github.pr_for_branch",
+            return_value={"url": "https://github.com/owner/repo/pull/9"},
+        ),
+        patch(_MOD + ".github.pr_state", return_value="OPEN"),
+        patch(_MOD + "._post_branch_version", return_value="2.1.1"),
+        patch(_MOD + ".wait_and_merge"),
+    ):
+        back_merge_and_bump(ctx)
+    _no_closed_pr.assert_not_called()
 
 
 def test_back_merge_merges_existing_open_pr() -> None:
