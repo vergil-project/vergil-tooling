@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import mock_open, patch
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
 import pytest
 
@@ -19,18 +20,30 @@ from vergil_tooling.bin.vrg_validate import (
     _command_stage,
     _find_custom_validator,
     _in_dev_container,
+    _probe_xdist,
+    _python_test_stage,
+    _resolve_test_workers,
     _run_common_checks,
     _skip_conan_audit_scan,
+    _test_context,
     main,
 )
+from vergil_tooling.lib.config import ConfigError, TestConfig
 from vergil_tooling.lib.languages import CheckKind
 
 _MOD = "vergil_tooling.bin.vrg_validate"
 
 
 @pytest.fixture(autouse=True)
-def _container_env() -> Iterator[None]:
-    with patch(_MOD + "._in_dev_container", return_value=True):
+def _container_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    # The test-tuning env must not leak in from the runner (GitHub Actions sets
+    # GITHUB_ACTIONS=true), and no full run may probe the real test environment.
+    for name in ("VRG_TEST_WORKERS", "VRG_TEST_CONTEXT", "GITHUB_ACTIONS"):
+        monkeypatch.delenv(name, raising=False)
+    with (
+        patch(_MOD + "._in_dev_container", return_value=True),
+        patch(_MOD + "._probe_xdist", return_value=False),
+    ):
         yield
 
 
@@ -595,3 +608,213 @@ def test_build_stages_keeps_audit_when_token_present() -> None:
         )
         stages = _build_stages(None, "cpp", Path("/tmp/r"))  # noqa: S108
     assert "audit" in [s.name for s in stages]
+
+
+# -- xdist probe: the project's test environment (issue #3322) ---------------
+
+
+def _fake_env(tmp_path: Path, *, interpreter: str | None, body: str) -> Path:
+    """Make a bin dir holding a ``pytest`` and (optionally) a fake interpreter."""
+    bin_dir = tmp_path / "venv" / "bin"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / "pytest").write_text("#!/bin/sh\n")
+    (bin_dir / "pytest").chmod(0o755)
+    if interpreter is not None:
+        (bin_dir / interpreter).write_text(f"#!/bin/sh\n{body}\n")
+        (bin_dir / interpreter).chmod(0o755)
+    return bin_dir
+
+
+def _only_on_path(monkeypatch: pytest.MonkeyPatch, bin_dir: Path) -> None:
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}/usr/bin{os.pathsep}/bin")
+
+
+def test_probe_asks_test_env_not_own_interpreter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: xdist is importable here, but the test env says no → False.
+
+    This suite's own interpreter has pytest-xdist installed (it is in the dev
+    group), exactly like vrg-validate's tool venv in the issue. The probe must
+    still report the environment the resolved ``pytest`` belongs to.
+    """
+    import importlib.util
+
+    assert importlib.util.find_spec("xdist") is not None
+    bin_dir = _fake_env(tmp_path, interpreter="python", body="exit 3")
+    _only_on_path(monkeypatch, bin_dir)
+    assert _probe_xdist() is False
+
+
+def test_probe_reports_installed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    bin_dir = _fake_env(tmp_path, interpreter="python", body="exit 0")
+    _only_on_path(monkeypatch, bin_dir)
+    assert _probe_xdist() is True
+
+
+def test_probe_falls_back_to_python3(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    bin_dir = _fake_env(tmp_path, interpreter="python3", body="exit 0")
+    _only_on_path(monkeypatch, bin_dir)
+    assert _probe_xdist() is True
+
+
+def test_probe_error_exit_is_loud(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    bin_dir = _fake_env(tmp_path, interpreter="python", body="echo boom >&2; exit 1")
+    _only_on_path(monkeypatch, bin_dir)
+    with pytest.raises(ValidationError, match=r"probe failed: .* exited 1: boom"):
+        _probe_xdist()
+
+
+def test_probe_without_pytest_is_loud(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _only_on_path(monkeypatch, tmp_path)
+    with (
+        patch(_MOD + ".shutil.which", return_value=None),
+        pytest.raises(ValidationError, match="pytest is not on PATH"),
+    ):
+        _probe_xdist()
+
+
+def test_probe_without_interpreter_is_loud(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    bin_dir = _fake_env(tmp_path, interpreter=None, body="")
+    _only_on_path(monkeypatch, bin_dir)
+    with pytest.raises(ValidationError, match="no python interpreter next to"):
+        _probe_xdist()
+
+
+@pytest.mark.parametrize(
+    "exc", [OSError("exec format error"), subprocess.TimeoutExpired("python", 60)]
+)
+def test_probe_that_cannot_run_is_loud(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exc: Exception
+) -> None:
+    bin_dir = _fake_env(tmp_path, interpreter="python", body="exit 0")
+    _only_on_path(monkeypatch, bin_dir)
+    with (
+        patch(_MOD + ".subprocess.run", side_effect=exc),
+        pytest.raises(ValidationError, match="probe could not run"),
+    ):
+        _probe_xdist()
+
+
+# -- worker count resolution (issue #3322) ----------------------------------
+
+
+def test_test_context_unknown_without_signals() -> None:
+    assert _test_context() is None
+
+
+def test_test_context_github_actions_is_ci(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    assert _test_context() == "ci"
+
+
+def test_test_context_forwarded_wins(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("VRG_TEST_CONTEXT", "local-vm")
+    assert _test_context() == "local-vm"
+
+
+def test_test_context_unknown_value_is_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VRG_TEST_CONTEXT", "my-laptop")
+    with pytest.raises(ConfigError, match="'my-laptop' is not a known context"):
+        _test_context()
+
+
+_TUNED = TestConfig(workers=4, context_workers={"local-vm": 12})
+
+
+def test_resolve_workers_uses_context_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VRG_TEST_CONTEXT", "local-vm")
+    assert _resolve_test_workers(_TUNED) == (12, "[test.local-vm].workers, context local-vm")
+
+
+def test_resolve_workers_default_for_unknown_context() -> None:
+    assert _resolve_test_workers(_TUNED) == (4, "[test].workers, context <unknown>")
+
+
+def test_resolve_workers_env_override_wins(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VRG_TEST_CONTEXT", "local-vm")
+    monkeypatch.setenv("VRG_TEST_WORKERS", "6")
+    assert _resolve_test_workers(_TUNED) == (6, "VRG_TEST_WORKERS")
+
+
+def test_resolve_workers_invalid_env_is_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VRG_TEST_WORKERS", "lots")
+    with pytest.raises(ConfigError, match="VRG_TEST_WORKERS must be"):
+        _resolve_test_workers(_TUNED)
+
+
+def test_main_invalid_workers_env_returns_1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write_config(tmp_path, "python")
+    monkeypatch.setenv("VRG_TEST_WORKERS", "0")
+    with patch(_MOD + ".git.repo_root", return_value=tmp_path):
+        assert main([]) == 1
+    assert "VRG_TEST_WORKERS must be" in capsys.readouterr().err
+
+
+# -- deferred Python test stage (issue #3322) ---------------------------------
+
+
+def _run_test_stage(
+    *, parallel: bool, workers: int | str, workers_source: str, xdist_probe: Callable[[], bool]
+) -> list[list[str]]:
+    ran: list[list[str]] = []
+
+    def record(cmd: list[str], *, check: bool = True) -> int:  # noqa: ARG001
+        ran.append(cmd)
+        return 0
+
+    stage = _python_test_stage(
+        parallel=parallel, workers=workers, workers_source=workers_source, xdist_probe=xdist_probe
+    )
+    with patch(_MOD + ".progress.run", side_effect=record):
+        stage.fn(None)
+    return ran
+
+
+def test_python_test_stage_parallel_with_tuned_workers(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    ran = _run_test_stage(
+        parallel=True,
+        workers=12,
+        workers_source="[test.local-vm].workers",
+        xdist_probe=lambda: True,
+    )
+    assert ran[0][-4:] == ["-n", "12", "--dist", "worksteal"]
+    assert "Test parallelism: -n 12 (from [test.local-vm].workers)" in capsys.readouterr().out
+
+
+def test_python_test_stage_serial_when_xdist_absent(capsys: pytest.CaptureFixture[str]) -> None:
+    ran = _run_test_stage(parallel=True, workers=12, workers_source="x", xdist_probe=lambda: False)
+    assert "-n" not in ran[0]
+    assert "pytest-xdist is not installed" in capsys.readouterr().out
+
+
+def test_python_test_stage_opt_out_skips_probe(capsys: pytest.CaptureFixture[str]) -> None:
+    def probe() -> bool:
+        raise AssertionError("probe must not run when parallel = false")
+
+    ran = _run_test_stage(parallel=False, workers="auto", workers_source="x", xdist_probe=probe)
+    assert "-n" not in ran[0]
+    assert "[test].parallel = false" in capsys.readouterr().out
+
+
+def test_build_stages_defers_python_probe_to_stage_time() -> None:
+    """The probe must not run at build time: install has not populated .venv yet."""
+    calls: list[str] = []
+
+    def probe() -> bool:
+        calls.append("probe")
+        return True
+
+    with patch(_MOD + "._find_custom_validator", return_value=None):
+        stages = _build_stages("test", "python", Path("/r"), test_workers=12, xdist_probe=probe)
+    assert [s.name for s in stages] == ["install", "test"]
+    assert calls == []
+    with patch(_MOD + ".progress.run", return_value=0) as m_run:
+        stages[1].fn(None)
+    assert calls == ["probe"]
+    assert m_run.call_args.args[0][-4:] == ["-n", "12", "--dist", "worksteal"]

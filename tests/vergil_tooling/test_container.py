@@ -567,6 +567,22 @@ def test_build_container_args_env_prefix_passthrough_cannot_override_pycache_pre
     assert bare < explicit
 
 
+def test_build_container_args_extra_env_after_passthrough(tmp_path: Path) -> None:
+    # extra_env is emitted as `-e NAME=value` after the env-prefixes
+    # passthrough, so a forwarded host variable cannot override it (#3322).
+    with patch.dict("os.environ", {"VRG_TEST_CONTEXT": "bogus"}, clear=True):
+        args = build_container_args(
+            tmp_path,
+            "img:1",
+            ["cmd"],
+            runtime="docker",
+            env_prefixes=("VRG_",),
+            extra_env={"VRG_TEST_CONTEXT": "local-vm", "VRG_TEST_WORKERS": "12"},
+        )
+    assert args.index("VRG_TEST_CONTEXT") < args.index("VRG_TEST_CONTEXT=local-vm")
+    assert "VRG_TEST_WORKERS=12" in args
+
+
 def test_build_container_args_masks_venv_for_python(tmp_path: Path) -> None:
     # A Python repo gets an anonymous volume masking the bind-mounted host
     # `.venv`, so in-container `uv sync` builds a throwaway venv that cannot

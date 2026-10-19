@@ -5,12 +5,25 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
-from vergil_tooling.bin.vrg_container_run import main
+import pytest
+
+from vergil_tooling.bin.vrg_container_run import _test_context, _test_tuning_env, main
+from vergil_tooling.lib.platform_env import Platform
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
-    import pytest
+
+@pytest.fixture(autouse=True)
+def _host_platform() -> Iterator[None]:
+    # Platform resolution probes the network and filesystem; pin it so every
+    # run is hermetic. Tests that care override it explicitly.
+    with patch(
+        "vergil_tooling.bin.vrg_container_run.platform_env.current_platform",
+        return_value=Platform.PHYSICAL_HOST,
+    ):
+        yield
 
 
 # -- help output --------------------------------------------------------------
@@ -579,3 +592,55 @@ def test_python_routes_through_cache(tmp_path: Path) -> None:
         mock_cache.return_value = "ghcr.io/vergil-project/dev-python:3.14--develop--aabbccdd"
         main(["--", "uv", "run", "pytest"])
     mock_cache.assert_called_once()
+
+
+# -- test-tuning env (issue #3322) ------------------------------------------
+
+
+def test_test_context_explicit_passes_through() -> None:
+    env = {"VRG_TEST_CONTEXT": "cloud-vm", "GITHUB_ACTIONS": "true"}
+    with patch.dict("os.environ", env, clear=True):
+        assert _test_context() == "cloud-vm"
+
+
+def test_test_context_github_actions_is_ci() -> None:
+    with patch.dict("os.environ", {"GITHUB_ACTIONS": "true"}, clear=True):
+        assert _test_context() == "ci"
+
+
+def test_test_context_falls_back_to_platform() -> None:
+    with (
+        patch.dict("os.environ", {}, clear=True),
+        patch(
+            "vergil_tooling.bin.vrg_container_run.platform_env.current_platform",
+            return_value=Platform.LOCAL_VM,
+        ),
+    ):
+        assert _test_context() == "local-vm"
+
+
+def test_test_tuning_env_forwards_workers_override() -> None:
+    with patch.dict("os.environ", {"VRG_TEST_WORKERS": " 12 "}, clear=True):
+        assert _test_tuning_env() == {
+            "VRG_TEST_CONTEXT": "physical-host",
+            "VRG_TEST_WORKERS": "12",
+        }
+
+
+def test_test_tuning_env_omits_unset_workers() -> None:
+    with patch.dict("os.environ", {}, clear=True):
+        assert _test_tuning_env() == {"VRG_TEST_CONTEXT": "physical-host"}
+
+
+def test_main_passes_test_tuning_env_to_container(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text("[project]\n")
+    with (
+        patch("vergil_tooling.bin.vrg_container_run.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_run.assert_runtime_available"),
+        patch("vergil_tooling.bin.vrg_container_run.ensure_cached_image", return_value="img"),
+        patch("vergil_tooling.bin.vrg_container_run.detect_runtime", return_value="docker"),
+        patch("vergil_tooling.bin.vrg_container_run.os.execvp") as mock_exec,
+        patch.dict("os.environ", {"GITHUB_ACTIONS": "true"}, clear=True),
+    ):
+        main(["--", "vrg-validate"])
+    assert "VRG_TEST_CONTEXT=ci" in mock_exec.call_args[0][1]
