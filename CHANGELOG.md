@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.250] - 2026-10-19
+
+### Bug fixes
+
+- delete the branch when the dependency-update gate closes a PR (#3338)
+
+### Chores
+
+- uv lock --upgrade
+
+### Features
+
+- add vrg-branch-sweep to delete finished branches left on origin (#3339)
+
 ## [2.1.249] - 2026-10-19
 
 ### Bug fixes

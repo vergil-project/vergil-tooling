@@ -83,6 +83,7 @@ nav:
           - vrg-release: reference/dev/release.md
           - vrg-update-deps: reference/dev/update-deps.md
           - vrg-finalize-pr: reference/dev/finalize-pr.md
+          - vrg-branch-sweep: reference/dev/branch-sweep.md
           - vrg-host: reference/dev/host.md
   - Standards:
       - Authoring:
