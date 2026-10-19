@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.248] - 2026-10-19
+
+### Bug fixes
+
+- probe xdist in the project test env and make the worker count tunable per context (#3323)
+
+### Chores
+
+- uv lock --upgrade
+
 ## [2.1.247] - 2026-10-17
 
 ### Bug fixes
