@@ -1292,6 +1292,8 @@
       
         
       
+        
+      
     
     
     
@@ -1344,6 +1346,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.248/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.248
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -12052,6 +12082,45 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#workers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        workers
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="workers">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#validation-contexts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validation contexts
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#precedence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Precedence
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#levers-evaluated-and-dropped" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -15472,6 +15541,45 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#workers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        workers
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="workers">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#validation-contexts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validation contexts
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#precedence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Precedence
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#levers-evaluated-and-dropped" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -15507,6 +15615,10 @@ behavior.</p>
 <h2 id="structure">Structure<a class="headerlink" href="#structure" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">[test]</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">parallel</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span><span class="w">   </span><span class="c1"># opt out of parallel test execution (default: true)</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">workers</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"auto"</span><span class="w">   </span><span class="c1"># xdist worker count: "auto" or a positive integer</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="k">[test.local-vm]</span><span class="w">    </span><span class="c1"># override for one validation context (see below)</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="n">workers</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">12</span>
 </code></pre></div>
 <h2 id="keys">Keys<a class="headerlink" href="#keys" title="Permanent link">&para;</a></h2>
 <table>
@@ -15525,17 +15637,32 @@ behavior.</p>
 <td><code>true</code></td>
 <td>Whether the Python validation gate runs tests in parallel via pytest-xdist. On by default fleet-wide; set <code>false</code> to force serial execution</td>
 </tr>
+<tr>
+<td><code>workers</code></td>
+<td><code>"auto"</code> or positive integer</td>
+<td><code>"auto"</code></td>
+<td>The pytest-xdist worker count (<code>-n</code>) when the gate runs in parallel</td>
+</tr>
+<tr>
+<td><code>[test.&lt;context&gt;].workers</code></td>
+<td><code>"auto"</code> or positive integer</td>
+<td><em>(none)</em></td>
+<td>The worker count for one validation context: <code>ci</code>, <code>local-vm</code>, <code>cloud-vm</code>, or <code>physical-host</code>. Wins over <code>workers</code> in that context. A context subtable must set <code>workers</code></td>
+</tr>
 </tbody>
 </table>
 <p>A non-boolean <code>parallel</code> is <strong>rejected</strong> rather than silently coerced, so a
 mistyped opt-out (for example <code>parallel = "no"</code>) fails loudly at config-parse
-time instead of quietly leaving parallelism on.</p>
+time instead of quietly leaving parallelism on. A <code>workers</code> that is not
+<code>"auto"</code> or a positive integer (for example <code>0</code>, <code>-2</code>, <code>true</code>, or <code>"many"</code>)
+is rejected the same way.</p>
 <h2 id="parallel"><code>parallel</code><a class="headerlink" href="#parallel" title="Permanent link">&para;</a></h2>
 <p>Parallelism is <strong>on by default</strong> for every Python repo. When <code>vrg-validate</code>
 runs the Python test stage, the shared command
 (<a href="https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/lib/languages.py"><code>languages.py</code></a>)
-appends pytest-xdist's work-stealing flags — <code>-n auto --dist worksteal</code> — to
-the base coverage-gate argv, so the suite fans out across every available core.
+appends pytest-xdist's work-stealing flags — <code>-n &lt;workers&gt; --dist worksteal</code> —
+to the base coverage-gate argv, so the suite fans out across workers (one per
+reported CPU at the default <code>auto</code>; see <a href="#workers"><code>workers</code></a>).
 On this repo's own suite that lever alone took the test stage from ~23.5 s to
 ~7.4 s (≈3.2× faster; see
 <a href="https://github.com/vergil-project/vergil-tooling/blob/develop/epics/333-python-test-perf/evidence/baseline.md"><code>epics/333-python-test-perf/evidence/baseline.md</code></a>),
@@ -15543,23 +15670,36 @@ and it was landed fleet-wide as the new default (epic
 <a href="https://github.com/vergil-project/.github/issues/333">vergil-project/.github#333</a>).</p>
 <h3 id="how-the-flag-is-computed">How the flag is computed<a class="headerlink" href="#how-the-flag-is-computed" title="Permanent link">&para;</a></h3>
 <p>The Python TEST command is <strong>computed</strong>, not stored as a fixed list. The shared
-command derives the final argv from two inputs:</p>
+command derives the final argv from three inputs:</p>
 <ul>
 <li><strong><code>[test].parallel</code></strong> — the repo's declared intent (this knob).</li>
-<li><strong>xdist availability</strong> — a live probe (<code>importlib.util.find_spec("xdist")</code>)
-  that the caller supplies.</li>
+<li><strong>xdist availability</strong> — a live probe of the <strong>project's test environment</strong>,
+  run when the test stage starts (after the install stage has populated
+  <code>.venv</code>). It asks the Python interpreter next to the <code>pytest</code> on <code>PATH</code> —
+  the same <code>pytest</code> the command runs, with <code>.venv/bin</code> first — whether
+  <code>xdist</code> is importable. It deliberately does <strong>not</strong> consult <code>vrg-validate</code>'s
+  own interpreter: that is usually a uv tool venv without pytest-xdist, which
+  once left every consumer repo running serially
+  (<a href="https://github.com/vergil-project/vergil-tooling/issues/3322">#3322</a>).</li>
+<li><strong>The resolved worker count</strong> — see <a href="#workers"><code>workers</code></a>.</li>
 </ul>
-<p><code>-n auto --dist worksteal</code> is appended <strong>iff <code>xdist_available and parallel</code></strong>.
-The order that produces:</p>
+<p><code>-n &lt;workers&gt; --dist worksteal</code> is appended <strong>iff <code>xdist_available and
+parallel</code></strong>. The order that produces:</p>
 <ul>
-<li><strong>Default (<code>parallel = true</code>) with pytest-xdist present</strong> → parallel run.
-  This is the fleet default: the Python dev image ships <code>pytest-xdist</code>, so the
-  flag resolves and the gate runs in parallel everywhere.</li>
-<li><strong><code>parallel = false</code></strong> → serial run, no error. This is the per-repo opt-out.</li>
-<li><strong>pytest-xdist not installed</strong> → serial run, no error. Availability is a
-  probe, never a hard requirement, so a repo whose environment lacks xdist
-  degrades to serial rather than failing.</li>
+<li><strong>Default (<code>parallel = true</code>) with pytest-xdist in the project environment</strong>
+  → parallel run. This is the fleet default: every Python repo carries
+  <code>pytest-xdist</code> in its dev group.</li>
+<li><strong><code>parallel = false</code></strong> → serial run, no error, and the probe does not run.
+  This is the per-repo opt-out.</li>
+<li><strong>pytest-xdist not installed in the project environment</strong> → serial run, no
+  error. Availability is a probe, never a hard requirement.</li>
+<li><strong>The probe itself fails</strong> (no <code>pytest</code> on <code>PATH</code>, no interpreter beside it,
+  or the interpreter errors) → the test stage <strong>fails loudly</strong>. A broken probe
+  is never read as "not installed".</li>
 </ul>
+<p>The stage prints its decision — for example
+<code>Test parallelism: -n 12 (from [test.local-vm].workers, context local-vm)</code> —
+so the run log always shows whether, and how widely, the suite ran in parallel.</p>
 <p>The coverage gate (<code>--cov-branch --cov-fail-under=100</code>) is part of the base argv
 and is therefore present in <strong>every</strong> computed command — serial or parallel,
 opted-in or opted-out. Parallelism changes only <em>how fast</em> the suite runs, never
@@ -15571,6 +15711,100 @@ tests that assume single-process execution). The knob exists so that no repo is
 ever left known-broken by the fleet-wide default — but the goal is a suite that
 runs correctly in parallel, so treat an opt-out as a bug to fix, not a
 resting state.</p>
+<h2 id="workers"><code>workers</code><a class="headerlink" href="#workers" title="Permanent link">&para;</a></h2>
+<p><code>auto</code> gives one xdist worker per CPU the machine <strong>reports</strong>. That is the right
+default on a GitHub runner or a physical host, but it can be badly wrong in a VM
+whose vCPUs exceed the host's real cores, or that shares them with other VMs:
+the workers contend and most of the speed-up disappears. One measurement
+(<a href="https://github.com/vergil-project/vergil-tooling/issues/3322">#3322</a>) on a
+24-vCPU Lima VM on an 18-core Mac:</p>
+<table>
+<thead>
+<tr>
+<th>Workers</th>
+<th>Wall clock</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>serial</td>
+<td>196 s</td>
+</tr>
+<tr>
+<td>8</td>
+<td>48–52 s</td>
+</tr>
+<tr>
+<td>12</td>
+<td><strong>42 s</strong></td>
+</tr>
+<tr>
+<td>16</td>
+<td>56 s</td>
+</tr>
+<tr>
+<td><code>auto</code> (= 24)</td>
+<td>136–162 s</td>
+</tr>
+</tbody>
+</table>
+<p>The optimum depends on both the suite and the machine, so it has to be
+<strong>measured</strong>, and it can be set at three levels:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">[test]</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">workers</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"auto"</span><span class="w">     </span><span class="c1"># repo default — anything not listed below</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="k">[test.local-vm]</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">workers</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">12</span><span class="w">         </span><span class="c1"># this repo's Lima VM (measured)</span>
+</code></pre></div>
+<h3 id="validation-contexts">Validation contexts<a class="headerlink" href="#validation-contexts" title="Permanent link">&para;</a></h3>
+<p>A context names <em>where</em> validation runs:</p>
+<table>
+<thead>
+<tr>
+<th>Context</th>
+<th>Means</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ci</code></td>
+<td>A GitHub Actions runner (<code>GITHUB_ACTIONS=true</code>)</td>
+</tr>
+<tr>
+<td><code>local-vm</code></td>
+<td>A Lima agent VM (<code>vrg-whoami --platform</code>)</td>
+</tr>
+<tr>
+<td><code>cloud-vm</code></td>
+<td>An off-platform cloud agent VM, or any VM not positively confirmed local (<code>vrg-whoami --platform</code>, fail-closed)</td>
+</tr>
+<tr>
+<td><code>physical-host</code></td>
+<td>The developer's Mac itself (<code>vrg-whoami --platform</code>)</td>
+</tr>
+</tbody>
+</table>
+<p><code>vrg-container-run</code> resolves the context <strong>outside</strong> the container, where the
+platform is observable, and forwards it into the container as
+<code>VRG_TEST_CONTEXT</code>. Setting <code>VRG_TEST_CONTEXT</code> yourself overrides that
+detection. When <code>vrg-validate</code> runs without <code>vrg-container-run</code>, a GitHub
+Actions runner is still recognized as <code>ci</code>; any other run has no context and
+uses <code>[test].workers</code>. A <code>VRG_TEST_CONTEXT</code> that names no known context is an
+error.</p>
+<h3 id="precedence">Precedence<a class="headerlink" href="#precedence" title="Permanent link">&para;</a></h3>
+<p>Highest first:</p>
+<ol>
+<li><strong><code>VRG_TEST_WORKERS</code></strong> — an environment override for one machine (for
+   example a second Mac whose VM measured differently). <code>vrg-container-run</code>
+   forwards it into the container. It takes the same values as <code>workers</code>, and
+   an invalid value fails the run.</li>
+<li><strong><code>[test.&lt;context&gt;].workers</code></strong> — the repo's tuned count for the current
+   context.</li>
+<li><strong><code>[test].workers</code></strong> — the repo default.</li>
+<li><strong><code>"auto"</code></strong>.</li>
+</ol>
+<p>Because the tuned value lives in the repo's <code>vergil.toml</code>, retuning is a
+commit. No VM rebuild or <code>vrg-vm update</code> is needed.</p>
 <h2 id="levers-evaluated-and-dropped">Levers evaluated and dropped<a class="headerlink" href="#levers-evaluated-and-dropped" title="Permanent link">&para;</a></h2>
 <p>Two other test-stage levers were evaluated during epic
 <a href="https://github.com/vergil-project/.github/issues/333">vergil-project/.github#333</a>

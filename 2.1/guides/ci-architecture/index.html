@@ -1292,6 +1292,8 @@
       
         
       
+        
+      
     
     
     
@@ -1344,6 +1346,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.248/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.248
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -16074,14 +16104,16 @@ ensures agents use <code>vrg-commit</code> (which runs validation) rather than r
 <p class="admonition-title">Python tests run in parallel by default</p>
 <p>For Python repos the validation gate's test stage runs in parallel via
 pytest-xdist's work-stealing scheduler — the shared command appends
-<code>-n auto --dist worksteal</code> to the coverage-gate argv. This is the
-fleet-wide default (the Python dev image ships <code>pytest-xdist</code>, so the
-flag resolves everywhere) and materially cuts test-stage wall-clock —
+<code>-n &lt;workers&gt; --dist worksteal</code> to the coverage-gate argv when
+pytest-xdist is installed in the project's test environment. This is
+the fleet-wide default and materially cuts test-stage wall-clock —
 roughly 3.2× on this repo's own suite (epic
 <a href="https://github.com/vergil-project/.github/issues/333">vergil-project/.github#333</a>).
-A repo with an order-dependent suite opts out with <code>[test].parallel =
-false</code> in its <code>vergil.toml</code>; see
-<a href="../../reference/test-config/">Test Config (<code>[test]</code>)</a> for the knob and
+The worker count defaults to <code>auto</code> and is tunable per validation
+context (<code>ci</code>, <code>local-vm</code>, …) with <code>[test].workers</code> and
+<code>[test.&lt;context&gt;]</code>. A repo with an order-dependent suite opts out with
+<code>[test].parallel = false</code> in its <code>vergil.toml</code>; see
+<a href="../../reference/test-config/">Test Config (<code>[test]</code>)</a> for the knobs and
 how the flag is computed. Parallelism changes only <em>how fast</em> the suite
 runs — the <code>--cov-branch --cov-fail-under=100</code> gate is present in every
 computed command, serial or parallel, and measures the identical set.</p>
