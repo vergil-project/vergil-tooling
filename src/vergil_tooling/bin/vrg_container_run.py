@@ -13,10 +13,12 @@ import shlex
 import sys
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import git
+from vergil_tooling.lib import git, platform_env
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.config import (
     DEFAULT_VALIDATION_COMMAND,
+    TEST_CONTEXT_ENV,
+    TEST_WORKERS_ENV,
     container_env_prefixes,
     primary_ci_version,
     validation_container_command,
@@ -60,6 +62,11 @@ environment variables:
   VRG_DOCKER_INSTALL_TAG   override the vergil-tooling version tag from vergil.toml
   PYTHONPYCACHEPREFIX     container bytecode cache root (default: /tmp/pycache,
                           keeping __pycache__ off the bind-mounted repo)
+  VRG_TEST_WORKERS        override the test worker count ("auto" or N) on this
+                          machine; forwarded into the container
+  VRG_TEST_CONTEXT        override the validation context that selects a
+                          [test.<context>] worker count (default: ci on GitHub
+                          Actions, else the vrg-whoami --platform token)
 
 examples:
   vrg-container-run -- uv run vrg-validate
@@ -151,12 +158,38 @@ def main(argv: list[str] | None = None) -> int:
         runtime=runtime,
         pull_policy=pull_policy,
         env_prefixes=env_prefixes,
+        extra_env=_test_tuning_env(),
     )
     if runtime == "nerdctl":
         os.execvp("nerdctl", container_args)  # noqa: S606, S607
     else:
         os.execvp("docker", container_args)  # noqa: S606, S607
     return 0  # pragma: no cover
+
+
+def _test_context() -> str:
+    """Resolve the validation context the test worker count is tuned for.
+
+    An explicit ``VRG_TEST_CONTEXT`` passes through untouched (vrg-validate
+    validates it). Otherwise a GitHub Actions runner is ``ci`` and anything else
+    is the ``vrg-whoami --platform`` token. This runs outside the container,
+    where the platform is observable; inside it the signals are not.
+    """
+    explicit = os.environ.get(TEST_CONTEXT_ENV, "").strip()
+    if explicit:
+        return explicit
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        return "ci"
+    return platform_env.current_platform().value
+
+
+def _test_tuning_env() -> dict[str, str]:
+    """Env that tells in-container vrg-validate how to size the test run (#3322)."""
+    env = {TEST_CONTEXT_ENV: _test_context()}
+    workers = os.environ.get(TEST_WORKERS_ENV, "").strip()
+    if workers:
+        env[TEST_WORKERS_ENV] = workers
+    return env
 
 
 def _apply_validation_override(command: list[str], repo_root: Path) -> list[str]:

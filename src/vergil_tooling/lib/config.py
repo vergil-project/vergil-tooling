@@ -62,6 +62,21 @@ _TYPESCRIPT_TARGET_VALUES = frozenset({"es2022"})
 # TEST command; this task adds only the config knob.
 DEFAULT_TEST_PARALLEL = True
 
+# `workers` is the pytest-xdist worker count (`-n`) the gate passes when it runs
+# in parallel: "auto" (one worker per reported CPU) or a positive int. `auto` can
+# be far slower than a tuned count where the reported vCPUs exceed the real
+# cores (a Lima VM on an over-provisioned Mac measured 136-162 s at auto vs 42 s
+# at 12; issue #3322), so the count is tunable per *validation context*: a repo
+# sets a `[test].workers` default and overrides it for one context in a
+# `[test.<context>]` subtable. The context is where validation runs — `ci` (a
+# GitHub Actions runner) or a `vrg-whoami --platform` token — and is resolved by
+# vrg-container-run outside the container, which forwards it as
+# VRG_TEST_CONTEXT. VRG_TEST_WORKERS overrides everything on one machine.
+DEFAULT_TEST_WORKERS = "auto"
+TEST_CONTEXTS = ("ci", "local-vm", "cloud-vm", "physical-host")
+TEST_WORKERS_ENV = "VRG_TEST_WORKERS"
+TEST_CONTEXT_ENV = "VRG_TEST_CONTEXT"
+
 _REQUIRED_PROJECT_FIELDS = (
     "repository-type",
     "versioning-scheme",
@@ -103,7 +118,7 @@ _KNOWN_KEYS: dict[str, frozenset[str]] = {
     "actions": frozenset({"extra-allowed-patterns"}),
     "cpp": frozenset({"std", "stdlib"}),
     "typescript": frozenset({"module", "target"}),
-    "test": frozenset({"parallel"}),
+    "test": frozenset({"parallel", "workers", *TEST_CONTEXTS}),
     "dependency-update": frozenset({"hook"}),
     "package": frozenset(
         {
@@ -265,10 +280,26 @@ class TestConfig:
     # so parallelism is on-by-default fleet-wide; a repo with an order-dependent
     # suite opts out with ``parallel = false``. Task 6 reads cfg.test.parallel.
     #
+    # ``workers`` is the repo default xdist worker count and ``context_workers``
+    # maps a validation context (one of TEST_CONTEXTS) to its override, from the
+    # ``[test.<context>]`` subtables (issue #3322).
+    #
     # ``__test__ = False`` (an unannotated attribute, so not a dataclass field)
     # tells pytest this ``Test*``-named class is not a test collection target.
     __test__ = False
     parallel: bool = DEFAULT_TEST_PARALLEL
+    workers: int | str = DEFAULT_TEST_WORKERS
+    context_workers: dict[str, int | str] = field(default_factory=dict)
+
+    def resolve_workers(self, context: str | None) -> tuple[int | str, str]:
+        """Return the worker count for *context* and the key it came from.
+
+        A ``[test.<context>].workers`` override wins over ``[test].workers``;
+        an unknown (``None``) context, or one with no override, gets the default.
+        """
+        if context is not None and context in self.context_workers:
+            return self.context_workers[context], f"[test.{context}].workers"
+        return self.workers, "[test].workers"
 
 
 @dataclass
@@ -655,19 +686,57 @@ def _parse_dependency_update(
     return DependencyUpdateConfig(hook=hook)
 
 
+def parse_test_workers(value: Any, where: str) -> int | str:
+    """Validate a worker count: ``"auto"`` or a positive int.
+
+    Shared by the ``[test]`` parser and the ``VRG_TEST_WORKERS`` override so
+    both reject the same values. A bool is rejected even though it is an int
+    subclass, and a string of digits (the env-var form) is accepted as its int.
+    """
+    if isinstance(value, str) and value.strip().isdigit():
+        value = int(value.strip())
+    if value == DEFAULT_TEST_WORKERS:
+        return DEFAULT_TEST_WORKERS
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 1:
+        return value
+    msg = f'{where} must be "auto" or a positive integer (got {value!r})'
+    raise ConfigError(msg)
+
+
 def _parse_test_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> TestConfig:
     """Parse the ``[test]`` block, defaulting ``parallel`` on when it is absent.
 
     ``parallel`` must be a boolean; a non-bool value is rejected rather than
     silently coerced, so a mistyped opt-out (e.g. ``parallel = "no"``) surfaces
-    loudly instead of quietly leaving parallelism on.
+    loudly instead of quietly leaving parallelism on. ``workers`` and each
+    ``[test.<context>].workers`` must be ``"auto"`` or a positive int.
     """
     test_raw = raw.get("test", {})
     parallel = test_raw.get("parallel", DEFAULT_TEST_PARALLEL)
     if not isinstance(parallel, bool):
         msg = f"{source}: [test].parallel must be a boolean (got {parallel!r})"
         raise ConfigError(msg)
-    return TestConfig(parallel=parallel)
+    workers = parse_test_workers(
+        test_raw.get("workers", DEFAULT_TEST_WORKERS), f"{source}: [test].workers"
+    )
+    context_workers: dict[str, int | str] = {}
+    for context in TEST_CONTEXTS:
+        table = test_raw.get(context)
+        if table is None:
+            continue
+        if not isinstance(table, dict):
+            msg = f"{source}: [test.{context}] must be a table"
+            raise ConfigError(msg)
+        for key in table:
+            if key != "workers":
+                print(f"{source}: unrecognized key '{key}' in [test.{context}]", file=sys.stderr)
+        if "workers" not in table:
+            msg = f"{source}: [test.{context}] missing required field 'workers'"
+            raise ConfigError(msg)
+        context_workers[context] = parse_test_workers(
+            table["workers"], f"{source}: [test.{context}].workers"
+        )
+    return TestConfig(parallel=parallel, workers=workers, context_workers=context_workers)
 
 
 def _pkg_str_list(value: Any, where: str, source: str) -> list[str]:

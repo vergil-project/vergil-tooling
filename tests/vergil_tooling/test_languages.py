@@ -155,6 +155,24 @@ def test_build_python_test_argv_xdist_flags_order() -> None:
     assert argv[-4:] == ["-n", "auto", "--dist", "worksteal"]
 
 
+def test_build_python_test_argv_tuned_worker_count() -> None:
+    """A resolved [test] worker count replaces ``auto`` (issue #3322)."""
+    argv = build_python_test_argv(xdist_available=True, parallel=True, workers=12)
+    assert argv[-4:] == ["-n", "12", "--dist", "worksteal"]
+
+
+def test_build_python_test_argv_workers_ignored_when_serial() -> None:
+    argv = build_python_test_argv(xdist_available=False, parallel=True, workers=12)
+    assert "-n" not in argv
+
+
+def test_language_commands_python_test_threads_workers() -> None:
+    cmds = language_commands(
+        "python", CheckKind.TEST, test_parallel=True, xdist_available=True, test_workers=8
+    )
+    assert cmds[0][-4:] == ["-n", "8", "--dist", "worksteal"]
+
+
 def test_build_python_test_argv_serial_equals_base() -> None:
     """Serial output is exactly the base gate argv with nothing appended."""
     serial = build_python_test_argv(xdist_available=False, parallel=True)

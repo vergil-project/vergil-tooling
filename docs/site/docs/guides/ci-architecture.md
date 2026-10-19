@@ -81,14 +81,16 @@ ensures agents use `vrg-commit` (which runs validation) rather than raw
 !!! note "Python tests run in parallel by default"
     For Python repos the validation gate's test stage runs in parallel via
     pytest-xdist's work-stealing scheduler — the shared command appends
-    `-n auto --dist worksteal` to the coverage-gate argv. This is the
-    fleet-wide default (the Python dev image ships `pytest-xdist`, so the
-    flag resolves everywhere) and materially cuts test-stage wall-clock —
+    `-n <workers> --dist worksteal` to the coverage-gate argv when
+    pytest-xdist is installed in the project's test environment. This is
+    the fleet-wide default and materially cuts test-stage wall-clock —
     roughly 3.2× on this repo's own suite (epic
     [vergil-project/.github#333](https://github.com/vergil-project/.github/issues/333)).
-    A repo with an order-dependent suite opts out with `[test].parallel =
-    false` in its `vergil.toml`; see
-    [Test Config (`[test]`)](../reference/test-config.md) for the knob and
+    The worker count defaults to `auto` and is tunable per validation
+    context (`ci`, `local-vm`, …) with `[test].workers` and
+    `[test.<context>]`. A repo with an order-dependent suite opts out with
+    `[test].parallel = false` in its `vergil.toml`; see
+    [Test Config (`[test]`)](../reference/test-config.md) for the knobs and
     how the flag is computed. Parallelism changes only *how fast* the suite
     runs — the `--cov-branch --cov-fail-under=100` gate is present in every
     computed command, serial or parallel, and measures the identical set.
