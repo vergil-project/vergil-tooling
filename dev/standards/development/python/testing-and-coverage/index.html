@@ -15622,14 +15622,18 @@ during review and maintenance.</p>
 coverage exceptions. Describe the branch or condition conceptually instead.</p>
 <h2 id="parallel-execution-in-the-validation-gate">Parallel Execution in the Validation Gate<a class="headerlink" href="#parallel-execution-in-the-validation-gate" title="Permanent link">&para;</a></h2>
 <p>Under <code>vrg-validate</code>, the Python test stage runs <strong>in parallel by default</strong> via
-pytest-xdist's work-stealing scheduler (<code>-n auto --dist worksteal</code>). This is a
-fleet-wide default that cut this repo's test-stage wall-clock by roughly 3.2×;
-the coverage gate (<code>--cov-branch --cov-fail-under=100</code>) is unchanged by it —
-parallelism affects only speed, not what coverage measures.</p>
+pytest-xdist's work-stealing scheduler (<code>-n &lt;workers&gt; --dist worksteal</code>,
+<code>auto</code> workers unless tuned). This is a fleet-wide default that cut this repo's
+test-stage wall-clock by roughly 3.2×; the coverage gate
+(<code>--cov-branch --cov-fail-under=100</code>) is unchanged by it — parallelism affects
+only speed, not what coverage measures.</p>
 <p>A repo whose suite is order-dependent opts out with <code>[test].parallel = false</code> in
 its <code>vergil.toml</code>. Prefer fixing the suite to run safely in parallel over opting
-out. See the <a href="../../../../reference/test-config/">Test Config (<code>[test]</code>)</a>
-reference for the knob and the exact command-build rules.</p>
+out. A repo whose measured optimum is not <code>auto</code> (for example in an
+over-provisioned VM) sets <code>[test].workers</code> or a per-context
+<code>[test.&lt;context&gt;].workers</code>. See the
+<a href="../../../../reference/test-config/">Test Config (<code>[test]</code>)</a> reference for the
+knobs and the exact command-build rules.</p>
 <h2 id="coverage-reporting">Coverage Reporting<a class="headerlink" href="#coverage-reporting" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>pytest<span class="w"> </span>--cov<span class="o">=</span>src<span class="w"> </span>--cov-report<span class="o">=</span>term-missing<span class="w"> </span>--cov-branch
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>pytest<span class="w"> </span>--cov<span class="o">=</span>src<span class="w"> </span>--cov-report<span class="o">=</span>html<span class="w"> </span>--cov-branch
