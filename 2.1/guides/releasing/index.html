@@ -1294,6 +1294,8 @@
       
         
       
+        
+      
     
     
     
@@ -1346,6 +1348,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.250/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.250
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -12298,6 +12328,8 @@
       
         
       
+        
+      
     
     
     
@@ -12498,6 +12530,34 @@
     
   
     vrg-finalize-pr
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/dev/branch-sweep/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-branch-sweep
   
 
     
@@ -16206,8 +16266,13 @@ labelled <code>dependency-update</code>. For each one:</p>
 <ul>
 <li><strong>The PR's fix task is closed as completed.</strong> The update landed
   through the fix PR. A squash-merged fix PR never marks the deps PR as
-  merged, so preflight comments on the deps PR, closes it, and records
-  it in the <code>prepare</code> comment on the tracking issue.</li>
+  merged, so preflight comments on the deps PR, closes it, deletes its
+  <code>deps/update-&lt;version&gt;</code> branch, and records it in the <code>prepare</code> comment
+  on the tracking issue. GitHub's delete-on-merge setting never applies
+  to a PR closed without merging, so preflight deletes the branch itself.
+  If that delete fails, the PR stays closed and the gate still clears,
+  but the release prints a warning and the <code>prepare</code> comment names the
+  branch to delete by hand.</li>
 <li><strong>The fix task is still open, the PR has no fix task, or the fix task
   was closed without being completed.</strong> The PR blocks the release and
   preflight refuses, naming each PR and why it blocks. A fix task
