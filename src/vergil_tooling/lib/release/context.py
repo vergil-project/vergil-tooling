@@ -88,6 +88,11 @@ class ReleaseContext:
     # prepare-stage tracking comment alongside any bypass.
     cleared_deps_prs: list[str] = field(default_factory=list)
 
+    # Head branches of those closed PRs that preflight could not delete
+    # (#3332). GitHub's delete-on-merge never covers a closed PR, so a leftover
+    # is named in the prepare-stage tracking comment rather than left silent.
+    undeleted_deps_branches: list[str] = field(default_factory=list)
+
     @property
     def work_root(self) -> Path:
         """Directory release artifacts are written into and git runs in.

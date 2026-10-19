@@ -295,8 +295,13 @@ labelled `dependency-update`. For each one:
 
 - **The PR's fix task is closed as completed.** The update landed
   through the fix PR. A squash-merged fix PR never marks the deps PR as
-  merged, so preflight comments on the deps PR, closes it, and records
-  it in the `prepare` comment on the tracking issue.
+  merged, so preflight comments on the deps PR, closes it, deletes its
+  `deps/update-<version>` branch, and records it in the `prepare` comment
+  on the tracking issue. GitHub's delete-on-merge setting never applies
+  to a PR closed without merging, so preflight deletes the branch itself.
+  If that delete fails, the PR stays closed and the gate still clears,
+  but the release prints a warning and the `prepare` comment names the
+  branch to delete by hand.
 - **The fix task is still open, the PR has no fix task, or the fix task
   was closed without being completed.** The PR blocks the release and
   preflight refuses, naming each PR and why it blocks. A fix task

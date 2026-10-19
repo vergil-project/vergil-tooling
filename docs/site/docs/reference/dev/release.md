@@ -45,8 +45,9 @@ vrg-release [minor|major] [options]
 
 On a fresh start (not on `--resume`), preflight refuses while an open
 PR carries the `dependency-update` label. First it closes, with a
-comment, any such PR whose linked fix task was closed as completed: the
-update landed through the fix PR. `--allow-pending-deps` lets the
+comment, any such PR whose linked fix task was closed as completed (the
+update landed through the fix PR), and deletes its head branch. A failed
+branch delete is reported, not fatal. `--allow-pending-deps` lets the
 release past whatever still blocks. Lookup failures refuse the release.
 See [The dependency-update gate](../../guides/releasing.md#the-dependency-update-gate).
 

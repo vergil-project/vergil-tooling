@@ -260,6 +260,13 @@ def _phase_details(ctx: ReleaseContext, phase: str) -> str:
             # #3286: closing a landed dependency-update PR is recorded, never silent.
             prs = ", ".join(ctx.cleared_deps_prs)
             lines.append(f"**Closed landed dependency-update PR(s)** (fix task completed): {prs}")
+        if ctx.undeleted_deps_branches:
+            # #3332: a closed PR's branch is never auto-deleted; a failed delete is named.
+            branches = ", ".join(f"`{b}`" for b in ctx.undeleted_deps_branches)
+            lines.append(
+                f"**Could not delete the branch(es) of those closed PR(s)** — delete by "
+                f"hand: {branches}"
+            )
         if ctx.bypassed_deps_prs:
             # spec §5.3: bypassing the dependency-update gate is never silent.
             prs = ", ".join(ctx.bypassed_deps_prs)
