@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
 _GHCR = "ghcr.io/vergil-project"
 
@@ -304,8 +304,14 @@ def build_container_args(
     runtime: str = "docker",
     pull_policy: str = "always",
     env_prefixes: Sequence[str] = (),
+    extra_env: Mapping[str, str] | None = None,
 ) -> list[str]:
-    """Build the container ``run`` argument list."""
+    """Build the container ``run`` argument list.
+
+    *extra_env* is set in the container as ``-e NAME=value`` after the
+    env-prefixes passthrough, so it wins over a passed-through variable of the
+    same name.
+    """
     network = os.environ.get("DOCKER_NETWORK", "")
 
     container_args = [runtime, "run", "--rm", f"--platform={container_platform()}"]
@@ -340,6 +346,9 @@ def build_container_args(
         for name in os.environ:
             if name.startswith(prefixes):
                 container_args.extend(["-e", name])
+
+    for name, value in (extra_env or {}).items():
+        container_args.extend(["-e", f"{name}={value}"])
 
     # uv's cache (`/root/.cache/uv`, container overlay fs) and the venv target
     # (`/workspace/.venv`, the bind-mounted repo) live on different filesystems,

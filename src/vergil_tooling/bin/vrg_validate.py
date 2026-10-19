@@ -11,16 +11,20 @@ everything else is fail_defer so all failures are reported in one run.
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import config, git, progress
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.languages import CheckKind, language_commands
 from vergil_tooling.lib.progress import Stage, StageMode
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 _CHECK_KINDS = {
     "common": None,
@@ -74,23 +78,24 @@ def main(argv: list[str] | None = None) -> int:
 
     cpp_std: str | None = None
     cpp_stdlib: str | None = None
-    test_parallel = True
+    test_config = config.TestConfig()
     try:
         vergil_config = config.read_config(repo_root)
         language = vergil_config.project.primary_language
         cpp_std = vergil_config.cpp.std
         cpp_stdlib = vergil_config.cpp.stdlib
-        test_parallel = vergil_config.test.parallel
+        test_config = vergil_config.test
     except FileNotFoundError:
         language = None
     except config.ConfigError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
-    # Probe pytest-xdist live: the Python TEST command only gains
-    # ``-n auto --dist worksteal`` when the plugin is importable in the
-    # environment where the tests actually run (this container).
-    xdist_available = importlib.util.find_spec("xdist") is not None
+    try:
+        test_workers, test_workers_source = _resolve_test_workers(test_config)
+    except config.ConfigError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
 
     stages = _build_stages(
         args.check,
@@ -98,8 +103,9 @@ def main(argv: list[str] | None = None) -> int:
         repo_root,
         cpp_std=cpp_std,
         cpp_stdlib=cpp_stdlib,
-        test_parallel=test_parallel,
-        xdist_available=xdist_available,
+        test_parallel=test_config.parallel,
+        test_workers=test_workers,
+        test_workers_source=test_workers_source,
     )
     if not stages:
         print(f"No {args.check} commands for language '{language or '<not set>'}'")
@@ -113,6 +119,96 @@ def main(argv: list[str] | None = None) -> int:
         args=args,
         repo_root=repo_root,
     )
+
+
+def _test_context() -> str | None:
+    """Return the validation context the worker count is tuned for, if known.
+
+    vrg-container-run resolves the context outside the container (where the
+    platform is observable) and forwards it as ``VRG_TEST_CONTEXT``. A run that
+    did not come through vrg-container-run still recognizes a GitHub Actions
+    runner as ``ci``; anything else is unknown and gets the ``[test]`` default.
+    An unrecognized forwarded value is an error, never silently ignored.
+    """
+    forwarded = os.environ.get(config.TEST_CONTEXT_ENV, "").strip()
+    if forwarded:
+        if forwarded not in config.TEST_CONTEXTS:
+            expected = ", ".join(config.TEST_CONTEXTS)
+            msg = f"{config.TEST_CONTEXT_ENV}={forwarded!r} is not a known context ({expected})"
+            raise config.ConfigError(msg)
+        return forwarded
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        return "ci"
+    return None
+
+
+def _resolve_test_workers(test_config: config.TestConfig) -> tuple[int | str, str]:
+    """Resolve the xdist worker count and a label naming where it came from.
+
+    Precedence, highest first: ``VRG_TEST_WORKERS`` (a one-machine override),
+    ``[test.<context>].workers``, ``[test].workers``, ``"auto"`` (issue #3322).
+    """
+    override = os.environ.get(config.TEST_WORKERS_ENV, "").strip()
+    if override:
+        workers = config.parse_test_workers(override, config.TEST_WORKERS_ENV)
+        return workers, config.TEST_WORKERS_ENV
+    context = _test_context()
+    workers, source = test_config.resolve_workers(context)
+    return workers, f"{source}, context {context or '<unknown>'}"
+
+
+# Exit 0 when pytest-xdist is importable, _XDIST_ABSENT_RC when it is not; any
+# other exit is a broken probe and is reported as such, never read as "absent".
+_XDIST_ABSENT_RC = 3
+_XDIST_PROBE = (
+    "import importlib.util, sys; "
+    f"sys.exit(0 if importlib.util.find_spec('xdist') else {_XDIST_ABSENT_RC})"
+)
+
+
+def _probe_xdist() -> bool:
+    """Return whether pytest-xdist is importable where the tests actually run.
+
+    The probe must not look at this process's own interpreter: ``vrg-validate``
+    is usually a uv tool with its own venv, while the tests run under the
+    project's ``.venv`` (issue #3322). So it asks the interpreter of the
+    environment the ``pytest`` on ``PATH`` belongs to — the same ``pytest`` the
+    TEST command resolves, with ``.venv/bin`` prepended. It runs at test-stage
+    time, after the install stage has populated ``.venv``. A probe that cannot
+    run, or errors, raises :class:`ValidationError` instead of degrading to
+    serial.
+    """
+    pytest_path = shutil.which("pytest")
+    if pytest_path is None:
+        msg = "cannot probe pytest-xdist: pytest is not on PATH"
+        raise ValidationError(msg)
+    bin_dir = Path(pytest_path).parent
+    interpreter = next(
+        (bin_dir / name for name in ("python", "python3") if (bin_dir / name).exists()), None
+    )
+    if interpreter is None:
+        msg = f"cannot probe pytest-xdist: no python interpreter next to {pytest_path}"
+        raise ValidationError(msg)
+    try:
+        result = subprocess.run(  # noqa: S603
+            [str(interpreter), "-c", _XDIST_PROBE],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        msg = f"pytest-xdist probe could not run {interpreter}: {exc}"
+        raise ValidationError(msg) from exc
+    if result.returncode not in (0, _XDIST_ABSENT_RC):
+        msg = (
+            f"pytest-xdist probe failed: {interpreter} exited {result.returncode}: "
+            f"{result.stderr.strip()}"
+        )
+        raise ValidationError(msg)
+    available = result.returncode == 0
+    print(f"pytest-xdist probe: {interpreter} -> {'installed' if available else 'not installed'}")
+    return available
 
 
 def _in_dev_container() -> bool:
@@ -183,10 +279,18 @@ def _skip_conan_audit_scan(cmds: list[list[str]]) -> list[list[str]]:
     return kept
 
 
-def _command_stage(label: str, cmds: list[list[str]], *, mode: StageMode) -> Stage:
+def _command_stage(
+    label: str,
+    cmds: list[list[str]] | Callable[[], list[list[str]]],
+    *,
+    mode: StageMode,
+) -> Stage:
+    """Run *cmds* as one stage; a callable is resolved when the stage runs."""
+
     def fn(_ctx: object) -> None:
+        resolved = cmds if isinstance(cmds, list) else cmds()
         failed = 0
-        for cmd in cmds:
+        for cmd in resolved:
             print(f"Running ({label}): {' '.join(cmd)}")
             rc = progress.run(cmd, check=False)
             if rc != 0:
@@ -194,10 +298,47 @@ def _command_stage(label: str, cmds: list[list[str]], *, mode: StageMode) -> Sta
                 if mode == "fail_fast":
                     break
         if failed:
-            msg = f"{failed} of {len(cmds)} {label} command(s) failed"
+            msg = f"{failed} of {len(resolved)} {label} command(s) failed"
             raise ValidationError(msg)
 
     return Stage(label, fn, mode=mode)
+
+
+def _python_test_stage(
+    *,
+    parallel: bool,
+    workers: int | str,
+    workers_source: str,
+    xdist_probe: Callable[[], bool],
+) -> Stage:
+    """Build the Python TEST stage, deciding parallelism when it runs.
+
+    The xdist probe is deferred to stage time because the project ``.venv`` it
+    inspects is only populated by the earlier install stage. The decision is
+    printed so the run log shows whether, and with how many workers, the suite
+    ran in parallel.
+    """
+
+    def cmds() -> list[list[str]]:
+        xdist_available = False
+        if not parallel:
+            print("Test parallelism: serial ([test].parallel = false)")
+        elif xdist_probe():
+            xdist_available = True
+            print(f"Test parallelism: -n {workers} (from {workers_source})")
+        else:
+            print(
+                "Test parallelism: serial (pytest-xdist is not installed in the test environment)"
+            )
+        return language_commands(
+            "python",
+            CheckKind.TEST,
+            test_parallel=parallel,
+            xdist_available=xdist_available,
+            test_workers=workers,
+        )
+
+    return _command_stage("test", cmds, mode="fail_defer")
 
 
 def _build_stages(
@@ -208,7 +349,9 @@ def _build_stages(
     cpp_std: str | None = None,
     cpp_stdlib: str | None = None,
     test_parallel: bool = True,
-    xdist_available: bool = False,
+    test_workers: int | str = config.DEFAULT_TEST_WORKERS,
+    test_workers_source: str = "[test].workers",
+    xdist_probe: Callable[[], bool] | None = None,
 ) -> list[Stage]:
     stages: list[Stage] = []
 
@@ -233,7 +376,7 @@ def _build_stages(
                     cpp_std=cpp_std,
                     cpp_stdlib=cpp_stdlib,
                     test_parallel=test_parallel,
-                    xdist_available=xdist_available,
+                    test_workers=test_workers,
                 ),
             )
             for kind in kinds
@@ -250,7 +393,15 @@ def _build_stages(
             if install_cmds:
                 stages.append(_command_stage("install", install_cmds, mode="fail_fast"))
             stages.extend(
-                _command_stage(kind.value, cmds, mode="fail_defer") for kind, cmds in kind_cmds
+                _python_test_stage(
+                    parallel=test_parallel,
+                    workers=test_workers,
+                    workers_source=test_workers_source,
+                    xdist_probe=xdist_probe or _probe_xdist,
+                )
+                if language == "python" and kind is CheckKind.TEST
+                else _command_stage(kind.value, cmds, mode="fail_defer")
+                for kind, cmds in kind_cmds
             )
 
     if check is None:

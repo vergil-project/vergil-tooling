@@ -30,6 +30,7 @@ from vergil_tooling.lib.config import (
     container_system_packages,
     declared_primary_language,
     dependency_update_hook,
+    parse_test_workers,
     parse_vm_stanza,
     primary_ci_version,
     read_config,
@@ -1662,10 +1663,113 @@ def test_test_config_non_bool_parallel_raises_config_error(tmp_path: Path) -> No
 
 
 def test_warns_unrecognized_test_key(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    toml = _VALID_TOML + "\n[test]\nparallel = true\nworkers = 4\n"
+    toml = _VALID_TOML + "\n[test]\nparallel = true\nbogus = 4\n"
     (tmp_path / "vergil.toml").write_text(toml)
     read_config(tmp_path)
-    assert "unrecognized key 'workers' in [test]" in capsys.readouterr().err
+    assert "unrecognized key 'bogus' in [test]" in capsys.readouterr().err
+
+
+# -- [test].workers and [test.<context>] (issue #3322) ------------------------
+
+
+def test_test_workers_defaults_auto(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    cfg = read_config(tmp_path)
+    assert cfg.test.workers == "auto"
+    assert cfg.test.context_workers == {}
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [("12", 12), ("1", 1), ('"auto"', "auto"), ('"12"', 12)],
+)
+def test_test_workers_accepts_auto_or_positive_int(
+    tmp_path: Path, value: str, expected: int | str
+) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML + f"\n[test]\nworkers = {value}\n")
+    assert read_config(tmp_path).test.workers == expected
+
+
+@pytest.mark.parametrize("value", ["0", "-2", '"many"', "true", "1.5"])
+def test_test_workers_rejects_invalid(tmp_path: Path, value: str) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML + f"\n[test]\nworkers = {value}\n")
+    with pytest.raises(ConfigError, match=r'\[test\]\.workers must be "auto" or a positive'):
+        read_config(tmp_path)
+
+
+def test_test_context_override_parsed(tmp_path: Path) -> None:
+    toml = _VALID_TOML + '\n[test]\nworkers = "auto"\n\n[test.local-vm]\nworkers = 12\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    cfg = read_config(tmp_path)
+    assert cfg.test.context_workers == {"local-vm": 12}
+
+
+def test_test_context_table_not_flagged_unrecognized(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    toml = _VALID_TOML + "\n[test.ci]\nworkers = 4\n\n[test.cloud-vm]\nworkers = 8\n"
+    (tmp_path / "vergil.toml").write_text(toml)
+    read_config(tmp_path)
+    assert "unrecognized" not in capsys.readouterr().err
+
+
+def test_test_unknown_context_table_warns(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    toml = _VALID_TOML + "\n[test.my-laptop]\nworkers = 4\n"
+    (tmp_path / "vergil.toml").write_text(toml)
+    cfg = read_config(tmp_path)
+    assert "unrecognized key 'my-laptop' in [test]" in capsys.readouterr().err
+    assert cfg.test.context_workers == {}
+
+
+def test_test_context_unknown_key_warns(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    toml = _VALID_TOML + "\n[test.local-vm]\nworkers = 12\nparallel = false\n"
+    (tmp_path / "vergil.toml").write_text(toml)
+    read_config(tmp_path)
+    assert "unrecognized key 'parallel' in [test.local-vm]" in capsys.readouterr().err
+
+
+def test_test_context_missing_workers_raises(tmp_path: Path) -> None:
+    toml = _VALID_TOML + "\n[test.local-vm]\n"
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=r"\[test\.local-vm\] missing required field 'workers'"):
+        read_config(tmp_path)
+
+
+def test_test_context_not_a_table_raises(tmp_path: Path) -> None:
+    toml = _VALID_TOML + "\n[test]\nlocal-vm = 12\n"
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=r"\[test\.local-vm\] must be a table"):
+        read_config(tmp_path)
+
+
+def test_test_context_invalid_workers_raises(tmp_path: Path) -> None:
+    toml = _VALID_TOML + "\n[test.local-vm]\nworkers = 0\n"
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=r"\[test\.local-vm\]\.workers must be"):
+        read_config(tmp_path)
+
+
+def test_resolve_workers_context_override_wins() -> None:
+    cfg = TestConfig(workers=4, context_workers={"local-vm": 12})
+    assert cfg.resolve_workers("local-vm") == (12, "[test.local-vm].workers")
+
+
+@pytest.mark.parametrize("context", [None, "ci"])
+def test_resolve_workers_falls_back_to_default(context: str | None) -> None:
+    cfg = TestConfig(workers=4, context_workers={"local-vm": 12})
+    assert cfg.resolve_workers(context) == (4, "[test].workers")
+
+
+def test_parse_test_workers_accepts_digit_string() -> None:
+    assert parse_test_workers(" 16 ", "VRG_TEST_WORKERS") == 16
+    assert parse_test_workers("auto", "VRG_TEST_WORKERS") == "auto"
+
+
+def test_parse_test_workers_error_names_source() -> None:
+    with pytest.raises(ConfigError, match=r"^VRG_TEST_WORKERS must be"):
+        parse_test_workers("0", "VRG_TEST_WORKERS")
 
 
 def test_test_block_not_flagged_as_unrecognized_section(

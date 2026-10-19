@@ -317,15 +317,18 @@ _PYTHON_TEST_BASE_ARGV: tuple[str, ...] = (
 )
 
 
-def build_python_test_argv(*, xdist_available: bool, parallel: bool) -> list[str]:
+def build_python_test_argv(
+    *, xdist_available: bool, parallel: bool, workers: int | str = "auto"
+) -> list[str]:
     """Compute the Python ``pytest`` TEST argv.
 
     Starts from :data:`_PYTHON_TEST_BASE_ARGV` (which always carries the
     ``--cov-branch --cov-fail-under=100`` coverage gate) and appends
-    ``-n auto --dist worksteal`` — pytest-xdist's work-stealing distribution —
-    **iff** ``xdist_available and parallel``. When xdist is not installed, or the
-    repo opts out via ``[test].parallel = false``, the command runs serially with
-    no error.
+    ``-n <workers> --dist worksteal`` — pytest-xdist's work-stealing
+    distribution — **iff** ``xdist_available and parallel``. ``workers`` is the
+    resolved ``[test]`` worker count (``"auto"`` or a positive int; issue
+    #3322). When xdist is not installed, or the repo opts out via
+    ``[test].parallel = false``, the command runs serially with no error.
 
     Returns a plain ``list[str]`` — just the argv. No environment overlay is
     returned: the ``COVERAGE_CORE=sysmon`` lever (Task 4) and the
@@ -334,7 +337,7 @@ def build_python_test_argv(*, xdist_available: bool, parallel: bool) -> list[str
     """
     argv = list(_PYTHON_TEST_BASE_ARGV)
     if xdist_available and parallel:
-        argv += ["-n", "auto", "--dist", "worksteal"]
+        argv += ["-n", str(workers), "--dist", "worksteal"]
     return argv
 
 
@@ -862,6 +865,7 @@ def language_commands(
     cpp_stdlib: str | None = None,
     test_parallel: bool = True,
     xdist_available: bool = False,
+    test_workers: int | str = "auto",
 ) -> list[list[str]]:
     """Return the canonical commands for a language and check kind.
 
@@ -882,6 +886,7 @@ def language_commands(
     Task 6). ``test_parallel`` carries the ``[test].parallel`` intent (default on)
     and ``xdist_available`` is a live probe supplied by the caller; both default
     to a safe serial command for callers that only need the gate flags.
+    ``test_workers`` is the resolved xdist worker count (issue #3322).
     """
     if language is None:
         return []
@@ -889,7 +894,11 @@ def language_commands(
     if entry is None:
         return []
     if language == "python" and kind is CheckKind.TEST:
-        return [build_python_test_argv(xdist_available=xdist_available, parallel=test_parallel)]
+        return [
+            build_python_test_argv(
+                xdist_available=xdist_available, parallel=test_parallel, workers=test_workers
+            )
+        ]
     # Local import keeps this module a leaf in the import graph (the same
     # cycle-avoidance idiom used by github_config/repo_init for languages).
     from vergil_tooling.lib.config import DEFAULT_CPP_STD, DEFAULT_CPP_STDLIB
