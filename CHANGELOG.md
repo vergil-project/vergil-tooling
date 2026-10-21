@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.253] - 2026-10-21
+
+### Bug fixes
+
+- honour VRG_VERSION_WINDOW inside the dev container (#3402)
+- flush stdout and stderr before exec so the banner survives a pipe or file (#3403)
+
+### CI
+
+- make vergil-tooling a library repository, keeping its CI version pin (#3404)
+
+### Features
+
+- add the Python resolver extension, toolchain-selection and floor checks (#3401)
+
 ## [2.1.252] - 2026-10-21
 
 ### Bug fixes
