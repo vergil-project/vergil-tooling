@@ -1,5 +1,5 @@
 [project]
-repository-type = "tooling"
+repository-type = "library"
 versioning-scheme = "semver"
 branching-model = "library-release"
 release-model = "tagged-release"
