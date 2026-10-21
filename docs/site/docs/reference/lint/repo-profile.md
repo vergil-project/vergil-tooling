@@ -32,7 +32,7 @@ and any value that loader rejects fails the check. The core rules:
 
 An unrecognized `[project].primary-language` is a warning, not a
 failure: the language is treated as unset. The recognized values are
-`cpp`, `go`, `java`, `python`, `ruby`, `rust` and `typescript`.
+`cpp`, `go`, `java`, `python`, `rust` and `typescript`.
 Unrecognized sections and keys are also reported as warnings. The
 optional tables have their own references, such as
 [`[container]`](../container-config.md),

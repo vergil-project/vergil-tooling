@@ -189,7 +189,7 @@ security-and-standards:
   if: ${{ inputs.run-security != 'false' }}
   uses: vergil-project/vergil-actions/.github/workflows/ci-security.yml@develop
   with:
-    language: ruby
+    language: python
     # For Go, also set: semgrep-language: golang
   permissions:
     contents: read
@@ -198,7 +198,7 @@ security-and-standards:
 
 !!! tip "Semgrep language names"
     Semgrep uses `p/<language>` rulesets. Most languages match their
-    common name (`ruby`, `python`, `java`) but Go requires `golang`.
+    common name (`python`, `java`, `rust`) but Go requires `golang`.
     Use the `semgrep-language` input to override when needed.
 
 #### Fleet-excluded semgrep rules
@@ -306,7 +306,6 @@ publisher reads:
 | python | *none* — PyPI OIDC trusted publishing |
 | go | *none* — no publish token |
 | rust | `CARGO_REGISTRY_TOKEN` |
-| ruby | `RUBYGEMS_API_KEY` |
 | java | `CENTRAL_USERNAME`, `CENTRAL_TOKEN`, `GPG_PRIVATE_KEY`, `GPG_PASSPHRASE` |
 
 A language that needs no secret (python, go, or any non-publishing
@@ -452,30 +451,31 @@ repository.
 
 ### Available images
 
-**`dev-ruby`** (3.2, 3.3, 3.4)
-:   Base: `ruby:<v>-slim`. Includes build-essential,
-    git, curl, bundler.
+This page does not repeat the published versions of each image. The
+generated version table in the `vergil-containers`
+[README](https://github.com/vergil-project/vergil-containers/blob/develop/README.md#available-images)
+is the single source of truth.
 
-**`dev-python`** (3.12, 3.13, 3.14)
+**`dev-python`**
 :   Base: `python:<v>-slim`. Includes git, curl, uv.
 
-**`dev-java`** (17, 21)
+**`dev-java`**
 :   Base: `eclipse-temurin:<v>-jdk`. Includes git, curl.
 
-**`dev-go`** (1.25, 1.26)
+**`dev-go`**
 :   Base: `golang:<v>`. Includes golangci-lint,
     govulncheck, go-licenses, gocyclo.
 
-**`dev-cpp-clang`** (19, 20)
+**`dev-cpp-clang`**
 :   Base: `debian:trixie-slim` + `apt.llvm.org`. Includes clang,
     clang-tidy, clang-format, lld, llvm (`llvm-cov`), the sanitizer
     runtime, CMake, Conan 2, cppcheck, and gcovr.
 
-**`dev-cpp-gcc`** (13, 14)
+**`dev-cpp-gcc`**
 :   Base: `debian:trixie-slim`. Includes g++, gcov, CMake, Conan 2,
     cppcheck, and gcovr.
 
-**`dev-ts-node`** (22, 24)
+**`dev-ts-node`**
 :   Base: `debian:trixie-slim` + prebuilt Node from NodeSource (never
     built from source). Includes Node.js, npm, TypeScript (`tsc`),
     ESLint + typescript-eslint, Prettier, Vitest, `@vitest/coverage-v8`,
@@ -499,7 +499,9 @@ docker/build.sh
 This builds all images. Individual images can be built with:
 
 ```bash
-docker build --build-arg RUBY_VERSION=3.4 -t dev-ruby:3.4 docker/ruby/
+docker/generate.sh python
+docker build --build-arg PYTHON_VERSION=3.14 \
+  -t dev-python:3.14 docker/python/
 ```
 
 ### Publishing
@@ -512,7 +514,7 @@ the `vergil-containers` repository via its
 
 - **Thin images** — language runtime + package manager + git/curl
 - **Project-managed dependencies** — tools come from lockfiles at
-  container startup (e.g., `bundle install`, `uv sync`, `go install`)
+  container startup (e.g., `uv sync`, `go install`)
 - **No host requirements** — Docker is the only prerequisite for
   local development
 
