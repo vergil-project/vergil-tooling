@@ -304,13 +304,16 @@ def build_container_args(
     runtime: str = "docker",
     pull_policy: str = "always",
     env_prefixes: Sequence[str] = (),
+    env_names: Sequence[str] = (),
     extra_env: Mapping[str, str] | None = None,
 ) -> list[str]:
     """Build the container ``run`` argument list.
 
-    *extra_env* is set in the container as ``-e NAME=value`` after the
-    env-prefixes passthrough, so it wins over a passed-through variable of the
-    same name.
+    *env_names* are forwarded as bare ``-e NAME``: the runtime copies each value
+    from its own environment, so a secret the caller placed there never appears
+    in the argv (or in ``ps`` output). *extra_env* is set in the container as
+    ``-e NAME=value`` after the env-prefixes passthrough, so it wins over a
+    passed-through variable of the same name.
     """
     network = os.environ.get("DOCKER_NETWORK", "")
 
@@ -346,6 +349,9 @@ def build_container_args(
         for name in os.environ:
             if name.startswith(prefixes):
                 container_args.extend(["-e", name])
+
+    for name in env_names:
+        container_args.extend(["-e", name])
 
     for name, value in (extra_env or {}).items():
         container_args.extend(["-e", f"{name}={value}"])

@@ -104,33 +104,42 @@ Clang-only and must never appear as a raw flag in a shared command):
 
 `conan audit scan .` queries ConanCenter's hosted advisory provider, which
 requires an authentication token. The command reads it from the environment
-variable **`CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER`**. Because that variable is
-consumed **inside the dev container**, a consuming C++ repository must arrange
-for it to reach both local runs and CI. Three pieces wire it end to end:
+variable **`CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER`**, which it needs **inside
+the dev container**.
 
-1. **Pass the token into the container.** Add the `CONAN_AUDIT_PROVIDER_TOKEN`
-   prefix to `[container].env-prefixes` in the repo's `vergil.toml`, so
-   `vrg-container-run` forwards the token into the container environment:
+For a cpp repo, `vrg-container-run` resolves the token itself and forwards it
+into the container. It does not rely on the token being exported by the shell
+that launched it, so it works the same under bash, zsh, and non-interactive
+shells. A consuming repo needs **no** `[container].env-prefixes` entry for it.
+The first source that has a token wins:
 
-   ```toml
-   [container]
-   env-prefixes = ["CONAN_AUDIT_PROVIDER_TOKEN"]
-   ```
+1. **`CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER` in the environment**, if set and
+   not blank. This is how CI provides it, and how an operator overrides the
+   files for one run.
+2. **`~/.config/vergil/conan.env`**, the file `vrg-vm` writes into agent VMs.
+3. **The `conan_audit_token_path` file named in
+   `~/.config/vergil/identities.toml`**, the host-side bare-token file. If more
+   than one identity sets it, they must all name the same file.
 
-2. **Provide the token in CI.** Store the value as the org/CI secret
-   **`CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER`** so it is present in the
-   environment on PR CI runs.
+A source that exists but cannot be read, is malformed, or holds an empty token
+stops `vrg-container-run` with an error naming the file. It never falls back to
+a lower source. The token value is passed to the container runtime through its
+environment, never on its command line, and is never printed.
 
-3. **Provide the token on VMs / local agents.** Point the agent identity at a
-   host file holding the bare token via the `conan_audit_token_path` key in
-   `identities.toml`. Credential injection reads that file and exports
-   `CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER` into the guest environment (the same
-   mechanism used for the Anthropic token), so agent sessions run AUDIT with the
-   token available.
+To wire the token up once:
 
-Without the token, `conan audit scan .` cannot reach the advisory provider and
-the AUDIT stage fails; the three pieces above are the one-time setup that makes
-a consuming C++ repo audit-ready.
+- **CI.** Store the value as the org/CI secret
+  **`CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER`**. The CI audit job injects it into
+  the container environment directly.
+- **Agent VMs and the host.** Point the identity at a host file holding the bare
+  token with the `conan_audit_token_path` key in `identities.toml`. `vrg-vm`
+  credential injection copies it into the guest's `~/.config/vergil/conan.env`,
+  and host-side runs read the file directly. Injection also adds a `~/.bashrc`
+  line that sources `conan.env`, so `conan` run by hand in an interactive bash
+  sees the token. The tooling does not depend on that line.
+
+Without any token, `vrg-validate` skips `conan audit scan .` with a notice and
+runs the rest of the AUDIT stage.
 
 ## Testing: CTest Runner, GoogleTest Default
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
@@ -644,3 +645,110 @@ def test_main_passes_test_tuning_env_to_container(tmp_path: Path) -> None:
     ):
         main(["--", "vrg-validate"])
     assert "VRG_TEST_CONTEXT=ci" in mock_exec.call_args[0][1]
+
+
+# -- Conan audit token injection (issue #2902) ----------------------------------
+
+_TOKEN_ENV = "CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER"  # noqa: S105
+
+
+def _run_cpp(
+    tmp_path: Path, env: dict[str, str], conan_env: str | None = None
+) -> tuple[int, list[str], dict[str, str]]:
+    """Run main() for a cpp repo; return (rc, argv, environ seen at exec time)."""
+    (tmp_path / "vergil.toml").write_text(_CPP_VERGIL_TOML)
+    home = tmp_path / "home"
+    home.mkdir()
+    env_file = home / "conan.env"
+    if conan_env is not None:
+        env_file.write_text(conan_env)
+    seen: dict[str, str] = {}
+    argv: list[str] = []
+
+    def _exec(_prog: str, args: list[str]) -> None:
+        argv.extend(args)
+        seen.update(os.environ)
+
+    with (
+        patch("vergil_tooling.bin.vrg_container_run.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_run.assert_runtime_available"),
+        patch(
+            "vergil_tooling.bin.vrg_container_run.ensure_cached_image", return_value="cached:img"
+        ),
+        patch("vergil_tooling.bin.vrg_container_run.detect_runtime", return_value="docker"),
+        patch("vergil_tooling.bin.vrg_container_run.os.execvp", side_effect=_exec),
+        patch("vergil_tooling.lib.conan_token.conan_env_path", return_value=env_file),
+        patch.dict("os.environ", env, clear=True),
+    ):
+        rc = main(["--", "vrg-validate"])
+    return rc, argv, seen
+
+
+def test_cpp_injects_token_from_conan_env_by_name(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # No token in the ambient env (a zsh or non-interactive shell): the token is
+    # read from conan.env and handed to the runtime through its environment.
+    rc, argv, seen = _run_cpp(
+        tmp_path, {}, conan_env=f"export {_TOKEN_ENV}=placeholder-from-file\n"
+    )
+    assert rc == 0
+    assert argv[argv.index(_TOKEN_ENV) - 1] == "-e"
+    assert not any("placeholder-from-file" in a for a in argv)
+    assert seen[_TOKEN_ENV] == "placeholder-from-file"
+    out = capsys.readouterr().out
+    assert "conan.env" in out
+    assert "placeholder-from-file" not in out
+
+
+def test_cpp_explicit_env_token_wins(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    rc, argv, seen = _run_cpp(
+        tmp_path,
+        {_TOKEN_ENV: "placeholder-from-env"},
+        conan_env=f"export {_TOKEN_ENV}=placeholder-from-file\n",
+    )
+    assert rc == 0
+    assert _TOKEN_ENV in argv
+    assert seen[_TOKEN_ENV] == "placeholder-from-env"
+    assert "environment" in capsys.readouterr().out
+
+
+def test_cpp_without_token_injects_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Absent everywhere: keep the #2895 behaviour (vrg-validate skips the scan).
+    rc, argv, seen = _run_cpp(tmp_path, {})
+    assert rc == 0
+    assert _TOKEN_ENV not in argv
+    assert _TOKEN_ENV not in seen
+    assert "no audit token" in capsys.readouterr().out
+
+
+def test_cpp_malformed_conan_env_fails_loudly(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rc, argv, _ = _run_cpp(tmp_path, {}, conan_env="export do-not-print-me\n")
+    assert rc == 1
+    assert argv == []
+    err = capsys.readouterr().err
+    assert "Conan audit token" in err
+    assert "conan.env" in err
+    assert "do-not-print-me" not in err
+
+
+def test_non_cpp_repo_never_resolves_token(tmp_path: Path) -> None:
+    # The token is only consumed by the cpp audit; other repos never read the
+    # files, so a broken token file cannot fail them.
+    (tmp_path / "pyproject.toml").write_text("[project]\n")
+    with (
+        patch("vergil_tooling.bin.vrg_container_run.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_run.assert_runtime_available"),
+        patch("vergil_tooling.bin.vrg_container_run.ensure_cached_image", return_value="img"),
+        patch("vergil_tooling.bin.vrg_container_run.detect_runtime", return_value="docker"),
+        patch("vergil_tooling.bin.vrg_container_run.os.execvp") as mock_exec,
+        patch("vergil_tooling.lib.conan_token.resolve_conan_audit_token") as mock_resolve,
+        patch.dict("os.environ", {}, clear=True),
+    ):
+        main(["--", "echo", "hi"])
+    mock_resolve.assert_not_called()
+    assert _TOKEN_ENV not in mock_exec.call_args[0][1]
