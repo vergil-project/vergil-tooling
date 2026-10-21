@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.vergil_tooling.conftest import window_default_resolution
 from vergil_tooling.lib.config import vrg_install_tag
 from vergil_tooling.lib.container_cache import (
     _VRG_GIT_URL,
@@ -31,7 +32,18 @@ from vergil_tooling.lib.container_cache import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
+
+
+@pytest.fixture(autouse=True)
+def _marker_language_resolution() -> Iterator[None]:
+    # Tests drop only a language marker (no vergil.toml); resolve the language
+    # to its newest fixture-window version instead of reading a vergil.toml.
+    with patch(
+        "vergil_tooling.lib.container_cache.repo_resolution", side_effect=window_default_resolution
+    ):
+        yield
 
 
 def _completed(returncode: int = 0, stdout: str = "", stderr: str = "") -> MagicMock:
@@ -421,19 +433,23 @@ def test_provision_returns_cached_when_built(tmp_path: Path) -> None:
     assert (image, source) == ("base:1--develop--abcd1234", "cached")
 
 
-def test_provision_passes_declared_version(tmp_path: Path) -> None:
-    # The repo's declared [ci].versions primary threads into image selection so
-    # provisioning warms the same image vrg-container-run picks (issue #2468).
+def test_provision_uses_the_resolved_image(tmp_path: Path) -> None:
+    # The resolver's answer picks the image, so provisioning warms the same
+    # image vrg-container-run selects (epic vergil-project/.github#407).
+    resolution = object()
     with (
         patch.dict("os.environ", {}, clear=True),
-        patch("vergil_tooling.lib.container_cache.primary_ci_version", return_value="3.12"),
+        patch(
+            "vergil_tooling.lib.container_cache.repo_resolution", return_value=resolution
+        ) as resolve,
         patch(
             "vergil_tooling.lib.container_cache.default_image", return_value="base:1"
         ) as default_img,
         patch("vergil_tooling.lib.container_cache.ensure_cached_image", return_value="base:1"),
     ):
         provision_dev_image(tmp_path, "python", runtime="docker")
-    default_img.assert_called_once_with("python", fallback=True, prefix="prod", version="3.12")
+    resolve.assert_called_once_with(tmp_path, "python")
+    default_img.assert_called_once_with(resolution, fallback=True, prefix="prod")
 
 
 def test_provision_returns_default_when_no_cache_files(tmp_path: Path) -> None:

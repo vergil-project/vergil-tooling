@@ -265,31 +265,6 @@ _CPP_TOOLCHAIN_FILE = "build/conan_toolchain.cmake"
 # read a sibling worktree's sources or build tree (#2906).
 _WORKTREES_DIR = ".worktrees"
 
-# Recognized C++ compiler families, in declared-primary precedence order. The
-# `[ci].versions` tags carry the compiler family as a `<family>-<version>`
-# prefix (e.g. ``clang-20``), per spec vergil-project/.github#207 §6.
-_CPP_FAMILIES = ("clang", "gcc")
-
-
-def parse_cpp_version_tag(tag: str) -> tuple[str, str] | None:
-    """Split a C++ compiler-family version tag into ``(family, version)``.
-
-    C++ carries its compiler-family × version axis on ``[ci].versions`` as a
-    ``clang-``/``gcc-`` prefixed tag (e.g. ``clang-20`` → ``("clang", "20")``,
-    ``gcc-15`` → ``("gcc", "15")``), per spec vergil-project/.github#207 §6.
-    Returns ``None`` when *tag* carries no recognized family prefix.
-
-    This is the single source of truth for the tag format, shared by the
-    container image-resolution path (:mod:`container`) and the CI scaffolding
-    path (:mod:`repo_init`) so the two can never drift on the naming.
-    """
-    for family in _CPP_FAMILIES:
-        prefix = f"{family}-"
-        if tag.startswith(prefix):
-            return family, tag[len(prefix) :]
-    return None
-
-
 # -- Python TEST command (epic vergil-project/.github#333, Task 6) -------------
 #
 # The Python TEST command is *computed* by ``build_python_test_argv`` rather than

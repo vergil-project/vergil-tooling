@@ -22,6 +22,8 @@ from vergil_tooling.lib import config, git, progress
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.languages import CheckKind, language_commands
 from vergil_tooling.lib.progress import Stage, StageMode
+from vergil_tooling.lib.versions import VersionsError
+from vergil_tooling.lib.versions.resolve import resolve_config
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -79,6 +81,7 @@ def main(argv: list[str] | None = None) -> int:
     cpp_std: str | None = None
     cpp_stdlib: str | None = None
     test_config = config.TestConfig()
+    vergil_config: config.VergilConfig | None = None
     try:
         vergil_config = config.read_config(repo_root)
         language = vergil_config.project.primary_language
@@ -89,6 +92,9 @@ def main(argv: list[str] | None = None) -> int:
         language = None
     except config.ConfigError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+
+    if vergil_config is not None and not _versions_resolve(vergil_config, repo_root):
         return 1
 
     try:
@@ -119,6 +125,27 @@ def main(argv: list[str] | None = None) -> int:
         args=args,
         repo_root=repo_root,
     )
+
+
+def _versions_resolve(vergil_config: config.VergilConfig, repo_root: Path) -> bool:
+    """The config check: the repo's versions must resolve against the window.
+
+    Runs the single resolver CI uses (epic vergil-project/.github#407), so a pin
+    outside the published window, or a window that cannot be read, fails
+    validation here instead of first failing in CI. Warnings are printed and do
+    not fail.
+    """
+    try:
+        resolution = resolve_config(vergil_config, repo_root=repo_root)
+    except VersionsError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return False
+    if resolution is not None:
+        primary = resolution.primary
+        print(f"CI versions: {', '.join(resolution.versions)} (primary {primary})")
+        for warning in resolution.warnings:
+            print(f"WARNING: {warning}", file=sys.stderr)
+    return True
 
 
 def _test_context() -> str | None:

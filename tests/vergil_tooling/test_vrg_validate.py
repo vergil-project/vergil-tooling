@@ -352,6 +352,56 @@ def test_main_runs_pipeline_with_command_name(tmp_path: Path) -> None:
     assert kwargs["repo_root"] == tmp_path
 
 
+# -- Version resolution config check (epic vergil-project/.github#407) ---------
+
+
+def _write_pinned_config(tmp_path: Path, *, repo_type: str, versions: str) -> None:
+    (tmp_path / "vergil.toml").write_text(
+        f'[project]\nrepository-type = "{repo_type}"\nversioning-scheme = "semver"\n'
+        'branching-model = "library-release"\nrelease-model = "tagged-release"\n'
+        'primary-language = "python"\n[dependencies]\nvergil = "v2.1"\n'
+        f"[ci]\nversions = {versions}\n"
+    )
+
+
+def test_main_reports_resolved_versions(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _write_pinned_config(tmp_path, repo_type="library", versions='["3.12", "3.14"]')
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".progress.run_pipeline", return_value=0),
+    ):
+        assert main(["--check", "common"]) == 0
+    assert "CI versions: 3.14, 3.12 (primary 3.14)" in capsys.readouterr().out
+
+
+def test_main_pin_outside_window_fails_validation(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The same resolver CI runs: a pin the window no longer builds fails here.
+    _write_pinned_config(tmp_path, repo_type="library", versions='["3.11"]')
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".progress.run_pipeline", return_value=0) as m_pipeline,
+    ):
+        assert main([]) == 1
+    m_pipeline.assert_not_called()
+    err = capsys.readouterr().err
+    assert "ERROR: [ci].versions pins 3.11" in err
+    assert "remove it from [ci].versions" in err
+
+
+def test_main_resolution_warning_does_not_fail(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write_pinned_config(tmp_path, repo_type="tooling", versions='["3.13", "3.14"]')
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".progress.run_pipeline", return_value=0),
+    ):
+        assert main(["--check", "common"]) == 0
+    assert "WARNING: [ci].versions pins 2 versions" in capsys.readouterr().err
+
+
 # -- Unit tests for internal functions ----------------------------------------
 
 
