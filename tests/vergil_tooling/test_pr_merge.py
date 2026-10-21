@@ -466,3 +466,49 @@ def test_on_branch_updated_failure_propagates_before_merge() -> None:
     ):
         wait_and_merge("99", strategy="merge", on_branch_updated=hook)
     gh.merge.assert_not_called()
+
+
+# --- #2914: stale failed checks on a BEHIND branch update, not abort -------
+
+
+def test_stale_failed_check_on_behind_branch_updates_and_merges() -> None:
+    """The lazy mergeStateStatus precheck misses a freshly-behind branch, the
+    waiter returns at once on stale terminal checks, and one of them is red —
+    the failed-checks gate must re-check BEHIND and update, not abort."""
+    # iteration 1: CLEAN pre-wait (lazy miss), BEHIND at the failed-checks recheck
+    # iteration 2: CLEAN pre-wait, CLEAN post-wait -> merge
+    gh = _gh(merge_states=["CLEAN", "BEHIND", "CLEAN", "CLEAN"])
+    gh.failed_check_names.side_effect = [["quality / common"], []]
+    with patch(_MOD + ".github", gh), patch(_MOD + ".time.sleep"):
+        wait_and_merge("208", strategy="squash")
+    gh.update_branch.assert_called_once_with("208")
+    assert gh.wait_for_checks.call_count == 2
+    gh.merge.assert_called_once_with("208", strategy="squash")
+
+
+def test_genuine_failed_check_on_current_branch_still_aborts() -> None:
+    """A red check on a branch that is not BEHIND is a real failure — abort
+    without touching the branch."""
+    gh = _gh(merge_states=["CLEAN", "CLEAN"], failed=["quality / common"])
+    with (
+        patch(_MOD + ".github", gh),
+        patch(_MOD + ".time.sleep"),
+        pytest.raises(MergeAbortError, match="Checks failed on PR 208: quality / common"),
+    ):
+        wait_and_merge("208", strategy="squash")
+    gh.update_branch.assert_not_called()
+    gh.merge.assert_not_called()
+
+
+def test_stale_failed_check_on_behind_branch_respects_update_cap() -> None:
+    """A branch that keeps coming back red and BEHIND is bounded by the shared
+    branch-update cap — it never loops forever."""
+    gh = _gh(merge_states=["CLEAN", "BEHIND"] * 10, failed=["quality / common"])
+    with (
+        patch(_MOD + ".github", gh),
+        patch(_MOD + ".time.sleep"),
+        pytest.raises(MergeAbortError, match="still behind"),
+    ):
+        wait_and_merge("208", strategy="squash")
+    assert gh.update_branch.call_count == 5
+    gh.merge.assert_not_called()
