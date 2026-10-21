@@ -422,6 +422,27 @@ def test_main_renders_all_four_sections_in_order(capsys: pytest.CaptureFixture[s
     )
 
 
+def test_main_every_issue_branch_type_is_development(capsys: pytest.CaptureFixture[str]) -> None:
+    statuses = [
+        _status("bugfix/2-b", WorktreeState.NO_PR, ahead=1),
+        _status("hotfix/3-c", WorktreeState.OPEN_PR, pr=9, ahead=1),
+        _status("chore/4-dep-update-1.0.3", WorktreeState.NO_PR, ahead=1),
+        _status("chore/no-number", WorktreeState.NO_PR, ahead=1),
+        _status("spike/5-idea", WorktreeState.NO_PR, ahead=1),
+    ]
+    rc, _ = _run(_raws(statuses), gather=statuses)
+    out = capsys.readouterr().out
+    assert rc == 0
+    development = out[out.index("Development\n") : out.index("Other / unknown")]
+    for branch in ("bugfix/2-b", "hotfix/3-c", "chore/4-dep-update-1.0.3"):
+        assert branch in development
+    other = out[out.index("Other / unknown\n") :]
+    assert "chore/no-number" in other
+    assert "spike/5-idea" in other
+    assert "3 development" in out
+    assert "2 other / unknown" in out
+
+
 def test_main_omits_empty_sections_but_counts_them(capsys: pytest.CaptureFixture[str]) -> None:
     rc, _ = _run([])
     out = capsys.readouterr().out

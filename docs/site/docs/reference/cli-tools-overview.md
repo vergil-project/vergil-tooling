@@ -200,7 +200,11 @@ not shown. The sections, in order:
    `branching-model` in `vergil.toml` (every current model integrates on
    `develop`); without a `vergil.toml` it defaults to `develop` and a
    note says so. A malformed `vergil.toml` is an error (exit 1).
-2. **Development** — `feature/<N>-<slug>` worktrees under `.worktrees/`.
+2. **Development** — issue-branch worktrees under `.worktrees/`: a
+   `feature/`, `bugfix/`, `hotfix/` or `chore/` branch carrying an issue
+   number (`<type>/<N>-<slug>`), including the `chore/<N>-dep-update-*`
+   fix branch `vrg-update-deps` asks for. An issue prefix without an
+   issue number, or an unknown prefix, goes to Other / unknown.
    A mid-rebase worktree is placed by the branch recovered from the
    paused rebase or its `issue-<N>-<slug>` directory name.
 3. **Release and dependency machinery** — `release/*`, `release/post-*`

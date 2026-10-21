@@ -5,7 +5,8 @@ this repo is shown, in four sections (issue #3386):
 
 1. **Main checkout** — always shown; flagged when it is not on the repo's
    integration branch, is dirty, or is mid-rebase.
-2. **Development** — ``feature/<N>-<slug>`` worktrees under ``.worktrees/``,
+2. **Development** — issue-branch worktrees under ``.worktrees/``
+   (``feature/``, ``bugfix/``, ``hotfix/`` or ``chore/`` + ``<N>-<slug>``),
    showing which are removable cruft (merged/closed PRs whose worktree was
    never cleaned up) versus in-flight work.
 3. **Release and dependency machinery** — ``release/*`` and ``deps/update-*``

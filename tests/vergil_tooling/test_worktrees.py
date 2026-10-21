@@ -1027,8 +1027,15 @@ def test_is_canonical_worktree() -> None:
         ("release/1.4.0", True, WorktreeKind.MACHINERY),
         ("release/post-1.4.0", True, WorktreeKind.MACHINERY),
         ("deps/update-1.0.3", True, WorktreeKind.MACHINERY),
-        ("bugfix/7-foo", True, WorktreeKind.OTHER),
+        ("bugfix/7-foo", True, WorktreeKind.DEVELOPMENT),
+        ("hotfix/8-urgent", True, WorktreeKind.DEVELOPMENT),
+        # The fix-task branch vrg-update-deps asks for when an update fails.
+        ("chore/3400-dep-update-1.0.3", True, WorktreeKind.DEVELOPMENT),
+        # An issue prefix without an issue number is not recognised.
         ("feature/no-issue-number", True, WorktreeKind.OTHER),
+        ("chore/tidy", True, WorktreeKind.OTHER),
+        # An unknown prefix, even with a number.
+        ("spike/12-idea", True, WorktreeKind.OTHER),
         ("experiment", True, WorktreeKind.OTHER),
         ("(detached)", True, WorktreeKind.OTHER),
         (None, True, WorktreeKind.OTHER),

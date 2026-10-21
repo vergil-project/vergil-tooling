@@ -463,15 +463,16 @@ _MACHINERY_PREFIXES = ("release/", "deps/update-")
 def worktree_kind(branch: str | None, *, canonical: bool) -> WorktreeKind:
     """Classify a linked worktree by its branch and location.
 
-    ``feature/<N>-<slug>`` under ``.worktrees/`` is development work; the
-    release and dependency-update branches are machinery; everything else —
-    any other branch, a detached HEAD, or any worktree outside ``.worktrees/``
-    — is other.
+    An issue branch under ``.worktrees/`` — any ``<type>/<N>-<slug>`` whose
+    type is in ``branch_names.ISSUE_BRANCH_TYPES`` (``feature``, ``bugfix``,
+    ``hotfix``, ``chore``) — is development work; the release and
+    dependency-update branches are machinery; everything else — any other
+    branch, an issue prefix without an issue number, a detached HEAD, or any
+    worktree outside ``.worktrees/`` — is other.
     """
     if not canonical or branch is None:
         return WorktreeKind.OTHER
-    parsed = branch_names.parse_issue_branch(branch)
-    if parsed is not None and parsed.type == "feature":
+    if branch_names.is_valid_issue_branch(branch):
         return WorktreeKind.DEVELOPMENT
     if branch.startswith(_MACHINERY_PREFIXES):
         return WorktreeKind.MACHINERY
