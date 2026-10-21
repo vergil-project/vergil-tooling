@@ -73,7 +73,7 @@ Environment overrides:
     Build the dev images locally before first use:
     `cd ../vergil-containers && docker/build.sh`
 
-Running `vrg-container-run -- uv run vrg-validate` before each commit runs
+Running `vrg-container-run -- vrg-validate` before each commit runs
 common checks and per-language validation. The Claude Code hook guard
 ensures agents use `vrg-commit` (which runs validation) rather than raw
 `git commit`.

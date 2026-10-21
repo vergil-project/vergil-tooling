@@ -34,9 +34,8 @@ agent gets its own worktree under `.worktrees/`.
 
 ## Branching model
 
-Every repository's branching model is declared in
-`docs/repository-standards.md` under the `branching_model`
-attribute. Three models are supported:
+Every repository's branching model is declared in `vergil.toml`
+as `[project].branching-model`. Three models are supported:
 
 | Model | Prefixes allowed | Typical use |
 |---|---|---|
@@ -153,14 +152,6 @@ vrg-submit-pr \
   not accepted.
 - Creates the PR via `gh pr create` under the hood.
 
-!!! note "Auto-merge is disabled"
-    As of 2026-04-22 all managed repos have `allow_auto_merge=false`.
-    `vrg-submit-pr` still tries to enable auto-merge after PR creation
-    and will print a non-fatal `CalledProcessError` traceback — the
-    PR itself is created successfully and simply waits for a human
-    merge. Removing that call is tracked in
-    [vergil-tooling#268](https://github.com/vergil-project/vergil-tooling/issues/268).
-
 See the [vrg-submit-pr reference](../reference/dev/submit-pr.md).
 
 !!! note "Agent handoff and the post-report-ready freeze"
@@ -252,10 +243,9 @@ This section is the user-level "how to."
 ### When a worktree is optional but recommended
 
 - Any feature branch, even for solo sequential work. The convention
-  keeps the main tree clean; once the plugin-level CWD check is
-  active (release tracked in
-  [vergil-claude-plugin#46](https://github.com/vergil-project/vergil-claude-plugin/issues/46))
-  committing from the main tree will be blocked.
+  keeps the main tree clean, and in a repo that has adopted it
+  (`.worktrees/` in `.gitignore`) both the plugin and `vrg-commit`
+  block feature-branch commits from the main tree.
 
 ### Creating a worktree for an issue
 
@@ -343,24 +333,17 @@ with a fix task, and the next
 
 ## Adoption for a new repo
 
-Onboarding a brand-new repository has two entry points:
+`vrg-github-repo-init` creates a new managed repository, or adopts
+an existing one with `--adopt`, and writes every managed file in its
+canonical form: `vergil.toml`, `CLAUDE.md` (including the
+Parallel-AI-agent-development section), `.claude/settings.json`,
+`.claude/hooks/guard.sh`, the managed `.gitignore` block (including
+`.worktrees/`) and the GitHub workflows. Two guides cover it:
 
-- **[Getting Started](../getting-started.md)** — five-to-ten minute
-  quickstart.
+- **[Getting Started](../getting-started.md)** — the quickstart.
 - **[Consuming Repo Setup](consuming-repo-setup.md)** — full
-  walkthrough with rationale, CI configuration, plugin nuances,
+  walkthrough with rationale, CI configuration, plugin details,
   and troubleshooting.
-
-At a minimum, a new repo needs:
-
-1. `docs/repository-standards.md` with the six required attributes
-   (see the existing setup guide).
-2. `.claude/hooks/guard.sh` and `.claude/settings.json` wiring
-   the Claude Code hook guard to block raw `git`/`gh` commands.
-3. `.claude/settings.json` also enabling the `vergil-tooling`
-   plugin so the plugin hooks fire in Claude Code sessions.
-4. `.worktrees/` in `.gitignore` and a Parallel-AI-agent-development
-   section in CLAUDE.md so the worktree convention applies.
 
 ## Troubleshooting
 
@@ -382,32 +365,17 @@ The hook that fired will print a reason. Common signals:
 
 ### My plugin cache is stale
 
-Until plugin release automation is fully stood up
-([vergil-claude-plugin#46](https://github.com/vergil-project/vergil-claude-plugin/issues/46)),
-the plugin is consumed from a local checkout and its cache under
-`~/.claude/plugins/cache/vergil-tooling-marketplace/`. If you're
-running an old version of a hook:
+If you're running an old version of a hook, refresh the plugin from
+inside Claude Code:
 
-```bash
-git -C ~/.claude/plugins/marketplaces/vergil-tooling-marketplace pull
-# then restart Claude Code
+```text
+/plugin marketplace update vergil-marketplace
+/reload-plugins
 ```
 
-### `vrg-submit-pr` threw a CalledProcessError on auto-merge
-
-Expected since 2026-04-22 — auto-merge is disabled org-wide. The
-PR itself was created successfully. See
-[vergil-tooling#268](https://github.com/vergil-project/vergil-tooling/issues/268)
-for the planned fix.
-
-### Validator-not-on-PATH errors during PostToolUse
-
-The plugin's `validate-on-edit` hook expects those validators on
-PATH. Some are only installed inside the dev container image, not on
-the host. Hook-level PATH discovery is tracked in
-[vergil-tooling#265](https://github.com/vergil-project/vergil-tooling/issues/265).
-Workaround: run the validator explicitly via `vrg-container-run` to
-confirm the file is clean; then proceed.
+See the plugin README's
+[Update section](https://github.com/vergil-project/vergil-claude-plugin#update)
+for what each step does.
 
 ## Related
 
