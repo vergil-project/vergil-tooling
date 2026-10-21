@@ -38,6 +38,9 @@ def _ctx() -> ReleaseContext:
         version_override=None,
     )
     ctx.issue_number = 42
+    # back-merge-bump records this; confirm-develop pins its CD run to it (#3329).
+    ctx.bump_pr_url = "https://github.com/o/r/pull/101"
+    ctx.bump_merge_sha = _SHA
     return ctx
 
 
@@ -769,3 +772,208 @@ def test_verify_artifacts_retries_404_on_just_published_release() -> None:
         _verify_artifacts(ctx)
     assert ctx.release_url == url
     assert read.call_count == 2
+
+
+# --- #3329: confirm-develop verifies the back-merge commit, not develop's tip ---
+
+_BACK_MERGE_SHA = "b4c4me4ge5ha0000"
+_MOVED_TIP_SHA = "d3p5upd4te0000"
+
+
+def test_confirm_develop_on_resume_verifies_back_merge_not_moved_tip() -> None:
+    """Resume after develop moved past the back-merge (e.g. a deps PR merged).
+
+    Develop's tip now has its own CD run. confirm-develop must poll for the
+    back-merge commit's run, never read the tip.
+    """
+    ctx = _ctx()
+    ctx.bump_merge_sha = _BACK_MERGE_SHA
+    with (
+        patch(
+            _MOD + ".github.read_output",
+            side_effect=["555", "https://github.com/o/r/actions/runs/555"],
+        ) as read,
+        patch(_MOD + "._fetch_run_jobs", return_value=_DEVELOP_JOBS_OK),
+        patch(_MOD + ".watch_workflow") as watch,
+        patch(_MOD + ".git.run") as git_run,
+        patch(_MOD + ".git.read_output", return_value=_MOVED_TIP_SHA) as git_read,
+    ):
+        confirm_develop(ctx)
+
+    run_list_jq = read.call_args_list[0].args[-1]
+    assert f'.headSha == "{_BACK_MERGE_SHA}"' in run_list_jq
+    assert _MOVED_TIP_SHA not in run_list_jq
+    git_read.assert_not_called()
+    git_run.assert_not_called()
+    watch.assert_called_once_with("owner/repo", "555", check_status=False)
+    assert ctx.develop_cd_run_id == "555"
+
+
+def test_confirm_develop_without_back_merge_sha_fails_loud() -> None:
+    """No recorded back-merge SHA: fail, never fall back to develop's tip."""
+    ctx = _ctx()
+    ctx.bump_merge_sha = None
+    with (
+        patch(_MOD + ".github.read_output") as read,
+        patch(_MOD + ".git.run") as git_run,
+        patch(_MOD + ".git.read_output", return_value=_MOVED_TIP_SHA) as git_read,
+        pytest.raises(ReleaseError, match="merge commit SHA is not recorded") as excinfo,
+    ):
+        confirm_develop(ctx)
+    assert excinfo.value.phase == "confirm-develop"
+    assert "https://github.com/o/r/pull/101" in str(excinfo.value)
+    read.assert_not_called()
+    git_run.assert_not_called()
+    git_read.assert_not_called()
+
+
+def test_confirm_main_still_verifies_main_tip() -> None:
+    """confirm-main is unchanged: it resolves the tip of origin/main."""
+    from vergil_tooling.lib.release.confirm import _cd_head_sha
+
+    ctx = _ctx()
+    with (
+        patch(_MOD + ".git.run") as git_run,
+        patch(_MOD + ".git.read_output", return_value=_MOVED_TIP_SHA) as git_read,
+    ):
+        assert _cd_head_sha(ctx, "main") == _MOVED_TIP_SHA
+    git_run.assert_called_once_with("fetch", "origin", "main")
+    git_read.assert_called_once_with("rev-parse", "origin/main")
+
+
+# --- #3352: a stale non-terminal job record is not a failed publish ---
+
+# vergil-vm v2.1.47: every step of release / package-matrix ran, but the jobs API
+# kept reporting it in_progress with a null conclusion after the run concluded.
+_STALE_MATRIX = _job("release / package-matrix", status="in_progress", conclusion=None)
+_STALE_MAIN_JOBS = [
+    _job("docs / docs"),
+    _STALE_MATRIX,
+    _job("release / release"),
+    _job("release / package-build / ${{ matrix.id }}", conclusion="skipped"),
+    _job("release / package-sign", conclusion="skipped"),
+]
+
+
+def test_confirm_main_stale_record_in_successful_run_is_not_deferred(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Regression #3352: a successful run whose only non-success job is a stale
+    in_progress record confirms without deferring, and names the stale job."""
+    ctx = _ctx()
+    with (
+        patch(_MOD + "._watch_cd", return_value=("123", "https://run/123")),
+        patch(_MOD + "._fetch_run_jobs", return_value=_STALE_MAIN_JOBS) as fetch,
+        patch(_MOD + "._run_conclusion", return_value="success"),
+        patch(_MOD + ".time.sleep"),
+        patch(_MOD + "._verify_artifacts"),
+        patch(_MOD + ".progress.mark_warn") as mark_warn,
+    ):
+        confirm_main(ctx)
+    from vergil_tooling.lib.release.confirm import _JOB_SETTLE_ATTEMPTS
+
+    assert fetch.call_count == _JOB_SETTLE_ATTEMPTS  # waited out the settle budget
+    assert ctx.deferred_publish_failures == []
+    mark_warn.assert_called_once_with("stale job record: release / package-matrix")
+    out = capsys.readouterr().out
+    assert "did not succeed" not in out
+    assert "Publish deferred" not in out
+    assert "release / package-matrix never reached 'completed'" in out
+
+
+def test_confirm_main_unsettled_job_in_failed_run_is_deferred_by_full_name() -> None:
+    """When the run did not conclude success, an unsettled job may really have
+    failed: defer it, by full name, as never settled."""
+    ctx = _ctx()
+    with (
+        patch(_MOD + "._watch_cd", return_value=("123", "https://run/123")),
+        patch(_MOD + "._fetch_run_jobs", return_value=_STALE_MAIN_JOBS),
+        patch(_MOD + "._run_conclusion", return_value="failure"),
+        patch(_MOD + ".time.sleep"),
+        patch(_MOD + "._verify_artifacts"),
+    ):
+        confirm_main(ctx)
+    assert ctx.deferred_publish_failures == ["release / package-matrix (never settled)"]
+
+
+def test_confirm_main_settles_lagging_non_release_job() -> None:
+    """The settle wait also absorbs a brief lag on a non-release job (#1611
+    applies to every leaf), so a job that settles is judged normally and the
+    run conclusion is never needed."""
+    ctx = _ctx()
+    lagging = [_STALE_MATRIX, _job("release / release")]
+    settled = [_job("release / package-matrix"), _job("release / release")]
+    with (
+        patch(_MOD + "._watch_cd", return_value=("123", "https://run/123")),
+        patch(_MOD + "._fetch_run_jobs", side_effect=[lagging, settled]) as fetch,
+        patch(_MOD + "._run_conclusion") as conclusion,
+        patch(_MOD + ".time.sleep"),
+        patch(_MOD + "._verify_artifacts"),
+    ):
+        confirm_main(ctx)
+    assert fetch.call_count == 2
+    conclusion.assert_not_called()
+    assert ctx.deferred_publish_failures == []
+
+
+def test_collect_deferred_publish_names_release_family_job_in_full() -> None:
+    """A failed job in the release job's own family is reported by full name,
+    so the message cannot read as the (successful) release itself failing."""
+    from vergil_tooling.lib.release.confirm import _collect_deferred_publish
+
+    jobs = [
+        _job("release / release"),
+        _job("release / package-matrix", conclusion="failure"),
+        _job("docker-publish / publish: prod-base:latest", conclusion="failure"),
+    ]
+    assert _collect_deferred_publish(jobs) == ["release / package-matrix", "docker-publish"]
+
+
+def test_collect_deferred_publish_skips_unsettled_jobs() -> None:
+    from vergil_tooling.lib.release.confirm import _collect_deferred_publish, _unsettled_jobs
+
+    assert _collect_deferred_publish(_STALE_MAIN_JOBS) == []
+    assert _unsettled_jobs(_STALE_MAIN_JOBS) == ["release / package-matrix"]
+
+
+def test_confirm_main_combines_deferral_and_stale_warning() -> None:
+    """mark_warn is last-call-wins, so a stage with both a real deferral and a
+    stale record carries one combined reason."""
+    ctx = _ctx()
+    jobs = [*_STALE_MAIN_JOBS, _job("docker-publish / publish: x", conclusion="failure")]
+    with (
+        patch(_MOD + "._watch_cd", return_value=("123", "https://run/123")),
+        patch(_MOD + "._settled_run_jobs", return_value=jobs),
+        patch(_MOD + "._run_conclusion", return_value="success"),
+        patch(_MOD + "._verify_artifacts"),
+        patch(_MOD + ".progress.mark_warn") as mark_warn,
+    ):
+        confirm_main(ctx)
+    assert ctx.deferred_publish_failures == ["docker-publish"]
+    mark_warn.assert_called_once_with(
+        "publish deferred: docker-publish; stale job record: release / package-matrix"
+    )
+
+
+def test_confirm_develop_stale_record_in_successful_run_is_not_deferred() -> None:
+    ctx = _ctx()
+    jobs = [_job("docs / docs"), _job("codeql / analyze", status="queued", conclusion=None)]
+    with (
+        patch(_MOD + "._watch_cd", return_value=("9", "https://run/9")),
+        patch(_MOD + "._settled_run_jobs", return_value=jobs),
+        patch(_MOD + "._run_conclusion", return_value="success"),
+        patch(_MOD + ".progress.mark_warn") as mark_warn,
+    ):
+        confirm_develop(ctx)
+    assert ctx.deferred_publish_failures == []
+    mark_warn.assert_called_once_with("stale job record: codeql / analyze")
+
+
+def test_run_conclusion_reads_run_level_conclusion() -> None:
+    from vergil_tooling.lib.release.confirm import _run_conclusion
+
+    with patch(_MOD + ".github.read_output", return_value="success\n") as read:
+        assert _run_conclusion(_ctx(), "123") == "success"
+    args = read.call_args.args
+    assert args[:5] == ("run", "view", "--repo", "owner/repo", "123")
+    assert args[5:] == ("--json", "conclusion", "--jq", ".conclusion")

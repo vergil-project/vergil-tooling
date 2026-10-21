@@ -1,7 +1,7 @@
 """Validate the repository configuration and README structure.
 
 Checks that ``vergil.toml`` is valid (required fields,
-enum values, co-author format, dependencies), then validates
+enum values, dependencies), then validates
 README.md structural conventions (exactly one H1, a Table of
 Contents heading, no heading-level skips).
 """
@@ -49,7 +49,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         description=(
             "Validate the current repository's configuration and README "
             "structure: that vergil.toml is present and valid (required "
-            "fields, enum values, co-author format, dependencies) and that "
+            "fields, enum values, dependencies) and that "
             "README.md follows the structural conventions (exactly one H1, a "
             "Table of Contents, no heading-level skips)."
         ),

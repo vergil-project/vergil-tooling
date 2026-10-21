@@ -57,11 +57,38 @@ automatically and the wait restarts.
 **Orphaned check-runs.** GitHub occasionally leaves a check-run
 non-terminal (`queued`/`in_progress`) even though the workflow run that
 owns it has already completed — an *orphan* that would never go green on
-its own. When the deadline elapses with checks still pending, finalize
-cross-checks each one against its backing run (`gh run view`). A
-non-terminal check over a completed run is an orphan, so finalize
-**aborts with recovery guidance** — close and reopen the PR to re-run the
-gate, then re-run `vrg-finalize-pr` — rather than hanging. Genuinely
+its own. The waiter detects this **while waiting**, not only at the
+deadline (issue #3358). About every 30 seconds it checks the backing run
+(`gh run view`) of each pending Actions check. Once a run has completed,
+its check gets a one-minute grace period to turn terminal. If the check is
+still pending after that, the backing job's own conclusion decides
+(`GET /repos/{owner}/{repo}/actions/jobs/{job_id}`):
+
+- The job **succeeded** and the check is **not required**: the check is
+  treated as passed and a warning names it (`'test / matrix' check-run
+  stale; backing job succeeded`), so the merge goes ahead instead of waiting
+  out the deadline. Checks that really failed are still caught by the
+  failed-checks gate.
+- The job **succeeded** but the check is one of the target branch's
+  **required** status checks: finalize **aborts at once** (issue #3379).
+  GitHub keeps blocking the merge on a required check it reports as
+  pending, so passing it would only move the wait to the merge step. The
+  error names the check, says GitHub will block the merge until it settles,
+  and gives the same close-and-reopen guidance.
+- The job **succeeded** but the required checks **could not be read** (see
+  *Required checks* below): finalize **aborts at once** for the same reason,
+  because it cannot tell whether GitHub will block on the stale check. The
+  error says the required-check lookup failed. Without a stale check, a
+  failed lookup still only warns and waits on registered checks.
+- The job **did not succeed**, has no conclusion, or its conclusion **cannot
+  be read**: finalize **aborts at once with recovery guidance**. The
+  guidance is to close and reopen the PR to re-run the gate, then re-run
+  `vrg-finalize-pr`. The error names each such check, its job's outcome and
+  its job link.
+
+The deadline is the backstop. When it elapses with checks still pending,
+each one is checked against its backing run again, and a non-terminal check
+over a completed run aborts with the same guidance. Genuinely
 still-running checks are waited on as normal; if the deadline elapses
 with nothing orphaned (for example an app-posted status that is legitimately
 slow), finalize fails with a timeout error that names every still-pending

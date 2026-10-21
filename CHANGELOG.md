@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.252] - 2026-10-21
+
+### Bug fixes
+
+- update instead of aborting on stale failed checks when BEHIND (#3359)
+- pin confirm-develop to the back-merge commit, not the develop tip (#3360)
+- resolve a leftover deps/update branch by its PR state instead of refusing (#3363)
+- fail loudly when scripts/bin/validate-custom is not executable (#3364)
+- stop reporting a stale in_progress CD job as a failed publish (#3366)
+- detect stale check-runs while waiting, not only at the deadline (#3374)
+- ensure issue labels exist at the point of use (#3378)
+- resolve the Conan audit token from its file at point of use (#3380)
+- fail fast on a stale check-run that is a required status check (#3383)
+- drop the deprecated run-standards input and stale CI, scripts/dev and deps/ guidance (#3389)
+- name the publish credentials the tools actually read (#3395)
+
+### Chores
+
+- uv lock --upgrade (#3356)
+- drop AI co-author attribution and turn off Claude Code's trailer (#3365)
+- stop generating deprecated CI inputs (#3391)
+
+### Documentation
+
+- rewrite getting-started and consuming-repo-setup to match current tooling (#3381)
+- finish the Go 1.25 retirement and drop Ruby from the supported languages (#3382)
+- fix the remaining stale CI, validation and git-workflow docs (#3385)
+
+### Features
+
+- make the .claude/settings.json attribution audit strict (#3376)
+- show every worktree in the repo, grouped by kind (#3390)
+- resolve CI versions from the published window with one resolver (#3393)
+
+### Refactoring
+
+- remove Ruby support from the tooling (#3388)
+
 ## [2.1.251] - 2026-10-21
 
 ### Bug fixes

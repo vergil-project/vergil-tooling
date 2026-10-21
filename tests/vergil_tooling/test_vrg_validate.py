@@ -17,6 +17,7 @@ from vergil_tooling.bin.vrg_validate import (
     _CONAN_AUDIT_TOKEN_ENV,
     ValidationError,
     _build_stages,
+    _check_custom_validator,
     _command_stage,
     _find_custom_validator,
     _in_dev_container,
@@ -305,6 +306,7 @@ def test_run_all_includes_custom_validator(tmp_path: Path) -> None:
         patch(_MOD + "._run_common_checks", return_value=0),
         patch(_MOD + ".progress.run", side_effect=mock_run),
         patch(_MOD + "._find_custom_validator", return_value="/path/to/custom"),
+        patch(_MOD + "._check_custom_validator"),
     ):
         result = main([])
     assert result == 0
@@ -319,6 +321,7 @@ def test_run_all_custom_validator_failure(tmp_path: Path) -> None:
         patch(_MOD + "._run_common_checks", return_value=0),
         patch(_MOD + ".progress.run", return_value=1),
         patch(_MOD + "._find_custom_validator", return_value="/path/to/custom"),
+        patch(_MOD + "._check_custom_validator"),
     ):
         result = main([])
     assert result == 1
@@ -347,6 +350,56 @@ def test_main_runs_pipeline_with_command_name(tmp_path: Path) -> None:
     kwargs = m_pipeline.call_args.kwargs
     assert kwargs["command"] == "vrg-validate"
     assert kwargs["repo_root"] == tmp_path
+
+
+# -- Version resolution config check (epic vergil-project/.github#407) ---------
+
+
+def _write_pinned_config(tmp_path: Path, *, repo_type: str, versions: str) -> None:
+    (tmp_path / "vergil.toml").write_text(
+        f'[project]\nrepository-type = "{repo_type}"\nversioning-scheme = "semver"\n'
+        'branching-model = "library-release"\nrelease-model = "tagged-release"\n'
+        'primary-language = "python"\n[dependencies]\nvergil = "v2.1"\n'
+        f"[ci]\nversions = {versions}\n"
+    )
+
+
+def test_main_reports_resolved_versions(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _write_pinned_config(tmp_path, repo_type="library", versions='["3.12", "3.14"]')
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".progress.run_pipeline", return_value=0),
+    ):
+        assert main(["--check", "common"]) == 0
+    assert "CI versions: 3.14, 3.12 (primary 3.14)" in capsys.readouterr().out
+
+
+def test_main_pin_outside_window_fails_validation(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The same resolver CI runs: a pin the window no longer builds fails here.
+    _write_pinned_config(tmp_path, repo_type="library", versions='["3.11"]')
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".progress.run_pipeline", return_value=0) as m_pipeline,
+    ):
+        assert main([]) == 1
+    m_pipeline.assert_not_called()
+    err = capsys.readouterr().err
+    assert "ERROR: [ci].versions pins 3.11" in err
+    assert "remove it from [ci].versions" in err
+
+
+def test_main_resolution_warning_does_not_fail(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write_pinned_config(tmp_path, repo_type="tooling", versions='["3.13", "3.14"]')
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".progress.run_pipeline", return_value=0),
+    ):
+        assert main(["--check", "common"]) == 0
+    assert "WARNING: [ci].versions pins 2 versions" in capsys.readouterr().err
 
 
 # -- Unit tests for internal functions ----------------------------------------
@@ -421,6 +474,69 @@ def test_find_custom_validator_local_script(tmp_path: Path) -> None:
 def test_find_custom_validator_none(tmp_path: Path) -> None:
     with patch(_MOD + ".shutil.which", return_value=None):
         assert _find_custom_validator(tmp_path) is None
+
+
+def _custom_script(repo: Path, mode: int) -> Path:
+    scripts_bin = repo / "scripts" / "bin"
+    scripts_bin.mkdir(parents=True)
+    script = scripts_bin / "validate-custom"
+    script.write_text("#!/bin/bash\n")
+    script.chmod(mode)
+    return script
+
+
+def test_find_custom_validator_returns_non_executable_script(tmp_path: Path) -> None:
+    # A present-but-unusable script must reach the custom stage to fail there,
+    # not be skipped as "no custom validator" (#3349).
+    script = _custom_script(tmp_path, 0o600)
+    with patch(_MOD + ".shutil.which", return_value=None):
+        assert _find_custom_validator(tmp_path) == str(script)
+
+
+def test_find_custom_validator_returns_broken_symlink(tmp_path: Path) -> None:
+    scripts_bin = tmp_path / "scripts" / "bin"
+    scripts_bin.mkdir(parents=True)
+    link = scripts_bin / "validate-custom"
+    link.symlink_to(tmp_path / "missing")
+    with patch(_MOD + ".shutil.which", return_value=None):
+        assert _find_custom_validator(tmp_path) == str(link)
+
+
+def test_check_custom_validator_executable_passes(tmp_path: Path) -> None:
+    _check_custom_validator(_custom_script(tmp_path, 0o755))
+
+
+def test_check_custom_validator_not_executable(tmp_path: Path) -> None:
+    script = _custom_script(tmp_path, 0o600)
+    with pytest.raises(ValidationError, match="is not executable") as exc:
+        _check_custom_validator(script)
+    assert f"chmod +x {script}" in str(exc.value)
+
+
+def test_check_custom_validator_not_a_file(tmp_path: Path) -> None:
+    (tmp_path / "validate-custom").mkdir()
+    with pytest.raises(ValidationError, match="is not a regular file"):
+        _check_custom_validator(tmp_path / "validate-custom")
+
+
+def test_run_all_non_executable_custom_validator_fails(tmp_path: Path) -> None:
+    _write_config(tmp_path)
+    _custom_script(tmp_path, 0o600)
+    ran: list[str] = []
+
+    def mock_run(cmd: tuple[str, ...], *, check: bool = True) -> int:
+        ran.append(cmd[0])
+        return 0
+
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + "._run_common_checks", return_value=0),
+        patch(_MOD + ".shutil.which", return_value=None),
+        patch(_MOD + ".progress.run", side_effect=mock_run),
+    ):
+        result = main([])
+    assert result == 1
+    assert ran == []
 
 
 # -- Config error handling ---------------------------------------------------

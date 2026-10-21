@@ -299,8 +299,7 @@ via the `[validation]` override in `vergil.toml` — see
 
 **Tier 2 — PR CI (~5-8 min):** Triggers on `pull_request`. Runs every
 quality check across the full Python version matrix (3.12, 3.13, 3.14),
-security scanners (CodeQL, Trivy, Semgrep), standards compliance, and
-release gates. Workflow: `.github/workflows/ci.yml`. `ci.yml` is a **thin
+security scanners (CodeQL, Trivy, Semgrep), and release gates. Workflow: `.github/workflows/ci.yml`. `ci.yml` is a **thin
 caller** of the `vergil-actions` reusable workflows, passing only
 `language:`/`container-suffix:`; the matrix is read from `[ci].versions` in
 `vergil.toml` at run time, and branch protection requires the stable,
@@ -354,7 +353,8 @@ vrg-container-run -- vrg-validate
 CLI tools installed as `vrg-*` console scripts:
 
 - **`vrg-commit`** — Construct standards-compliant conventional
-  commits with co-author resolution
+  commits (no AI co-author trailer; Claude Code's attribution is turned
+  off in `.claude/settings.json`, #3200)
 - **`vrg-reword`** — Reword a branch-local commit's message via a scripted,
   non-interactive rebase; the agent-safe path to correct a branch-local
   commit message (raw interactive rebase is blocked repo-wide). Bounded:
@@ -434,10 +434,11 @@ Shared libraries under `src/vergil_tooling/lib/`:
 Dev container images (Dockerfiles, build script, publish workflow) are
 maintained in [vergil-containers](https://github.com/vergil-project/vergil-containers).
 
-The `vrg-container-test` entry point auto-detects the project
-language (Gemfile, pyproject.toml, go.mod, pom.xml/mvnw) and runs the test
-suite inside the appropriate container. Consuming repos call it directly or wrap
-it in a thin `scripts/dev/test.sh`. Environment overrides:
+The `vrg-container-test` entry point takes the project language from
+`[project].primary-language` in `vergil.toml` (falling back to package-manager
+markers such as pyproject.toml, go.mod, Cargo.toml or pom.xml/mvnw) and runs
+the test suite inside the appropriate container. Consuming repos call it
+directly. Environment overrides:
 
 - `DOCKER_DEV_IMAGE` — override the container image
 - `DOCKER_TEST_CMD` — override the test command

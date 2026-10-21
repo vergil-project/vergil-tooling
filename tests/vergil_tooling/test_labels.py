@@ -2,7 +2,18 @@
 
 from __future__ import annotations
 
-from vergil_tooling.lib.labels import load_labels
+import subprocess
+from unittest.mock import patch
+
+import pytest
+
+from vergil_tooling.lib import github
+from vergil_tooling.lib.labels import (
+    UnknownLabelError,
+    ensure_labels,
+    ensure_labels_or_report,
+    load_labels,
+)
 
 # GitHub default labels that must not collide with the registry.
 #
@@ -127,3 +138,117 @@ def test_delete_list_retires_deprecated_labels() -> None:
     # retire-standing task): no live ``standing`` epics remain, so a sync must
     # de-provision the label.
     assert load_labels()["delete"] == ["enhancement", "standing"]
+
+
+# --- ensure_labels: the shared point-of-use primitive (#3373) ---------------
+
+_RUN = "vergil_tooling.lib.labels.github.run"
+
+
+def _spec(name: str) -> dict[str, str]:
+    return next(entry for entry in load_labels()["labels"] if entry["name"] == name)
+
+
+def _fake_gh(repo_labels: dict[str, tuple[str, str]]):
+    """A stand-in for ``gh label create --force`` over an in-memory label set."""
+
+    def run(*args: str) -> None:
+        assert args[:2] == ("label", "create")
+        assert "--force" in args
+        name = args[2]
+        color = args[args.index("--color") + 1]
+        description = args[args.index("--description") + 1]
+        repo_labels[name] = (color, description)
+
+    return run
+
+
+def test_ensure_labels_creates_missing_label_from_registry() -> None:
+    # A repo that was never label-synced lacks 'triage'; ensuring it creates it
+    # with the registry's colour and description.
+    repo_labels: dict[str, tuple[str, str]] = {}
+    with patch(_RUN, side_effect=_fake_gh(repo_labels)) as mock_run:
+        ensure_labels("org/repo", ["triage"])
+    spec = _spec("triage")
+    assert repo_labels == {"triage": (spec["color"], spec["description"])}
+    assert list(mock_run.call_args.args[:5]) == ["label", "create", "triage", "--repo", "org/repo"]
+
+
+def test_ensure_labels_leaves_present_label_canonical() -> None:
+    # A label already present is not an error: the idempotent --force create
+    # succeeds and leaves it at its canonical definition.
+    spec = _spec("idea")
+    repo_labels = {"idea": (spec["color"], spec["description"]), "bug": ("ffffff", "x")}
+    with patch(_RUN, side_effect=_fake_gh(repo_labels)):
+        ensure_labels("org/repo", ["idea"])
+    assert repo_labels["idea"] == (spec["color"], spec["description"])
+    assert repo_labels["bug"] == ("ffffff", "x")  # untouched: not asked for
+
+
+def test_ensure_labels_creates_each_name_once_in_order() -> None:
+    with patch(_RUN) as mock_run:
+        ensure_labels("org/.github", ("archive", "ad-hoc", "archive"))
+    assert [c.args[2] for c in mock_run.call_args_list] == ["archive", "ad-hoc"]
+
+
+def test_ensure_labels_empty_is_a_noop() -> None:
+    with patch(_RUN) as mock_run:
+        ensure_labels("org/repo", [])
+    mock_run.assert_not_called()
+
+
+def test_ensure_labels_refuses_unknown_label_before_any_gh_call() -> None:
+    # An off-registry label is an actionable error, and nothing is created —
+    # not even the known labels named alongside it.
+    with patch(_RUN) as mock_run, pytest.raises(UnknownLabelError) as excinfo:
+        ensure_labels("org/repo", ["triage", "not-a-label", "nope"])
+    mock_run.assert_not_called()
+    assert excinfo.value.names == ("not-a-label", "nope")
+    message = str(excinfo.value)
+    assert "unknown labels 'not-a-label', 'nope'" in message
+    assert "data/labels.json" in message
+
+
+def test_unknown_label_error_singular_wording() -> None:
+    assert str(UnknownLabelError(["x"])).startswith("unknown label 'x':")
+
+
+def test_ensure_labels_gh_failure_propagates() -> None:
+    # A failing `gh label create` is never swallowed: it surfaces to the caller,
+    # which must not go on to create the issue.
+    error = github.GitHubAPIError(1, ["gh"], "", "HTTP 403: Resource not accessible")
+    with patch(_RUN, side_effect=error) as mock_run, pytest.raises(subprocess.CalledProcessError):
+        ensure_labels("org/repo", ["triage", "idea"])
+    assert mock_run.call_count == 1
+
+
+def test_ensure_labels_or_report_success() -> None:
+    with patch(_RUN) as mock_run:
+        assert ensure_labels_or_report("vrg-x", "org/repo", ["triage"]) is True
+    mock_run.assert_called_once()
+
+
+def test_ensure_labels_or_report_unknown_label(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch(_RUN) as mock_run:
+        assert ensure_labels_or_report("vrg-x", "org/repo", ["bogus"]) is False
+    mock_run.assert_not_called()
+    err = capsys.readouterr().err
+    assert err.startswith("vrg-x: unknown label 'bogus':")
+    assert "data/labels.json" in err
+
+
+def test_ensure_labels_or_report_gh_failure(capsys: pytest.CaptureFixture[str]) -> None:
+    error = github.GitHubAPIError(1, ["gh"], "", "HTTP 403: Resource not accessible")
+    with patch(_RUN, side_effect=error):
+        assert ensure_labels_or_report("vrg-x", "org/repo", ["triage", "bug"]) is False
+    err = capsys.readouterr().err
+    assert "vrg-x: could not ensure label(s) triage, bug exist in org/repo" in err
+    assert "no issue was created" in err
+    assert "HTTP 403: Resource not accessible" in err
+
+
+def test_ensure_labels_or_report_lets_missing_token_reach_cli_boundary() -> None:
+    # The missing-token message is owned by cli_main, so it is re-raised as-is.
+    error = github.MissingGitHubTokenError(1, ["gh"], "", "set the GH_TOKEN environment variable")
+    with patch(_RUN, side_effect=error), pytest.raises(github.MissingGitHubTokenError):
+        ensure_labels_or_report("vrg-x", "org/repo", ["triage"])

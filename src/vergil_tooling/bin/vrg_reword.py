@@ -96,13 +96,11 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
 
-    co_author = os.environ.get("VRG_CO_AUTHOR")
     message = build_commit_message(
         commit_type=args.commit_type,
         scope=args.scope,
         message=args.message,
         body=args.body,
-        co_author=co_author,
     )
 
     rebase_rc = _run_reword_rebase(target_sha, message)

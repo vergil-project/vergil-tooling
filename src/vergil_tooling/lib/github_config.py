@@ -99,7 +99,6 @@ _BASE_ACTION_PATTERNS = [
 
 _LANGUAGE_ACTION_PATTERNS: dict[str, list[str]] = {
     "python": ["astral-sh/*", "pypa/*"],
-    "ruby": ["ruby/*"],
     "rust": ["actions-rust-lang/*", "swatinem/*"],
 }
 
@@ -227,7 +226,6 @@ _CODEQL_SUPPORTED_LANGUAGES = frozenset(
         "python",
         "go",
         "java",
-        "ruby",
         "rust",
         # cpp aligns this list with repo_init._CODEQL_LANGUAGES, which already
         # lists cpp — the two must agree (epic vergil-project/.github#207 T7).
@@ -283,6 +281,7 @@ def desired_ci_gates_ruleset(
     ghas: bool,
     docs: bool = True,
     package: bool = False,
+    integration_versions: Sequence[str] = (),
 ) -> DesiredRuleset:
     """Derive the CI gates ruleset from project identity and CI config.
 
@@ -353,9 +352,10 @@ def desired_ci_gates_ruleset(
     if package:
         checks.append(_make_check("package / evidence"))
 
-    # Integration tests per version (when enabled)
+    # Integration tests per resolved version (when enabled). The caller resolves
+    # the versions (lib.versions), since [ci].versions may be absent.
     if ci.integration_tests:
-        for version in ci.versions:
+        for version in integration_versions:
             checks.append(_make_check(f"test / integration / {version}"))
 
     # Version check
@@ -641,6 +641,21 @@ def classify_evidence_gate(check_name: str) -> str | None:
     return None
 
 
+def resolved_integration_versions(config: VergilConfig) -> tuple[str, ...]:
+    """The versions whose ``test / integration / <version>`` checks are required.
+
+    Empty unless ``[ci].integration-tests`` is on. Otherwise they are the
+    resolver's versions (epic vergil-project/.github#407), the same set the CI
+    matrix runs, so a required check can never name a version CI does not
+    build. Window and resolution failures propagate.
+    """
+    if not config.ci.integration_tests:
+        return ()
+    from vergil_tooling.lib.versions.resolve import matrix_versions, resolve_config
+
+    return matrix_versions(resolve_config(config, repo_root=None))
+
+
 def required_evidence_gates(
     project: ProjectConfig,
     ci: CiConfig,
@@ -648,6 +663,7 @@ def required_evidence_gates(
     ghas: bool,
     docs: bool = True,
     package: bool = False,
+    integration_versions: Sequence[str] = (),
 ) -> tuple[EvidenceGate, ...]:
     """The evidence-producing gates this repo MUST emit.
 
@@ -656,7 +672,14 @@ def required_evidence_gates(
     evidence-required gates cannot drift apart. ``docs`` and ``package`` are
     threaded through identically for the same reason.
     """
-    ruleset = desired_ci_gates_ruleset(project, ci, ghas=ghas, docs=docs, package=package)
+    ruleset = desired_ci_gates_ruleset(
+        project,
+        ci,
+        ghas=ghas,
+        docs=docs,
+        package=package,
+        integration_versions=integration_versions,
+    )
     checks = _extract_status_checks(ruleset.rules) or []
 
     grouped: dict[str, list[str]] = {}
@@ -690,6 +713,7 @@ def compute_desired_state(
             ghas=ghas,
             docs=config.publish.docs,
             package=config.package is not None,
+            integration_versions=resolved_integration_versions(config),
         )
     )
 

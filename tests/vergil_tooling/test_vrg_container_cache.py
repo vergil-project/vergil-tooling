@@ -5,12 +5,15 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+from tests.vergil_tooling.conftest import window_default_resolution
 from vergil_tooling.bin.vrg_container_cache import main
+from vergil_tooling.lib.versions.resolve import ResolutionError
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
-
-    import pytest
 
 _VALID_TOML = """\
 [project]
@@ -26,6 +29,17 @@ vergil = "v2.0"
 [ci]
 versions = ["3.14"]
 """
+
+
+@pytest.fixture(autouse=True)
+def _marker_language_resolution() -> Iterator[None]:
+    # Tests drop only a language marker (no vergil.toml); resolve the language
+    # to its newest fixture-window version instead of reading a vergil.toml.
+    with patch(
+        "vergil_tooling.bin.vrg_container_cache.repo_resolution",
+        side_effect=window_default_resolution,
+    ):
+        yield
 
 
 # -- no subcommand ------------------------------------------------------------
@@ -49,6 +63,21 @@ def test_build_calls_ensure(tmp_path: Path) -> None:
         ),
     ):
         assert main(["build"]) == 0
+
+
+def test_resolution_error_exits_1(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    with (
+        patch("vergil_tooling.bin.vrg_container_cache.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_cache.detect_runtime", return_value="docker"),
+        patch(
+            "vergil_tooling.bin.vrg_container_cache.repo_resolution",
+            side_effect=ResolutionError("pin 3.11 is outside the window"),
+        ),
+        patch("vergil_tooling.bin.vrg_container_cache.ensure_cached_image") as ensure,
+    ):
+        assert main(["build"]) == 1
+    ensure.assert_not_called()
+    assert "error: pin 3.11 is outside the window" in capsys.readouterr().err
 
 
 # -- status subcommand --------------------------------------------------------

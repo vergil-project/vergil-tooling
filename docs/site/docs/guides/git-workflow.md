@@ -34,9 +34,8 @@ agent gets its own worktree under `.worktrees/`.
 
 ## Branching model
 
-Every repository's branching model is declared in
-`docs/repository-standards.md` under the `branching_model`
-attribute. Three models are supported:
+Every repository's branching model is declared in `vergil.toml`
+as `[project].branching-model`. Three models are supported:
 
 | Model | Prefixes allowed | Typical use |
 |---|---|---|
@@ -57,13 +56,20 @@ bugfix/101-fix-null-pointer
 chore/256-bump-dependency-versions
 ```
 
-Pattern: `^(feature|bugfix|hotfix|chore)/[0-9]+-[a-z0-9][a-z0-9-]*$`.
+Pattern: `^(feature|bugfix|hotfix|chore)/[0-9]+-[a-z0-9][a-z0-9.-]*$`.
+`vrg-git` applies it when the branch is created (`worktree add -b`,
+`checkout -b`, `switch -c`) and `vrg-commit` applies it again at commit
+time.
 
 The `release/*` and `promotion/*` prefixes are created by automated
-workflows and are exempt from the issue-number rule. So is
-`deps/update-<version>`, the branch `vrg-update-deps` (and the
-`vrg-release` `update-deps` stage) creates for a dependency update; only
-that driver commits to it.
+workflows and are exempt from the issue-number rule.
+
+`deps/update-<version>` is the branch `vrg-update-deps` (and the
+`vrg-release` `update-deps` stage) creates for a dependency update. It
+is not one of the branching-model prefixes, so `vrg-commit` refuses to
+commit on it. That is deliberate: only the driver commits there, and it
+runs `git commit` itself rather than going through `vrg-commit`. Any
+manual change goes on a fix branch, described next.
 
 When a dependency update fails, its fix task's branch follows the
 issue-number rule but starts from the failed update:
@@ -86,24 +92,34 @@ at the Claude Code tool level. The plugin catches additional
 patterns (heredocs, worktree convention enforcement) that the
 hook guard does not cover. Together they close the loop.
 
-For the hook guard detail, see
-[Git Hooks and Validation][hooks-doc].
+For the hook guard detail, see the
+[Claude Code Hook Guard reference](../reference/hooks/pre-commit.md).
+For every check and where it runs, see the
+[Validation Matrix](validation-matrix.md).
 For the plugin hook detail, see
 [vergil-claude-plugin/docs → Hooks](https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/site/docs/hooks/index.md).
 
 ## Developing a change
 
-The common path, for work that isn't running in parallel:
+Every change follows this path, whether or not other work is running
+in parallel.
 
-### 1. Branch from the integration branch
+### 1. Create a worktree on a new branch
+
+From the project root:
 
 ```bash
-git fetch origin develop
-git checkout -b feature/42-add-caching origin/develop
+vrg-git fetch origin
+vrg-git worktree add -b feature/42-add-caching \
+  .worktrees/issue-42-add-caching origin/develop
+cd .worktrees/issue-42-add-caching
 ```
 
-`vrg-commit` enforces the prefix and issue-number rule when
-you try to commit, so name the branch correctly now.
+`vrg-git` checks the branch name and the worktree directory when it
+creates them, so name both correctly now. The directory must be
+`.worktrees/issue-<N>-<slug>`, matching the branch
+`<type>/<N>-<slug>`. See [Parallel work with worktrees](#parallel-work-with-worktrees)
+for why every change gets its own worktree.
 
 ### 2. Commit with `vrg-commit`
 
@@ -112,8 +128,7 @@ vrg-commit \
   --type feat \
   --scope cache \
   --message "cache computed results" \
-  --body "Adds an LRU cache to the computation pipeline..." \
-  --agent claude
+  --body "Adds an LRU cache to the computation pipeline..."
 ```
 
 `vrg-commit`:
@@ -121,15 +136,16 @@ vrg-commit \
 - Validates the commit type against conventional-commit standards
   (`feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`, `ci`,
   `build`).
-- Resolves the AI agent's `Co-Authored-By` trailer from
-  `docs/repository-standards.md`.
+- Adds no AI `Co-Authored-By` trailer: AI co-author attribution is
+  not used, and Claude Code's own attribution is turned off in
+  `.claude/settings.json` (#3200).
 - Invokes `git commit` under the hood after all checks pass.
 
 **Multi-line bodies go in a file**, not a heredoc. The plugin blocks
 heredocs in CLI args because they cause escaping bugs:
 
 ```bash
-vrg-commit --type feat --message "…" --body "$(cat /tmp/body.txt)" --agent claude
+vrg-commit --type feat --scope cache --message "…" --body "$(cat /tmp/body.txt)"
 ```
 
 See the [vrg-commit reference](../reference/dev/commit.md) for the
@@ -152,14 +168,6 @@ vrg-submit-pr \
   merge) or `Ref #42` for a legacy issue. `Fixes`/`Resolves` are
   not accepted.
 - Creates the PR via `gh pr create` under the hood.
-
-!!! note "Auto-merge is disabled"
-    As of 2026-04-22 all managed repos have `allow_auto_merge=false`.
-    `vrg-submit-pr` still tries to enable auto-merge after PR creation
-    and will print a non-fatal `CalledProcessError` traceback — the
-    PR itself is created successfully and simply waits for a human
-    merge. Removing that call is tracked in
-    [vergil-tooling#268](https://github.com/vergil-project/vergil-tooling/issues/268).
 
 See the [vrg-submit-pr reference](../reference/dev/submit-pr.md).
 
@@ -233,46 +241,45 @@ See the [vrg-finalize-pr reference](../reference/dev/finalize-pr.md).
 
 ## Parallel work with worktrees
 
-Use the worktree convention when running **more than one agent in
-the same repo at the same time**, or when you want to start a second
-issue before the first is merged.
+The main worktree at the project root stays on `develop` and is
+read-only. Every change happens in its own worktree under
+`.worktrees/`, on its own branch. This lets several agents work in the
+same repository at once, and lets you start a second issue before the
+first is merged.
 
 For the full spec (rationale, trust model, failure modes, memory-path
 implications), see
 [the worktree convention][worktree-spec].
 This section is the user-level "how to."
 
-### When a worktree is required
+### What enforces it
 
-- Two or more Claude Code sessions are going to work concurrently
-  on the same repo.
-- The main working tree at the project root is serving as the
-  "canonical state" for one agent while another starts work.
+Once `.worktrees/` exists in the project root:
 
-### When a worktree is optional but recommended
+- `vrg-git checkout` and `vrg-git switch` refuse to move the main
+  worktree onto a work branch.
+- `vrg-commit` refuses a work-branch commit made from the main
+  worktree.
+- `vrg-git worktree add` refuses a worktree outside `.worktrees/`, or
+  one whose directory name does not match its branch.
 
-- Any feature branch, even for solo sequential work. The convention
-  keeps the main tree clean; once the plugin-level CWD check is
-  active (release tracked in
-  [vergil-claude-plugin#46](https://github.com/vergil-project/vergil-claude-plugin/issues/46))
-  committing from the main tree will be blocked.
+`vrg-github-repo-init` adds `.worktrees/` to the managed `.gitignore`
+block, so worktrees never show up as untracked files.
 
 ### Creating a worktree for an issue
 
 From the project root:
 
 ```bash
-git fetch origin develop
-git worktree add \
-  .worktrees/issue-42-add-caching \
-  -b feature/42-add-caching \
-  origin/develop
+vrg-git fetch origin
+vrg-git worktree add -b feature/42-add-caching \
+  .worktrees/issue-42-add-caching origin/develop
 ```
 
 Directory layout:
 
 ```text
-~/dev/github/<repo>/                      ← session starts here
+<project-root>/                           ← session starts here
   .git/
   CLAUDE.md, src/, docs/, …               ← main worktree (develop)
   .worktrees/                             ← gitignored, local-only
@@ -287,19 +294,19 @@ inside the worktree. The session's initial CWD determines the memory
 slug; starting inside a worktree creates a separate memory silo and
 loses shared project context.
 
-Then give the agent the canonical prompt (a template lives in each
+Then give the agent the canonical prompt. The template lives in each
 repo's CLAUDE.md under "Parallel AI agent development → Agent prompt
-contract"):
+contract"; filled in, it reads:
 
 ```text
 You are working on issue #42: Add LRU cache to pipeline.
 
-Your worktree is: /Users/pmoore/dev/github/<repo>/.worktrees/issue-42-add-caching/
+Your worktree is: <project-root>/.worktrees/issue-42-add-caching/
 Your branch is:   feature/42-add-caching
 
 Rules for this session:
 - Do all git operations from inside your worktree:
-    cd <absolute-worktree-path> && git <command>
+    cd <absolute-worktree-path> && vrg-git <command>
 - For Read / Edit / Write tools, use the absolute worktree path.
 - For Bash commands that touch files, cd into the worktree first
   or use absolute paths.
@@ -312,16 +319,18 @@ Rules for this session:
 
 ### Cleanup after merge
 
-`vrg-finalize-pr` handles worktree removal for the finalized branch
-when the worktree lives under the canonical `.worktrees/` directory, so
-the cleanup above is automatic. To remove one by hand:
+`vrg-finalize-pr` removes the finalized branch's worktree when it lives
+under the canonical `.worktrees/` directory, so cleanup is normally
+automatic. To remove one by hand, from the project root:
 
 ```bash
-cd ~/dev/github/<repo>
-git worktree remove .worktrees/issue-42-add-caching
-git branch -D feature/42-add-caching    # usually already deleted
-git fetch --prune                        # usually already pruned
+vrg-git worktree remove .worktrees/issue-42-add-caching
+vrg-git branch -D feature/42-add-caching   # usually already deleted
+vrg-git fetch --prune                      # usually already pruned
 ```
+
+`vrg-git branch -D` deletes a branch only when its upstream is gone or
+is an integration branch, and never deletes a protected branch.
 
 ## Releasing
 
@@ -343,24 +352,17 @@ with a fix task, and the next
 
 ## Adoption for a new repo
 
-Onboarding a brand-new repository has two entry points:
+`vrg-github-repo-init` creates a new managed repository, or adopts
+an existing one with `--adopt`, and writes every managed file in its
+canonical form: `vergil.toml`, `CLAUDE.md` (including the
+Parallel-AI-agent-development section), `.claude/settings.json`,
+`.claude/hooks/guard.sh`, the managed `.gitignore` block (including
+`.worktrees/`) and the GitHub workflows. Two guides cover it:
 
-- **[Getting Started](../getting-started.md)** — five-to-ten minute
-  quickstart.
+- **[Getting Started](../getting-started.md)** — the quickstart.
 - **[Consuming Repo Setup](consuming-repo-setup.md)** — full
-  walkthrough with rationale, CI configuration, plugin nuances,
+  walkthrough with rationale, CI configuration, plugin details,
   and troubleshooting.
-
-At a minimum, a new repo needs:
-
-1. `docs/repository-standards.md` with the six required attributes
-   (see the existing setup guide).
-2. `.claude/hooks/guard.sh` and `.claude/settings.json` wiring
-   the Claude Code hook guard to block raw `git`/`gh` commands.
-3. `.claude/settings.json` also enabling the `vergil-tooling`
-   plugin so the plugin hooks fire in Claude Code sessions.
-4. `.worktrees/` in `.gitignore` and a Parallel-AI-agent-development
-   section in CLAUDE.md so the worktree convention applies.
 
 ## Troubleshooting
 
@@ -382,43 +384,29 @@ The hook that fired will print a reason. Common signals:
 
 ### My plugin cache is stale
 
-Until plugin release automation is fully stood up
-([vergil-claude-plugin#46](https://github.com/vergil-project/vergil-claude-plugin/issues/46)),
-the plugin is consumed from a local checkout and its cache under
-`~/.claude/plugins/cache/vergil-tooling-marketplace/`. If you're
-running an old version of a hook:
+If you're running an old version of a hook, refresh the plugin from
+inside Claude Code:
 
-```bash
-git -C ~/.claude/plugins/marketplaces/vergil-tooling-marketplace pull
-# then restart Claude Code
+```text
+/plugin marketplace update vergil-marketplace
+/reload-plugins
 ```
 
-### `vrg-submit-pr` threw a CalledProcessError on auto-merge
-
-Expected since 2026-04-22 — auto-merge is disabled org-wide. The
-PR itself was created successfully. See
-[vergil-tooling#268](https://github.com/vergil-project/vergil-tooling/issues/268)
-for the planned fix.
-
-### Validator-not-on-PATH errors during PostToolUse
-
-The plugin's `validate-on-edit` hook expects those validators on
-PATH. Some are only installed inside the dev container image, not on
-the host. Hook-level PATH discovery is tracked in
-[vergil-tooling#265](https://github.com/vergil-project/vergil-tooling/issues/265).
-Workaround: run the validator explicitly via `vrg-container-run` to
-confirm the file is clean; then proceed.
+See the plugin README's
+[Update section](https://github.com/vergil-project/vergil-claude-plugin#update)
+for what each step does.
 
 ## Related
 
-- [Git Hooks and Validation][hooks-doc]
-  — pre-commit hook + validator reference
+- [Validation Matrix](validation-matrix.md)
+  — every check and where it runs
+- [Claude Code Hook Guard](../reference/hooks/pre-commit.md)
+  — hook guard and `vrg-commit` check reference
 - [Worktree convention spec][worktree-spec]
   — rationale, failure modes, trust model
 - [Releasing](releasing.md) — release workflow detail
 - [vergil-claude-plugin — Hooks][plugin-hooks]
   — plugin hook reference
 
-[hooks-doc]: https://github.com/vergil-project/vergil-tooling/blob/develop/docs/git-hooks-and-validation.md
 [worktree-spec]: https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/worktree-convention.md
 [plugin-hooks]: https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/site/docs/hooks/index.md

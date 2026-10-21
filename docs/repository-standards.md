@@ -37,18 +37,17 @@ Do not construct commit messages or PR bodies manually.
 
 ```bash
 vrg-commit \
-  --type TYPE --message MESSAGE --agent AGENT \
-  [--scope SCOPE] [--body BODY]
+  --type TYPE --scope SCOPE --message MESSAGE \
+  [--body BODY]
 ```
 
 - `--type` (required): `feat|fix|docs|style|refactor|test|chore|ci|build|revert`
 - `--message` (required): commit description
-- `--agent` (required): `claude` or `codex`
-- `--scope` (optional): conventional commit scope
+- `--scope` (required): conventional commit scope
 - `--body` (optional): detailed commit body
 
-The script resolves the correct `Co-Authored-By` identity from
-`vergil.toml` and the git hooks validate the result.
+Commits carry no AI `Co-Authored-By` trailer; Claude Code's
+attribution is turned off in `.claude/settings.json` (#3200).
 
 ### Submitting PRs
 

@@ -20,7 +20,10 @@ train (serial batch finalize, issue #1673) a freshly-behind branch can pass the
 precheck and only be caught by the merge endpoint itself, which rejects with
 "the head branch is not up to date with the base branch." That authoritative
 rejection is fed back into the same update-and-retry path rather than surfaced
-as a hard failure (issue #2856).
+as a hard failure (issue #2856). Failed checks get the same treatment: a branch
+that is BEHIND when its checks come back red is updated and re-checked rather
+than aborted, since those failures may be stale runs against the old base
+(issue #2914).
 
 "Green" means every registered check is terminal **and** every required status
 check of the base branch is registered and terminal (issue #3061). CI aggregator
@@ -132,7 +135,10 @@ def wait_and_merge(
     else:
 
         def wait(p: str) -> None:
-            github.wait_for_checks(p, required=required)
+            # Pass the lookup result through as-is: ``None`` tells the waiter
+            # the required set is unknown (no second lookup), so it falls back
+            # to registered checks but never passes a stale check (#3379).
+            github.wait_for_checks(p, required=resolved)
 
     updates = 0
     not_ready_deadline: float | None = None
@@ -194,8 +200,9 @@ def wait_and_merge(
     def _update_or_abort() -> None:
         """Update the behind branch, or abort once the merge-train cap is hit.
 
-        Shared by the mergeStateStatus precheck and the merge endpoint's own
-        stale-behind rejection so both are bounded by one branch-update cap.
+        Shared by the mergeStateStatus precheck, the failed-checks gate (#2914)
+        and the merge endpoint's own stale-behind rejection so all are bounded
+        by one branch-update cap.
         """
         nonlocal updates
         updates += 1
@@ -239,13 +246,10 @@ def wait_and_merge(
         try:
             wait(pr)
         except OrphanedCheckError as exc:
-            msg = (
-                f"PR {pr} cannot be merged: GitHub left a check-run non-terminal "
-                "after its backing workflow run completed (orphaned check-run). "
-                "Close and reopen the PR to re-run the gate, then re-run the "
-                "waiting command (vrg-release --resume for a release, vrg-finalize-pr "
-                "otherwise)."
-            )
+            # The waiter's message names each orphaned check, why it cannot pass
+            # (e.g. a required check GitHub will block on, #3379) and the
+            # close-and-reopen recovery, so carry it through verbatim.
+            msg = f"PR {pr} cannot be merged (orphaned check-run): {exc}"
             raise MergeAbortError(msg) from exc
         except ChecksTimeoutError as exc:
             # exc.stderr already names every pending check and its link.
@@ -254,6 +258,15 @@ def wait_and_merge(
 
         failed = github.failed_check_names(pr)
         if failed:
+            # The loop-top BEHIND precheck can miss a freshly-behind branch (lazy
+            # mergeStateStatus), and wait() returns at once on checks that are
+            # already terminal — so these may be stale failures from before the
+            # base advanced. Re-check BEHIND before aborting and update directly
+            # (update-branch cancels them and starts a fresh run) rather than
+            # going back through the precheck that just missed (issue #2914).
+            if github.merge_state_status(pr) == "BEHIND":
+                _update_or_abort()
+                continue
             msg = f"Checks failed on PR {pr}: {', '.join(failed)}"
             raise MergeAbortError(msg)
 

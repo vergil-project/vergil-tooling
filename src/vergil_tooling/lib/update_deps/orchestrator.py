@@ -83,6 +83,10 @@ def run_updaters_stage(state: UpdateDepsState) -> None:
     tree. Nothing is pushed for an ``update`` failure, so no PR is opened.
     """
     ctx = _require_ctx(state)
+    if ctx.landed_pr_url is not None:
+        # The update for this version already merged (#3330): with no updater
+        # run there are no changes, so every later stage is a no-op.
+        return
     selected = select_updaters(state.registry, only=state.only, skip=state.skip)
     for updater in applicable_updaters(ctx, registry=selected):
         try:
@@ -152,6 +156,9 @@ def fix_task_stage(state: UpdateDepsState) -> None:
 def finalize_stage(state: UpdateDepsState) -> None:
     """Print the held-back report (every run, spec §7.1) and remove the worktree."""
     ctx = _require_ctx(state)
+    if ctx.landed_pr_url is not None:
+        print(f"Dependency update for {ctx.version} already merged: {ctx.landed_pr_url}")
+        return
     print("Held back by declared bounds:")
     print(report.render_markdown(report.collect(ctx.results)))
     if ctx.failure is not None:

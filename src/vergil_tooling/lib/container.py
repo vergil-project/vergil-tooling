@@ -14,24 +14,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-_GHCR = "ghcr.io/vergil-project"
+    from vergil_tooling.lib.versions.resolve import Resolution
 
-_DEFAULT_VERSIONS: dict[str, str] = {
-    "ruby": "3.4",
-    "python": "3.14",
-    "go": "1.26",
-    "rust": "1.93",
-    "java": "21",
-    # C++ carries its compiler family on the version tag (spec
-    # vergil-project/.github#207 §6). The built-in default is the primary Clang
-    # image, so default_image("cpp") resolves to prod-cpp-clang:20.
-    "cpp": "clang-20",
-    # TypeScript carries its Node major on the version tag as a `node-` prefix
-    # (epic vergil-project/.github#284). The runtime family is the fixed
-    # `ts-node` image suffix and the numeric major is the tag, so the primary
-    # default default_image("typescript") resolves to prod-ts-node:24.
-    "typescript": "node-24",
-}
+_GHCR = "ghcr.io/vergil-project"
 
 _DEFAULT_PREFIX = "prod"
 
@@ -61,7 +46,6 @@ _NPM_GLOBAL_ROOT = "/usr/lib/node_modules"
 PYCACHE_PREFIX = "/tmp/pycache"  # noqa: S108
 
 _DEFAULT_TEST_COMMANDS: dict[str, str] = {
-    "ruby": "bundle install --jobs 4 && bundle exec rake",
     "python": "uv sync && uv run pytest tests/ -v",
     "go": "go test ./...",
     "rust": "cargo test",
@@ -133,8 +117,6 @@ def _package_json_has_typescript_dep(package_json: Path) -> bool:
 
 def detect_language(repo_root: Path) -> str:
     """Detect the project language from repo contents."""
-    if (repo_root / "Gemfile").is_file():
-        return "ruby"
     if (repo_root / "pyproject.toml").is_file():
         return "python"
     if (repo_root / "go.mod").is_file():
@@ -182,78 +164,40 @@ def resolve_language(repo_root: Path) -> str:
     return declared_primary_language(repo_root) or detect_language(repo_root)
 
 
-def _parse_node_version_tag(tag: str) -> str | None:
-    """Extract the Node major from a ``node-`` prefixed version tag.
-
-    TypeScript carries its Node major on ``[ci].versions`` as a ``node-`` prefixed
-    tag (e.g. ``node-24`` → ``"24"``, ``node-22`` → ``"22"``), matching the
-    ``prod-ts-node:<major>`` images T1/T2 build in vergil-containers (epic
-    vergil-project/.github#284). Returns ``None`` when *tag* carries no recognized
-    ``node-`` prefix.
-
-    This is the container-side counterpart of ``repo_init._node_major`` and mirrors
-    its ``node-`` → major parse exactly; it is kept local so the container path stays
-    self-contained (T5), the way ``repo_init`` keeps its own copy for the CI
-    scaffolding path.
-    """
-    prefix = "node-"
-    if tag.startswith(prefix):
-        return tag[len(prefix) :]
-    return None
-
-
 def default_image(
-    lang: str,
+    resolution: Resolution | None,
     *,
     fallback: bool = False,
     prefix: str = _DEFAULT_PREFIX,
-    version: str | None = None,
 ) -> str:
-    """Return the default container image for a language.
+    """Return the dev container image for a resolved repo.
 
-    When *fallback* is True, return the base image if no language
-    matches instead of returning an empty string.
+    The image is ``<prefix>-<suffix>:<tag>`` for the resolution's primary
+    version, both read from the published version window (epic
+    vergil-project/.github#407): ``3.14`` is ``prod-python:3.14`` and
+    ``clang-20`` is ``prod-cpp-clang:20``. There is no built-in default
+    version; :func:`repo_resolution` produces the resolution.
 
-    *version* overrides the built-in ``_DEFAULT_VERSIONS`` entry for *lang*
-    (issue #2468). Callers pass the repo's declared ``[ci].versions`` primary
-    (via :func:`config.primary_ci_version`) so the repo — not a tooling-side
-    constant — picks the container tag. When it is ``None`` (or empty), the
-    built-in default is used.
+    With no resolution (a repo with no language), the base image is returned
+    when *fallback* is True, else ``""``.
     """
-    # A declared *version* overrides only for a language that has a per-language
-    # image. A language-less/unknown repo has no `prod-<lang>` image, so it always
-    # uses the base — a declared [ci].versions must not resurrect a malformed
-    # `prod-:<version>` tag (#2475, the #2468 regression).
-    default_version = _DEFAULT_VERSIONS.get(lang, "")
-    if not default_version:
+    if resolution is None:
         return _fallback_image(prefix) if fallback else ""
-    resolved = version or default_version
-    # C++ carries its compiler family on the version tag: `clang-20` resolves to
-    # `prod-cpp-clang:20` — the family rides the image *suffix*, only the numeric
-    # major is the tag (spec vergil-project/.github#207 §6, matching the images
-    # T1/T2 build in vergil-containers). A malformed tag (no clang-/gcc- prefix)
-    # must not build a `prod-cpp-:<ver>` image, so it falls back like an
-    # unknown language.
-    if lang == "cpp":
-        from vergil_tooling.lib.languages import parse_cpp_version_tag
+    suffix = resolution.primary_container_suffix
+    return f"{_GHCR}/{prefix}-{suffix}:{resolution.primary_container_tag}"
 
-        parsed = parse_cpp_version_tag(resolved)
-        if parsed is None:
-            return _fallback_image(prefix) if fallback else ""
-        family, ver = parsed
-        return f"{_GHCR}/{prefix}-cpp-{family}:{ver}"
-    # TypeScript carries its Node major on the version tag: `node-24` resolves to
-    # `prod-ts-node:24` — the runtime family is the fixed `ts-node` image suffix
-    # and only the numeric major is the tag (epic vergil-project/.github#284,
-    # matching the images T1/T2 build in vergil-containers). A malformed tag (no
-    # `node-` prefix, or an empty major) must not build a `prod-ts-node:` image
-    # with an empty major, so it falls back like an unknown language.
-    if lang == "typescript":
-        major = _parse_node_version_tag(resolved)
-        if not major:
-            return _fallback_image(prefix) if fallback else ""
-        return f"{_GHCR}/{prefix}-ts-node:{major}"
-    return f"{_GHCR}/{prefix}-{lang}:{resolved}"
+
+def repo_resolution(repo_root: Path, lang: str) -> Resolution | None:
+    """Resolve *repo_root*'s versions for the container language *lang*.
+
+    *lang* is :func:`resolve_language`'s answer, so a language detected from
+    the repo's files stands in when ``vergil.toml`` declares none. Raises
+    :class:`~vergil_tooling.lib.versions.VersionsError` when the window cannot
+    be loaded or the repo's pin is outside it; there is no fallback version.
+    """
+    from vergil_tooling.lib.versions.resolve import resolve_repo
+
+    return resolve_repo(repo_root, language=lang or None)
 
 
 def worktree_parent_gitdir(repo_root: Path) -> Path | None:
@@ -304,13 +248,16 @@ def build_container_args(
     runtime: str = "docker",
     pull_policy: str = "always",
     env_prefixes: Sequence[str] = (),
+    env_names: Sequence[str] = (),
     extra_env: Mapping[str, str] | None = None,
 ) -> list[str]:
     """Build the container ``run`` argument list.
 
-    *extra_env* is set in the container as ``-e NAME=value`` after the
-    env-prefixes passthrough, so it wins over a passed-through variable of the
-    same name.
+    *env_names* are forwarded as bare ``-e NAME``: the runtime copies each value
+    from its own environment, so a secret the caller placed there never appears
+    in the argv (or in ``ps`` output). *extra_env* is set in the container as
+    ``-e NAME=value`` after the env-prefixes passthrough, so it wins over a
+    passed-through variable of the same name.
     """
     network = os.environ.get("DOCKER_NETWORK", "")
 
@@ -346,6 +293,9 @@ def build_container_args(
         for name in os.environ:
             if name.startswith(prefixes):
                 container_args.extend(["-e", name])
+
+    for name in env_names:
+        container_args.extend(["-e", name])
 
     for name, value in (extra_env or {}).items():
         container_args.extend(["-e", f"{name}={value}"])

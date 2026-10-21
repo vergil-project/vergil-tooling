@@ -213,7 +213,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--versions",
-        help="CI versions, comma-separated (default: language-derived)",
+        help=(
+            "CI versions pin, comma-separated (default: none; the repo follows the version window)"
+        ),
     )
     parser.add_argument(
         "--integration-tests",
@@ -235,7 +237,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--vergil-version",
-        help="Vergil dependency version (default: v2.1)",
+        help=(
+            "Vergil dependency version (default: [dependencies].vergil when adopting, "
+            "else the installed vergil-tooling's vX.Y)"
+        ),
     )
     parser.add_argument(
         "--license",

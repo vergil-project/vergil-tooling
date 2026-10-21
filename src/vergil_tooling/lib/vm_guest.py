@@ -184,6 +184,11 @@ def _inject_conan_token(transport: Transport, token_path: str) -> None:
     ``~/.config/vergil/conan.env`` (peer to ``claude.env``), and add an
     idempotent ``~/.bashrc`` source line so interactive shells pick it up. The
     token value is shell-quoted so any special characters survive the export.
+
+    ``conan.env`` is the canonical copy: ``vrg-container-run`` parses it at the
+    point of use (``lib/conan_token``), so the container gets the token under any
+    shell (#2902). The bashrc line is only a convenience for running ``conan``
+    by hand in an interactive bash; nothing in the tooling depends on it.
     """
     path = Path(token_path).expanduser()
     if not path.exists():

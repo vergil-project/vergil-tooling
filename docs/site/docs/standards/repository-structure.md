@@ -44,10 +44,10 @@ Use `docs/decisions/` for ADRs. Naming and structure:
 - Keep the decision record immutable once accepted; revisions require a new
   ADR that references the original
 
-Each repository must include `docs/repository-standards.md` that:
-
-- documents the repository profile attributes
-- documents project-specific overlays and deviations from shared standards
+Each repository declares its repository profile in `vergil.toml` at
+the repository root (the `[project]` table), which `vrg-repo-profile`
+validates. See
+[Consuming Repo Setup](../guides/consuming-repo-setup.md#step-4-vergiltoml-the-repository-profile).
 
 ## Examples
 

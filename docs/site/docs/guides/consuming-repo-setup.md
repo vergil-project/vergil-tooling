@@ -1,35 +1,33 @@
 # Consuming Repo Setup
 
-This is the full walkthrough for onboarding a new repository to use
+This is the full walkthrough for putting a repository under
 vergil-tooling. For the one-screen quickstart, see
 [Getting Started](../getting-started.md). For how the workflow
 unfolds once you're set up, see [Git Workflow](git-workflow.md).
 
 ## Mental model — what you're installing
 
-Vergil-tooling is delivered through three coordinated surfaces.
-The setup steps below wire up each one:
+Vergil-tooling is delivered through three coordinated surfaces:
 
 | Surface | What it is | How you consume it |
 |---|---|---|
-| **Host tools** | `vrg-container-run`, `vrg-commit`, `vrg-submit-pr`, and other host-side CLI tools. | `uv tool install` from the vergil-tooling git URL; scripts land in `~/.local/bin/`. |
-| **Dev container** | `ghcr.io/vergil-project/dev-<lang>:<version>` — pre-baked images with language runtimes, validators, and every other `vrg-*` tool installed. | Pulled automatically by `vrg-container-run`; nothing to install manually. |
-| **Claude Code plugin** | `vergil-claude-plugin` — hooks, skills, agents, and slash commands that enforce the workflow at the Claude-Code-tool level. | Declared in `.claude/settings.json`; Claude Code loads on session start. |
+| **Host tools** | `vrg-container-run`, `vrg-commit`, `vrg-submit-pr`, `vrg-github-repo-init` and the other `vrg-*` CLI tools. | `uv tool install` from the vergil-tooling git URL; scripts land in `~/.local/bin/`. |
+| **Dev container** | `ghcr.io/vergil-project/prod-*` images (`dev-*` with `vrg-container-run --prefix dev`) with the language runtimes and validators. | Pulled by `vrg-container-run`, which builds a per-branch cached image with vergil-tooling installed; nothing to install manually. |
+| **Claude Code plugin** | `vergil-claude-plugin` — hooks, skills, agents and slash commands that enforce the workflow at the Claude Code tool level. | Declared in `.claude/settings.json`; Claude Code loads it on session start. |
 
-Plus two layers that aren't installed as packages but are expected
-to be present in every consuming repo:
+Every managed repository also carries files that are not installed
+as packages but checked in:
 
-- **Claude Code hook guard** — a `.claude/hooks/guard.sh` shim
-  checked into the repo, wired via `.claude/settings.json` as a
-  `PreToolUse` hook.
-- **CI workflow** — the `standards-compliance` composite action
-  from `vergil-project/vergil-actions`, invoked from your repo's
-  `.github/workflows/ci.yml`.
+- **`vergil.toml`** — the repository profile and tooling config.
+- **Claude Code hook guard** — a `.claude/hooks/guard.sh` shim, wired
+  in `.claude/settings.json` as a `PreToolUse` hook.
+- **GitHub workflows** — a thin `ci.yml` that calls the reusable
+  workflows in `vergil-project/vergil-actions`, plus `ops.yml`,
+  `epic-rollup.yml` and, when the repo publishes, `cd.yml`.
 
-Both of these validate the repo profile and enforce branching rules
-from two different entry points. See
+`vrg-github-repo-init` generates all of them (Step 3). See
 [Git Workflow → Two enforcement layers](git-workflow.md#two-enforcement-layers)
-for how they fit together.
+for how the hook guard and `vrg-commit` fit together.
 
 ## Step 1: Host prerequisites
 
@@ -44,12 +42,11 @@ dependencies. On macOS, install it with Homebrew (`brew install uv`),
 which is how `vrg-host` reads and upgrades it. On Linux, use the
 [official installer](https://docs.astral.sh/uv/getting-started/installation/).
 
-**gh** — GitHub CLI. Both the human and agent GitHub accounts must
-be logged into `gh auth` on the developer's machine. Credential
-selection is handled automatically by `vrg-gh`. See the credential
-management design
-(`docs/specs/2026-05-14-credential-management-design.md`) for the
-full setup details.
+**gh** — GitHub CLI, logged in as you (`gh auth login`). Your own
+credentials drive `vrg-github-repo-init`, `vrg-submit-pr`,
+`vrg-finalize-pr` and `vrg-release`. AI agents do not use `gh auth`;
+they run as GitHub Apps — see [Identity Setup](account-setup.md) and
+[Credential Management](credential-management.md).
 
 **Git and Bash** — standard on Linux. On macOS, install the Xcode
 Command Line Tools (`xcode-select --install`; Homebrew needs them)
@@ -68,13 +65,12 @@ for you; see [Keeping up to date](#keeping-up-to-date).
 ## Step 2: Install vergil-tooling
 
 ```bash
-uv tool install 'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.1'
+uv tool install --python 3.14 'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.1'
 ```
 
 This installs all `vrg-*` console scripts into `~/.local/bin/`.
 `uv`'s official installer already puts that directory on `PATH`; with
 a Homebrew-installed `uv`, run `uv tool update-shell` once to add it.
-No sibling checkout, no custom PATH entries, no venv bootstrapping.
 
 Verify:
 
@@ -92,178 +88,206 @@ vrg-container-run --help   # should print usage
     with an anonymous volume, so host and container never clobber
     each other's environment. This does not apply to consuming repos.
 
-## Step 3: Claude Code hook guard
+## Step 3: Bootstrap with `vrg-github-repo-init`
 
-Every managed repo ships a `.claude/hooks/guard.sh` shim that
-blocks raw `git` and `gh` commands in Claude Code agent sessions.
-The shim delegates to `vrg-hook-guard` (when vergil-tooling is
-installed on the host) or falls back to a `jq`-based hard deny.
+`vrg-github-repo-init` is the entry point for every managed repo. It
+writes each managed file in its canonical form, so a repo it creates
+passes `vrg-validate` and the config audit from its first commit.
 
-Create `.claude/hooks/guard.sh` in your repo (the `vrg-github-repo-init`
-wizard creates this automatically for new repos):
+Run it in a human shell. It uses your `gh` credentials for
+`gh repo create` and the org-level settings, and it refuses to run
+under an agent identity.
 
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-if command -v vrg-hook-guard >/dev/null 2>&1; then
-  exec vrg-hook-guard
-fi
-# Fallback: hard-deny git/gh when vrg-hook-guard is not installed.
-INPUT="$(cat)"
-CMD="$(printf '%s' "$INPUT" | jq -r '.input.command // empty')"
-case "$CMD" in
-  git\ *|*/git\ *|gh\ *|*/gh\ *)
-    printf '{"decision":"block","reason":"raw git/gh blocked (vrg-hook-guard not installed)"}\n'
-    exit 0
-    ;;
-esac
-exit 0
-```
-
-Save this as `.claude/hooks/guard.sh`, make it executable, and
-commit it:
+### A new repository
 
 ```bash
-mkdir -p .claude/hooks
-chmod +x .claude/hooks/guard.sh
+cd ~/dev/projects/<org>        # or any subdirectory of the <org> directory
+vrg-github-repo-init <org>/<name>
 ```
 
-No per-clone configuration is required — the hook is wired via
-`.claude/settings.json` (see Step 5 below) and fires automatically
-in every Claude Code session.
+Managed repos live at `<projects>/<org>/<name>`, so the clone goes
+next to the org's other repos: the wizard walks up from the current
+directory to the first one named `<org>`. Pass `--target-dir <parent>`
+to name the clone's parent directory explicitly. The clone uses SSH
+(`git@github.com:<org>/<name>.git`).
+
+The wizard runs ten steps, each committed as `chore(init): step N - …`
+so an interrupted run resumes where it stopped:
+
+1. Create the GitHub repository (`--visibility`, default public).
+2. Clone it.
+3. Generate `vergil.toml` from your answers (see Step 4).
+4. Scaffold `VERSION`, `CLAUDE.md`, `.claude/settings.json`,
+   `.claude/hooks/guard.sh`, `README.md`, `.gitignore` and `LICENSE`.
+5. Scaffold the language skeleton, where the language has one.
+6. Generate the workflows under `.github/workflows/` (see Step 6).
+7. Scaffold the MkDocs site under `docs/site/` (when docs publishing
+   is on).
+8. Create and push `develop` and `main`, and make `develop` the
+   default branch.
+9. Apply the GitHub settings, rulesets and labels.
+10. Configure GitHub Pages (when docs publishing is on).
+
+Every prompt has a matching flag (`--description`,
+`--repository-type`, `--language`, `--branching-model`,
+`--versioning-scheme`, `--release-model`, `--versions`,
+`--license` and others). `--non-interactive` runs with no prompts and
+fails loudly if a required flag is missing; run
+`vrg-github-repo-init --help` for the full list. The
+[CLI Tools Overview](../reference/cli-tools-overview.md#vrg-github-repo-init)
+covers the born-green language skeleton.
+
+### An existing repository
+
+From the root of the repo's clone, on a feature branch:
+
+```bash
+vrg-github-repo-init --adopt
+```
+
+Adopt is an idempotent "make it canonical" run. It overwrites every
+Vergil-managed file — `vergil.toml`, `CLAUDE.md`,
+`.claude/settings.json`, `.claude/hooks/guard.sh`, `LICENSE`,
+`README.md`, `.gitignore`, the CI/CD workflows and the docs site
+config — and applies the GitHub settings, rulesets and labels. It asks
+for confirmation first (`--non-interactive` accepts it). Values in an
+existing `vergil.toml` become the prompt defaults, and any table the
+wizard does not own (`[package]`, `[container]`, `[validation]`, …)
+is kept verbatim.
+
+Adopt commits its file changes to the branch you have checked out.
+Review them — especially `README.md` and `LICENSE` — and land them
+through a PR. Re-run adopt whenever you want to bring the managed
+files back to canonical, for example after adding a `[package]` table.
+
+## Step 4: `vergil.toml` — the repository profile
+
+`vergil.toml` at the repo root is the primary configuration surface
+for the tooling. `vrg-github-repo-init` writes this shape:
+
+```toml
+[project]
+repository-type = "library"
+versioning-scheme = "semver"
+branching-model = "library-release"
+release-model = "tagged-release"
+primary-language = "python"
+
+[ci]
+versions = ["3.12", "3.13", "3.14"]
+integration-tests = false
+
+[publish]
+release = true
+docs = true
+
+[dependencies]
+vergil = "v2.1"
+```
+
+Required keys and accepted values:
+
+| Key | Values | Notes |
+|---|---|---|
+| `[project].repository-type` | `application`, `documentation`, `infrastructure`, `library`, `tooling` | Required. |
+| `[project].versioning-scheme` | `application`, `library`, `none`, `semver` | Required. |
+| `[project].branching-model` | `application-promotion`, `docs-single-branch`, `library-release` | Required. Determines which branch prefixes `vrg-commit` allows. |
+| `[project].release-model` | `artifact-publishing`, `environment-promotion`, `none`, `tagged-release` | Required. |
+| `[project].primary-language` | `cpp`, `go`, `java`, `python`, `rust`, `typescript` | Optional. Omit it for a repo with no primary language; it selects the per-language checks, container image and `.gitignore` fragment. |
+| `[ci].versions` | non-empty list of strings | Required. The PR-CI version matrix. |
+| `[dependencies].vergil` | `vX.Y` | Required. The vergil release line; new repos get the line of the vergil-tooling that created them. |
+
+`[publish]` (`release`, default `false`; `docs`, default `true`) and
+`[ci].integration-tests` (default `false`) are optional. Optional
+tables have their own references:
+[`[container]`](../reference/container-config.md),
+[`[test]`](../reference/test-config.md),
+[`[package]`](../reference/package-config.md),
+[`[dependency-update]`](../reference/dependency-update-config.md) and
+[`[vm]`](../reference/vm-spec.md).
+
+`vrg-repo-profile` validates `vergil.toml` (required keys and enum
+values) and the `README.md` structure; `vrg-validate` runs it as part
+of its common checks. See the
+[repo-profile reference](../reference/lint/repo-profile.md).
+
+## Step 5: Claude Code hook guard and settings
+
+### Hook guard
+
+`.claude/hooks/guard.sh` blocks raw `git` and `gh` commands in Claude
+Code agent sessions. It delegates to `vrg-hook-guard` when
+vergil-tooling is installed and otherwise falls back to a `jq`-based
+hard deny. `vrg-github-repo-init` writes it, executable, from the
+packaged template
+[`hook_guard_shim.sh`](https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/data/hook_guard_shim.sh).
+No per-clone configuration is required.
 
 All branch/context checks (detached HEAD, protected branches,
-branch prefix, issue number) live in `vrg-commit` itself.
+branch prefix, issue number) live in `vrg-commit` itself. See the
+[Claude Code Hook Guard reference](../reference/hooks/pre-commit.md).
 
-Full reference: [Git Hooks and Validation][hooks-doc].
+### `.claude/settings.json`
 
-## Step 4: Repository profile
+`vrg-github-repo-init` writes `.claude/settings.json` from the
+packaged template
+[`claude_settings.json`](https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/data/claude_settings.json)
+and pins the plugin marketplace to `ref: "main"`, the plugin's single
+released channel. It has four parts:
 
-Create `docs/repository-standards.md` at your repo root. This is
-the primary configuration surface for the validators:
+| Key | Purpose |
+|---|---|
+| `permissions.allow` | Allows `Bash(vrg-*)`, so the `vrg-*` tools run without a permission prompt. |
+| `hooks.PreToolUse` | Runs `${CLAUDE_PROJECT_DIR}/.claude/hooks/guard.sh` on every `Bash` tool call. |
+| `extraKnownMarketplaces` / `enabledPlugins` | Declares the `vergil-marketplace` marketplace (`vergil-project/vergil-claude-plugin`, `ref: "main"`) and enables `vergil@vergil-marketplace`. |
+| `attribution` | Turns off Claude Code's AI co-author trailer on commits and PRs. |
 
-```markdown
-# Repository Standards
-
-## Table of Contents
-
-- [AI co-authors](#ai-co-authors)
-- [Repository profile](#repository-profile)
-
-## AI co-authors
-
-- Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
-
-## Repository profile
-
-- repository_type: library
-- versioning_scheme: semver
-- branching_model: library-release
-- release_model: tagged-release
-- supported_release_lines: 1
-- primary_language: python
-```
-
-Required attributes and accepted values:
-
-| Attribute | Values | Notes |
-|---|---|---|
-| `repository_type` | `application`, `library`, `tooling`, `documentation` | Informational; some validators branch on this. |
-| `versioning_scheme` | `semver`, `calver`, `none` | How releases are versioned. |
-| `branching_model` | `library-release`, `application-promotion`, `docs-single-branch` | Determines which branch prefixes `vrg-commit` allows. |
-| `release_model` | `tagged-release`, `continuous-deploy`, `none` | Affects release-flow tooling expectations. |
-| `supported_release_lines` | integer (commonly `1`) | How many concurrent major lines you support. |
-| `primary_language` | `python`, `go`, `java`, `rust`, `ruby`, `cpp`, `typescript`, `shell`, `none` | Determines which per-language validators run. |
-
-The `AI co-authors` section defines which `Co-Authored-By` trailer
-values `vrg-commit` accepts for `--agent`. Add one line per accepted
-agent identity.
-
-Values containing `<`, `>`, or `|` are rejected as placeholders by
-`vrg-repo-profile`.
-
-## Step 5: Enable the Claude Code plugin
-
-Create `.claude/settings.json` in your repo. This file serves
-double duty: it wires the hook guard from Step 3, and it enables
-the Claude Code plugin:
+AI co-author attribution is not used (#3200). The `attribution` block
+uses empty strings, which work on every Claude Code version:
 
 ```json
-{
-  "permissions": {
-    "allow": ["Bash(vrg-*)"]
-  },
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/guard.sh"
-          }
-        ]
-      }
-    ]
-  },
-  "extraKnownMarketplaces": {
-    "vergil-marketplace": {
-      "source": {
-        "source": "github",
-        "repo": "vergil-project/vergil-claude-plugin"
-      }
-    }
-  },
-  "enabledPlugins": {
-    "vergil@vergil-marketplace": true
-  }
+"attribution": {
+  "commit": "",
+  "pr": ""
 }
 ```
 
-Commit this file. It's part of your repo's reproducible
-environment — any Claude Code session opened in this repo will
-load the hook guard and the plugin automatically.
+Commit the file. Any Claude Code session opened in the repo then
+loads the hook guard and the plugin. `vrg-github-repo-config audit`
+checks the marketplace entry, its `ref`, the enabled plugin and the
+`attribution` block against the template.
 
-What the plugin provides:
+The plugin adds these hooks:
 
-- **PreToolUse hooks** on `Bash` that block heredoc syntax and
-  (on repos that have adopted the worktree convention) commits
-  originating outside `.worktrees/<name>/`.
-- **PostToolUse hooks** that remind you to run `vrg-finalize-pr`
-  after `vrg-submit-pr`, and that surface deprecation warnings in
-  test output.
-- **Stop hooks** that prevent session exit if a PR was submitted
-  but never finalized.
+- **PreToolUse on `Bash`** — blocks raw `git commit`, raw
+  `gh pr create`, commits from the main tree once the worktree
+  convention is adopted (on `main`/`develop` otherwise), heredoc syntax, bash associative arrays,
+  host/container tool misrouting, auto-close linkage keywords,
+  agent PR merges and GitHub Contents API writes.
+- **PreToolUse on `Write`/`Edit`** — blocks writes to the main
+  worktree once the worktree convention is adopted, and limits the
+  audit identity to writing its own artifacts.
+- **PostToolUse on `Bash`** — surfaces deprecation warnings in
+  command output.
 
 See the plugin's own
 [Hooks reference](https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/site/docs/hooks/index.md)
-for the full list.
+for the details.
 
-!!! warning "Plugin install is a known rough edge"
-    The plugin itself has not yet been cut as a proper versioned
-    release; Claude Code consumes it directly from the repo's
-    default branch. Updates can be slow to propagate and the local
-    `~/.claude/plugins/marketplaces/` and `…/cache/` directories
-    sometimes need manual refreshing. All tracked in
-    [vergil-claude-plugin#46](https://github.com/vergil-project/vergil-claude-plugin/issues/46).
-    The settings above are enough to get going; plan on
-    occasionally running `git pull` in
-    `~/.claude/plugins/marketplaces/vergil-tooling-marketplace/`
-    if a hook seems outdated.
+### Worktree convention
 
-## Step 6: Worktree convention
+Every managed repo adopts the worktree convention so multiple Claude
+Code agents can work in parallel without colliding. The generated
+files already carry both halves:
 
-Every managed repo adopts the worktree convention so multiple
-Claude Code agents can work in parallel without colliding. Two
-tiny changes:
+- `.worktrees/` is in the `base` fragment of the managed `.gitignore`
+  block (see Step 7). The plugin's worktree hooks activate on that
+  line.
+- The `CLAUDE.md` consumer section includes "Parallel AI agent
+  development", the local on-ramp to the canonical
+  [worktree convention spec][worktree-spec].
 
-Make sure `.worktrees/` is in your `.gitignore`. It is one of the `base`
-fragment's entries (see
-[Step 8: Managed `.gitignore` fence and config audit](#step-8-managed-gitignore-fence-and-config-audit)),
-so a repo that carries the managed fence already has it; the plugin's
-commit-block hook activates against its presence.
-
-!!! tip "The managed fence already ignores your validation/build output"
+!!! tip "The managed block already ignores your validation/build output"
     Validation and build artifacts (coverage reports, compiled output,
     cache dirs, temporary venvs) are part of the composed managed block in
     your `.gitignore`. Keeping them ignored matters: un-gitignored output
@@ -271,57 +295,36 @@ commit-block hook activates against its presence.
     `vrg-finalize-pr` cannot auto-remove — it surfaces as
     **needs-attention** in `vrg-worktree-status` and requires the opt-in
     `--clean-dirty` (or a manual clean) to clear. Carrying the managed
-    fence means merged worktrees sweep automatically.
+    block means merged worktrees sweep automatically.
 
-Add a `## Parallel AI agent development` section to your
-`CLAUDE.md`. Every managed repo has one you can copy — they differ
-only in the repo name and example issue number. The canonical text
-lives in the worktree convention spec at
-`docs/specs/worktree-convention.md` in vergil-tooling; a short
-local section in each repo's CLAUDE.md is the on-ramp, and the
-plugin's commit-block hook activates against the presence of
-`.worktrees/` in `.gitignore`.
-
-For how to actually use worktrees during development, see
+For how to use worktrees during development, see
 [Git Workflow → Parallel work with worktrees](git-workflow.md#parallel-work-with-worktrees).
 
-## Step 7: CI workflow
+## Step 6: CI workflow
 
-Use the `standards-compliance` composite action from
-`vergil-project/vergil-actions`. Minimal workflow
-(`.github/workflows/ci.yml`):
+`vrg-github-repo-init` generates `.github/workflows/ci.yml` as a thin
+caller of the reusable workflows in `vergil-project/vergil-actions`,
+pinned to the `[dependencies].vergil` line. It passes only
+`language:` and `container-suffix:`; the reusable workflows read the
+version matrix from `[ci].versions` themselves. Depending on the
+profile, it calls `ci-audit`, `ci-quality`, `ci-security`, `ci-docs`,
+`ci-test`, `ci-version-bump` and `ci-package`. Step 9 of the wizard
+creates the CI-gates ruleset that requires the checks these jobs
+report, and refuses to apply one that requires a check `ci.yml`
+never produces.
 
-```yaml
-name: CI
+Alongside it:
 
-on:
-  pull_request:
+- **`ops.yml`** — runs the config audit on a daily, per-repo
+  staggered `cron` schedule (see Step 7).
+- **`epic-rollup.yml`** — on any issue close, closes the parent epic
+  once all of its tasks are closed.
+- **`cd.yml`** — the release and docs publishing workflow, generated
+  when `[publish]` enables either.
 
-permissions:
-  contents: read
-
-jobs:
-  standards-compliance:
-    name: "ci: standards-compliance"
-    runs-on: ubuntu-latest
-    container: ghcr.io/vergil-project/dev-base:latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Validate standards
-        uses: vergil-project/vergil-actions/actions/standards-compliance@develop
-```
-
-What the composite action runs inside the `dev-base` container:
-
-- `vrg-repo-profile` — validates `docs/repository-standards.md`
-
-The `dev-base` container already has vergil-tooling on PATH, so
-no further setup is needed in the workflow.
-
-See the [CI Architecture](ci-architecture.md) guide if you also want
-per-language test/lint/audit tiers.
+To regenerate them after a `vergil.toml` change, re-run
+`vrg-github-repo-init --adopt`. See the
+[CI Architecture](ci-architecture.md) guide for the CI tiers.
 
 ### Optional: OS packages
 
@@ -366,12 +369,12 @@ label set up front keeps the repo in line with the registry:
 vrg-ensure-label --sync --repo <owner>/<repo>
 ```
 
-## Step 8: Managed `.gitignore` fence and config audit
+## Step 7: Managed `.gitignore` block and config audit
 
 Every managed repo owes two things to the fleet's self-policing config
 audit, and both are checked nightly:
 
-1. **Your `.gitignore` must carry the vergil-managed fence.** The fleet's
+1. **Your `.gitignore` must carry the vergil-managed block.** The fleet's
    ignore vocabulary is *composed* — a language-agnostic `base` fragment
    plus the fragment for your repo's `[project].primary-language` — into a
    fenced **managed block**: a `# >>> vergil-managed: base + <language> …`
@@ -381,7 +384,7 @@ audit, and both are checked nightly:
    block to be present and to match the composed block for your language
    **exactly**, with no managed pattern left loose outside the fence. A
    language with no fragment of its own — or a repo that declares none —
-   gets the base-only fence. Genuinely repo-local entries live outside the
+   gets the base-only block. Genuinely repo-local entries live outside the
    fence and are never touched; run `vrg-gitignore-sync` to write or
    refresh the block.
 
@@ -391,45 +394,42 @@ audit, and both are checked nightly:
    scheduled job is what runs the audit each night.
 
 Both are **fatal in the nightly audit**: any drift returns exit 1 and
-turns the scheduled `ops.yml` run red. A repo bootstrapped with
-`vrg-github-repo-init` is born conforming — it scaffolds the managed
-`.gitignore` fence and a staggered-cron `ops.yml` for you. For an
-existing repo, run `vrg-gitignore-sync` to install the fence and add
-`ops.yml`.
+turns the scheduled `ops.yml` run red. `vrg-github-repo-init` writes
+both, so a new or adopted repo starts conforming.
 
 You never bump a pin to receive fragment changes: every repo tracks the
 rolling `vergil-tooling@vX.Y` tag, so an updated fragment released under
 that line is picked up on the next `vrg-gitignore-sync` run — and the
 nightly audit flags the drift until you run it.
 
-Check your repo locally before relying on the nightly run:
+The audit also checks `vergil.toml`, `CLAUDE.md`,
+`.claude/settings.json`, `.claude/hooks/guard.sh`, the reusable-workflow
+pins and the GitHub settings. Check your repo locally before relying on
+the nightly run:
 
 ```bash
 vrg-github-repo-config audit   # exit 0 compliant, 1 drift, 2 could-not-complete
 ```
 
 See the [GitHub Config Audit reference](../reference/config-audit.md)
-for the full check list and the managed-fence propagation model.
+for the full check list and the managed-block propagation model.
 
-## Step 9: Verify end-to-end
+## Step 8: Verify end-to-end
 
-Once the above is in place, sanity-check each layer:
+Once the repo is bootstrapped, sanity-check each layer:
 
 ```bash
 # 1. Host tools — should print vrg-container-run help
 vrg-container-run --help
 
-# 2. Dev container — pulls an image on first run and runs a
-#    tiny command inside it
-vrg-container-run -- echo "container ok"
+# 2. Full validation inside the dev container, including
+#    vrg-repo-profile against vergil.toml
+vrg-container-run -- vrg-validate
 
-# 3. Repo profile — runs vrg-repo-profile inside the container
-vrg-container-run -- uv run vrg-repo-profile
+# 3. Config audit — local files and GitHub settings
+vrg-github-repo-config audit
 
-# 4. Hook guard shim is present and executable
-ls -la .claude/hooks/guard.sh
-
-# 5. Hook guard (requires Claude Code session) — in a Claude
+# 4. Hook guard (requires a Claude Code session) — in a Claude
 #    Code session in this repo, have Claude try to run a raw
 #    `git commit`. The hook guard should block it.
 ```
@@ -437,7 +437,8 @@ ls -la .claude/hooks/guard.sh
 If any step fails, check the corresponding section above, then
 re-run. Common causes: `uv tool install` not run,
 `.claude/settings.json` not committed to the branch your Claude
-Code session loaded.
+Code session loaded, or a managed file edited by hand (re-run
+`vrg-github-repo-init --adopt`).
 
 ## Keeping up to date
 
@@ -466,45 +467,44 @@ Docker Desktop and macOS itself are reported but never upgraded by
 pin it with `vrg-host pin` rather than skipping upgrades — see the
 [vrg-host reference](../reference/dev/host.md#pinning-host-dependencies).
 
-The dev container images auto-update on `vrg-container-run` pulls — the
-tag is a minor version (`3.12`, `1.26`, etc.) that tracks upstream
-releases. If you need a fresh image, `docker pull
-ghcr.io/vergil-project/dev-<lang>:<version>` forces a refresh.
+`vrg-container-run` pulls the base dev image on every run and rebuilds
+its per-branch cached image when the base image, the language
+lockfile or `vergil.toml` changes, so there is nothing to refresh by
+hand.
+`vrg-container-cache status` shows the cache state for the current
+branch.
 
-The Claude Code plugin can be stale after a release; manual
-refresh:
+After a plugin release, refresh the Claude Code plugin from inside
+Claude Code:
 
-```bash
-git -C ~/.claude/plugins/marketplaces/vergil-tooling-marketplace pull
-# then restart Claude Code
+```text
+/plugin marketplace update vergil-marketplace
+/reload-plugins
 ```
+
+See the plugin README's
+[Update section](https://github.com/vergil-project/vergil-claude-plugin#update)
+for what each step does.
 
 ## Troubleshooting
 
 - **`vrg-container-run: command not found`** — `uv tool install` has
   not been run, or `~/.local/bin` is not on PATH. Re-run the install
   command from Step 2 and confirm `which vrg-container-run` resolves.
-- **`manifest unknown` when pulling a container image** — the tag
-  you're asking for doesn't exist on GHCR. Older docs referenced
-  `ghcr.io/vergil-project/dev-docs:latest` (renamed to `dev-base` in
-  vergil-tooling#252); make sure your workflow files use the new
-  name.
+- **`vrg-github-repo-init` refuses to run** — it is human-credential
+  only; run it in a human shell, not an agent session. For a new repo,
+  run it from inside the `<org>` directory or pass `--target-dir`.
 - **Plugin hooks don't fire** — check that `.claude/settings.json`
   is present, committed, and syntactically valid JSON. Restart
   Claude Code; the plugin is loaded at session start. If still
-  stuck, refresh the local plugin marketplace clone per "Keeping
-  up to date" above.
+  stuck, refresh the plugin per "Keeping up to date" above.
 - **Commits blocked with "originate from inside .worktrees/"** —
   intentional. This repo has adopted the worktree convention.
   Create a worktree for your work; see
   [Git Workflow → Parallel work with worktrees](git-workflow.md#parallel-work-with-worktrees).
-- **`vrg-submit-pr` threw a `CalledProcessError` on auto-merge** —
-  expected since 2026-04-22. Auto-merge is disabled org-wide; the
-  PR itself was created successfully. Tracked in
-  [vergil-tooling#268](https://github.com/vergil-project/vergil-tooling/issues/268).
 - **"raw git/gh blocked"** — the Claude Code hook guard is working
   as intended. Use `vrg-commit` instead of raw `git commit`, and
-  `vrg-gh` instead of raw `gh`.
+  `vrg-git`/`vrg-gh` instead of raw `git`/`gh`.
 
 For a broader troubleshooting index see
 [Git Workflow → Troubleshooting](git-workflow.md#troubleshooting).
@@ -513,13 +513,12 @@ For a broader troubleshooting index see
 
 - [Git Workflow](git-workflow.md) — how the per-change cycle
   actually unfolds once setup is done
-- [Git Hooks and Validation][hooks-doc] —
-  pre-commit hook + validator reference
+- [Validation Matrix](validation-matrix.md) — every check and
+  where it runs
 - [CI Architecture](ci-architecture.md) — per-language test/lint/audit
   tier wiring
 - [Releasing](releasing.md) — release workflow
 - [Worktree convention spec][worktree-spec]
   — canonical reference for the parallel-agent convention
 
-[hooks-doc]: https://github.com/vergil-project/vergil-tooling/blob/develop/docs/git-hooks-and-validation.md
 [worktree-spec]: https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/worktree-convention.md

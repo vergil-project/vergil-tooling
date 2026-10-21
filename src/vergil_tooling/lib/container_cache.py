@@ -10,11 +10,12 @@ import subprocess
 import sys
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib.config import primary_ci_version, vrg_install_tag
+from vergil_tooling.lib.config import vrg_install_tag
 from vergil_tooling.lib.container import (
     container_platform,
     default_image,
     detect_runtime,
+    repo_resolution,
     workspace_mount_args,
 )
 from vergil_tooling.lib.languages import CheckKind, language_commands
@@ -43,7 +44,6 @@ def _allow_stale_base() -> bool:
 
 _CACHE_FILES: dict[str, list[str]] = {
     "python": ["uv.lock", "vergil.toml"],
-    "ruby": ["Gemfile.lock", "vergil.toml"],
     "rust": ["Cargo.lock", "vergil.toml"],
     "go": ["go.sum", "vergil.toml"],
     "java": ["pom.xml", "vergil.toml"],
@@ -73,7 +73,6 @@ _DEFAULT_CACHE_FILES = ["vergil.toml"]
 # later vrg-validate runs with the lock present and warms normally.
 _WARMUP_REQUIRES: dict[str, list[list[str]]] = {
     "python": [["pyproject.toml"], ["uv.lock"]],
-    "ruby": [["Gemfile"]],
     "rust": [["Cargo.toml"]],
     "go": [["go.mod"]],
     "java": [["pom.xml"], ["mvnw"]],
@@ -597,10 +596,9 @@ def provision_dev_image(
     env_image = os.environ.get("DOCKER_DEV_IMAGE")
     if env_image:
         return env_image, "env"
-    # The repo's declared [ci].versions picks the container version, not a
-    # hardcoded default (issue #2468), so provisioning warms the same image
-    # vrg-container-run selects.
-    base = default_image(lang, fallback=True, prefix=prefix, version=primary_ci_version(repo_root))
+    # The version resolver picks the container version from the published
+    # window, so provisioning warms the same image vrg-container-run selects.
+    base = default_image(repo_resolution(repo_root, lang), fallback=True, prefix=prefix)
     image = ensure_cached_image(repo_root, lang, base, runtime=runtime, quiet_warmup=quiet_warmup)
     return image, ("cached" if image != base else "default")
 

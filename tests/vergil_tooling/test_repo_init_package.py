@@ -19,6 +19,7 @@ from vergil_tooling.lib.github_config import (
 )
 from vergil_tooling.lib.repo_init import (
     RepoInitContext,
+    _resolve_versions,
     _unmanaged_toml_sections,
     render_cd_workflow,
     render_ci_workflow,
@@ -54,6 +55,10 @@ def _packaged_python_ctx() -> RepoInitContext:
     ctx.publish_docs = True
     ctx.publish_release = True
     ctx.package = True
+    ctx.repository_type = "library"
+    ctx.branching_model = "library-release"
+    ctx.versioning_scheme = "semver"
+    ctx.resolution = _resolve_versions(render_vergil_toml(ctx))
     return ctx
 
 
@@ -196,6 +201,9 @@ _PACKAGE_TOML = (
     "[package]\n"
     'name = "demo"\n'
     'builder = "python"\n'
+    'vendor = "vergil"\n'
+    'summary = "Demo"\n'
+    'smoke = "demo --help"\n'
     "\n"
     "[package.python]\n"
     'runtime = "3.14.0"\n'
@@ -252,6 +260,9 @@ class TestAdoptPreservesPackage:
         assert written["package"] == {
             "name": "demo",
             "builder": "python",
+            "vendor": "vergil",
+            "summary": "Demo",
+            "smoke": "demo --help",
             "python": {"runtime": "3.14.0"},
         }
         assert written["container"] == {"env-prefixes": ["DEMO_"]}

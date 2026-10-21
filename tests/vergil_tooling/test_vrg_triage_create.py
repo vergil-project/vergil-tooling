@@ -2,14 +2,73 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from typing import TYPE_CHECKING
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from vergil_tooling.bin.vrg_triage_create import main, parse_args
+from vergil_tooling.lib import github
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 _MOD = "vergil_tooling.bin.vrg_triage_create"
 _URL = "https://github.com/org/.github/issues/321"
+
+
+@pytest.fixture(autouse=True)
+def label_gh() -> Iterator[MagicMock]:
+    """Stub the gh boundary under the real ensure_labels (#3373)."""
+    with patch("vergil_tooling.lib.labels.github.run") as mock_run:
+        yield mock_run
+
+
+def test_main_ensures_labels_in_target_repo_before_create(label_gh: MagicMock) -> None:
+    # Every applied label is created-if-absent in the target repo first, so a
+    # repo that was never label-synced does not fail with 'triage' not found.
+    order: list[str] = []
+    label_gh.side_effect = lambda *a: order.append(f"label:{a[2]}@{a[4]}")
+    with (
+        patch(f"{_MOD}.github.detect_org", return_value="org"),
+        patch(
+            f"{_MOD}.github.create_issue",
+            side_effect=lambda **kw: order.append("create") or _URL,
+        ),
+    ):
+        rc = main(["--title", "T", "--label", "bug"])
+    assert rc == 0
+    assert order == ["label:triage@org/.github", "label:bug@org/.github", "create"]
+
+
+def test_main_unknown_label_creates_nothing(
+    label_gh: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with (
+        patch(f"{_MOD}.github.detect_org", return_value="org"),
+        patch(f"{_MOD}.github.create_issue") as mock_create,
+    ):
+        rc = main(["--title", "T", "--label", "no-such-label"])
+    assert rc == 1
+    mock_create.assert_not_called()
+    label_gh.assert_not_called()
+    assert "vrg-triage-create: unknown label 'no-such-label'" in capsys.readouterr().err
+
+
+def test_main_label_create_failure_creates_nothing(
+    label_gh: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    label_gh.side_effect = github.GitHubAPIError(1, ["gh"], "", "HTTP 403: forbidden")
+    with (
+        patch(f"{_MOD}.github.detect_org", return_value="org"),
+        patch(f"{_MOD}.github.create_issue") as mock_create,
+    ):
+        rc = main(["--title", "T"])
+    assert rc == 1
+    mock_create.assert_not_called()
+    err = capsys.readouterr().err
+    assert "vrg-triage-create: could not ensure label(s) triage exist in org/.github" in err
+    assert "HTTP 403: forbidden" in err
 
 
 def test_parse_args_requires_title() -> None:

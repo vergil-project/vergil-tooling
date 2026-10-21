@@ -25,7 +25,6 @@ from vergil_tooling.lib.languages import (
     check_cardinality,
     ecosystem_metadata,
     language_commands,
-    parse_cpp_version_tag,
     supported_languages,
 )
 
@@ -349,46 +348,6 @@ def test_java_audit_maven_licenses_allowlist_intact() -> None:
     assert "MIT License" in licenses
     assert "Apache-2.0" in licenses
     assert len(licenses) == 9
-
-
-# -- Ruby ---------------------------------------------------------------------
-
-
-def test_ruby_install_commands() -> None:
-    cmds = language_commands("ruby", CheckKind.INSTALL)
-    assert cmds == [["bundle", "install", "--jobs", "4"]]
-
-
-def test_ruby_lint_commands() -> None:
-    joined = _joined(language_commands("ruby", CheckKind.LINT))
-    assert any("rubocop" in c for c in joined)
-
-
-def test_ruby_typecheck_commands() -> None:
-    joined = _joined(language_commands("ruby", CheckKind.TYPECHECK))
-    assert any("steep check" in c for c in joined)
-
-
-def test_ruby_test_commands() -> None:
-    joined = _joined(language_commands("ruby", CheckKind.TEST))
-    assert any("rake" in c for c in joined)
-
-
-def test_ruby_audit_commands() -> None:
-    joined = _joined(language_commands("ruby", CheckKind.AUDIT))
-    assert any("bundle-audit" in c for c in joined)
-    assert any("license_finder" in c for c in joined)
-
-
-def test_ruby_audit_license_finder_decisions_file() -> None:
-    cmds = language_commands("ruby", CheckKind.AUDIT)
-    license_finder_cmds = [c for c in cmds if c[0] == "license_finder"]
-    assert len(license_finder_cmds) == 1
-    decisions_arg = license_finder_cmds[0][1]
-    assert decisions_arg.startswith("--decisions-file=")
-    path = decisions_arg.split("=", 1)[1]
-    assert path.endswith("ruby/license_finder.yml")
-    assert "{configs}" not in decisions_arg
 
 
 # -- Rust ---------------------------------------------------------------------
@@ -878,22 +837,12 @@ def test_none_language_install_returns_empty() -> None:
 
 
 def test_configs_placeholder_is_resolved() -> None:
-    """Commands containing {configs} must resolve to a real path."""
-    cmds = language_commands("ruby", CheckKind.AUDIT)
-    for cmd in cmds:
-        for arg in cmd:
-            assert "{configs}" not in arg, f"Unresolved placeholder in: {arg}"
-
-
-def test_configs_placeholder_resolves_to_existing_directory() -> None:
-    """The resolved {configs} path must point to a real file."""
-    cmds = language_commands("ruby", CheckKind.AUDIT)
-    license_finder_cmds = [c for c in cmds if c[0] == "license_finder"]
-    if not license_finder_cmds:
-        return
-    decisions_arg = license_finder_cmds[0][1]
-    path = decisions_arg.split("=", 1)[1]
-    assert Path(path).exists(), f"Resolved path does not exist: {path}"
+    """No command of any language may carry an unresolved {configs} placeholder."""
+    for lang in supported_languages():
+        for kind in CheckKind:
+            for cmd in language_commands(lang, kind):
+                for arg in cmd:
+                    assert "{configs}" not in arg, f"Unresolved placeholder in: {arg}"
 
 
 # -- New API ------------------------------------------------------------------
@@ -901,7 +850,7 @@ def test_configs_placeholder_resolves_to_existing_directory() -> None:
 
 def test_supported_languages_includes_cpp() -> None:
     langs = supported_languages()
-    assert langs == frozenset({"python", "go", "java", "ruby", "rust", "cpp", "typescript"})
+    assert langs == frozenset({"python", "go", "java", "rust", "cpp", "typescript"})
 
 
 def test_supported_languages_is_frozen() -> None:
@@ -914,7 +863,15 @@ def test_ecosystem_metadata_python() -> None:
     assert isinstance(info, EcosystemInfo)
     assert info.build_cmd is not None
     assert info.publish_cmd is not None
-    assert info.publish_env_var is not None
+    # PyPI trusted publishing (OIDC): no token env var is named (#3394).
+    assert info.publish_env_var is None
+
+
+def test_ecosystem_metadata_rust_names_cargo_registry_token() -> None:
+    # cargo publish reads CARGO_REGISTRY_TOKEN, not CRATES_IO_TOKEN (#3394).
+    info = ecosystem_metadata("rust")
+    assert info.publish_cmd == ["cargo", "publish"]
+    assert info.publish_env_var == "CARGO_REGISTRY_TOKEN"
 
 
 def test_ecosystem_metadata_go() -> None:
@@ -989,27 +946,6 @@ def test_language_may_declare_once_cardinality() -> None:
 def test_cardinality_enum_values() -> None:
     assert Cardinality.PER_VERSION.value == "per-version"
     assert Cardinality.ONCE.value == "once"
-
-
-# -- parse_cpp_version_tag ----------------------------------------------------
-
-
-def test_parse_cpp_version_tag_clang() -> None:
-    assert parse_cpp_version_tag("clang-20") == ("clang", "20")
-
-
-def test_parse_cpp_version_tag_gcc() -> None:
-    assert parse_cpp_version_tag("gcc-15") == ("gcc", "15")
-
-
-def test_parse_cpp_version_tag_unrecognized_prefix_returns_none() -> None:
-    # A tag with no clang-/gcc- prefix carries no compiler family.
-    assert parse_cpp_version_tag("latest") is None
-    assert parse_cpp_version_tag("20") is None
-
-
-def test_parse_cpp_version_tag_empty_returns_none() -> None:
-    assert parse_cpp_version_tag("") is None
 
 
 # -- Per-language lock command (epic vergil-project/.github#342, T2) -----------

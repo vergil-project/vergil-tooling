@@ -42,10 +42,34 @@ error. The updaters are described in the
 - Run from the root checkout, on `develop`, with a clean working tree
   that matches `origin/develop`.
 - An authenticated `gh`.
-- The `deps/update-<version>` branch for the current `develop` version
-  must not exist locally or on origin. If it does, an earlier update for
-  that version is still in flight; land or close its PR and delete the
-  branch first.
+- No dependency update for the current `develop` version may be in
+  flight. See [An existing update branch](#an-existing-update-branch).
+
+## An existing update branch
+
+If the `deps/update-<version>` branch for the current `develop` version
+already exists locally or on origin, `preflight` looks up the branch's
+PRs and acts on the newest one:
+
+| Branch state | What `preflight` does |
+| ------------ | --------------------- |
+| The PR merged | The update for this version is already done. It prints the PR's URL and exits 0 without updating anything |
+| The PR was closed without merging | The branch is stale. It deletes the branch on origin and locally, naming it, then runs the update as usual |
+| A PR is open | Refuses: the update is still in flight. Land or close the PR first |
+| The branch has no PR | Refuses: the update is still in flight |
+
+`preflight` also refuses, without deleting anything, when the branch's
+tip is not the head of its newest PR. That means the branch name was
+reused after the PR finished, so the branch holds commits that no PR
+covers. If a stale branch cannot be deleted, `preflight` refuses and
+names the branch to delete by hand.
+
+After it merges its own PR, the `merge` stage deletes the
+`deps/update-<version>` branch on origin. GitHub's delete-on-merge
+setting usually deletes it first, and the stage then reports that it is
+already gone. If the delete fails, the stage prints a warning with the
+command to run by hand. The run still succeeds, because the update has
+merged.
 
 ## Stages
 
@@ -55,7 +79,7 @@ error. The updaters are described in the
 | `update` | Runs each applicable updater in order (`python`, `vergil`, `images`, then `hook`), committing each one's changes separately |
 | `validate` | Runs `vrg-container-run -- vrg-validate` once, if anything changed |
 | `prepare-pr` | Pushes the branch and opens a PR to `develop` labelled `dependency-update`, creating the label if the repo lacks it |
-| `merge` | Waits for the PR's checks and merges it, if validation passed |
+| `merge` | Waits for the PR's checks and merges it, if validation passed, then deletes its branch on origin |
 | `fix-task` | After a validation or merge failure, files the fix task and links it from the PR body |
 | `finalize` | Prints the held-back report and removes the worktree and local branch |
 | `status` | Exits non-zero if a failure was recorded |
@@ -81,6 +105,6 @@ The fix flow is in
 
 | Code | Meaning |
 | ---- | ------- |
-| 0 | Updated and merged, or nothing to update |
+| 0 | Updated and merged, nothing to update, or the update for this `develop` version had already merged |
 | 1 | A failure was recorded, a precondition failed, or the command was refused |
 | 130 | Interrupted (Ctrl-C) |

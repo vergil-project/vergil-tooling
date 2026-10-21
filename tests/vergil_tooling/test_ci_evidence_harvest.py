@@ -673,10 +673,24 @@ def test_resolve_required_gates_wires_config_ghas_and_derivation(
 
     monkeypatch.setattr(ci_evidence, "ghas_available", fake_ghas)
 
+    def fake_integration(config: Any) -> tuple[str, ...]:
+        captured["integration_config"] = config
+        return ("3.14",)
+
+    monkeypatch.setattr(ci_evidence, "resolved_integration_versions", fake_integration)
+
     sentinel = (EvidenceGate(name="test", checks=("test / unit",)),)
 
-    def fake_required(project: Any, ci: Any, *, ghas: bool, docs: bool, package: bool) -> Any:
-        captured["derivation_args"] = (project, ci, ghas, docs, package)
+    def fake_required(
+        project: Any,
+        ci: Any,
+        *,
+        ghas: bool,
+        docs: bool,
+        package: bool,
+        integration_versions: tuple[str, ...],
+    ) -> Any:
+        captured["derivation_args"] = (project, ci, ghas, docs, package, integration_versions)
         return sentinel
 
     monkeypatch.setattr(ci_evidence, "required_evidence_gates", fake_required)
@@ -690,7 +704,9 @@ def test_resolve_required_gates_wires_config_ghas_and_derivation(
     assert captured["visibility"] == "public"
     # docs is wired from config.publish.docs (here False) alongside ghas, and
     # package from the presence of a [package] section (here absent).
-    assert captured["derivation_args"] == ("PROJECT", "CI", True, False, False)
+    assert captured["derivation_args"] == ("PROJECT", "CI", True, False, False, ("3.14",))
+    # The integration checks come from the resolver, for the same config.
+    assert captured["integration_config"] is cfg
 
 
 def test_package_section_makes_harvest_download_ci_evidence_package(

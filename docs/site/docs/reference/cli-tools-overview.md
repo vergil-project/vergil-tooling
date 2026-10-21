@@ -12,15 +12,15 @@ They drive git, `gh`, SSH, and Docker operations. Installed via
 
 ### vrg-commit
 
-Construct standards-compliant conventional commits with co-author
-resolution. Performs five branch/context checks before committing
+Construct standards-compliant conventional commits (no AI co-author
+trailer; see #3200). Performs five branch/context checks before committing
 (detached HEAD, protected branch, branch prefix, issue number,
 worktree convention).
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_commit` |
-| Args | `--type` (required), `--scope`, `--message` (required), `--body`, `--agent` (required) |
+| Args | `--type` (required), `--scope` (required), `--message` (required), `--body`, `--allow-empty` |
 | Preconditions | Git repo, staged changes, not detached HEAD, not on protected branch, branch prefix matches branching model, issue number in branch name, not main worktree when `.worktrees/` present |
 | Failure mode | `SystemExit` with diagnostic on stderr for each check |
 | Exit codes | 0 success, 1 rejection or error |
@@ -188,26 +188,73 @@ ruleset rule), a branch with no PR, or a branch whose name was reused
 
 ### vrg-worktree-status
 
-List canonical `.worktrees/` worktrees with their derived lifecycle
-state, so removable cruft (merged/closed PRs whose worktree was never
-cleaned up) is distinguishable from in-flight work at a glance.
-Read-only — cleanup stays `vrg-finalize-pr`'s job. PR state is queried
-from GitHub per worktree; a failed lookup shows as `unknown` with the
-reason rather than being silently downgraded. The summary counts fall
+Show every worktree git knows about in the current repo, grouped by
+kind, so nothing with code on disk goes unseen (issue #3386). Read-only
+— cleanup stays `vrg-finalize-pr`'s job, and finalize and sweep still
+act only on development worktrees. Local branches with no worktree are
+not shown. The sections, in order:
+
+1. **Main checkout** — always shown. Its STATUS is `ok`, or `PROBLEM:`
+   followed by each issue found: not on the integration branch, dirty,
+   or mid-rebase. The integration branch comes from the
+   `branching-model` in `vergil.toml` (every current model integrates on
+   `develop`); without a `vergil.toml` it defaults to `develop` and a
+   note says so. A malformed `vergil.toml` is an error (exit 1).
+2. **Development** — issue-branch worktrees under `.worktrees/`: a
+   `feature/`, `bugfix/`, `hotfix/` or `chore/` branch carrying an issue
+   number (`<type>/<N>-<slug>`), including the `chore/<N>-dep-update-*`
+   fix branch `vrg-update-deps` asks for. An issue prefix without an
+   issue number, or an unknown prefix, goes to Other / unknown.
+   A mid-rebase worktree is placed by the branch recovered from the
+   paused rebase or its `issue-<N>-<slug>` directory name.
+3. **Release and dependency machinery** — `release/*`, `release/post-*`
+   and `deps/update-*` worktrees. These are meant to be single-run, so
+   each row shows age, PR state and dirty state and a leftover stands out.
+4. **Other / unknown** — any other branch, a detached HEAD, or a
+   worktree outside `.worktrees/` (shown by its full path).
+
+Empty sections are omitted; the summary line counts every section,
+including the empty ones. A branch that was deleted on its remote is
+still listed, with `(branch gone)` after its name. That check queries
+each remote once; if it fails, a note gives the reason.
+
+The worktree sections share one table. PR state is queried from GitHub
+per worktree; a failed lookup shows as `unknown` with the reason rather
+than being silently downgraded. The development summary counts fall
 into disjoint buckets — **active**, **needs-attention**, **stalled
 (no-pr)**, and **cruft (removable)**. A finished-but-stuck worktree
 (merged/closed but not removable: dirty, or a reused branch name whose
 merged verdict was withheld, issue #1719) is counted under
 **needs-attention** with an actionable note, never miscounted as active
-behind a "0 cruft" message (issue #2347).
+behind a "0 cruft" message (issue #2347). A merged release or deps
+worktree shows as `merged` in its own section but is not counted as
+`vrg-finalize-pr` cruft.
+
+```text
+Main checkout (integration branch: develop)
+CHECKOUT               BRANCH   DIRTY  LAST COMMIT  STATUS
+mq-gateway-replay-lab  develop  -      23d ago      ok
+
+Development
+WORKTREE                      BRANCH                          PR  STATE  WORKFLOW  AHEAD  DIRTY  LAST COMMIT  LAST MODIFIED
+issue-315-deps-security-bump  feature/315-deps-security-bump  -   no-pr  ready     1      -      1h ago       1h ago
+
+Other / unknown
+WORKTREE         BRANCH      PR  STATE     WORKFLOW  AHEAD  DIRTY  LAST COMMIT  LAST MODIFIED
+tmp-wheel-build  (detached)  -   detached  -         0      -      82d ago      82d ago
+  note: tmp-wheel-build (detached): detached HEAD — no branch checked out; check out a branch to resume work
+
+3 worktrees: main checkout (ok), 1 development, 0 release and dependency machinery, 1 other / unknown.
+Development: 0 active, 0 needs-attention, 1 stalled (no-pr), 0 cruft (removable). 1 PR prepared.
+```
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_worktree_status` |
-| Args | `--target-branch` (default: develop) |
+| Args | `--target-branch` (default: develop) — the branch AHEAD is measured against |
 | Preconditions | Git repo; `gh` CLI on PATH for PR state |
-| Failure mode | None for classification — a failed PR lookup is reported as an `unknown` row, never a crash |
-| Exit codes | 0 always (read-only) |
+| Failure mode | None for classification — a failed PR lookup is reported as an `unknown` row and a failed branch-gone check as a note, never a crash. A malformed `vergil.toml` exits 1 with the reason |
+| Exit codes | 0 success, 1 malformed `vergil.toml` |
 | Status | Active |
 
 ### vrg-ensure-label
@@ -289,7 +336,7 @@ later build once the lock is committed
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_github_repo_init` |
-| Args | `org/name` positional; `--adopt`, `--non-interactive`, `--target-dir`, and per-field overrides (`--primary-language`, `--repository-type`, …) |
+| Args | `org/name` positional; `--adopt`, `--non-interactive`, `--target-dir`, and per-field overrides (`--language`, `--repository-type`, …) |
 | Preconditions | `gh` and `git` on PATH; run from the org-layout parent (or pass `--target-dir`) |
 | Failure mode | Loud refusal on a foreign-repo CWD, an occupied clone path, or missing required non-interactive values |
 | Exit codes | 0 success, 1 error |
@@ -348,7 +395,7 @@ project language to select the Docker image; falls back to
 | Source | `vergil_tooling.bin.vrg_container_run` |
 | Args | `[--prefix <dev\|prod>] [--] <command> [args...]` (manual parsing, `--` separator) |
 | Preconditions | Git repo, `GH_TOKEN` set, Docker daemon running |
-| Failure mode | Explicit error message for missing `GH_TOKEN`; `assert_docker_available()` exits with message for Docker; `git.repo_root()` raises on non-git directory |
+| Failure mode | Explicit error message for missing `GH_TOKEN`; `assert_docker_available()` exits with message for Docker; `git.repo_root()` raises on non-git directory; in a cpp repo, an unreadable or malformed ConanCenter audit token source exits 1 naming the file (see [Container Config](container-config.md#variables-vrg-container-run-always-sets)) |
 | Exit codes | 0 (help), 1 error; command exit code after `execvp` |
 | Status | Active |
 
@@ -463,7 +510,7 @@ refuses `sudo`/`doas`/`su`/`pkexec`. See the
 
 ### vrg-generate-commands
 
-Generate MQSC command methods for all language ports (Python, Ruby,
+Generate MQSC command methods for all language ports (Python,
 Java, Go, Rust) from `mapping-data.json`. Updates target files
 between `BEGIN/END GENERATED MQSC METHODS` markers.
 
@@ -503,17 +550,19 @@ carries Ansible content.
 
 ### vrg-repo-profile
 
-Validate the repository profile in `docs/repository-standards.md`.
-Checks that all required attributes are present and none contain
-placeholder values.
+Validate the repository configuration in `vergil.toml` (required
+keys, enum values, dependencies) and the `README.md` structure
+(exactly one H1, a Table of Contents, no heading-level skips). Run by
+`vrg-validate` as a common check. See the
+[repo-profile reference](lint/repo-profile.md).
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_repo_profile` |
 | Args | None |
-| Preconditions | `docs/repository-standards.md` exists |
-| Failure mode | Exit 2 if profile file not found; exit 1 for missing or placeholder attributes |
-| Exit codes | 0 valid, 1 invalid, 2 file not found |
+| Preconditions | Run from the repository root; `vergil.toml` exists |
+| Failure mode | Exit 2 if `vergil.toml` is not found; exit 1 for an invalid `vergil.toml` or a `README.md` structure error |
+| Exit codes | 0 valid, 1 invalid, 2 `vergil.toml` not found |
 | Status | Active |
 
 ### vrg-package

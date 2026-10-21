@@ -8,11 +8,14 @@ from unittest.mock import patch
 import pytest
 
 from vergil_tooling.lib.config import (
+    _ENUMS,
     DEFAULT_CPP_STD,
     DEFAULT_CPP_STDLIB,
     DEFAULT_TYPESCRIPT_MODULE,
     DEFAULT_TYPESCRIPT_TARGET,
     DEFAULT_VALIDATION_COMMAND,
+    INTEGRATION_BRANCH_BY_MODEL,
+    REPOSITORY_TYPE_DEFINITIONS,
     CiConfig,
     ConfigError,
     ContainerConfig,
@@ -30,9 +33,9 @@ from vergil_tooling.lib.config import (
     container_system_packages,
     declared_primary_language,
     dependency_update_hook,
+    integration_branch,
     parse_test_workers,
     parse_vm_stanza,
-    primary_ci_version,
     read_config,
     validation_container_command,
     vrg_install_tag,
@@ -146,23 +149,11 @@ def test_read_config_invalid_toml(tmp_path: Path) -> None:
         read_config(tmp_path)
 
 
-def test_primary_ci_version_returns_first_declared(tmp_path: Path) -> None:
-    toml = _BASE_TOML + '\n[ci]\nversions = ["3.12", "3.13", "3.14"]\n'
-    (tmp_path / "vergil.toml").write_text(toml)
-    assert primary_ci_version(tmp_path) == "3.12"
-
-
-def test_primary_ci_version_none_when_no_config(tmp_path: Path) -> None:
-    # No vergil.toml: the caller falls back to the built-in default version.
-    assert primary_ci_version(tmp_path) is None
-
-
-def test_primary_ci_version_propagates_config_error(tmp_path: Path) -> None:
-    # A malformed config fails loudly rather than silently defaulting — matching
-    # validation_container_command / container_env_prefixes (issue #2468).
-    (tmp_path / "vergil.toml").write_text("[invalid\n")
-    with pytest.raises(ConfigError):
-        primary_ci_version(tmp_path)
+def test_repository_type_definitions_cover_every_type() -> None:
+    # Version resolution reads repository-type (epic vergil-project/.github#407),
+    # so every allowed value carries a definition.
+    assert set(REPOSITORY_TYPE_DEFINITIONS) == _ENUMS["repository-type"]
+    assert all(REPOSITORY_TYPE_DEFINITIONS.values())
 
 
 # -- declared_primary_language (asserted language for container selection) -----
@@ -198,8 +189,7 @@ def test_declared_primary_language_none_when_unset(tmp_path: Path) -> None:
 
 
 def test_declared_primary_language_propagates_config_error(tmp_path: Path) -> None:
-    # A malformed config fails loudly rather than silently defaulting — matching
-    # primary_ci_version (issue #2858).
+    # A malformed config fails loudly rather than silently defaulting (issue #2858).
     (tmp_path / "vergil.toml").write_text("[invalid\n")
     with pytest.raises(ConfigError):
         declared_primary_language(tmp_path)
@@ -279,6 +269,14 @@ def test_config_warns_on_claude_plugin_language(
     cfg = read_config(tmp_path)
     assert cfg.project.primary_language is None
     assert "unrecognized primary-language 'claude-plugin'" in capsys.readouterr().err
+
+
+def test_config_rejects_retired_ruby_language(tmp_path: Path) -> None:
+    """A retired language fails loudly instead of warning and reading as unset."""
+    toml = _VALID_TOML.replace('primary-language = "python"', 'primary-language = "ruby"')
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=r"primary-language 'ruby' is no longer supported"):
+        read_config(tmp_path)
 
 
 def test_config_accepts_cpp_language(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -398,12 +396,12 @@ def test_read_config_ci_section(tmp_path: Path) -> None:
     assert cfg.ci == CiConfig(versions=["3.12", "3.13", "3.14"], integration_tests=True)
 
 
-def test_primary_version_defaults_to_highest(tmp_path: Path) -> None:
-    # With no explicit [ci].primary-version, the primary is the numerically
-    # highest declared version, regardless of list order.
+def test_primary_version_unset_is_empty(tmp_path: Path) -> None:
+    # Without an explicit [ci].primary-version the raw field is empty; the
+    # resolver (lib.versions) makes the newest resolved version the primary.
     toml = _BASE_TOML + '[ci]\nversions = ["3.12", "3.14", "3.13"]\n'
     (tmp_path / "vergil.toml").write_text(toml)
-    assert read_config(tmp_path).ci.primary_version == "3.14"
+    assert read_config(tmp_path).ci.primary_version == ""
 
 
 def test_primary_version_explicit_override(tmp_path: Path) -> None:
@@ -421,14 +419,6 @@ def test_primary_version_non_string_raises(tmp_path: Path) -> None:
         read_config(tmp_path)
 
 
-def test_primary_version_defaults_to_highest_prefixed(tmp_path: Path) -> None:
-    # Non-Python versions carry a family prefix (clang-/gcc-/node-); the default
-    # still picks the numerically-highest entry, ignoring the prefix.
-    toml = _BASE_TOML + '[ci]\nversions = ["node-22", "node-24"]\n'
-    (tmp_path / "vergil.toml").write_text(toml)
-    assert read_config(tmp_path).ci.primary_version == "node-24"
-
-
 def test_read_config_ci_no_integration_tests(tmp_path: Path) -> None:
     toml = _BASE_TOML + '[ci]\nversions = ["3.14"]\n'
     (tmp_path / "vergil.toml").write_text(toml)
@@ -437,11 +427,11 @@ def test_read_config_ci_no_integration_tests(tmp_path: Path) -> None:
     assert cfg.ci.integration_tests is False
 
 
-def test_read_config_ci_missing_versions(tmp_path: Path) -> None:
+def test_read_config_ci_versions_optional(tmp_path: Path) -> None:
+    # No [ci].versions: the repo follows the published version window.
     toml = _BASE_TOML + "[ci]\nintegration-tests = true\n"
     (tmp_path / "vergil.toml").write_text(toml)
-    with pytest.raises(ConfigError, match="versions"):
-        read_config(tmp_path)
+    assert read_config(tmp_path).ci.versions is None
 
 
 def test_read_config_ci_empty_versions(tmp_path: Path) -> None:
@@ -2082,3 +2072,31 @@ def test_overlay_is_ignored_without_package_section(tmp_path: Path) -> None:
     (tmp_path / "packaging").mkdir()
     (tmp_path / "packaging" / "nfpm.overlay.yaml").write_text("name: other\n")
     assert read_config(tmp_path).package is None
+
+
+# -- integration_branch (issue #3386) ------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "model", ["library-release", "application-promotion", "docs-single-branch"]
+)
+def test_integration_branch_per_model(tmp_path: Path, model: str) -> None:
+    toml = _VALID_TOML.replace('"library-release"', f'"{model}"')
+    (tmp_path / "vergil.toml").write_text(toml)
+    assert integration_branch(tmp_path) == INTEGRATION_BRANCH_BY_MODEL[model]
+
+
+def test_integration_branch_every_model_is_mapped() -> None:
+    # A new branching model must declare its integration branch, never fall
+    # through to a silent default.
+    assert set(INTEGRATION_BRANCH_BY_MODEL) == _ENUMS["branching-model"]
+
+
+def test_integration_branch_none_when_no_config(tmp_path: Path) -> None:
+    assert integration_branch(tmp_path) is None
+
+
+def test_integration_branch_propagates_config_error(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text("[invalid\n")
+    with pytest.raises(ConfigError):
+        integration_branch(tmp_path)

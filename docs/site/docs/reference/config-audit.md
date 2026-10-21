@@ -56,10 +56,34 @@ divergence:
 | `_check_vergil_toml` | `vergil.toml` present and parseable |
 | `_check_hook_guard_shim` | `.claude/hooks/guard.sh` present |
 | `_check_claude_md` | `CLAUDE.md` carries the canonical consumer template verbatim |
-| `_check_claude_settings` | `.claude/settings.json` marketplace + `enabledPlugins` match the template |
+| `_check_claude_settings` | `.claude/settings.json` marketplace, `enabledPlugins` and `attribution` match the template |
 | `_check_workflow_refs` | every `vergil-*` reusable-workflow pin matches the `vergil.toml` version |
 | `_check_gitignore` | `.gitignore` carries the correct `base + <language>` vergil-managed fence **(#311, #325)** |
 | `_check_required_workflows` | `ops.yml` is present, wires the audit, and is scheduled **(new, #311)** |
+
+### `_check_claude_settings` — attribution
+
+`.claude/settings.json` must carry exactly:
+
+```json
+"attribution": { "commit": "", "pr": "" }
+```
+
+This turns off Claude Code's AI `Co-Authored-By` trailer on commits and
+PRs; AI co-author attribution is not used
+([#3200](https://github.com/vergil-project/vergil-tooling/issues/3200)).
+The empty-string form is required: `attribution: false` needs a newer
+Claude Code and makes older versions skip the whole settings file. A
+missing or different value is a hard failure,
+`DiffItem(field="local.claude_settings.attribution", ...)`, whose
+expected value names the key and #3200. Fix it by adding the block above
+to the repo's checked-in `.claude/settings.json`.
+
+The check was warning-only while the fleet was swept and became strict
+in [#3361](https://github.com/vergil-project/vergil-tooling/issues/3361).
+There is no exemption for dormant repos: a dormant repo whose nightly
+audit still runs fails until the key is added. Each dormant repo carries
+a backlog issue to add the key when it is revived.
 
 ### `_check_gitignore` — managed fence
 
@@ -122,7 +146,7 @@ language-agnostic `base` (editors, OS, secrets, logs, Vergil internals
 like `.venv/` / `.worktrees/` / `.vergil/` / `.superpowers/`, and all
 build/validation/CI-evidence output including the mkdocs build path
 `docs/site/site/`) plus the fragment for its `[project].primary-language`
-(Python, TypeScript/Node, Go, Ruby, C++; Rust and Java are managed with
+(Python, TypeScript/Node, Go, C++; Rust and Java are managed with
 an empty fragment). A repo that declares no fragment language gets the
 base-only block.
 

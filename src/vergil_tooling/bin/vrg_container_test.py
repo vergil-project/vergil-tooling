@@ -15,15 +15,17 @@ from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import git
 from vergil_tooling.lib.cli import cli_main
-from vergil_tooling.lib.config import container_env_prefixes, primary_ci_version
+from vergil_tooling.lib.config import container_env_prefixes
 from vergil_tooling.lib.container import (
     _DEFAULT_TEST_COMMANDS,
     build_container_args,
     default_image,
     detect_language,
     detect_runtime,
+    repo_resolution,
     resolve_language,
 )
+from vergil_tooling.lib.versions import VersionsError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -48,9 +50,13 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     env_prefixes = container_env_prefixes(repo_root)
-    container_args = build_test_container_args(
-        repo_root, lang, runtime=runtime, env_prefixes=env_prefixes
-    )
+    try:
+        container_args = build_test_container_args(
+            repo_root, lang, runtime=runtime, env_prefixes=env_prefixes
+        )
+    except VersionsError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
 
     if not _runtime_is_available(runtime):
         print(
@@ -91,9 +97,7 @@ def build_test_container_args(
     env_prefixes: Sequence[str] = (),
 ) -> list[str]:
     """Build the container run argument list for test execution."""
-    image = os.environ.get("DOCKER_DEV_IMAGE") or default_image(
-        lang, version=primary_ci_version(repo_root)
-    )
+    image = os.environ.get("DOCKER_DEV_IMAGE") or default_image(repo_resolution(repo_root, lang))
     test_cmd = os.environ.get("DOCKER_TEST_CMD") or _DEFAULT_TEST_COMMANDS.get(lang, "")
     network = os.environ.get("DOCKER_NETWORK", "")
 

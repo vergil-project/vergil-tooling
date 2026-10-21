@@ -1,9 +1,9 @@
 # Getting Started
 
-A five-to-ten minute quickstart for wiring up a new repository to
-use vergil-tooling. For the detailed walkthrough with rationale,
-CI config, and troubleshooting, see
-[Consuming Repo Setup](guides/consuming-repo-setup.md).
+A quickstart for putting a repository under vergil-tooling. You
+install the host tools, let `vrg-github-repo-init` create (or adopt)
+the repository, and verify the result. For the detailed walkthrough,
+see [Consuming Repo Setup](guides/consuming-repo-setup.md).
 
 ## Prerequisites
 
@@ -16,14 +16,13 @@ Install these on your host:
 - **Docker** — the dev container engine
 - **uv** — Python package manager
   ([install](https://docs.astral.sh/uv/getting-started/installation/))
-- **`gh` CLI** — GitHub CLI, authenticated
+- **`gh` CLI** — GitHub CLI, authenticated as you
   (`gh auth login`)
 - **macOS or Linux** (Bash)
 
-Everything else — language runtimes, linters, test frameworks, and
-most `vrg-*` tools — lives inside the dev container. The host-side
-`vrg-*` tools (`vrg-container-run`, `vrg-commit`, `vrg-submit-pr`, etc.)
-are installed via `uv tool install`.
+Everything else — language runtimes, linters, test frameworks — lives
+inside the dev container. The `vrg-*` tools are installed on the host
+with `uv tool install`.
 
 This list is the minimum to get started. On macOS, once vergil-tooling is
 installed (step 1), `vrg-host status` is the complete host-dependency check: it
@@ -33,11 +32,12 @@ git and the agent-VM tools, and flags anything missing or out of date.
 ## 1. Install vergil-tooling on the host
 
 ```bash
-uv tool install 'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.1'
+uv tool install --python 3.14 'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.1'
 ```
 
-This installs all `vrg-*` console scripts into `~/.local/bin/`,
-which `uv`'s installer already puts on `PATH`.
+This installs all `vrg-*` console scripts into `~/.local/bin/`.
+`uv`'s official installer already puts that directory on `PATH`; with
+a Homebrew-installed `uv`, run `uv tool update-shell` once to add it.
 
 ```bash
 which vrg-container-run    # should resolve to ~/.local/bin/vrg-container-run
@@ -63,108 +63,92 @@ to set up the apt or dnf repository. Check the downloaded signing key
 against the pinned primary fingerprint
 `B3A1D804DC03AB036566A4E367861822166ECABE`.
 
-## 2. Configure the Claude Code hook guard
+## 2. Create or adopt the repository
 
-Every managed repo ships a `.claude/hooks/guard.sh` shim that blocks
-raw `git` and `gh` commands in agent sessions. The shim is wired via
-`.claude/settings.json` and requires no per-clone configuration. See
-[Consuming Repo Setup](guides/consuming-repo-setup.md) for the full
-setup.
+`vrg-github-repo-init` builds a managed repository that conforms from
+its first commit. Run it in a human shell: it uses your `gh`
+credentials for `gh repo create` and the GitHub settings, and it
+refuses to run under an agent identity.
 
-## 3. Enable the Claude Code plugin
+**A new repository.** Run it from inside the directory named after
+the GitHub org (or any subdirectory of it), or name the clone's
+parent directory with `--target-dir`:
 
-Create `.claude/settings.json` in your repo:
+```bash
+cd ~/dev/projects/<org>
+vrg-github-repo-init <org>/<name>
+```
+
+The wizard prompts for the project description, repository type,
+primary language, branching model, versioning scheme, release model
+and the other `vergil.toml` values. Every prompt has a matching flag;
+`--non-interactive` runs with no prompts and fails loudly if a
+required flag is missing (see `vrg-github-repo-init --help`).
+
+**An existing repository.** From the root of its clone, on a feature
+branch:
+
+```bash
+vrg-github-repo-init --adopt
+```
+
+Adopt overwrites every Vergil-managed file to its canonical state —
+`vergil.toml`, `CLAUDE.md`, `.claude/settings.json`,
+`.claude/hooks/guard.sh`, `LICENSE`, `README.md`, `.gitignore`, the
+CI/CD workflows and the docs site config — and applies the GitHub
+settings, rulesets and labels. It asks for confirmation first. Values
+already in `vergil.toml` become the prompt defaults, and hand-written
+tables such as `[package]` or `[container]` are kept. Review the
+resulting commits and land them through a PR.
+
+Either way, the repository ends up with:
+
+| Path | What it is |
+|---|---|
+| `vergil.toml` | The repository profile and tooling config |
+| `CLAUDE.md` | Agent guidance, including the canonical consumer section (worktree convention, shell command policy, validation) |
+| `.claude/settings.json` | Wires the hook guard, enables the Vergil Claude Code plugin, and turns off Claude Code's AI co-author attribution |
+| `.claude/hooks/guard.sh` | Hook-guard shim that blocks raw `git`/`gh` in agent sessions |
+| `.gitignore` | The vergil-managed ignore block for your language, including `.worktrees/` |
+| `.github/workflows/` | `ci.yml`, `ops.yml` (nightly config audit), `epic-rollup.yml`, and `cd.yml` when the repo publishes releases or docs |
+
+`.claude/settings.json` is generated from the packaged template
+[`claude_settings.json`](https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/data/claude_settings.json),
+with the plugin marketplace pinned to `ref: "main"`. Its
+`attribution` block is what keeps Claude Code from adding an AI
+co-author trailer to commits and PRs; AI co-author attribution is not
+used (#3200):
 
 ```json
-{
-  "extraKnownMarketplaces": {
-    "vergil-tooling-marketplace": {
-      "source": {
-        "source": "github",
-        "repo": "vergil-project/vergil-claude-plugin"
-      }
-    }
-  },
-  "enabledPlugins": {
-    "vergil-tooling@vergil-tooling-marketplace": true
-  }
+"attribution": {
+  "commit": "",
+  "pr": ""
 }
 ```
 
-Commit this file — it's part of the repo's reproducible setup.
-
-!!! note "Plugin install is a known rough edge"
-    The install/update flow for the plugin itself is tracked in
-    [vergil-claude-plugin#46](https://github.com/vergil-project/vergil-claude-plugin/issues/46).
-    For now, this settings.json entry is enough for Claude Code to
-    discover and enable the plugin on the next session restart.
-
-## 4. Create your repository profile
-
-Create `docs/repository-standards.md` with the six required
-attributes (and AI co-author entries if you'll use them):
-
-```markdown
-# Repository Standards
-
-## Table of Contents
-
-- [AI co-authors](#ai-co-authors)
-- [Repository profile](#repository-profile)
-
-## AI co-authors
-
-- Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
-
-## Repository profile
-
-- repository_type: library
-- versioning_scheme: semver
-- branching_model: library-release
-- release_model: tagged-release
-- supported_release_lines: 1
-- primary_language: python
-```
-
-Pick the values that match your repo. See
-[Consuming Repo Setup](guides/consuming-repo-setup.md) for the full
-attribute reference.
-
-## 5. Adopt the worktree convention
-
-Add `.worktrees/` to your `.gitignore`:
+## 3. Verify
 
 ```bash
-echo '.worktrees/' >> .gitignore
+# Full validation, inside the dev container
+vrg-container-run -- vrg-validate
+
+# Config audit: vergil.toml, CLAUDE.md, .claude/, .gitignore, workflows,
+# and the GitHub settings (exit 0 compliant, 1 drift, 2 could not complete)
+vrg-github-repo-config audit
 ```
 
-Add a "Parallel AI agent development" section to your `CLAUDE.md`
-describing the convention. Every managed repo already has one you
-can copy from; the canonical source is
-[the worktree convention spec][worktree-spec].
-
-## 6. Verify
-
-```bash
-# Host tooling reachable
-vrg-container-run --help
-
-# Repo profile validates (runs inside the container)
-vrg-container-run -- uv run vrg-repo-profile
-
-# Hook guard shim is present and executable
-ls -la .claude/hooks/guard.sh
-```
-
-If all three behave as expected, you're wired up correctly. The hook
-guard fires on Claude Code `Bash` tool invocations — to test it end
-to end, have Claude Code try a raw `git commit` in a session.
+`vrg-validate` includes `vrg-repo-profile`, which checks `vergil.toml`.
+The hook guard fires on Claude Code `Bash` tool calls; to test it end
+to end, have Claude Code try a raw `git commit` in a session in the
+repository.
 
 ## Next steps
 
 - **[Consuming Repo Setup](guides/consuming-repo-setup.md)** —
-  detailed walkthrough including CI workflow, plugin nuances, and
-  troubleshooting.
+  what each generated file does, the `vergil.toml` profile, CI, the
+  config audit, keeping up to date, and troubleshooting.
+- **[Identity Setup](guides/account-setup.md)** — the GitHub App
+  identities that AI agents run as.
 - **[Git Workflow](guides/git-workflow.md)** — branching, commit /
   PR / finalize cycle, two-layer enforcement, worktrees in practice.
 - **[Worktree convention spec][worktree-spec]**

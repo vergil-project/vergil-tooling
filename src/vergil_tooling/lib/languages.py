@@ -265,31 +265,6 @@ _CPP_TOOLCHAIN_FILE = "build/conan_toolchain.cmake"
 # read a sibling worktree's sources or build tree (#2906).
 _WORKTREES_DIR = ".worktrees"
 
-# Recognized C++ compiler families, in declared-primary precedence order. The
-# `[ci].versions` tags carry the compiler family as a `<family>-<version>`
-# prefix (e.g. ``clang-20``), per spec vergil-project/.github#207 §6.
-_CPP_FAMILIES = ("clang", "gcc")
-
-
-def parse_cpp_version_tag(tag: str) -> tuple[str, str] | None:
-    """Split a C++ compiler-family version tag into ``(family, version)``.
-
-    C++ carries its compiler-family × version axis on ``[ci].versions`` as a
-    ``clang-``/``gcc-`` prefixed tag (e.g. ``clang-20`` → ``("clang", "20")``,
-    ``gcc-15`` → ``("gcc", "15")``), per spec vergil-project/.github#207 §6.
-    Returns ``None`` when *tag* carries no recognized family prefix.
-
-    This is the single source of truth for the tag format, shared by the
-    container image-resolution path (:mod:`container`) and the CI scaffolding
-    path (:mod:`repo_init`) so the two can never drift on the naming.
-    """
-    for family in _CPP_FAMILIES:
-        prefix = f"{family}-"
-        if tag.startswith(prefix):
-            return family, tag[len(prefix) :]
-    return None
-
-
 # -- Python TEST command (epic vergil-project/.github#333, Task 6) -------------
 #
 # The Python TEST command is *computed* by ``build_python_test_argv`` rather than
@@ -385,7 +360,7 @@ _REGISTRY: dict[str, Language] = {
         ecosystem=EcosystemInfo(
             build_cmd=["uv", "build"],
             publish_cmd=["uv", "publish"],
-            publish_env_var="PYPI_TOKEN",
+            publish_env_var=None,
         ),
     ),
     "go": Language(
@@ -442,24 +417,6 @@ _REGISTRY: dict[str, Language] = {
             publish_env_var="MAVEN_GPG_PASSPHRASE",
         ),
     ),
-    "ruby": Language(
-        name="ruby",
-        checks={
-            CheckKind.INSTALL: [["bundle", "install", "--jobs", "4"]],
-            CheckKind.LINT: [["bundle", "exec", "rubocop"]],
-            CheckKind.TYPECHECK: [["bundle", "exec", "steep", "check"]],
-            CheckKind.TEST: [["bundle", "exec", "rake"]],
-            CheckKind.AUDIT: [
-                ["bundle", "exec", "bundle-audit", "check", "--update"],
-                ["license_finder", "--decisions-file={configs}/ruby/license_finder.yml"],
-            ],
-        },
-        ecosystem=EcosystemInfo(
-            build_cmd=["gem", "build"],
-            publish_cmd=["gem", "push"],
-            publish_env_var="RUBYGEMS_API_KEY",
-        ),
-    ),
     "rust": Language(
         name="rust",
         checks={
@@ -475,7 +432,7 @@ _REGISTRY: dict[str, Language] = {
         ecosystem=EcosystemInfo(
             build_cmd=["cargo", "build", "--release"],
             publish_cmd=["cargo", "publish"],
-            publish_env_var="CRATES_IO_TOKEN",
+            publish_env_var="CARGO_REGISTRY_TOKEN",
         ),
     ),
     # C++ (epic vergil-project/.github#207, T5). CMake + Conan 2; two co-equal

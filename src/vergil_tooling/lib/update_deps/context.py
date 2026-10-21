@@ -53,6 +53,9 @@ class UpdateDepsContext:
     version: str | None = None
     failure: DepsFailure | None = None
     fix_issue_url: str | None = None
+    # Set by preflight when deps/update-<version>'s PR already merged (#3330):
+    # the update for this version is done, so the run does nothing and exits 0.
+    landed_pr_url: str | None = None
 
     @property
     def has_work(self) -> bool:

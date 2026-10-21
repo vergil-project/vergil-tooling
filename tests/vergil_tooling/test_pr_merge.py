@@ -107,6 +107,17 @@ def test_wait_and_merge_aborts_on_orphaned_check() -> None:
     gh.merge.assert_not_called()
 
 
+def test_wait_and_merge_orphan_abort_carries_the_waiters_detail() -> None:
+    # The waiter's message (which check, why it cannot pass, how to recover)
+    # must reach the operator, not be replaced by a generic one (#3379).
+    detail = "test / evidence (job succeeded, but it is a required status check ...)"
+    gh = _gh()
+    gh.wait_for_checks.side_effect = OrphanedCheckError(detail)
+    with patch(_MOD + ".github", gh), pytest.raises(MergeAbortError) as excinfo:
+        wait_and_merge("934", strategy="squash")
+    assert str(excinfo.value) == f"PR 934 cannot be merged (orphaned check-run): {detail}"
+
+
 def test_merge_train_guard_exhausts() -> None:
     gh = _gh(merge_states=["BEHIND"] * 10)
     with (
@@ -224,11 +235,17 @@ def test_default_waiter_receives_resolved_required_checks() -> None:
 
 
 def test_required_lookup_failure_falls_back_to_registered_checks() -> None:
-    """``None`` (lookup failed; the lib already warned) waits on registered checks only."""
+    """``None`` (lookup failed; the lib already warned) waits on registered checks only.
+
+    The waiter receives ``None`` itself — not ``frozenset()`` — so it knows the
+    required set is unknown and never passes a stale check (#3379); it is not
+    looked up a second time.
+    """
     gh = _gh(required=None)
     with patch(_MOD + ".github", gh):
         wait_and_merge("99", strategy="squash")
-    gh.wait_for_checks.assert_called_once_with("99", required=frozenset())
+    gh.required_check_names.assert_called_once_with("99")
+    gh.wait_for_checks.assert_called_once_with("99", required=None)
     gh.merge.assert_called_once()
 
 
@@ -465,4 +482,50 @@ def test_on_branch_updated_failure_propagates_before_merge() -> None:
         pytest.raises(RuntimeError, match="local branch diverged"),
     ):
         wait_and_merge("99", strategy="merge", on_branch_updated=hook)
+    gh.merge.assert_not_called()
+
+
+# --- #2914: stale failed checks on a BEHIND branch update, not abort -------
+
+
+def test_stale_failed_check_on_behind_branch_updates_and_merges() -> None:
+    """The lazy mergeStateStatus precheck misses a freshly-behind branch, the
+    waiter returns at once on stale terminal checks, and one of them is red —
+    the failed-checks gate must re-check BEHIND and update, not abort."""
+    # iteration 1: CLEAN pre-wait (lazy miss), BEHIND at the failed-checks recheck
+    # iteration 2: CLEAN pre-wait, CLEAN post-wait -> merge
+    gh = _gh(merge_states=["CLEAN", "BEHIND", "CLEAN", "CLEAN"])
+    gh.failed_check_names.side_effect = [["quality / common"], []]
+    with patch(_MOD + ".github", gh), patch(_MOD + ".time.sleep"):
+        wait_and_merge("208", strategy="squash")
+    gh.update_branch.assert_called_once_with("208")
+    assert gh.wait_for_checks.call_count == 2
+    gh.merge.assert_called_once_with("208", strategy="squash")
+
+
+def test_genuine_failed_check_on_current_branch_still_aborts() -> None:
+    """A red check on a branch that is not BEHIND is a real failure — abort
+    without touching the branch."""
+    gh = _gh(merge_states=["CLEAN", "CLEAN"], failed=["quality / common"])
+    with (
+        patch(_MOD + ".github", gh),
+        patch(_MOD + ".time.sleep"),
+        pytest.raises(MergeAbortError, match="Checks failed on PR 208: quality / common"),
+    ):
+        wait_and_merge("208", strategy="squash")
+    gh.update_branch.assert_not_called()
+    gh.merge.assert_not_called()
+
+
+def test_stale_failed_check_on_behind_branch_respects_update_cap() -> None:
+    """A branch that keeps coming back red and BEHIND is bounded by the shared
+    branch-update cap — it never loops forever."""
+    gh = _gh(merge_states=["CLEAN", "BEHIND"] * 10, failed=["quality / common"])
+    with (
+        patch(_MOD + ".github", gh),
+        patch(_MOD + ".time.sleep"),
+        pytest.raises(MergeAbortError, match="still behind"),
+    ):
+        wait_and_merge("208", strategy="squash")
+    assert gh.update_branch.call_count == 5
     gh.merge.assert_not_called()

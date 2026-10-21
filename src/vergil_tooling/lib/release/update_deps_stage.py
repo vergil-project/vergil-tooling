@@ -49,6 +49,12 @@ def update_deps(ctx: ReleaseContext) -> None:
     git.run("fetch", "origin", "develop")
     git.run("merge", "--ff-only", "origin/develop")
     deps = run_update(repo_root=ctx.repo_root)
+    if deps.landed_pr_url is not None:
+        # A re-run (e.g. --resume) after the update for this develop version
+        # already merged: done, not a failure (#3330).
+        ctx.deps_landed_pr_url = deps.landed_pr_url
+        ctx.deps_pr_url = deps.landed_pr_url
+        return
     ctx.deps_report = report.render_markdown(report.collect(deps.results))
     ctx.deps_pr_url = deps.pr_url
     ctx.deps_fix_issue_url = deps.fix_issue_url

@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from vergil_tooling.lib.github_config import DesiredState
+    from vergil_tooling.lib.versions.resolve import Resolution
 
 from vergil_tooling.lib import git, github, gitignore, lang_scaffold, repo_config
 from vergil_tooling.lib.config import _ENUMS
@@ -68,6 +69,7 @@ class RepoInitContext:
     branching_model: str = ""
     versioning_scheme: str = ""
     release_model: str = ""
+    # The [ci].versions pin; empty means the repo follows the version window.
     ci_versions: list[str] = field(default_factory=list)
     integration_tests: bool = False
     publish_release: bool = False
@@ -80,6 +82,10 @@ class RepoInitContext:
     # vergil.toml on adopt, and drives the ``package`` CI job and the
     # ``secrets: inherit`` CD release caller (issue #3144).
     package: bool = False
+    # The resolver's answer for the vergil.toml step 3 writes (epic
+    # vergil-project/.github#407). It names the generated release job's
+    # container; None for a repo with no language.
+    resolution: Resolution | None = None
 
     # Non-interactive mode (issue #2382): resolve every value from a flag and
     # never prompt. The wizard fails loud on a missing required value rather
@@ -339,7 +345,8 @@ def _load_license(license_type: str) -> str:
 
 def render_vergil_toml(ctx: RepoInitContext) -> str:
     """Render vergil.toml from wizard answers."""
-    ci_versions = ", ".join(f'"{v}"' for v in ctx.ci_versions)
+    pin = ", ".join(f'"{v}"' for v in ctx.ci_versions)
+    versions_line = f"versions = [{pin}]\n" if ctx.ci_versions else ""
     lang_line = f'primary-language = "{ctx.primary_language}"\n' if ctx.primary_language else ""
     return (
         "[project]\n"
@@ -350,7 +357,7 @@ def render_vergil_toml(ctx: RepoInitContext) -> str:
         f"{lang_line}"
         "\n"
         "[ci]\n"
-        f"versions = [{ci_versions}]\n"
+        f"{versions_line}"
         f"integration-tests = {'true' if ctx.integration_tests else 'false'}\n"
         "\n"
         "[publish]\n"
@@ -523,83 +530,16 @@ def render_gitignore(lang: str | None) -> str:
     return gitignore.render_block(lang)
 
 
-def _cpp_family_and_version(versions: list[str] | None) -> tuple[str, str] | None:
-    """Parse the primary cpp compiler family and version from ``[ci].versions``.
+def _container_suffix(resolution: Resolution | None) -> str:
+    """The dev container image suffix of the resolved primary version.
 
-    C++ carries its compiler family × version axis on ``[ci].versions`` as a
-    ``clang-``/``gcc-`` prefixed tag (e.g. ``clang-20``), per spec
-    vergil-project/.github#207 §6. The first entry is the representative
-    primary that drives the single top-level ``container-suffix``/
-    ``container-tag`` in generated CI. Returns ``(family, version)`` — e.g.
-    ``("clang", "20")`` — or ``None`` when the primary entry carries no
-    recognized prefix.
-
-    The tag parse itself is delegated to
-    :func:`languages.parse_cpp_version_tag` — the single source of truth shared
-    with the container image-resolution path so scaffolding and image naming
-    can never drift.
+    Read from the version window through the resolver: ``python``, or the
+    family for a family-keyed language (``cpp-clang``, ``ts-node``). A repo
+    with no language uses ``base``.
     """
-    # Local import keeps languages a leaf in the import graph (the same
-    # cycle-avoidance idiom already used for language_commands below).
-    from vergil_tooling.lib.languages import parse_cpp_version_tag
+    from vergil_tooling.lib.versions.resolve import NO_LANGUAGE_SUFFIX
 
-    if not versions:
-        return None
-    return parse_cpp_version_tag(versions[0])
-
-
-def _node_major(versions: list[str] | None) -> str | None:
-    """Parse the primary Node major from a ``node-``-prefixed ``[ci].versions`` tag.
-
-    TypeScript carries its Node major on ``[ci].versions`` as a ``node-``
-    prefixed tag (e.g. ``node-24``), matching the ``prod-ts-node:<major>``
-    images T1/T2 build in vergil-containers (epic vergil-project/.github#284).
-    The first entry is the representative primary that drives the single
-    top-level ``container-suffix``/``container-tag`` in generated CI. Returns
-    the numeric major (e.g. ``"24"``) or ``None`` when the primary entry
-    carries no recognized ``node-`` prefix.
-
-    The container image-resolution side of this parse lives in
-    :mod:`container` and lands with T5; this local helper keeps the CI
-    scaffolding path self-contained on the ``typescript`` primary-language
-    name alone.
-    """
-    if not versions:
-        return None
-    prefix = "node-"
-    primary = versions[0]
-    if primary.startswith(prefix):
-        return primary[len(prefix) :]
-    return None
-
-
-def _container_suffix(language: str | None, versions: list[str] | None = None) -> str:
-    """Map primary language to dev container image suffix.
-
-    C++ is compiler-family-aware: the suffix resolves to ``cpp-clang`` /
-    ``cpp-gcc`` from the ``clang-``/``gcc-`` prefix on the primary
-    ``[ci].versions`` entry (vergil-project/.github#207 §6). TypeScript resolves
-    to the fixed ``ts-node`` runtime-family suffix (the Node major rides the
-    *tag*, like cpp's numeric version), matching the ``prod-ts-node:<major>``
-    images (epic vergil-project/.github#284). A primary tag without a
-    recognized ``node-`` prefix falls back to ``base``, like an unknown
-    language.
-    """
-    if language is None:
-        return "base"
-    if language == "cpp":
-        parsed = _cpp_family_and_version(versions)
-        return f"cpp-{parsed[0]}" if parsed else "base"
-    if language == "typescript":
-        return "ts-node" if _node_major(versions) else "base"
-    suffix_map = {
-        "python": "python",
-        "go": "go",
-        "java": "java",
-        "ruby": "ruby",
-        "rust": "rust",
-    }
-    return suffix_map.get(language, "base")
+    return resolution.primary_container_suffix if resolution else NO_LANGUAGE_SUFFIX
 
 
 def _cd_release_secrets(language: str | None) -> list[str]:
@@ -614,31 +554,16 @@ def _cd_release_secrets(language: str | None) -> list[str]:
     """
     secrets_map = {
         "rust": ["CARGO_REGISTRY_TOKEN"],
-        "ruby": ["RUBYGEMS_API_KEY"],
         "java": ["CENTRAL_USERNAME", "CENTRAL_TOKEN", "GPG_PRIVATE_KEY", "GPG_PASSPHRASE"],
     }
     return secrets_map.get(language or "", [])
 
 
-def _container_tag(language: str | None, versions: list[str]) -> str:
-    """Derive the container tag from language and versions.
+def _container_tag(resolution: Resolution | None) -> str:
+    """The container tag of the resolved primary version (``clang-20`` is ``20``)."""
+    from vergil_tooling.lib.versions.resolve import NO_LANGUAGE_VERSION
 
-    C++ tags carry only the numeric version — the compiler family rides the
-    image *suffix* (``cpp-clang`` / ``cpp-gcc``), so ``clang-20`` resolves to
-    ``prod-cpp-clang:20`` (vergil-project/.github#207 §6). The primary is the
-    first ``[ci].versions`` entry.
-    """
-    if language == "cpp":
-        parsed = _cpp_family_and_version(versions)
-        return parsed[1] if parsed else "latest"
-    if language == "typescript":
-        # The Node major is the tag; the ``ts-node`` family rides the suffix,
-        # so ``node-24`` resolves to ``prod-ts-node:24`` (epic
-        # vergil-project/.github#284). A malformed tag falls back to ``latest``.
-        return _node_major(versions) or "latest"
-    if language == "python" and versions:
-        return versions[-1]
-    return "latest"
+    return resolution.primary_container_tag if resolution else NO_LANGUAGE_VERSION
 
 
 _CODEQL_LANGUAGES = frozenset(
@@ -646,7 +571,6 @@ _CODEQL_LANGUAGES = frozenset(
         "python",
         "go",
         "java",
-        "ruby",
         "cpp",
         "csharp",
         "javascript",
@@ -670,7 +594,11 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
     # ``container-suffix:``. The reusable workflows resolve ``versions`` and the
     # container tag from ``vergil.toml`` themselves, so the caller no longer
     # emits ``versions:``/``container-tag:`` (epic vergil-project/.github#338).
-    suffix = _container_suffix(ctx.primary_language, ctx.ci_versions)
+    # Deprecated no-op inputs are not emitted either: ``container-suffix`` on
+    # the security job, ``run-standards`` on ci-security.yml, and
+    # ``run-release`` on ci-version-bump.yml, whose gate now follows
+    # ``release-model`` in vergil.toml (issue #3387).
+    suffix = _container_suffix(ctx.resolution)
 
     has_audit = len(language_commands(ctx.primary_language, CheckKind.AUDIT)) > 0
     has_test = (
@@ -685,9 +613,6 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
         "  workflow_call:\n",
         "    inputs:\n",
         "      run-security:\n",
-        "        type: boolean\n",
-        "        default: true\n",
-        "      run-release:\n",
         "        type: boolean\n",
         "        default: true\n",
         "\n",
@@ -731,7 +656,6 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
             "      actions: read\n",
             "    with:\n",
             lang_line,
-            "      run-standards: ${{ inputs.run-release != 'false' }}\n",
             "      run-security: ${{ inputs.run-security != 'false' }}\n",
         ]
     )
@@ -746,12 +670,6 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
                 "      upload-sarif: false\n",
             ]
         )
-
-    lines.extend(
-        [
-            f"      container-suffix: {suffix}\n",
-        ]
-    )
 
     if ctx.primary_language not in _CODEQL_LANGUAGES:
         lines.append("      run-codeql: false\n")
@@ -790,7 +708,6 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
                 _uses_line("ci-version-bump", ctx.vergil_version),
                 "    with:\n",
                 lang_line,
-                "      run-release: ${{ inputs.run-release != 'false' }}\n",
                 f"      container-suffix: {suffix}\n",
             ]
         )
@@ -858,8 +775,8 @@ def render_cd_workflow(ctx: RepoInitContext) -> str:
         )
 
     if ctx.publish_release:
-        suffix = _container_suffix(ctx.primary_language, ctx.ci_versions)
-        tag = _container_tag(ctx.primary_language, ctx.ci_versions)
+        suffix = _container_suffix(ctx.resolution)
+        tag = _container_tag(ctx.resolution)
         lines.append("\n")
         lines.extend(
             [
@@ -1149,30 +1066,6 @@ def step_clone(ctx: RepoInitContext, *, parent_dir: Path | None = None) -> None:
     print(f"  Cloned to {target}.")
 
 
-def _default_ci_versions(language: str | None) -> str:
-    """Return sensible default CI versions for a language."""
-    if language is None:
-        return "latest"
-    defaults: dict[str, str] = {
-        "python": "3.12, 3.13, 3.14",
-        "go": "1.23",
-        "java": "21",
-        "ruby": "3.3",
-        "rust": "stable",
-        # C++ carries the compiler family × version axis here as a
-        # ``clang-``/``gcc-`` prefixed tag (vergil-project/.github#207 §6); the
-        # default seeds a single primary Clang image, matching the primary
-        # major built in vergil-containers.
-        "cpp": "clang-20",
-        # TypeScript carries the Node major here as a ``node-`` prefixed tag so
-        # the derived suffix/tag are runtime-aware; the default seeds the two v1
-        # LTS majors (primary first), matching the ``prod-ts-node:<major>``
-        # images built in vergil-containers (epic vergil-project/.github#284).
-        "typescript": "node-24, node-22",
-    }
-    return defaults.get(language, "latest")
-
-
 def _load_existing_config(work_dir: Path) -> dict[str, Any] | None:
     """Load existing vergil.toml if present. Returns raw TOML dict."""
     toml_path = work_dir / "vergil.toml"
@@ -1182,6 +1075,28 @@ def _load_existing_config(work_dir: Path) -> dict[str, Any] | None:
 
     with toml_path.open("rb") as f:
         return tomllib.load(f)
+
+
+def _resolve_versions(vergil_toml: str) -> Resolution | None:
+    """Resolve the rendered *vergil_toml* against the published version window.
+
+    A pin outside the window, or a window that cannot be read, stops the wizard
+    before anything is committed, rather than creating a repo whose CI fails.
+    """
+    import tomllib
+
+    from vergil_tooling.lib.config import _parse_raw_config
+    from vergil_tooling.lib.versions import VersionsError
+    from vergil_tooling.lib.versions.resolve import resolve_config
+
+    cfg = _parse_raw_config(tomllib.loads(vergil_toml))
+    try:
+        resolution = resolve_config(cfg, repo_root=None)
+    except VersionsError as exc:
+        raise SystemExit(f"error: {exc}") from exc
+    for warning in resolution.warnings if resolution else ():
+        print(f"  WARNING: {warning}", file=sys.stderr)
+    return resolution
 
 
 def step_generate_config(ctx: RepoInitContext) -> None:
@@ -1270,19 +1185,20 @@ def step_generate_config(ctx: RepoInitContext) -> None:
                 "error: --non-interactive is missing required values: " + ", ".join(missing)
             )
 
-    default_versions = _default_ci_versions(ctx.primary_language)
-    existing_versions = ", ".join(ci_raw.get("versions", []))
-    versions_default = existing_versions or default_versions
+    # No pin by default: a new repo follows the published version window (epic
+    # vergil-project/.github#407). An adopted repo keeps its existing pin.
+    versions_default = ", ".join(ci_raw.get("versions", []))
     raw_versions = _resolve(
         ctx.opt_ci_versions,
         non_interactive=ni,
         default=versions_default,
         prompt=lambda: prompt_free_text(
-            "CI versions (comma-separated)",
+            "CI versions pin (comma-separated; empty follows the version window)",
             default=versions_default,
+            required=False,
         ),
     )
-    ctx.ci_versions = [v.strip() for v in raw_versions.split(",")]
+    ctx.ci_versions = [v.strip() for v in raw_versions.split(",") if v.strip()]
 
     it_default = ci_raw.get("integration-tests", False)
     ctx.integration_tests = _resolve(
@@ -1344,6 +1260,8 @@ def step_generate_config(ctx: RepoInitContext) -> None:
         extra = _unmanaged_toml_sections((ctx.work_dir / "vergil.toml").read_text(), existing)
         if extra:
             content += "\n" + extra
+    # Resolve the whole file, carried tables included, before anything is written.
+    ctx.resolution = _resolve_versions(content)
     (ctx.work_dir / "vergil.toml").write_text(content)
 
     git.run("add", "vergil.toml")

@@ -14,7 +14,7 @@ is built (with `build-cache-files` naming the inputs that invalidate the cache).
 
 ```toml
 [container]
-env-prefixes = ["CONAN_AUDIT_PROVIDER_TOKEN"]   # forward matching host env vars
+env-prefixes = ["MQ_"]                          # forward matching host env vars
 system-packages = ["lilypond"]                  # install Debian packages
 build-command = "npm install -g @coderline/alphatab"  # provision non-apt deps
 build-cache-files = ["package-lock.json"]       # inputs that invalidate the cache
@@ -36,9 +36,11 @@ is passed through when `vrg-container-run` launches the container. This is how a
 consuming repo gets a secret or token — held only in the host environment — into
 the container without hard-coding its name in tooling.
 
-For a fully worked example (wiring the ConanCenter audit token end to end across
-local runs, CI, and agent VMs), see
-[C++ Overview → ConanCenter Audit Token](../standards/development/cpp/overview.md#conancenter-audit-token).
+The ConanCenter audit token does **not** need an `env-prefixes` entry. For a cpp
+repo, `vrg-container-run` resolves it from the environment or its canonical
+token file and forwards it itself (see the next section and
+[C++ Overview → ConanCenter Audit Token](../standards/development/cpp/overview.md#conancenter-audit-token)).
+An existing `CONAN_AUDIT_PROVIDER_TOKEN` prefix is harmless but redundant.
 The passthrough design is specified in
 [`docs/specs/2026-05-25-configurable-container-env-passthrough-design.md`](https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/2026-05-25-configurable-container-env-passthrough-design.md).
 
@@ -54,6 +56,15 @@ value `vrg-container-run` resolves:
 | `UV_LINK_MODE` | `copy` (the uv cache and `/workspace` are on different filesystems) | An explicit host value wins |
 | `PYTHONPYCACHEPREFIX` | `/tmp/pycache` (container-local, discarded with the container) | A non-empty host value wins; an empty value falls back to the default |
 | `NODE_PATH` | npm global root, only when `build-command` is declared (see below) | An explicit host value wins |
+
+For a **cpp** repo, `vrg-container-run` also forwards
+`CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER` when it can resolve one: from the
+environment if set and not blank, else from `~/.config/vergil/conan.env`, else
+from the `conan_audit_token_path` file in `~/.config/vergil/identities.toml`.
+The value goes to the container runtime through its environment, never its
+command line. A token source that exists but is unreadable or malformed stops
+the run with an error, and with no token at all nothing is forwarded (see
+[C++ Overview → ConanCenter Audit Token](../standards/development/cpp/overview.md#conancenter-audit-token)).
 
 `PYTHONPYCACHEPREFIX` keeps Python bytecode (including pytest's rewritten test
 modules) out of the bind-mounted repo. Parallel test workers writing

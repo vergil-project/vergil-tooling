@@ -23,14 +23,13 @@ opt out (see ``_RESOLVER_TEST_MODULES``).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
-from vergil_tooling.lib import github, host_pins, identity_mode
-
-if TYPE_CHECKING:
-    from pathlib import Path
+from vergil_tooling.lib import conan_token, github, host_pins, identity_mode
+from vergil_tooling.lib.versions import window
+from vergil_tooling.lib.versions.resolve import Resolution
 
 # Modules that test identity resolution directly and set the signals themselves.
 _RESOLVER_TEST_MODULES = frozenset({"test_identity_mode", "test_vrg_whoami"})
@@ -59,6 +58,61 @@ def _hermetic_host_pins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     """
     monkeypatch.setattr(
         host_pins, "default_pins_path", lambda: tmp_path / "vergil-config" / "host-pins.toml"
+    )
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_conan_token(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point the Conan audit token file sources at absent per-test paths.
+
+    ``vrg-container-run`` resolves the token from ``~/.config/vergil/conan.env``
+    and ``identities.toml`` (#2902); no test may read a developer's or agent
+    VM's real token. ``test_conan_token`` captures the real locators at import,
+    before this fixture patches the module.
+    """
+    absent = tmp_path / "absent-conan"
+    monkeypatch.setattr(conan_token, "conan_env_path", lambda: absent / "conan.env")
+    monkeypatch.setattr(conan_token, "identities_path", lambda: absent / "identities.toml")
+    monkeypatch.delenv(conan_token.CONAN_AUDIT_TOKEN_ENV, raising=False)
+
+
+FIXTURE_WINDOW = Path(__file__).parent / "fixtures" / "versions" / "window.json"
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_version_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Resolve CI versions against a fixture window, never the network.
+
+    The resolver reads the published window over HTTP unless
+    ``VRG_VERSION_WINDOW`` names a file (epic vergil-project/.github#407). The
+    fixture is a copy of the schema-1 window vergil-containers publishes at
+    v2.1. Tests of the fetch path pass their own ``env`` and ``fetch``.
+    """
+    monkeypatch.setenv(window.WINDOW_ENV, str(FIXTURE_WINDOW))
+
+
+def window_default_resolution(_repo_root: Path, lang: str) -> Resolution | None:
+    """A stand-in for ``container.repo_resolution`` that needs no ``vergil.toml``.
+
+    It resolves *lang* as an unpinned app would, to the newest version of the
+    language's first fixture-window family (``python`` -> ``3.14``, ``cpp`` ->
+    ``clang-20``), so container tests that only drop a language marker still get
+    a real image. Tests of resolution itself use the real function.
+    """
+    if not lang:
+        return None
+    family = window.load_window("v2.1", env={window.WINDOW_ENV: str(FIXTURE_WINDOW)}).languages[
+        lang
+    ][0]
+    newest = family.versions[0]
+    token = family.token(newest)
+    return Resolution(
+        language=lang,
+        kind="app",
+        versions=(token,),
+        primary=token,
+        container_tags={token: newest.version},
+        container_suffixes={token: family.key},
     )
 
 

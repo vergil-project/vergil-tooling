@@ -41,8 +41,8 @@ Run inside dev containers launched by `vrg-container-run`.
 | [vrg-sarif-filter](cli-tools-overview.md#vrg-sarif-filter) | Drop accepted-suppressed results from a SARIF file before upload |
 | [Markdown validation](lint/markdown-standards.md) | Markdownlint with bundled canonical config |
 
-## Git Hooks
+## Claude Code Hooks
 
 | Hook | Purpose |
 | ---- | ------- |
-| [pre-commit](hooks/pre-commit.md) | Env-var gate (admits `vrg-commit`, rejects raw `git commit`) |
+| [Claude Code Hook Guard](hooks/pre-commit.md) | `PreToolUse` guard that blocks raw `git` and `gh`; also documents the `vrg-commit` branch checks |

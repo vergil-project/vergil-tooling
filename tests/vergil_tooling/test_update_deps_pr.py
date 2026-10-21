@@ -110,7 +110,7 @@ def test_pr_body_stays_under_github_limit() -> None:
 def test_prepare_pr_pushes_ensures_label_and_labels_pr(monkeypatch) -> None:
     runs: list[list[str]] = []
     git_runs: list[tuple[str, ...]] = []
-    monkeypatch.setattr(_MOD + ".progress.run", lambda cmd: runs.append(cmd) or 0)
+    monkeypatch.setattr(_MOD + ".ensure_labels", lambda repo, names: runs.append([repo, *names]))
     monkeypatch.setattr(_MOD + ".git.run", lambda *a: git_runs.append(a))
     created: dict[str, object] = {}
 
@@ -123,7 +123,7 @@ def test_prepare_pr_pushes_ensures_label_and_labels_pr(monkeypatch) -> None:
     ctx = _ctx()
     pr.prepare_pr(ctx)
     assert git_runs == [("push", "-u", "origin", "deps/update-2.1.243")]
-    assert runs[0][:5] == ["vrg-ensure-label", "--repo", "o/r", "--label", "dependency-update"]
+    assert runs == [["o/r", "dependency-update"]]
     assert created["labels"] == ["dependency-update"]
     assert created["base"] == "develop"
     assert created["title"] == "chore(deps): dependency update for 2.1.243"
@@ -144,10 +144,45 @@ def test_merge_pr_calls_wait_and_merge(monkeypatch) -> None:
         _MOD + ".pr_merge.wait_and_merge",
         lambda url, *, strategy, wait_checks=None: seen.update(pr=url, strategy=strategy),
     )
+    deleted: list[str] = []
+    monkeypatch.setattr(_MOD + ".delete_merged_branch", lambda ctx: deleted.append(ctx.branch))
     ctx = _ctx()
     ctx.pr_url = "https://x/pr/1"
     pr.merge_pr(ctx)
     assert seen == {"pr": "https://x/pr/1", "strategy": "merge"}
+    assert ctx.failure is None
+    assert deleted == ["deps/update-2.1.243"]
+
+
+@pytest.mark.parametrize(
+    ("existed", "message"),
+    [
+        (True, "Deleted merged branch deps/update-2.1.243 on origin."),
+        (False, "Branch deps/update-2.1.243 already deleted on origin."),
+    ],
+)
+def test_delete_merged_branch_deletes_on_origin(monkeypatch, capsys, existed, message) -> None:
+    """The merged branch is deleted as its own API step, not gh pr merge --delete-branch."""
+    endpoints: list[str] = []
+    monkeypatch.setattr(
+        _MOD + ".github.delete_if_exists", lambda ep: endpoints.append(ep) or existed
+    )
+    pr.delete_merged_branch(_ctx())
+    assert endpoints == ["repos/o/r/git/refs/heads/deps/update-2.1.243"]
+    assert message in capsys.readouterr().out
+
+
+def test_delete_merged_branch_failure_warns_without_failing(monkeypatch, capsys) -> None:
+    def _fail(ep: str) -> bool:
+        raise subprocess.CalledProcessError(1, ["gh", "api", ep])
+
+    monkeypatch.setattr(_MOD + ".github.delete_if_exists", _fail)
+    ctx = _ctx()
+    ctx.pr_url = "https://x/pr/1"
+    pr.delete_merged_branch(ctx)
+    out = capsys.readouterr().out
+    assert "WARNING: merged https://x/pr/1, but could not delete" in out
+    assert "git push origin --delete deps/update-2.1.243" in out
     assert ctx.failure is None
 
 

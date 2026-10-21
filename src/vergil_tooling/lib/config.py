@@ -30,7 +30,40 @@ _ENUMS: dict[str, set[str]] = {
     "versioning-scheme": {"library", "semver", "application", "none"},
     "branching-model": {"library-release", "application-promotion", "docs-single-branch"},
     "release-model": {"artifact-publishing", "tagged-release", "environment-promotion", "none"},
-    "primary-language": {"python", "go", "java", "ruby", "rust", "cpp", "typescript"},
+    "primary-language": {"python", "go", "java", "rust", "cpp", "typescript"},
+}
+
+# What each [project].repository-type means (epic vergil-project/.github#407,
+# spec §6.3). Version resolution reads it: a ``library`` builds the whole
+# version window, and every other type resolves as an app that builds one
+# version. Each definition completes the sentence "a <type> is a repo that …".
+REPOSITORY_TYPE_DEFINITIONS: dict[str, str] = {
+    "library": (
+        "provides code that runs in other repos' environments, whether imported "
+        "there or installed there as a tool"
+    ),
+    "application": "ships a program or service that runs in its own deployed environment",
+    "infrastructure": "provisions or operates environments, images or platform services",
+    "tooling": "provides development tools that run only in its own or its developers' setup",
+    "documentation": "publishes documentation and carries no product code",
+}
+
+# Languages vergil once supported and has since dropped, each with the reason
+# shown to the user. A repo that still declares one is rejected outright: the
+# generic unrecognized-language path only warns and treats the value as unset,
+# which would silently validate the repo as a language-less project.
+_RETIRED_PRIMARY_LANGUAGES: dict[str, str] = {
+    "ruby": "Ruby support was removed in epic vergil-project/.github#407",
+}
+
+# The branch each branching model integrates feature work into. Every current
+# model integrates on develop (develop is docs-single-branch's only eternal
+# branch). The table keeps the mapping explicit, so a model that integrates
+# elsewhere is one entry here rather than a guess in each caller (issue #3386).
+INTEGRATION_BRANCH_BY_MODEL: dict[str, str] = {
+    "library-release": "develop",
+    "application-promotion": "develop",
+    "docs-single-branch": "develop",
 }
 
 # The [cpp] block (epic vergil-project/.github#207 §3.3). The compiler family ×
@@ -198,19 +231,14 @@ def _version_sort_key(version: str) -> tuple[int, ...]:
 
 @dataclass
 class CiConfig:
-    versions: list[str]
+    # The [ci].versions pin, or None when the repo follows the version window
+    # (epic vergil-project/.github#407). Resolution lives in lib.versions; read
+    # the resolved versions from there, never from this raw field.
+    versions: list[str] | None
     integration_tests: bool
-    # The version the single-container CI jobs (security, version-bump, docs)
-    # run on, and the local dev/validate image tag (epic
-    # vergil-project/.github#338, Task 5). Defaults to the numerically highest
-    # entry of ``versions``; a repo overrides it with an explicit
-    # ``[ci].primary-version``. Stored as "" when unset and derived in
-    # ``__post_init__`` so a hand-built CiConfig and a parsed one agree.
+    # The explicit [ci].primary-version override, or "" when unset. Without it
+    # the resolver makes the newest resolved version the primary.
     primary_version: str = ""
-
-    def __post_init__(self) -> None:
-        if not self.primary_version:
-            self.primary_version = max(self.versions, key=_version_sort_key)
 
 
 @dataclass
@@ -966,6 +994,12 @@ def _parse_raw_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> VergilC
             raise ConfigError(msg)
 
     raw_lang = project_raw.get("primary-language", "")
+    if raw_lang in _RETIRED_PRIMARY_LANGUAGES:
+        msg = (
+            f"{source}: primary-language '{raw_lang}' is no longer supported"
+            f" ({_RETIRED_PRIMARY_LANGUAGES[raw_lang]})"
+        )
+        raise ConfigError(msg)
     if raw_lang and raw_lang not in _ENUMS["primary-language"]:
         allowed = ", ".join(sorted(_ENUMS["primary-language"]))
         print(
@@ -996,14 +1030,12 @@ def _parse_raw_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> VergilC
     if ci_raw is None:
         msg = f"{source}: missing required section [ci]"
         raise ConfigError(msg)
+    # Optional: without a pin the repo follows the published version window.
     versions = ci_raw.get("versions")
-    if versions is None:
-        msg = f"{source}: [ci] missing required field 'versions'"
-        raise ConfigError(msg)
-    if not isinstance(versions, list) or not versions:
+    if versions is not None and (not isinstance(versions, list) or not versions):
         msg = f"{source}: [ci].versions must be a list with at least one entry"
         raise ConfigError(msg)
-    if not all(isinstance(v, str) for v in versions):
+    if versions is not None and not all(isinstance(v, str) for v in versions):
         msg = f"{source}: [ci].versions entries must be strings"
         raise ConfigError(msg)
     primary_version = ci_raw.get("primary-version")
@@ -1142,26 +1174,19 @@ def vrg_install_tag(repo_root: Path) -> str:
     return cfg.dependencies["vergil"]
 
 
-def primary_ci_version(repo_root: Path) -> str | None:
-    """Return the repo's primary declared version — ``[ci].versions[0]``.
+def integration_branch(repo_root: Path) -> str | None:
+    """Return the branch feature work integrates into, per the branching model.
 
-    This is authoritative for local container selection (issue #2468): the
-    dev/validate image tag is ``prod-<lang>:<version>``, and the repo's declared
-    version must win over the built-in ``_DEFAULT_VERSIONS`` so a tooling-side
-    default bump cannot silently change every consuming repo's local builds (or
-    skew them from CI, which runs the same ``[ci].versions``).
-
-    Returns ``None`` — the caller falls back to the built-in default — when the
-    repo has no ``vergil.toml``. A ``ConfigError`` from a malformed config
-    propagates, matching :func:`validation_container_command` and
-    :func:`container_env_prefixes`; the parser guarantees ``[ci].versions`` is a
-    non-empty list, so ``[0]`` is always valid once the read succeeds.
+    Returns ``None`` when the repo has no ``vergil.toml``; the caller decides
+    the default and says so. A ``ConfigError`` from a malformed config
+    propagates. The parser already rejects an unknown ``branching-model``, so
+    the lookup always succeeds.
     """
     try:
         cfg = read_config(repo_root)
     except FileNotFoundError:
         return None
-    return cfg.ci.versions[0]
+    return INTEGRATION_BRANCH_BY_MODEL[cfg.project.branching_model]
 
 
 def declared_primary_language(repo_root: Path) -> str | None:
@@ -1176,9 +1201,8 @@ def declared_primary_language(repo_root: Path) -> str | None:
 
     Returns ``None`` — the caller falls back to filesystem detection — when the
     repo has no ``vergil.toml`` or declares no ``primary-language``. A
-    ``ConfigError`` from a malformed config propagates, matching
-    :func:`primary_ci_version`; a silent default is exactly how the run and
-    validate paths drifted apart in the first place.
+    ``ConfigError`` from a malformed config propagates; a silent default is
+    exactly how the run and validate paths drifted apart in the first place.
     """
     try:
         cfg = read_config(repo_root)

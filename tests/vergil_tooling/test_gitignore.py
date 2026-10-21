@@ -29,7 +29,8 @@ if TYPE_CHECKING:
 #: behavior — the user-presets pointer stub always lands beside the conanfile), so
 #: #3044 re-ignored it, restoring it to the cpp fragment and to this set (the
 #: sibling ``CMakePresets.json`` genuinely lives under ``build/`` and stays
-#: pruned). The
+#: pruned). #3377 then dropped the two patterns of a retired language's fragment
+#: together with that fragment. The
 #: lossless-split invariant below proves ``base ∪ all-fragments`` still
 #: reconstitutes exactly this set, so a future fragment edit that silently drops
 #: or invents a pattern fails CI. This is the regression guard the monolith used
@@ -73,8 +74,6 @@ _LEGACY_GITIGNORE_PATTERNS: tuple[str, ...] = (
     "*.tsbuildinfo",
     "*.test",
     "*.out",
-    ".bundle/",
-    "vendor/bundle/",
     "*.o",
     "*.obj",
     "*.a",
@@ -109,7 +108,6 @@ def test_fragment_langs_are_expected() -> None:
         "python",
         "cpp",
         "go",
-        "ruby",
         "rust",
         "java",
         "typescript",

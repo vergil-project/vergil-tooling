@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vergil-tooling"
-version = "2.1.251"
+version = "2.1.252"
 description = "VERGIL — Validation Engine for Repository Governance, Integration & Lifecycle"
 requires-python = ">=3.12,<4.0"
 license = "MIT"
@@ -20,6 +20,7 @@ vrg-await = "vergil_tooling.bin.vrg_await:main"
 vrg-branch-sweep = "vergil_tooling.bin.vrg_branch_sweep:main"
 vrg-changelog = "vergil_tooling.bin.vrg_changelog:main"
 vrg-ci-evidence = "vergil_tooling.bin.vrg_ci_evidence:main"
+vrg-ci-resolve = "vergil_tooling.bin.vrg_ci_resolve:main"
 vrg-ci-sync = "vergil_tooling.bin.vrg_ci_sync:main"
 vrg-commit = "vergil_tooling.bin.vrg_commit:main"
 vrg-container-build-command = "vergil_tooling.bin.vrg_container_build_command:main"
@@ -95,7 +96,7 @@ constraint-dependencies = ["msgpack>=1.2.1"]
 package-dir = {"" = "src"}
 
 [tool.setuptools.package-data]
-vergil_tooling = ["data/*.json", "data/*.toml", "data/*.md", "data/*.sh", "data/gitignore/*", "data/licenses/*.txt", "data/skeletons/cpp/*", "data/skeletons/cpp/src/*", "data/skeletons/cpp/tests/*", "configs/*.yaml", "configs/*.toml", "configs/ruby/*.yml", "configs/cpp/.clang-format", "configs/cpp/.clang-tidy", "configs/cpp/*.txt", "configs/cpp/*.cfg", "configs/typescript/*.json", "configs/typescript/*.mjs"]
+vergil_tooling = ["data/*.json", "data/*.toml", "data/*.md", "data/*.sh", "data/gitignore/*", "data/licenses/*.txt", "data/skeletons/cpp/*", "data/skeletons/cpp/src/*", "data/skeletons/cpp/tests/*", "configs/*.yaml", "configs/*.toml", "configs/cpp/.clang-format", "configs/cpp/.clang-tidy", "configs/cpp/*.txt", "configs/cpp/*.cfg", "configs/typescript/*.json", "configs/typescript/*.mjs"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

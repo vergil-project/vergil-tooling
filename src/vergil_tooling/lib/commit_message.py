@@ -2,8 +2,8 @@
 
 Both ``vrg-commit`` (new commits) and ``vrg-reword`` (rewriting an
 existing branch-local commit's message) build the same conventional
-subject, optional body, and co-author trailer through these helpers, so
-a reworded message is stamped exactly like a freshly authored one.
+subject and optional body through these helpers, so a reworded
+message is stamped exactly like a freshly authored one.
 """
 
 from __future__ import annotations
@@ -54,19 +54,16 @@ def build_commit_message(
     scope: str,
     message: str,
     body: str = "",
-    co_author: str | None = None,
 ) -> str:
-    """Return the full commit message text (subject, body, co-author trailer).
+    """Return the full commit message text (subject and optional body).
 
     The layout matches what ``vrg-commit`` writes to its commit-message
     file byte-for-byte: a ``type(scope): message`` subject line, then an
-    optional blank-line-separated body, then an optional
-    ``Co-Authored-By`` trailer.
+    optional blank-line-separated body. No AI co-author trailer is
+    added: AI co-author attribution was dropped (#3200).
     """
     subject = f"{commit_type}({scope}): {message}"
     parts = [f"{subject}\n"]
     if body:
         parts.append(f"\n{body}\n")
-    if co_author:
-        parts.append(f"\nCo-Authored-By: {co_author}\n")
     return "".join(parts)

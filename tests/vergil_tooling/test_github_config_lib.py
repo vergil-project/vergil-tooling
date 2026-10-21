@@ -60,6 +60,7 @@ from vergil_tooling.lib.github_config import (
     ghas_available,
     required_evidence_gates,
     required_status_contexts,
+    resolved_integration_versions,
     unproducible_ci_yaml_contexts,
     unproducible_required_contexts,
 )
@@ -498,7 +499,7 @@ def test_ci_gates_require_evidence_not_per_version() -> None:
 
 def test_ci_gates_integration_tests_when_enabled() -> None:
     ci = _ci(versions=["3.12", "3.13"], integration_tests=True)
-    r = desired_ci_gates_ruleset(_project(), ci, ghas=True)
+    r = desired_ci_gates_ruleset(_project(), ci, ghas=True, integration_versions=("3.12", "3.13"))
     names = _check_names(r)
     assert "test / integration / 3.12" in names
     assert "test / integration / 3.13" in names
@@ -587,7 +588,11 @@ def test_integration_context_is_flagged_unproducible() -> None:
     """`test / integration / <v>` is required when integration-tests=true, but
     ci-test.yml emits only `unit` — so the context can never report (#2720)."""
     ruleset = desired_ci_gates_ruleset(
-        _project(), _ci(integration_tests=True), ghas=True, docs=True
+        _project(),
+        _ci(integration_tests=True),
+        ghas=True,
+        docs=True,
+        integration_versions=("3.14",),
     )
     ci_yaml = _ci_yaml(jobs=_FULL_CI_JOBS)
     missing = unproducible_ci_yaml_contexts(ci_yaml, required_status_contexts(ruleset), ghas=True)
@@ -851,7 +856,7 @@ _EXPECTED_GATES_TWO_VERSIONS = [
 ]
 
 
-@pytest.mark.parametrize("language", ["python", "go", "java", "ruby", "rust"])
+@pytest.mark.parametrize("language", ["python", "go", "java", "rust"])
 def test_ci_gates_existing_languages_snapshot(language: str) -> None:
     ci = _ci(versions=["v1", "v2"])
     r = desired_ci_gates_ruleset(_project(language=language), ci, ghas=True)
@@ -906,6 +911,29 @@ def test_ghas_available_declared_overrides_visibility() -> None:
     assert ghas_available(cfg, visibility="private") is True
     cfg.project.ghas = False
     assert ghas_available(cfg, visibility="public") is False
+
+
+def test_resolved_integration_versions_empty_when_disabled() -> None:
+    assert resolved_integration_versions(_vergil_config()) == ()
+
+
+def test_resolved_integration_versions_follow_the_resolver() -> None:
+    # The pin resolves against the fixture window (conftest), newest first.
+    cfg = _vergil_config(versions=["3.12", "3.14"], integration_tests=True)
+    assert resolved_integration_versions(cfg) == ("3.14", "3.12")
+
+
+def test_resolved_integration_versions_no_language_is_latest() -> None:
+    cfg = _vergil_config(integration_tests=True)
+    cfg.project.primary_language = None
+    assert resolved_integration_versions(cfg) == ("latest",)
+
+
+def test_compute_desired_state_requires_resolved_integration_checks() -> None:
+    cfg = _vergil_config(versions=["3.13"], integration_tests=True)
+    state = compute_desired_state(cfg, visibility="public", is_org=True)
+    gates = next(r for r in state.rulesets if r.name == "CI gates")
+    assert "test / integration / 3.13" in _check_names(gates)
 
 
 def test_compute_desired_state_has_three_rulesets() -> None:

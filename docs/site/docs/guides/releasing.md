@@ -105,12 +105,12 @@ issue and ticks its box in the issue's stage checklist.
 | `preflight` | fail-fast | Checks the host prerequisites, `gh` auth, `vergil.toml`, and that the root checkout is a clean `develop` matching `origin/develop`. On a fresh start it also checks the version is not tagged, that no tracking issue exists for it, runs the [package re-publish check](#the-package-re-publish-check), and runs the [dependency-update gate](#the-dependency-update-gate). Creates the `release/<version>` managed worktree |
 | `prepare` | fail-fast | Creates the `release: <version>` tracking issue, generates the changelog and release notes, and opens the release PR to `main` |
 | `merge-release` | fail-fast | Waits for the release PR's checks and merges it |
-| `confirm-main` | fail-fast | Watches CD on `main`. The release job must succeed; other failed publish jobs are recorded as deferred publish failures |
-| `back-merge-bump` | fail-fast | Creates `release/post-<version>` from `main`, bumps the version, and merges it to `develop` |
+| `confirm-main` | fail-fast | Watches CD on `main`. The release job must succeed; other failed publish jobs are recorded as deferred publish failures (see [Stale job records](#stale-job-records)) |
+| `back-merge-bump` | fail-fast | Creates `release/post-<version>` from `main`, bumps the version, and merges it to `develop`. Records the back-merge's merge commit |
 | `teardown-worktree` | deferred | Removes the release worktree and returns to the root checkout |
-| `confirm-develop` | deferred | Watches CD on `develop`; a failed docs publish is deferred |
+| `confirm-develop` | deferred | Watches the CD run on `develop` for the back-merge's merge commit; a failed docs publish is deferred |
 | `promote` | deferred | Moves the rolling `vX.Y` tag to the new release (skipped with `--no-promote`) |
-| `close-finalize` | deferred | Closes the tracking issue with a summary and runs `vrg-finalize-pr --cleanup-only` |
+| `close-finalize` | deferred | Closes the tracking issue with a summary and runs `vrg-finalize-pr --cleanup-only --no-wait-cd` |
 | `package-index` | deferred | For repos with `[package]`, waits for the new version in the package index |
 | `consumer-refresh` | deferred | Prints the `[publish].consumer-refresh` commands |
 | `update-deps` | deferred | Runs the dependency update on the new `develop` version (skipped with `--without-deps`); see [Dependency updates](#dependency-updates) |
@@ -121,6 +121,41 @@ when an earlier stage has failed, so the release can be resumed with
 `vrg-release --resume`. A deferred publish failure also leaves the
 issue open, but the release itself is complete: re-run the CD publish
 rather than resuming.
+
+`confirm-develop` checks the CD run for the back-merge's merge commit,
+not for the current tip of `develop`. On `vrg-release --resume`, other
+PRs (a dependency update or a feature) may have merged to `develop`
+since the back-merge. The tip's CD run then says nothing about the
+release. A resume re-runs `back-merge-bump`, which adopts the existing
+back-merge PR and records its merge commit again. If the merge commit
+can't be found, `confirm-develop` fails. It never falls back to the tip.
+
+`close-finalize` passes `--no-wait-cd` to `vrg-finalize-pr`. Without a
+merge of its own, finalize's CD check would watch the tip of `develop`,
+which has the same problem. `confirm-develop` has already checked the
+right run, and `close-finalize` runs `vrg-finalize-pr` only when every
+earlier stage passed. A second wait would add nothing. It would also
+fail the stage on a docs publish failure that `confirm-develop` has
+already deferred.
+
+### Stale job records
+
+The confirm stages wait a bounded time for every CD job to reach
+`completed` in the GitHub jobs API, because a job's record can lag the
+run's. A job that is still not `completed` after that wait has no
+conclusion to judge:
+
+- If the run itself concluded `success`, GitHub has confirmed that every
+  job succeeded or was skipped, so the record is stale. The stage shows a
+  warning, `stale job record: <job>`, and nothing is deferred. No CD
+  re-run is needed.
+- Under any other run conclusion the job may really have failed, so it is
+  deferred as `<job> (never settled)`.
+
+A failed job in the release job's own family, such as
+`release / package-sign`, is reported by its full name rather than as
+`release`, so the message is never mistaken for the release itself
+failing.
 
 ### Consumer steps
 
@@ -234,7 +269,11 @@ The stage brings the root checkout's `develop` up to date with
 same pipeline as [`vrg-update-deps`](../reference/dev/update-deps.md):
 
 1. Create the `deps/update-<version>` branch in a managed worktree,
-   where `<version>` is the new `develop` version.
+   where `<version>` is the new `develop` version. If that branch
+   already exists, its PR decides what happens; see
+   [An existing update branch](../reference/dev/update-deps.md#an-existing-update-branch).
+   On `--resume`, if the update for this version already merged, the
+   stage succeeds and its tracking-issue comment links the merged PR.
 2. Run each applicable updater, committing each one's changes
    separately. The built-in updaters and the per-repo hook are described
    in the [dependency-update reference](../reference/dependency-update-config.md).
@@ -242,7 +281,8 @@ same pipeline as [`vrg-update-deps`](../reference/dev/update-deps.md):
    The tracking-issue comment says "No dependency changes; no PR opened."
 4. Otherwise run `vrg-container-run -- vrg-validate` once, push the
    branch, and open a PR to `develop` labelled `dependency-update`.
-5. If validation passed, wait for the PR's checks and merge it.
+5. If validation passed, wait for the PR's checks, merge it, and
+   delete its branch on origin.
 
 The stage's comment on the tracking issue always carries a
 **Held back by declared bounds** table: the dependencies whose newest
