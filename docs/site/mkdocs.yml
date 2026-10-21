@@ -112,7 +112,6 @@ nav:
               - Import-Time Side Effects: standards/development/python/import-time-side-effects.md
               - Testing and Coverage: standards/development/python/testing-and-coverage.md
               - Dependency Management: standards/development/python/dependency-management.md
-              - Local Validation: standards/development/python/local-validation-scripts.md
               - Version Management: standards/development/python/version-management.md
               - ty Migration Plan: standards/development/python/ty-migration-plan.md
           - C++:

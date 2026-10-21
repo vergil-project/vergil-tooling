@@ -728,7 +728,6 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
             "      actions: read\n",
             "    with:\n",
             lang_line,
-            "      run-standards: ${{ inputs.run-release != 'false' }}\n",
             "      run-security: ${{ inputs.run-security != 'false' }}\n",
         ]
     )

@@ -8,6 +8,7 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+import yaml
 
 from vergil_tooling.lib import gitignore, repo_init
 from vergil_tooling.lib.config import CiConfig, ProjectConfig, _parse_raw_config
@@ -756,6 +757,20 @@ class TestRenderCiWorkflow:
         assert "container-tag:" not in content
         # container-suffix still selects the image family and stays emitted.
         assert "container-suffix: python" in content
+
+    def test_security_job_omits_deprecated_run_standards(self) -> None:
+        """ci-security.yml retired its standards job and documents
+        ``run-standards`` as deprecated and ignored, so the generated caller
+        must not pass it — a new repo would otherwise be born with dead
+        config (issue #3384)."""
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.primary_language = "python"
+        ctx.ci_versions = ["3.12"]
+        ctx.release_model = "tagged-release"
+        content = render_ci_workflow(ctx)
+        assert "run-standards" not in content
+        security = yaml.safe_load(content)["jobs"]["security"]["with"]
+        assert security["run-security"] == "${{ inputs.run-security != 'false' }}"
 
 
 class TestCiGatesProducibility:
