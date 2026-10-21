@@ -543,6 +543,14 @@ _PROGRESS_INTERVAL_SECS = 60
 # instead of every hang costing hours.
 _POLL_TIMEOUT_SECS = 1800
 CHECKS_TIMEOUT_ENV = "VRG_CHECKS_TIMEOUT"
+# While waiting, how often a pending check's backing Actions run is re-probed
+# for completion (once per run, not per check or per poll), and how long a
+# pending check may sit over a *completed* run before its backing job's own
+# conclusion decides it. The grace absorbs normal API lag between a run
+# finishing and its check-runs turning terminal; past it the check-run is stale
+# and must not hold the merge to the deadline (#3358).
+_RUN_PROBE_INTERVAL_SECS = 30
+_STALE_GRACE_SECS = _PROGRESS_INTERVAL_SECS
 
 
 def checks_timeout_secs() -> int:
@@ -984,6 +992,117 @@ def run_completed(run_id: str) -> bool:
     return isinstance(data, dict) and data.get("status") == "completed"
 
 
+# The repo and job id of an Actions job link, for reading the job itself.
+_ACTIONS_JOB_LINK_RE = re.compile(r"github\.com/([^/]+/[^/]+)/actions/runs/\d+/job/(\d+)")
+
+
+def job_conclusion(repo: str, job_id: str) -> str | None:
+    """The Actions job's own ``conclusion`` (``success``, ``failure``, ...), or None if unset.
+
+    Read from the jobs API, which can be authoritative while the job's check-run
+    is still stuck ``pending`` (#3358). A gh/API failure propagates.
+    """
+    data = read_json("api", f"repos/{repo}/actions/jobs/{job_id}")
+    conclusion = data.get("conclusion") if isinstance(data, dict) else None
+    return str(conclusion) if conclusion else None
+
+
+_ORPHAN_RECOVERY = (
+    "Close and reopen the PR to re-run the gate, then re-run the waiting "
+    "command (vrg-finalize-pr, or vrg-release --resume)."
+)
+
+
+class _StaleCheckProbe:
+    """Detect check-runs left pending after their backing Actions run completed (#3358).
+
+    One instance lives for one :func:`wait_for_checks` call. Each poll, every
+    pending check with an Actions job link has its run probed for completion
+    (throttled to once per :data:`_RUN_PROBE_INTERVAL_SECS` per run; a completed
+    run is never re-probed). A check still pending :data:`_STALE_GRACE_SECS`
+    after its run was first seen completed is stale, and its job's own
+    conclusion decides it: ``success`` re-buckets the check ``pass`` (warned by
+    name, once); anything else — another conclusion, none, or an unreadable job
+    — raises :class:`OrphanedCheckError` naming every such check at once.
+    """
+
+    def __init__(self) -> None:
+        self._probed_at: dict[str, float] = {}
+        self._completed_at: dict[str, float] = {}
+        self._passed: set[tuple[str, str]] = set()
+
+    def _run_done_since(self, run_id: str, now: float) -> float | None:
+        """When *run_id* was first seen completed, probing it if due; None while running."""
+        if run_id not in self._completed_at:
+            last = self._probed_at.get(run_id)
+            if last is not None and now - last < _RUN_PROBE_INTERVAL_SECS:
+                return None
+            self._probed_at[run_id] = now
+            if not run_completed(run_id):
+                return None
+            self._completed_at[run_id] = now
+        return self._completed_at[run_id]
+
+    def apply(self, checks: list[dict[str, str]], now: float) -> bool:
+        """Re-bucket (in place) stale checks whose job succeeded; raise on any other.
+
+        Returns True when any check was re-bucketed, so the caller knows to
+        re-evaluate whether the checks are now terminal.
+        """
+        orphans: list[str] = []
+        cause: Exception | None = None
+        changed = False
+        for check in checks:
+            if check.get("bucket") != _PENDING_BUCKET:
+                continue
+            name, link = str(check.get("name")), str(check.get("link") or "")
+            key = (name, link)
+            if key not in self._passed:
+                run = _ACTIONS_RUN_LINK_RE.search(link)
+                if run is None:
+                    continue  # app-posted status: no run to probe
+                done = self._run_done_since(run.group(1), now)
+                if done is None or now - done < _STALE_GRACE_SECS:
+                    continue
+                problem, error = _stale_job_problem(link)
+                cause = cause or error
+                if problem:
+                    orphans.append(f"{name} ({problem}; {link})")
+                    continue
+                self._passed.add(key)
+                print(
+                    f"Warning: {name!r} check-run stale; backing job succeeded. GitHub "
+                    f"still reports it pending {_format_wait(now - done)} after its "
+                    f"workflow run completed, so it is treated as passed (#3358). Job: {link}",
+                    file=sys.stderr,
+                )
+            check["bucket"], check["state"] = "pass", "SUCCESS"
+            changed = True
+        if orphans:
+            msg = (
+                "GitHub left check-runs pending after their backing workflow run "
+                "completed, and their jobs cannot be confirmed successful "
+                f"(orphaned check-run): {'; '.join(orphans)}. {_ORPHAN_RECOVERY}"
+            )
+            raise OrphanedCheckError(msg) from cause
+        return changed
+
+
+def _stale_job_problem(link: str) -> tuple[str | None, Exception | None]:
+    """Why the stale check at *link* is an orphan (None: its job succeeded), and any read error."""
+    match = _ACTIONS_JOB_LINK_RE.search(link)
+    if match is None:
+        return "job conclusion could not be read: unrecognised job link", None
+    try:
+        conclusion = job_conclusion(match.group(1), match.group(2))
+    except (subprocess.CalledProcessError, ValueError) as exc:
+        detail = (getattr(exc, "stderr", None) or str(exc)).strip()
+        return f"job conclusion could not be read: {detail}", exc
+    if conclusion == "success":
+        return None, None
+    return f"job concluded {conclusion or 'with no conclusion'}", None
+
+
 def _checks_terminal(checks: list[dict[str, str]], required: Collection[str]) -> bool:
     """True when *checks* is non-empty, none is pending, and no required check is outstanding."""
     return (
@@ -1205,8 +1324,19 @@ def wait_for_checks(
     While waiting it prints each pending check with how long this wait has seen
     it pending — whenever the pending set changes and at least every
     :data:`_PROGRESS_INTERVAL_SECS` — so a stuck check is obvious long before the
-    deadline. *poll_timeout* defaults to :func:`checks_timeout_secs`
-    (``$VRG_CHECKS_TIMEOUT``, else 1800s). When it elapses with checks still
+    deadline.
+
+    Stale check-runs are caught *while* waiting, not only at the deadline
+    (#3358): a pending check still pending :data:`_STALE_GRACE_SECS` after its
+    backing Actions run completed is decided by the backing job's own
+    conclusion (:class:`_StaleCheckProbe`). A job that succeeded passes the check
+    with a warning naming it; any other conclusion, or an unreadable one, raises
+    :class:`OrphanedCheckError` at once. A genuinely failing check is untouched
+    and still caught by ``pr_merge.failed_check_names``.
+
+    *poll_timeout* defaults to :func:`checks_timeout_secs`
+    (``$VRG_CHECKS_TIMEOUT``, else 1800s) and remains the backstop for
+    genuinely long-running checks. When it elapses with checks still
     pending, each is cross-checked against its backing workflow run: a
     non-terminal check over a *completed* run is a GitHub orphan and raises
     :class:`OrphanedCheckError`; otherwise :class:`ChecksTimeoutError` names every
@@ -1223,11 +1353,15 @@ def wait_for_checks(
     first_seen: dict[tuple[str, str], float] = {}
     reported: tuple[tuple[str, str], ...] = ()
     last_report = 0.0
+    stale = _StaleCheckProbe()
     while True:
         checks = pr_checks(pr)
         if _checks_terminal(checks, required):
             return  # let pr_merge.failed_check_names catch any failure
         now = time.monotonic()
+        # At the deadline the orphan backstop below decides instead.
+        if now < deadline and stale.apply(checks, now) and _checks_terminal(checks, required):
+            return  # every still-pending check was stale over a successful job
         outstanding = outstanding_required_checks(checks, required)
         if outstanding and outstanding != announced:
             print(f"Awaiting required checks: {describe_outstanding(outstanding)}")
@@ -1251,9 +1385,7 @@ def wait_for_checks(
                 # check-runs that live only on a superseded run (#2897).
                 raise OrphanedCheckError(
                     f"GitHub left {', '.join(orphans)} non-terminal after its "
-                    "backing workflow run completed (orphaned check-run). Close "
-                    "and reopen the PR to re-run the gate, then re-run the "
-                    "waiting command (vrg-finalize-pr, or vrg-release --resume)."
+                    f"backing workflow run completed (orphaned check-run). {_ORPHAN_RECOVERY}"
                 )
             detail = f"checks still pending after {timeout}s"
             if pending:
