@@ -21,7 +21,7 @@ def test_python_ecosystem_interactive(capsys: pytest.CaptureFixture[str]) -> Non
     assert rc == 0
     assert "build: uv build\n" in captured.out
     assert "publish: uv publish\n" in captured.out
-    assert "credential-secret: PYPI_TOKEN\n" in captured.out
+    assert "credential-secret: \n" in captured.out
 
 
 def test_python_ecosystem_ci_mode(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
@@ -37,7 +37,7 @@ def test_python_ecosystem_ci_mode(capsys: pytest.CaptureFixture[str], tmp_path: 
     content = output_file.read_text()
     assert "build=uv build\n" in content
     assert "publish=uv publish\n" in content
-    assert "credential-secret=PYPI_TOKEN\n" in content
+    assert "credential-secret=\n" in content
 
 
 def test_go_ecosystem_ci_mode(tmp_path: Path) -> None:
@@ -78,7 +78,7 @@ def test_rust_ecosystem_ci_mode(tmp_path: Path) -> None:
     content = output_file.read_text()
     assert "build=cargo build --release\n" in content
     assert "publish=cargo publish\n" in content
-    assert "credential-secret=CRATES_IO_TOKEN\n" in content
+    assert "credential-secret=CARGO_REGISTRY_TOKEN\n" in content
 
 
 def test_unknown_language_fails() -> None:
