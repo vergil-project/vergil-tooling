@@ -606,6 +606,17 @@ def test_phase_details_update_deps_noop() -> None:
     assert "No dependency changes; no PR opened." in text
 
 
+def test_phase_details_update_deps_already_merged() -> None:
+    ctx = _ctx()
+    ctx.deps_landed_pr_url = "https://x/pull/7"
+    ctx.deps_pr_url = "https://x/pull/7"
+    text = _phase_details(ctx, "update-deps")
+    assert text == (
+        "The dependency update for this develop version had already merged: "
+        "https://x/pull/7. Nothing to update."
+    )
+
+
 def test_phase_details_update_deps_skipped() -> None:
     ctx = _ctx()
     ctx.without_deps = True

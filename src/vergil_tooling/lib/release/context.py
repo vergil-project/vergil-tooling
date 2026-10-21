@@ -82,6 +82,9 @@ class ReleaseContext:
     deps_pr_url: str | None = None
     deps_fix_issue_url: str | None = None
     deps_failure: str | None = None
+    # Set when the update for the develop version had already merged before
+    # this stage ran (a re-run such as --resume, #3330): nothing was updated.
+    deps_landed_pr_url: str | None = None
 
     # Open dependency-update PRs this release bypassed with --allow-pending-deps
     # (spec §5.3); named in the prepare-stage tracking comment so the bypass is

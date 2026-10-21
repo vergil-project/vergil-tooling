@@ -117,6 +117,36 @@ def merge_pr(ctx: UpdateDepsContext) -> None:
         pr_merge.wait_and_merge(pr_url, strategy="merge")
     except pr_merge.MergeAbortError as exc:
         record_merge_failure(ctx, str(exc))
+        return
+    delete_merged_branch(ctx)
+
+
+def delete_merged_branch(ctx: UpdateDepsContext) -> None:
+    """Delete the merged PR's head branch on origin (#3330).
+
+    GitHub's delete-on-merge setting usually has already, but it can skip its
+    after-merge processing; a leftover branch would make the next run at this
+    version report "already merged". Deliberately not ``gh pr merge
+    --delete-branch``: ``github.merge`` is shared with other callers, and gh
+    also deletes the *local* branch, switching off it first — from this linked
+    worktree (``develop`` is held by the root checkout) that can fail and make
+    gh exit non-zero after a successful merge, which would read as a merge
+    failure. The same split as the release gate's close-then-delete (#3332).
+    A failure is loud but does not fail the run: the update has landed.
+    """
+    endpoint = f"repos/{ctx.repo}/git/refs/heads/{ctx.branch}"
+    try:
+        deleted = github.delete_if_exists(endpoint)
+    except subprocess.CalledProcessError as exc:
+        print(
+            f"WARNING: merged {ctx.pr_url}, but could not delete its branch "
+            f"{ctx.branch}: {exc}\nDelete it by hand: git push origin --delete {ctx.branch}"
+        )
+        return
+    if deleted:
+        print(f"Deleted merged branch {ctx.branch} on origin.")
+    else:
+        print(f"Branch {ctx.branch} already deleted on origin.")
 
 
 def record_merge_failure(ctx: UpdateDepsContext, message: str) -> None:

@@ -250,7 +250,11 @@ The stage brings the root checkout's `develop` up to date with
 same pipeline as [`vrg-update-deps`](../reference/dev/update-deps.md):
 
 1. Create the `deps/update-<version>` branch in a managed worktree,
-   where `<version>` is the new `develop` version.
+   where `<version>` is the new `develop` version. If that branch
+   already exists, its PR decides what happens; see
+   [An existing update branch](../reference/dev/update-deps.md#an-existing-update-branch).
+   On `--resume`, if the update for this version already merged, the
+   stage succeeds and its tracking-issue comment links the merged PR.
 2. Run each applicable updater, committing each one's changes
    separately. The built-in updaters and the per-repo hook are described
    in the [dependency-update reference](../reference/dependency-update-config.md).
@@ -258,7 +262,8 @@ same pipeline as [`vrg-update-deps`](../reference/dev/update-deps.md):
    The tracking-issue comment says "No dependency changes; no PR opened."
 4. Otherwise run `vrg-container-run -- vrg-validate` once, push the
    branch, and open a PR to `develop` labelled `dependency-update`.
-5. If validation passed, wait for the PR's checks and merge it.
+5. If validation passed, wait for the PR's checks, merge it, and
+   delete its branch on origin.
 
 The stage's comment on the tracking issue always carries a
 **Held back by declared bounds** table: the dependencies whose newest
