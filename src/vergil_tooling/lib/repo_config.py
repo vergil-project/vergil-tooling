@@ -332,31 +332,40 @@ def _check_claude_settings(repo_root: Path, items: list[DiffItem], warnings: lis
         field="local.claude_settings.plugin",
         items=items,
     )
-    _check_attribution(raw, template, warnings)
+    _check_attribution(raw, template, items)
 
 
 def _check_attribution(
     raw: dict[str, Any],
     template: dict[str, Any],
-    warnings: list[str],
+    items: list[DiffItem],
 ) -> None:
-    """Warn unless ``attribution`` equals the template's value (#3200).
+    """Require ``attribution`` to equal the template's value (#3200, #3361).
 
     AI co-author attribution was dropped fleet-wide: Claude Code's default
     ``attribution`` setting is what tells agents to add a ``Co-Authored-By``
-    trailer, so each repo turns it off in its checked-in settings. While the
-    fleet is being swept, a missing or different value is a warning, not a
-    hard failure, so not-yet-swept repos keep passing their audits.
+    trailer, so each repo turns it off in its checked-in settings. The fleet
+    sweep has landed, so a missing or different value is a hard failure. The
+    empty-string form is required: ``attribution: false`` needs a newer
+    Claude Code and makes older versions skip the whole settings file.
     """
     expected = template.get("attribution")
     actual = raw.get("attribution")
     if actual == expected:
         return
-    shown = "missing" if "attribution" not in raw else json.dumps(actual, sort_keys=True)
-    warnings.append(
-        f"attribution in .claude/settings.json is {shown}; expected "
-        f'"attribution": {json.dumps(expected)} to turn off Claude Code\'s '
-        "AI co-author trailer (#3200)."
+    items.append(
+        DiffItem(
+            field="local.claude_settings.attribution",
+            expected=(
+                f'"attribution": {json.dumps(expected)} in .claude/settings.json '
+                "to turn off Claude Code's AI co-author trailer (#3200)"
+            ),
+            actual=(
+                "missing"
+                if "attribution" not in raw
+                else f'"attribution": {json.dumps(actual, sort_keys=True)}'
+            ),
+        )
     )
 
 
