@@ -117,6 +117,23 @@ def test_success_records_report_and_pr(monkeypatch: pytest.MonkeyPatch) -> None:
     assert ctx.deps_failure is None
 
 
+def test_already_merged_update_is_not_a_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """On --resume after the update for this version merged, the stage succeeds (#3330)."""
+    deps = UpdateDepsContext(
+        repo="o/r",
+        repo_root=Path("/r"),
+        version="2.1.243",
+        landed_pr_url="https://github.com/o/r/pull/7",
+    )
+    _patch(monkeypatch, deps)
+    ctx = _rctx()
+    update_deps(ctx)  # no raise
+    assert ctx.deps_landed_pr_url == "https://github.com/o/r/pull/7"
+    assert ctx.deps_pr_url == "https://github.com/o/r/pull/7"
+    assert ctx.deps_failure is None
+    assert ctx.deps_report is None
+
+
 def test_noop_records_report_without_pr(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch(monkeypatch, _deps(held_back=False))
     ctx = _rctx()

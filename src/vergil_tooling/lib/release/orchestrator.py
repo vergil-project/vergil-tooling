@@ -309,6 +309,11 @@ def _phase_details(ctx: ReleaseContext, phase: str) -> str:
     elif phase == "update-deps":
         if ctx.without_deps:
             lines.append("Dependency update skipped (--without-deps).")
+        elif ctx.deps_landed_pr_url:
+            lines.append(
+                "The dependency update for this develop version had already merged: "
+                f"{ctx.deps_landed_pr_url}. Nothing to update."
+            )
         else:
             lines.append("**Held back by declared bounds**")
             lines.append("")

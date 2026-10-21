@@ -151,6 +151,30 @@ def test_merge_stage_runs_only_on_changes(monkeypatch) -> None:
     assert calls["n"] == 1
 
 
+def test_already_landed_update_is_a_clean_noop(monkeypatch, capsys) -> None:
+    """Preflight found deps/update-<v>'s PR merged (#3330): nothing runs, exit 0."""
+    monkeypatch.setattr(_MOD + ".git.run", lambda *a: pytest.fail("git ran"))
+    monkeypatch.setattr(_MOD + ".pr.cleanup_worktree", lambda ctx: pytest.fail("cleaned up"))  # noqa: ARG005
+    state = UpdateDepsState(repo_root=Path("/tmp/r"))  # noqa: S108
+    ctx = UpdateDepsContext(
+        repo="o/r",
+        repo_root=Path("/tmp/r"),  # noqa: S108
+        branch="deps/update-2.1.243",
+        version="2.1.243",
+        landed_pr_url="https://github.com/o/r/pull/7",
+    )
+    state.ctx = ctx
+    state.registry = [_Changed()]
+    for stage in build_stages()[1:]:
+        stage.fn(state)
+    assert ctx.results == []
+    assert ctx.any_changes is False
+    assert ctx.failure is None
+    out = capsys.readouterr().out
+    assert "Dependency update for 2.1.243 already merged: https://github.com/o/r/pull/7" in out
+    assert "Held back" not in out
+
+
 def test_finalize_removes_worktree_on_noop(monkeypatch) -> None:
     cleaned = {"done": False}
     monkeypatch.setattr(_MOD + ".pr.cleanup_worktree", lambda ctx: cleaned.update(done=True))  # noqa: ARG005
