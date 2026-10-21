@@ -193,7 +193,7 @@ Required keys and accepted values:
 | `[project].versioning-scheme` | `application`, `library`, `none`, `semver` | Required. |
 | `[project].branching-model` | `application-promotion`, `docs-single-branch`, `library-release` | Required. Determines which branch prefixes `vrg-commit` allows. |
 | `[project].release-model` | `artifact-publishing`, `environment-promotion`, `none`, `tagged-release` | Required. |
-| `[project].primary-language` | `cpp`, `go`, `java`, `python`, `ruby`, `rust`, `typescript` | Optional. Omit it for a repo with no primary language; it selects the per-language checks, container image and `.gitignore` fragment. |
+| `[project].primary-language` | `cpp`, `go`, `java`, `python`, `rust`, `typescript` | Optional. Omit it for a repo with no primary language; it selects the per-language checks, container image and `.gitignore` fragment. |
 | `[ci].versions` | non-empty list of strings | Required. The PR-CI version matrix. |
 | `[dependencies].vergil` | `vX.Y` | Required. The vergil release line; new repos get the line of the vergil-tooling that created them. |
 
