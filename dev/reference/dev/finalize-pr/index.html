@@ -15980,11 +15980,26 @@ automatically and the wait restarts.</p>
 <p><strong>Orphaned check-runs.</strong> GitHub occasionally leaves a check-run
 non-terminal (<code>queued</code>/<code>in_progress</code>) even though the workflow run that
 owns it has already completed — an <em>orphan</em> that would never go green on
-its own. When the deadline elapses with checks still pending, finalize
-cross-checks each one against its backing run (<code>gh run view</code>). A
-non-terminal check over a completed run is an orphan, so finalize
-<strong>aborts with recovery guidance</strong> — close and reopen the PR to re-run the
-gate, then re-run <code>vrg-finalize-pr</code> — rather than hanging. Genuinely
+its own. The waiter detects this <strong>while waiting</strong>, not only at the
+deadline (issue #3358). About every 30 seconds it checks the backing run
+(<code>gh run view</code>) of each pending Actions check. Once a run has completed,
+its check gets a one-minute grace period to turn terminal. If the check is
+still pending after that, the backing job's own conclusion decides
+(<code>GET /repos/{owner}/{repo}/actions/jobs/{job_id}</code>):</p>
+<ul>
+<li>The job <strong>succeeded</strong>: the check is treated as passed and a warning names
+  it (<code>'test / matrix' check-run stale; backing job succeeded</code>), so the
+  merge goes ahead instead of waiting out the deadline. Checks that really
+  failed are still caught by the failed-checks gate.</li>
+<li>The job <strong>did not succeed</strong>, has no conclusion, or its conclusion <strong>cannot
+  be read</strong>: finalize <strong>aborts at once with recovery guidance</strong>. The
+  guidance is to close and reopen the PR to re-run the gate, then re-run
+  <code>vrg-finalize-pr</code>. The error names each such check, its job's outcome and
+  its job link.</li>
+</ul>
+<p>The deadline is the backstop. When it elapses with checks still pending,
+each one is checked against its backing run again, and a non-terminal check
+over a completed run aborts with the same guidance. Genuinely
 still-running checks are waited on as normal; if the deadline elapses
 with nothing orphaned (for example an app-posted status that is legitimately
 slow), finalize fails with a timeout error that names every still-pending
