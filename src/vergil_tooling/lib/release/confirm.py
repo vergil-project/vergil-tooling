@@ -39,14 +39,9 @@ def confirm_main(ctx: ReleaseContext) -> None:
     jobs = _settled_run_jobs(ctx, run_id, (_is_release_job,))
     _verify_release_job(jobs)
 
-    deferred = _collect_deferred_publish(jobs)
-    if deferred:
-        ctx.deferred_publish_failures.extend(
-            d for d in deferred if d not in ctx.deferred_publish_failures
-        )
-        print(f"  Publish deferred (release is valid): {', '.join(deferred)}")
-        progress.mark_warn(f"publish deferred: {', '.join(deferred)}")
-    else:
+    if not _record_publish_state(
+        ctx, run_id, jobs, deferred_label="Publish deferred (release is valid)"
+    ):
         print("  All CD jobs succeeded.")
 
     _verify_artifacts(ctx)
@@ -60,15 +55,48 @@ def confirm_develop(ctx: ReleaseContext) -> None:
     ctx.develop_cd_run_url = run_url
 
     jobs = _settled_run_jobs(ctx, run_id, (_name_contains("docs"),))
+    if not _record_publish_state(ctx, run_id, jobs, deferred_label="Publish deferred on develop"):
+        print("Develop CD verified.")
+
+
+def _record_publish_state(
+    ctx: ReleaseContext, run_id: str, jobs: list[dict[str, Any]], *, deferred_label: str
+) -> bool:
+    """Record deferred publish failures and stale job records; True if any.
+
+    A job still non-terminal after the settle budget has no conclusion to judge
+    (#3352). ``gh run watch`` already saw the run finish, so when the run itself
+    concluded ``success`` GitHub is asserting every job succeeded or skipped: the
+    job's record is stale, reported by name as a warning but never as a failed
+    publish. Under any other run conclusion it may genuinely have failed, so it
+    is deferred as ``<job> (never settled)``.
+    """
     deferred = _collect_deferred_publish(jobs)
+    stale: list[str] = []
+    unsettled = _unsettled_jobs(jobs)
+    if unsettled:
+        if _run_conclusion(ctx, run_id) == "success":
+            stale = unsettled
+        else:
+            deferred.extend(f"{name} (never settled)" for name in unsettled)
+
+    reasons: list[str] = []
     if deferred:
         ctx.deferred_publish_failures.extend(
             d for d in deferred if d not in ctx.deferred_publish_failures
         )
-        print(f"  Publish deferred on develop: {', '.join(deferred)}")
-        progress.mark_warn(f"publish deferred: {', '.join(deferred)}")
-    else:
-        print("Develop CD verified.")
+        print(f"  {deferred_label}: {', '.join(deferred)}")
+        reasons.append(f"publish deferred: {', '.join(deferred)}")
+    if stale:
+        print(
+            f"  Stale job record (run concluded success; ignored): {', '.join(stale)} "
+            "never reached 'completed' in the jobs API"
+        )
+        reasons.append(f"stale job record: {', '.join(stale)}")
+    if reasons:
+        # mark_warn is last-call-wins, so the stage carries one combined reason.
+        progress.mark_warn("; ".join(reasons))
+    return bool(reasons)
 
 
 def _watch_cd(
@@ -182,6 +210,16 @@ def _fetch_run_jobs(ctx: ReleaseContext, run_id: str) -> list[dict[str, Any]]:
     return jobs
 
 
+def _run_conclusion(ctx: ReleaseContext, run_id: str) -> str:
+    """Return the run-level ``conclusion`` of *run_id* (empty if none)."""
+    return retry.retry_known_resource(
+        lambda: github.read_output(
+            "run", "view", "--repo", ctx.repo, run_id, "--json", "conclusion", "--jq", ".conclusion"
+        ),
+        resource=_run_resource(run_id),
+    ).strip()
+
+
 JobMatcher = Callable[[str], bool]
 
 
@@ -218,6 +256,11 @@ def _settled_run_jobs(
     release settle uses ``_is_release_job`` (the leaf segment), because
     cd-release also runs ``release / package-*`` jobs that finish first and
     would end the wait early under a substring match (#3102).
+
+    Every other job must settle too, within the same budget: the same lag hits
+    any leaf, and a non-terminal job has no conclusion to judge (#3352). A job
+    that never settles is left in the final snapshot for the caller to report
+    (``_unsettled_jobs``).
     """
     jobs: list[dict[str, Any]] = []
     for attempt in range(_JOB_SETTLE_ATTEMPTS):
@@ -225,7 +268,7 @@ def _settled_run_jobs(
         if all(
             (job := _find_job(jobs, matches)) is not None and job.get("status") == "completed"
             for matches in expected
-        ):
+        ) and not _unsettled_jobs(jobs):
             return jobs
         if attempt < _JOB_SETTLE_ATTEMPTS - 1:
             time.sleep(_JOB_SETTLE_INTERVAL)
@@ -277,25 +320,40 @@ def _verify_release_job(jobs: list[dict[str, Any]]) -> None:
     )
 
 
-def _collect_deferred_publish(jobs: list[dict[str, Any]]) -> list[str]:
-    """Ordered-unique families of non-release jobs that did not succeed.
+def _job_family(name: str) -> str:
+    return name.split(" / ", 1)[0]
 
-    A job "did not succeed" when its conclusion is neither ``success`` nor
-    ``skipped`` (a skipped job — e.g. codeql — is not a failure). Reusable
-    leaves are ``<family> / <job>``; collapse to the family so a matrix of
-    failed ``docker-publish`` leaves reports once as ``docker-publish``.
+
+def _unsettled_jobs(jobs: list[dict[str, Any]]) -> list[str]:
+    """Full names of jobs whose ``status`` is not yet ``completed``."""
+    return [job.get("name", "") for job in jobs if job.get("status") != "completed"]
+
+
+def _collect_deferred_publish(jobs: list[dict[str, Any]]) -> list[str]:
+    """Ordered-unique families of completed non-release jobs that did not succeed.
+
+    A job "did not succeed" when it completed with a conclusion that is neither
+    ``success`` nor ``skipped`` (a skipped job — e.g. codeql — is not a
+    failure). A job that has not completed is not judged here — see
+    ``_unsettled_jobs`` (#3352). Reusable leaves are ``<family> / <job>``;
+    collapse to the family so a matrix of failed ``docker-publish`` leaves
+    reports once as ``docker-publish`` — except when the family is the release
+    job's own (``release / package-sign``), where the bare family would read as
+    the release itself failing, so the full job name is reported.
     """
-    families: list[str] = []
+    release_families = {_job_family(n) for j in jobs if _is_release_job(n := j.get("name", ""))}
+    failed: list[str] = []
     for job in jobs:
         name = job.get("name", "")
-        if _is_release_job(name):
+        if _is_release_job(name) or job.get("status") != "completed":
             continue
         if job.get("conclusion") in ("success", "skipped"):
             continue
-        family = name.split(" / ", 1)[0]
-        if family and family not in families:
-            families.append(family)
-    return families
+        family = _job_family(name)
+        label = name if family in release_families else family
+        if label and label not in failed:
+            failed.append(label)
+    return failed
 
 
 def _verify_artifacts(ctx: ReleaseContext) -> None:
