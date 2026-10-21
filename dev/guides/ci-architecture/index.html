@@ -16322,7 +16322,7 @@ reusable workflow at
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">if</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${{ inputs.run-security != 'false' }}</span>
 <a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">vergil-project/vergil-actions/.github/workflows/ci-security.yml@develop</span>
 <a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span><span class="nt">with</span><span class="p">:</span>
-<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">    </span><span class="nt">language</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ruby</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">    </span><span class="nt">language</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">python</span>
 <a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">    </span><span class="c1"># For Go, also set: semgrep-language: golang</span>
 <a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">  </span><span class="nt">permissions</span><span class="p">:</span>
 <a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">    </span><span class="nt">contents</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">read</span>
@@ -16331,7 +16331,7 @@ reusable workflow at
 <div class="admonition tip">
 <p class="admonition-title">Semgrep language names</p>
 <p>Semgrep uses <code>p/&lt;language&gt;</code> rulesets. Most languages match their
-common name (<code>ruby</code>, <code>python</code>, <code>java</code>) but Go requires <code>golang</code>.
+common name (<code>python</code>, <code>java</code>, <code>rust</code>) but Go requires <code>golang</code>.
 Use the <code>semgrep-language</code> input to override when needed.</p>
 </div>
 <h4 id="fleet-excluded-semgrep-rules">Fleet-excluded semgrep rules<a class="headerlink" href="#fleet-excluded-semgrep-rules" title="Permanent link">&para;</a></h4>
@@ -16434,10 +16434,6 @@ publisher reads:</p>
 <tr>
 <td>rust</td>
 <td><code>CARGO_REGISTRY_TOKEN</code></td>
-</tr>
-<tr>
-<td>ruby</td>
-<td><code>RUBYGEMS_API_KEY</code></td>
 </tr>
 <tr>
 <td>java</td>
@@ -16558,24 +16554,25 @@ set is reconciled.</p>
 <a href="https://github.com/vergil-project/vergil-containers">vergil-containers</a>
 repository.</p>
 <h3 id="available-images">Available images<a class="headerlink" href="#available-images" title="Permanent link">&para;</a></h3>
-<p><strong><code>dev-ruby</code></strong> (3.2, 3.3, 3.4)
-:   Base: <code>ruby:&lt;v&gt;-slim</code>. Includes build-essential,
-    git, curl, bundler.</p>
-<p><strong><code>dev-python</code></strong> (3.12, 3.13, 3.14)
+<p>This page does not repeat the published versions of each image. The
+generated version table in the <code>vergil-containers</code>
+<a href="https://github.com/vergil-project/vergil-containers/blob/develop/README.md#available-images">README</a>
+is the single source of truth.</p>
+<p><strong><code>dev-python</code></strong>
 :   Base: <code>python:&lt;v&gt;-slim</code>. Includes git, curl, uv.</p>
-<p><strong><code>dev-java</code></strong> (17, 21)
+<p><strong><code>dev-java</code></strong>
 :   Base: <code>eclipse-temurin:&lt;v&gt;-jdk</code>. Includes git, curl.</p>
-<p><strong><code>dev-go</code></strong> (1.25, 1.26)
+<p><strong><code>dev-go</code></strong>
 :   Base: <code>golang:&lt;v&gt;</code>. Includes golangci-lint,
     govulncheck, go-licenses, gocyclo.</p>
-<p><strong><code>dev-cpp-clang</code></strong> (19, 20)
+<p><strong><code>dev-cpp-clang</code></strong>
 :   Base: <code>debian:trixie-slim</code> + <code>apt.llvm.org</code>. Includes clang,
     clang-tidy, clang-format, lld, llvm (<code>llvm-cov</code>), the sanitizer
     runtime, CMake, Conan 2, cppcheck, and gcovr.</p>
-<p><strong><code>dev-cpp-gcc</code></strong> (13, 14)
+<p><strong><code>dev-cpp-gcc</code></strong>
 :   Base: <code>debian:trixie-slim</code>. Includes g++, gcov, CMake, Conan 2,
     cppcheck, and gcovr.</p>
-<p><strong><code>dev-ts-node</code></strong> (22, 24)
+<p><strong><code>dev-ts-node</code></strong>
 :   Base: <code>debian:trixie-slim</code> + prebuilt Node from NodeSource (never
     built from source). Includes Node.js, npm, TypeScript (<code>tsc</code>),
     ESLint + typescript-eslint, Prettier, Vitest, <code>@vitest/coverage-v8</code>,
@@ -16592,7 +16589,9 @@ family rides the <code>[ci].versions</code> tag prefix (<code>clang-20</code>, <
 <a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>docker/build.sh
 </code></pre></div>
 <p>This builds all images. Individual images can be built with:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>docker<span class="w"> </span>build<span class="w"> </span>--build-arg<span class="w"> </span><span class="nv">RUBY_VERSION</span><span class="o">=</span><span class="m">3</span>.4<span class="w"> </span>-t<span class="w"> </span>dev-ruby:3.4<span class="w"> </span>docker/ruby/
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>docker/generate.sh<span class="w"> </span>python
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>docker<span class="w"> </span>build<span class="w"> </span>--build-arg<span class="w"> </span><span class="nv">PYTHON_VERSION</span><span class="o">=</span><span class="m">3</span>.14<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">  </span>-t<span class="w"> </span>dev-python:3.14<span class="w"> </span>docker/python/
 </code></pre></div>
 <h3 id="publishing">Publishing<a class="headerlink" href="#publishing" title="Permanent link">&para;</a></h3>
 <p>Images are published automatically on push to <code>develop</code> or <code>main</code> in
@@ -16602,7 +16601,7 @@ the <code>vergil-containers</code> repository via its
 <ul>
 <li><strong>Thin images</strong> — language runtime + package manager + git/curl</li>
 <li><strong>Project-managed dependencies</strong> — tools come from lockfiles at
-  container startup (e.g., <code>bundle install</code>, <code>uv sync</code>, <code>go install</code>)</li>
+  container startup (e.g., <code>uv sync</code>, <code>go install</code>)</li>
 <li><strong>No host requirements</strong> — Docker is the only prerequisite for
   local development</li>
 </ul>
