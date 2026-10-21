@@ -16257,7 +16257,11 @@ never affect the release itself. Pass <code>--without-deps</code> to skip it.</p
 same pipeline as <a href="../../reference/dev/update-deps/"><code>vrg-update-deps</code></a>:</p>
 <ol>
 <li>Create the <code>deps/update-&lt;version&gt;</code> branch in a managed worktree,
-   where <code>&lt;version&gt;</code> is the new <code>develop</code> version.</li>
+   where <code>&lt;version&gt;</code> is the new <code>develop</code> version. If that branch
+   already exists, its PR decides what happens; see
+   <a href="../../reference/dev/update-deps/#an-existing-update-branch">An existing update branch</a>.
+   On <code>--resume</code>, if the update for this version already merged, the
+   stage succeeds and its tracking-issue comment links the merged PR.</li>
 <li>Run each applicable updater, committing each one's changes
    separately. The built-in updaters and the per-repo hook are described
    in the <a href="../../reference/dependency-update-config/">dependency-update reference</a>.</li>
@@ -16265,7 +16269,8 @@ same pipeline as <a href="../../reference/dev/update-deps/"><code>vrg-update-dep
    The tracking-issue comment says "No dependency changes; no PR opened."</li>
 <li>Otherwise run <code>vrg-container-run -- vrg-validate</code> once, push the
    branch, and open a PR to <code>develop</code> labelled <code>dependency-update</code>.</li>
-<li>If validation passed, wait for the PR's checks and merge it.</li>
+<li>If validation passed, wait for the PR's checks, merge it, and
+   delete its branch on origin.</li>
 </ol>
 <p>The stage's comment on the tracking issue always carries a
 <strong>Held back by declared bounds</strong> table: the dependencies whose newest
