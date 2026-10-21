@@ -16152,13 +16152,14 @@ container themselves (epic
 <a href="https://github.com/vergil-project/.github/issues/338">vergil-project/.github#338</a>).
 A <code>[ci].versions</code> change therefore takes effect fleet-wide with no edit to
 <code>ci.yml</code>.</p>
-<p><code>ci.yml</code> also declares <code>workflow_call</code> with two boolean inputs,
-<code>run-security</code> and <code>run-release</code>, both defaulting to <code>true</code>. On a
-<code>pull_request</code> run the inputs are empty, so the generated <code>ci.yml</code>
-compares them with <code>!= 'false'</code> and both stay on. <code>run-security</code> is
-forwarded to <code>ci-security.yml</code>. <code>run-release</code> is forwarded to
-<code>ci-version-bump.yml</code>, where it is deprecated: the version gate now
-follows <code>[project].release-model</code>.</p>
+<p><code>ci.yml</code> also declares <code>workflow_call</code> with one boolean input,
+<code>run-security</code>, defaulting to <code>true</code>. On a <code>pull_request</code> run the input
+is empty, so the generated <code>ci.yml</code> compares it with <code>!= 'false'</code> and it
+stays on. <code>run-security</code> is forwarded to <code>ci-security.yml</code>. The security
+job passes no <code>container-suffix:</code>, because <code>ci-security.yml</code> ignores it.
+The generated <code>ci.yml</code> no longer declares or forwards <code>run-release</code>: the
+version gate in <code>ci-version-bump.yml</code> follows <code>[project].release-model</code>
+instead.</p>
 <h3 id="shared-security-workflow">Shared security workflow<a class="headerlink" href="#shared-security-workflow" title="Permanent link">&para;</a></h3>
 <p>The security scanners live in the reusable workflow
 <code>vergil-project/vergil-actions/.github/workflows/ci-security.yml</code>. It
