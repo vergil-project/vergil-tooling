@@ -30,7 +30,15 @@ _ENUMS: dict[str, set[str]] = {
     "versioning-scheme": {"library", "semver", "application", "none"},
     "branching-model": {"library-release", "application-promotion", "docs-single-branch"},
     "release-model": {"artifact-publishing", "tagged-release", "environment-promotion", "none"},
-    "primary-language": {"python", "go", "java", "ruby", "rust", "cpp", "typescript"},
+    "primary-language": {"python", "go", "java", "rust", "cpp", "typescript"},
+}
+
+# Languages vergil once supported and has since dropped, each with the reason
+# shown to the user. A repo that still declares one is rejected outright: the
+# generic unrecognized-language path only warns and treats the value as unset,
+# which would silently validate the repo as a language-less project.
+_RETIRED_PRIMARY_LANGUAGES: dict[str, str] = {
+    "ruby": "Ruby support was removed in epic vergil-project/.github#407",
 }
 
 # The [cpp] block (epic vergil-project/.github#207 §3.3). The compiler family ×
@@ -966,6 +974,12 @@ def _parse_raw_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> VergilC
             raise ConfigError(msg)
 
     raw_lang = project_raw.get("primary-language", "")
+    if raw_lang in _RETIRED_PRIMARY_LANGUAGES:
+        msg = (
+            f"{source}: primary-language '{raw_lang}' is no longer supported"
+            f" ({_RETIRED_PRIMARY_LANGUAGES[raw_lang]})"
+        )
+        raise ConfigError(msg)
     if raw_lang and raw_lang not in _ENUMS["primary-language"]:
         allowed = ", ".join(sorted(_ENUMS["primary-language"]))
         print(

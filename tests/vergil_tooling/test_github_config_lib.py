@@ -851,7 +851,7 @@ _EXPECTED_GATES_TWO_VERSIONS = [
 ]
 
 
-@pytest.mark.parametrize("language", ["python", "go", "java", "ruby", "rust"])
+@pytest.mark.parametrize("language", ["python", "go", "java", "rust"])
 def test_ci_gates_existing_languages_snapshot(language: str) -> None:
     ci = _ci(versions=["v1", "v2"])
     r = desired_ci_gates_ruleset(_project(language=language), ci, ghas=True)

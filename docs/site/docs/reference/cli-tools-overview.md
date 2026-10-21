@@ -463,7 +463,7 @@ refuses `sudo`/`doas`/`su`/`pkexec`. See the
 
 ### vrg-generate-commands
 
-Generate MQSC command methods for all language ports (Python, Ruby,
+Generate MQSC command methods for all language ports (Python,
 Java, Go, Rust) from `mapping-data.json`. Updates target files
 between `BEGIN/END GENERATED MQSC METHODS` markers.
 

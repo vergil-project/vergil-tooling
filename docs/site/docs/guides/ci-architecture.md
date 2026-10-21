@@ -214,7 +214,7 @@ standards-compliance job is gone: PR issue linkage is now checked by
 
 !!! tip "Semgrep rulesets"
     `vrg-semgrep-scan` maps the language to a registry ruleset:
-    `python`, `java`, `ruby` and `rust` map to `p/<language>`, and `go`
+    `python`, `java` and `rust` map to `p/<language>`, and `go`
     maps to `p/golang`. It adds `p/dockerfile` when the repository has
     Dockerfiles and `p/github-actions` when it has workflows.
     `ci-security.yml` adds `p/c` for `cpp` and `p/typescript` for

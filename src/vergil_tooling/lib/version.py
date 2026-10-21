@@ -18,14 +18,12 @@ from vergil_tooling.lib.config import read_config
 if TYPE_CHECKING:
     from pathlib import Path
 
-_RUBY_VERSION_RE = re.compile(r"VERSION\s*=\s*'([^']+)'")
 _GO_VERSION_RE = re.compile(r'Version\s*=\s*"([^"]+)"')
 _JAVA_VERSION_RE = re.compile(r"<version>([^<]+)</version>")
 
 _LOCKFILE_COMMANDS: dict[str, list[str]] = {
     "python": ["uv", "lock"],
     "rust": ["cargo", "update", "--workspace"],
-    "ruby": ["bundle", "install"],
 }
 
 _DEFAULT_VERSION_FILES: dict[str, str] = {
@@ -41,7 +39,6 @@ _LANGUAGES_WITH_SEPARATE_VERSION = frozenset(
         "python",
         "rust",
         "java",
-        "ruby",
         "go",
     }
 )
@@ -58,13 +55,6 @@ class VersionSyncError(Exception):
 def _discover_version_file(repo_root: Path, language: str) -> Path:
     if language in _DEFAULT_VERSION_FILES:
         return repo_root / _DEFAULT_VERSION_FILES[language]
-
-    if language == "ruby":
-        matches = list(repo_root.glob("lib/**/version.rb"))
-        if not matches:
-            msg = f"No lib/**/version.rb found in {repo_root}"
-            raise FileNotFoundError(msg)
-        return matches[0]
 
     if language == "go":
         matches = [m for m in repo_root.glob("**/version.go") if ".git" not in m.parts]
@@ -119,13 +109,6 @@ def _read_version(text: str, language: str) -> str:
     if language == "rust":
         data = tomllib.loads(text)
         return str(data["package"]["version"])
-
-    if language == "ruby":
-        m = _RUBY_VERSION_RE.search(text)
-        if not m:
-            msg = "No VERSION = '...' found"
-            raise ValueError(msg)
-        return m.group(1)
 
     if language == "go":
         m = _GO_VERSION_RE.search(text)
@@ -211,8 +194,6 @@ def _write_version(version_file: Path, language: str, old: str, new: str) -> Non
 
     if language in ("python", "rust"):
         text = text.replace(f'version = "{old}"', f'version = "{new}"', 1)
-    elif language == "ruby":
-        text = text.replace(f"VERSION = '{old}'", f"VERSION = '{new}'", 1)
     elif language == "go":
         text = text.replace(f'Version = "{old}"', f'Version = "{new}"', 1)
     elif language == "java":

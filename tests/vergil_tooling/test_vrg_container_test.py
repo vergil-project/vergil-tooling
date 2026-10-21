@@ -27,11 +27,6 @@ def test_detect_python(tmp_path: Path) -> None:
     assert _detect_language(tmp_path) == "python"
 
 
-def test_detect_ruby(tmp_path: Path) -> None:
-    (tmp_path / "Gemfile").write_text("source 'https://rubygems.org'\n")
-    assert _detect_language(tmp_path) == "ruby"
-
-
 def test_detect_go(tmp_path: Path) -> None:
     (tmp_path / "go.mod").write_text("module example\n")
     assert _detect_language(tmp_path) == "go"
@@ -54,15 +49,6 @@ def test_detect_java_mvnw(tmp_path: Path) -> None:
 
 def test_detect_none(tmp_path: Path) -> None:
     assert _detect_language(tmp_path) == ""
-
-
-# -- _detect_language priority: ruby wins over python -------------------------
-
-
-def test_detect_ruby_priority(tmp_path: Path) -> None:
-    (tmp_path / "Gemfile").write_text("")
-    (tmp_path / "pyproject.toml").write_text("")
-    assert _detect_language(tmp_path) == "ruby"
 
 
 # -- build_test_container_args ------------------------------------------------

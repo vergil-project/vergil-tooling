@@ -33,9 +33,6 @@ class TestResolveRulesets:
     def test_java(self) -> None:
         assert resolve_rulesets("java") == ["p/java"]
 
-    def test_ruby(self) -> None:
-        assert resolve_rulesets("ruby") == ["p/ruby"]
-
     def test_rust(self) -> None:
         assert resolve_rulesets("rust") == ["p/rust"]
 

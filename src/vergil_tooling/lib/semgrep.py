@@ -13,7 +13,6 @@ _LANGUAGE_RULESETS: dict[str, str] = {
     "python": "p/python",
     "go": "p/golang",
     "java": "p/java",
-    "ruby": "p/ruby",
     "rust": "p/rust",
 }
 

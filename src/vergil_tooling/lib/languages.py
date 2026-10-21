@@ -442,24 +442,6 @@ _REGISTRY: dict[str, Language] = {
             publish_env_var="MAVEN_GPG_PASSPHRASE",
         ),
     ),
-    "ruby": Language(
-        name="ruby",
-        checks={
-            CheckKind.INSTALL: [["bundle", "install", "--jobs", "4"]],
-            CheckKind.LINT: [["bundle", "exec", "rubocop"]],
-            CheckKind.TYPECHECK: [["bundle", "exec", "steep", "check"]],
-            CheckKind.TEST: [["bundle", "exec", "rake"]],
-            CheckKind.AUDIT: [
-                ["bundle", "exec", "bundle-audit", "check", "--update"],
-                ["license_finder", "--decisions-file={configs}/ruby/license_finder.yml"],
-            ],
-        },
-        ecosystem=EcosystemInfo(
-            build_cmd=["gem", "build"],
-            publish_cmd=["gem", "push"],
-            publish_env_var="RUBYGEMS_API_KEY",
-        ),
-    ),
     "rust": Language(
         name="rust",
         checks={

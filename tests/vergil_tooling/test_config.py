@@ -281,6 +281,14 @@ def test_config_warns_on_claude_plugin_language(
     assert "unrecognized primary-language 'claude-plugin'" in capsys.readouterr().err
 
 
+def test_config_rejects_retired_ruby_language(tmp_path: Path) -> None:
+    """A retired language fails loudly instead of warning and reading as unset."""
+    toml = _VALID_TOML.replace('primary-language = "python"', 'primary-language = "ruby"')
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=r"primary-language 'ruby' is no longer supported"):
+        read_config(tmp_path)
+
+
 def test_config_accepts_cpp_language(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """``primary-language = "cpp"`` is a recognized language (no warning)."""
     toml = _VALID_TOML.replace('primary-language = "python"', 'primary-language = "cpp"')

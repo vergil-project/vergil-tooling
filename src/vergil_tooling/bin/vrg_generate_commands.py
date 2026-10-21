@@ -1,7 +1,7 @@
 """Generate MQSC command methods for all language ports.
 
 Reads mapping-data.json and generates complete command method blocks for
-Python, Ruby, Java, Go, and Rust.  Output is written between
+Python, Java, Go, and Rust.  Output is written between
 BEGIN/END GENERATED MQSC METHODS markers in the target file.
 """
 
@@ -269,118 +269,6 @@ def _python_method(cmd: CommandSpec, mapping_pages: frozenset[str]) -> str:
 def generate_python(specs: list[CommandSpec], mapping_pages: frozenset[str]) -> str:
     """Generate all Python methods."""
     methods = [_python_method(cmd, mapping_pages) for cmd in specs]
-    return "\n\n".join(methods)
-
-
-# ---------------------------------------------------------------------------
-# Ruby generation
-# ---------------------------------------------------------------------------
-
-
-def _ruby_method(cmd: CommandSpec) -> str:
-    """Generate one Ruby method."""
-    method_name = f"{cmd.verb.lower()}_{cmd.mqsc_qualifier.lower()}"
-    command_label = f"{cmd.verb} {cmd.mqsc_qualifier}"
-
-    lines: list[str] = []
-
-    # YARD doc
-    lines.append(f"        # Execute the MQSC +{command_label}+ command.")
-    lines.append("        #")
-
-    if cmd.pattern == "required_name" or (cmd.pattern == "list" and not cmd.name_default):
-        lines.append("        # @param name [String] the object name")
-    elif cmd.pattern in ("list", "optional_name"):
-        if cmd.name_default:
-            lines.append(
-                f"        # @param name [String, nil] object name or pattern,"
-                f' defaults to +"{cmd.name_default}"+'
-            )
-        else:
-            lines.append("        # @param name [String, nil] object name")
-
-    lines.append(
-        "        # @param request_parameters [Hash{String => Object}, nil] request attributes"
-    )
-    lines.append(
-        "        # @param response_parameters [Array<String>, nil] response attributes to return"
-    )
-    if cmd.pattern == "list":
-        lines.append("        # @param where [String, nil] filter expression")
-
-    if cmd.pattern == "singleton":
-        lines.append(
-            "        # @return [Hash{String => Object}, nil] parameter hash, or nil if empty"
-        )
-    elif cmd.pattern == "list":
-        lines.append("        # @return [Array<Hash{String => Object}>] parameter hashes")
-    else:
-        lines.append("        # @return [nil]")
-
-    lines.append("        # @raise [CommandError] if the MQSC command fails")
-    lines.append("        # @raise [MappingError] if attribute mapping fails in strict mode")
-
-    # Signature
-    if cmd.pattern == "required_name":
-        lines.append(
-            f"        def {method_name}(name, request_parameters: nil, response_parameters: nil)"
-        )
-    elif cmd.pattern in ("no_name", "singleton"):
-        lines.append(
-            f"        def {method_name}(request_parameters: nil, response_parameters: nil)"
-        )
-    elif cmd.pattern == "list" and cmd.name_default:
-        lines.append(
-            f"        def {method_name}(name: nil, request_parameters: nil,"
-            f" response_parameters: nil, where: nil)"
-        )
-    elif cmd.pattern == "list":
-        lines.append(
-            f"        def {method_name}(name, request_parameters: nil,"
-            f" response_parameters: nil, where: nil)"
-        )
-    else:  # optional_name
-        lines.append(
-            f"        def {method_name}(name: nil, request_parameters: nil,"
-            f" response_parameters: nil)"
-        )
-
-    # Body
-    if cmd.pattern == "list" and cmd.name_default:
-        name_expr = f"name || '{cmd.name_default}'"
-    elif cmd.pattern in ("required_name", "optional_name", "list"):
-        name_expr = "name"
-    else:
-        name_expr = "nil"
-
-    if cmd.pattern == "list":
-        lines.append("          mqsc_command(")
-        lines.append(f"            command: '{cmd.verb}', mqsc_qualifier: '{cmd.mqsc_qualifier}',")
-        lines.append(f"            name: {name_expr}, request_parameters: request_parameters,")
-        lines.append("            response_parameters: response_parameters, where: where")
-        lines.append("          )")
-    elif cmd.pattern == "singleton":
-        lines.append("          objects = mqsc_command(")
-        lines.append(f"            command: '{cmd.verb}', mqsc_qualifier: '{cmd.mqsc_qualifier}',")
-        lines.append(f"            name: {name_expr}, request_parameters: request_parameters,")
-        lines.append("            response_parameters: response_parameters")
-        lines.append("          )")
-        lines.append("          objects.empty? ? nil : objects[0]")
-    else:
-        lines.append("          mqsc_command(")
-        lines.append(f"            command: '{cmd.verb}', mqsc_qualifier: '{cmd.mqsc_qualifier}',")
-        lines.append(f"            name: {name_expr}, request_parameters: request_parameters,")
-        lines.append("            response_parameters: response_parameters")
-        lines.append("          )")
-        lines.append("          nil")
-
-    lines.append("        end")
-    return "\n".join(lines)
-
-
-def generate_ruby(specs: list[CommandSpec]) -> str:
-    """Generate all Ruby methods."""
-    methods = [_ruby_method(cmd) for cmd in specs]
     return "\n\n".join(methods)
 
 
@@ -702,11 +590,10 @@ def generate_rust(specs: list[CommandSpec]) -> str:
 # Language dispatch
 # ---------------------------------------------------------------------------
 
-LANGUAGES = ("python", "ruby", "java", "go", "rust")
+LANGUAGES = ("python", "java", "go", "rust")
 
 GENERATORS: dict[str, object] = {
     "python": generate_python,
-    "ruby": generate_ruby,
     "java": generate_java,
     "go": generate_go,
     "rust": generate_rust,
@@ -722,8 +609,6 @@ def generate(
     """Generate command methods for the given language."""
     if language == "python":
         return generate_python(specs, mapping_pages or frozenset())
-    if language == "ruby":
-        return generate_ruby(specs)
     if language == "java":
         return generate_java(specs)
     if language == "go":
@@ -740,7 +625,6 @@ def generate(
 
 MARKERS: dict[str, tuple[str, str]] = {
     "python": ("    # BEGIN GENERATED MQSC METHODS", "    # END GENERATED MQSC METHODS"),
-    "ruby": ("        # BEGIN GENERATED MQSC METHODS", "        # END GENERATED MQSC METHODS"),
     "java": ("  // BEGIN GENERATED MQSC METHODS", "  // END GENERATED MQSC METHODS"),
     "go": ("// BEGIN GENERATED MQSC METHODS", "// END GENERATED MQSC METHODS"),
     "rust": ("    // BEGIN GENERATED MQSC METHODS", "    // END GENERATED MQSC METHODS"),

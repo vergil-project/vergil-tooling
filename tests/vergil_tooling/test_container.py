@@ -58,11 +58,6 @@ def test_detect_python(tmp_path: Path) -> None:
     assert detect_language(tmp_path) == "python"
 
 
-def test_detect_ruby(tmp_path: Path) -> None:
-    (tmp_path / "Gemfile").write_text("source 'https://rubygems.org'\n")
-    assert detect_language(tmp_path) == "ruby"
-
-
 def test_detect_go(tmp_path: Path) -> None:
     (tmp_path / "go.mod").write_text("module example\n")
     assert detect_language(tmp_path) == "go"
@@ -85,12 +80,6 @@ def test_detect_java_mvnw(tmp_path: Path) -> None:
 
 def test_detect_none(tmp_path: Path) -> None:
     assert detect_language(tmp_path) == ""
-
-
-def test_detect_ruby_priority(tmp_path: Path) -> None:
-    (tmp_path / "Gemfile").write_text("")
-    (tmp_path / "pyproject.toml").write_text("")
-    assert detect_language(tmp_path) == "ruby"
 
 
 def test_detect_cpp_conanfile_py(tmp_path: Path) -> None:
@@ -214,8 +203,8 @@ def test_resolve_language_falls_back_when_language_unset(tmp_path: Path) -> None
         '\n[ci]\nversions = ["3.14"]\n'
     )
     (tmp_path / "vergil.toml").write_text(toml)
-    (tmp_path / "Gemfile").write_text("source 'https://rubygems.org'\n")
-    assert resolve_language(tmp_path) == "ruby"
+    (tmp_path / "go.mod").write_text("module example\n")
+    assert resolve_language(tmp_path) == "go"
 
 
 def test_resolve_language_empty_when_neither_asserted_nor_detected(tmp_path: Path) -> None:

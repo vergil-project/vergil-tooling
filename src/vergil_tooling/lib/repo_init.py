@@ -596,7 +596,6 @@ def _container_suffix(language: str | None, versions: list[str] | None = None) -
         "python": "python",
         "go": "go",
         "java": "java",
-        "ruby": "ruby",
         "rust": "rust",
     }
     return suffix_map.get(language, "base")
@@ -614,7 +613,6 @@ def _cd_release_secrets(language: str | None) -> list[str]:
     """
     secrets_map = {
         "rust": ["CARGO_REGISTRY_TOKEN"],
-        "ruby": ["RUBYGEMS_API_KEY"],
         "java": ["CENTRAL_USERNAME", "CENTRAL_TOKEN", "GPG_PRIVATE_KEY", "GPG_PASSPHRASE"],
     }
     return secrets_map.get(language or "", [])
@@ -646,7 +644,6 @@ _CODEQL_LANGUAGES = frozenset(
         "python",
         "go",
         "java",
-        "ruby",
         "cpp",
         "csharp",
         "javascript",
@@ -1157,7 +1154,6 @@ def _default_ci_versions(language: str | None) -> str:
         "python": "3.12, 3.13, 3.14",
         "go": "1.23",
         "java": "21",
-        "ruby": "3.3",
         "rust": "stable",
         # C++ carries the compiler family × version axis here as a
         # ``clang-``/``gcc-`` prefixed tag (vergil-project/.github#207 §6); the

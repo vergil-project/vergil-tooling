@@ -43,7 +43,6 @@ def _allow_stale_base() -> bool:
 
 _CACHE_FILES: dict[str, list[str]] = {
     "python": ["uv.lock", "vergil.toml"],
-    "ruby": ["Gemfile.lock", "vergil.toml"],
     "rust": ["Cargo.lock", "vergil.toml"],
     "go": ["go.sum", "vergil.toml"],
     "java": ["pom.xml", "vergil.toml"],
@@ -73,7 +72,6 @@ _DEFAULT_CACHE_FILES = ["vergil.toml"]
 # later vrg-validate runs with the lock present and warms normally.
 _WARMUP_REQUIRES: dict[str, list[list[str]]] = {
     "python": [["pyproject.toml"], ["uv.lock"]],
-    "ruby": [["Gemfile"]],
     "rust": [["Cargo.toml"]],
     "go": [["go.mod"]],
     "java": [["pom.xml"], ["mvnw"]],

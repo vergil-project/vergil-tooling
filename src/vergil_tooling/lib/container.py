@@ -17,7 +17,6 @@ if TYPE_CHECKING:
 _GHCR = "ghcr.io/vergil-project"
 
 _DEFAULT_VERSIONS: dict[str, str] = {
-    "ruby": "3.4",
     "python": "3.14",
     "go": "1.26",
     "rust": "1.93",
@@ -61,7 +60,6 @@ _NPM_GLOBAL_ROOT = "/usr/lib/node_modules"
 PYCACHE_PREFIX = "/tmp/pycache"  # noqa: S108
 
 _DEFAULT_TEST_COMMANDS: dict[str, str] = {
-    "ruby": "bundle install --jobs 4 && bundle exec rake",
     "python": "uv sync && uv run pytest tests/ -v",
     "go": "go test ./...",
     "rust": "cargo test",
@@ -133,8 +131,6 @@ def _package_json_has_typescript_dep(package_json: Path) -> bool:
 
 def detect_language(repo_root: Path) -> str:
     """Detect the project language from repo contents."""
-    if (repo_root / "Gemfile").is_file():
-        return "ruby"
     if (repo_root / "pyproject.toml").is_file():
         return "python"
     if (repo_root / "go.mod").is_file():
