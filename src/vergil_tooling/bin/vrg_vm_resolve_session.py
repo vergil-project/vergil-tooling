@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from vergil_tooling.lib.cli import cli_main
+from vergil_tooling.lib.process import exec_replace
 from vergil_tooling.lib.session import (
     Create,
     Decision,
@@ -378,7 +379,7 @@ def _read_state(
 
 
 def _exec_claude(args: list[str]) -> int:
-    os.execvp("claude", ["claude", *args])  # noqa: S606, S607
+    exec_replace("claude", ["claude", *args])
     return 0  # reached only when execvp is stubbed (tests)
 
 

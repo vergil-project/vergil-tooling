@@ -329,6 +329,48 @@ def test_python_minor_comes_from_runtime(tmp_path: Path, monkeypatch: pytest.Mon
     assert any(c.startswith(f"uv venv --python {interp} ") for c in fake.flat)
 
 
+_VERGIL_TOML = (
+    '[project]\nrepository-type = "application"\nversioning-scheme = "semver"\n'
+    'branching-model = "library-release"\nrelease-model = "tagged-release"\n'
+    'primary-language = "python"\n[dependencies]\nvergil = "v2.1"\n'
+    "[ci]\n{ci}"
+    '[package]\nbuilder = "python"\nvendor = "vergil"\nsummary = "s"\nsmoke = "true"\n'
+)
+
+
+def test_unpinned_runtime_is_derived_from_the_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The fixture window publishes a runtime for 3.14 only (epic .github#407 §7).
+    _repo(tmp_path)
+    (tmp_path / "vergil.toml").write_text(_VERGIL_TOML.format(ci=""))
+    fake = _Fake(tmp_path, monkeypatch)
+    pkg = _pkg(python=PackagePythonConfig())
+    res = python_builder.build_python(_py_ctx(tmp_path, pkg=pkg))
+    assert f"apt-get {_FAST} install -y vergil-python3.14" in fake.flat
+    interp = "/opt/vergil/python/3.14/bin/python3.14"
+    assert any(c.startswith(f"uv venv --python {interp} ") for c in fake.flat)
+    assert res.depends["deb"] == ["vergil-python3.14 (>= 3.14.4+20261001)"]
+
+
+def test_package_runtime_resolution_failure_is_a_package_error(tmp_path: Path) -> None:
+    # Pinned to 3.13, which has no published runtime in the fixture window.
+    (tmp_path / "vergil.toml").write_text(_VERGIL_TOML.format(ci='versions = ["3.13"]\n'))
+    (tmp_path / "uv.lock").write_text("version = 1\n")
+    with pytest.raises(PackageError, match="cannot derive the vergil-python runtime: no published"):
+        python_builder.package_runtime(tmp_path)
+
+
+def test_malformed_derived_runtime_is_a_package_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _repo(tmp_path)
+    _Fake(tmp_path, monkeypatch)
+    monkeypatch.setattr(python_builder, "package_runtime", lambda _root: "bogus")
+    with pytest.raises(PackageError, match="'bogus' is not an x.y or x.y.z version"):
+        python_builder.build_python(_py_ctx(tmp_path, pkg=_pkg(python=PackagePythonConfig())))
+
+
 def test_shim_subset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _repo(tmp_path)
     _Fake(tmp_path, monkeypatch)

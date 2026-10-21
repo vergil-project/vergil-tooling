@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import io
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
@@ -10,6 +12,31 @@ from vergil_tooling.bin.vrg_container_docs import main
 
 if TYPE_CHECKING:
     import pytest
+
+
+def test_banner_flushed_before_exec_when_stdout_is_not_a_tty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Issue #3396: a pipe or file block-buffers stdout, and execvp replaces the
+    # process without flushing it, so the banner must be flushed before exec.
+    raw = io.BytesIO()
+    monkeypatch.setattr(sys, "stdout", io.TextIOWrapper(raw, encoding="utf-8"))
+    written_at_exec: list[str] = []
+
+    def _exec(_prog: str, _args: list[str]) -> None:
+        written_at_exec.append(raw.getvalue().decode())
+
+    with (
+        patch("vergil_tooling.bin.vrg_container_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_docs.detect_runtime", return_value="docker"),
+        patch("vergil_tooling.bin.vrg_container_docs.os.execvp", side_effect=_exec),
+        patch.dict("os.environ", {}, clear=True),
+    ):
+        main(["build"])
+
+    assert len(written_at_exec) == 1
+    assert "Image:   " in written_at_exec[0]
+    assert written_at_exec[0].rstrip().endswith("---")
 
 
 def test_no_args() -> None:

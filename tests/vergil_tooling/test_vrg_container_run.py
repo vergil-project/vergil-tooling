@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import io
 import os
+import sys
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
@@ -11,6 +13,7 @@ import pytest
 from tests.vergil_tooling.conftest import FIXTURE_WINDOW, window_default_resolution
 from vergil_tooling.bin.vrg_container_run import _test_context, _test_tuning_env, main
 from vergil_tooling.lib import container
+from vergil_tooling.lib.container import VERSION_WINDOW_MOUNT
 from vergil_tooling.lib.platform_env import Platform
 from vergil_tooling.lib.versions.window import WINDOW_ENV
 
@@ -632,6 +635,38 @@ def test_python_routes_through_cache(tmp_path: Path) -> None:
     mock_cache.assert_called_once()
 
 
+def test_banner_flushed_before_exec_when_stdout_is_not_a_tty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Issue #3396: a pipe or file makes Python block-buffer stdout, and execvp
+    # replaces the process without flushing it, so the banner was silently
+    # lost. Model that stream and record what had reached it when execvp ran.
+    (tmp_path / "pyproject.toml").write_text("[project]\n")
+    raw = io.BytesIO()
+    monkeypatch.setattr(sys, "stdout", io.TextIOWrapper(raw, encoding="utf-8"))
+    written_at_exec: list[str] = []
+
+    def _exec(_prog: str, _args: list[str]) -> None:
+        written_at_exec.append(raw.getvalue().decode())
+
+    with (
+        patch("vergil_tooling.bin.vrg_container_run.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_run.assert_runtime_available"),
+        patch(
+            "vergil_tooling.bin.vrg_container_run.ensure_cached_image", return_value="cached:img"
+        ),
+        patch("vergil_tooling.bin.vrg_container_run.detect_runtime", return_value="docker"),
+        patch("vergil_tooling.bin.vrg_container_run.os.execvp", side_effect=_exec),
+        patch.dict("os.environ", {"GH_TOKEN": "tok"}, clear=True),
+    ):
+        main(["--", "echo", "hi"])
+
+    assert len(written_at_exec) == 1
+    assert "Language: python" in written_at_exec[0]
+    assert "Command:  echo hi" in written_at_exec[0]
+    assert written_at_exec[0].rstrip().endswith("---")
+
+
 # -- test-tuning env (issue #3322) ------------------------------------------
 
 
@@ -789,3 +824,60 @@ def test_non_cpp_repo_never_resolves_token(tmp_path: Path) -> None:
         main(["--", "echo", "hi"])
     mock_resolve.assert_not_called()
     assert _TOKEN_ENV not in mock_exec.call_args[0][1]
+
+
+# -- VRG_VERSION_WINDOW override (issue #3392) ---------------------------------
+
+
+def _run_with_env(tmp_path: Path, env: dict[str, str]) -> tuple[int, MagicMock, MagicMock]:
+    (tmp_path / "pyproject.toml").write_text("[project]\n")
+    with (
+        patch("vergil_tooling.bin.vrg_container_run.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_run.assert_runtime_available"),
+        patch(
+            "vergil_tooling.bin.vrg_container_run.ensure_cached_image", return_value="cached:img"
+        ) as mock_cache,
+        patch("vergil_tooling.bin.vrg_container_run.detect_runtime", return_value="docker"),
+        patch("vergil_tooling.bin.vrg_container_run.os.execvp") as mock_exec,
+        patch.dict("os.environ", env, clear=True),
+    ):
+        rc = main(["--", "vrg-ci-resolve"])
+    return rc, mock_cache, mock_exec
+
+
+def test_version_window_set_is_mounted_and_rewritten(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    window_file = tmp_path / "window.json"
+    window_file.write_text(FIXTURE_WINDOW.read_text())
+    rc, _cache, mock_exec = _run_with_env(tmp_path, {WINDOW_ENV: str(window_file)})
+    assert rc == 0
+    args = mock_exec.call_args[0][1]
+    assert f"{window_file.resolve()}:{VERSION_WINDOW_MOUNT}:ro" in args
+    assert f"{WINDOW_ENV}={VERSION_WINDOW_MOUNT}" in args
+    assert f"{WINDOW_ENV}={window_file}" not in args
+    assert f"Window:   {window_file.resolve()} (VRG_VERSION_WINDOW)" in capsys.readouterr().out
+
+
+def test_version_window_unset_changes_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rc, _cache, mock_exec = _run_with_env(tmp_path, {})
+    assert rc == 0
+    args = mock_exec.call_args[0][1]
+    assert not any(VERSION_WINDOW_MOUNT in a for a in args)
+    assert not any(a.startswith(WINDOW_ENV) for a in args)
+    assert "Window:" not in capsys.readouterr().out
+
+
+def test_version_window_missing_file_fails_on_host(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    missing = tmp_path / "absent" / "window.json"
+    rc, mock_cache, mock_exec = _run_with_env(tmp_path, {WINDOW_ENV: str(missing)})
+    assert rc == 1
+    mock_cache.assert_not_called()
+    mock_exec.assert_not_called()
+    err = capsys.readouterr().err
+    assert str(missing.resolve()) in err
+    assert WINDOW_ENV in err

@@ -25,6 +25,7 @@ from vergil_tooling.lib.container import (
     repo_resolution,
     resolve_language,
 )
+from vergil_tooling.lib.process import exec_replace
 from vergil_tooling.lib.versions import VersionsError
 
 if TYPE_CHECKING:
@@ -66,9 +67,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if runtime == "nerdctl":
-        os.execvp("nerdctl", container_args)  # noqa: S606, S607
+        exec_replace("nerdctl", container_args)
     else:
-        os.execvp("docker", container_args)  # noqa: S606, S607
+        exec_replace("docker", container_args)
     return 0  # pragma: no cover
 
 
