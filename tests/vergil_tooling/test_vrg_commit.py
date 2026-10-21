@@ -41,16 +41,11 @@ def _commit_environment(
     branching_model: str = "library-release",
     has_staged: bool = True,
     write_config: bool = True,
-    co_author: str = "test-agent <test-agent@test.com>",
 ) -> Generator[None]:
     if write_config:
         (tmp_path / "vergil.toml").write_text(
             _TEST_TOML_TEMPLATE.format(branching_model=branching_model)
         )
-
-    env_patches = {}
-    if co_author:
-        env_patches["VRG_CO_AUTHOR"] = co_author
 
     with (
         patch("vergil_tooling.bin.vrg_commit.git.current_branch", return_value=branch),
@@ -64,7 +59,6 @@ def _commit_environment(
             return_value=has_staged,
         ),
         patch("vergil_tooling.bin.vrg_commit.git.run"),
-        patch.dict(os.environ, env_patches, clear=False),
     ):
         yield
 
@@ -152,7 +146,7 @@ def test_main_with_staged_changes(tmp_path: Path) -> None:
         result = main(["--type", "feat", "--scope", "core", "--message", "add feature"])
     assert result == 0
     assert commit_file_content.startswith("feat(core): add feature\n")
-    assert "Co-Authored-By: test-agent <test-agent@test.com>" in commit_file_content
+    assert "Co-Authored-By" not in commit_file_content
 
 
 def test_main_with_scope_and_body(tmp_path: Path) -> None:
@@ -182,7 +176,7 @@ def test_main_with_scope_and_body(tmp_path: Path) -> None:
     assert result == 0
     assert "fix(lint): correct regex" in commit_file_content
     assert "Fixed edge case" in commit_file_content
-    assert "Co-Authored-By: test-agent <test-agent@test.com>" in commit_file_content
+    assert "Co-Authored-By" not in commit_file_content
 
 
 # --------------------------------------------------------------------------
@@ -209,18 +203,18 @@ def test_main_missing_config(tmp_path: Path) -> None:
         patch("vergil_tooling.bin.vrg_commit.git.is_main_worktree", return_value=False),
         patch("vergil_tooling.bin.vrg_commit.git.has_staged_changes", return_value=True),
         patch("vergil_tooling.bin.vrg_commit.git.run"),
-        patch.dict(os.environ, {"VRG_CO_AUTHOR": "test <test@test.com>"}, clear=False),
     ):
         result = main(_DEFAULT_ARGS)
     assert result == 0
 
 
 # --------------------------------------------------------------------------
-# Co-author from VRG_CO_AUTHOR env var
+# No AI co-author trailer (#3200)
 # --------------------------------------------------------------------------
 
 
-def test_co_author_from_env_var(tmp_path: Path) -> None:
+def test_stale_vrg_co_author_env_var_is_ignored(tmp_path: Path) -> None:
+    """The retired VRG_CO_AUTHOR env var no longer stamps a trailer."""
     commit_file_content = ""
 
     def capture_run(*args: str) -> None:
@@ -229,27 +223,8 @@ def test_co_author_from_env_var(tmp_path: Path) -> None:
             commit_file_content = Path(args[2]).read_text(encoding="utf-8")
 
     with (
-        _commit_environment(
-            tmp_path,
-            co_author="Claude Opus 4.6 <noreply@anthropic.com>",
-        ),
-        patch("vergil_tooling.bin.vrg_commit.git.run", side_effect=capture_run),
-    ):
-        result = main(_DEFAULT_ARGS)
-    assert result == 0
-    assert "Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>" in commit_file_content
-
-
-def test_no_co_author_when_env_var_unset(tmp_path: Path) -> None:
-    commit_file_content = ""
-
-    def capture_run(*args: str) -> None:
-        nonlocal commit_file_content
-        if args[0] == "commit" and args[1] == "--file":
-            commit_file_content = Path(args[2]).read_text(encoding="utf-8")
-
-    with (
-        _commit_environment(tmp_path, co_author=""),
+        _commit_environment(tmp_path),
+        patch.dict(os.environ, {"VRG_CO_AUTHOR": "Claude <noreply@anthropic.com>"}, clear=False),
         patch("vergil_tooling.bin.vrg_commit.git.run", side_effect=capture_run),
     ):
         result = main(_DEFAULT_ARGS)

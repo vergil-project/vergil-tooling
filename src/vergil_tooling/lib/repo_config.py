@@ -332,6 +332,32 @@ def _check_claude_settings(repo_root: Path, items: list[DiffItem], warnings: lis
         field="local.claude_settings.plugin",
         items=items,
     )
+    _check_attribution(raw, template, warnings)
+
+
+def _check_attribution(
+    raw: dict[str, Any],
+    template: dict[str, Any],
+    warnings: list[str],
+) -> None:
+    """Warn unless ``attribution`` equals the template's value (#3200).
+
+    AI co-author attribution was dropped fleet-wide: Claude Code's default
+    ``attribution`` setting is what tells agents to add a ``Co-Authored-By``
+    trailer, so each repo turns it off in its checked-in settings. While the
+    fleet is being swept, a missing or different value is a warning, not a
+    hard failure, so not-yet-swept repos keep passing their audits.
+    """
+    expected = template.get("attribution")
+    actual = raw.get("attribution")
+    if actual == expected:
+        return
+    shown = "missing" if "attribution" not in raw else json.dumps(actual, sort_keys=True)
+    warnings.append(
+        f"attribution in .claude/settings.json is {shown}; expected "
+        f'"attribution": {json.dumps(expected)} to turn off Claude Code\'s '
+        "AI co-author trailer (#3200)."
+    )
 
 
 def _check_marketplace_ref(

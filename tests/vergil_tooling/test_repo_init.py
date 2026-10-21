@@ -2288,6 +2288,13 @@ def test_render_claude_settings_seeds_main() -> None:
     assert text.endswith("\n")
 
 
+def test_render_claude_settings_turns_off_attribution() -> None:
+    # AI co-author attribution is dropped (#3200): new repos ship with Claude
+    # Code's commit/PR attribution turned off.
+    data = json.loads(render_claude_settings())
+    assert data["attribution"] == {"commit": "", "pr": ""}
+
+
 def test_multi_choice_numbers() -> None:
     with patch("builtins.input", return_value="1,3"):
         assert prompt_multi_choice("pick", ["a", "b", "c"]) == [0, 2]

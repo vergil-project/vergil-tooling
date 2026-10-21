@@ -1,14 +1,12 @@
 """Commit wrapper that constructs standards-compliant commit messages.
 
-Co-author identity comes from the ``VRG_CO_AUTHOR`` environment variable
-(set by the AI harness). Performs branch / context validation before
-invoking ``git commit``.
+Performs branch / context validation before invoking ``git commit``.
+Commits carry no AI co-author trailer (#3200).
 """
 
 from __future__ import annotations
 
 import argparse
-import os
 import re
 import sys
 import tempfile
@@ -87,8 +85,6 @@ def main(argv: list[str] | None = None) -> int:
             "succeed.",
         )
 
-    co_author = os.environ.get("VRG_CO_AUTHOR")
-
     if not args.allow_empty and not git.has_staged_changes():
         print(
             "ERROR: no staged changes. Stage files with 'git add' before committing.",
@@ -101,7 +97,6 @@ def main(argv: list[str] | None = None) -> int:
         scope=args.scope,
         message=args.message,
         body=args.body,
-        co_author=co_author,
     )
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:

@@ -112,8 +112,7 @@ vrg-commit \
   --type feat \
   --scope cache \
   --message "cache computed results" \
-  --body "Adds an LRU cache to the computation pipeline..." \
-  --agent claude
+  --body "Adds an LRU cache to the computation pipeline..."
 ```
 
 `vrg-commit`:
@@ -121,15 +120,16 @@ vrg-commit \
 - Validates the commit type against conventional-commit standards
   (`feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`, `ci`,
   `build`).
-- Resolves the AI agent's `Co-Authored-By` trailer from
-  `docs/repository-standards.md`.
+- Adds no AI `Co-Authored-By` trailer: AI co-author attribution is
+  not used, and Claude Code's own attribution is turned off in
+  `.claude/settings.json` (#3200).
 - Invokes `git commit` under the hood after all checks pass.
 
 **Multi-line bodies go in a file**, not a heredoc. The plugin blocks
 heredocs in CLI args because they cause escaping bugs:
 
 ```bash
-vrg-commit --type feat --message "…" --body "$(cat /tmp/body.txt)" --agent claude
+vrg-commit --type feat --scope cache --message "…" --body "$(cat /tmp/body.txt)"
 ```
 
 See the [vrg-commit reference](../reference/dev/commit.md) for the

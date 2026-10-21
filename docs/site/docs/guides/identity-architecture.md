@@ -140,9 +140,9 @@ it — no new Apps, no new keys, no credential reconfiguration.
 
 The agent App identity captures AI-driven development work
 regardless of which AI tool produced it — Claude Code, Copilot,
-Cursor, or any future harness. The specific tool is recorded in
-commit metadata (co-author trailers, PR descriptions), not at the
-identity level. The App represents "AI operating under VERGIL
+Cursor, or any future harness. The specific tool is not recorded
+at the identity level, and commits carry no AI co-author trailer
+(#3200). The App represents "AI operating under VERGIL
 discipline in a given role," not "Claude Code specifically."
 
 ## The `-mimir` convention
@@ -156,7 +156,7 @@ them.
 A `<username>-mimir` identity is the credential that attack tooling
 presents when attempting to breach Vergil-managed repos. It has no
 integration with the Vergil tooling — no App, no credential
-selection, no co-author entry. It authenticates with raw `gh`, raw
+selection. It authenticates with raw `gh`, raw
 `git`, and direct API calls, deliberately bypassing `vrg-gh` and
 `vrg-commit`. It operates *against* the tooling, not within it.
 

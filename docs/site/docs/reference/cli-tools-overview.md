@@ -12,15 +12,15 @@ They drive git, `gh`, SSH, and Docker operations. Installed via
 
 ### vrg-commit
 
-Construct standards-compliant conventional commits with co-author
-resolution. Performs five branch/context checks before committing
+Construct standards-compliant conventional commits (no AI co-author
+trailer; see #3200). Performs five branch/context checks before committing
 (detached HEAD, protected branch, branch prefix, issue number,
 worktree convention).
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_commit` |
-| Args | `--type` (required), `--scope`, `--message` (required), `--body`, `--agent` (required) |
+| Args | `--type` (required), `--scope` (required), `--message` (required), `--body`, `--allow-empty` |
 | Preconditions | Git repo, staged changes, not detached HEAD, not on protected branch, branch prefix matches branching model, issue number in branch name, not main worktree when `.worktrees/` present |
 | Failure mode | `SystemExit` with diagnostic on stderr for each check |
 | Exit codes | 0 success, 1 rejection or error |

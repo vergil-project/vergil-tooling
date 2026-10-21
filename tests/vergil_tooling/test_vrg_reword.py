@@ -437,7 +437,6 @@ def test_reword_midchain_commit_end_to_end(
 ) -> None:
     repo, sha_b = reword_repo
     monkeypatch.chdir(repo)
-    monkeypatch.setenv("VRG_CO_AUTHOR", "Claude <noreply@anthropic.com>")
 
     rc = main(
         [
@@ -461,9 +460,9 @@ def test_reword_midchain_commit_end_to_end(
         "feat(core): commit A",
     ]
 
-    # The reworded commit carries the co-author trailer (standards path).
+    # The reworded commit carries no AI co-author trailer (#3200).
     b_body = _git(repo, "log", "--format=%B", "-1", "HEAD~1")
-    assert "Co-Authored-By: Claude <noreply@anthropic.com>" in b_body
+    assert "Co-Authored-By" not in b_body
 
     # Commit C (applied after B) keeps its author but gets a new committer —
     # the design note made observable.
@@ -486,7 +485,6 @@ def test_reword_head_commit_end_to_end(
     """
     repo, _ = reword_repo
     monkeypatch.chdir(repo)
-    monkeypatch.delenv("VRG_CO_AUTHOR", raising=False)
     head = _git(repo, "rev-parse", "HEAD")
 
     rc = main(
@@ -505,7 +503,7 @@ def test_reword_head_commit_end_to_end(
     assert rc == 0
 
     assert _git(repo, "log", "--format=%s", "-1", "HEAD") == "feat(core): renamed C"
-    # No co-author was configured, so no trailer is stamped.
+    # No AI co-author trailer is stamped (#3200).
     assert "Co-Authored-By" not in _git(repo, "log", "--format=%B", "-1", "HEAD")
 
 
