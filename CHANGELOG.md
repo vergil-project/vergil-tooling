@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.251] - 2026-10-21
+
+### Bug fixes
+
+- pass NO_MKDOCS_2_WARNING=1 into the vrg-container-docs container (#3345)
+- skip cloud memory projection when session only lists (#3351)
+
+### Chores
+
+- uv lock --upgrade
+- bump certifi to 2026.10.19 for PYSEC-2026-4320 (#3348)
+
 ## [2.1.250] - 2026-10-19
 
 ### Bug fixes

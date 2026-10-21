@@ -17,6 +17,13 @@ from vergil_tooling.lib.container import build_container_args, detect_runtime
 
 _VALID_PREFIXES = {"dev", "prod"}
 
+# mkdocs-material 9.7.x prints a MkDocs 2.0 warning banner on every mkdocs
+# run unless NO_MKDOCS_2_WARNING is set
+# (https://squidfunk.github.io/mkdocs-material/blog/2026/02/18/mkdocs-2.0/).
+# CI and CD already set it (vergil-project/vergil-actions#947); setting it
+# here, for both build and serve, keeps local builds matching CI.
+_DOCS_ENV = {"NO_MKDOCS_2_WARNING": "1"}
+
 
 @cli_main
 def main(argv: list[str] | None = None) -> int:
@@ -82,6 +89,7 @@ def main(argv: list[str] | None = None) -> int:
         ["bash", "-c", container_cmd],
         runtime=runtime,
         env_prefixes=env_prefixes,
+        extra_env=_DOCS_ENV,
     )
 
     if command == "serve":

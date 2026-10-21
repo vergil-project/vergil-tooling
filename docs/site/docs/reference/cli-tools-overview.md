@@ -370,7 +370,9 @@ language and selects appropriate image and test command.
 
 Preview or build MkDocs documentation inside a dev container.
 Supports `serve` (live-reload) and `build` subcommands. For Python
-repos, wraps with `uv sync --group docs`.
+repos, wraps with `uv sync --group docs`. Always sets
+`NO_MKDOCS_2_WARNING=1` in the container, so local builds suppress the
+mkdocs-material MkDocs 2.0 warning banner the same way CI does.
 
 | Attribute | Value |
 |---|---|

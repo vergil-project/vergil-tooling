@@ -362,3 +362,31 @@ def test_env_prefixes_passed_to_build_container_args(tmp_path: Path) -> None:
         ]
         main(["build"])
     assert mock_build.call_args[1]["env_prefixes"] == ["MQ_"]
+
+
+def _docker_args_for(tmp_path: Path, command: str) -> list[str]:
+    """Run main() with the real build_container_args; return the execvp args."""
+    with (
+        patch("vergil_tooling.bin.vrg_container_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_docs.detect_runtime", return_value="docker"),
+        patch("vergil_tooling.bin.vrg_container_docs.os.execvp") as mock_exec,
+        patch.dict("os.environ", {}, clear=True),
+    ):
+        main([command])
+    mock_exec.assert_called_once()
+    return list(mock_exec.call_args[0][1])
+
+
+def test_build_sets_no_mkdocs_2_warning(tmp_path: Path) -> None:
+    args = _docker_args_for(tmp_path, "build")
+    idx = args.index("NO_MKDOCS_2_WARNING=1")
+    assert args[idx - 1] == "-e"
+    # A `docker run` option, so it must precede the image.
+    assert idx < args.index("ghcr.io/vergil-project/prod-base:latest")
+
+
+def test_serve_sets_no_mkdocs_2_warning(tmp_path: Path) -> None:
+    args = _docker_args_for(tmp_path, "serve")
+    idx = args.index("NO_MKDOCS_2_WARNING=1")
+    assert args[idx - 1] == "-e"
+    assert idx < args.index("ghcr.io/vergil-project/prod-base:latest")
