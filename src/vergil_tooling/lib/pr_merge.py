@@ -135,7 +135,10 @@ def wait_and_merge(
     else:
 
         def wait(p: str) -> None:
-            github.wait_for_checks(p, required=required)
+            # Pass the lookup result through as-is: ``None`` tells the waiter
+            # the required set is unknown (no second lookup), so it falls back
+            # to registered checks but never passes a stale check (#3379).
+            github.wait_for_checks(p, required=resolved)
 
     updates = 0
     not_ready_deadline: float | None = None
@@ -243,13 +246,10 @@ def wait_and_merge(
         try:
             wait(pr)
         except OrphanedCheckError as exc:
-            msg = (
-                f"PR {pr} cannot be merged: GitHub left a check-run non-terminal "
-                "after its backing workflow run completed (orphaned check-run). "
-                "Close and reopen the PR to re-run the gate, then re-run the "
-                "waiting command (vrg-release --resume for a release, vrg-finalize-pr "
-                "otherwise)."
-            )
+            # The waiter's message names each orphaned check, why it cannot pass
+            # (e.g. a required check GitHub will block on, #3379) and the
+            # close-and-reopen recovery, so carry it through verbatim.
+            msg = f"PR {pr} cannot be merged (orphaned check-run): {exc}"
             raise MergeAbortError(msg) from exc
         except ChecksTimeoutError as exc:
             # exc.stderr already names every pending check and its link.

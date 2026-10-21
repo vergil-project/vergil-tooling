@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
+import enum
 import functools
 import json
 import logging
@@ -1024,9 +1025,17 @@ class _StaleCheckProbe:
     conclusion decides it: ``success`` re-buckets the check ``pass`` (warned by
     name, once); anything else — another conclusion, none, or an unreadable job
     — raises :class:`OrphanedCheckError` naming every such check at once.
+
+    A stale check is only passed when it is *not* a required status check of
+    the base branch (#3379): GitHub keeps a required check that it reports
+    pending blocking the merge, so passing it here would just move the stall to
+    the merge. *required* is the base branch's required set, or ``None`` when
+    :func:`required_check_names` could not read it — then whether GitHub will
+    block on the stale check is unknown, and it is an orphan too.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, required: Collection[str] | None) -> None:
+        self._required = required
         self._probed_at: dict[str, float] = {}
         self._completed_at: dict[str, float] = {}
         self._passed: set[tuple[str, str]] = set()
@@ -1066,6 +1075,7 @@ class _StaleCheckProbe:
                     continue
                 problem, error = _stale_job_problem(link)
                 cause = cause or error
+                problem = problem or self._required_problem(name)
                 if problem:
                     orphans.append(f"{name} ({problem}; {link})")
                     continue
@@ -1081,11 +1091,25 @@ class _StaleCheckProbe:
         if orphans:
             msg = (
                 "GitHub left check-runs pending after their backing workflow run "
-                "completed, and their jobs cannot be confirmed successful "
-                f"(orphaned check-run): {'; '.join(orphans)}. {_ORPHAN_RECOVERY}"
+                f"completed (orphaned check-run): {'; '.join(orphans)}. {_ORPHAN_RECOVERY}"
             )
             raise OrphanedCheckError(msg) from cause
         return changed
+
+    def _required_problem(self, name: str) -> str | None:
+        """Why a stale check whose job succeeded still cannot pass, or None if it can."""
+        if self._required is None:
+            return (
+                "job succeeded, but the base branch's required status checks could "
+                "not be read (see the warning above), so whether GitHub will block "
+                "the merge on this pending check is unknown"
+            )
+        if name in self._required:
+            return (
+                "job succeeded, but it is a required status check GitHub still "
+                "reports pending, so GitHub will block the merge until it settles"
+            )
+        return None
 
 
 def _stale_job_problem(link: str) -> tuple[str | None, Exception | None]:
@@ -1300,12 +1324,18 @@ def _pending_checks(checks: list[dict[str, str]]) -> list[tuple[str, str]]:
     ]
 
 
+class _Resolve(enum.Enum):
+    """Sentinel type for :func:`wait_for_checks`' "look the required set up yourself"."""
+
+    REQUIRED = enum.auto()
+
+
 def wait_for_checks(
     pr: str,
     *,
     poll_interval: int = _POLL_INTERVAL_SECS,
     poll_timeout: int | None = None,
-    required: Collection[str] | None = None,
+    required: Collection[str] | None | _Resolve = _Resolve.REQUIRED,
 ) -> None:
     """Block until all checks on *pr* reach a terminal state, bounded by a deadline.
 
@@ -1318,8 +1348,11 @@ def wait_for_checks(
     ``failed_check_names`` gate to catch any failure. Zero registered checks is
     not terminal (#2623), and the head is re-read on every poll, so a moved head
     is followed rather than pinned. *required* defaults to
-    :func:`required_check_names` resolved once at entry; pass an explicit
-    collection (empty to disable) when the caller has already resolved it.
+    :func:`required_check_names` resolved once at entry; a caller that has
+    already resolved it passes that result through unchanged — a collection
+    (empty to disable), or ``None`` when the lookup failed. An unknown set
+    (``None``) falls back to waiting on registered checks only (#3061), but a
+    stale check can then never be passed (see below, #3379).
 
     While waiting it prints each pending check with how long this wait has seen
     it pending — whenever the pending set changes and at least every
@@ -1330,7 +1363,9 @@ def wait_for_checks(
     (#3358): a pending check still pending :data:`_STALE_GRACE_SECS` after its
     backing Actions run completed is decided by the backing job's own
     conclusion (:class:`_StaleCheckProbe`). A job that succeeded passes the check
-    with a warning naming it; any other conclusion, or an unreadable one, raises
+    with a warning naming it — unless the check is a required status check, or
+    the required set is unknown, since GitHub would then still block the merge
+    on it (#3379). Those, and any other or unreadable conclusion, raise
     :class:`OrphanedCheckError` at once. A genuinely failing check is untouched
     and still caught by ``pr_merge.failed_check_names``.
 
@@ -1346,14 +1381,16 @@ def wait_for_checks(
     automatically via the library-level retry wrapper.
     """
     timeout = checks_timeout_secs() if poll_timeout is None else poll_timeout
-    if required is None:
-        required = required_check_names(pr) or frozenset()
+    known = required_check_names(pr) if isinstance(required, _Resolve) else required
+    # An unreadable required set gates on registered checks only (#3061); the
+    # stale probe still sees it as unknown and refuses to pass a stale check.
+    required = frozenset() if known is None else known
     deadline = time.monotonic() + timeout
     announced: dict[str, str] = {}
     first_seen: dict[tuple[str, str], float] = {}
     reported: tuple[tuple[str, str], ...] = ()
     last_report = 0.0
-    stale = _StaleCheckProbe()
+    stale = _StaleCheckProbe(known)
     while True:
         checks = pr_checks(pr)
         if _checks_terminal(checks, required):
