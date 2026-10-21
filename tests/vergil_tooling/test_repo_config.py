@@ -10,7 +10,7 @@ from vergil_tooling.lib import gitignore, repo_config
 from vergil_tooling.lib.repo_config import audit_local_config
 
 if TYPE_CHECKING:
-    from vergil_tooling.lib.github_config import ConfigDiff
+    from vergil_tooling.lib.github_config import ConfigDiff, DiffItem
 
 _MINIMAL_VERGIL_TOML = """\
 [project]
@@ -360,6 +360,7 @@ class TestClaudeSettings:
         settings = {
             "extraKnownMarketplaces": _template_marketplaces_with_main(),
             "enabledPlugins": _SETTINGS_TEMPLATE["enabledPlugins"],
+            "attribution": _SETTINGS_TEMPLATE["attribution"],
         }
         _write_settings(tmp_path, settings)
         diff = audit_local_config(tmp_path)
@@ -378,6 +379,7 @@ class TestClaudeSettings:
                 **_SETTINGS_TEMPLATE["enabledPlugins"],
                 "other@other-marketplace": True,
             },
+            "attribution": _SETTINGS_TEMPLATE["attribution"],
         }
         _write_settings(tmp_path, settings)
         diff = audit_local_config(tmp_path)
@@ -597,8 +599,13 @@ class TestMarketplaceRef:
 class TestAttribution:
     """``attribution`` must turn off Claude Code's AI co-author trailer (#3200).
 
-    Warning-only during the fleet rollout: never a DiffItem.
+    Strict since the fleet sweep landed (#3361): a missing or different value
+    is a ``local.claude_settings.attribution`` DiffItem, never just a warning.
     """
+
+    @staticmethod
+    def _attr_items(diff: ConfigDiff) -> list[DiffItem]:
+        return [i for i in diff.items if i.field == "local.claude_settings.attribution"]
 
     @staticmethod
     def _audit(tmp_path: Path, attribution: object, *, present: bool = True) -> ConfigDiff:
@@ -618,30 +625,31 @@ class TestAttribution:
         assert diff.is_compliant(), [f"{i.field}: {i.actual}" for i in diff.items]
         assert not diff.warnings
 
-    def test_missing_warns_only(self, tmp_path: Path) -> None:
+    def test_missing_fails(self, tmp_path: Path) -> None:
         diff = self._audit(tmp_path, None, present=False)
-        assert diff.is_compliant(), [f"{i.field}: {i.actual}" for i in diff.items]
-        assert len(diff.warnings) == 1
-        warning = diff.warnings[0]
-        assert "missing" in warning
-        assert '"attribution": {"commit": "", "pr": ""}' in warning
-        assert "#3200" in warning
+        assert not diff.is_compliant()
+        assert not diff.warnings
+        [item] = self._attr_items(diff)
+        assert item.actual == "missing"
+        assert '"attribution": {"commit": "", "pr": ""}' in str(item.expected)
+        assert ".claude/settings.json" in str(item.expected)
+        assert "#3200" in str(item.expected)
 
-    def test_wrong_value_warns_only(self, tmp_path: Path) -> None:
+    def test_wrong_value_fails(self, tmp_path: Path) -> None:
         diff = self._audit(tmp_path, {"commit": "Co-Authored-By: x", "pr": ""})
-        assert diff.is_compliant(), [f"{i.field}: {i.actual}" for i in diff.items]
-        assert len(diff.warnings) == 1
-        warning = diff.warnings[0]
-        assert "Co-Authored-By: x" in warning
-        assert "#3200" in warning
+        assert not diff.is_compliant()
+        assert not diff.warnings
+        [item] = self._attr_items(diff)
+        assert "Co-Authored-By: x" in str(item.actual)
+        assert "#3200" in str(item.expected)
 
-    def test_boolean_false_warns(self, tmp_path: Path) -> None:
+    def test_boolean_false_fails(self, tmp_path: Path) -> None:
         # ``attribution: false`` needs a newer Claude Code and makes older
         # versions skip the whole file, so the empty-string form is required.
         diff = self._audit(tmp_path, False)
-        assert diff.is_compliant()
-        assert len(diff.warnings) == 1
-        assert "false" in diff.warnings[0]
+        assert not diff.is_compliant()
+        [item] = self._attr_items(diff)
+        assert item.actual == '"attribution": false'
 
 
 class TestWorkflowRefs:
