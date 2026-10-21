@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from vergil_tooling.lib import github, host_pins, identity_mode
+from vergil_tooling.lib import conan_token, github, host_pins, identity_mode
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -60,6 +60,21 @@ def _hermetic_host_pins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(
         host_pins, "default_pins_path", lambda: tmp_path / "vergil-config" / "host-pins.toml"
     )
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_conan_token(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point the Conan audit token file sources at absent per-test paths.
+
+    ``vrg-container-run`` resolves the token from ``~/.config/vergil/conan.env``
+    and ``identities.toml`` (#2902); no test may read a developer's or agent
+    VM's real token. ``test_conan_token`` captures the real locators at import,
+    before this fixture patches the module.
+    """
+    absent = tmp_path / "absent-conan"
+    monkeypatch.setattr(conan_token, "conan_env_path", lambda: absent / "conan.env")
+    monkeypatch.setattr(conan_token, "identities_path", lambda: absent / "identities.toml")
+    monkeypatch.delenv(conan_token.CONAN_AUDIT_TOKEN_ENV, raising=False)
 
 
 @dataclass

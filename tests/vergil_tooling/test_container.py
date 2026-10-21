@@ -583,6 +583,18 @@ def test_build_container_args_extra_env_after_passthrough(tmp_path: Path) -> Non
     assert "VRG_TEST_WORKERS=12" in args
 
 
+def test_build_container_args_env_names_forward_by_name_only(tmp_path: Path) -> None:
+    # env_names are emitted as bare `-e NAME`, so the runtime reads the value
+    # from its own environment and a secret never lands in the argv (#2902).
+    with patch.dict("os.environ", {"SECRET_NAME": "do-not-print-me"}, clear=True):
+        args = build_container_args(
+            tmp_path, "img:1", ["cmd"], runtime="docker", env_names=("SECRET_NAME",)
+        )
+    idx = args.index("SECRET_NAME")
+    assert args[idx - 1] == "-e"
+    assert not any("do-not-print-me" in a for a in args)
+
+
 def test_build_container_args_masks_venv_for_python(tmp_path: Path) -> None:
     # A Python repo gets an anonymous volume masking the bind-mounted host
     # `.venv`, so in-container `uv sync` builds a throwaway venv that cannot

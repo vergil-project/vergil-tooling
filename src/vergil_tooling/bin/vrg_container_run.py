@@ -13,7 +13,7 @@ import shlex
 import sys
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import git, platform_env
+from vergil_tooling.lib import conan_token, git, platform_env
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.config import (
     DEFAULT_VALIDATION_COMMAND,
@@ -62,6 +62,11 @@ environment variables:
   VRG_DOCKER_INSTALL_TAG   override the vergil-tooling version tag from vergil.toml
   PYTHONPYCACHEPREFIX     container bytecode cache root (default: /tmp/pycache,
                           keeping __pycache__ off the bind-mounted repo)
+  CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER
+                          cpp repos only: the ConanCenter audit token. When
+                          unset, it is read from ~/.config/vergil/conan.env,
+                          then from conan_audit_token_path in
+                          ~/.config/vergil/identities.toml, and forwarded
   VRG_TEST_WORKERS        override the test worker count ("auto" or N) on this
                           machine; forwarded into the container
   VRG_TEST_CONTEXT        override the validation context that selects a
@@ -114,6 +119,13 @@ def main(argv: list[str] | None = None) -> int:
     lang = resolve_language(repo_root)
     command = _apply_validation_override(command, repo_root)
 
+    # Resolve before any image work, so a broken token file fails fast.
+    try:
+        conan_status, token_names = _inject_conan_audit_token(lang)
+    except conan_token.ConanTokenError as exc:
+        print(f"error: Conan audit token: {exc}", file=sys.stderr)
+        return 1
+
     env_image = os.environ.get("DOCKER_DEV_IMAGE")
     if env_image:
         image = env_image
@@ -142,6 +154,8 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(f"Image:    {image}")
     print(f"Command:  {' '.join(command)}")
+    if conan_status:
+        print(f"Conan:    {conan_status}")
     network = os.environ.get("DOCKER_NETWORK", "")
     if network:
         print(f"Network:  {network}")
@@ -158,6 +172,7 @@ def main(argv: list[str] | None = None) -> int:
         runtime=runtime,
         pull_policy=pull_policy,
         env_prefixes=env_prefixes,
+        env_names=token_names,
         extra_env=_test_tuning_env(),
     )
     if runtime == "nerdctl":
@@ -165,6 +180,30 @@ def main(argv: list[str] | None = None) -> int:
     else:
         os.execvp("docker", container_args)  # noqa: S606, S607
     return 0  # pragma: no cover
+
+
+def _inject_conan_audit_token(lang: str) -> tuple[str, list[str]]:
+    """Resolve the ConanCenter audit token for a cpp repo and stage it for the run.
+
+    Returns a printable status line (``""`` for non-cpp repos, which never
+    consume the token and so never read its files) and the env names to forward.
+    The token is resolved from its canonical file rather than trusted to the
+    ambient environment, which a zsh or non-interactive shell never populated
+    (#2902); see ``lib/conan_token`` for the precedence. The value is placed in
+    this process's environment, which ``execvp`` hands to the container runtime,
+    and forwarded by name only, so it never appears in the runtime's argv.
+    Raises :class:`conan_token.ConanTokenError` for a broken token source.
+    """
+    if lang != "cpp":
+        return "", []
+    resolved = conan_token.resolve_conan_audit_token(os.environ)
+    if resolved is None:
+        return "no audit token found (vrg-validate will skip `conan audit scan`)", []
+    os.environ[conan_token.CONAN_AUDIT_TOKEN_ENV] = resolved.value
+    return (
+        f"audit token from {resolved.source}",
+        [conan_token.CONAN_AUDIT_TOKEN_ENV],
+    )
 
 
 def _test_context() -> str:
