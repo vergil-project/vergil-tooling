@@ -667,6 +667,10 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
     # ``container-suffix:``. The reusable workflows resolve ``versions`` and the
     # container tag from ``vergil.toml`` themselves, so the caller no longer
     # emits ``versions:``/``container-tag:`` (epic vergil-project/.github#338).
+    # Deprecated no-op inputs are not emitted either: ``container-suffix`` on
+    # the security job, ``run-standards`` on ci-security.yml, and
+    # ``run-release`` on ci-version-bump.yml, whose gate now follows
+    # ``release-model`` in vergil.toml (issue #3387).
     suffix = _container_suffix(ctx.primary_language, ctx.ci_versions)
 
     has_audit = len(language_commands(ctx.primary_language, CheckKind.AUDIT)) > 0
@@ -682,9 +686,6 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
         "  workflow_call:\n",
         "    inputs:\n",
         "      run-security:\n",
-        "        type: boolean\n",
-        "        default: true\n",
-        "      run-release:\n",
         "        type: boolean\n",
         "        default: true\n",
         "\n",
@@ -743,12 +744,6 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
             ]
         )
 
-    lines.extend(
-        [
-            f"      container-suffix: {suffix}\n",
-        ]
-    )
-
     if ctx.primary_language not in _CODEQL_LANGUAGES:
         lines.append("      run-codeql: false\n")
 
@@ -786,7 +781,6 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
                 _uses_line("ci-version-bump", ctx.vergil_version),
                 "    with:\n",
                 lang_line,
-                "      run-release: ${{ inputs.run-release != 'false' }}\n",
                 f"      container-suffix: {suffix}\n",
             ]
         )

@@ -29,7 +29,7 @@ carve-out (see the
 [Runtime Version Support Policy](../runtime-version-support-policy.md)).
 
 Required checks for Python repositories are maintained in the
-[standard-actions CI gates documentation](https://vergil-project.github.io/standard-actions/ci-gates/required-checks/).
+[vergil-actions CI gates documentation](https://vergil-project.github.io/vergil-actions/ci-gates/required-checks/).
 
 ## Document Map
 

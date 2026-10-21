@@ -642,7 +642,8 @@ class TestRenderCiWorkflow:
         assert "ci-quality.yml@v2.1" in content
         assert "ci-security.yml@v2.1" in content
         assert "ci-version-bump.yml@v2.1" in content
-        assert content.count("container-suffix: base") == 3
+        # quality + version; the security job passes no container-suffix.
+        assert content.count("container-suffix: base") == 2
         assert "container-tag:" not in content
 
     def test_no_language_omits_trailing_space(self) -> None:
@@ -666,7 +667,8 @@ class TestRenderCiWorkflow:
         assert "ci-audit.yml" not in content
         assert "ci-test.yml" not in content
         assert "version-bump" not in content
-        assert content.count("container-suffix: base") == 2
+        # quality only; the security job passes no container-suffix.
+        assert content.count("container-suffix: base") == 1
         assert "container-tag:" not in content
 
     def test_no_language_skips_audit_and_test(self) -> None:
@@ -771,6 +773,38 @@ class TestRenderCiWorkflow:
         assert "run-standards" not in content
         security = yaml.safe_load(content)["jobs"]["security"]["with"]
         assert security["run-security"] == "${{ inputs.run-security != 'false' }}"
+
+    @staticmethod
+    def _job_block(content: str, job: str) -> str:
+        """Return the rendered text of one top-level job, header included."""
+        start = content.index(f"\n  {job}:\n")
+        end = content.find("\n\n", start + 1)
+        return content[start:] if end == -1 else content[start:end]
+
+    @pytest.mark.parametrize("release_model", ["tagged-release", "none"])
+    @pytest.mark.parametrize("language", ["python", ""])
+    def test_omits_deprecated_inputs(self, release_model: str, language: str) -> None:
+        """The rendered ci.yml emits none of the inputs vergil-actions has
+        deprecated to no-ops (issue #3387): ``run-release`` is neither
+        declared under ``workflow_call`` nor forwarded to ci-version-bump.yml,
+        ``run-standards`` is not passed to ci-security.yml, and the security
+        job passes no ``container-suffix``."""
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.primary_language = language
+        ctx.ci_versions = ["3.14"] if language else ["latest"]
+        ctx.release_model = release_model
+        content = render_ci_workflow(ctx)
+        assert "run-release" not in content
+        assert "run-standards" not in content
+        security = self._job_block(content, "security")
+        assert "ci-security.yml@v2.1" in security
+        assert "container-suffix" not in security
+        assert "run-security: ${{ inputs.run-security != 'false' }}" in security
+        if release_model != "none":
+            # The version job still selects its image via container-suffix.
+            version = self._job_block(content, "version")
+            assert "ci-version-bump.yml@v2.1" in version
+            assert "container-suffix:" in version
 
 
 class TestCiGatesProducibility:
