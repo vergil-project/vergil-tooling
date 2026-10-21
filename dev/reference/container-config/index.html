@@ -15904,7 +15904,7 @@ container, <code>system-packages</code> declares Debian packages installed <stro
 is built (with <code>build-cache-files</code> naming the inputs that invalidate the cache).</p>
 <h2 id="structure">Structure<a class="headerlink" href="#structure" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">[container]</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">env-prefixes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"CONAN_AUDIT_PROVIDER_TOKEN"</span><span class="p">]</span><span class="w">   </span><span class="c1"># forward matching host env vars</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">env-prefixes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"MQ_"</span><span class="p">]</span><span class="w">                          </span><span class="c1"># forward matching host env vars</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">system-packages</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"lilypond"</span><span class="p">]</span><span class="w">                  </span><span class="c1"># install Debian packages</span>
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">build-command</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"npm install -g @coderline/alphatab"</span><span class="w">  </span><span class="c1"># provision non-apt deps</span>
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="n">build-cache-files</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"package-lock.json"</span><span class="p">]</span><span class="w">       </span><span class="c1"># inputs that invalidate the cache</span>
@@ -15951,9 +15951,11 @@ is built (with <code>build-cache-files</code> naming the inputs that invalidate 
 is passed through when <code>vrg-container-run</code> launches the container. This is how a
 consuming repo gets a secret or token — held only in the host environment — into
 the container without hard-coding its name in tooling.</p>
-<p>For a fully worked example (wiring the ConanCenter audit token end to end across
-local runs, CI, and agent VMs), see
-<a href="../../standards/development/cpp/overview/#conancenter-audit-token">C++ Overview → ConanCenter Audit Token</a>.
+<p>The ConanCenter audit token does <strong>not</strong> need an <code>env-prefixes</code> entry. For a cpp
+repo, <code>vrg-container-run</code> resolves it from the environment or its canonical
+token file and forwards it itself (see the next section and
+<a href="../../standards/development/cpp/overview/#conancenter-audit-token">C++ Overview → ConanCenter Audit Token</a>).
+An existing <code>CONAN_AUDIT_PROVIDER_TOKEN</code> prefix is harmless but redundant.
 The passthrough design is specified in
 <a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/2026-05-25-configurable-container-env-passthrough-design.md"><code>docs/specs/2026-05-25-configurable-container-env-passthrough-design.md</code></a>.</p>
 <h3 id="variables-vrg-container-run-always-sets">Variables <code>vrg-container-run</code> always sets<a class="headerlink" href="#variables-vrg-container-run-always-sets" title="Permanent link">&para;</a></h3>
@@ -15987,6 +15989,14 @@ value <code>vrg-container-run</code> resolves:</p>
 </tr>
 </tbody>
 </table>
+<p>For a <strong>cpp</strong> repo, <code>vrg-container-run</code> also forwards
+<code>CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER</code> when it can resolve one: from the
+environment if set and not blank, else from <code>~/.config/vergil/conan.env</code>, else
+from the <code>conan_audit_token_path</code> file in <code>~/.config/vergil/identities.toml</code>.
+The value goes to the container runtime through its environment, never its
+command line. A token source that exists but is unreadable or malformed stops
+the run with an error, and with no token at all nothing is forwarded (see
+<a href="../../standards/development/cpp/overview/#conancenter-audit-token">C++ Overview → ConanCenter Audit Token</a>).</p>
 <p><code>PYTHONPYCACHEPREFIX</code> keeps Python bytecode (including pytest's rewritten test
 modules) out of the bind-mounted repo. Parallel test workers writing
 <code>__pycache__</code> over the macOS-to-container mount could leave a truncated <code>.pyc</code>

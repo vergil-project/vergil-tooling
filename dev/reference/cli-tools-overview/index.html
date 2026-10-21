@@ -17004,7 +17004,7 @@ project language to select the Docker image; falls back to
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>Explicit error message for missing <code>GH_TOKEN</code>; <code>assert_docker_available()</code> exits with message for Docker; <code>git.repo_root()</code> raises on non-git directory</td>
+<td>Explicit error message for missing <code>GH_TOKEN</code>; <code>assert_docker_available()</code> exits with message for Docker; <code>git.repo_root()</code> raises on non-git directory; in a cpp repo, an unreadable or malformed ConanCenter audit token source exits 1 naming the file (see <a href="../container-config/#variables-vrg-container-run-always-sets">Container Config</a>)</td>
 </tr>
 <tr>
 <td>Exit codes</td>
