@@ -1298,6 +1298,8 @@
       
         
       
+        
+      
     
     
     
@@ -1350,6 +1352,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.251/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.251
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17026,7 +17056,9 @@ language and selects appropriate image and test command.</p>
 <h3 id="vrg-container-docs">vrg-container-docs<a class="headerlink" href="#vrg-container-docs" title="Permanent link">&para;</a></h3>
 <p>Preview or build MkDocs documentation inside a dev container.
 Supports <code>serve</code> (live-reload) and <code>build</code> subcommands. For Python
-repos, wraps with <code>uv sync --group docs</code>.</p>
+repos, wraps with <code>uv sync --group docs</code>. Always sets
+<code>NO_MKDOCS_2_WARNING=1</code> in the container, so local builds suppress the
+mkdocs-material MkDocs 2.0 warning banner the same way CI does.</p>
 <table>
 <thead>
 <tr>

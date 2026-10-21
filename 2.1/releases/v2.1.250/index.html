@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.251/">
       
       
         <link rel="next" href="../v2.1.249/">
@@ -1305,6 +1305,8 @@
       
         
       
+        
+      
     
     
     
@@ -1360,6 +1362,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.251/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.251
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15552,6 +15582,7 @@ GitHub's delete-on-merge setting never applies to a PR closed without merging, s
 <li><strong>add vrg-branch-sweep to delete finished branches left on origin (#3339)</strong>
 Lists a repo's branches via the GitHub API and reports, or with --apply deletes, those whose newest PR is merged or closed with none open and whose tip still equals that PR's headRefOid. Keeps the default branch, develop, main, gh-pages, protected branches (branches API flag plus any ruleset rule from the rules-for-branch endpoint), no-PR branches and reused branch names. Per-branch errors are reported and the run exits non-zero after processing the rest. Safety net behind delete-on-merge and the delete-on-close rule (#3332).</li>
 </ul>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.250/v2.1.250-ci-evidence.tar.gz">Download →</a></p>
 
 
 
