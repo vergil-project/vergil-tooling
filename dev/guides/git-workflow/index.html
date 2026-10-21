@@ -13413,8 +13413,6 @@
       
         
       
-        
-      
     
     
     
@@ -13643,34 +13641,6 @@
     
   
     Dependency Management
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../standards/development/python/local-validation-scripts/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Local Validation
   
 
     
@@ -16043,10 +16013,13 @@ through PRs against the appropriate integration branch (typically
 <code>checkout -b</code>, <code>switch -c</code>) and <code>vrg-commit</code> applies it again at commit
 time.</p>
 <p>The <code>release/*</code> and <code>promotion/*</code> prefixes are created by automated
-workflows and are exempt from the issue-number rule. So is
-<code>deps/update-&lt;version&gt;</code>, the branch <code>vrg-update-deps</code> (and the
-<code>vrg-release</code> <code>update-deps</code> stage) creates for a dependency update; only
-that driver commits to it.</p>
+workflows and are exempt from the issue-number rule.</p>
+<p><code>deps/update-&lt;version&gt;</code> is the branch <code>vrg-update-deps</code> (and the
+<code>vrg-release</code> <code>update-deps</code> stage) creates for a dependency update. It
+is not one of the branching-model prefixes, so <code>vrg-commit</code> refuses to
+commit on it. That is deliberate: only the driver commits there, and it
+runs <code>git commit</code> itself rather than going through <code>vrg-commit</code>. Any
+manual change goes on a fix branch, described next.</p>
 <p>When a dependency update fails, its fix task's branch follows the
 issue-number rule but starts from the failed update:
 <code>chore/&lt;fix-issue&gt;-dep-update-&lt;version&gt;</code>, cut from
