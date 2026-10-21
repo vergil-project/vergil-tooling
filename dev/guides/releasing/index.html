@@ -15481,6 +15481,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#stale-job-records" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stale job records
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#consumer-steps" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -15727,6 +15738,17 @@
     <span class="md-ellipsis">
       
         The vrg-release pipeline
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stale-job-records" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stale job records
       
     </span>
   </a>
@@ -16058,7 +16080,7 @@ issue and ticks its box in the issue's stage checklist.</p>
 <tr>
 <td><code>confirm-main</code></td>
 <td>fail-fast</td>
-<td>Watches CD on <code>main</code>. The release job must succeed; other failed publish jobs are recorded as deferred publish failures</td>
+<td>Watches CD on <code>main</code>. The release job must succeed; other failed publish jobs are recorded as deferred publish failures (see <a href="#stale-job-records">Stale job records</a>)</td>
 </tr>
 <tr>
 <td><code>back-merge-bump</code></td>
@@ -16126,6 +16148,23 @@ right run, and <code>close-finalize</code> runs <code>vrg-finalize-pr</code> onl
 earlier stage passed. A second wait would add nothing. It would also
 fail the stage on a docs publish failure that <code>confirm-develop</code> has
 already deferred.</p>
+<h3 id="stale-job-records">Stale job records<a class="headerlink" href="#stale-job-records" title="Permanent link">&para;</a></h3>
+<p>The confirm stages wait a bounded time for every CD job to reach
+<code>completed</code> in the GitHub jobs API, because a job's record can lag the
+run's. A job that is still not <code>completed</code> after that wait has no
+conclusion to judge:</p>
+<ul>
+<li>If the run itself concluded <code>success</code>, GitHub has confirmed that every
+  job succeeded or was skipped, so the record is stale. The stage shows a
+  warning, <code>stale job record: &lt;job&gt;</code>, and nothing is deferred. No CD
+  re-run is needed.</li>
+<li>Under any other run conclusion the job may really have failed, so it is
+  deferred as <code>&lt;job&gt; (never settled)</code>.</li>
+</ul>
+<p>A failed job in the release job's own family, such as
+<code>release / package-sign</code>, is reported by its full name rather than as
+<code>release</code>, so the message is never mistaken for the release itself
+failing.</p>
 <h3 id="consumer-steps">Consumer steps<a class="headerlink" href="#consumer-steps" title="Permanent link">&para;</a></h3>
 <p>For most consumers, <strong>no action is required</strong>: the rolling <code>v1.3</code>
 tag they're already pinned to now points at the patch release. They
