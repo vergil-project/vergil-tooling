@@ -339,3 +339,81 @@ def test_unreadable_job_error_types_include_called_process_error(
     _stub(monkeypatch, run_completed=lambda rid: True, job_conclusion=unreadable)
     with pytest.raises(github.OrphanedCheckError, match="boom"):
         github.wait_for_checks("1", poll_interval=5, poll_timeout=1800, required=())
+
+
+# --- stale required checks (#3379) --------------------------------------------
+
+
+def test_stale_required_check_with_successful_job_fails_fast(
+    monkeypatch: pytest.MonkeyPatch, clock: _Clock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # GitHub keeps blocking the merge on a required check it reports pending, so
+    # passing it here would only move the stall into pr_merge's not-ready loop.
+    _stub(monkeypatch, run_completed=lambda rid: True, job_conclusion=lambda r, j: "success")
+    with pytest.raises(github.OrphanedCheckError) as excinfo:
+        github.wait_for_checks(
+            "1", poll_interval=5, poll_timeout=1800, required=frozenset({_MATRIX})
+        )
+    assert clock.now <= github._STALE_GRACE_SECS + 5
+    msg = str(excinfo.value)
+    assert _MATRIX in msg
+    assert "required status check" in msg
+    assert "GitHub will block the merge until it settles" in msg
+    assert "Close and reopen the PR" in msg
+    assert _MATRIX_LINK in msg
+    assert "treated as passed" not in capsys.readouterr().err
+
+
+def test_stale_non_required_check_passes_with_a_required_set_present(
+    monkeypatch: pytest.MonkeyPatch, clock: _Clock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _stub(monkeypatch, run_completed=lambda rid: True, job_conclusion=lambda r, j: "success")
+    github.wait_for_checks(
+        "1", poll_interval=5, poll_timeout=1800, required=frozenset({"quality / common"})
+    )
+    assert f"{_MATRIX!r} check-run stale; backing job succeeded" in capsys.readouterr().err
+
+
+def test_stale_check_with_unknown_required_set_fails_loudly(
+    monkeypatch: pytest.MonkeyPatch, clock: _Clock
+) -> None:
+    # pr_merge passes a failed lookup through as None: whether GitHub will block
+    # on the stale check is unknown, so it must not be passed.
+    _stub(monkeypatch, run_completed=lambda rid: True, job_conclusion=lambda r, j: "success")
+    monkeypatch.setattr(github, "required_check_names", lambda pr: pytest.fail("no second lookup"))
+    with pytest.raises(github.OrphanedCheckError) as excinfo:
+        github.wait_for_checks("1", poll_interval=5, poll_timeout=1800, required=None)
+    msg = str(excinfo.value)
+    assert _MATRIX in msg
+    assert "required status checks could not be read" in msg
+    assert "Close and reopen the PR" in msg
+
+
+def test_self_resolved_lookup_failure_fails_stale_check_loudly(
+    monkeypatch: pytest.MonkeyPatch, clock: _Clock
+) -> None:
+    # The waiter's own lookup (vrg-wait-until-green) failing is "unknown" too.
+    lookups: list[str] = []
+    _stub(monkeypatch, run_completed=lambda rid: True, job_conclusion=lambda r, j: "success")
+    monkeypatch.setattr(github, "required_check_names", lambda pr: bool(lookups.append(pr)) or None)
+    with pytest.raises(github.OrphanedCheckError, match="could not be read"):
+        github.wait_for_checks("1", poll_interval=5, poll_timeout=1800)
+    assert lookups == ["1"]
+
+
+def test_unknown_required_set_keeps_the_registered_checks_fallback(
+    monkeypatch: pytest.MonkeyPatch, clock: _Clock
+) -> None:
+    # With no stale check involved, an unknown set still waits on registered
+    # checks only and returns once they are terminal (#3061 fallback).
+    def settles(pr: str) -> list[dict[str, str]]:
+        return _checks(*(() if clock.now >= 20 else ((_MATRIX, _MATRIX_LINK),)))(pr)
+
+    _stub(
+        monkeypatch,
+        run_completed=lambda rid: False,
+        job_conclusion=lambda r, j: pytest.fail("not stale"),
+    )
+    monkeypatch.setattr(github, "pr_checks", settles)
+    github.wait_for_checks("1", poll_interval=5, poll_timeout=1800, required=None)
+    assert clock.now == 20

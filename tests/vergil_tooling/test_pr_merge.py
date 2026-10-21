@@ -107,6 +107,17 @@ def test_wait_and_merge_aborts_on_orphaned_check() -> None:
     gh.merge.assert_not_called()
 
 
+def test_wait_and_merge_orphan_abort_carries_the_waiters_detail() -> None:
+    # The waiter's message (which check, why it cannot pass, how to recover)
+    # must reach the operator, not be replaced by a generic one (#3379).
+    detail = "test / evidence (job succeeded, but it is a required status check ...)"
+    gh = _gh()
+    gh.wait_for_checks.side_effect = OrphanedCheckError(detail)
+    with patch(_MOD + ".github", gh), pytest.raises(MergeAbortError) as excinfo:
+        wait_and_merge("934", strategy="squash")
+    assert str(excinfo.value) == f"PR 934 cannot be merged (orphaned check-run): {detail}"
+
+
 def test_merge_train_guard_exhausts() -> None:
     gh = _gh(merge_states=["BEHIND"] * 10)
     with (
@@ -224,11 +235,17 @@ def test_default_waiter_receives_resolved_required_checks() -> None:
 
 
 def test_required_lookup_failure_falls_back_to_registered_checks() -> None:
-    """``None`` (lookup failed; the lib already warned) waits on registered checks only."""
+    """``None`` (lookup failed; the lib already warned) waits on registered checks only.
+
+    The waiter receives ``None`` itself — not ``frozenset()`` — so it knows the
+    required set is unknown and never passes a stale check (#3379); it is not
+    looked up a second time.
+    """
     gh = _gh(required=None)
     with patch(_MOD + ".github", gh):
         wait_and_merge("99", strategy="squash")
-    gh.wait_for_checks.assert_called_once_with("99", required=frozenset())
+    gh.required_check_names.assert_called_once_with("99")
+    gh.wait_for_checks.assert_called_once_with("99", required=None)
     gh.merge.assert_called_once()
 
 
