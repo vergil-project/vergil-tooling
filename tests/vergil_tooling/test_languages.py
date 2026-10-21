@@ -863,7 +863,15 @@ def test_ecosystem_metadata_python() -> None:
     assert isinstance(info, EcosystemInfo)
     assert info.build_cmd is not None
     assert info.publish_cmd is not None
-    assert info.publish_env_var is not None
+    # PyPI trusted publishing (OIDC): no token env var is named (#3394).
+    assert info.publish_env_var is None
+
+
+def test_ecosystem_metadata_rust_names_cargo_registry_token() -> None:
+    # cargo publish reads CARGO_REGISTRY_TOKEN, not CRATES_IO_TOKEN (#3394).
+    info = ecosystem_metadata("rust")
+    assert info.publish_cmd == ["cargo", "publish"]
+    assert info.publish_env_var == "CARGO_REGISTRY_TOKEN"
 
 
 def test_ecosystem_metadata_go() -> None:

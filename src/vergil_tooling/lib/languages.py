@@ -360,7 +360,7 @@ _REGISTRY: dict[str, Language] = {
         ecosystem=EcosystemInfo(
             build_cmd=["uv", "build"],
             publish_cmd=["uv", "publish"],
-            publish_env_var="PYPI_TOKEN",
+            publish_env_var=None,
         ),
     ),
     "go": Language(
@@ -432,7 +432,7 @@ _REGISTRY: dict[str, Language] = {
         ecosystem=EcosystemInfo(
             build_cmd=["cargo", "build", "--release"],
             publish_cmd=["cargo", "publish"],
-            publish_env_var="CRATES_IO_TOKEN",
+            publish_env_var="CARGO_REGISTRY_TOKEN",
         ),
     ),
     # C++ (epic vergil-project/.github#207, T5). CMake + Conan 2; two co-equal
