@@ -16332,8 +16332,8 @@ what it assumes, and how it fails when those assumptions are violated.</p>
 They drive git, <code>gh</code>, SSH, and Docker operations. Installed via
 <code>uv tool install</code> or the dev-tree override venv.</p>
 <h3 id="vrg-commit">vrg-commit<a class="headerlink" href="#vrg-commit" title="Permanent link">&para;</a></h3>
-<p>Construct standards-compliant conventional commits with co-author
-resolution. Performs five branch/context checks before committing
+<p>Construct standards-compliant conventional commits (no AI co-author
+trailer; see #3200). Performs five branch/context checks before committing
 (detached HEAD, protected branch, branch prefix, issue number,
 worktree convention).</p>
 <table>
@@ -16350,7 +16350,7 @@ worktree convention).</p>
 </tr>
 <tr>
 <td>Args</td>
-<td><code>--type</code> (required), <code>--scope</code>, <code>--message</code> (required), <code>--body</code>, <code>--agent</code> (required)</td>
+<td><code>--type</code> (required), <code>--scope</code> (required), <code>--message</code> (required), <code>--body</code>, <code>--allow-empty</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>

@@ -16161,21 +16161,21 @@ you try to commit, so name the branch correctly now.</p>
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>--type<span class="w"> </span>feat<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>--scope<span class="w"> </span>cache<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span>--message<span class="w"> </span><span class="s2">"cache computed results"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span>--body<span class="w"> </span><span class="s2">"Adds an LRU cache to the computation pipeline..."</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">  </span>--agent<span class="w"> </span>claude
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span>--body<span class="w"> </span><span class="s2">"Adds an LRU cache to the computation pipeline..."</span>
 </code></pre></div>
 <p><code>vrg-commit</code>:</p>
 <ul>
 <li>Validates the commit type against conventional-commit standards
   (<code>feat</code>, <code>fix</code>, <code>docs</code>, <code>style</code>, <code>refactor</code>, <code>test</code>, <code>chore</code>, <code>ci</code>,
   <code>build</code>).</li>
-<li>Resolves the AI agent's <code>Co-Authored-By</code> trailer from
-  <code>docs/repository-standards.md</code>.</li>
+<li>Adds no AI <code>Co-Authored-By</code> trailer: AI co-author attribution is
+  not used, and Claude Code's own attribution is turned off in
+  <code>.claude/settings.json</code> (#3200).</li>
 <li>Invokes <code>git commit</code> under the hood after all checks pass.</li>
 </ul>
 <p><strong>Multi-line bodies go in a file</strong>, not a heredoc. The plugin blocks
 heredocs in CLI args because they cause escaping bugs:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>vrg-commit<span class="w"> </span>--type<span class="w"> </span>feat<span class="w"> </span>--message<span class="w"> </span><span class="s2">"…"</span><span class="w"> </span>--body<span class="w"> </span><span class="s2">"</span><span class="k">$(</span>cat<span class="w"> </span>/tmp/body.txt<span class="k">)</span><span class="s2">"</span><span class="w"> </span>--agent<span class="w"> </span>claude
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>vrg-commit<span class="w"> </span>--type<span class="w"> </span>feat<span class="w"> </span>--scope<span class="w"> </span>cache<span class="w"> </span>--message<span class="w"> </span><span class="s2">"…"</span><span class="w"> </span>--body<span class="w"> </span><span class="s2">"</span><span class="k">$(</span>cat<span class="w"> </span>/tmp/body.txt<span class="k">)</span><span class="s2">"</span>
 </code></pre></div>
 <p>See the <a href="../../reference/dev/commit/">vrg-commit reference</a> for the
 full flag list.</p>

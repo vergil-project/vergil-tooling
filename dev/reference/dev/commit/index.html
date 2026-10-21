@@ -15653,17 +15653,23 @@
 
 <h1 id="vrg-commit">vrg-commit<a class="headerlink" href="#vrg-commit" title="Permanent link">&para;</a></h1>
 <p><strong>Installed as:</strong> <code>vrg-commit</code> (Python console script)</p>
-<p><strong>Source:</strong> <code>src/vergil_tooling/commit.py</code></p>
-<p>Wrapper that constructs standards-compliant commit messages
-with correct Conventional Commits format and Co-Authored-By trailers.</p>
+<p><strong>Source:</strong> <code>src/vergil_tooling/bin/vrg_commit.py</code></p>
+<p>Wrapper that constructs standards-compliant commit messages in
+Conventional Commits format.</p>
 <div class="admonition warning">
 <p class="admonition-title">Required for AI agents</p>
-<p>AI agents <strong>must</strong> use this tool instead of raw <code>git commit</code>.
-The tool resolves the correct co-author identity automatically.</p>
+<p>AI agents <strong>must</strong> use this tool instead of raw <code>git commit</code>.</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">No AI co-author trailer</p>
+<p>Commits carry no AI <code>Co-Authored-By</code> trailer. AI co-author
+attribution was dropped, and Claude Code's own attribution is
+turned off in each repo's checked-in <code>.claude/settings.json</code>
+(<code>"attribution": { "commit": "", "pr": "" }</code>; see #3200).</p>
 </div>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>vrg-commit<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span>--type<span class="w"> </span>TYPE<span class="w"> </span>--message<span class="w"> </span>MESSAGE<span class="w"> </span>--agent<span class="w"> </span>AGENT<span class="w"> </span><span class="o">[</span>options<span class="o">]</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span>--type<span class="w"> </span>TYPE<span class="w"> </span>--scope<span class="w"> </span>SCOPE<span class="w"> </span>--message<span class="w"> </span>MESSAGE<span class="w"> </span><span class="o">[</span>options<span class="o">]</span>
 </code></pre></div>
 <h2 id="arguments">Arguments<a class="headerlink" href="#arguments" title="Permanent link">&para;</a></h2>
 <table>
@@ -15681,54 +15687,54 @@ The tool resolves the correct co-author identity automatically.</p>
 <td>Conventional commit type</td>
 </tr>
 <tr>
+<td><code>--scope</code></td>
+<td>Yes</td>
+<td>Conventional commit scope</td>
+</tr>
+<tr>
 <td><code>--message</code></td>
 <td>Yes</td>
 <td>Commit description</td>
-</tr>
-<tr>
-<td><code>--agent</code></td>
-<td>Yes</td>
-<td>AI tool identity: <code>claude</code> or <code>codex</code></td>
-</tr>
-<tr>
-<td><code>--scope</code></td>
-<td>No</td>
-<td>Conventional commit scope</td>
 </tr>
 <tr>
 <td><code>--body</code></td>
 <td>No</td>
 <td>Detailed commit body</td>
 </tr>
+<tr>
+<td><code>--allow-empty</code></td>
+<td>No</td>
+<td>Allow a commit with no staged changes (e.g. to re-trigger CI)</td>
+</tr>
 </tbody>
 </table>
 <h3 id="allowed-types">Allowed Types<a class="headerlink" href="#allowed-types" title="Permanent link">&para;</a></h3>
 <p><code>feat</code>, <code>fix</code>, <code>docs</code>, <code>style</code>, <code>refactor</code>, <code>test</code>, <code>chore</code>, <code>ci</code>,
-<code>build</code></p>
+<code>build</code>, <code>revert</code></p>
 <h2 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Feature with scope</span>
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>vrg-commit<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span>--type<span class="w"> </span>feat<span class="w"> </span>--scope<span class="w"> </span>lint<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span>--message<span class="w"> </span><span class="s2">"add new check"</span><span class="w"> </span>--agent<span class="w"> </span>claude
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span>--message<span class="w"> </span><span class="s2">"add new check"</span>
 <a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>
-<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="c1"># Bug fix</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="c1"># Documentation with body</span>
 <a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>vrg-commit<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">  </span>--type<span class="w"> </span>fix<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">  </span>--message<span class="w"> </span><span class="s2">"correct regex pattern"</span><span class="w"> </span>--agent<span class="w"> </span>claude
-<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>
-<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="c1"># Documentation with body</span>
-<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>vrg-commit<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="w">  </span>--type<span class="w"> </span>docs<span class="w"> </span>--message<span class="w"> </span><span class="s2">"update README"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="w">  </span>--body<span class="w"> </span><span class="s2">"Expanded usage section"</span><span class="w"> </span>--agent<span class="w"> </span>claude
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">  </span>--type<span class="w"> </span>docs<span class="w"> </span>--scope<span class="w"> </span>readme<span class="w"> </span>--message<span class="w"> </span><span class="s2">"update README"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">  </span>--body<span class="w"> </span><span class="s2">"Expanded usage section"</span>
 </code></pre></div>
 <h2 id="behavior">Behavior<a class="headerlink" href="#behavior" title="Permanent link">&para;</a></h2>
 <ol>
-<li>Validates all required arguments.</li>
-<li>Reads <code>docs/repository-standards.md</code> to find the approved
-   co-author identity matching the <code>--agent</code> value.</li>
-<li>Verifies staged changes exist.</li>
-<li>Constructs the commit message in a temporary file.</li>
-<li>Runs <code>git commit --file</code>.</li>
+<li>Reads <code>branching_model</code> from <code>vergil.toml</code>.</li>
+<li>Validates the branch context: no detached HEAD, not a protected
+   branch, branch prefix matches the branching model, issue number
+   in the branch name, not the main worktree when <code>.worktrees/</code> is
+   present.</li>
+<li>Refuses the commit when the branch has been reported ready
+   (<code>vrg-pr-workflow report-ready</code>) and is frozen.</li>
+<li>Rejects a body containing a GitHub auto-close keyword.</li>
+<li>Verifies staged changes exist (unless <code>--allow-empty</code>).</li>
+<li>Constructs the commit message in a temporary file and runs
+   <code>git commit --file</code>.</li>
 </ol>
 <h2 id="exit-codes">Exit Codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>
 <table>
@@ -15745,7 +15751,7 @@ The tool resolves the correct co-author identity automatically.</p>
 </tr>
 <tr>
 <td>1</td>
-<td>Validation failure or missing identity</td>
+<td>Validation failure or error</td>
 </tr>
 </tbody>
 </table>
