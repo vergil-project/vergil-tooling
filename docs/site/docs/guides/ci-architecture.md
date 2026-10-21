@@ -170,13 +170,14 @@ container themselves (epic
 A `[ci].versions` change therefore takes effect fleet-wide with no edit to
 `ci.yml`.
 
-`ci.yml` also declares `workflow_call` with two boolean inputs,
-`run-security` and `run-release`, both defaulting to `true`. On a
-`pull_request` run the inputs are empty, so the generated `ci.yml`
-compares them with `!= 'false'` and both stay on. `run-security` is
-forwarded to `ci-security.yml`. `run-release` is forwarded to
-`ci-version-bump.yml`, where it is deprecated: the version gate now
-follows `[project].release-model`.
+`ci.yml` also declares `workflow_call` with one boolean input,
+`run-security`, defaulting to `true`. On a `pull_request` run the input
+is empty, so the generated `ci.yml` compares it with `!= 'false'` and it
+stays on. `run-security` is forwarded to `ci-security.yml`. The security
+job passes no `container-suffix:`, because `ci-security.yml` ignores it.
+The generated `ci.yml` no longer declares or forwards `run-release`: the
+version gate in `ci-version-bump.yml` follows `[project].release-model`
+instead.
 
 ### Shared security workflow
 
