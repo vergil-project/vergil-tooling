@@ -12157,6 +12157,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#vrg_version_window-a-local-version-window" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        VRG_VERSION_WINDOW: a local version window
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -15727,6 +15738,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#vrg_version_window-a-local-version-window" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        VRG_VERSION_WINDOW: a local version window
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -16007,6 +16029,31 @@ prefix, bytecode is still cached and shared by every worker within a run, and an
 stale <code>.pyc</code> already in the working tree is ignored. A host override pointing
 inside the repo would put bytecode back on the mount, so keep any override
 outside it.</p>
+<h3 id="vrg_version_window-a-local-version-window"><code>VRG_VERSION_WINDOW</code>: a local version window<a class="headerlink" href="#vrg_version_window-a-local-version-window" title="Permanent link">&para;</a></h3>
+<p>The version resolver reads the language version window that <code>vergil-containers</code>
+publishes at the repo's <code>[dependencies].vergil</code> ref, over the network.
+<code>VRG_VERSION_WINDOW=&lt;path&gt;</code> is the one sanctioned override: it names a local
+<code>window.json</code> to resolve from instead, for example to validate offline. The
+published window is never silently replaced, and an explicit override is never
+silently dropped (epic
+<a href="https://github.com/vergil-project/.github/issues/407">vergil-project/.github#407</a>).</p>
+<p>A host path is not visible inside the container, so <code>vrg-container-run</code> does not
+forward the variable as is. When <code>VRG_VERSION_WINDOW</code> is set on the host, it:</p>
+<ol>
+<li>resolves the path to an absolute one (a relative path is taken from the
+   current directory);</li>
+<li>stops on the host, before any image work, if the value is empty, the path is
+   not an existing file, or the path contains a <code>:</code> (which the <code>-v</code> bind syntax
+   cannot carry). The error names the path;</li>
+<li>bind-mounts the file read-only at <code>/run/vergil/version-window.json</code>;</li>
+<li>sets <code>VRG_VERSION_WINDOW=/run/vergil/version-window.json</code> in the container.</li>
+</ol>
+<p>The run banner shows the file in use (<code>Window:   &lt;path&gt; (VRG_VERSION_WINDOW)</code>).
+The host value is never forwarded, even when an <code>env-prefixes</code> entry such as
+<code>VRG_</code> matches it. When the variable is unset, nothing changes: the container
+fetches the published window.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nv">VRG_VERSION_WINDOW</span><span class="o">=</span>/abs/path/window.json<span class="w"> </span>vrg-container-run<span class="w"> </span>--<span class="w"> </span>vrg-ci-resolve
+</code></pre></div>
 <h2 id="system-packages"><code>system-packages</code><a class="headerlink" href="#system-packages" title="Permanent link">&para;</a></h2>
 <p>A list of Debian package <strong>names</strong> — nothing more. Vergil's container model
 otherwise treats a system dependency as a property of the <strong>language</strong>
@@ -16018,7 +16065,7 @@ package — for example a repo whose tests shell out to the LilyPond renderer
 shared base images (epic
 <a href="https://github.com/vergil-project/.github/issues/272">vergil-project/.github#272</a>).</p>
 <p>The packages are installed with:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>apt-get install -y --no-install-recommends &lt;names&gt;
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>apt-get install -y --no-install-recommends &lt;names&gt;
 </code></pre></div>
 <p>from the base image's <strong>existing</strong> apt sources (Debian main). The surface is
 deliberately narrow — <strong>names only</strong>:</p>
@@ -16053,7 +16100,7 @@ for the mechanism in full.</p>
 the CI runner's arch). If a declared package has <strong>no installation candidate</strong>
 for that architecture, the build and the CI setup step both <strong>fail immediately</strong>,
 naming the package and the architecture:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>system package 'X' is not installable on linux/arm64 (apt: no installation candidate)
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>system package 'X' is not installable on linux/arm64 (apt: no installation candidate)
 </code></pre></div>
 <p>There is no silent skip and no degraded image — a missing dependency stops the
 build rather than producing a container that fails mysteriously inside a test.</p>
@@ -16074,8 +16121,8 @@ nonexistent names.</p>
 <p><code>vrg-container-system-packages</code> reads the key through the same single accessor
 the local bake and CI both use (<code>container_system_packages</code> in
 <a href="https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/lib/config.py"><code>config.py</code></a>):</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>vrg-container-system-packages<span class="w">                   </span><span class="c1"># the declared names, one per line</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>vrg-container-system-packages<span class="w"> </span>--install-script<span class="w">  </span><span class="c1"># the exact apt snippet CI runs</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>vrg-container-system-packages<span class="w">                   </span><span class="c1"># the declared names, one per line</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>vrg-container-system-packages<span class="w"> </span>--install-script<span class="w">  </span><span class="c1"># the exact apt snippet CI runs</span>
 </code></pre></div>
 <p>The plain-list mode is a human-facing inspection affordance ("what would this
 repo install?"); <code>--install-script</code> emits the single, shared apt speller that
@@ -16169,8 +16216,8 @@ express), and it is what makes it a larger grant.</p>
 <p><code>vrg-container-build-command</code> reads the key through the same single accessor the
 local bake and CI both use (<code>container_build_command</code> in
 <a href="https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/lib/config.py"><code>config.py</code></a>):</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>vrg-container-build-command<span class="w">            </span><span class="c1"># the declared command (nothing if unset)</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>vrg-container-build-command<span class="w"> </span>--script<span class="w">   </span><span class="c1"># the same command, emitted for CI to run</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>vrg-container-build-command<span class="w">            </span><span class="c1"># the declared command (nothing if unset)</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>vrg-container-build-command<span class="w"> </span>--script<span class="w">   </span><span class="c1"># the same command, emitted for CI to run</span>
 </code></pre></div>
 <p>Both modes print the command verbatim; a repo that declares no <code>build-command</code>
 prints nothing. <code>--script</code> is the CI-consumption entry point — the CI test jobs
