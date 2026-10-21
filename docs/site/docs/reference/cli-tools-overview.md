@@ -289,7 +289,7 @@ later build once the lock is committed
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_github_repo_init` |
-| Args | `org/name` positional; `--adopt`, `--non-interactive`, `--target-dir`, and per-field overrides (`--primary-language`, `--repository-type`, …) |
+| Args | `org/name` positional; `--adopt`, `--non-interactive`, `--target-dir`, and per-field overrides (`--language`, `--repository-type`, …) |
 | Preconditions | `gh` and `git` on PATH; run from the org-layout parent (or pass `--target-dir`) |
 | Failure mode | Loud refusal on a foreign-repo CWD, an occupied clone path, or missing required non-interactive values |
 | Exit codes | 0 success, 1 error |
@@ -503,17 +503,19 @@ carries Ansible content.
 
 ### vrg-repo-profile
 
-Validate the repository profile in `docs/repository-standards.md`.
-Checks that all required attributes are present and none contain
-placeholder values.
+Validate the repository configuration in `vergil.toml` (required
+keys, enum values, dependencies) and the `README.md` structure
+(exactly one H1, a Table of Contents, no heading-level skips). Run by
+`vrg-validate` as a common check. See the
+[repo-profile reference](lint/repo-profile.md).
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_repo_profile` |
 | Args | None |
-| Preconditions | `docs/repository-standards.md` exists |
-| Failure mode | Exit 2 if profile file not found; exit 1 for missing or placeholder attributes |
-| Exit codes | 0 valid, 1 invalid, 2 file not found |
+| Preconditions | Run from the repository root; `vergil.toml` exists |
+| Failure mode | Exit 2 if `vergil.toml` is not found; exit 1 for an invalid `vergil.toml` or a `README.md` structure error |
+| Exit codes | 0 valid, 1 invalid, 2 `vergil.toml` not found |
 | Status | Active |
 
 ### vrg-package

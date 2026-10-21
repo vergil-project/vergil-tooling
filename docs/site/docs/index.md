@@ -32,9 +32,10 @@ PreToolUse hook that blocks raw `git` and `gh`, routing through `vrg-*` wrappers
    `uv tool install`, placing `vrg-*` scripts in `~/.local/bin/`.
 2. `vrg-container-run` bridges host commands into dev container images
    where language runtimes and validators live.
-3. Python consumers also declare `vergil-tooling` as a dev dep
-   via `[tool.uv.sources]` so `uv run vrg-*` inside the container
-   resolves the pinned version.
+3. Inside the container, `vrg-container-run` uses a per-branch cached
+   image with `vergil-tooling` installed at the release line pinned in
+   `vergil.toml` (`[dependencies].vergil`), so `vrg-*` tools run there
+   by bare name too.
 4. Each repo ships a `.claude/hooks/guard.sh` shim wired via
    `.claude/settings.json`, blocking raw `git`/`gh` in agent sessions.
 5. Consuming repos call tools by bare name -- no file copying or

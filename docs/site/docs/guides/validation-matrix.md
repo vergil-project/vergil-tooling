@@ -31,8 +31,10 @@ and its exit codes.
 
 **Trigger:** PR opened or updated
 
-Validates `docs/repository-standards.md` has all six required
-attributes.
+Validates that `vergil.toml` is present and valid (required keys,
+enum values, dependencies) and that `README.md` follows the
+structural conventions. `vrg-validate` runs it as part of its common
+checks, locally and in CI.
 
 ### Markdown validation (vrg-validate)
 

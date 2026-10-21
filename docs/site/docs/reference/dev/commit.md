@@ -54,7 +54,7 @@ vrg-commit \
 
 ## Behavior
 
-1. Reads `branching_model` from `vergil.toml`.
+1. Reads `[project].branching-model` from `vergil.toml`.
 2. Validates the branch context: no detached HEAD, not a protected
    branch, branch prefix matches the branching model, issue number
    in the branch name, not the main worktree when `.worktrees/` is
