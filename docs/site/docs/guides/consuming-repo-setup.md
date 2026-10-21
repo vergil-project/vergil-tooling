@@ -147,12 +147,7 @@ the primary configuration surface for the validators:
 
 ## Table of Contents
 
-- [AI co-authors](#ai-co-authors)
 - [Repository profile](#repository-profile)
-
-## AI co-authors
-
-- Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 
 ## Repository profile
 
@@ -174,10 +169,6 @@ Required attributes and accepted values:
 | `release_model` | `tagged-release`, `continuous-deploy`, `none` | Affects release-flow tooling expectations. |
 | `supported_release_lines` | integer (commonly `1`) | How many concurrent major lines you support. |
 | `primary_language` | `python`, `go`, `java`, `rust`, `ruby`, `cpp`, `typescript`, `shell`, `none` | Determines which per-language validators run. |
-
-The `AI co-authors` section defines which `Co-Authored-By` trailer
-values `vrg-commit` accepts for `--agent`. Add one line per accepted
-agent identity.
 
 Values containing `<`, `>`, or `|` are rejected as placeholders by
 `vrg-repo-profile`.
@@ -216,9 +207,18 @@ the Claude Code plugin:
   },
   "enabledPlugins": {
     "vergil@vergil-marketplace": true
+  },
+  "attribution": {
+    "commit": "",
+    "pr": ""
   }
 }
 ```
+
+The `attribution` block turns off Claude Code's AI co-author
+trailer on commits and PRs. AI co-author attribution is not used
+(#3200), and the empty-string form works on every Claude Code
+version.
 
 Commit this file. It's part of your repo's reproducible
 environment — any Claude Code session opened in this repo will

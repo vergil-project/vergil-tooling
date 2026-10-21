@@ -29,32 +29,12 @@ def test_build_with_body() -> None:
     assert msg == "fix(lint): correct regex\n\nEdge case.\n"
 
 
-def test_build_with_co_author() -> None:
+def test_build_never_adds_co_author_trailer() -> None:
+    """AI co-author attribution was dropped (#3200): no trailer, ever."""
     msg = build_commit_message(
-        commit_type="feat",
-        scope="core",
-        message="add thing",
-        co_author="Claude <noreply@anthropic.com>",
+        commit_type="feat", scope="core", message="add thing", body="Why it changed."
     )
-    assert msg == "feat(core): add thing\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n"
-
-
-def test_build_with_body_and_co_author_ordering() -> None:
-    msg = build_commit_message(
-        commit_type="feat",
-        scope="core",
-        message="add thing",
-        body="Why it changed.",
-        co_author="Claude <noreply@anthropic.com>",
-    )
-    assert msg == (
-        "feat(core): add thing\n\nWhy it changed.\n"
-        "\nCo-Authored-By: Claude <noreply@anthropic.com>\n"
-    )
-
-
-def test_empty_co_author_omits_trailer() -> None:
-    msg = build_commit_message(commit_type="feat", scope="core", message="x", co_author="")
+    assert msg == "feat(core): add thing\n\nWhy it changed.\n"
     assert "Co-Authored-By" not in msg
 
 

@@ -87,9 +87,18 @@ Create `.claude/settings.json` in your repo:
   },
   "enabledPlugins": {
     "vergil-tooling@vergil-tooling-marketplace": true
+  },
+  "attribution": {
+    "commit": "",
+    "pr": ""
   }
 }
 ```
+
+The `attribution` block turns off Claude Code's AI co-author
+trailer on commits and PRs. AI co-author attribution is not used
+(#3200), and the empty-string form works on every Claude Code
+version.
 
 Commit this file — it's part of the repo's reproducible setup.
 
@@ -102,19 +111,14 @@ Commit this file — it's part of the repo's reproducible setup.
 ## 4. Create your repository profile
 
 Create `docs/repository-standards.md` with the six required
-attributes (and AI co-author entries if you'll use them):
+attributes:
 
 ```markdown
 # Repository Standards
 
 ## Table of Contents
 
-- [AI co-authors](#ai-co-authors)
 - [Repository profile](#repository-profile)
-
-## AI co-authors
-
-- Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 
 ## Repository profile
 

@@ -197,8 +197,6 @@ is the primary configuration surface. It controls:
 
 - **`branching_model`**: Determines which branch prefixes
   `vrg-commit` allows.
-- **`Co-Authored-By` entries**: Defines approved AI agent
-  identities for co-author trailer resolution.
 - **Six required attributes**: Validated by `repo-profile`
   in CI.
 

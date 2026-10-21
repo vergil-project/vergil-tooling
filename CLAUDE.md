@@ -354,7 +354,8 @@ vrg-container-run -- vrg-validate
 CLI tools installed as `vrg-*` console scripts:
 
 - **`vrg-commit`** — Construct standards-compliant conventional
-  commits with co-author resolution
+  commits (no AI co-author trailer; Claude Code's attribution is turned
+  off in `.claude/settings.json`, #3200)
 - **`vrg-reword`** — Reword a branch-local commit's message via a scripted,
   non-interactive rebase; the agent-safe path to correct a branch-local
   commit message (raw interactive rebase is blocked repo-wide). Bounded:
