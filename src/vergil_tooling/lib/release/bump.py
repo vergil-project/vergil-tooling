@@ -23,8 +23,10 @@ def back_merge_and_bump(ctx: ReleaseContext) -> None:
 
     Resume-safe (#1612, #3328): if the back-merge PR already exists it is
     adopted — merged when still open, skipped when already merged — and
-    ``bump_pr_url`` / ``next_version`` are hydrated rather than re-creating
-    the branch. A closed, unmerged PR is not adopted.
+    ``bump_pr_url`` / ``bump_merge_sha`` / ``next_version`` are hydrated
+    rather than re-creating the branch. A closed, unmerged PR is not adopted.
+    The context is never persisted: a resume re-runs this stage, so every
+    path must record ``bump_merge_sha`` for confirm-develop (#3329).
     """
     branch = f"release/post-{ctx.version}"
 
@@ -36,6 +38,7 @@ def back_merge_and_bump(ctx: ReleaseContext) -> None:
         else:
             print(f"Back-merge PR already open — merging: {ctx.bump_pr_url}")
             wait_and_merge(ctx.bump_pr_url, phase="back-merge-bump")
+        ctx.bump_merge_sha = _merge_commit(ctx.bump_pr_url)
         ctx.next_version = _post_branch_version(ctx, branch)
         return
 
@@ -50,6 +53,7 @@ def back_merge_and_bump(ctx: ReleaseContext) -> None:
     if merged is not None and known_pr_state(str(merged["url"])) == "MERGED":
         ctx.bump_pr_url = str(merged["url"])
         print(f"Back-merge PR already merged: {ctx.bump_pr_url}")
+        ctx.bump_merge_sha = _merge_commit(ctx.bump_pr_url)
         ctx.next_version = _merged_pr_version(ctx, str(merged["number"]))
         return
 
@@ -72,7 +76,19 @@ def back_merge_and_bump(ctx: ReleaseContext) -> None:
     wait_and_merge(pr_url, phase="back-merge-bump")
 
     ctx.bump_pr_url = pr_url
+    ctx.bump_merge_sha = _merge_commit(pr_url)
     ctx.next_version = next_ver
+
+
+def _merge_commit(pr_url: str) -> str | None:
+    """The commit the merged back-merge PR produced on develop, or None.
+
+    ``mergeCommit.oid`` is the ``headSha`` develop's push hands to CD, so
+    confirm-develop polls for the run of exactly this commit (#3329). None
+    when GitHub reports no merge commit; confirm-develop then fails loudly
+    rather than fall back to develop's tip.
+    """
+    return github.merge_commit_sha(pr_url) or None
 
 
 def _post_branch_version(ctx: ReleaseContext, branch: str) -> str:

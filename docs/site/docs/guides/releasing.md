@@ -106,11 +106,11 @@ issue and ticks its box in the issue's stage checklist.
 | `prepare` | fail-fast | Creates the `release: <version>` tracking issue, generates the changelog and release notes, and opens the release PR to `main` |
 | `merge-release` | fail-fast | Waits for the release PR's checks and merges it |
 | `confirm-main` | fail-fast | Watches CD on `main`. The release job must succeed; other failed publish jobs are recorded as deferred publish failures |
-| `back-merge-bump` | fail-fast | Creates `release/post-<version>` from `main`, bumps the version, and merges it to `develop` |
+| `back-merge-bump` | fail-fast | Creates `release/post-<version>` from `main`, bumps the version, and merges it to `develop`. Records the back-merge's merge commit |
 | `teardown-worktree` | deferred | Removes the release worktree and returns to the root checkout |
-| `confirm-develop` | deferred | Watches CD on `develop`; a failed docs publish is deferred |
+| `confirm-develop` | deferred | Watches the CD run on `develop` for the back-merge's merge commit; a failed docs publish is deferred |
 | `promote` | deferred | Moves the rolling `vX.Y` tag to the new release (skipped with `--no-promote`) |
-| `close-finalize` | deferred | Closes the tracking issue with a summary and runs `vrg-finalize-pr --cleanup-only` |
+| `close-finalize` | deferred | Closes the tracking issue with a summary and runs `vrg-finalize-pr --cleanup-only --no-wait-cd` |
 | `package-index` | deferred | For repos with `[package]`, waits for the new version in the package index |
 | `consumer-refresh` | deferred | Prints the `[publish].consumer-refresh` commands |
 | `update-deps` | deferred | Runs the dependency update on the new `develop` version (skipped with `--without-deps`); see [Dependency updates](#dependency-updates) |
@@ -121,6 +121,22 @@ when an earlier stage has failed, so the release can be resumed with
 `vrg-release --resume`. A deferred publish failure also leaves the
 issue open, but the release itself is complete: re-run the CD publish
 rather than resuming.
+
+`confirm-develop` checks the CD run for the back-merge's merge commit,
+not for the current tip of `develop`. On `vrg-release --resume`, other
+PRs (a dependency update or a feature) may have merged to `develop`
+since the back-merge. The tip's CD run then says nothing about the
+release. A resume re-runs `back-merge-bump`, which adopts the existing
+back-merge PR and records its merge commit again. If the merge commit
+can't be found, `confirm-develop` fails. It never falls back to the tip.
+
+`close-finalize` passes `--no-wait-cd` to `vrg-finalize-pr`. Without a
+merge of its own, finalize's CD check would watch the tip of `develop`,
+which has the same problem. `confirm-develop` has already checked the
+right run, and `close-finalize` runs `vrg-finalize-pr` only when every
+earlier stage passed. A second wait would add nothing. It would also
+fail the stage on a docs publish failure that `confirm-develop` has
+already deferred.
 
 ### Consumer steps
 

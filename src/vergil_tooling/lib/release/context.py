@@ -31,6 +31,12 @@ class ReleaseContext:
 
     bump_pr_url: str | None = None
     next_version: str | None = None
+    # The commit the back-merge PR's merge produced on develop (its
+    # mergeCommit oid). confirm-develop verifies the CD run for exactly this
+    # commit, not develop's tip, which may have moved by the time a resumed
+    # release reaches it (#3329). Set by back-merge-bump on every path —
+    # create, adopt-open and adopt-merged — so a resume re-hydrates it.
+    bump_merge_sha: str | None = None
 
     cd_run_id: str | None = None
     cd_run_url: str | None = None

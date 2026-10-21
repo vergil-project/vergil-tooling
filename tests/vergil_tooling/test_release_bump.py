@@ -27,6 +27,16 @@ def _no_closed_pr() -> Iterator[MagicMock]:
         yield m
 
 
+_MERGE_SHA = "b4c4me4ge5ha"
+
+
+@pytest.fixture(autouse=True)
+def _merge_commit() -> Iterator[MagicMock]:
+    """The merged back-merge PR's merge commit, recorded on every path (#3329)."""
+    with patch(_MOD + ".github.merge_commit_sha", return_value=_MERGE_SHA) as m:
+        yield m
+
+
 def _ctx() -> ReleaseContext:
     ctx = ReleaseContext(
         repo="owner/repo",
@@ -345,3 +355,98 @@ def test_back_merge_never_returns_to_develop() -> None:
     assert ("checkout", "develop") not in git_run_calls
     assert not any("merge" in c for c in git_run_calls)
     assert not any(c[0] == "pull" for c in git_run_calls)
+
+
+# --- #3329: back-merge-bump records the back-merge's merge commit SHA ---
+
+
+def test_back_merge_create_path_records_merge_sha(_merge_commit: MagicMock) -> None:
+    """The fresh path reads the merge commit only after the PR merged."""
+    ctx = _ctx()
+    order: list[str] = []
+    _merge_commit.side_effect = lambda _url: order.append("sha") or _MERGE_SHA
+    with (
+        patch(_MOD + ".git.run"),
+        patch(_MOD + ".github.pr_for_branch", return_value=None),
+        patch(_MOD + ".version.bump", return_value="2.1.1"),
+        patch(_MOD + ".github.create_pr", return_value="https://github.com/owner/repo/pull/101"),
+        patch(_MOD + ".wait_and_merge", side_effect=lambda *_a, **_k: order.append("merge")),
+    ):
+        back_merge_and_bump(ctx)
+    _merge_commit.assert_called_once_with("https://github.com/owner/repo/pull/101")
+    assert order == ["merge", "sha"]
+    assert ctx.bump_merge_sha == _MERGE_SHA
+
+
+def test_back_merge_adopt_open_path_records_merge_sha(_merge_commit: MagicMock) -> None:
+    """Adopting a still-open PR merges it, then records its merge commit."""
+    ctx = _ctx()
+    order: list[str] = []
+    _merge_commit.side_effect = lambda _url: order.append("sha") or _MERGE_SHA
+    with (
+        patch(
+            _MOD + ".github.pr_for_branch",
+            return_value={"url": "https://github.com/owner/repo/pull/9"},
+        ),
+        patch(_MOD + ".github.pr_state", return_value="OPEN"),
+        patch(_MOD + "._post_branch_version", return_value="2.1.1"),
+        patch(_MOD + ".wait_and_merge", side_effect=lambda *_a, **_k: order.append("merge")),
+    ):
+        back_merge_and_bump(ctx)
+    _merge_commit.assert_called_once_with("https://github.com/owner/repo/pull/9")
+    assert order == ["merge", "sha"]
+    assert ctx.bump_merge_sha == _MERGE_SHA
+
+
+def test_back_merge_adopt_listed_open_but_merged_records_merge_sha(
+    _merge_commit: MagicMock,
+) -> None:
+    ctx = _ctx()
+    with (
+        patch(
+            _MOD + ".github.pr_for_branch",
+            return_value={"url": "https://github.com/owner/repo/pull/9"},
+        ),
+        patch(_MOD + ".github.pr_state", return_value="MERGED"),
+        patch(_MOD + "._post_branch_version", return_value="2.1.1"),
+        patch(_MOD + ".wait_and_merge"),
+    ):
+        back_merge_and_bump(ctx)
+    _merge_commit.assert_called_once_with("https://github.com/owner/repo/pull/9")
+    assert ctx.bump_merge_sha == _MERGE_SHA
+
+
+def test_back_merge_adopt_merged_path_records_merge_sha(
+    _no_closed_pr: MagicMock, _merge_commit: MagicMock
+) -> None:
+    """Resume after the back-merge merged: the adopted PR's merge commit is recorded."""
+    ctx = _ctx()
+    _no_closed_pr.return_value = {
+        "number": "951",
+        "url": "https://github.com/owner/repo/pull/951",
+        "headRefOid": "3bd942f2",
+    }
+    with (
+        patch(_MOD + ".git.run"),
+        patch(_MOD + ".github.pr_for_branch", return_value=None),
+        patch(_MOD + ".github.pr_state", return_value="MERGED"),
+        patch(_MOD + ".version.show", return_value="2.1.1"),
+    ):
+        back_merge_and_bump(ctx)
+    _merge_commit.assert_called_once_with("https://github.com/owner/repo/pull/951")
+    assert ctx.bump_merge_sha == _MERGE_SHA
+
+
+def test_back_merge_records_none_when_no_merge_commit(_merge_commit: MagicMock) -> None:
+    """An empty mergeCommit is recorded as None, never as an empty SHA."""
+    ctx = _ctx()
+    _merge_commit.return_value = ""
+    with (
+        patch(_MOD + ".git.run"),
+        patch(_MOD + ".github.pr_for_branch", return_value=None),
+        patch(_MOD + ".version.bump", return_value="2.1.1"),
+        patch(_MOD + ".github.create_pr", return_value="https://github.com/owner/repo/pull/101"),
+        patch(_MOD + ".wait_and_merge"),
+    ):
+        back_merge_and_bump(ctx)
+    assert ctx.bump_merge_sha is None

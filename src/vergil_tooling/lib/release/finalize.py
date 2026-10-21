@@ -14,6 +14,14 @@ from vergil_tooling.lib.release.tracking import close_tracking_issue, comment_pu
 if TYPE_CHECKING:
     from vergil_tooling.lib.release.context import ReleaseContext
 
+_FINALIZE_CMD = (
+    "vrg-finalize-pr",
+    "--cleanup-only",
+    "--no-wait-cd",
+    "--output-format",
+    "plain",
+)
+
 
 def teardown_worktree(ctx: ReleaseContext) -> None:
     """Return to the root checkout and remove the release worktree (#1578).
@@ -76,15 +84,22 @@ def close_and_finalize(ctx: ReleaseContext) -> None:
     # never block on a terminal read. Captured stderr rides on
     # CalledProcessError for ReleaseError.detail; the streamed lines
     # mean warnings are never silently swallowed.
+    #
+    # --no-wait-cd: the release has already verified develop's CD, pinned to
+    # the back-merge's merge commit, in confirm-develop (#3329). Finalize's
+    # cleanup-only cd-check has no merge to pin to, so it would watch
+    # develop's current tip instead — on a resume that can be an unrelated
+    # commit (a dependency-update or feature PR merged since), whose CD says
+    # nothing about the release. It would also re-fail on a docs publish
+    # failure confirm-develop deliberately deferred. This point is reached only
+    # when confirm-develop succeeded in this run (any failed stage returns
+    # early above), so skipping the second wait loses no coverage.
     try:
-        progress.run(
-            ("vrg-finalize-pr", "--cleanup-only", "--output-format", "plain"),  # noqa: S607
-            stdin=subprocess.DEVNULL,
-        )
+        progress.run(_FINALIZE_CMD, stdin=subprocess.DEVNULL)
     except subprocess.CalledProcessError as exc:
         raise ReleaseError(
             phase="close-finalize",
-            command="vrg-finalize-pr --cleanup-only --output-format plain",
+            command=" ".join(_FINALIZE_CMD),
             message="vrg-finalize-pr failed.",
             detail=exc.stderr,
         ) from exc
