@@ -15724,7 +15724,7 @@ turned off in each repo's checked-in <code>.claude/settings.json</code>
 </code></pre></div>
 <h2 id="behavior">Behavior<a class="headerlink" href="#behavior" title="Permanent link">&para;</a></h2>
 <ol>
-<li>Reads <code>branching_model</code> from <code>vergil.toml</code>.</li>
+<li>Reads <code>[project].branching-model</code> from <code>vergil.toml</code>.</li>
 <li>Validates the branch context: no detached HEAD, not a protected
    branch, branch prefix matches the branching model, issue number
    in the branch name, not the main worktree when <code>.worktrees/</code> is

@@ -12290,10 +12290,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#3-branching-model-detection" class="md-nav__link">
+  <a href="#3-branch-prefix-validation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3. Branching Model Detection
+        3. Branch Prefix Validation
       
     </span>
   </a>
@@ -12301,10 +12301,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#4-branch-prefix-validation" class="md-nav__link">
+  <a href="#4-issue-number-naming" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. Branch Prefix Validation
+        4. Issue Number Naming
       
     </span>
   </a>
@@ -12312,10 +12312,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#5-issue-number-naming" class="md-nav__link">
+  <a href="#5-main-worktree-commits" class="md-nav__link">
     <span class="md-ellipsis">
       
-        5. Issue Number Naming
+        5. Main-worktree commits
       
     </span>
   </a>
@@ -15619,10 +15619,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#3-branching-model-detection" class="md-nav__link">
+  <a href="#3-branch-prefix-validation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3. Branching Model Detection
+        3. Branch Prefix Validation
       
     </span>
   </a>
@@ -15630,10 +15630,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#4-branch-prefix-validation" class="md-nav__link">
+  <a href="#4-issue-number-naming" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. Branch Prefix Validation
+        4. Issue Number Naming
       
     </span>
   </a>
@@ -15641,10 +15641,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#5-issue-number-naming" class="md-nav__link">
+  <a href="#5-main-worktree-commits" class="md-nav__link">
     <span class="md-ellipsis">
       
-        5. Issue Number Naming
+        5. Main-worktree commits
       
     </span>
   </a>
@@ -15709,11 +15709,9 @@ run before <code>git commit</code> is invoked:</p>
 <p>Commits on a detached HEAD are blocked unconditionally.</p>
 <h3 id="2-protected-branch">2. Protected Branch<a class="headerlink" href="#2-protected-branch" title="Permanent link">&para;</a></h3>
 <p>Direct commits to <code>develop</code>, <code>release</code>, and <code>main</code> are forbidden.</p>
-<h3 id="3-branching-model-detection">3. Branching Model Detection<a class="headerlink" href="#3-branching-model-detection" title="Permanent link">&para;</a></h3>
-<p>Reads <code>branching_model</code> from <code>docs/repository-standards.md</code>. If not
-found, falls back to <code>feature/*</code> and <code>bugfix/*</code> with a warning.</p>
-<h3 id="4-branch-prefix-validation">4. Branch Prefix Validation<a class="headerlink" href="#4-branch-prefix-validation" title="Permanent link">&para;</a></h3>
-<p>Allowed prefixes depend on the branching model:</p>
+<h3 id="3-branch-prefix-validation">3. Branch Prefix Validation<a class="headerlink" href="#3-branch-prefix-validation" title="Permanent link">&para;</a></h3>
+<p>Allowed prefixes depend on <code>[project].branching-model</code> in
+<code>vergil.toml</code>:</p>
 <table>
 <thead>
 <tr>
@@ -15728,7 +15726,7 @@ found, falls back to <code>feature/*</code> and <code>bugfix/*</code> with a war
 </tr>
 <tr>
 <td><code>application-promotion</code></td>
-<td><code>feature</code>, <code>bugfix</code>, <code>hotfix</code>, <code>chore</code>, <code>promo</code></td>
+<td><code>feature</code>, <code>bugfix</code>, <code>hotfix</code>, <code>chore</code>, <code>promotion</code></td>
 </tr>
 <tr>
 <td><code>library-release</code></td>
@@ -15736,7 +15734,10 @@ found, falls back to <code>feature/*</code> and <code>bugfix/*</code> with a war
 </tr>
 </tbody>
 </table>
-<h3 id="5-issue-number-naming">5. Issue Number Naming<a class="headerlink" href="#5-issue-number-naming" title="Permanent link">&para;</a></h3>
+<p>An unrecognized branching model is an error. Without a <code>vergil.toml</code>,
+<code>vrg-commit</code> warns and falls back to <code>feature/*</code>, <code>bugfix/*</code> and
+<code>chore/*</code>.</p>
+<h3 id="4-issue-number-naming">4. Issue Number Naming<a class="headerlink" href="#4-issue-number-naming" title="Permanent link">&para;</a></h3>
 <p>Work branches (<code>feature/*</code>, <code>bugfix/*</code>, <code>hotfix/*</code>, <code>chore/*</code>) must
 include a repository issue number:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>{type}/{issue}-{description}
@@ -15744,6 +15745,10 @@ include a repository issue number:</p>
 <p><strong>Example:</strong> <code>feature/42-add-caching</code></p>
 <p><code>release/*</code> and <code>promotion/*</code> branches are exempt from this check
 because they are created by automated workflows.</p>
+<h3 id="5-main-worktree-commits">5. Main-worktree commits<a class="headerlink" href="#5-main-worktree-commits" title="Permanent link">&para;</a></h3>
+<p>When the repository has a <code>.worktrees/</code> directory (the worktree
+convention), commits on a work branch from the main worktree are
+forbidden. Make them from a worktree under <code>.worktrees/&lt;name&gt;/</code>.</p>
 <h2 id="exit-codes">Exit Codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -15765,8 +15770,9 @@ because they are created by automated workflows.</p>
 </table>
 <h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
 <p>The hook guard is wired via <code>.claude/settings.json</code> and requires
-no per-clone setup. <code>vrg-commit</code> reads <code>branching_model</code> from
-<code>docs/repository-standards.md</code>. No other configuration is required.</p>
+no per-clone setup. <code>vrg-commit</code> reads the branching model from
+<code>[project].branching-model</code> in <code>vergil.toml</code>. No other configuration
+is required.</p>
 
 
 

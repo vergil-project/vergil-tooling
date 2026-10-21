@@ -16870,7 +16870,7 @@ later build once the lock is committed
 </tr>
 <tr>
 <td>Args</td>
-<td><code>org/name</code> positional; <code>--adopt</code>, <code>--non-interactive</code>, <code>--target-dir</code>, and per-field overrides (<code>--primary-language</code>, <code>--repository-type</code>, …)</td>
+<td><code>org/name</code> positional; <code>--adopt</code>, <code>--non-interactive</code>, <code>--target-dir</code>, and per-field overrides (<code>--language</code>, <code>--repository-type</code>, …)</td>
 </tr>
 <tr>
 <td>Preconditions</td>
@@ -17348,9 +17348,11 @@ carries Ansible content.</p>
 </tbody>
 </table>
 <h3 id="vrg-repo-profile">vrg-repo-profile<a class="headerlink" href="#vrg-repo-profile" title="Permanent link">&para;</a></h3>
-<p>Validate the repository profile in <code>docs/repository-standards.md</code>.
-Checks that all required attributes are present and none contain
-placeholder values.</p>
+<p>Validate the repository configuration in <code>vergil.toml</code> (required
+keys, enum values, dependencies) and the <code>README.md</code> structure
+(exactly one H1, a Table of Contents, no heading-level skips). Run by
+<code>vrg-validate</code> as a common check. See the
+<a href="../lint/repo-profile/">repo-profile reference</a>.</p>
 <table>
 <thead>
 <tr>
@@ -17369,15 +17371,15 @@ placeholder values.</p>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td><code>docs/repository-standards.md</code> exists</td>
+<td>Run from the repository root; <code>vergil.toml</code> exists</td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>Exit 2 if profile file not found; exit 1 for missing or placeholder attributes</td>
+<td>Exit 2 if <code>vergil.toml</code> is not found; exit 1 for an invalid <code>vergil.toml</code> or a <code>README.md</code> structure error</td>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 valid, 1 invalid, 2 file not found</td>
+<td>0 valid, 1 invalid, 2 <code>vergil.toml</code> not found</td>
 </tr>
 <tr>
 <td>Status</td>

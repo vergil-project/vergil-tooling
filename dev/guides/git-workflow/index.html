@@ -15502,28 +15502,6 @@
   
 </li>
         
-          <li class="md-nav__item">
-  <a href="#vrg-submit-pr-threw-a-calledprocesserror-on-auto-merge" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        vrg-submit-pr threw a CalledProcessError on auto-merge
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#validator-not-on-path-errors-during-posttooluse" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Validator-not-on-PATH errors during PostToolUse
-      
-    </span>
-  </a>
-  
-</li>
-        
       </ul>
     </nav>
   
@@ -15983,28 +15961,6 @@
   
 </li>
         
-          <li class="md-nav__item">
-  <a href="#vrg-submit-pr-threw-a-calledprocesserror-on-auto-merge" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        vrg-submit-pr threw a CalledProcessError on auto-merge
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#validator-not-on-path-errors-during-posttooluse" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Validator-not-on-PATH errors during PostToolUse
-      
-    </span>
-  </a>
-  
-</li>
-        
       </ul>
     </nav>
   
@@ -16067,9 +16023,8 @@ see <a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/
 (below) — every session starts at the project root, each concurrent
 agent gets its own worktree under <code>.worktrees/</code>.</p>
 <h2 id="branching-model">Branching model<a class="headerlink" href="#branching-model" title="Permanent link">&para;</a></h2>
-<p>Every repository's branching model is declared in
-<code>docs/repository-standards.md</code> under the <code>branching_model</code>
-attribute. Three models are supported:</p>
+<p>Every repository's branching model is declared in <code>vergil.toml</code>
+as <code>[project].branching-model</code>. Three models are supported:</p>
 <table>
 <thead>
 <tr>
@@ -16194,15 +16149,6 @@ full flag list.</p>
   not accepted.</li>
 <li>Creates the PR via <code>gh pr create</code> under the hood.</li>
 </ul>
-<div class="admonition note">
-<p class="admonition-title">Auto-merge is disabled</p>
-<p>As of 2026-04-22 all managed repos have <code>allow_auto_merge=false</code>.
-<code>vrg-submit-pr</code> still tries to enable auto-merge after PR creation
-and will print a non-fatal <code>CalledProcessError</code> traceback — the
-PR itself is created successfully and simply waits for a human
-merge. Removing that call is tracked in
-<a href="https://github.com/vergil-project/vergil-tooling/issues/268">vergil-tooling#268</a>.</p>
-</div>
 <p>See the <a href="../../reference/dev/submit-pr/">vrg-submit-pr reference</a>.</p>
 <div class="admonition note">
 <p class="admonition-title">Agent handoff and the post-report-ready freeze</p>
@@ -16284,10 +16230,9 @@ This section is the user-level "how to."</p>
 <h3 id="when-a-worktree-is-optional-but-recommended">When a worktree is optional but recommended<a class="headerlink" href="#when-a-worktree-is-optional-but-recommended" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Any feature branch, even for solo sequential work. The convention
-  keeps the main tree clean; once the plugin-level CWD check is
-  active (release tracked in
-  <a href="https://github.com/vergil-project/vergil-claude-plugin/issues/46">vergil-claude-plugin#46</a>)
-  committing from the main tree will be blocked.</li>
+  keeps the main tree clean, and in a repo that has adopted it
+  (<code>.worktrees/</code> in <code>.gitignore</code>) both the plugin and <code>vrg-commit</code>
+  block feature-branch commits from the main tree.</li>
 </ul>
 <h3 id="creating-a-worktree-for-an-issue">Creating a worktree for an issue<a class="headerlink" href="#creating-a-worktree-for-an-issue" title="Permanent link">&para;</a></h3>
 <p>From the project root:</p>
@@ -16356,25 +16301,18 @@ with a fix task, and the next
    release refuses to start until it is dealt with.</li>
 </ol>
 <h2 id="adoption-for-a-new-repo">Adoption for a new repo<a class="headerlink" href="#adoption-for-a-new-repo" title="Permanent link">&para;</a></h2>
-<p>Onboarding a brand-new repository has two entry points:</p>
+<p><code>vrg-github-repo-init</code> creates a new managed repository, or adopts
+an existing one with <code>--adopt</code>, and writes every managed file in its
+canonical form: <code>vergil.toml</code>, <code>CLAUDE.md</code> (including the
+Parallel-AI-agent-development section), <code>.claude/settings.json</code>,
+<code>.claude/hooks/guard.sh</code>, the managed <code>.gitignore</code> block (including
+<code>.worktrees/</code>) and the GitHub workflows. Two guides cover it:</p>
 <ul>
-<li><strong><a href="../../getting-started/">Getting Started</a></strong> — five-to-ten minute
-  quickstart.</li>
+<li><strong><a href="../../getting-started/">Getting Started</a></strong> — the quickstart.</li>
 <li><strong><a href="../consuming-repo-setup/">Consuming Repo Setup</a></strong> — full
-  walkthrough with rationale, CI configuration, plugin nuances,
+  walkthrough with rationale, CI configuration, plugin details,
   and troubleshooting.</li>
 </ul>
-<p>At a minimum, a new repo needs:</p>
-<ol>
-<li><code>docs/repository-standards.md</code> with the six required attributes
-   (see the existing setup guide).</li>
-<li><code>.claude/hooks/guard.sh</code> and <code>.claude/settings.json</code> wiring
-   the Claude Code hook guard to block raw <code>git</code>/<code>gh</code> commands.</li>
-<li><code>.claude/settings.json</code> also enabling the <code>vergil-tooling</code>
-   plugin so the plugin hooks fire in Claude Code sessions.</li>
-<li><code>.worktrees/</code> in <code>.gitignore</code> and a Parallel-AI-agent-development
-   section in CLAUDE.md so the worktree convention applies.</li>
-</ol>
 <h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
 <h3 id="a-hook-blocked-me-which-one-and-why">A hook blocked me. Which one, and why?<a class="headerlink" href="#a-hook-blocked-me-which-one-and-why" title="Permanent link">&para;</a></h3>
 <p>The hook that fired will print a reason. Common signals:</p>
@@ -16435,26 +16373,14 @@ with a fix task, and the next
 </tbody>
 </table>
 <h3 id="my-plugin-cache-is-stale">My plugin cache is stale<a class="headerlink" href="#my-plugin-cache-is-stale" title="Permanent link">&para;</a></h3>
-<p>Until plugin release automation is fully stood up
-(<a href="https://github.com/vergil-project/vergil-claude-plugin/issues/46">vergil-claude-plugin#46</a>),
-the plugin is consumed from a local checkout and its cache under
-<code>~/.claude/plugins/cache/vergil-tooling-marketplace/</code>. If you're
-running an old version of a hook:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>git<span class="w"> </span>-C<span class="w"> </span>~/.claude/plugins/marketplaces/vergil-tooling-marketplace<span class="w"> </span>pull
-<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="c1"># then restart Claude Code</span>
+<p>If you're running an old version of a hook, refresh the plugin from
+inside Claude Code:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>/plugin marketplace update vergil-marketplace
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>/reload-plugins
 </code></pre></div>
-<h3 id="vrg-submit-pr-threw-a-calledprocesserror-on-auto-merge"><code>vrg-submit-pr</code> threw a CalledProcessError on auto-merge<a class="headerlink" href="#vrg-submit-pr-threw-a-calledprocesserror-on-auto-merge" title="Permanent link">&para;</a></h3>
-<p>Expected since 2026-04-22 — auto-merge is disabled org-wide. The
-PR itself was created successfully. See
-<a href="https://github.com/vergil-project/vergil-tooling/issues/268">vergil-tooling#268</a>
-for the planned fix.</p>
-<h3 id="validator-not-on-path-errors-during-posttooluse">Validator-not-on-PATH errors during PostToolUse<a class="headerlink" href="#validator-not-on-path-errors-during-posttooluse" title="Permanent link">&para;</a></h3>
-<p>The plugin's <code>validate-on-edit</code> hook expects those validators on
-PATH. Some are only installed inside the dev container image, not on
-the host. Hook-level PATH discovery is tracked in
-<a href="https://github.com/vergil-project/vergil-tooling/issues/265">vergil-tooling#265</a>.
-Workaround: run the validator explicitly via <code>vrg-container-run</code> to
-confirm the file is clean; then proceed.</p>
+<p>See the plugin README's
+<a href="https://github.com/vergil-project/vergil-claude-plugin#update">Update section</a>
+for what each step does.</p>
 <h2 id="related">Related<a class="headerlink" href="#related" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/git-hooks-and-validation.md">Git Hooks and Validation</a>

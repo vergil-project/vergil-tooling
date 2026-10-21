@@ -15751,8 +15751,10 @@ and its exit codes.</p>
 <h2 id="ci-checks">CI Checks<a class="headerlink" href="#ci-checks" title="Permanent link">&para;</a></h2>
 <h3 id="vrg-repo-profile">vrg-repo-profile<a class="headerlink" href="#vrg-repo-profile" title="Permanent link">&para;</a></h3>
 <p><strong>Trigger:</strong> PR opened or updated</p>
-<p>Validates <code>docs/repository-standards.md</code> has all six required
-attributes.</p>
+<p>Validates that <code>vergil.toml</code> is present and valid (required keys,
+enum values, dependencies) and that <code>README.md</code> follows the
+structural conventions. <code>vrg-validate</code> runs it as part of its common
+checks, locally and in CI.</p>
 <h3 id="markdown-validation-vrg-validate">Markdown validation (vrg-validate)<a class="headerlink" href="#markdown-validation-vrg-validate" title="Permanent link">&para;</a></h3>
 <p><strong>Trigger:</strong> PR opened or updated</p>
 <p>Runs markdownlint on published markdown (<code>docs/site/**/*.md</code> and
