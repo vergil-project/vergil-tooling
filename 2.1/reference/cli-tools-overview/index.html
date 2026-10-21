@@ -1300,6 +1300,8 @@
       
         
       
+        
+      
     
     
     
@@ -1352,6 +1354,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.252/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.252
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13883,8 +13913,6 @@
       
         
       
-        
-      
     
     
     
@@ -14113,34 +14141,6 @@
     
   
     Dependency Management
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../standards/development/python/local-validation-scripts/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Local Validation
   
 
     
@@ -16332,8 +16332,8 @@ what it assumes, and how it fails when those assumptions are violated.</p>
 They drive git, <code>gh</code>, SSH, and Docker operations. Installed via
 <code>uv tool install</code> or the dev-tree override venv.</p>
 <h3 id="vrg-commit">vrg-commit<a class="headerlink" href="#vrg-commit" title="Permanent link">&para;</a></h3>
-<p>Construct standards-compliant conventional commits with co-author
-resolution. Performs five branch/context checks before committing
+<p>Construct standards-compliant conventional commits (no AI co-author
+trailer; see #3200). Performs five branch/context checks before committing
 (detached HEAD, protected branch, branch prefix, issue number,
 worktree convention).</p>
 <table>
@@ -16350,7 +16350,7 @@ worktree convention).</p>
 </tr>
 <tr>
 <td>Args</td>
-<td><code>--type</code> (required), <code>--scope</code>, <code>--message</code> (required), <code>--body</code>, <code>--agent</code> (required)</td>
+<td><code>--type</code> (required), <code>--scope</code> (required), <code>--message</code> (required), <code>--body</code>, <code>--allow-empty</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
@@ -16692,18 +16692,62 @@ ruleset rule), a branch with no PR, or a branch whose name was reused
 </tbody>
 </table>
 <h3 id="vrg-worktree-status">vrg-worktree-status<a class="headerlink" href="#vrg-worktree-status" title="Permanent link">&para;</a></h3>
-<p>List canonical <code>.worktrees/</code> worktrees with their derived lifecycle
-state, so removable cruft (merged/closed PRs whose worktree was never
-cleaned up) is distinguishable from in-flight work at a glance.
-Read-only — cleanup stays <code>vrg-finalize-pr</code>'s job. PR state is queried
-from GitHub per worktree; a failed lookup shows as <code>unknown</code> with the
-reason rather than being silently downgraded. The summary counts fall
+<p>Show every worktree git knows about in the current repo, grouped by
+kind, so nothing with code on disk goes unseen (issue #3386). Read-only
+— cleanup stays <code>vrg-finalize-pr</code>'s job, and finalize and sweep still
+act only on development worktrees. Local branches with no worktree are
+not shown. The sections, in order:</p>
+<ol>
+<li><strong>Main checkout</strong> — always shown. Its STATUS is <code>ok</code>, or <code>PROBLEM:</code>
+   followed by each issue found: not on the integration branch, dirty,
+   or mid-rebase. The integration branch comes from the
+   <code>branching-model</code> in <code>vergil.toml</code> (every current model integrates on
+   <code>develop</code>); without a <code>vergil.toml</code> it defaults to <code>develop</code> and a
+   note says so. A malformed <code>vergil.toml</code> is an error (exit 1).</li>
+<li><strong>Development</strong> — issue-branch worktrees under <code>.worktrees/</code>: a
+   <code>feature/</code>, <code>bugfix/</code>, <code>hotfix/</code> or <code>chore/</code> branch carrying an issue
+   number (<code>&lt;type&gt;/&lt;N&gt;-&lt;slug&gt;</code>), including the <code>chore/&lt;N&gt;-dep-update-*</code>
+   fix branch <code>vrg-update-deps</code> asks for. An issue prefix without an
+   issue number, or an unknown prefix, goes to Other / unknown.
+   A mid-rebase worktree is placed by the branch recovered from the
+   paused rebase or its <code>issue-&lt;N&gt;-&lt;slug&gt;</code> directory name.</li>
+<li><strong>Release and dependency machinery</strong> — <code>release/*</code>, <code>release/post-*</code>
+   and <code>deps/update-*</code> worktrees. These are meant to be single-run, so
+   each row shows age, PR state and dirty state and a leftover stands out.</li>
+<li><strong>Other / unknown</strong> — any other branch, a detached HEAD, or a
+   worktree outside <code>.worktrees/</code> (shown by its full path).</li>
+</ol>
+<p>Empty sections are omitted; the summary line counts every section,
+including the empty ones. A branch that was deleted on its remote is
+still listed, with <code>(branch gone)</code> after its name. That check queries
+each remote once; if it fails, a note gives the reason.</p>
+<p>The worktree sections share one table. PR state is queried from GitHub
+per worktree; a failed lookup shows as <code>unknown</code> with the reason rather
+than being silently downgraded. The development summary counts fall
 into disjoint buckets — <strong>active</strong>, <strong>needs-attention</strong>, <strong>stalled
 (no-pr)</strong>, and <strong>cruft (removable)</strong>. A finished-but-stuck worktree
 (merged/closed but not removable: dirty, or a reused branch name whose
 merged verdict was withheld, issue #1719) is counted under
 <strong>needs-attention</strong> with an actionable note, never miscounted as active
-behind a "0 cruft" message (issue #2347).</p>
+behind a "0 cruft" message (issue #2347). A merged release or deps
+worktree shows as <code>merged</code> in its own section but is not counted as
+<code>vrg-finalize-pr</code> cruft.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>Main checkout (integration branch: develop)
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>CHECKOUT               BRANCH   DIRTY  LAST COMMIT  STATUS
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>mq-gateway-replay-lab  develop  -      23d ago      ok
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>Development
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>WORKTREE                      BRANCH                          PR  STATE  WORKFLOW  AHEAD  DIRTY  LAST COMMIT  LAST MODIFIED
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>issue-315-deps-security-bump  feature/315-deps-security-bump  -   no-pr  ready     1      -      1h ago       1h ago
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>Other / unknown
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>WORKTREE         BRANCH      PR  STATE     WORKFLOW  AHEAD  DIRTY  LAST COMMIT  LAST MODIFIED
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>tmp-wheel-build  (detached)  -   detached  -         0      -      82d ago      82d ago
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>  note: tmp-wheel-build (detached): detached HEAD — no branch checked out; check out a branch to resume work
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>3 worktrees: main checkout (ok), 1 development, 0 release and dependency machinery, 1 other / unknown.
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>Development: 0 active, 0 needs-attention, 1 stalled (no-pr), 0 cruft (removable). 1 PR prepared.
+</code></pre></div>
 <table>
 <thead>
 <tr>
@@ -16718,7 +16762,7 @@ behind a "0 cruft" message (issue #2347).</p>
 </tr>
 <tr>
 <td>Args</td>
-<td><code>--target-branch</code> (default: develop)</td>
+<td><code>--target-branch</code> (default: develop) — the branch AHEAD is measured against</td>
 </tr>
 <tr>
 <td>Preconditions</td>
@@ -16726,11 +16770,11 @@ behind a "0 cruft" message (issue #2347).</p>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>None for classification — a failed PR lookup is reported as an <code>unknown</code> row, never a crash</td>
+<td>None for classification — a failed PR lookup is reported as an <code>unknown</code> row and a failed branch-gone check as a note, never a crash. A malformed <code>vergil.toml</code> exits 1 with the reason</td>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 always (read-only)</td>
+<td>0 success, 1 malformed <code>vergil.toml</code></td>
 </tr>
 <tr>
 <td>Status</td>
@@ -16870,7 +16914,7 @@ later build once the lock is committed
 </tr>
 <tr>
 <td>Args</td>
-<td><code>org/name</code> positional; <code>--adopt</code>, <code>--non-interactive</code>, <code>--target-dir</code>, and per-field overrides (<code>--primary-language</code>, <code>--repository-type</code>, …)</td>
+<td><code>org/name</code> positional; <code>--adopt</code>, <code>--non-interactive</code>, <code>--target-dir</code>, and per-field overrides (<code>--language</code>, <code>--repository-type</code>, …)</td>
 </tr>
 <tr>
 <td>Preconditions</td>
@@ -17004,7 +17048,7 @@ project language to select the Docker image; falls back to
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>Explicit error message for missing <code>GH_TOKEN</code>; <code>assert_docker_available()</code> exits with message for Docker; <code>git.repo_root()</code> raises on non-git directory</td>
+<td>Explicit error message for missing <code>GH_TOKEN</code>; <code>assert_docker_available()</code> exits with message for Docker; <code>git.repo_root()</code> raises on non-git directory; in a cpp repo, an unreadable or malformed ConanCenter audit token source exits 1 naming the file (see <a href="../container-config/#variables-vrg-container-run-always-sets">Container Config</a>)</td>
 </tr>
 <tr>
 <td>Exit codes</td>
@@ -17264,7 +17308,7 @@ refuses <code>sudo</code>/<code>doas</code>/<code>su</code>/<code>pkexec</code>.
 </tbody>
 </table>
 <h3 id="vrg-generate-commands">vrg-generate-commands<a class="headerlink" href="#vrg-generate-commands" title="Permanent link">&para;</a></h3>
-<p>Generate MQSC command methods for all language ports (Python, Ruby,
+<p>Generate MQSC command methods for all language ports (Python,
 Java, Go, Rust) from <code>mapping-data.json</code>. Updates target files
 between <code>BEGIN/END GENERATED MQSC METHODS</code> markers.</p>
 <table>
@@ -17348,9 +17392,11 @@ carries Ansible content.</p>
 </tbody>
 </table>
 <h3 id="vrg-repo-profile">vrg-repo-profile<a class="headerlink" href="#vrg-repo-profile" title="Permanent link">&para;</a></h3>
-<p>Validate the repository profile in <code>docs/repository-standards.md</code>.
-Checks that all required attributes are present and none contain
-placeholder values.</p>
+<p>Validate the repository configuration in <code>vergil.toml</code> (required
+keys, enum values, dependencies) and the <code>README.md</code> structure
+(exactly one H1, a Table of Contents, no heading-level skips). Run by
+<code>vrg-validate</code> as a common check. See the
+<a href="../lint/repo-profile/">repo-profile reference</a>.</p>
 <table>
 <thead>
 <tr>
@@ -17369,15 +17415,15 @@ placeholder values.</p>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td><code>docs/repository-standards.md</code> exists</td>
+<td>Run from the repository root; <code>vergil.toml</code> exists</td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>Exit 2 if profile file not found; exit 1 for missing or placeholder attributes</td>
+<td>Exit 2 if <code>vergil.toml</code> is not found; exit 1 for an invalid <code>vergil.toml</code> or a <code>README.md</code> structure error</td>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 valid, 1 invalid, 2 file not found</td>
+<td>0 valid, 1 invalid, 2 <code>vergil.toml</code> not found</td>
 </tr>
 <tr>
 <td>Status</td>

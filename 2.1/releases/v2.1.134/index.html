@@ -1307,6 +1307,8 @@
       
         
       
+        
+      
     
     
     
@@ -1362,6 +1364,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.252/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.252
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13503,8 +13533,6 @@
       
         
       
-        
-      
     
     
     
@@ -13733,34 +13761,6 @@
     
   
     Dependency Management
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../standards/development/python/local-validation-scripts/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Local Validation
   
 
     
@@ -15582,7 +15582,7 @@ Add the convention doc that any release-publishing repo or future CI gate confor
 <h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>link CI evidence bundle from release pages (#2318)</strong>
-Add evidence_link_line(repo, tag, <em>, has_asset) to lib/docs.py — a pure builder for the '</em><em>CI Evidence:</em>* ... <a href="...">Download →</a>' line on a release page, or None when the release has no evidence asset. Wire vrg-docs-stage to resolve has_asset per staged release via 'gh release view <tag> --json assets' (one cheap call at docs-build time; a 404 means no asset, other gh errors propagate) and append the line.</li>
+Add evidence_link_line(repo, tag, *, has_asset) to lib/docs.py — a pure builder for the '<strong>CI Evidence:</strong> ... <a href="...">Download →</a>' line on a release page, or None when the release has no evidence asset. Wire vrg-docs-stage to resolve has_asset per staged release via 'gh release view <tag> --json assets' (one cheap call at docs-build time; a 404 means no asset, other gh errors propagate) and append the line.</li>
 </ul>
 <p>Prevent drift: extract evidence_asset_name(tag)/evidence_manifest_name(tag) into lib/ci_evidence.py as the single source of truth for the bundle's published filename, and have both the harvester (vrg-ci-evidence) and this doc-site link derive the name from them.</p>
 <p>Task T6 of epic vergil-project/.github#140.</p>

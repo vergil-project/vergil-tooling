@@ -1307,6 +1307,8 @@
       
         
       
+        
+      
     
     
     
@@ -1362,6 +1364,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.252/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.252
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13514,8 +13544,6 @@
       
         
       
-        
-      
     
     
     
@@ -13744,34 +13772,6 @@
     
   
     Dependency Management
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../standards/development/python/local-validation-scripts/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Local Validation
   
 
     
@@ -15645,7 +15645,7 @@ Implements the vrg-gh wrapper (permission model plan Task 2 + credential managem
 </li>
 <li>
 <p><strong>deploy permission model with fully qualified path deny patterns</strong>
-Update deny rules to include Bash(<em>/git </em>) and Bash(<em>/gh </em>) patterns that block fully qualified path invocations (e.g., /usr/bin/git status). Resolve Task 4 pattern matching verification via Claude Code documentation. Deploy project-level Bash(vrg-*) allowlist to .claude/settings.json for vergil-tooling. Ref #754.</p>
+Update deny rules to include Bash(*/git <em>) and Bash(</em>/gh <em>) patterns that block fully qualified path invocations (e.g., /usr/bin/git status). Resolve Task 4 pattern matching verification via Claude Code documentation. Deploy project-level Bash(vrg-</em>) allowlist to .claude/settings.json for vergil-tooling. Ref #754.</p>
 </li>
 </ul>
 <h2 id="refactoring">Refactoring<a class="headerlink" href="#refactoring" title="Permanent link">&para;</a></h2>

@@ -1389,6 +1389,8 @@
       
         
       
+        
+      
     
     
     
@@ -1441,6 +1443,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="releases/v2.1.252/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.252
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13502,8 +13532,6 @@
       
         
       
-        
-      
     
     
     
@@ -13732,34 +13760,6 @@
     
   
     Dependency Management
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="standards/development/python/local-validation-scripts/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Local Validation
   
 
     
@@ -15605,9 +15605,10 @@ PreToolUse hook that blocks raw <code>git</code> and <code>gh</code>, routing th
    <code>uv tool install</code>, placing <code>vrg-*</code> scripts in <code>~/.local/bin/</code>.</li>
 <li><code>vrg-container-run</code> bridges host commands into dev container images
    where language runtimes and validators live.</li>
-<li>Python consumers also declare <code>vergil-tooling</code> as a dev dep
-   via <code>[tool.uv.sources]</code> so <code>uv run vrg-*</code> inside the container
-   resolves the pinned version.</li>
+<li>Inside the container, <code>vrg-container-run</code> uses a per-branch cached
+   image with <code>vergil-tooling</code> installed at the release line pinned in
+   <code>vergil.toml</code> (<code>[dependencies].vergil</code>), so <code>vrg-*</code> tools run there
+   by bare name too.</li>
 <li>Each repo ships a <code>.claude/hooks/guard.sh</code> shim wired via
    <code>.claude/settings.json</code>, blocking raw <code>git</code>/<code>gh</code> in agent sessions.</li>
 <li>Consuming repos call tools by bare name -- no file copying or

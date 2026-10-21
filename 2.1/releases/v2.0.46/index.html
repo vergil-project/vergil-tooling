@@ -1307,6 +1307,8 @@
       
         
       
+        
+      
     
     
     
@@ -1362,6 +1364,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.252/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.252
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13525,8 +13555,6 @@
       
         
       
-        
-      
     
     
     
@@ -13755,34 +13783,6 @@
     
   
     Dependency Management
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../standards/development/python/local-validation-scripts/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Local Validation
   
 
     
@@ -15637,7 +15637,7 @@ Wrap subprocess.run calls in try/except to print captured stderr before re-raisi
 <p>For github.py specifically, get_installation_token() now catches CalledProcessError and OSError, logs a warning, and returns None so vrg-gh falls back to ambient gh auth instead of crashing.</p>
 <ul>
 <li><strong>update CLAUDE.md consumer template for vrg-container-run rename</strong>
-The vrg-docker-<em> to vrg-container-</em> rename (4e712baf) updated CLAUDE.md but missed the consumer template at src/vergil_tooling/data/claude_md_consumer.md. The template still referenced vrg-docker-run in two places, causing vrg-github-repo-config audit to report 'template not found' and blocking the release preflight.</li>
+The vrg-docker-* to vrg-container-* rename (4e712baf) updated CLAUDE.md but missed the consumer template at src/vergil_tooling/data/claude_md_consumer.md. The template still referenced vrg-docker-run in two places, causing vrg-github-repo-config audit to report 'template not found' and blocking the release preflight.</li>
 </ul>
 <h2 id="chores">Chores<a class="headerlink" href="#chores" title="Permanent link">&para;</a></h2>
 <ul>
@@ -15670,8 +15670,8 @@ Standalone tool to force-update the vX.Y rolling tag to point at a specific vX.Y
 <h2 id="refactoring">Refactoring<a class="headerlink" href="#refactoring" title="Permanent link">&para;</a></h2>
 <ul>
 <li>
-<p><strong>rename vrg-docker-<em> to vrg-container-</em> with runtime auto-detection</strong>
-Replace all vrg-docker-<em> commands with vrg-container-</em> equivalents to support
+<p><em><em>rename vrg-docker-</em> to vrg-container-</em> with runtime auto-detection**
+Replace all vrg-docker-* commands with vrg-container-* equivalents to support
 nerdctl as a first-class runtime alongside Docker. Add detect_runtime() to
 lib/container.py that prefers nerdctl when available, falling back to docker.</p>
 </li>

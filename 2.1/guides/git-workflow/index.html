@@ -1300,6 +1300,8 @@
       
         
       
+        
+      
     
     
     
@@ -1352,6 +1354,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.252/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.252
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13413,8 +13443,6 @@
       
         
       
-        
-      
     
     
     
@@ -13643,34 +13671,6 @@
     
   
     Dependency Management
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../standards/development/python/local-validation-scripts/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Local Validation
   
 
     
@@ -15315,10 +15315,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#1-branch-from-the-integration-branch" class="md-nav__link">
+  <a href="#1-create-a-worktree-on-a-new-branch" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. Branch from the integration branch
+        1. Create a worktree on a new branch
       
     </span>
   </a>
@@ -15387,21 +15387,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#when-a-worktree-is-required" class="md-nav__link">
+  <a href="#what-enforces-it" class="md-nav__link">
     <span class="md-ellipsis">
       
-        When a worktree is required
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#when-a-worktree-is-optional-but-recommended" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        When a worktree is optional but recommended
+        What enforces it
       
     </span>
   </a>
@@ -15496,28 +15485,6 @@
     <span class="md-ellipsis">
       
         My plugin cache is stale
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#vrg-submit-pr-threw-a-calledprocesserror-on-auto-merge" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        vrg-submit-pr threw a CalledProcessError on auto-merge
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#validator-not-on-path-errors-during-posttooluse" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Validator-not-on-PATH errors during PostToolUse
       
     </span>
   </a>
@@ -15796,10 +15763,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#1-branch-from-the-integration-branch" class="md-nav__link">
+  <a href="#1-create-a-worktree-on-a-new-branch" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. Branch from the integration branch
+        1. Create a worktree on a new branch
       
     </span>
   </a>
@@ -15868,21 +15835,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#when-a-worktree-is-required" class="md-nav__link">
+  <a href="#what-enforces-it" class="md-nav__link">
     <span class="md-ellipsis">
       
-        When a worktree is required
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#when-a-worktree-is-optional-but-recommended" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        When a worktree is optional but recommended
+        What enforces it
       
     </span>
   </a>
@@ -15983,28 +15939,6 @@
   
 </li>
         
-          <li class="md-nav__item">
-  <a href="#vrg-submit-pr-threw-a-calledprocesserror-on-auto-merge" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        vrg-submit-pr threw a CalledProcessError on auto-merge
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#validator-not-on-path-errors-during-posttooluse" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Validator-not-on-PATH errors during PostToolUse
-      
-    </span>
-  </a>
-  
-</li>
-        
       </ul>
     </nav>
   
@@ -16067,9 +16001,8 @@ see <a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/
 (below) — every session starts at the project root, each concurrent
 agent gets its own worktree under <code>.worktrees/</code>.</p>
 <h2 id="branching-model">Branching model<a class="headerlink" href="#branching-model" title="Permanent link">&para;</a></h2>
-<p>Every repository's branching model is declared in
-<code>docs/repository-standards.md</code> under the <code>branching_model</code>
-attribute. Three models are supported:</p>
+<p>Every repository's branching model is declared in <code>vergil.toml</code>
+as <code>[project].branching-model</code>. Three models are supported:</p>
 <table>
 <thead>
 <tr>
@@ -16105,12 +16038,18 @@ through PRs against the appropriate integration branch (typically
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>bugfix/101-fix-null-pointer
 <a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>chore/256-bump-dependency-versions
 </code></pre></div>
-<p>Pattern: <code>^(feature|bugfix|hotfix|chore)/[0-9]+-[a-z0-9][a-z0-9-]*$</code>.</p>
+<p>Pattern: <code>^(feature|bugfix|hotfix|chore)/[0-9]+-[a-z0-9][a-z0-9.-]*$</code>.
+<code>vrg-git</code> applies it when the branch is created (<code>worktree add -b</code>,
+<code>checkout -b</code>, <code>switch -c</code>) and <code>vrg-commit</code> applies it again at commit
+time.</p>
 <p>The <code>release/*</code> and <code>promotion/*</code> prefixes are created by automated
-workflows and are exempt from the issue-number rule. So is
-<code>deps/update-&lt;version&gt;</code>, the branch <code>vrg-update-deps</code> (and the
-<code>vrg-release</code> <code>update-deps</code> stage) creates for a dependency update; only
-that driver commits to it.</p>
+workflows and are exempt from the issue-number rule.</p>
+<p><code>deps/update-&lt;version&gt;</code> is the branch <code>vrg-update-deps</code> (and the
+<code>vrg-release</code> <code>update-deps</code> stage) creates for a dependency update. It
+is not one of the branching-model prefixes, so <code>vrg-commit</code> refuses to
+commit on it. That is deliberate: only the driver commits there, and it
+runs <code>git commit</code> itself rather than going through <code>vrg-commit</code>. Any
+manual change goes on a fix branch, described next.</p>
 <p>When a dependency update fails, its fix task's branch follows the
 issue-number rule but starts from the failed update:
 <code>chore/&lt;fix-issue&gt;-dep-update-&lt;version&gt;</code>, cut from
@@ -16144,38 +16083,47 @@ mechanisms. Both exist; they complement each other.</p>
 at the Claude Code tool level. The plugin catches additional
 patterns (heredocs, worktree convention enforcement) that the
 hook guard does not cover. Together they close the loop.</p>
-<p>For the hook guard detail, see
-<a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/git-hooks-and-validation.md">Git Hooks and Validation</a>.
+<p>For the hook guard detail, see the
+<a href="../../reference/hooks/pre-commit/">Claude Code Hook Guard reference</a>.
+For every check and where it runs, see the
+<a href="../validation-matrix/">Validation Matrix</a>.
 For the plugin hook detail, see
 <a href="https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/site/docs/hooks/index.md">vergil-claude-plugin/docs → Hooks</a>.</p>
 <h2 id="developing-a-change">Developing a change<a class="headerlink" href="#developing-a-change" title="Permanent link">&para;</a></h2>
-<p>The common path, for work that isn't running in parallel:</p>
-<h3 id="1-branch-from-the-integration-branch">1. Branch from the integration branch<a class="headerlink" href="#1-branch-from-the-integration-branch" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>git<span class="w"> </span>fetch<span class="w"> </span>origin<span class="w"> </span>develop
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>git<span class="w"> </span>checkout<span class="w"> </span>-b<span class="w"> </span>feature/42-add-caching<span class="w"> </span>origin/develop
+<p>Every change follows this path, whether or not other work is running
+in parallel.</p>
+<h3 id="1-create-a-worktree-on-a-new-branch">1. Create a worktree on a new branch<a class="headerlink" href="#1-create-a-worktree-on-a-new-branch" title="Permanent link">&para;</a></h3>
+<p>From the project root:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>vrg-git<span class="w"> </span>fetch<span class="w"> </span>origin
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>vrg-git<span class="w"> </span>worktree<span class="w"> </span>add<span class="w"> </span>-b<span class="w"> </span>feature/42-add-caching<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span>.worktrees/issue-42-add-caching<span class="w"> </span>origin/develop
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="nb">cd</span><span class="w"> </span>.worktrees/issue-42-add-caching
 </code></pre></div>
-<p><code>vrg-commit</code> enforces the prefix and issue-number rule when
-you try to commit, so name the branch correctly now.</p>
+<p><code>vrg-git</code> checks the branch name and the worktree directory when it
+creates them, so name both correctly now. The directory must be
+<code>.worktrees/issue-&lt;N&gt;-&lt;slug&gt;</code>, matching the branch
+<code>&lt;type&gt;/&lt;N&gt;-&lt;slug&gt;</code>. See <a href="#parallel-work-with-worktrees">Parallel work with worktrees</a>
+for why every change gets its own worktree.</p>
 <h3 id="2-commit-with-vrg-commit">2. Commit with <code>vrg-commit</code><a class="headerlink" href="#2-commit-with-vrg-commit" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>vrg-commit<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>--type<span class="w"> </span>feat<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>--scope<span class="w"> </span>cache<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span>--message<span class="w"> </span><span class="s2">"cache computed results"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span>--body<span class="w"> </span><span class="s2">"Adds an LRU cache to the computation pipeline..."</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">  </span>--agent<span class="w"> </span>claude
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span>--body<span class="w"> </span><span class="s2">"Adds an LRU cache to the computation pipeline..."</span>
 </code></pre></div>
 <p><code>vrg-commit</code>:</p>
 <ul>
 <li>Validates the commit type against conventional-commit standards
   (<code>feat</code>, <code>fix</code>, <code>docs</code>, <code>style</code>, <code>refactor</code>, <code>test</code>, <code>chore</code>, <code>ci</code>,
   <code>build</code>).</li>
-<li>Resolves the AI agent's <code>Co-Authored-By</code> trailer from
-  <code>docs/repository-standards.md</code>.</li>
+<li>Adds no AI <code>Co-Authored-By</code> trailer: AI co-author attribution is
+  not used, and Claude Code's own attribution is turned off in
+  <code>.claude/settings.json</code> (#3200).</li>
 <li>Invokes <code>git commit</code> under the hood after all checks pass.</li>
 </ul>
 <p><strong>Multi-line bodies go in a file</strong>, not a heredoc. The plugin blocks
 heredocs in CLI args because they cause escaping bugs:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>vrg-commit<span class="w"> </span>--type<span class="w"> </span>feat<span class="w"> </span>--message<span class="w"> </span><span class="s2">"…"</span><span class="w"> </span>--body<span class="w"> </span><span class="s2">"</span><span class="k">$(</span>cat<span class="w"> </span>/tmp/body.txt<span class="k">)</span><span class="s2">"</span><span class="w"> </span>--agent<span class="w"> </span>claude
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>vrg-commit<span class="w"> </span>--type<span class="w"> </span>feat<span class="w"> </span>--scope<span class="w"> </span>cache<span class="w"> </span>--message<span class="w"> </span><span class="s2">"…"</span><span class="w"> </span>--body<span class="w"> </span><span class="s2">"</span><span class="k">$(</span>cat<span class="w"> </span>/tmp/body.txt<span class="k">)</span><span class="s2">"</span>
 </code></pre></div>
 <p>See the <a href="../../reference/dev/commit/">vrg-commit reference</a> for the
 full flag list.</p>
@@ -16194,15 +16142,6 @@ full flag list.</p>
   not accepted.</li>
 <li>Creates the PR via <code>gh pr create</code> under the hood.</li>
 </ul>
-<div class="admonition note">
-<p class="admonition-title">Auto-merge is disabled</p>
-<p>As of 2026-04-22 all managed repos have <code>allow_auto_merge=false</code>.
-<code>vrg-submit-pr</code> still tries to enable auto-merge after PR creation
-and will print a non-fatal <code>CalledProcessError</code> traceback — the
-PR itself is created successfully and simply waits for a human
-merge. Removing that call is tracked in
-<a href="https://github.com/vergil-project/vergil-tooling/issues/268">vergil-tooling#268</a>.</p>
-</div>
 <p>See the <a href="../../reference/dev/submit-pr/">vrg-submit-pr reference</a>.</p>
 <div class="admonition note">
 <p class="admonition-title">Agent handoff and the post-report-ready freeze</p>
@@ -16267,38 +16206,35 @@ after confirmation; better still, gitignore that output so the worktree
 sweeps automatically.</p>
 <p>See the <a href="../../reference/dev/finalize-pr/">vrg-finalize-pr reference</a>.</p>
 <h2 id="parallel-work-with-worktrees">Parallel work with worktrees<a class="headerlink" href="#parallel-work-with-worktrees" title="Permanent link">&para;</a></h2>
-<p>Use the worktree convention when running <strong>more than one agent in
-the same repo at the same time</strong>, or when you want to start a second
-issue before the first is merged.</p>
+<p>The main worktree at the project root stays on <code>develop</code> and is
+read-only. Every change happens in its own worktree under
+<code>.worktrees/</code>, on its own branch. This lets several agents work in the
+same repository at once, and lets you start a second issue before the
+first is merged.</p>
 <p>For the full spec (rationale, trust model, failure modes, memory-path
 implications), see
 <a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/worktree-convention.md">the worktree convention</a>.
 This section is the user-level "how to."</p>
-<h3 id="when-a-worktree-is-required">When a worktree is required<a class="headerlink" href="#when-a-worktree-is-required" title="Permanent link">&para;</a></h3>
+<h3 id="what-enforces-it">What enforces it<a class="headerlink" href="#what-enforces-it" title="Permanent link">&para;</a></h3>
+<p>Once <code>.worktrees/</code> exists in the project root:</p>
 <ul>
-<li>Two or more Claude Code sessions are going to work concurrently
-  on the same repo.</li>
-<li>The main working tree at the project root is serving as the
-  "canonical state" for one agent while another starts work.</li>
+<li><code>vrg-git checkout</code> and <code>vrg-git switch</code> refuse to move the main
+  worktree onto a work branch.</li>
+<li><code>vrg-commit</code> refuses a work-branch commit made from the main
+  worktree.</li>
+<li><code>vrg-git worktree add</code> refuses a worktree outside <code>.worktrees/</code>, or
+  one whose directory name does not match its branch.</li>
 </ul>
-<h3 id="when-a-worktree-is-optional-but-recommended">When a worktree is optional but recommended<a class="headerlink" href="#when-a-worktree-is-optional-but-recommended" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Any feature branch, even for solo sequential work. The convention
-  keeps the main tree clean; once the plugin-level CWD check is
-  active (release tracked in
-  <a href="https://github.com/vergil-project/vergil-claude-plugin/issues/46">vergil-claude-plugin#46</a>)
-  committing from the main tree will be blocked.</li>
-</ul>
+<p><code>vrg-github-repo-init</code> adds <code>.worktrees/</code> to the managed <code>.gitignore</code>
+block, so worktrees never show up as untracked files.</p>
 <h3 id="creating-a-worktree-for-an-issue">Creating a worktree for an issue<a class="headerlink" href="#creating-a-worktree-for-an-issue" title="Permanent link">&para;</a></h3>
 <p>From the project root:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>git<span class="w"> </span>fetch<span class="w"> </span>origin<span class="w"> </span>develop
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>git<span class="w"> </span>worktree<span class="w"> </span>add<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span>.worktrees/issue-42-add-caching<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">  </span>-b<span class="w"> </span>feature/42-add-caching<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">  </span>origin/develop
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>vrg-git<span class="w"> </span>fetch<span class="w"> </span>origin
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>vrg-git<span class="w"> </span>worktree<span class="w"> </span>add<span class="w"> </span>-b<span class="w"> </span>feature/42-add-caching<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span>.worktrees/issue-42-add-caching<span class="w"> </span>origin/develop
 </code></pre></div>
 <p>Directory layout:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>~/dev/github/&lt;repo&gt;/                      ← session starts here
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>&lt;project-root&gt;/                           ← session starts here
 <a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>  .git/
 <a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>  CLAUDE.md, src/, docs/, …               ← main worktree (develop)
 <a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>  .worktrees/                             ← gitignored, local-only
@@ -16310,17 +16246,17 @@ This section is the user-level "how to."</p>
 inside the worktree. The session's initial CWD determines the memory
 slug; starting inside a worktree creates a separate memory silo and
 loses shared project context.</p>
-<p>Then give the agent the canonical prompt (a template lives in each
+<p>Then give the agent the canonical prompt. The template lives in each
 repo's CLAUDE.md under "Parallel AI agent development → Agent prompt
-contract"):</p>
+contract"; filled in, it reads:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>You are working on issue #42: Add LRU cache to pipeline.
 <a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>
-<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>Your worktree is: /Users/pmoore/dev/github/&lt;repo&gt;/.worktrees/issue-42-add-caching/
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>Your worktree is: &lt;project-root&gt;/.worktrees/issue-42-add-caching/
 <a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>Your branch is:   feature/42-add-caching
 <a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>
 <a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>Rules for this session:
 <a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>- Do all git operations from inside your worktree:
-<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>    cd &lt;absolute-worktree-path&gt; &amp;&amp; git &lt;command&gt;
+<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>    cd &lt;absolute-worktree-path&gt; &amp;&amp; vrg-git &lt;command&gt;
 <a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>- For Read / Edit / Write tools, use the absolute worktree path.
 <a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a>- For Bash commands that touch files, cd into the worktree first
 <a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a>  or use absolute paths.
@@ -16331,14 +16267,15 @@ contract"):</p>
 <a id="__codelineno-9-16" name="__codelineno-9-16" href="#__codelineno-9-16"></a>  (vrg-container-run mounts the current directory).
 </code></pre></div>
 <h3 id="cleanup-after-merge">Cleanup after merge<a class="headerlink" href="#cleanup-after-merge" title="Permanent link">&para;</a></h3>
-<p><code>vrg-finalize-pr</code> handles worktree removal for the finalized branch
-when the worktree lives under the canonical <code>.worktrees/</code> directory, so
-the cleanup above is automatic. To remove one by hand:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="nb">cd</span><span class="w"> </span>~/dev/github/&lt;repo&gt;
-<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>git<span class="w"> </span>worktree<span class="w"> </span>remove<span class="w"> </span>.worktrees/issue-42-add-caching
-<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>git<span class="w"> </span>branch<span class="w"> </span>-D<span class="w"> </span>feature/42-add-caching<span class="w">    </span><span class="c1"># usually already deleted</span>
-<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>git<span class="w"> </span>fetch<span class="w"> </span>--prune<span class="w">                        </span><span class="c1"># usually already pruned</span>
+<p><code>vrg-finalize-pr</code> removes the finalized branch's worktree when it lives
+under the canonical <code>.worktrees/</code> directory, so cleanup is normally
+automatic. To remove one by hand, from the project root:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>vrg-git<span class="w"> </span>worktree<span class="w"> </span>remove<span class="w"> </span>.worktrees/issue-42-add-caching
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>vrg-git<span class="w"> </span>branch<span class="w"> </span>-D<span class="w"> </span>feature/42-add-caching<span class="w">   </span><span class="c1"># usually already deleted</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>vrg-git<span class="w"> </span>fetch<span class="w"> </span>--prune<span class="w">                      </span><span class="c1"># usually already pruned</span>
 </code></pre></div>
+<p><code>vrg-git branch -D</code> deletes a branch only when its upstream is gone or
+is an integration branch, and never deletes a protected branch.</p>
 <h2 id="releasing">Releasing<a class="headerlink" href="#releasing" title="Permanent link">&para;</a></h2>
 <p>Release flow is covered in its own guide:
 <a href="../releasing/">Releasing</a>.</p>
@@ -16356,25 +16293,18 @@ with a fix task, and the next
    release refuses to start until it is dealt with.</li>
 </ol>
 <h2 id="adoption-for-a-new-repo">Adoption for a new repo<a class="headerlink" href="#adoption-for-a-new-repo" title="Permanent link">&para;</a></h2>
-<p>Onboarding a brand-new repository has two entry points:</p>
+<p><code>vrg-github-repo-init</code> creates a new managed repository, or adopts
+an existing one with <code>--adopt</code>, and writes every managed file in its
+canonical form: <code>vergil.toml</code>, <code>CLAUDE.md</code> (including the
+Parallel-AI-agent-development section), <code>.claude/settings.json</code>,
+<code>.claude/hooks/guard.sh</code>, the managed <code>.gitignore</code> block (including
+<code>.worktrees/</code>) and the GitHub workflows. Two guides cover it:</p>
 <ul>
-<li><strong><a href="../../getting-started/">Getting Started</a></strong> — five-to-ten minute
-  quickstart.</li>
+<li><strong><a href="../../getting-started/">Getting Started</a></strong> — the quickstart.</li>
 <li><strong><a href="../consuming-repo-setup/">Consuming Repo Setup</a></strong> — full
-  walkthrough with rationale, CI configuration, plugin nuances,
+  walkthrough with rationale, CI configuration, plugin details,
   and troubleshooting.</li>
 </ul>
-<p>At a minimum, a new repo needs:</p>
-<ol>
-<li><code>docs/repository-standards.md</code> with the six required attributes
-   (see the existing setup guide).</li>
-<li><code>.claude/hooks/guard.sh</code> and <code>.claude/settings.json</code> wiring
-   the Claude Code hook guard to block raw <code>git</code>/<code>gh</code> commands.</li>
-<li><code>.claude/settings.json</code> also enabling the <code>vergil-tooling</code>
-   plugin so the plugin hooks fire in Claude Code sessions.</li>
-<li><code>.worktrees/</code> in <code>.gitignore</code> and a Parallel-AI-agent-development
-   section in CLAUDE.md so the worktree convention applies.</li>
-</ol>
 <h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
 <h3 id="a-hook-blocked-me-which-one-and-why">A hook blocked me. Which one, and why?<a class="headerlink" href="#a-hook-blocked-me-which-one-and-why" title="Permanent link">&para;</a></h3>
 <p>The hook that fired will print a reason. Common signals:</p>
@@ -16435,30 +16365,20 @@ with a fix task, and the next
 </tbody>
 </table>
 <h3 id="my-plugin-cache-is-stale">My plugin cache is stale<a class="headerlink" href="#my-plugin-cache-is-stale" title="Permanent link">&para;</a></h3>
-<p>Until plugin release automation is fully stood up
-(<a href="https://github.com/vergil-project/vergil-claude-plugin/issues/46">vergil-claude-plugin#46</a>),
-the plugin is consumed from a local checkout and its cache under
-<code>~/.claude/plugins/cache/vergil-tooling-marketplace/</code>. If you're
-running an old version of a hook:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>git<span class="w"> </span>-C<span class="w"> </span>~/.claude/plugins/marketplaces/vergil-tooling-marketplace<span class="w"> </span>pull
-<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="c1"># then restart Claude Code</span>
+<p>If you're running an old version of a hook, refresh the plugin from
+inside Claude Code:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>/plugin marketplace update vergil-marketplace
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>/reload-plugins
 </code></pre></div>
-<h3 id="vrg-submit-pr-threw-a-calledprocesserror-on-auto-merge"><code>vrg-submit-pr</code> threw a CalledProcessError on auto-merge<a class="headerlink" href="#vrg-submit-pr-threw-a-calledprocesserror-on-auto-merge" title="Permanent link">&para;</a></h3>
-<p>Expected since 2026-04-22 — auto-merge is disabled org-wide. The
-PR itself was created successfully. See
-<a href="https://github.com/vergil-project/vergil-tooling/issues/268">vergil-tooling#268</a>
-for the planned fix.</p>
-<h3 id="validator-not-on-path-errors-during-posttooluse">Validator-not-on-PATH errors during PostToolUse<a class="headerlink" href="#validator-not-on-path-errors-during-posttooluse" title="Permanent link">&para;</a></h3>
-<p>The plugin's <code>validate-on-edit</code> hook expects those validators on
-PATH. Some are only installed inside the dev container image, not on
-the host. Hook-level PATH discovery is tracked in
-<a href="https://github.com/vergil-project/vergil-tooling/issues/265">vergil-tooling#265</a>.
-Workaround: run the validator explicitly via <code>vrg-container-run</code> to
-confirm the file is clean; then proceed.</p>
+<p>See the plugin README's
+<a href="https://github.com/vergil-project/vergil-claude-plugin#update">Update section</a>
+for what each step does.</p>
 <h2 id="related">Related<a class="headerlink" href="#related" title="Permanent link">&para;</a></h2>
 <ul>
-<li><a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/git-hooks-and-validation.md">Git Hooks and Validation</a>
-  — pre-commit hook + validator reference</li>
+<li><a href="../validation-matrix/">Validation Matrix</a>
+  — every check and where it runs</li>
+<li><a href="../../reference/hooks/pre-commit/">Claude Code Hook Guard</a>
+  — hook guard and <code>vrg-commit</code> check reference</li>
 <li><a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/worktree-convention.md">Worktree convention spec</a>
   — rationale, failure modes, trust model</li>
 <li><a href="../releasing/">Releasing</a> — release workflow detail</li>

@@ -1302,6 +1302,8 @@
       
         
       
+        
+      
     
     
     
@@ -1354,6 +1356,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../releases/v2.1.252/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.252
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13434,8 +13464,6 @@
       
         
       
-        
-      
     
     
     
@@ -13664,34 +13692,6 @@
     
   
     Dependency Management
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../python/local-validation-scripts/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Local Validation
   
 
     
@@ -15826,35 +15826,40 @@ Clang-only and must never appear as a raw flag in a shared command):</p>
 <h2 id="conancenter-audit-token">ConanCenter Audit Token<a class="headerlink" href="#conancenter-audit-token" title="Permanent link">&para;</a></h2>
 <p><code>conan audit scan .</code> queries ConanCenter's hosted advisory provider, which
 requires an authentication token. The command reads it from the environment
-variable <strong><code>CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER</code></strong>. Because that variable is
-consumed <strong>inside the dev container</strong>, a consuming C++ repository must arrange
-for it to reach both local runs and CI. Three pieces wire it end to end:</p>
+variable <strong><code>CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER</code></strong>, which it needs <strong>inside
+the dev container</strong>.</p>
+<p>For a cpp repo, <code>vrg-container-run</code> resolves the token itself and forwards it
+into the container. It does not rely on the token being exported by the shell
+that launched it, so it works the same under bash, zsh, and non-interactive
+shells. A consuming repo needs <strong>no</strong> <code>[container].env-prefixes</code> entry for it.
+The first source that has a token wins:</p>
 <ol>
-<li><strong>Pass the token into the container.</strong> Add the <code>CONAN_AUDIT_PROVIDER_TOKEN</code>
-   prefix to <code>[container].env-prefixes</code> in the repo's <code>vergil.toml</code>, so
-   <code>vrg-container-run</code> forwards the token into the container environment:</li>
+<li><strong><code>CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER</code> in the environment</strong>, if set and
+   not blank. This is how CI provides it, and how an operator overrides the
+   files for one run.</li>
+<li><strong><code>~/.config/vergil/conan.env</code></strong>, the file <code>vrg-vm</code> writes into agent VMs.</li>
+<li><strong>The <code>conan_audit_token_path</code> file named in
+   <code>~/.config/vergil/identities.toml</code></strong>, the host-side bare-token file. If more
+   than one identity sets it, they must all name the same file.</li>
 </ol>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">[container]</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">env-prefixes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"CONAN_AUDIT_PROVIDER_TOKEN"</span><span class="p">]</span>
-</code></pre></div>
-<ol>
-<li>
-<p><strong>Provide the token in CI.</strong> Store the value as the org/CI secret
-   <strong><code>CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER</code></strong> so it is present in the
-   environment on PR CI runs.</p>
-</li>
-<li>
-<p><strong>Provide the token on VMs / local agents.</strong> Point the agent identity at a
-   host file holding the bare token via the <code>conan_audit_token_path</code> key in
-   <code>identities.toml</code>. Credential injection reads that file and exports
-   <code>CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER</code> into the guest environment (the same
-   mechanism used for the Anthropic token), so agent sessions run AUDIT with the
-   token available.</p>
-</li>
-</ol>
-<p>Without the token, <code>conan audit scan .</code> cannot reach the advisory provider and
-the AUDIT stage fails; the three pieces above are the one-time setup that makes
-a consuming C++ repo audit-ready.</p>
+<p>A source that exists but cannot be read, is malformed, or holds an empty token
+stops <code>vrg-container-run</code> with an error naming the file. It never falls back to
+a lower source. The token value is passed to the container runtime through its
+environment, never on its command line, and is never printed.</p>
+<p>To wire the token up once:</p>
+<ul>
+<li><strong>CI.</strong> Store the value as the org/CI secret
+  <strong><code>CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER</code></strong>. The CI audit job injects it into
+  the container environment directly.</li>
+<li><strong>Agent VMs and the host.</strong> Point the identity at a host file holding the bare
+  token with the <code>conan_audit_token_path</code> key in <code>identities.toml</code>. <code>vrg-vm</code>
+  credential injection copies it into the guest's <code>~/.config/vergil/conan.env</code>,
+  and host-side runs read the file directly. Injection also adds a <code>~/.bashrc</code>
+  line that sources <code>conan.env</code>, so <code>conan</code> run by hand in an interactive bash
+  sees the token. The tooling does not depend on that line.</li>
+</ul>
+<p>Without any token, <code>vrg-validate</code> skips <code>conan audit scan .</code> with a notice and
+runs the rest of the AUDIT stage.</p>
 <h2 id="testing-ctest-runner-googletest-default">Testing: CTest Runner, GoogleTest Default<a class="headerlink" href="#testing-ctest-runner-googletest-default" title="Permanent link">&para;</a></h2>
 <p><strong>CTest is the mandated test runner.</strong> Every C++ repository exposes its tests
 through CTest, and the validation pipeline invokes them with

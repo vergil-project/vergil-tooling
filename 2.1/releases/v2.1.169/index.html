@@ -1307,6 +1307,8 @@
       
         
       
+        
+      
     
     
     
@@ -1362,6 +1364,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.252/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.252
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13503,8 +13533,6 @@
       
         
       
-        
-      
     
     
     
@@ -13733,34 +13761,6 @@
     
   
     Dependency Management
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../standards/development/python/local-validation-scripts/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Local Validation
   
 
     
@@ -15593,7 +15593,7 @@ Add "cpp" to _CODEQL_SUPPORTED_LANGUAGES so a cpp repo receives the CodeQL CI ga
 <li><strong>C++ registry entry (clang/gcc) (#2565)</strong>
 Add the C++ Language entry to the _REGISTRY (epic vergil-project/.github#207, T5), building on the merged T3 cardinality concept and T4 [cpp] schema.</li>
 </ul>
-<p>INSTALL runs conan install then a cmake configure that exports compile_commands.json and threads the [cpp] std/stdlib in as VERGIL_CPP_<em> cache vars. LINT (declared ONCE) runs clang-format, run-clang-tidy over the compile DB, and cppcheck against packaged {configs}/cpp/</em> configs. TYPECHECK (per-version) is the warnings-to-11 build; this task owns and unit-tests the concrete curated warning set. TEST (per-version) runs ctest, gcovr --fail-under-line 100, and a separate ASan/UBSan build+run. AUDIT (declared ONCE) runs conan audit plus a best-effort Conan license surfacing; a C++ license allowlist constant is added.</p>
+<p>INSTALL runs conan install then a cmake configure that exports compile_commands.json and threads the [cpp] std/stdlib in as VERGIL_CPP_* cache vars. LINT (declared ONCE) runs clang-format, run-clang-tidy over the compile DB, and cppcheck against packaged {configs}/cpp/* configs. TYPECHECK (per-version) is the warnings-to-11 build; this task owns and unit-tests the concrete curated warning set. TEST (per-version) runs ctest, gcovr --fail-under-line 100, and a separate ASan/UBSan build+run. AUDIT (declared ONCE) runs conan audit plus a best-effort Conan license surfacing; a C++ license allowlist constant is added.</p>
 <p>language_commands gains {std}/{stdlib} expansion (defaulting to the v1 pins) and vrg-validate threads the parsed [cpp] values through. Packaged clang-format/clang-tidy/cppcheck/gcovr configs land under configs/cpp/ and are registered in package-data.</p>
 <p>Curated warning set (floor + extras, portable across both current GCC and Clang since one static command runs in every image): -Wall -Wextra -Werror -Wpedantic -Wshadow -Wconversion -Wsign-conversion -Wcast-qual -Wold-style-cast -Wnon-virtual-dtor -Woverloaded-virtual -Wdouble-promotion -Wformat=2 -Wimplicit-fallthrough -Wnull-dereference.</p>
 <ul>

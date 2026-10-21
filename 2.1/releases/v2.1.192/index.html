@@ -1307,6 +1307,8 @@
       
         
       
+        
+      
     
     
     
@@ -1362,6 +1364,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.252/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.252
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13503,8 +13533,6 @@
       
         
       
-        
-      
     
     
     
@@ -13733,34 +13761,6 @@
     
   
     Dependency Management
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../standards/development/python/local-validation-scripts/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Local Validation
   
 
     
@@ -15678,7 +15678,7 @@ Local vrg-validate runs one dev container on a single Python interpreter (curren
 <ul>
 <li>
 <p><strong>extend markdownlint coverage to the epics/ directory (#2799)</strong>
-_find_markdown_files now also discovers epics/*<em>/</em>.md, honouring the existing [markdownlint].ignore exclusions, so the durable per-epic design record (spec.md, plan.md, retrospective.md) is linted alongside docs/site/ and README.md. The markdownlint progress line names the added path, and the discovery tests cover the epics/ scope and its ignore handling.</p>
+_find_markdown_files now also discovers epics/**/*.md, honouring the existing [markdownlint].ignore exclusions, so the durable per-epic design record (spec.md, plan.md, retrospective.md) is linted alongside docs/site/ and README.md. The markdownlint progress line names the added path, and the discovery tests cover the epics/ scope and its ignore handling.</p>
 </li>
 <li>
 <p><strong>exempt epics/ from MD013 in the markdownlint step (#2808)</strong>

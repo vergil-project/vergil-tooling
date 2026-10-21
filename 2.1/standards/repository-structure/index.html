@@ -1302,6 +1302,8 @@
       
         
       
+        
+      
     
     
     
@@ -1354,6 +1356,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.252/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.252
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13558,8 +13588,6 @@
       
         
       
-        
-      
     
     
     
@@ -13788,34 +13816,6 @@
     
   
     Dependency Management
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../development/python/local-validation-scripts/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Local Validation
   
 
     
@@ -15706,11 +15706,10 @@ uses a different convention, document the rationale and keep it consistent.</p>
 <li>Keep the decision record immutable once accepted; revisions require a new
   ADR that references the original</li>
 </ul>
-<p>Each repository must include <code>docs/repository-standards.md</code> that:</p>
-<ul>
-<li>documents the repository profile attributes</li>
-<li>documents project-specific overlays and deviations from shared standards</li>
-</ul>
+<p>Each repository declares its repository profile in <code>vergil.toml</code> at
+the repository root (the <code>[project]</code> table), which <code>vrg-repo-profile</code>
+validates. See
+<a href="../../guides/consuming-repo-setup/#step-4-vergiltoml-the-repository-profile">Consuming Repo Setup</a>.</p>
 <h2 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>repo/
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>├── docs/

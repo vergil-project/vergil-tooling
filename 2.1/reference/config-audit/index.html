@@ -1300,6 +1300,8 @@
       
         
       
+        
+      
     
     
     
@@ -1352,6 +1354,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.252/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.252
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -12067,6 +12097,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#_check_claude_settings-attribution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        _check_claude_settings — attribution
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#_check_gitignore-managed-fence" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -13602,8 +13643,6 @@
       
         
       
-        
-      
     
     
     
@@ -13832,34 +13871,6 @@
     
   
     Dependency Management
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../standards/development/python/local-validation-scripts/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Local Validation
   
 
     
@@ -15657,6 +15668,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#_check_claude_settings-attribution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        _check_claude_settings — attribution
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#_check_gitignore-managed-fence" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -15851,7 +15873,7 @@ divergence:</p>
 </tr>
 <tr>
 <td><code>_check_claude_settings</code></td>
-<td><code>.claude/settings.json</code> marketplace + <code>enabledPlugins</code> match the template</td>
+<td><code>.claude/settings.json</code> marketplace, <code>enabledPlugins</code> and <code>attribution</code> match the template</td>
 </tr>
 <tr>
 <td><code>_check_workflow_refs</code></td>
@@ -15867,6 +15889,24 @@ divergence:</p>
 </tr>
 </tbody>
 </table>
+<h3 id="_check_claude_settings-attribution"><code>_check_claude_settings</code> — attribution<a class="headerlink" href="#_check_claude_settings-attribution" title="Permanent link">&para;</a></h3>
+<p><code>.claude/settings.json</code> must carry exactly:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">"attribution"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">"commit"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span><span class="p">,</span><span class="w"> </span><span class="nt">"pr"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span><span class="w"> </span><span class="p">}</span>
+</code></pre></div>
+<p>This turns off Claude Code's AI <code>Co-Authored-By</code> trailer on commits and
+PRs; AI co-author attribution is not used
+(<a href="https://github.com/vergil-project/vergil-tooling/issues/3200">#3200</a>).
+The empty-string form is required: <code>attribution: false</code> needs a newer
+Claude Code and makes older versions skip the whole settings file. A
+missing or different value is a hard failure,
+<code>DiffItem(field="local.claude_settings.attribution", ...)</code>, whose
+expected value names the key and #3200. Fix it by adding the block above
+to the repo's checked-in <code>.claude/settings.json</code>.</p>
+<p>The check was warning-only while the fleet was swept and became strict
+in <a href="https://github.com/vergil-project/vergil-tooling/issues/3361">#3361</a>.
+There is no exemption for dormant repos: a dormant repo whose nightly
+audit still runs fails until the key is added. Each dormant repo carries
+a backlog issue to add the key when it is revived.</p>
 <h3 id="_check_gitignore-managed-fence"><code>_check_gitignore</code> — managed fence<a class="headerlink" href="#_check_gitignore-managed-fence" title="Permanent link">&para;</a></h3>
 <p>The repo's <code>.gitignore</code> must carry the vergil-managed fence for its
 resolved language (see
@@ -15905,8 +15945,8 @@ repos) and the one-time rollout (existing repos).</p>
 <h2 id="the-composed-managed-fence">The composed managed fence<a class="headerlink" href="#the-composed-managed-fence" title="Permanent link">&para;</a></h2>
 <p>The source of truth for the fleet's ignore vocabulary is a set of
 packaged data-asset <strong>fragments</strong>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>src/vergil_tooling/data/gitignore/base        # language-agnostic
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>src/vergil_tooling/data/gitignore/&lt;language&gt;  # one per managed language
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>src/vergil_tooling/data/gitignore/base        # language-agnostic
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>src/vergil_tooling/data/gitignore/&lt;language&gt;  # one per managed language
 </code></pre></div>
 <p>They are loaded at runtime via <code>importlib.resources</code> — the same idiom
 used for the <code>CLAUDE.md</code> and <code>.claude/settings.json</code> templates — and
@@ -15919,7 +15959,7 @@ language-agnostic <code>base</code> (editors, OS, secrets, logs, Vergil internal
 like <code>.venv/</code> / <code>.worktrees/</code> / <code>.vergil/</code> / <code>.superpowers/</code>, and all
 build/validation/CI-evidence output including the mkdocs build path
 <code>docs/site/site/</code>) plus the fragment for its <code>[project].primary-language</code>
-(Python, TypeScript/Node, Go, Ruby, C++; Rust and Java are managed with
+(Python, TypeScript/Node, Go, C++; Rust and Java are managed with
 an empty fragment). A repo that declares no fragment language gets the
 base-only block.</p>
 <p><strong>The managed fence.</strong> The composed block is written into <code>.gitignore</code>

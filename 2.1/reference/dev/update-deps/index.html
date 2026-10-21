@@ -1300,6 +1300,8 @@
       
         
       
+        
+      
     
     
     
@@ -1352,6 +1354,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.252/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.252
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -12635,6 +12665,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#an-existing-update-branch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        An existing update branch
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#stages" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -13542,8 +13583,6 @@
       
         
       
-        
-      
     
     
     
@@ -13772,34 +13811,6 @@
     
   
     Dependency Management
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../standards/development/python/local-validation-scripts/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Local Validation
   
 
     
@@ -15590,6 +15601,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#an-existing-update-branch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        An existing update branch
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#stages" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -15701,11 +15723,50 @@ error. The updaters are described in the
 <li>Run from the root checkout, on <code>develop</code>, with a clean working tree
   that matches <code>origin/develop</code>.</li>
 <li>An authenticated <code>gh</code>.</li>
-<li>The <code>deps/update-&lt;version&gt;</code> branch for the current <code>develop</code> version
-  must not exist locally or on origin. If it does, an earlier update for
-  that version is still in flight; land or close its PR and delete the
-  branch first.</li>
+<li>No dependency update for the current <code>develop</code> version may be in
+  flight. See <a href="#an-existing-update-branch">An existing update branch</a>.</li>
 </ul>
+<h2 id="an-existing-update-branch">An existing update branch<a class="headerlink" href="#an-existing-update-branch" title="Permanent link">&para;</a></h2>
+<p>If the <code>deps/update-&lt;version&gt;</code> branch for the current <code>develop</code> version
+already exists locally or on origin, <code>preflight</code> looks up the branch's
+PRs and acts on the newest one:</p>
+<table>
+<thead>
+<tr>
+<th>Branch state</th>
+<th>What <code>preflight</code> does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>The PR merged</td>
+<td>The update for this version is already done. It prints the PR's URL and exits 0 without updating anything</td>
+</tr>
+<tr>
+<td>The PR was closed without merging</td>
+<td>The branch is stale. It deletes the branch on origin and locally, naming it, then runs the update as usual</td>
+</tr>
+<tr>
+<td>A PR is open</td>
+<td>Refuses: the update is still in flight. Land or close the PR first</td>
+</tr>
+<tr>
+<td>The branch has no PR</td>
+<td>Refuses: the update is still in flight</td>
+</tr>
+</tbody>
+</table>
+<p><code>preflight</code> also refuses, without deleting anything, when the branch's
+tip is not the head of its newest PR. That means the branch name was
+reused after the PR finished, so the branch holds commits that no PR
+covers. If a stale branch cannot be deleted, <code>preflight</code> refuses and
+names the branch to delete by hand.</p>
+<p>After it merges its own PR, the <code>merge</code> stage deletes the
+<code>deps/update-&lt;version&gt;</code> branch on origin. GitHub's delete-on-merge
+setting usually deletes it first, and the stage then reports that it is
+already gone. If the delete fails, the stage prints a warning with the
+command to run by hand. The run still succeeds, because the update has
+merged.</p>
 <h2 id="stages">Stages<a class="headerlink" href="#stages" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -15733,7 +15794,7 @@ error. The updaters are described in the
 </tr>
 <tr>
 <td><code>merge</code></td>
-<td>Waits for the PR's checks and merges it, if validation passed</td>
+<td>Waits for the PR's checks and merges it, if validation passed, then deletes its branch on origin</td>
 </tr>
 <tr>
 <td><code>fix-task</code></td>
@@ -15775,7 +15836,7 @@ opened.</p>
 <tbody>
 <tr>
 <td>0</td>
-<td>Updated and merged, or nothing to update</td>
+<td>Updated and merged, nothing to update, or the update for this <code>develop</code> version had already merged</td>
 </tr>
 <tr>
 <td>1</td>

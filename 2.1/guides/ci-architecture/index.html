@@ -1300,6 +1300,8 @@
       
         
       
+        
+      
     
     
     
@@ -1352,6 +1354,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.252/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.252
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13413,8 +13443,6 @@
       
         
       
-        
-      
     
     
     
@@ -13643,34 +13671,6 @@
     
   
     Dependency Management
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../standards/development/python/local-validation-scripts/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Local Validation
   
 
     
@@ -15495,67 +15495,6 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Implementation guide">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#step-1-define-ciyml" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Step 1: Define ci.yml
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#step-2-factor-security-into-shared-workflow" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Step 2: Factor security into shared workflow
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#step-3-add-dev-scripts" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Step 3: Add dev scripts
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#step-4-update-ci-gates" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Step 4: Update CI gates
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#step-5-update-claudemd" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Step 5: Update CLAUDE.md
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
 </li>
       
         <li class="md-nav__item">
@@ -15571,10 +15510,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#every-gate-is-required-there-are-no-optional-pr-gates" class="md-nav__link">
+  <a href="#every-check-that-runs-is-a-gate" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Every gate is required — there are no optional PR gates
+        Every check that runs is a gate
       
     </span>
   </a>
@@ -15937,67 +15876,6 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Implementation guide">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#step-1-define-ciyml" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Step 1: Define ci.yml
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#step-2-factor-security-into-shared-workflow" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Step 2: Factor security into shared workflow
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#step-3-add-dev-scripts" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Step 3: Add dev scripts
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#step-4-update-ci-gates" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Step 4: Update CI gates
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#step-5-update-claudemd" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Step 5: Update CLAUDE.md
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
 </li>
       
         <li class="md-nav__item">
@@ -16013,10 +15891,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#every-gate-is-required-there-are-no-optional-pr-gates" class="md-nav__link">
+  <a href="#every-check-that-runs-is-a-gate" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Every gate is required — there are no optional PR gates
+        Every check that runs is a gate
       
     </span>
   </a>
@@ -16129,9 +16007,8 @@
 
 
 <h1 id="ci-architecture">CI Architecture<a class="headerlink" href="#ci-architecture" title="Permanent link">&para;</a></h1>
-<p>This guide explains the continuous integration model used across all
-<code>mq-rest-admin-*</code> repositories and the vergil-tooling ecosystem, and
-how to implement it in new projects.</p>
+<p>This guide explains the continuous integration model used by every
+Vergil-managed repository, and how a repository gets it.</p>
 <h2 id="table-of-contents">Table of Contents<a class="headerlink" href="#table-of-contents" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="#overview">Overview</a></li>
@@ -16158,13 +16035,13 @@ latency:</p>
 <tr>
 <td>1</td>
 <td>Manual (before commit)</td>
-<td>Seconds</td>
+<td>Seconds to minutes</td>
 <td>No</td>
 </tr>
 <tr>
 <td>2</td>
 <td>Pull request</td>
-<td>~8-10 min</td>
+<td>Minutes</td>
 <td>Yes</td>
 </tr>
 </tbody>
@@ -16174,9 +16051,10 @@ latency:</p>
 <li><strong>Tier 2</strong>: Full version matrix, all checks, security uploads</li>
 </ul>
 <p>The goal is fast local feedback for the developer and comprehensive gated
-checks on the PR itself. The Claude Code hook guard and <code>vrg-commit</code>
-enforce that Tier 1 runs before any commit lands, so by the time a PR
-opens, it should already be green.</p>
+checks on the PR itself. Tier 1 is a discipline, not a gate: <code>vrg-commit</code>
+checks the branch and commit context but does not run validation, so run
+Tier 1 yourself before each commit. If you do, the PR should already be
+green when it opens.</p>
 <div class="admonition note">
 <p class="admonition-title">Historical: three-tier CI</p>
 <p>Earlier versions of this guide documented a third tier — push-CI — as
@@ -16195,31 +16073,30 @@ the one deliberate gap.</p>
 <h2 id="tier-1-local-pre-commit">Tier 1: Local pre-commit<a class="headerlink" href="#tier-1-local-pre-commit" title="Permanent link">&para;</a></h2>
 <p>Run in a dev container on the developer's machine. Docker is the only
 host prerequisite.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>./scripts/dev/test.sh<span class="w">        </span><span class="c1"># Unit tests + linting</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>./scripts/dev/lint.sh<span class="w">        </span><span class="c1"># Lint and formatting checks</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>./scripts/dev/audit.sh<span class="w">       </span><span class="c1"># Dependency and license audit</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>vrg-container-run<span class="w"> </span>--<span class="w"> </span>vrg-validate
 </code></pre></div>
-<p>Each script follows the same pattern:</p>
-<ol>
-<li>Set <code>DOCKER_DEV_IMAGE</code> (default: <code>dev-&lt;language&gt;:&lt;latevrg-version&gt;</code>)</li>
-<li>Set <code>DOCKER_TEST_CMD</code> (language-specific command)</li>
-<li>Delegate to <code>vrg-container-test</code> if available, otherwise run <code>docker run</code>
-   directly</li>
-</ol>
-<p>Environment overrides:</p>
-<ul>
-<li><code>DOCKER_DEV_IMAGE</code> — use a different container image</li>
-<li><code>DOCKER_TEST_CMD</code> — override the test command</li>
-</ul>
-<div class="admonition tip">
-<p class="admonition-title">Tip</p>
-<p>Build the dev images locally before first use:
-<code>cd ../vergil-containers &amp;&amp; docker/build.sh</code></p>
-</div>
-<p>Running <code>vrg-container-run -- uv run vrg-validate</code> before each commit runs
-common checks and per-language validation. The Claude Code hook guard
-ensures agents use <code>vrg-commit</code> (which runs validation) rather than raw
-<code>git commit</code>.</p>
+<p>This is the single Tier 1 command. <code>vrg-container-run</code> starts one
+container and runs <code>vrg-validate</code> inside it, with the repository
+bind-mounted. The image is
+<code>ghcr.io/vergil-project/&lt;prefix&gt;-&lt;language&gt;:&lt;version&gt;</code>: the prefix is
+<code>prod</code> unless you pass <code>--prefix dev</code>, the language comes from
+<code>[project].primary-language</code>, and the version is the primary
+<code>[ci].versions</code> entry. C++ and TypeScript carry a family in the image
+name instead (see <a href="#dev-container-images">Dev container images</a>), and a
+repository with no language uses the base image. On top of that image,
+<code>vrg-container-run</code> builds a per-branch cached image with
+vergil-tooling installed. Set <code>DOCKER_DEV_IMAGE</code> to use a different
+image.</p>
+<p><code>vrg-validate</code> first runs the common checks: <code>vrg-repo-profile</code>,
+markdownlint, shellcheck, yamllint, hadolint, actionlint, and
+ansible-lint when the repository has Ansible content. It then runs the
+language's lint, typecheck, test and audit commands. To run one stage,
+pass <code>--check common</code>, <code>lint</code>, <code>typecheck</code>, <code>test</code> or <code>audit</code>. The
+<a href="../validation-matrix/">Validation Matrix</a> lists every check and where
+it runs.</p>
+<p>A repository can change the in-container command with
+<code>[validation].container-command</code> in <code>vergil.toml</code>. vergil-tooling
+uses this to run its own unreleased code (<code>uv run vrg-validate</code>).</p>
 <div class="admonition note">
 <p class="admonition-title">Python tests run in parallel by default</p>
 <p>For Python repos the validation gate's test stage runs in parallel via
@@ -16247,24 +16124,32 @@ Neither ships; parallelism is the one universal win. See
 for the measured evidence.</p>
 <h2 id="tier-2-pr-ci">Tier 2: PR CI<a class="headerlink" href="#tier-2-pr-ci" title="Permanent link">&para;</a></h2>
 <p>Triggers on <code>pull_request</code> events. Runs the full validation suite.</p>
-<p><strong>What runs:</strong></p>
+<p><strong>What runs</strong> (each item is one job in <code>ci.yml</code>, calling one
+<code>vergil-actions</code> reusable workflow):</p>
 <ul>
-<li>Unit tests across the full version matrix</li>
-<li>Integration tests across the full version matrix</li>
-<li>Security scanners (CodeQL, Trivy, Semgrep) via shared reusable workflow</li>
-<li>Standards compliance</li>
-<li>Dependency audit</li>
-<li>Release gates (version divergence, format validation)</li>
-<li>Binary package build and install-test (<code>ci-package.yml</code>, only in repos
+<li><code>audit</code> (<code>ci-audit.yml</code>): dependency audit across the full version
+  matrix, for languages that have an audit command</li>
+<li><code>quality</code> (<code>ci-quality.yml</code>): the common checks once (<code>vrg-validate
+  --check common</code>), then lint and typecheck across the full version
+  matrix</li>
+<li><code>security</code> (<code>ci-security.yml</code>): CodeQL, Trivy and Semgrep</li>
+<li><code>test</code> (<code>ci-test.yml</code>): the language's test command across the full
+  version matrix</li>
+<li><code>version</code> (<code>ci-version-bump.yml</code>): fails when the PR's version equals
+  the version on <code>main</code>. It is a no-op before the first release, and it
+  passes when <code>[project].release-model</code> is <code>none</code></li>
+<li><code>docs</code> (<code>ci-docs.yml</code>): builds the docs site, only in repos with
+  <code>[publish].docs</code> enabled</li>
+<li><code>package</code>: binary package build and install-test (<code>ci-package.yml</code>, only in repos
   whose <code>vergil.toml</code> has <code>[package]</code>). Feature PRs run the <strong>reduced</strong>
   tier: every build cell, but one install-test cell per format (the oldest
   selected release, amd64 first). Release PRs (<code>release/*</code> into <code>main</code>)
   and non-PR events run the <strong>full</strong> matrix. See
   <a href="../../reference/package-config/#tiers-full-and-reduced">Tiers: full and reduced</a>.</li>
 </ul>
-<p>The workflow file is <code>.github/workflows/ci.yml</code>, which runs directly on
-<code>pull_request</code> and is also exposed as a reusable workflow via
-<code>workflow_call</code> for any specialized callers (release pipelines, etc.).</p>
+<p>The workflow file is <code>.github/workflows/ci.yml</code>. It runs on
+<code>pull_request</code> and is also exposed through <code>workflow_call</code> (see
+<a href="#thin-caller-pattern">Thin-caller pattern</a>).</p>
 <div class="admonition warning">
 <p class="admonition-title">Local validate is not full coverage parity</p>
 <p>Tier 1 runs one dev container on a single Python interpreter (currently
@@ -16286,53 +16171,62 @@ away for speed.</p>
 <h3 id="thin-caller-pattern">Thin-caller pattern<a class="headerlink" href="#thin-caller-pattern" title="Permanent link">&para;</a></h3>
 <p>A consuming repo's <code>ci.yml</code> is a <strong>thin caller</strong>: each job simply <code>uses:</code> a
 <code>vergil-actions</code> reusable workflow (<code>ci-audit</code>, <code>ci-quality</code>, <code>ci-security</code>,
-<code>ci-test</code>, <code>ci-version-bump</code>, <code>ci-docs</code>) at the pinned <code>@v2.1</code> tag and passes
-only <code>language:</code> and <code>container-suffix:</code>. It does <strong>not</strong> pass a version matrix
+<code>ci-test</code>, <code>ci-version-bump</code>, <code>ci-docs</code>, <code>ci-package</code>) pinned to the repo's
+vergil series tag (for example <code>@v2.1</code>; <code>vrg-github-repo-init</code> uses the
+<code>vX.Y</code> series of the installed vergil-tooling). Apart from the scope
+inputs below, it passes only <code>language:</code> and <code>container-suffix:</code>, and
+<code>ci-docs</code> and <code>ci-package</code> take no inputs. It does <strong>not</strong> pass a version matrix
 or a container tag — the reusable workflows read <code>[ci].versions</code> from the repo's
 <code>vergil.toml</code> at run time and derive both the matrix and the primary-version
 container themselves (epic
 <a href="https://github.com/vergil-project/.github/issues/338">vergil-project/.github#338</a>).
 A <code>[ci].versions</code> change therefore takes effect fleet-wide with no edit to
 <code>ci.yml</code>.</p>
-<p><code>ci.yml</code> still exposes <code>workflow_call</code> with two scope inputs so specialized
-callers (e.g. release pipelines) can constrain it — <code>run-security</code> (enable the
-security scanners) and <code>run-release</code> (enable the release/version gates). When
-triggered directly by <code>pull_request</code> both default on, producing the full
-Tier 2 behavior.</p>
-<div class="admonition warning">
-<p class="admonition-title">String inputs, not booleans</p>
-<p>Use <code>type: string</code> for gate inputs, not <code>type: boolean</code>. Boolean
-inputs are unreliable for job-level <code>if</code> conditions when the
-workflow is triggered directly (inputs are empty, not <code>false</code>).
-Use <code>!= 'false'</code> comparisons instead.</p>
-</div>
+<p><code>ci.yml</code> also declares <code>workflow_call</code> with one boolean input,
+<code>run-security</code>, defaulting to <code>true</code>. On a <code>pull_request</code> run the input
+is empty, so the generated <code>ci.yml</code> compares it with <code>!= 'false'</code> and it
+stays on. <code>run-security</code> is forwarded to <code>ci-security.yml</code>. The security
+job passes no <code>container-suffix:</code>, because <code>ci-security.yml</code> ignores it.
+The generated <code>ci.yml</code> no longer declares or forwards <code>run-release</code>: the
+version gate in <code>ci-version-bump.yml</code> follows <code>[project].release-model</code>
+instead.</p>
 <h3 id="shared-security-workflow">Shared security workflow<a class="headerlink" href="#shared-security-workflow" title="Permanent link">&para;</a></h3>
-<p>Security scanners and standards compliance are factored into a shared
-reusable workflow at
-<code>vergil-project/vergil-actions/.github/workflows/ci-security.yml</code>.</p>
-<p>This provides four jobs:</p>
+<p>The security scanners live in the reusable workflow
+<code>vergil-project/vergil-actions/.github/workflows/ci-security.yml</code>. It
+runs three scanner jobs and one aggregate. Because the caller's job is
+named <code>security</code>, the checks report as:</p>
 <ul>
-<li><code>ci: standards-compliance</code></li>
-<li><code>security: codeql</code></li>
-<li><code>security: trivy</code></li>
-<li><code>security: semgrep</code></li>
+<li><code>security / codeql</code></li>
+<li><code>security / trivy</code></li>
+<li><code>security / semgrep</code></li>
+<li><code>security / evidence</code></li>
 </ul>
-<p>Call it from <code>ci.yml</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">security-and-standards</span><span class="p">:</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">if</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${{ inputs.run-security != 'false' }}</span>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">vergil-project/vergil-actions/.github/workflows/ci-security.yml@develop</span>
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span><span class="nt">with</span><span class="p">:</span>
-<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">    </span><span class="nt">language</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ruby</span>
-<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">    </span><span class="c1"># For Go, also set: semgrep-language: golang</span>
-<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">  </span><span class="nt">permissions</span><span class="p">:</span>
-<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">    </span><span class="nt">contents</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">read</span>
-<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">    </span><span class="nt">security-events</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">write</span>
+<p>vergil-tooling's own <code>ci.yml</code> calls it like this:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">security</span><span class="p">:</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">vergil-project/vergil-actions/.github/workflows/ci-security.yml@v2.1</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span><span class="nt">permissions</span><span class="p">:</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">    </span><span class="nt">contents</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">read</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">    </span><span class="nt">security-events</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">write</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">    </span><span class="nt">actions</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">read</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">  </span><span class="nt">with</span><span class="p">:</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">    </span><span class="nt">language</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">python</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">    </span><span class="nt">run-security</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${{ inputs.run-security != 'false' }}</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">    </span><span class="nt">container-suffix</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">python</span>
 </code></pre></div>
+<p>CodeQL is skipped when <code>run-codeql</code> is <code>false</code> (set for languages
+CodeQL does not support) or when <code>upload-sarif</code> is <code>false</code> (set for
+private repositories without GitHub Advanced Security).
+<code>container-suffix</code> is a deprecated no-op here, and the old
+standards-compliance job is gone: PR issue linkage is now checked by
+<code>vrg-submit-pr</code> when it builds the PR body.</p>
 <div class="admonition tip">
-<p class="admonition-title">Semgrep language names</p>
-<p>Semgrep uses <code>p/&lt;language&gt;</code> rulesets. Most languages match their
-common name (<code>ruby</code>, <code>python</code>, <code>java</code>) but Go requires <code>golang</code>.
-Use the <code>semgrep-language</code> input to override when needed.</p>
+<p class="admonition-title">Semgrep rulesets</p>
+<p><code>vrg-semgrep-scan</code> maps the language to a registry ruleset:
+<code>python</code>, <code>java</code> and <code>rust</code> map to <code>p/&lt;language&gt;</code>, and <code>go</code>
+maps to <code>p/golang</code>. It adds <code>p/dockerfile</code> when the repository has
+Dockerfiles and <code>p/github-actions</code> when it has workflows.
+<code>ci-security.yml</code> adds <code>p/c</code> for <code>cpp</code> and <code>p/typescript</code> for
+<code>typescript</code>.</p>
 </div>
 <h4 id="fleet-excluded-semgrep-rules">Fleet-excluded semgrep rules<a class="headerlink" href="#fleet-excluded-semgrep-rules" title="Permanent link">&para;</a></h4>
 <p>The semgrep scanner (<code>vrg-semgrep-scan</code>, backed by
@@ -16436,10 +16330,6 @@ publisher reads:</p>
 <td><code>CARGO_REGISTRY_TOKEN</code></td>
 </tr>
 <tr>
-<td>ruby</td>
-<td><code>RUBYGEMS_API_KEY</code></td>
-</tr>
-<tr>
 <td>java</td>
 <td><code>CENTRAL_USERNAME</code>, <code>CENTRAL_TOKEN</code>, <code>GPG_PRIVATE_KEY</code>, <code>GPG_PASSPHRASE</code></td>
 </tr>
@@ -16476,61 +16366,90 @@ matrix out over that list. Single-container jobs (<code>ci-security</code>,
 single stored source of the version set; nothing is hand-maintained in <code>ci.yml</code>,
 so the matrix cannot drift from <code>[ci].versions</code>.</p>
 <h2 id="implementation-guide">Implementation guide<a class="headerlink" href="#implementation-guide" title="Permanent link">&para;</a></h2>
-<h3 id="step-1-define-ciyml">Step 1: Define ci.yml<a class="headerlink" href="#step-1-define-ciyml" title="Permanent link">&para;</a></h3>
-<p>Trigger on <code>pull_request</code> and (optionally) expose <code>workflow_call</code>
-alongside it for specialized callers. Define inputs with string types
-and sensible defaults.</p>
-<h3 id="step-2-factor-security-into-shared-workflow">Step 2: Factor security into shared workflow<a class="headerlink" href="#step-2-factor-security-into-shared-workflow" title="Permanent link">&para;</a></h3>
-<p>Replace inline CodeQL, Trivy, Semgrep, and standards-compliance jobs
-with a single call to <code>ci-security.yml</code>.</p>
-<h3 id="step-3-add-dev-scripts">Step 3: Add dev scripts<a class="headerlink" href="#step-3-add-dev-scripts" title="Permanent link">&para;</a></h3>
-<p>Create <code>scripts/dev/test.sh</code>, <code>scripts/dev/lint.sh</code>, and
-<code>scripts/dev/audit.sh</code> following the Docker-first pattern. See
-<a href="#dev-container-images">Dev container images</a> for image details.</p>
-<h3 id="step-4-update-ci-gates">Step 4: Update CI gates<a class="headerlink" href="#step-4-update-ci-gates" title="Permanent link">&para;</a></h3>
-<p>Update the repository ruleset to match new check names. Key changes:</p>
+<p>A repository does not write its CI by hand. <code>vrg-github-repo-init</code>
+generates it, for a new repository or for an existing one with
+<code>--adopt</code>:</p>
 <ul>
-<li>Remove <code>ci: docs-only</code> (no longer exists)</li>
-<li>Replace <code>ci: standards-compliance</code> with
-  <code>security-and-standards / ci: standards-compliance</code></li>
-<li>Replace <code>security: *</code> with <code>security-and-standards / security: *</code></li>
+<li><strong><code>ci.yml</code></strong> is rendered as the thin caller described above. Its jobs
+  follow the language: <code>audit</code> only when the language has an audit
+  command, <code>test</code> only when it has a test command or
+  <code>[ci].integration-tests</code> is on, <code>docs</code> only when <code>[publish].docs</code> is
+  on, <code>version</code> only when <code>[project].release-model</code> is not <code>none</code>, and
+  <code>package</code> only when <code>vergil.toml</code> has <code>[package]</code>.</li>
+<li><strong>The <code>CI gates</code> ruleset</strong> is applied to <code>main</code> and <code>develop</code> with
+  the required checks listed in <a href="#ci-gates">CI gates</a>. Before it is
+  applied, the tool checks that the generated <code>ci.yml</code> produces every
+  required check and fails if it does not.</li>
 </ul>
-<p>Use the GitHub API to update rulesets:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>gh<span class="w"> </span>api<span class="w"> </span>repos/OWNER/REPO/rulesets/RULESET_ID<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>--input<span class="w"> </span>gates.json
-</code></pre></div>
-<h3 id="step-5-update-claudemd">Step 5: Update CLAUDE.md<a class="headerlink" href="#step-5-update-claudemd" title="Permanent link">&para;</a></h3>
-<p>Add the two-tier CI model and Docker-first testing sections to the
-repository's <code>CLAUDE.md</code>.</p>
+<p>After that, <code>vrg-github-repo-config</code> keeps the repository in line:
+<code>audit</code> reports drift, <code>diff</code> shows it, and <code>apply</code> reconciles the
+GitHub side, including the ruleset. <code>vrg-container-run -- vrg-validate</code>
+is the local command. Nothing else needs to be added to the repository.</p>
 <h2 id="ci-gates">CI gates<a class="headerlink" href="#ci-gates" title="Permanent link">&para;</a></h2>
-<p>When security and standards jobs move into the shared reusable workflow,
-their check names gain a <code>security-and-standards /</code> prefix:</p>
-<p>Old names and their replacements:</p>
-<ul>
-<li><code>ci: standards-compliance</code> →
-  <code>security-and-standards / ci: standards-compliance</code></li>
-<li><code>security: codeql</code> →
-  <code>security-and-standards / security: codeql</code></li>
-<li><code>security: trivy</code> →
-  <code>security-and-standards / security: trivy</code></li>
-<li><code>security: semgrep</code> →
-  <code>security-and-standards / security: semgrep</code></li>
-</ul>
-<p>Jobs that remain inline keep their names unchanged:</p>
-<ul>
-<li><code>ci: dependency-audit</code></li>
-<li><code>release: gates</code></li>
-<li><code>test: unit (&lt;version&gt;)</code></li>
-<li><code>test: integration (&lt;version&gt;)</code></li>
-</ul>
-<p>The docs-build job is a universal reusable-CI job emitted on every
-managed repo with no <code>if:</code> guard, so it always runs and surfaces the
-<code>docs / docs</code> check.</p>
-<h3 id="every-gate-is-required-there-are-no-optional-pr-gates">Every gate is required — there are no optional PR gates<a class="headerlink" href="#every-gate-is-required-there-are-no-optional-pr-gates" title="Permanent link">&para;</a></h3>
-<p>Every check that can gate a PR is configured as a <strong>required status
-check</strong> on the target branch; there is no tier of checks that runs but
-does not block. <code>docs / docs</code> is required alongside the tests, audit,
-release gates, and the security checks — the desired required-check set is
-complete, and it is pinned by a test so it cannot silently drift.</p>
+<p>The <code>CI gates</code> ruleset requires these checks. The list is computed from
+<code>vergil.toml</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Check</th>
+<th>Required when</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>quality / common</code></td>
+<td>Always</td>
+</tr>
+<tr>
+<td><code>security / trivy</code>, <code>security / semgrep</code></td>
+<td>Always</td>
+</tr>
+<tr>
+<td><code>docs / docs</code></td>
+<td><code>[publish].docs</code> is on</td>
+</tr>
+<tr>
+<td><code>audit / evidence</code></td>
+<td>The language has an audit command</td>
+</tr>
+<tr>
+<td><code>quality / evidence</code></td>
+<td>The language has a lint or typecheck command</td>
+</tr>
+<tr>
+<td><code>test / evidence</code></td>
+<td>The language has a unit test command</td>
+</tr>
+<tr>
+<td><code>version / version-bump</code></td>
+<td><code>[project].release-model</code> is not <code>none</code></td>
+</tr>
+<tr>
+<td><code>package / evidence</code></td>
+<td><code>vergil.toml</code> has <code>[package]</code></td>
+</tr>
+<tr>
+<td><code>security / codeql</code>, <code>CodeQL</code></td>
+<td>GHAS is available and CodeQL supports the language</td>
+</tr>
+<tr>
+<td><code>Trivy</code>, <code>Semgrep OSS</code></td>
+<td>GHAS is available</td>
+</tr>
+<tr>
+<td><code>test / integration / &lt;version&gt;</code></td>
+<td><code>[ci].integration-tests</code> is on (one per <code>[ci].versions</code> entry)</td>
+</tr>
+</tbody>
+</table>
+<p>GHAS (GitHub Advanced Security) is taken from <code>[project].ghas</code> when it
+is set. Otherwise it counts as available for any repository that is not
+private. The bare <code>CodeQL</code>, <code>Trivy</code> and <code>Semgrep OSS</code> checks come from
+GitHub code scanning, not from a workflow job. Without GHAS those checks
+never report, so they are not required.</p>
+<h3 id="every-check-that-runs-is-a-gate">Every check that runs is a gate<a class="headerlink" href="#every-check-that-runs-is-a-gate" title="Permanent link">&para;</a></h3>
+<p>There is no tier of checks that runs on a PR but does not block it. The
+required set above is pinned by a test so it cannot drift silently.</p>
 <p>For the matrixed kinds — audit, quality (lint + typecheck), and unit tests —
 the required check is the <strong>stable, version-agnostic <code>&lt;kind&gt; / evidence</code>
 aggregate</strong> each reusable workflow emits (<code>audit / evidence</code>,
@@ -16554,28 +16473,31 @@ fails rather than reporting a warning. <code>vrg-release</code> gates on that au
 so a repo whose required-check set has drifted cannot release until the
 set is reconciled.</p>
 <h2 id="dev-container-images">Dev container images<a class="headerlink" href="#dev-container-images" title="Permanent link">&para;</a></h2>
-<p>Published to <code>ghcr.io/vergil-project/dev-&lt;language&gt;:&lt;version&gt;</code> from the
-<a href="https://github.com/vergil-project/vergil-containers">vergil-containers</a>
-repository.</p>
+<p>Published to <code>ghcr.io/vergil-project/&lt;prefix&gt;-&lt;language&gt;:&lt;version&gt;</code> from
+the <a href="https://github.com/vergil-project/vergil-containers">vergil-containers</a>
+repository. The <code>dev-</code> images are built from its <code>develop</code> branch and
+the <code>prod-</code> images from <code>main</code>. <code>vrg-container-run</code> and the CI
+workflows use <code>prod-</code> by default.</p>
 <h3 id="available-images">Available images<a class="headerlink" href="#available-images" title="Permanent link">&para;</a></h3>
-<p><strong><code>dev-ruby</code></strong> (3.2, 3.3, 3.4)
-:   Base: <code>ruby:&lt;v&gt;-slim</code>. Includes build-essential,
-    git, curl, bundler.</p>
-<p><strong><code>dev-python</code></strong> (3.12, 3.13, 3.14)
+<p>This page does not repeat the published versions of each image. The
+generated version table in the <code>vergil-containers</code>
+<a href="https://github.com/vergil-project/vergil-containers/blob/develop/README.md#available-images">README</a>
+is the single source of truth.</p>
+<p><strong><code>dev-python</code></strong>
 :   Base: <code>python:&lt;v&gt;-slim</code>. Includes git, curl, uv.</p>
-<p><strong><code>dev-java</code></strong> (17, 21)
+<p><strong><code>dev-java</code></strong>
 :   Base: <code>eclipse-temurin:&lt;v&gt;-jdk</code>. Includes git, curl.</p>
-<p><strong><code>dev-go</code></strong> (1.25, 1.26)
+<p><strong><code>dev-go</code></strong>
 :   Base: <code>golang:&lt;v&gt;</code>. Includes golangci-lint,
     govulncheck, go-licenses, gocyclo.</p>
-<p><strong><code>dev-cpp-clang</code></strong> (19, 20)
+<p><strong><code>dev-cpp-clang</code></strong>
 :   Base: <code>debian:trixie-slim</code> + <code>apt.llvm.org</code>. Includes clang,
     clang-tidy, clang-format, lld, llvm (<code>llvm-cov</code>), the sanitizer
     runtime, CMake, Conan 2, cppcheck, and gcovr.</p>
-<p><strong><code>dev-cpp-gcc</code></strong> (13, 14)
+<p><strong><code>dev-cpp-gcc</code></strong>
 :   Base: <code>debian:trixie-slim</code>. Includes g++, gcov, CMake, Conan 2,
     cppcheck, and gcovr.</p>
-<p><strong><code>dev-ts-node</code></strong> (22, 24)
+<p><strong><code>dev-ts-node</code></strong>
 :   Base: <code>debian:trixie-slim</code> + prebuilt Node from NodeSource (never
     built from source). Includes Node.js, npm, TypeScript (<code>tsc</code>),
     ESLint + typescript-eslint, Prettier, Vitest, <code>@vitest/coverage-v8</code>,
@@ -16588,21 +16510,23 @@ image families (<code>dev-cpp-clang</code> / <code>dev-cpp-gcc</code>, and match
 images) so TYPECHECK and TEST run per compiler and per version. The
 family rides the <code>[ci].versions</code> tag prefix (<code>clang-20</code>, <code>gcc-14</code>).</p>
 <h3 id="building-locally">Building locally<a class="headerlink" href="#building-locally" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nb">cd</span><span class="w"> </span>../vergil-containers
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>docker/build.sh
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nb">cd</span><span class="w"> </span>../vergil-containers
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>docker/build.sh
 </code></pre></div>
 <p>This builds all images. Individual images can be built with:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>docker<span class="w"> </span>build<span class="w"> </span>--build-arg<span class="w"> </span><span class="nv">RUBY_VERSION</span><span class="o">=</span><span class="m">3</span>.4<span class="w"> </span>-t<span class="w"> </span>dev-ruby:3.4<span class="w"> </span>docker/ruby/
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>docker/generate.sh<span class="w"> </span>python
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>docker<span class="w"> </span>build<span class="w"> </span>--build-arg<span class="w"> </span><span class="nv">PYTHON_VERSION</span><span class="o">=</span><span class="m">3</span>.14<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span>-t<span class="w"> </span>dev-python:3.14<span class="w"> </span>docker/python/
 </code></pre></div>
 <h3 id="publishing">Publishing<a class="headerlink" href="#publishing" title="Permanent link">&para;</a></h3>
-<p>Images are published automatically on push to <code>develop</code> or <code>main</code> in
-the <code>vergil-containers</code> repository via its
-<code>.github/workflows/docker-publish.yml</code> workflow.</p>
+<p>Images are published automatically on push to <code>develop</code> (<code>dev-</code>) or
+<code>main</code> (<code>prod-</code>) in the <code>vergil-containers</code> repository: its <code>cd.yml</code>
+calls the reusable <code>.github/workflows/cd-docker-publish.yml</code> workflow.</p>
 <h3 id="design-principles">Design principles<a class="headerlink" href="#design-principles" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Thin images</strong> — language runtime + package manager + git/curl</li>
 <li><strong>Project-managed dependencies</strong> — tools come from lockfiles at
-  container startup (e.g., <code>bundle install</code>, <code>uv sync</code>, <code>go install</code>)</li>
+  container startup (e.g., <code>uv sync</code>, <code>go install</code>)</li>
 <li><strong>No host requirements</strong> — Docker is the only prerequisite for
   local development</li>
 </ul>
@@ -16612,8 +16536,8 @@ treated as a property of the <strong>language</strong>, not the repo, which is w
 image cache sound. A repo that genuinely needs a Debian binary its language image
 does not carry (for example a repo whose render/e2e tests shell out to LilyPond)
 declares it once in <code>vergil.toml</code>, <strong>without</strong> touching the shared base image:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="k">[container]</span>
-<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="n">system-packages</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"lilypond"</span><span class="p">]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="k">[container]</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="n">system-packages</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"lilypond"</span><span class="p">]</span>
 </code></pre></div>
 <p>The full key reference — trust model, the names-only surface, cache-key
 behaviour, and the fail-closed error — lives in
@@ -16640,9 +16564,9 @@ Two things matter for the CI/container model here:</p>
 <p>For a dependency that is <strong>not</strong> an apt package — a JS library a test driver
 consumes at runtime, say — a repo declares a <code>build-command</code> (with optional
 <code>build-cache-files</code>) instead of <code>system-packages</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="k">[container]</span>
-<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="n">build-command</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"npm install -g @coderline/alphatab"</span>
-<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="n">build-cache-files</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"package-lock.json"</span><span class="p">]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="k">[container]</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="n">build-command</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"npm install -g @coderline/alphatab"</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="n">build-cache-files</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"package-lock.json"</span><span class="p">]</span>
 </code></pre></div>
 <p>The full key reference — the out-of-workspace contract, the <code>NODE_PATH</code> handling
 for baked npm libraries, the trust model, and the cache-key behaviour — lives in

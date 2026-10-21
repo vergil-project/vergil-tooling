@@ -1298,6 +1298,8 @@
       
         
       
+        
+      
     
     
     
@@ -1350,6 +1352,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.252/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.252
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13411,8 +13441,6 @@
       
         
       
-        
-      
     
     
     
@@ -13641,34 +13669,6 @@
     
   
     Dependency Management
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../standards/development/python/local-validation-scripts/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Local Validation
   
 
     
@@ -15481,6 +15481,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#stale-job-records" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stale job records
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#consumer-steps" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -15727,6 +15738,17 @@
     <span class="md-ellipsis">
       
         The vrg-release pipeline
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stale-job-records" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stale job records
       
     </span>
   </a>
@@ -16058,12 +16080,12 @@ issue and ticks its box in the issue's stage checklist.</p>
 <tr>
 <td><code>confirm-main</code></td>
 <td>fail-fast</td>
-<td>Watches CD on <code>main</code>. The release job must succeed; other failed publish jobs are recorded as deferred publish failures</td>
+<td>Watches CD on <code>main</code>. The release job must succeed; other failed publish jobs are recorded as deferred publish failures (see <a href="#stale-job-records">Stale job records</a>)</td>
 </tr>
 <tr>
 <td><code>back-merge-bump</code></td>
 <td>fail-fast</td>
-<td>Creates <code>release/post-&lt;version&gt;</code> from <code>main</code>, bumps the version, and merges it to <code>develop</code></td>
+<td>Creates <code>release/post-&lt;version&gt;</code> from <code>main</code>, bumps the version, and merges it to <code>develop</code>. Records the back-merge's merge commit</td>
 </tr>
 <tr>
 <td><code>teardown-worktree</code></td>
@@ -16073,7 +16095,7 @@ issue and ticks its box in the issue's stage checklist.</p>
 <tr>
 <td><code>confirm-develop</code></td>
 <td>deferred</td>
-<td>Watches CD on <code>develop</code>; a failed docs publish is deferred</td>
+<td>Watches the CD run on <code>develop</code> for the back-merge's merge commit; a failed docs publish is deferred</td>
 </tr>
 <tr>
 <td><code>promote</code></td>
@@ -16083,7 +16105,7 @@ issue and ticks its box in the issue's stage checklist.</p>
 <tr>
 <td><code>close-finalize</code></td>
 <td>deferred</td>
-<td>Closes the tracking issue with a summary and runs <code>vrg-finalize-pr --cleanup-only</code></td>
+<td>Closes the tracking issue with a summary and runs <code>vrg-finalize-pr --cleanup-only --no-wait-cd</code></td>
 </tr>
 <tr>
 <td><code>package-index</code></td>
@@ -16112,6 +16134,37 @@ when an earlier stage has failed, so the release can be resumed with
 <code>vrg-release --resume</code>. A deferred publish failure also leaves the
 issue open, but the release itself is complete: re-run the CD publish
 rather than resuming.</p>
+<p><code>confirm-develop</code> checks the CD run for the back-merge's merge commit,
+not for the current tip of <code>develop</code>. On <code>vrg-release --resume</code>, other
+PRs (a dependency update or a feature) may have merged to <code>develop</code>
+since the back-merge. The tip's CD run then says nothing about the
+release. A resume re-runs <code>back-merge-bump</code>, which adopts the existing
+back-merge PR and records its merge commit again. If the merge commit
+can't be found, <code>confirm-develop</code> fails. It never falls back to the tip.</p>
+<p><code>close-finalize</code> passes <code>--no-wait-cd</code> to <code>vrg-finalize-pr</code>. Without a
+merge of its own, finalize's CD check would watch the tip of <code>develop</code>,
+which has the same problem. <code>confirm-develop</code> has already checked the
+right run, and <code>close-finalize</code> runs <code>vrg-finalize-pr</code> only when every
+earlier stage passed. A second wait would add nothing. It would also
+fail the stage on a docs publish failure that <code>confirm-develop</code> has
+already deferred.</p>
+<h3 id="stale-job-records">Stale job records<a class="headerlink" href="#stale-job-records" title="Permanent link">&para;</a></h3>
+<p>The confirm stages wait a bounded time for every CD job to reach
+<code>completed</code> in the GitHub jobs API, because a job's record can lag the
+run's. A job that is still not <code>completed</code> after that wait has no
+conclusion to judge:</p>
+<ul>
+<li>If the run itself concluded <code>success</code>, GitHub has confirmed that every
+  job succeeded or was skipped, so the record is stale. The stage shows a
+  warning, <code>stale job record: &lt;job&gt;</code>, and nothing is deferred. No CD
+  re-run is needed.</li>
+<li>Under any other run conclusion the job may really have failed, so it is
+  deferred as <code>&lt;job&gt; (never settled)</code>.</li>
+</ul>
+<p>A failed job in the release job's own family, such as
+<code>release / package-sign</code>, is reported by its full name rather than as
+<code>release</code>, so the message is never mistaken for the release itself
+failing.</p>
 <h3 id="consumer-steps">Consumer steps<a class="headerlink" href="#consumer-steps" title="Permanent link">&para;</a></h3>
 <p>For most consumers, <strong>no action is required</strong>: the rolling <code>v1.3</code>
 tag they're already pinned to now points at the patch release. They
@@ -16243,7 +16296,11 @@ never affect the release itself. Pass <code>--without-deps</code> to skip it.</p
 same pipeline as <a href="../../reference/dev/update-deps/"><code>vrg-update-deps</code></a>:</p>
 <ol>
 <li>Create the <code>deps/update-&lt;version&gt;</code> branch in a managed worktree,
-   where <code>&lt;version&gt;</code> is the new <code>develop</code> version.</li>
+   where <code>&lt;version&gt;</code> is the new <code>develop</code> version. If that branch
+   already exists, its PR decides what happens; see
+   <a href="../../reference/dev/update-deps/#an-existing-update-branch">An existing update branch</a>.
+   On <code>--resume</code>, if the update for this version already merged, the
+   stage succeeds and its tracking-issue comment links the merged PR.</li>
 <li>Run each applicable updater, committing each one's changes
    separately. The built-in updaters and the per-repo hook are described
    in the <a href="../../reference/dependency-update-config/">dependency-update reference</a>.</li>
@@ -16251,7 +16308,8 @@ same pipeline as <a href="../../reference/dev/update-deps/"><code>vrg-update-dep
    The tracking-issue comment says "No dependency changes; no PR opened."</li>
 <li>Otherwise run <code>vrg-container-run -- vrg-validate</code> once, push the
    branch, and open a PR to <code>develop</code> labelled <code>dependency-update</code>.</li>
-<li>If validation passed, wait for the PR's checks and merge it.</li>
+<li>If validation passed, wait for the PR's checks, merge it, and
+   delete its branch on origin.</li>
 </ol>
 <p>The stage's comment on the tracking issue always carries a
 <strong>Held back by declared bounds</strong> table: the dependencies whose newest

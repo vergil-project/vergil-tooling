@@ -1300,6 +1300,8 @@
       
         
       
+        
+      
     
     
     
@@ -1352,6 +1354,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.252/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.252
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -12364,10 +12394,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#required-attributes" class="md-nav__link">
+  <a href="#vergiltoml-checks" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Required Attributes
+        vergil.toml checks
       
     </span>
   </a>
@@ -12375,21 +12405,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#validation-rules" class="md-nav__link">
+  <a href="#readmemd-checks" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Validation Rules
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#format" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Format
+        README.md checks
       
     </span>
   </a>
@@ -13531,8 +13550,6 @@
       
         
       
-        
-      
     
     
     
@@ -13761,34 +13778,6 @@
     
   
     Dependency Management
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../standards/development/python/local-validation-scripts/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Local Validation
   
 
     
@@ -15557,10 +15546,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#required-attributes" class="md-nav__link">
+  <a href="#vergiltoml-checks" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Required Attributes
+        vergil.toml checks
       
     </span>
   </a>
@@ -15568,21 +15557,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#validation-rules" class="md-nav__link">
+  <a href="#readmemd-checks" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Validation Rules
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#format" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Format
+        README.md checks
       
     </span>
   </a>
@@ -15619,60 +15597,70 @@
 
 <h1 id="vrg-repo-profile">vrg-repo-profile<a class="headerlink" href="#vrg-repo-profile" title="Permanent link">&para;</a></h1>
 <p><strong>Installed as:</strong> <code>vrg-repo-profile</code> (Python console script)</p>
-<p>Validates that <code>docs/repository-standards.md</code> contains all required
-repository profile attributes with non-placeholder values.</p>
+<p>Validates the repository configuration in <code>vergil.toml</code> and the
+structure of <code>README.md</code>. <code>vrg-validate</code> runs it as part of its
+common checks.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>vrg-repo-profile
 </code></pre></div>
-<p>Run from the repository root. The script reads
-<code>docs/repository-standards.md</code> relative to the current directory.</p>
-<h2 id="required-attributes">Required Attributes<a class="headerlink" href="#required-attributes" title="Permanent link">&para;</a></h2>
-<p>The following attributes must be present and non-empty:</p>
+<p>Run from the repository root. The script reads <code>vergil.toml</code> and
+<code>README.md</code> relative to the current directory.</p>
+<h2 id="vergiltoml-checks"><code>vergil.toml</code> checks<a class="headerlink" href="#vergiltoml-checks" title="Permanent link">&para;</a></h2>
+<p><code>vergil.toml</code> is parsed with the same loader every <code>vrg-*</code> tool uses,
+and any value that loader rejects fails the check. The core rules:</p>
 <table>
 <thead>
 <tr>
-<th>Attribute</th>
-<th>Example Values</th>
+<th>Key</th>
+<th>Rule</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>repository_type</code></td>
-<td><code>application</code>, <code>library</code>, <code>tooling</code></td>
+<td><code>[project].repository-type</code></td>
+<td>Required; one of <code>application</code>, <code>documentation</code>, <code>infrastructure</code>, <code>library</code>, <code>tooling</code></td>
 </tr>
 <tr>
-<td><code>versioning_scheme</code></td>
-<td><code>semver</code>, <code>calver</code>, <code>none</code></td>
+<td><code>[project].versioning-scheme</code></td>
+<td>Required; one of <code>application</code>, <code>library</code>, <code>none</code>, <code>semver</code></td>
 </tr>
 <tr>
-<td><code>branching_model</code></td>
-<td><code>library-release</code>, <code>application-promotion</code></td>
+<td><code>[project].branching-model</code></td>
+<td>Required; one of <code>application-promotion</code>, <code>docs-single-branch</code>, <code>library-release</code></td>
 </tr>
 <tr>
-<td><code>release_model</code></td>
-<td><code>tagged-release</code>, <code>continuous-deploy</code></td>
+<td><code>[project].release-model</code></td>
+<td>Required; one of <code>artifact-publishing</code>, <code>environment-promotion</code>, <code>none</code>, <code>tagged-release</code></td>
 </tr>
 <tr>
-<td><code>supported_release_lines</code></td>
-<td><code>1</code>, <code>2</code></td>
+<td><code>[project].ghas</code></td>
+<td>Optional; must be a boolean</td>
 </tr>
 <tr>
-<td><code>primary_language</code></td>
-<td><code>python</code>, <code>go</code>, <code>java</code>, <code>rust</code>, <code>ruby</code>, <code>cpp</code>, <code>typescript</code>, <code>shell</code></td>
+<td><code>[ci].versions</code></td>
+<td>Required; a non-empty list of strings</td>
+</tr>
+<tr>
+<td><code>[dependencies].vergil</code></td>
+<td>Required</td>
 </tr>
 </tbody>
 </table>
-<h2 id="validation-rules">Validation Rules<a class="headerlink" href="#validation-rules" title="Permanent link">&para;</a></h2>
+<p>An unrecognized <code>[project].primary-language</code> is a warning, not a
+failure: the language is treated as unset. The recognized values are
+<code>cpp</code>, <code>go</code>, <code>java</code>, <code>python</code>, <code>rust</code> and <code>typescript</code>.
+Unrecognized sections and keys are also reported as warnings. The
+optional tables have their own references, such as
+<a href="../../container-config/"><code>[container]</code></a>,
+<a href="../../test-config/"><code>[test]</code></a> and
+<a href="../../package-config/"><code>[package]</code></a>.</p>
+<h2 id="readmemd-checks"><code>README.md</code> checks<a class="headerlink" href="#readmemd-checks" title="Permanent link">&para;</a></h2>
+<p>When <code>README.md</code> exists, outside fenced code blocks it must have:</p>
 <ol>
-<li><strong>Presence</strong> -- each attribute must exist in the file.</li>
-<li><strong>No placeholders</strong> -- values containing <code>&lt;</code>, <code>&gt;</code>, or <code>|</code> are
-   rejected as unfilled template placeholders.</li>
+<li>exactly one H1 heading,</li>
+<li>a <code>## Table of Contents</code> heading, and</li>
+<li>no heading-level skips (for example, <code>##</code> followed by <code>####</code>).</li>
 </ol>
-<h2 id="format">Format<a class="headerlink" href="#format" title="Permanent link">&para;</a></h2>
-<p>Attributes are expected as YAML-like key-value pairs in markdown:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">-</span><span class="w"> </span>repository_type: library
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="k">-</span><span class="w"> </span>versioning_scheme: semver
-</code></pre></div>
 <h2 id="exit-codes">Exit Codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -15684,15 +15672,15 @@ repository profile attributes with non-placeholder values.</p>
 <tbody>
 <tr>
 <td>0</td>
-<td>All required attributes present and valid</td>
+<td><code>vergil.toml</code> valid and <code>README.md</code> structure correct</td>
 </tr>
 <tr>
 <td>1</td>
-<td>One or more attributes missing or placeholder</td>
+<td><code>vergil.toml</code> invalid or <code>README.md</code> structure incorrect</td>
 </tr>
 <tr>
 <td>2</td>
-<td>Profile file not found</td>
+<td><code>vergil.toml</code> not found</td>
 </tr>
 </tbody>
 </table>
