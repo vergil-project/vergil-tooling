@@ -38,7 +38,7 @@ def test_injects_token_and_calls_execvp(tmp_path: Path) -> None:
         patch("vergil_tooling.bin.vrg_scorecard.detect_runtime", return_value="docker"),
         patch("vergil_tooling.bin.vrg_scorecard.assert_runtime_available"),
         patch("vergil_tooling.bin.vrg_scorecard.build_container_args") as mock_build,
-        patch("vergil_tooling.bin.vrg_scorecard.os.execvp") as mock_exec,
+        patch("vergil_tooling.lib.process.os.execvp") as mock_exec,
     ):
         mock_build.return_value = [
             "docker",
@@ -67,7 +67,7 @@ def test_build_container_args_receives_correct_image_and_command(tmp_path: Path)
         patch("vergil_tooling.bin.vrg_scorecard.detect_runtime", return_value="docker"),
         patch("vergil_tooling.bin.vrg_scorecard.assert_runtime_available"),
         patch("vergil_tooling.bin.vrg_scorecard.build_container_args") as mock_build,
-        patch("vergil_tooling.bin.vrg_scorecard.os.execvp"),
+        patch("vergil_tooling.lib.process.os.execvp"),
     ):
         mock_build.return_value = [
             "docker",
@@ -94,7 +94,7 @@ def test_no_args_still_runs_scorecard(tmp_path: Path) -> None:
         patch("vergil_tooling.bin.vrg_scorecard.detect_runtime", return_value="docker"),
         patch("vergil_tooling.bin.vrg_scorecard.assert_runtime_available"),
         patch("vergil_tooling.bin.vrg_scorecard.build_container_args") as mock_build,
-        patch("vergil_tooling.bin.vrg_scorecard.os.execvp"),
+        patch("vergil_tooling.lib.process.os.execvp"),
     ):
         mock_build.return_value = ["docker", "run", "--rm", image, "scorecard"]
         main([])
@@ -113,7 +113,7 @@ def test_cli_prefix_used(tmp_path: Path) -> None:
         patch("vergil_tooling.bin.vrg_scorecard.detect_runtime", return_value="docker"),
         patch("vergil_tooling.bin.vrg_scorecard.assert_runtime_available"),
         patch("vergil_tooling.bin.vrg_scorecard.build_container_args") as mock_build,
-        patch("vergil_tooling.bin.vrg_scorecard.os.execvp"),
+        patch("vergil_tooling.lib.process.os.execvp"),
     ):
         mock_build.return_value = ["docker", "run", "--rm", image, "scorecard"]
         main(["--prefix", "dev", "--repo=github.com/org/repo"])
@@ -158,7 +158,7 @@ def test_argv_none_uses_sys_argv(tmp_path: Path) -> None:
         patch("vergil_tooling.bin.vrg_scorecard.detect_runtime", return_value="docker"),
         patch("vergil_tooling.bin.vrg_scorecard.assert_runtime_available"),
         patch("vergil_tooling.bin.vrg_scorecard.build_container_args") as mock_build,
-        patch("vergil_tooling.bin.vrg_scorecard.os.execvp"),
+        patch("vergil_tooling.lib.process.os.execvp"),
         patch(
             "vergil_tooling.bin.vrg_scorecard.sys.argv",
             ["vrg-scorecard", "--repo=github.com/org/repo"],

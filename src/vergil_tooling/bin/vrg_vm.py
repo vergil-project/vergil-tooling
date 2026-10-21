@@ -58,6 +58,7 @@ from vergil_tooling.lib.lima import (
     vm_status,
     write_instance_meta,
 )
+from vergil_tooling.lib.process import exec_replace
 from vergil_tooling.lib.progress import Stage
 from vergil_tooling.lib.session import filter_recent
 from vergil_tooling.lib.session_store import SessionInfo
@@ -2969,7 +2970,7 @@ def _cmd_session(args: argparse.Namespace) -> int:
         "-c",
         inner,
     ]
-    os.execvp(cmd[0], cmd)  # noqa: S606, S607
+    exec_replace(cmd[0], cmd)
     return 0  # unreachable, keeps the type checker happy
 
 

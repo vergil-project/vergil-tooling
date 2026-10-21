@@ -7,7 +7,6 @@ to the ``scorecard`` binary.
 
 from __future__ import annotations
 
-import os
 import sys
 
 from vergil_tooling.lib import git, github
@@ -17,6 +16,7 @@ from vergil_tooling.lib.container import (
     build_container_args,
     detect_runtime,
 )
+from vergil_tooling.lib.process import exec_replace
 
 _GHCR = "ghcr.io/vergil-project"
 
@@ -87,7 +87,7 @@ def main(argv: list[str] | None = None) -> int:
     idx = container_args.index(image)
     container_args[idx:idx] = ["-e", f"GH_TOKEN={token}"]
 
-    os.execvp(runtime, container_args)  # noqa: S606, S607
+    exec_replace(runtime, container_args)
     return 0  # pragma: no cover
 
 
