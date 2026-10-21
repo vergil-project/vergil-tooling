@@ -32,9 +32,12 @@ from vergil_tooling.lib.container import (
 )
 from vergil_tooling.lib.container_cache import ensure_cached_image
 from vergil_tooling.lib.versions import VersionsError
+from vergil_tooling.lib.versions.extensions import container_env
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from vergil_tooling.lib.versions.resolve import Resolution
 
 _VALID_PREFIXES = {"dev", "prod"}
 
@@ -128,6 +131,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     env_image = os.environ.get("DOCKER_DEV_IMAGE")
+    resolution: Resolution | None = None
     if env_image:
         image = env_image
         image_source = "env"
@@ -173,7 +177,9 @@ def main(argv: list[str] | None = None) -> int:
         pull_policy=pull_policy,
         env_prefixes=env_prefixes,
         env_names=token_names,
-        extra_env=_test_tuning_env(),
+        # The resolved version reaches the language's own tooling (UV_PYTHON
+        # for Python), so it cannot pick another interpreter (spec §6.5).
+        extra_env={**_test_tuning_env(), **container_env(resolution)},
     )
     if runtime == "nerdctl":
         os.execvp("nerdctl", container_args)  # noqa: S606, S607

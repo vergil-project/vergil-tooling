@@ -332,8 +332,9 @@ class TestConfig:
 
 @dataclass
 class PackagePythonConfig:
-    # Exact vergil-python CPython patch to build against and depend on.
-    runtime: str
+    # Exact vergil-python CPython patch to build against and depend on, or None
+    # to derive the x.y runtime from the resolved version (lib.versions).
+    runtime: str | None = None
     # Optional subset of [project.scripts] to shim; None means all of them.
     commands: list[str] | None = None
 
@@ -800,11 +801,12 @@ def _pkg_subtable(raw: dict[str, Any], key: str, source: str) -> dict[str, Any] 
 
 
 def _parse_package_python(py: dict[str, Any] | None, source: str) -> PackagePythonConfig:
-    if py is None or "runtime" not in py:
-        msg = f'{source}: [package.python].runtime is required for builder = "python"'
-        raise ConfigError(msg)
-    runtime = py["runtime"]
-    if not isinstance(runtime, str) or not _RUNTIME_RE.fullmatch(runtime):
+    py = py or {}
+    # Absent, the runtime follows the resolved version (epic
+    # vergil-project/.github#407, spec §7); an explicit value is an exact-patch
+    # pin, whose x.y the resolver checks against the window.
+    runtime = py.get("runtime")
+    if runtime is not None and (not isinstance(runtime, str) or not _RUNTIME_RE.fullmatch(runtime)):
         msg = (
             f"{source}: [package.python].runtime must be an exact CPython patch "
             f"like 3.14.4 (got {runtime!r})"

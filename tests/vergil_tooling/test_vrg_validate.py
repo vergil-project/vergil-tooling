@@ -402,6 +402,46 @@ def test_main_resolution_warning_does_not_fail(
     assert "WARNING: [ci].versions pins 2 versions" in capsys.readouterr().err
 
 
+def test_main_floor_warning_does_not_fail(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write_pinned_config(tmp_path, repo_type="library", versions='["3.14"]')
+    (tmp_path / "pyproject.toml").write_text('[project]\nrequires-python = ">=3.11"\n')
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".progress.run_pipeline", return_value=0),
+    ):
+        assert main(["--check", "common"]) == 0
+    assert "WARNING: requires-python floor 3.11 is below" in capsys.readouterr().err
+
+
+def test_main_toolchain_selection_fails_validation(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write_pinned_config(tmp_path, repo_type="library", versions='["3.14"]')
+    (tmp_path / ".python-version").write_text("3.14\n")
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".progress.run_pipeline", return_value=0) as m_pipeline,
+    ):
+        assert main([]) == 1
+    m_pipeline.assert_not_called()
+    assert "ERROR: .python-version selects the Python interpreter" in capsys.readouterr().err
+
+
+def test_main_floor_check_failure_fails_validation(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write_pinned_config(tmp_path, repo_type="library", versions='["3.14"]')
+    (tmp_path / "pyproject.toml").write_text('[project]\nrequires-python = "nonsense"\n')
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".progress.run_pipeline", return_value=0),
+    ):
+        assert main([]) == 1
+    assert "is not a valid version specifier" in capsys.readouterr().err
+
+
 # -- Unit tests for internal functions ----------------------------------------
 
 

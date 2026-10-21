@@ -1929,12 +1929,27 @@ def test_staged_builder_does_not_need_uv_lock(tmp_path: Path) -> None:
     assert read_config(tmp_path).package is not None
 
 
-def test_python_builder_requires_runtime(tmp_path: Path) -> None:
+def test_python_builder_runtime_is_optional(tmp_path: Path) -> None:
+    # Absent, the runtime follows the resolved version (epic .github#407 spec §7).
     (tmp_path / "vergil.toml").write_text(
         _PKG_PY.replace('\n[package.python]\nruntime = "3.14.4"\n', "")
     )
-    with pytest.raises(ConfigError, match=r"\[package\.python\]\.runtime is required"):
-        read_config(tmp_path)
+    (tmp_path / "uv.lock").write_text("version = 1\n")
+    pkg = read_config(tmp_path).package
+    assert pkg is not None
+    assert pkg.python is not None
+    assert (pkg.python.runtime, pkg.python.commands) == (None, None)
+
+
+def test_python_table_without_runtime_is_unpinned(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(
+        _PKG_PY.replace('runtime = "3.14.4"', 'commands = ["vrg-whoami"]')
+    )
+    (tmp_path / "uv.lock").write_text("version = 1\n")
+    pkg = read_config(tmp_path).package
+    assert pkg is not None
+    assert pkg.python is not None
+    assert (pkg.python.runtime, pkg.python.commands) == (None, ["vrg-whoami"])
 
 
 @pytest.mark.parametrize("runtime", ['"3.14"', '"3.14.4rc1"', "3", '"3.14.4\\n"'])

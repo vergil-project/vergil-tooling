@@ -1,39 +1,68 @@
 """Per-language resolver extensions (epic vergil-project/.github#407, spec §8.3).
 
 The shared resolver has no language branches. A language that needs a rule of
-its own registers an :data:`Extension` here, under its ``primary-language``
-value, in a module of its own (``extensions/<lang>.py``). An extension narrows
-the candidate versions; it never adds one. The registry starts empty.
+its own registers it here, under its ``primary-language`` value, from a module
+of its own (``extensions/<lang>.py``). The hooks are:
+
+* :data:`EXTENSIONS`: narrows the candidate versions; never adds one.
+* :data:`FLOOR_CHECKS`: warns about the repo's own declared floor (spec §6.4).
+* :data:`TOOLCHAIN_CHECKS`: reports settings that pick the toolchain behind
+  Vergil's back (spec §6.5).
+* :data:`CONTAINER_ENVS`: hands the resolved version to the language's own
+  tooling inside the dev container (spec §6.5).
+
+A language with no entry in a registry has no rule of that kind.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
+
+from vergil_tooling.lib.versions.extensions import go, python
+from vergil_tooling.lib.versions.extensions.base import (
+    ContainerEnv,
+    Extension,
+    ExtensionContext,
+    FloorCheck,
+    ResolutionKind,
+    ToolchainCheck,
+)
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from vergil_tooling.lib.versions.resolve import Resolution
 
-    from vergil_tooling.lib.config import VergilConfig
-    from vergil_tooling.lib.versions.window import Window
+__all__ = [
+    "CONTAINER_ENVS",
+    "EXTENSIONS",
+    "FLOOR_CHECKS",
+    "TOOLCHAIN_CHECKS",
+    "ContainerEnv",
+    "Extension",
+    "ExtensionContext",
+    "FloorCheck",
+    "ResolutionKind",
+    "ToolchainCheck",
+    "container_env",
+]
 
-ResolutionKind = Literal["library", "app"]
+EXTENSIONS: dict[str, Extension] = {"python": python.python_extension}
+
+FLOOR_CHECKS: dict[str, FloorCheck] = {
+    "python": python.check_floor,
+    "go": go.check_floor,
+}
+
+TOOLCHAIN_CHECKS: dict[str, ToolchainCheck] = {"python": python.check_toolchain}
+
+CONTAINER_ENVS: dict[str, ContainerEnv] = {"python": python.container_env}
 
 
-@dataclass(frozen=True)
-class ExtensionContext:
-    cfg: VergilConfig
-    window: Window
-    language: str
-    kind: ResolutionKind
-    # True when the candidates are the repo's [ci].versions pin, False when they
-    # are the window.
-    pinned: bool
-    # The repo checkout, or None when the config was read from a remote ref.
-    repo_root: Path | None
+def container_env(resolution: Resolution | None) -> dict[str, str]:
+    """The environment that hands *resolution*'s primary version to its tooling.
 
-
-Extension = Callable[[ExtensionContext, tuple[str, ...]], tuple[str, ...]]
-
-EXTENSIONS: dict[str, Extension] = {}
+    Empty for a repo with no language, or a language with no such hook.
+    """
+    if resolution is None:
+        return {}
+    hook = CONTAINER_ENVS.get(resolution.language)
+    return dict(hook(resolution.primary)) if hook is not None else {}

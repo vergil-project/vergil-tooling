@@ -23,7 +23,9 @@ from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.languages import CheckKind, language_commands
 from vergil_tooling.lib.progress import Stage, StageMode
 from vergil_tooling.lib.versions import VersionsError
-from vergil_tooling.lib.versions.resolve import resolve_config
+from vergil_tooling.lib.versions.floors import check_floors, check_toolchain_selection
+from vergil_tooling.lib.versions.resolve import resolve_language
+from vergil_tooling.lib.versions.window import load_window
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -132,20 +134,27 @@ def _versions_resolve(vergil_config: config.VergilConfig, repo_root: Path) -> bo
 
     Runs the single resolver CI uses (epic vergil-project/.github#407), so a pin
     outside the published window, or a window that cannot be read, fails
-    validation here instead of first failing in CI. Warnings are printed and do
-    not fail.
+    validation here instead of first failing in CI. A setting that selects the
+    toolchain behind Vergil's back fails too (spec §6.5). Resolution and floor
+    warnings (spec §6.4) are printed and do not fail.
     """
+    language = vergil_config.project.primary_language
+    if not language:
+        return True
     try:
-        resolution = resolve_config(vergil_config, repo_root=repo_root)
+        window = load_window(vergil_config.dependencies["vergil"])
+        resolution = resolve_language(vergil_config, window, language, repo_root=repo_root)
+        warnings = [*resolution.warnings, *check_floors(repo_root, resolution, window)]
+        errors = check_toolchain_selection(repo_root, language)
     except VersionsError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return False
-    if resolution is not None:
-        primary = resolution.primary
-        print(f"CI versions: {', '.join(resolution.versions)} (primary {primary})")
-        for warning in resolution.warnings:
-            print(f"WARNING: {warning}", file=sys.stderr)
-    return True
+    print(f"CI versions: {', '.join(resolution.versions)} (primary {resolution.primary})")
+    for warning in warnings:
+        print(f"WARNING: {warning}", file=sys.stderr)
+    for error in errors:
+        print(f"ERROR: {error}", file=sys.stderr)
+    return not errors
 
 
 def _test_context() -> str | None:

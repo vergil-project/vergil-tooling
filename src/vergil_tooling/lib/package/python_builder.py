@@ -28,6 +28,7 @@ import tomllib
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from vergil_tooling.lib.config import read_config
 from vergil_tooling.lib.package import PackageError, matrix, orgs, repo_setup
 from vergil_tooling.lib.package import targets as tg
 from vergil_tooling.lib.package.build import (
@@ -36,6 +37,10 @@ from vergil_tooling.lib.package.build import (
     contents_from_tree,
     register,
 )
+from vergil_tooling.lib.versions import VersionsError
+from vergil_tooling.lib.versions.extensions.python import derived_runtime, runtime_series
+from vergil_tooling.lib.versions.resolve import resolve_language
+from vergil_tooling.lib.versions.window import load_window
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.config import PackageConfig
@@ -71,6 +76,24 @@ def runtime_depends(runtime: str, pbs_version: str) -> dict[str, list[str]]:
     """The per-format dependency on the runtime the venv was built against."""
     name = f"vergil-python{runtime}"
     return {"deb": [f"{name} (>= {pbs_version})"], "rpm": [f"{name} >= {pbs_version}"]}
+
+
+def package_runtime(repo_root: Path) -> str:
+    """The ``x.y`` runtime for a repo with no ``[package.python].runtime`` pin.
+
+    The newest resolved version with a published ``vergil-python`` runtime, read
+    from the window at the repo's Vergil ref (epic vergil-project/.github#407,
+    spec §7). Its ``vergil-python<x.y>`` package installs at
+    ``/opt/vergil/python/<x.y>``.
+    """
+    try:
+        cfg = read_config(repo_root)
+        window = load_window(cfg.dependencies["vergil"])
+        resolution = resolve_language(cfg, window, "python", repo_root=repo_root)
+        return derived_runtime(resolution, window)
+    except VersionsError as exc:
+        msg = f"cannot derive the vergil-python runtime: {exc}"
+        raise PackageError(msg) from exc
 
 
 def shim_commands(repo_root: Path, pkg: PackageConfig) -> list[str]:
@@ -138,8 +161,12 @@ def build_python(ctx: BuildContext) -> BuildResult:
     else:
         fmt, suite = "deb", _SHARED_SUITE
 
-    runtime = py.runtime
-    interpreter = f"{runtime_dir(_RUNTIME_VENDOR, runtime)}/bin/python{runtime.rsplit('.', 1)[0]}"
+    runtime = py.runtime or package_runtime(ctx.repo_root)
+    try:
+        series = runtime_series(runtime)
+    except VersionsError as exc:
+        raise PackageError(str(exc)) from exc
+    interpreter = f"{runtime_dir(_RUNTIME_VENDOR, runtime)}/bin/python{series}"
     product = Path(_OPT) / ctx.pkg.vendor / ctx.name
     venv = product / "venv"
     if product.exists():
