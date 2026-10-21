@@ -39,6 +39,5 @@ Required checks for Python repositories are maintained in the
 - Type hints: [type-hints.md](type-hints.md)
 - Testing and coverage: [testing-and-coverage.md](testing-and-coverage.md)
 - Dependency management: [dependency-management.md](dependency-management.md)
-- Local validation scripts: [local-validation-scripts.md](local-validation-scripts.md)
 - Python version management: [version-management.md](version-management.md)
 - Ty migration plan: [ty-migration-plan.md](ty-migration-plan.md)

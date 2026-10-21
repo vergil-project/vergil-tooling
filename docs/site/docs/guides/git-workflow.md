@@ -62,10 +62,14 @@ Pattern: `^(feature|bugfix|hotfix|chore)/[0-9]+-[a-z0-9][a-z0-9.-]*$`.
 time.
 
 The `release/*` and `promotion/*` prefixes are created by automated
-workflows and are exempt from the issue-number rule. So is
-`deps/update-<version>`, the branch `vrg-update-deps` (and the
-`vrg-release` `update-deps` stage) creates for a dependency update; only
-that driver commits to it.
+workflows and are exempt from the issue-number rule.
+
+`deps/update-<version>` is the branch `vrg-update-deps` (and the
+`vrg-release` `update-deps` stage) creates for a dependency update. It
+is not one of the branching-model prefixes, so `vrg-commit` refuses to
+commit on it. That is deliberate: only the driver commits there, and it
+runs `git commit` itself rather than going through `vrg-commit`. Any
+manual change goes on a fix branch, described next.
 
 When a dependency update fails, its fix task's branch follows the
 issue-number rule but starts from the failed update:
