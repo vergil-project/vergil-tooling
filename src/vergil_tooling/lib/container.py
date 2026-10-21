@@ -240,6 +240,47 @@ def workspace_mount_args(repo_root: Path) -> list[str]:
     return args
 
 
+# Where a host ``VRG_VERSION_WINDOW`` file is bind-mounted in the container. The
+# in-container resolver is pointed at this path, never at the host path, which
+# the container cannot see (issue #3392).
+VERSION_WINDOW_MOUNT = "/run/vergil/version-window.json"
+
+
+def version_window_override(environ: Mapping[str, str] | None = None) -> Path | None:
+    """Return the absolute host file named by ``VRG_VERSION_WINDOW``, or ``None``.
+
+    The override is the one sanctioned replacement for the published window
+    (epic vergil-project/.github#407, spec §6.2/§8.3), so a broken one fails
+    loudly on the host rather than being dropped: an empty value, a path that
+    is not an existing file, or a path the ``-v`` bind syntax cannot carry
+    raises :class:`WindowError` naming the path. Unset returns ``None`` and the
+    container fetches the published window as before.
+    """
+    from vergil_tooling.lib.versions.window import WINDOW_ENV, WindowError
+
+    env = os.environ if environ is None else environ
+    raw = env.get(WINDOW_ENV)
+    if raw is None:
+        return None
+    if not raw:
+        msg = f"{WINDOW_ENV} is set but empty. Fix: set it to a window.json path, or unset it"
+        raise WindowError(msg)
+    path = Path(raw).resolve()
+    if not path.is_file():
+        msg = (
+            f"{WINDOW_ENV} names {path}, which is not an existing file. "
+            f"Fix: point it at a window.json, or unset it to use the published window"
+        )
+        raise WindowError(msg)
+    if ":" in str(path):
+        msg = (
+            f"{WINDOW_ENV} names {path}, whose ':' cannot be bind-mounted into the "
+            f"container. Fix: copy the window.json to a path without ':'"
+        )
+        raise WindowError(msg)
+    return path
+
+
 def build_container_args(
     repo_root: Path,
     image: str,
@@ -250,6 +291,7 @@ def build_container_args(
     env_prefixes: Sequence[str] = (),
     env_names: Sequence[str] = (),
     extra_env: Mapping[str, str] | None = None,
+    version_window: Path | None = None,
 ) -> list[str]:
     """Build the container ``run`` argument list.
 
@@ -258,7 +300,14 @@ def build_container_args(
     in the argv (or in ``ps`` output). *extra_env* is set in the container as
     ``-e NAME=value`` after the env-prefixes passthrough, so it wins over a
     passed-through variable of the same name.
+
+    *version_window* is a host ``window.json`` (see :func:`version_window_override`):
+    it is bind-mounted read-only at :data:`VERSION_WINDOW_MOUNT` and
+    ``VRG_VERSION_WINDOW`` is set to that mount. ``VRG_VERSION_WINDOW`` is never
+    forwarded by the env-prefixes passthrough, so a host path cannot leak in.
     """
+    from vergil_tooling.lib.versions.window import WINDOW_ENV
+
     network = os.environ.get("DOCKER_NETWORK", "")
 
     container_args = [runtime, "run", "--rm", f"--platform={container_platform()}"]
@@ -291,8 +340,12 @@ def build_container_args(
     if env_prefixes:
         prefixes = tuple(env_prefixes)
         for name in os.environ:
-            if name.startswith(prefixes):
+            if name.startswith(prefixes) and name != WINDOW_ENV:
                 container_args.extend(["-e", name])
+
+    if version_window is not None:
+        container_args.extend(["-v", f"{version_window}:{VERSION_WINDOW_MOUNT}:ro"])
+        container_args.extend(["-e", f"{WINDOW_ENV}={VERSION_WINDOW_MOUNT}"])
 
     for name in env_names:
         container_args.extend(["-e", name])

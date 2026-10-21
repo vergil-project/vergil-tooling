@@ -29,6 +29,7 @@ from vergil_tooling.lib.container import (
     detect_runtime,
     repo_resolution,
     resolve_language,
+    version_window_override,
 )
 from vergil_tooling.lib.container_cache import ensure_cached_image
 from vergil_tooling.lib.versions import VersionsError
@@ -71,6 +72,9 @@ environment variables:
                           unset, it is read from ~/.config/vergil/conan.env,
                           then from conan_audit_token_path in
                           ~/.config/vergil/identities.toml, and forwarded
+  VRG_VERSION_WINDOW      a local window.json to resolve versions from instead of
+                          the published window; checked on the host, mounted
+                          read-only and pointed at inside the container
   VRG_TEST_WORKERS        override the test worker count ("auto" or N) on this
                           machine; forwarded into the container
   VRG_TEST_CONTEXT        override the validation context that selects a
@@ -123,6 +127,14 @@ def main(argv: list[str] | None = None) -> int:
     lang = resolve_language(repo_root)
     command = _apply_validation_override(command, repo_root)
 
+    # Check the explicit window override before any image work: it must reach
+    # the container or stop the run, never be silently dropped (#3392).
+    try:
+        version_window = version_window_override()
+    except VersionsError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
     # Resolve before any image work, so a broken token file fails fast.
     try:
         conan_status, token_names = _inject_conan_audit_token(lang)
@@ -160,6 +172,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Command:  {' '.join(command)}")
     if conan_status:
         print(f"Conan:    {conan_status}")
+    if version_window is not None:
+        print(f"Window:   {version_window} (VRG_VERSION_WINDOW)")
     network = os.environ.get("DOCKER_NETWORK", "")
     if network:
         print(f"Network:  {network}")
@@ -180,6 +194,7 @@ def main(argv: list[str] | None = None) -> int:
         # The resolved version reaches the language's own tooling (UV_PYTHON
         # for Python), so it cannot pick another interpreter (spec §6.5).
         extra_env={**_test_tuning_env(), **container_env(resolution)},
+        version_window=version_window,
     )
     if runtime == "nerdctl":
         os.execvp("nerdctl", container_args)  # noqa: S606, S607
