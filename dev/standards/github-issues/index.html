@@ -16494,6 +16494,13 @@ up to date (see
 <p><code>dependency-update</code> goes on PRs, not issues: <code>vrg-update-deps</code> and the
 <code>vrg-release</code> <code>update-deps</code> stage put it on every dependency-update PR
 they open, and create the label first if the repo does not have it.</p>
+<p>Every command that applies a label works the same way: label presence is
+ensured <strong>at the point of use</strong>, not by a periodic sync. <code>vrg-triage-create</code>,
+<code>vrg-issue-create</code>, and the epic and ad-hoc commands create each label they
+are about to apply (idempotently, with the registry's colour and description)
+before they apply it, so a repo that was never label-synced still works. A
+label that is not in the registry is refused with an error rather than created
+or dropped, and no issue is created.</p>
 <h2 id="closing-behavior">Closing behavior<a class="headerlink" href="#closing-behavior" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Default: auto-close issues via PR closing keywords.</li>
