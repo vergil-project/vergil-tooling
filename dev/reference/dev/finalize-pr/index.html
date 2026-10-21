@@ -15987,10 +15987,22 @@ its check gets a one-minute grace period to turn terminal. If the check is
 still pending after that, the backing job's own conclusion decides
 (<code>GET /repos/{owner}/{repo}/actions/jobs/{job_id}</code>):</p>
 <ul>
-<li>The job <strong>succeeded</strong>: the check is treated as passed and a warning names
-  it (<code>'test / matrix' check-run stale; backing job succeeded</code>), so the
-  merge goes ahead instead of waiting out the deadline. Checks that really
-  failed are still caught by the failed-checks gate.</li>
+<li>The job <strong>succeeded</strong> and the check is <strong>not required</strong>: the check is
+  treated as passed and a warning names it (<code>'test / matrix' check-run
+  stale; backing job succeeded</code>), so the merge goes ahead instead of waiting
+  out the deadline. Checks that really failed are still caught by the
+  failed-checks gate.</li>
+<li>The job <strong>succeeded</strong> but the check is one of the target branch's
+  <strong>required</strong> status checks: finalize <strong>aborts at once</strong> (issue #3379).
+  GitHub keeps blocking the merge on a required check it reports as
+  pending, so passing it would only move the wait to the merge step. The
+  error names the check, says GitHub will block the merge until it settles,
+  and gives the same close-and-reopen guidance.</li>
+<li>The job <strong>succeeded</strong> but the required checks <strong>could not be read</strong> (see
+  <em>Required checks</em> below): finalize <strong>aborts at once</strong> for the same reason,
+  because it cannot tell whether GitHub will block on the stale check. The
+  error says the required-check lookup failed. Without a stale check, a
+  failed lookup still only warns and waits on registered checks.</li>
 <li>The job <strong>did not succeed</strong>, has no conclusion, or its conclusion <strong>cannot
   be read</strong>: finalize <strong>aborts at once with recovery guidance</strong>. The
   guidance is to close and reopen the PR to re-run the gate, then re-run
