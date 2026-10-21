@@ -16063,7 +16063,7 @@ issue and ticks its box in the issue's stage checklist.</p>
 <tr>
 <td><code>back-merge-bump</code></td>
 <td>fail-fast</td>
-<td>Creates <code>release/post-&lt;version&gt;</code> from <code>main</code>, bumps the version, and merges it to <code>develop</code></td>
+<td>Creates <code>release/post-&lt;version&gt;</code> from <code>main</code>, bumps the version, and merges it to <code>develop</code>. Records the back-merge's merge commit</td>
 </tr>
 <tr>
 <td><code>teardown-worktree</code></td>
@@ -16073,7 +16073,7 @@ issue and ticks its box in the issue's stage checklist.</p>
 <tr>
 <td><code>confirm-develop</code></td>
 <td>deferred</td>
-<td>Watches CD on <code>develop</code>; a failed docs publish is deferred</td>
+<td>Watches the CD run on <code>develop</code> for the back-merge's merge commit; a failed docs publish is deferred</td>
 </tr>
 <tr>
 <td><code>promote</code></td>
@@ -16083,7 +16083,7 @@ issue and ticks its box in the issue's stage checklist.</p>
 <tr>
 <td><code>close-finalize</code></td>
 <td>deferred</td>
-<td>Closes the tracking issue with a summary and runs <code>vrg-finalize-pr --cleanup-only</code></td>
+<td>Closes the tracking issue with a summary and runs <code>vrg-finalize-pr --cleanup-only --no-wait-cd</code></td>
 </tr>
 <tr>
 <td><code>package-index</code></td>
@@ -16112,6 +16112,20 @@ when an earlier stage has failed, so the release can be resumed with
 <code>vrg-release --resume</code>. A deferred publish failure also leaves the
 issue open, but the release itself is complete: re-run the CD publish
 rather than resuming.</p>
+<p><code>confirm-develop</code> checks the CD run for the back-merge's merge commit,
+not for the current tip of <code>develop</code>. On <code>vrg-release --resume</code>, other
+PRs (a dependency update or a feature) may have merged to <code>develop</code>
+since the back-merge. The tip's CD run then says nothing about the
+release. A resume re-runs <code>back-merge-bump</code>, which adopts the existing
+back-merge PR and records its merge commit again. If the merge commit
+can't be found, <code>confirm-develop</code> fails. It never falls back to the tip.</p>
+<p><code>close-finalize</code> passes <code>--no-wait-cd</code> to <code>vrg-finalize-pr</code>. Without a
+merge of its own, finalize's CD check would watch the tip of <code>develop</code>,
+which has the same problem. <code>confirm-develop</code> has already checked the
+right run, and <code>close-finalize</code> runs <code>vrg-finalize-pr</code> only when every
+earlier stage passed. A second wait would add nothing. It would also
+fail the stage on a docs publish failure that <code>confirm-develop</code> has
+already deferred.</p>
 <h3 id="consumer-steps">Consumer steps<a class="headerlink" href="#consumer-steps" title="Permanent link">&para;</a></h3>
 <p>For most consumers, <strong>no action is required</strong>: the rolling <code>v1.3</code>
 tag they're already pinned to now points at the patch release. They
