@@ -105,7 +105,7 @@ issue and ticks its box in the issue's stage checklist.
 | `preflight` | fail-fast | Checks the host prerequisites, `gh` auth, `vergil.toml`, and that the root checkout is a clean `develop` matching `origin/develop`. On a fresh start it also checks the version is not tagged, that no tracking issue exists for it, runs the [package re-publish check](#the-package-re-publish-check), and runs the [dependency-update gate](#the-dependency-update-gate). Creates the `release/<version>` managed worktree |
 | `prepare` | fail-fast | Creates the `release: <version>` tracking issue, generates the changelog and release notes, and opens the release PR to `main` |
 | `merge-release` | fail-fast | Waits for the release PR's checks and merges it |
-| `confirm-main` | fail-fast | Watches CD on `main`. The release job must succeed; other failed publish jobs are recorded as deferred publish failures |
+| `confirm-main` | fail-fast | Watches CD on `main`. The release job must succeed; other failed publish jobs are recorded as deferred publish failures (see [Stale job records](#stale-job-records)) |
 | `back-merge-bump` | fail-fast | Creates `release/post-<version>` from `main`, bumps the version, and merges it to `develop`. Records the back-merge's merge commit |
 | `teardown-worktree` | deferred | Removes the release worktree and returns to the root checkout |
 | `confirm-develop` | deferred | Watches the CD run on `develop` for the back-merge's merge commit; a failed docs publish is deferred |
@@ -137,6 +137,25 @@ right run, and `close-finalize` runs `vrg-finalize-pr` only when every
 earlier stage passed. A second wait would add nothing. It would also
 fail the stage on a docs publish failure that `confirm-develop` has
 already deferred.
+
+### Stale job records
+
+The confirm stages wait a bounded time for every CD job to reach
+`completed` in the GitHub jobs API, because a job's record can lag the
+run's. A job that is still not `completed` after that wait has no
+conclusion to judge:
+
+- If the run itself concluded `success`, GitHub has confirmed that every
+  job succeeded or was skipped, so the record is stale. The stage shows a
+  warning, `stale job record: <job>`, and nothing is deferred. No CD
+  re-run is needed.
+- Under any other run conclusion the job may really have failed, so it is
+  deferred as `<job> (never settled)`.
+
+A failed job in the release job's own family, such as
+`release / package-sign`, is reported by its full name rather than as
+`release`, so the message is never mistaken for the release itself
+failing.
 
 ### Consumer steps
 
