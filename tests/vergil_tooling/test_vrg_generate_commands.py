@@ -270,53 +270,6 @@ def test_python_mapping_pages(mapping_data_file: Path, tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Ruby generation
-# ---------------------------------------------------------------------------
-
-
-def test_ruby_singleton(mapping_data_file: Path) -> None:
-    specs = load_commands(mapping_data_file)
-    output = generate("ruby", specs)
-    assert "def display_qmgr(request_parameters: nil, response_parameters: nil)" in output
-    assert "objects.empty? ? nil : objects[0]" in output
-
-
-def test_ruby_list_with_default(mapping_data_file: Path) -> None:
-    specs = load_commands(mapping_data_file)
-    output = generate("ruby", specs)
-    assert "def display_queue(name: nil," in output
-    assert "name: name || '*'" in output
-    assert "where: where" in output
-
-
-def test_ruby_list_without_default(mapping_data_file: Path) -> None:
-    specs = load_commands(mapping_data_file)
-    output = generate("ruby", specs)
-    assert "def display_authinfo(name, request_parameters:" in output
-    assert "where: where" in output
-
-
-def test_ruby_required_name(mapping_data_file: Path) -> None:
-    specs = load_commands(mapping_data_file)
-    output = generate("ruby", specs)
-    assert "def define_qlocal(name, request_parameters:" in output
-    assert "nil\n        end" in output
-
-
-def test_ruby_optional_name(mapping_data_file: Path) -> None:
-    specs = load_commands(mapping_data_file)
-    output = generate("ruby", specs)
-    assert "def alter_authinfo(name: nil," in output
-
-
-def test_ruby_no_name(mapping_data_file: Path) -> None:
-    specs = load_commands(mapping_data_file)
-    output = generate("ruby", specs)
-    assert "def alter_qmgr(request_parameters: nil, response_parameters: nil)" in output
-    assert "name: nil, request_parameters:" in output
-
-
-# ---------------------------------------------------------------------------
 # Java generation
 # ---------------------------------------------------------------------------
 
@@ -634,7 +587,7 @@ def test_main_missing_mapping_data(capsys: pytest.CaptureFixture[str]) -> None:
 
 
 def test_main_all_languages(mapping_data_file: Path) -> None:
-    for lang in ("python", "ruby", "java", "go", "rust"):
+    for lang in ("python", "java", "go", "rust"):
         result = main(["--language", lang, "--mapping-data", str(mapping_data_file)])
         assert result == 0, f"Failed for {lang}"
 
@@ -665,13 +618,11 @@ def test_all_languages_same_method_count(mapping_data_file: Path) -> None:
     """All languages should generate the same number of methods."""
     specs = load_commands(mapping_data_file)
     expected = len(specs)
-    for lang in ("python", "ruby", "java", "go", "rust"):
+    for lang in ("python", "java", "go", "rust"):
         output = generate(lang, specs)
         # Count methods by language-specific markers
         if lang == "python":
             count = output.count("    def ")
-        elif lang == "ruby":
-            count = output.count("        def ")
         elif lang == "java":
             count = output.count("  public ")
         elif lang == "go":

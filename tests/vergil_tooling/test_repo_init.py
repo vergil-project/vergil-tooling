@@ -140,7 +140,7 @@ class TestPromptChoice:
 
 
 class TestPromptLanguage:
-    # Languages are listed sorted: cpp, go, java, python, ruby, rust (index 4 is python).
+    # Languages are listed sorted: cpp, go, java, python, rust, typescript (index 4 is python).
     def test_selects_language(self) -> None:
         with patch("builtins.input", return_value="4"):
             assert prompt_language() == "python"
@@ -1015,16 +1015,6 @@ class TestRenderCdWorkflow:
         assert "    secrets:\n" in content
         assert "      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}\n" in content
 
-    def test_release_ruby_explicit_secrets(self) -> None:
-        ctx = RepoInitContext(org="vergil-project", name="test")
-        ctx.publish_docs = False
-        ctx.publish_release = True
-        ctx.primary_language = "ruby"
-        content = render_cd_workflow(ctx)
-        assert "secrets: inherit" not in content
-        assert "    secrets:\n" in content
-        assert "      RUBYGEMS_API_KEY: ${{ secrets.RUBYGEMS_API_KEY }}\n" in content
-
     def test_release_java_explicit_secrets(self) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test")
         ctx.publish_docs = False
@@ -1045,7 +1035,6 @@ class TestRenderCdWorkflow:
         assert _cd_release_secrets(None) == []
         assert _cd_release_secrets("elixir") == []
         assert _cd_release_secrets("rust") == ["CARGO_REGISTRY_TOKEN"]
-        assert _cd_release_secrets("ruby") == ["RUBYGEMS_API_KEY"]
         assert _cd_release_secrets("java") == [
             "CENTRAL_USERNAME",
             "CENTRAL_TOKEN",
@@ -1339,7 +1328,7 @@ class TestStepGenerateConfig:
 
         # Indices are alphabetical within each sorted enum:
         # repository-type: 5=tooling; primary-language: 4=python — sorted order
-        # is cpp, go, java, python, ruby, rust;
+        # is cpp, go, java, python, rust, typescript;
         # branching-model: 3=library-release, versioning-scheme: 4=semver,
         # release-model: 4=tagged-release
         inputs = iter(

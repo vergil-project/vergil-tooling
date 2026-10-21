@@ -11,7 +11,8 @@ vergil-project/.github#325); the lossless-split invariant test freezes the
 managed pattern set as a regression guard against a fragment edit silently
 dropping one. The frozen set began as the monolith's 62 patterns and lost the
 18 dead Conan generator globs in epic #342 Task 4 (#3034), once #2912 relocated
-Conan output under the already-ignored ``build/``.
+Conan output under the already-ignored ``build/``, then the two patterns of a
+retired language's fragment (#3377).
 """
 
 from __future__ import annotations
@@ -30,7 +31,8 @@ MANAGED_END = "# <<< vergil-managed <<<"
 #: The known baseline *comment* scaffolding a bootstrap must strip alongside the
 #: managed patterns. Frozen verbatim from the former ``data/gitignore.baseline``
 #: monolith (every comment line: the "single source of truth" preamble and every
-#: ``# section`` header) so the set outlived the monolith's deletion (Task 10),
+#: ``# section`` header, less those of retired languages whose patterns are no
+#: longer managed, #3377) so the set outlived the monolith's deletion (Task 10),
 #: plus the header
 #: an earlier sweep appended to some repos (vergil-project/.github#322). A repo
 #: whose ``.gitignore`` *was* repo-init's fully-commented baseline would
@@ -58,7 +60,6 @@ _MANAGED_COMMENTS: frozenset[str] = frozenset(
         "# Docs (mkdocs build output; mkdocs.yml lives at docs/site/)",
         "# Node / TypeScript",
         "# Go (test/coverage output; binaries usually have no extension)",
-        "# Ruby",
         "# C/C++ object & archive output",
         "# C/C++ Conan 2 generator output (written into the source tree by `conan install`).",
         "# The -debug-armv8 style suffix carries build type + arch, so these need wildcards",
@@ -78,7 +79,6 @@ FRAGMENT_LANGS: tuple[str, ...] = (
     "python",
     "cpp",
     "go",
-    "ruby",
     "rust",
     "java",
     "typescript",

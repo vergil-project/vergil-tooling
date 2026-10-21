@@ -99,7 +99,6 @@ _BASE_ACTION_PATTERNS = [
 
 _LANGUAGE_ACTION_PATTERNS: dict[str, list[str]] = {
     "python": ["astral-sh/*", "pypa/*"],
-    "ruby": ["ruby/*"],
     "rust": ["actions-rust-lang/*", "swatinem/*"],
 }
 
@@ -227,7 +226,6 @@ _CODEQL_SUPPORTED_LANGUAGES = frozenset(
         "python",
         "go",
         "java",
-        "ruby",
         "rust",
         # cpp aligns this list with repo_init._CODEQL_LANGUAGES, which already
         # lists cpp — the two must agree (epic vergil-project/.github#207 T7).

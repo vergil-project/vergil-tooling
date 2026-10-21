@@ -436,7 +436,7 @@ Dev container images (Dockerfiles, build script, publish workflow) are
 maintained in [vergil-containers](https://github.com/vergil-project/vergil-containers).
 
 The `vrg-container-test` entry point auto-detects the project
-language (Gemfile, pyproject.toml, go.mod, pom.xml/mvnw) and runs the test
+language (pyproject.toml, go.mod, pom.xml/mvnw) and runs the test
 suite inside the appropriate container. Consuming repos call it directly or wrap
 it in a thin `scripts/dev/test.sh`. Environment overrides:
 

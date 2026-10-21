@@ -13,7 +13,7 @@ from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.languages import ecosystem_metadata, supported_languages
 from vergil_tooling.lib.output import emit_error
 
-_CONTAINER_LANGUAGES = frozenset({"python", "java", "ruby", "rust", "go"})
+_CONTAINER_LANGUAGES = frozenset({"python", "java", "rust", "go"})
 
 
 @cli_main
@@ -32,7 +32,7 @@ def main(argv: list[str] | None = None) -> int:
         "--language",
         default="",
         dest="language_flag",
-        help="Programming language (go, java, python, ruby, rust). Omit for non-language projects.",
+        help="Programming language (go, java, python, rust). Omit for non-language projects.",
     )
     parser.add_argument(
         "--container-tag",

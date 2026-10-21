@@ -49,15 +49,6 @@ def test_show_rust(tmp_path: Path) -> None:
     assert show(tmp_path) == "0.3.7"
 
 
-def test_show_ruby(tmp_path: Path) -> None:
-    _write_toml(tmp_path, "ruby")
-    (tmp_path / "VERSION").write_text("4.1.0\n")
-    version_dir = tmp_path / "lib" / "mq" / "rest" / "admin"
-    version_dir.mkdir(parents=True)
-    (version_dir / "version.rb").write_text("  VERSION = '4.1.0'\n")
-    assert show(tmp_path) == "4.1.0"
-
-
 def test_show_go(tmp_path: Path) -> None:
     _write_toml(tmp_path, "go")
     (tmp_path / "VERSION").write_text("1.0.5\n")
@@ -174,7 +165,7 @@ def test_show_ref_reads_version_file_no_cross_check(tmp_path: Path) -> None:
 def test_show_cross_check_warns_when_discover_raises(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    _write_toml(tmp_path, "ruby")
+    _write_toml(tmp_path, "go")
     (tmp_path / "VERSION").write_text("1.0.0\n")
     result = show(tmp_path)
     assert result == "1.0.0"
@@ -221,20 +212,6 @@ def test_bump_rust(tmp_path: Path) -> None:
     assert (tmp_path / "VERSION").read_text().strip() == "0.3.8"
     text = (tmp_path / "Cargo.toml").read_text()
     assert 'version = "0.3.8"' in text
-
-
-def test_bump_ruby(tmp_path: Path) -> None:
-    _write_toml(tmp_path, "ruby")
-    (tmp_path / "VERSION").write_text("1.0.0\n")
-    version_dir = tmp_path / "lib" / "mq"
-    version_dir.mkdir(parents=True)
-    (version_dir / "version.rb").write_text("  VERSION = '1.0.0'\n")
-    with patch("vergil_tooling.lib.version.subprocess.run"):
-        result = bump(tmp_path)
-    assert result == "1.0.1"
-    assert (tmp_path / "VERSION").read_text().strip() == "1.0.1"
-    text = (version_dir / "version.rb").read_text()
-    assert "VERSION = '1.0.1'" in text
 
 
 def test_bump_go(tmp_path: Path) -> None:
@@ -311,23 +288,6 @@ def test_bump_rust_runs_cargo_update(tmp_path: Path) -> None:
         )
 
 
-def test_bump_ruby_runs_bundle_install(tmp_path: Path) -> None:
-    _write_toml(tmp_path, "ruby")
-    (tmp_path / "VERSION").write_text("1.0.0\n")
-    version_dir = tmp_path / "lib" / "mq"
-    version_dir.mkdir(parents=True)
-    (version_dir / "version.rb").write_text("  VERSION = '1.0.0'\n")
-    with patch("vergil_tooling.lib.version.subprocess.run") as mock_run:
-        bump(tmp_path)
-        mock_run.assert_called_once_with(
-            ["bundle", "install"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-
-
 def test_bump_generic_skips_lockfile(tmp_path: Path) -> None:
     _write_toml(tmp_path)
     (tmp_path / "VERSION").write_text("1.0.0\n")
@@ -337,7 +297,7 @@ def test_bump_generic_skips_lockfile(tmp_path: Path) -> None:
 
 
 def test_bump_skips_missing_language_file_discover_raises(tmp_path: Path) -> None:
-    _write_toml(tmp_path, "ruby")
+    _write_toml(tmp_path, "go")
     (tmp_path / "VERSION").write_text("1.0.0\n")
     with patch("vergil_tooling.lib.version.subprocess.run"):
         result = bump(tmp_path)
@@ -369,13 +329,6 @@ def test_bump_claude_plugin_skips_lockfile(tmp_path: Path) -> None:
 # -- _discover_version_file error paths ----------------------------------------
 
 
-def test_discover_ruby_no_match(tmp_path: Path) -> None:
-    from vergil_tooling.lib.version import _discover_version_file
-
-    with pytest.raises(FileNotFoundError, match="No lib"):
-        _discover_version_file(tmp_path, "ruby")
-
-
 def test_discover_go_no_match(tmp_path: Path) -> None:
     from vergil_tooling.lib.version import _discover_version_file
 
@@ -391,13 +344,6 @@ def test_discover_unsupported_language(tmp_path: Path) -> None:
 
 
 # -- _read_version error paths -------------------------------------------------
-
-
-def test_read_version_ruby_bad_format() -> None:
-    from vergil_tooling.lib.version import _read_version
-
-    with pytest.raises(ValueError, match="No VERSION"):
-        _read_version("no version here", "ruby")
 
 
 def test_read_version_go_bad_format() -> None:
