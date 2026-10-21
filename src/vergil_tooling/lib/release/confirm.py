@@ -77,8 +77,7 @@ def _watch_cd(
     branch: str,
 ) -> tuple[str, str]:
     print(f"Waiting for {_CD_WORKFLOW} on {branch}...")
-    git.run("fetch", "origin", branch)
-    head_sha = git.read_output("rev-parse", f"origin/{branch}")
+    head_sha = _cd_head_sha(ctx, branch)
 
     run_id = _poll_for_run(ctx.repo, branch, head_sha)
     resource = _run_resource(run_id)
@@ -106,6 +105,36 @@ def _watch_cd(
 
     print(f"  CD workflow completed: {run_url}")
     return run_id, run_url
+
+
+def _cd_head_sha(ctx: ReleaseContext, branch: str) -> str:
+    """The commit whose CD run the confirm stage on *branch* must verify.
+
+    develop: the back-merge PR's merge commit, recorded by back-merge-bump.
+    develop's tip is not used — on ``--resume`` anything merged since (a
+    dependency-update or feature PR) has moved it, and its CD run says nothing
+    about the release (#3329). No recorded SHA fails loudly; there is no
+    fallback to the tip.
+
+    main: the tip of ``origin/main``. Only release PRs merge to main, so its
+    tip is the release merge.
+    """
+    if branch == "develop":
+        if not ctx.bump_merge_sha:
+            raise ReleaseError(
+                phase="confirm-develop",
+                command="gh pr view --json mergeCommit",
+                message=(
+                    "The back-merge PR's merge commit SHA is not recorded "
+                    f"(back-merge PR: {ctx.bump_pr_url}), so the develop CD run "
+                    "for the release cannot be identified. Refusing to verify "
+                    "develop's tip instead. Check the back-merge PR is merged, "
+                    "then resume with vrg-release --resume."
+                ),
+            )
+        return ctx.bump_merge_sha
+    git.run("fetch", "origin", branch)
+    return git.read_output("rev-parse", f"origin/{branch}")
 
 
 def _poll_for_run(repo: str, branch: str, head_sha: str) -> str:

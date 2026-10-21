@@ -38,6 +38,9 @@ def _ctx() -> ReleaseContext:
         version_override=None,
     )
     ctx.issue_number = 42
+    # back-merge-bump records this; confirm-develop pins its CD run to it (#3329).
+    ctx.bump_pr_url = "https://github.com/o/r/pull/101"
+    ctx.bump_merge_sha = _SHA
     return ctx
 
 
@@ -769,3 +772,70 @@ def test_verify_artifacts_retries_404_on_just_published_release() -> None:
         _verify_artifacts(ctx)
     assert ctx.release_url == url
     assert read.call_count == 2
+
+
+# --- #3329: confirm-develop verifies the back-merge commit, not develop's tip ---
+
+_BACK_MERGE_SHA = "b4c4me4ge5ha0000"
+_MOVED_TIP_SHA = "d3p5upd4te0000"
+
+
+def test_confirm_develop_on_resume_verifies_back_merge_not_moved_tip() -> None:
+    """Resume after develop moved past the back-merge (e.g. a deps PR merged).
+
+    Develop's tip now has its own CD run. confirm-develop must poll for the
+    back-merge commit's run, never read the tip.
+    """
+    ctx = _ctx()
+    ctx.bump_merge_sha = _BACK_MERGE_SHA
+    with (
+        patch(
+            _MOD + ".github.read_output",
+            side_effect=["555", "https://github.com/o/r/actions/runs/555"],
+        ) as read,
+        patch(_MOD + "._fetch_run_jobs", return_value=_DEVELOP_JOBS_OK),
+        patch(_MOD + ".watch_workflow") as watch,
+        patch(_MOD + ".git.run") as git_run,
+        patch(_MOD + ".git.read_output", return_value=_MOVED_TIP_SHA) as git_read,
+    ):
+        confirm_develop(ctx)
+
+    run_list_jq = read.call_args_list[0].args[-1]
+    assert f'.headSha == "{_BACK_MERGE_SHA}"' in run_list_jq
+    assert _MOVED_TIP_SHA not in run_list_jq
+    git_read.assert_not_called()
+    git_run.assert_not_called()
+    watch.assert_called_once_with("owner/repo", "555", check_status=False)
+    assert ctx.develop_cd_run_id == "555"
+
+
+def test_confirm_develop_without_back_merge_sha_fails_loud() -> None:
+    """No recorded back-merge SHA: fail, never fall back to develop's tip."""
+    ctx = _ctx()
+    ctx.bump_merge_sha = None
+    with (
+        patch(_MOD + ".github.read_output") as read,
+        patch(_MOD + ".git.run") as git_run,
+        patch(_MOD + ".git.read_output", return_value=_MOVED_TIP_SHA) as git_read,
+        pytest.raises(ReleaseError, match="merge commit SHA is not recorded") as excinfo,
+    ):
+        confirm_develop(ctx)
+    assert excinfo.value.phase == "confirm-develop"
+    assert "https://github.com/o/r/pull/101" in str(excinfo.value)
+    read.assert_not_called()
+    git_run.assert_not_called()
+    git_read.assert_not_called()
+
+
+def test_confirm_main_still_verifies_main_tip() -> None:
+    """confirm-main is unchanged: it resolves the tip of origin/main."""
+    from vergil_tooling.lib.release.confirm import _cd_head_sha
+
+    ctx = _ctx()
+    with (
+        patch(_MOD + ".git.run") as git_run,
+        patch(_MOD + ".git.read_output", return_value=_MOVED_TIP_SHA) as git_read,
+    ):
+        assert _cd_head_sha(ctx, "main") == _MOVED_TIP_SHA
+    git_run.assert_called_once_with("fetch", "origin", "main")
+    git_read.assert_called_once_with("rev-parse", "origin/main")

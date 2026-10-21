@@ -76,7 +76,13 @@ def test_close_and_finalize_streams_through_progress() -> None:
     ):
         close_and_finalize(ctx)
     (cmd,) = run.call_args.args
-    assert cmd == ("vrg-finalize-pr", "--cleanup-only", "--output-format", "plain")
+    assert cmd == (
+        "vrg-finalize-pr",
+        "--cleanup-only",
+        "--no-wait-cd",
+        "--output-format",
+        "plain",
+    )
     assert run.call_args.kwargs["stdin"] == subprocess.DEVNULL
 
 
