@@ -40,7 +40,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from vergil_tooling.lib import github
-from vergil_tooling.lib.github_config import ghas_available, required_evidence_gates
+from vergil_tooling.lib.github_config import (
+    ghas_available,
+    required_evidence_gates,
+    resolved_integration_versions,
+)
 from vergil_tooling.lib.linkage import extract_merge_pr
 from vergil_tooling.lib.remote_config import require_config_at_ref
 
@@ -717,6 +721,7 @@ def resolve_required_gates(repo: str, ref: str) -> tuple[EvidenceGate, ...]:
         ghas=ghas,
         docs=config.publish.docs,
         package=config.package is not None,
+        integration_versions=resolved_integration_versions(config),
     )
 
 

@@ -70,6 +70,7 @@ from vergil_tooling.lib.container_cache import (
 from vergil_tooling.lib.pr_workflow import batch, github_transport
 from vergil_tooling.lib.progress import Stage
 from vergil_tooling.lib.repo_init import prompt_choice
+from vergil_tooling.lib.versions import VersionsError
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -1137,7 +1138,7 @@ def _stage_provision(ctx: FinalizeContext) -> None:
         # warmup build is captured (surfaced on failure) rather than streamed
         # raw over the progress tree (#2906).
         image, source = provision_dev_image(ctx.root, lang, quiet_warmup=True)
-    except RuntimeError as exc:
+    except (RuntimeError, VersionsError) as exc:
         raise FinalizeError(f"dev-image provisioning failed: {exc}") from exc
     if source == "env":
         print(f"  Using DOCKER_DEV_IMAGE override: {image}")

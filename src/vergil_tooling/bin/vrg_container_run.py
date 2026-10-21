@@ -20,7 +20,6 @@ from vergil_tooling.lib.config import (
     TEST_CONTEXT_ENV,
     TEST_WORKERS_ENV,
     container_env_prefixes,
-    primary_ci_version,
     validation_container_command,
 )
 from vergil_tooling.lib.container import (
@@ -28,9 +27,11 @@ from vergil_tooling.lib.container import (
     build_container_args,
     default_image,
     detect_runtime,
+    repo_resolution,
     resolve_language,
 )
 from vergil_tooling.lib.container_cache import ensure_cached_image
+from vergil_tooling.lib.versions import VersionsError
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -131,20 +132,19 @@ def main(argv: list[str] | None = None) -> int:
         image = env_image
         image_source = "env"
     else:
-        # The repo's declared [ci].versions is authoritative for the container
-        # version — never a hardcoded tooling-side default (issue #2468). Fall
-        # back to the built-in default only when the repo declares none, and say
-        # so loudly: a silent fallback is exactly how a default bump once flipped
-        # every repo's local build to a different interpreter.
-        declared_version = primary_ci_version(repo_root)
-        if declared_version is None and lang:
-            print(
-                f"WARNING: vergil.toml declares no [ci].versions; using the "
-                f"built-in default container for '{lang}'. Declare [ci].versions "
-                f"to pin the container version and keep local builds aligned with CI.",
-                file=sys.stderr,
-            )
-        base = default_image(lang, fallback=True, prefix=prefix, version=declared_version)
+        # The container version is the resolver's primary version, read from the
+        # published window at the repo's Vergil ref — the same resolution CI
+        # uses. There is no tooling-side default to fall back to (epic
+        # vergil-project/.github#407): a window or pin failure stops here.
+        try:
+            resolution = repo_resolution(repo_root, lang)
+        except VersionsError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            print("(set DOCKER_DEV_IMAGE to choose the image explicitly)", file=sys.stderr)
+            return 1
+        for warning in resolution.warnings if resolution else ():
+            print(f"WARNING: {warning}", file=sys.stderr)
+        base = default_image(resolution, fallback=True, prefix=prefix)
         image = ensure_cached_image(repo_root, lang, base, runtime=runtime)
         image_source = "cached" if image != base else "default"
 

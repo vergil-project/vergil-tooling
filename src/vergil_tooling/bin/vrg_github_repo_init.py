@@ -213,7 +213,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--versions",
-        help="CI versions, comma-separated (default: language-derived)",
+        help=(
+            "CI versions pin, comma-separated (default: none; the repo follows the version window)"
+        ),
     )
     parser.add_argument(
         "--integration-tests",

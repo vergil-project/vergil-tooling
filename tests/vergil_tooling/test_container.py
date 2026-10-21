@@ -10,7 +10,6 @@ import pytest
 
 from vergil_tooling.lib.container import (
     _DEFAULT_TEST_COMMANDS,
-    _DEFAULT_VERSIONS,
     _NPM_GLOBAL_ROOT,
     PYCACHE_PREFIX,
     assert_docker_available,
@@ -21,10 +20,12 @@ from vergil_tooling.lib.container import (
     detect_language,
     detect_runtime,
     docker_platform,
+    repo_resolution,
     resolve_language,
     workspace_mount_args,
     worktree_parent_gitdir,
 )
+from vergil_tooling.lib.versions.resolve import ResolutionError
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -212,52 +213,124 @@ def test_resolve_language_empty_when_neither_asserted_nor_detected(tmp_path: Pat
     assert resolve_language(tmp_path) == ""
 
 
-# -- default_image ------------------------------------------------------------
+# -- default_image / repo_resolution -----------------------------------------
+#
+# The image comes from the resolver's primary version, read from the fixture
+# window (conftest's VRG_VERSION_WINDOW): python 3.14/3.13/3.12, cpp clang
+# 20/19 and gcc 14, typescript node 24/22.
 
 
-def test_default_image_known_lang() -> None:
-    assert "prod-python" in default_image("python")
+def _write_config(
+    root: Path, language: str, *, versions: list[str] | None = None, repo_type: str = "tooling"
+) -> None:
+    pin = "" if versions is None else "versions = [" + ", ".join(f'"{v}"' for v in versions) + "]"
+    (root / "vergil.toml").write_text(
+        "[project]\n"
+        f'repository-type = "{repo_type}"\n'
+        'versioning-scheme = "semver"\n'
+        'branching-model = "library-release"\n'
+        'release-model = "tagged-release"\n'
+        f'primary-language = "{language}"\n'
+        "[dependencies]\n"
+        'vergil = "v2.1"\n'
+        f"[ci]\n{pin}\n"
+    )
 
 
-def test_default_image_unknown_no_fallback() -> None:
-    assert default_image("unknown") == ""
+def _image(root: Path, language: str, *, prefix: str = "prod") -> str:
+    return default_image(repo_resolution(root, language), prefix=prefix)
 
 
-def test_default_image_unknown_with_fallback() -> None:
-    assert default_image("unknown", fallback=True) == "ghcr.io/vergil-project/prod-base:latest"
+def test_default_image_no_resolution_no_fallback() -> None:
+    assert default_image(None) == ""
 
 
-def test_default_image_empty_with_fallback() -> None:
-    assert default_image("", fallback=True) == "ghcr.io/vergil-project/prod-base:latest"
-
-
-# -- prefix-aware default_image -----------------------------------------------
-
-
-def test_default_image_prod_prefix() -> None:
-    img = default_image("python", prefix="prod")
-    assert "prod-python" in img
-    assert "dev-python" not in img
-
-
-def test_default_image_dev_prefix() -> None:
-    img = default_image("python", prefix="dev")
-    assert "dev-python" in img
-
-
-def test_default_image_default_prefix_is_prod() -> None:
-    img = default_image("python")
-    assert "prod-python" in img
-
-
-def test_default_image_fallback_respects_prefix() -> None:
-    img = default_image("unknown", fallback=True, prefix="prod")
-    assert "prod-base" in img
+def test_default_image_no_resolution_with_fallback() -> None:
+    assert default_image(None, fallback=True) == "ghcr.io/vergil-project/prod-base:latest"
 
 
 def test_default_image_fallback_dev_prefix() -> None:
-    img = default_image("unknown", fallback=True, prefix="dev")
-    assert "dev-base" in img
+    assert default_image(None, fallback=True, prefix="dev") == (
+        "ghcr.io/vergil-project/dev-base:latest"
+    )
+
+
+def test_default_image_unpinned_app_is_newest_window_version(tmp_path: Path) -> None:
+    _write_config(tmp_path, "python")
+    assert _image(tmp_path, "python") == "ghcr.io/vergil-project/prod-python:3.14"
+
+
+def test_default_image_unpinned_library_primary_is_newest(tmp_path: Path) -> None:
+    _write_config(tmp_path, "python", repo_type="library")
+    assert _image(tmp_path, "python") == "ghcr.io/vergil-project/prod-python:3.14"
+
+
+def test_default_image_pin_wins(tmp_path: Path) -> None:
+    _write_config(tmp_path, "python", versions=["3.12"])
+    assert _image(tmp_path, "python") == "ghcr.io/vergil-project/prod-python:3.12"
+
+
+def test_default_image_pinned_library_primary_is_newest_pin(tmp_path: Path) -> None:
+    # The primary is the newest resolved version, not the first list entry.
+    _write_config(tmp_path, "python", versions=["3.12", "3.13"], repo_type="library")
+    assert _image(tmp_path, "python") == "ghcr.io/vergil-project/prod-python:3.13"
+
+
+def test_default_image_dev_prefix(tmp_path: Path) -> None:
+    _write_config(tmp_path, "python")
+    assert _image(tmp_path, "python", prefix="dev") == "ghcr.io/vergil-project/dev-python:3.14"
+
+
+def test_default_image_cpp_family_rides_the_suffix(tmp_path: Path) -> None:
+    # clang-20 resolves to prod-cpp-clang:20: the family is the window
+    # family's image suffix and only the version is the tag.
+    _write_config(tmp_path, "cpp", versions=["clang-20"])
+    assert _image(tmp_path, "cpp") == "ghcr.io/vergil-project/prod-cpp-clang:20"
+
+
+def test_default_image_cpp_gcc(tmp_path: Path) -> None:
+    _write_config(tmp_path, "cpp", versions=["gcc-14"])
+    assert _image(tmp_path, "cpp", prefix="dev") == "ghcr.io/vergil-project/dev-cpp-gcc:14"
+
+
+def test_default_image_typescript_node(tmp_path: Path) -> None:
+    _write_config(tmp_path, "typescript", versions=["node-22"])
+    assert _image(tmp_path, "typescript") == "ghcr.io/vergil-project/prod-ts-node:22"
+
+
+def test_repo_resolution_pin_outside_window_is_fatal(tmp_path: Path) -> None:
+    # No fallback image: a pin the window no longer builds stops the run.
+    _write_config(tmp_path, "python", versions=["3.11"])
+    with pytest.raises(ResolutionError, match=r"3\.11"):
+        repo_resolution(tmp_path, "python")
+
+
+def test_repo_resolution_no_config_no_language_is_none(tmp_path: Path) -> None:
+    assert repo_resolution(tmp_path, "") is None
+
+
+def test_repo_resolution_detected_language_without_config_is_fatal(tmp_path: Path) -> None:
+    # A language detected from files, with no vergil.toml, has no Vergil ref to
+    # read the window at; there is no built-in default to fall back to.
+    with pytest.raises(ResolutionError, match=r"no vergil\.toml"):
+        repo_resolution(tmp_path, "python")
+
+
+def test_repo_resolution_detected_language_stands_in(tmp_path: Path) -> None:
+    # A vergil.toml with no primary-language resolves the detected language.
+    (tmp_path / "vergil.toml").write_text(
+        "[project]\n"
+        'repository-type = "tooling"\n'
+        'versioning-scheme = "semver"\n'
+        'branching-model = "library-release"\n'
+        'release-model = "tagged-release"\n'
+        "[dependencies]\n"
+        'vergil = "v2.1"\n'
+        "[ci]\n"
+    )
+    resolution = repo_resolution(tmp_path, "go")
+    assert resolution is not None
+    assert resolution.versions == ("1.26",)
 
 
 # -- container_platform -------------------------------------------------------
@@ -289,75 +362,6 @@ def test_docker_platform_alias() -> None:
     assert docker_platform is container_platform
 
 
-def test_default_image_version_override() -> None:
-    # The repo's declared [ci].versions primary wins over _DEFAULT_VERSIONS (#2468).
-    assert default_image("python", version="3.12") == "ghcr.io/vergil-project/prod-python:3.12"
-
-
-def test_default_image_version_none_uses_builtin_default() -> None:
-    assert default_image("python", version=None) == "ghcr.io/vergil-project/prod-python:3.14"
-
-
-def test_default_image_empty_version_uses_builtin_default() -> None:
-    # An empty string is "no declared version" (falsy), not a literal tag.
-    assert default_image("python", version="") == "ghcr.io/vergil-project/prod-python:3.14"
-
-
-def test_default_image_no_language_falls_back_despite_declared_version() -> None:
-    # A language-less repo (lang="") that declares [ci].versions must still fall
-    # back to the base image, not build a malformed prod-:<ver> tag (#2475: the
-    # declared version must not resurrect a per-language image when there is none).
-    assert default_image("", fallback=True, version="latest") == (
-        "ghcr.io/vergil-project/prod-base:latest"
-    )
-
-
-def test_default_image_no_language_no_fallback_ignores_version() -> None:
-    assert default_image("", version="latest") == ""
-
-
-# -- cpp compiler-family image resolution -------------------------------------
-
-
-def test_default_image_cpp_uses_builtin_clang_default() -> None:
-    # _DEFAULT_VERSIONS["cpp"] is the primary Clang tag (clang-20), so the
-    # family rides the image suffix and the numeric major is the tag.
-    assert default_image("cpp") == "ghcr.io/vergil-project/prod-cpp-clang:20"
-
-
-def test_default_image_cpp_clang_declared_version() -> None:
-    assert default_image("cpp", version="clang-20") == "ghcr.io/vergil-project/prod-cpp-clang:20"
-
-
-def test_default_image_cpp_gcc_declared_version() -> None:
-    # gcc-15 → prod-cpp-gcc:15, matching the image names T1/T2 produce.
-    assert default_image("cpp", version="gcc-15") == "ghcr.io/vergil-project/prod-cpp-gcc:15"
-
-
-def test_default_image_cpp_respects_prefix() -> None:
-    assert default_image("cpp", prefix="dev", version="clang-20") == (
-        "ghcr.io/vergil-project/dev-cpp-clang:20"
-    )
-
-
-def test_default_image_cpp_unparseable_version_no_fallback() -> None:
-    # A malformed cpp version tag (no clang-/gcc- prefix) must not build a
-    # malformed prod-cpp-:<ver> image — it returns empty without fallback.
-    assert default_image("cpp", version="latest") == ""
-
-
-def test_default_image_cpp_unparseable_version_with_fallback() -> None:
-    assert default_image("cpp", version="latest", fallback=True) == (
-        "ghcr.io/vergil-project/prod-base:latest"
-    )
-
-
-def test_cpp_default_version_is_primary_clang() -> None:
-    # The built-in default drives default_image("cpp") when no [ci].versions
-    # is declared — it must be the primary Clang tag.
-    assert _DEFAULT_VERSIONS["cpp"] == "clang-20"
-
-
 def test_cpp_default_test_command_is_conan_cmake_ctest() -> None:
     # vrg-container-test runs this via `bash -c`, so `&&` chaining is valid.
     cmd = _DEFAULT_TEST_COMMANDS["cpp"]
@@ -370,56 +374,7 @@ def test_cpp_default_test_command_is_conan_cmake_ctest() -> None:
     assert "-DCMAKE_BUILD_TYPE=Debug" in cmd
 
 
-# -- typescript node image resolution -----------------------------------------
-
-
-def test_default_image_typescript_uses_builtin_node_default() -> None:
-    # _DEFAULT_VERSIONS["typescript"] is the primary Node tag (node-24), so the
-    # runtime family rides the image suffix and the numeric major is the tag.
-    assert default_image("typescript") == "ghcr.io/vergil-project/prod-ts-node:24"
-
-
-def test_default_image_typescript_node24_declared_version() -> None:
-    assert default_image("typescript", version="node-24") == (
-        "ghcr.io/vergil-project/prod-ts-node:24"
-    )
-
-
-def test_default_image_typescript_node22_declared_version() -> None:
-    # node-22 → prod-ts-node:22, matching the second image T2 produces.
-    assert default_image("typescript", version="node-22") == (
-        "ghcr.io/vergil-project/prod-ts-node:22"
-    )
-
-
-def test_default_image_typescript_respects_prefix() -> None:
-    assert default_image("typescript", prefix="dev", version="node-24") == (
-        "ghcr.io/vergil-project/dev-ts-node:24"
-    )
-
-
-def test_default_image_typescript_unparseable_version_no_fallback() -> None:
-    # A malformed node tag (no node- prefix) must not build a malformed
-    # prod-ts-node: image — it returns empty without fallback.
-    assert default_image("typescript", version="latest") == ""
-
-
-def test_default_image_typescript_empty_major_no_fallback() -> None:
-    # A `node-` prefix with no major must not build prod-ts-node: with an empty
-    # major — it falls back like an unknown language.
-    assert default_image("typescript", version="node-") == ""
-
-
-def test_default_image_typescript_unparseable_version_with_fallback() -> None:
-    assert default_image("typescript", version="latest", fallback=True) == (
-        "ghcr.io/vergil-project/prod-base:latest"
-    )
-
-
-def test_typescript_default_version_is_primary_node() -> None:
-    # The built-in default drives default_image("typescript") when no [ci].versions
-    # is declared — it must be the primary Node tag.
-    assert _DEFAULT_VERSIONS["typescript"] == "node-24"
+# -- typescript test command ---------------------------------------------------
 
 
 def test_typescript_default_test_command_is_npm_ci_vitest() -> None:

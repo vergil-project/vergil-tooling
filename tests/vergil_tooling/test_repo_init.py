@@ -4,7 +4,7 @@ import json
 import subprocess
 import tomllib
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
@@ -20,10 +20,10 @@ from vergil_tooling.lib.repo_init import (
     _check_remote_steps,
     _container_suffix,
     _container_tag,
-    _default_ci_versions,
     _load_existing_config,
     _remote_branch_exists,
     _resolve,
+    _resolve_versions,
     _sync_labels,
     cwd_repo_slug,
     derive_clone_parent,
@@ -55,6 +55,9 @@ from vergil_tooling.lib.repo_init import (
     step_scaffold_config_files,
     step_scaffold_language,
 )
+
+if TYPE_CHECKING:
+    from vergil_tooling.lib.versions.resolve import Resolution
 
 
 @pytest.fixture(autouse=True)
@@ -590,6 +593,7 @@ class TestRenderCiWorkflow:
         ctx = RepoInitContext(org="vergil-project", name="test")
         ctx.primary_language = "python"
         ctx.ci_versions = ["3.12", "3.13", "3.14"]
+        ctx.resolution = _resolved("python", ctx.ci_versions)
         ctx.release_model = "tagged-release"
         content = render_ci_workflow(ctx)
         assert "ci-quality.yml@v2.1" in content
@@ -603,6 +607,7 @@ class TestRenderCiWorkflow:
         ctx = RepoInitContext(org="vergil-project", name="test")
         ctx.primary_language = "cpp"
         ctx.ci_versions = ["clang-20", "clang-19"]
+        ctx.resolution = _resolved("cpp", ctx.ci_versions)
         ctx.release_model = "tagged-release"
         content = render_ci_workflow(ctx)
         # Compiler-family-aware suffix → prod-cpp-clang image family. The tag
@@ -617,6 +622,7 @@ class TestRenderCiWorkflow:
         ctx = RepoInitContext(org="vergil-project", name="test")
         ctx.primary_language = "typescript"
         ctx.ci_versions = ["node-24", "node-22"]
+        ctx.resolution = _resolved("typescript", ctx.ci_versions)
         ctx.release_model = "tagged-release"
         content = render_ci_workflow(ctx)
         # The emitted ci.yml carries the *primary-language* name for container
@@ -751,6 +757,7 @@ class TestRenderCiWorkflow:
         ctx = RepoInitContext(org="vergil-project", name="test")
         ctx.primary_language = "python"
         ctx.ci_versions = ["3.12", "3.13", "3.14"]
+        ctx.resolution = _resolved("python", ctx.ci_versions)
         ctx.release_model = "tagged-release"
         ctx.integration_tests = True
         ctx.publish_docs = True
@@ -827,7 +834,9 @@ class TestCiGatesProducibility:
             primary_language=ctx.primary_language,
         )
         ci = CiConfig(versions=ctx.ci_versions, integration_tests=ctx.integration_tests)
-        ruleset = desired_ci_gates_ruleset(project, ci, ghas=ghas, docs=docs)
+        ruleset = desired_ci_gates_ruleset(
+            project, ci, ghas=ghas, docs=docs, integration_versions=ctx.ci_versions
+        )
         result: list[str] = unproducible_ci_yaml_contexts(
             render_ci_workflow(ctx), required_status_contexts(ruleset), ghas=ghas
         )
@@ -883,7 +892,13 @@ class TestAssertCiGatesProducible:
             primary_language=ctx.primary_language,
         )
         ci = CiConfig(versions=ctx.ci_versions, integration_tests=ctx.integration_tests)
-        ruleset = desired_ci_gates_ruleset(project, ci, ghas=ghas, docs=ctx.publish_docs)
+        ruleset = desired_ci_gates_ruleset(
+            project,
+            ci,
+            ghas=ghas,
+            docs=ctx.publish_docs,
+            integration_versions=ctx.ci_versions,
+        )
         return SimpleNamespace(rulesets=[ruleset])
 
     def test_passes_for_a_docs_repo(self, tmp_path: Path) -> None:
@@ -910,84 +925,89 @@ class TestAssertCiGatesProducible:
         assert "2721" in str(exc.value)
 
 
+def _resolved(language: str, versions: list[str] | None = None) -> Resolution | None:
+    """The resolver's answer for a library repo, against the fixture window."""
+    pin = "" if versions is None else "versions = [" + ", ".join(f'"{v}"' for v in versions) + "]"
+    return _resolve_versions(
+        "[project]\n"
+        'repository-type = "library"\n'
+        'versioning-scheme = "semver"\n'
+        'branching-model = "library-release"\n'
+        'release-model = "tagged-release"\n'
+        f'primary-language = "{language}"\n'
+        f"[ci]\n{pin}\n"
+        "[dependencies]\n"
+        'vergil = "v2.1"\n'
+    )
+
+
 class TestContainerHelpers:
-    def test_container_suffix_none_returns_base(self) -> None:
+    def test_no_resolution_is_base_latest(self) -> None:
         assert _container_suffix(None) == "base"
+        assert _container_tag(None) == "latest"
 
-    def test_default_ci_versions_none_returns_latest(self) -> None:
-        assert _default_ci_versions(None) == "latest"
+    def test_python_primary_is_newest(self) -> None:
+        resolution = _resolved("python")
+        assert _container_suffix(resolution) == "python"
+        assert _container_tag(resolution) == "3.14"
 
-    def test_container_suffix_cpp_clang(self) -> None:
-        # cpp is compiler-family-aware: the family rides the image suffix,
-        # parsed from the clang-/gcc- prefix on the primary [ci].versions entry
-        # (epic vergil-project/.github#207 §6).
-        assert _container_suffix("cpp", ["clang-20"]) == "cpp-clang"
+    def test_cpp_family_rides_the_suffix(self) -> None:
+        # The window family is the image suffix and only the version is the
+        # tag, so clang-20 is prod-cpp-clang:20 (epic vergil-project/.github#207).
+        resolution = _resolved("cpp", ["clang-20"])
+        assert _container_suffix(resolution) == "cpp-clang"
+        assert _container_tag(resolution) == "20"
 
-    def test_container_suffix_cpp_gcc(self) -> None:
-        assert _container_suffix("cpp", ["gcc-15"]) == "cpp-gcc"
+    def test_cpp_gcc(self) -> None:
+        resolution = _resolved("cpp", ["gcc-14"])
+        assert _container_suffix(resolution) == "cpp-gcc"
+        assert _container_tag(resolution) == "14"
 
-    def test_container_suffix_cpp_uses_first_entry_as_primary(self) -> None:
-        # A mixed-family matrix takes its representative top-level suffix from
-        # the first entry.
-        assert _container_suffix("cpp", ["gcc-15", "clang-20"]) == "cpp-gcc"
+    def test_typescript_node(self) -> None:
+        resolution = _resolved("typescript", ["node-24", "node-22"])
+        assert _container_suffix(resolution) == "ts-node"
+        assert _container_tag(resolution) == "24"
 
-    def test_container_suffix_cpp_unparseable_falls_back_to_base(self) -> None:
-        assert _container_suffix("cpp", ["latest"]) == "base"
-        assert _container_suffix("cpp", []) == "base"
 
-    def test_container_tag_cpp_is_numeric_version(self) -> None:
-        # The tag carries only the numeric version; family lives in the suffix,
-        # so clang-20 resolves to prod-cpp-clang:20.
-        assert _container_tag("cpp", ["clang-20"]) == "20"
-        assert _container_tag("cpp", ["gcc-15"]) == "15"
+class TestResolveVersions:
+    def test_no_language_is_none(self) -> None:
+        toml = (
+            "[project]\n"
+            'repository-type = "documentation"\n'
+            'versioning-scheme = "semver"\n'
+            'branching-model = "library-release"\n'
+            'release-model = "none"\n'
+            "[ci]\n"
+            "[dependencies]\n"
+            'vergil = "v2.1"\n'
+        )
+        assert _resolve_versions(toml) is None
 
-    def test_container_tag_cpp_unparseable_falls_back_to_latest(self) -> None:
-        assert _container_tag("cpp", ["latest"]) == "latest"
-        assert _container_tag("cpp", []) == "latest"
+    def test_pin_outside_window_stops_the_wizard(self) -> None:
+        with pytest.raises(SystemExit, match=r"error: .*3\.11.*remove it from \[ci\]\.versions"):
+            _resolved("python", ["3.11"])
 
-    def test_default_ci_versions_cpp_seeds_clang_primary(self) -> None:
-        # The cpp default must be a clang-/gcc- prefixed tag so the derived
-        # suffix/tag are family-aware; a bare "latest" would render a base image.
-        default = _default_ci_versions("cpp")
-        assert default == "clang-20"
-        versions: list[str] = [v.strip() for v in default.split(",")]
-        assert _container_suffix("cpp", versions) == "cpp-clang"
-        assert _container_tag("cpp", versions) == "20"
+    def test_unpinned_family_language_stops_the_wizard(self) -> None:
+        with pytest.raises(SystemExit, match="cpp must pin"):
+            _resolved("cpp")
 
-    def test_container_suffix_typescript_is_ts_node(self) -> None:
-        # TypeScript's runtime family (node) rides the suffix; the Node major
-        # rides the tag, so node-24 resolves to prod-ts-node:24 (epic
-        # vergil-project/.github#284).
-        assert _container_suffix("typescript", ["node-24"]) == "ts-node"
-        assert _container_suffix("typescript", ["node-22"]) == "ts-node"
-
-    def test_container_suffix_typescript_uses_first_entry_as_primary(self) -> None:
-        # The representative top-level suffix comes from the primary (first) entry.
-        assert _container_suffix("typescript", ["node-22", "node-24"]) == "ts-node"
-
-    def test_container_suffix_typescript_unparseable_falls_back_to_base(self) -> None:
-        assert _container_suffix("typescript", ["latest"]) == "base"
-        assert _container_suffix("typescript", []) == "base"
-
-    def test_container_tag_typescript_is_numeric_major(self) -> None:
-        # The tag carries only the numeric Node major; the family lives in the
-        # suffix, so node-24 resolves to prod-ts-node:24.
-        assert _container_tag("typescript", ["node-24"]) == "24"
-        assert _container_tag("typescript", ["node-22"]) == "22"
-
-    def test_container_tag_typescript_unparseable_falls_back_to_latest(self) -> None:
-        assert _container_tag("typescript", ["latest"]) == "latest"
-        assert _container_tag("typescript", []) == "latest"
-
-    def test_default_ci_versions_typescript_seeds_node_primary(self) -> None:
-        # The typescript default must be node-/prefixed tags (primary first) so
-        # the derived suffix/tag are runtime-aware; a bare "latest" would render
-        # a base image.
-        default = _default_ci_versions("typescript")
-        assert default == "node-24, node-22"
-        versions: list[str] = [v.strip() for v in default.split(",")]
-        assert _container_suffix("typescript", versions) == "ts-node"
-        assert _container_tag("typescript", versions) == "24"
+    def test_warning_is_printed(self, capsys: pytest.CaptureFixture[str]) -> None:
+        toml = (
+            "[project]\n"
+            'repository-type = "application"\n'
+            'versioning-scheme = "semver"\n'
+            'branching-model = "library-release"\n'
+            'release-model = "tagged-release"\n'
+            'primary-language = "python"\n'
+            "[ci]\n"
+            'versions = ["3.13", "3.14"]\n'
+            "[dependencies]\n"
+            'vergil = "v2.1"\n'
+        )
+        resolution = _resolve_versions(toml)
+        assert resolution is not None
+        assert resolution.versions == ("3.14", "3.13")
+        assert "WARNING: [ci].versions pins 2 versions" in capsys.readouterr().err
 
 
 class TestRenderCdWorkflow:
@@ -1012,6 +1032,7 @@ class TestRenderCdWorkflow:
         ctx.publish_release = True
         ctx.primary_language = "python"
         ctx.ci_versions = ["3.12", "3.13", "3.14"]
+        ctx.resolution = _resolved("python", ctx.ci_versions)
         content = render_cd_workflow(ctx)
         assert "cd-release.yml@v2.1" in content
         assert "if: github.ref == 'refs/heads/main'" in content
@@ -1043,12 +1064,13 @@ class TestRenderCdWorkflow:
         ctx.publish_docs = True
         ctx.publish_release = True
         ctx.primary_language = "go"
-        ctx.ci_versions = ["1.22"]
+        ctx.resolution = _resolved("go")
         content = render_cd_workflow(ctx)
         assert "cd-docs.yml@v2.1" in content
         assert "cd-release.yml@v2.1" in content
         assert "language: go" in content
-        assert 'container-tag: "latest"' in content
+        # The release job runs on the resolved primary's image, prod-go:1.26.
+        assert 'container-tag: "1.26"' in content
         assert "attestations: write" in content
         # go needs no publishing token — no secrets block, never blanket inherit.
         assert "secrets: inherit" not in content
@@ -1387,7 +1409,7 @@ class TestStepGenerateConfig:
                 "3",  # branching-model: library-release
                 "4",  # versioning-scheme: semver
                 "4",  # release-model: tagged-release
-                "latest",  # ci versions
+                "",  # ci versions: no pin, follow the window
                 "n",  # integration tests
                 "y",  # publish releases
                 "y",  # publish docs
@@ -1412,6 +1434,11 @@ class TestStepGenerateConfig:
         assert toml_path.exists()
         content = toml_path.read_text()
         assert 'primary-language = "python"' in content
+        # No pin is written: the new repo follows the version window, and an
+        # app resolves to its newest version.
+        assert "versions =" not in content
+        assert ctx.resolution is not None
+        assert ctx.resolution.versions == ("3.14",)
 
         assert any("commit" in c for c in calls)
 
@@ -1505,7 +1532,7 @@ class TestStepGenerateConfig:
             'primary-language = "python"\n'
             "\n"
             "[ci]\n"
-            'versions = ["latest"]\n'
+            'versions = ["3.14"]\n'
             "integration-tests = false\n"
             "\n"
             "[publish]\n"
@@ -1533,6 +1560,8 @@ class TestStepGenerateConfig:
 
         assert ctx.primary_language == "python"
         assert ctx.repository_type == "tooling"
+        # The existing pin is kept.
+        assert ctx.ci_versions == ["3.14"]
 
     def test_non_interactive_resolves_flags_without_prompting(self, tmp_path: Path) -> None:
         ctx = RepoInitContext(org="vergil-project", name="vergil-vm")

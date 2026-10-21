@@ -8,15 +8,29 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.vergil_tooling.conftest import window_default_resolution
 from vergil_tooling.bin.vrg_container_test import (
     _detect_language,
     _runtime_is_available,
     build_test_container_args,
     main,
 )
+from vergil_tooling.lib.versions.resolve import ResolutionError
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
+
+
+@pytest.fixture(autouse=True)
+def _marker_language_resolution() -> Iterator[None]:
+    # Tests drop only a language marker (no vergil.toml); resolve the language
+    # to its newest fixture-window version instead of reading a vergil.toml.
+    with patch(
+        "vergil_tooling.bin.vrg_container_test.repo_resolution",
+        side_effect=window_default_resolution,
+    ):
+        yield
 
 
 # -- _detect_language ---------------------------------------------------------
@@ -181,6 +195,24 @@ def test_main_calls_execvp_nerdctl(tmp_path: Path) -> None:
         main([])
     mock_exec.assert_called_once()
     assert mock_exec.call_args[0][0] == "nerdctl"
+
+
+def test_main_resolution_error_exits_1(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # No fallback image: a version the window cannot resolve stops the run.
+    (tmp_path / "pyproject.toml").write_text("[project]\n")
+    with (
+        patch("vergil_tooling.bin.vrg_container_test.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_test.detect_runtime", return_value="docker"),
+        patch(
+            "vergil_tooling.bin.vrg_container_test.repo_resolution",
+            side_effect=ResolutionError("pin 3.11 is outside the window"),
+        ),
+        patch("vergil_tooling.bin.vrg_container_test.os.execvp") as mock_exec,
+        patch.dict("os.environ", {}, clear=True),
+    ):
+        assert main([]) == 1
+    mock_exec.assert_not_called()
+    assert "ERROR: pin 3.11 is outside the window" in capsys.readouterr().err
 
 
 # -- _runtime_is_available ---------------------------------------------------

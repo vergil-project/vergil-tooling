@@ -16,11 +16,11 @@ import sys
 
 from vergil_tooling.lib import git
 from vergil_tooling.lib.cli import cli_main
-from vergil_tooling.lib.config import primary_ci_version
 from vergil_tooling.lib.container import (
     assert_runtime_available,
     default_image,
     detect_runtime,
+    repo_resolution,
     resolve_language,
 )
 from vergil_tooling.lib.container_cache import (
@@ -31,6 +31,7 @@ from vergil_tooling.lib.container_cache import (
     find_cached_image,
     resolve_base_digest,
 )
+from vergil_tooling.lib.versions import VersionsError
 
 
 @cli_main
@@ -59,13 +60,17 @@ def main(argv: list[str] | None = None) -> int:
         "status": _cmd_status,
         "clean-all": _cmd_clean_all,
     }
-    return dispatch[args.command](args, runtime=runtime)
+    try:
+        return dispatch[args.command](args, runtime=runtime)
+    except VersionsError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
 
 def _cmd_build(_args: argparse.Namespace, *, runtime: str) -> int:
     repo_root = git.repo_root()
     lang = resolve_language(repo_root)
-    base = default_image(lang, fallback=True, version=primary_ci_version(repo_root))
+    base = default_image(repo_resolution(repo_root, lang), fallback=True)
     assert_runtime_available(runtime)
     image = ensure_cached_image(repo_root, lang, base, runtime=runtime)
     if image == base:
@@ -76,7 +81,7 @@ def _cmd_build(_args: argparse.Namespace, *, runtime: str) -> int:
 def _cmd_clean(_args: argparse.Namespace, *, runtime: str) -> int:
     repo_root = git.repo_root()
     lang = resolve_language(repo_root)
-    base = default_image(lang, fallback=True, version=primary_ci_version(repo_root))
+    base = default_image(repo_resolution(repo_root, lang), fallback=True)
     branch = git.current_branch()
     existing = find_cached_image(base, branch, runtime=runtime)
     if existing is None:
@@ -93,7 +98,7 @@ def _cmd_clean(_args: argparse.Namespace, *, runtime: str) -> int:
 def _cmd_status(_args: argparse.Namespace, *, runtime: str) -> int:
     repo_root = git.repo_root()
     lang = resolve_language(repo_root)
-    base = default_image(lang, fallback=True, version=primary_ci_version(repo_root))
+    base = default_image(repo_resolution(repo_root, lang), fallback=True)
     branch = git.current_branch()
     existing = find_cached_image(base, branch, runtime=runtime)
     files = cache_sensitive_files(repo_root, lang)
