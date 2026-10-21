@@ -12,6 +12,7 @@ from vergil_tooling.lib.container import (
     _DEFAULT_TEST_COMMANDS,
     _NPM_GLOBAL_ROOT,
     PYCACHE_PREFIX,
+    VERSION_WINDOW_MOUNT,
     assert_docker_available,
     build_container_args,
     build_docker_args,
@@ -22,10 +23,12 @@ from vergil_tooling.lib.container import (
     docker_platform,
     repo_resolution,
     resolve_language,
+    version_window_override,
     workspace_mount_args,
     worktree_parent_gitdir,
 )
 from vergil_tooling.lib.versions.resolve import ResolutionError
+from vergil_tooling.lib.versions.window import WINDOW_ENV, WindowError
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -886,3 +889,99 @@ def test_build_docker_args_pull_never_omits_pull_flag(tmp_path: Path) -> None:
         args = build_docker_args(tmp_path, "img:1", ["cmd"], pull_policy="never")
     assert "--pull=always" not in args
     assert not any(a.startswith("--pull=") for a in args)
+
+
+# -- VRG_VERSION_WINDOW override (issue #3392) ---------------------------------
+
+
+def test_version_window_override_unset_is_none() -> None:
+    assert version_window_override({}) is None
+
+
+def test_version_window_override_reads_os_environ(tmp_path: Path) -> None:
+    window_file = tmp_path / "window.json"
+    window_file.write_text("{}")
+    with patch.dict("os.environ", {WINDOW_ENV: str(window_file)}, clear=True):
+        assert version_window_override() == window_file.resolve()
+
+
+def test_version_window_override_absolutises_relative_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "window.json").write_text("{}")
+    monkeypatch.chdir(tmp_path)
+    resolved = version_window_override({WINDOW_ENV: "window.json"})
+    assert resolved == (tmp_path / "window.json").resolve()
+    assert resolved is not None
+    assert resolved.is_absolute()
+
+
+def test_version_window_override_missing_file_names_the_path(tmp_path: Path) -> None:
+    missing = tmp_path / "nope" / "window.json"
+    with pytest.raises(WindowError, match="not an existing file") as exc:
+        version_window_override({WINDOW_ENV: str(missing)})
+    assert str(missing.resolve()) in str(exc.value)
+
+
+def test_version_window_override_directory_is_not_a_file(tmp_path: Path) -> None:
+    with pytest.raises(WindowError, match="not an existing file"):
+        version_window_override({WINDOW_ENV: str(tmp_path)})
+
+
+def test_version_window_override_empty_fails() -> None:
+    with pytest.raises(WindowError, match="set but empty"):
+        version_window_override({WINDOW_ENV: ""})
+
+
+def test_version_window_override_rejects_colon_path(tmp_path: Path) -> None:
+    window_file = tmp_path / "a:b.json"
+    window_file.write_text("{}")
+    with pytest.raises(WindowError, match="cannot be bind-mounted") as exc:
+        version_window_override({WINDOW_ENV: str(window_file)})
+    assert str(window_file.resolve()) in str(exc.value)
+
+
+def test_build_container_args_mounts_version_window_read_only(tmp_path: Path) -> None:
+    window_file = tmp_path / "window.json"
+    window_file.write_text("{}")
+    with patch.dict("os.environ", {}, clear=True):
+        args = build_container_args(
+            tmp_path, "img:1", ["cmd"], runtime="docker", version_window=window_file
+        )
+    assert f"{window_file}:{VERSION_WINDOW_MOUNT}:ro" in args
+    assert _env_value(args, WINDOW_ENV) == VERSION_WINDOW_MOUNT
+    assert args.index(f"{window_file}:{VERSION_WINDOW_MOUNT}:ro") < args.index("img:1")
+
+
+def test_build_container_args_without_version_window_adds_nothing(tmp_path: Path) -> None:
+    with patch.dict("os.environ", {}, clear=True):
+        args = build_container_args(tmp_path, "img:1", ["cmd"], runtime="docker")
+    assert not any(VERSION_WINDOW_MOUNT in a for a in args)
+    assert not any(a.startswith(WINDOW_ENV) for a in args)
+
+
+def test_build_container_args_never_forwards_raw_window_path(tmp_path: Path) -> None:
+    # A VRG_ passthrough must not forward the host path: the container cannot
+    # see it. Only the rewritten mount path reaches the container.
+    window_file = tmp_path / "window.json"
+    window_file.write_text("{}")
+    env = {WINDOW_ENV: str(window_file), "VRG_OTHER": "x"}
+    with patch.dict("os.environ", env, clear=True):
+        args = build_container_args(
+            tmp_path,
+            "img:1",
+            ["cmd"],
+            runtime="docker",
+            env_prefixes=("VRG_",),
+            version_window=window_file,
+        )
+        bare = build_container_args(
+            tmp_path, "img:1", ["cmd"], runtime="docker", env_prefixes=("VRG_",)
+        )
+    assert "VRG_OTHER" in args
+    assert WINDOW_ENV not in args
+    assert [a for a in args if a.startswith(f"{WINDOW_ENV}=")] == [
+        f"{WINDOW_ENV}={VERSION_WINDOW_MOUNT}"
+    ]
+    assert WINDOW_ENV not in bare
+    assert not any(a.startswith(f"{WINDOW_ENV}=") for a in bare)

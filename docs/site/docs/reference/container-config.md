@@ -77,6 +77,36 @@ stale `.pyc` already in the working tree is ignored. A host override pointing
 inside the repo would put bytecode back on the mount, so keep any override
 outside it.
 
+### `VRG_VERSION_WINDOW`: a local version window
+
+The version resolver reads the language version window that `vergil-containers`
+publishes at the repo's `[dependencies].vergil` ref, over the network.
+`VRG_VERSION_WINDOW=<path>` is the one sanctioned override: it names a local
+`window.json` to resolve from instead, for example to validate offline. The
+published window is never silently replaced, and an explicit override is never
+silently dropped (epic
+[vergil-project/.github#407](https://github.com/vergil-project/.github/issues/407)).
+
+A host path is not visible inside the container, so `vrg-container-run` does not
+forward the variable as is. When `VRG_VERSION_WINDOW` is set on the host, it:
+
+1. resolves the path to an absolute one (a relative path is taken from the
+   current directory);
+2. stops on the host, before any image work, if the value is empty, the path is
+   not an existing file, or the path contains a `:` (which the `-v` bind syntax
+   cannot carry). The error names the path;
+3. bind-mounts the file read-only at `/run/vergil/version-window.json`;
+4. sets `VRG_VERSION_WINDOW=/run/vergil/version-window.json` in the container.
+
+The run banner shows the file in use (`Window:   <path> (VRG_VERSION_WINDOW)`).
+The host value is never forwarded, even when an `env-prefixes` entry such as
+`VRG_` matches it. When the variable is unset, nothing changes: the container
+fetches the published window.
+
+```bash
+VRG_VERSION_WINDOW=/abs/path/window.json vrg-container-run -- vrg-ci-resolve
+```
+
 ## `system-packages`
 
 A list of Debian package **names** — nothing more. Vergil's container model
