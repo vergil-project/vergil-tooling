@@ -11,9 +11,11 @@ import pytest
 
 from vergil_tooling.lib.pr_workflow.state import WorkflowState
 from vergil_tooling.lib.worktrees import (
+    MainCheckoutStatus,
     MergeCommitsError,
     RawWorktree,
     Worktree,
+    WorktreeKind,
     WorktreeState,
     WorktreeStatus,
     _branch_from_worktree_name,
@@ -21,9 +23,13 @@ from vergil_tooling.lib.worktrees import (
     _probe_pr_workflow,
     _rebase_head_name,
     classify_worktree,
+    discover_repo_worktrees,
     discover_worktrees,
     gather_detached_status,
+    gather_main_checkout_status,
     gather_worktree_status,
+    gone_branches,
+    is_canonical_worktree,
     list_worktrees,
     match_worktrees,
     rebase_onto,
@@ -31,6 +37,7 @@ from vergil_tooling.lib.worktrees import (
     select_worktree,
     select_worktrees,
     worktree_for_branch,
+    worktree_kind,
     worktree_still_present,
 )
 
@@ -961,3 +968,195 @@ def test_detached_worktree_present_without_branch_check() -> None:
     ):
         assert worktree_still_present(raw, Path("/repo")) is True
     ref_exists.assert_not_called()
+
+
+# -- Repo-wide discovery for vrg-worktree-status (issue #3386) -----------------
+
+_PORCELAIN_REPO_WIDE = """\
+worktree /repo
+HEAD 1111111111111111111111111111111111111111
+branch refs/heads/develop
+
+worktree /repo/.worktrees/issue-7-foo
+HEAD 2222222222222222222222222222222222222222
+branch refs/heads/feature/7-foo
+
+worktree /elsewhere/rogue
+HEAD 3333333333333333333333333333333333333333
+branch refs/heads/feature/9-rogue
+
+worktree /repo/.worktrees/tmp-wheel-build
+HEAD 4444444444444444444444444444444444444444
+detached
+"""
+
+
+def test_discover_repo_worktrees_keeps_main_and_every_linked_worktree() -> None:
+    """The status view sees the main checkout and every linked worktree,
+    including one outside .worktrees/ and a detached one."""
+    with patch(_MOD + ".git.read_output", return_value=_PORCELAIN_REPO_WIDE):
+        repo = discover_repo_worktrees()
+    assert repo.main == RawWorktree(path=Path("/repo"), branch="develop")
+    assert repo.linked == (
+        RawWorktree(path=Path("/repo/.worktrees/issue-7-foo"), branch="feature/7-foo"),
+        RawWorktree(path=Path("/elsewhere/rogue"), branch="feature/9-rogue"),
+        RawWorktree(path=Path("/repo/.worktrees/tmp-wheel-build"), branch=None),
+    )
+
+
+def test_discover_worktrees_unchanged_by_repo_wide_discovery() -> None:
+    """Finalize and sweep callers still see only canonical worktrees."""
+    with patch(_MOD + ".git.read_output", return_value=_PORCELAIN_REPO_WIDE):
+        result = discover_worktrees(Path("/repo"))
+    assert result == [
+        RawWorktree(path=Path("/repo/.worktrees/issue-7-foo"), branch="feature/7-foo"),
+        RawWorktree(path=Path("/repo/.worktrees/tmp-wheel-build"), branch=None),
+    ]
+
+
+def test_is_canonical_worktree() -> None:
+    assert is_canonical_worktree(Path("/repo/.worktrees/issue-7-foo"), Path("/repo")) is True
+    assert is_canonical_worktree(Path("/elsewhere/rogue"), Path("/repo")) is False
+    assert is_canonical_worktree(Path("/repo"), Path("/repo")) is False
+
+
+@pytest.mark.parametrize(
+    ("branch", "canonical", "kind"),
+    [
+        ("feature/7-foo", True, WorktreeKind.DEVELOPMENT),
+        ("release/1.4.0", True, WorktreeKind.MACHINERY),
+        ("release/post-1.4.0", True, WorktreeKind.MACHINERY),
+        ("deps/update-1.0.3", True, WorktreeKind.MACHINERY),
+        ("bugfix/7-foo", True, WorktreeKind.OTHER),
+        ("feature/no-issue-number", True, WorktreeKind.OTHER),
+        ("experiment", True, WorktreeKind.OTHER),
+        ("(detached)", True, WorktreeKind.OTHER),
+        (None, True, WorktreeKind.OTHER),
+        # Outside .worktrees/ is always Other, whatever the branch.
+        ("feature/9-rogue", False, WorktreeKind.OTHER),
+        ("release/1.4.0", False, WorktreeKind.OTHER),
+    ],
+)
+def test_worktree_kind(branch: str | None, canonical: bool, kind: WorktreeKind) -> None:
+    assert worktree_kind(branch, canonical=canonical) is kind
+
+
+def test_worktree_still_present_any_location_uses_repo_wide_discovery() -> None:
+    rogue = RawWorktree(path=Path("/elsewhere/rogue"), branch="feature/9-rogue")
+    with (
+        patch(_MOD + ".git.read_output", return_value=_PORCELAIN_REPO_WIDE),
+        patch(_MOD + ".git.ref_exists", return_value=True),
+    ):
+        assert worktree_still_present(rogue, Path("/repo"), any_location=True) is True
+        assert worktree_still_present(rogue, Path("/repo")) is False
+
+
+def _main_status(
+    tmp_path: Path, raw: RawWorktree, *, porcelain: str = "", integration: str = "develop"
+) -> MainCheckoutStatus:
+    git_dir = tmp_path / "gitdir"
+    git_dir.mkdir(exist_ok=True)
+    with (
+        patch(_MOD + ".git.worktree_git_dir", return_value=git_dir),
+        patch(_MOD + ".git.read_output", return_value=porcelain),
+        patch(_MOD + ".git.committer_timestamp", return_value=1_699_900_000),
+    ):
+        return gather_main_checkout_status(raw, integration=integration)
+
+
+def test_main_checkout_on_integration_branch_is_ok(tmp_path: Path) -> None:
+    status = _main_status(tmp_path, RawWorktree(path=Path("/repo"), branch="develop"))
+    assert status.branch == "develop"
+    assert status.problems == ()
+    assert status.notes == ()
+    assert status.last_commit_ts == 1_699_900_000
+
+
+def test_main_checkout_off_integration_branch_is_flagged(tmp_path: Path) -> None:
+    raw = RawWorktree(path=Path("/repo"), branch="feature/12-x")
+    status = _main_status(tmp_path, raw)
+    assert status.problems == ("not on develop",)
+
+
+def test_main_checkout_uses_configured_integration_branch(tmp_path: Path) -> None:
+    raw = RawWorktree(path=Path("/repo"), branch="main")
+    assert _main_status(tmp_path, raw, integration="main").problems == ()
+
+
+def test_main_checkout_dirty_is_flagged_with_paths(tmp_path: Path) -> None:
+    raw = RawWorktree(path=Path("/repo"), branch="develop")
+    status = _main_status(tmp_path, raw, porcelain=" M src/x.py\n?? notes.txt")
+    assert status.dirty is True
+    assert status.problems == ("dirty",)
+    assert status.notes == ("2 uncommitted path(s): src/x.py, notes.txt",)
+
+
+def test_main_checkout_mid_rebase_is_flagged(tmp_path: Path) -> None:
+    git_dir = tmp_path / "gitdir"
+    (git_dir / "rebase-merge").mkdir(parents=True)
+    (git_dir / "rebase-merge" / "head-name").write_text("refs/heads/develop\n")
+    status = _main_status(tmp_path, RawWorktree(path=Path("/repo"), branch=None))
+    assert status.branch == "develop"
+    assert status.rebasing is True
+    assert status.problems == ("mid-rebase",)
+    assert any("rebase in progress" in note for note in status.notes)
+
+
+def test_main_checkout_detached_is_off_integration(tmp_path: Path) -> None:
+    status = _main_status(tmp_path, RawWorktree(path=Path("/repo"), branch=None))
+    assert status.branch is None
+    assert status.problems == ("not on develop",)
+
+
+def test_main_checkout_every_problem_at_once(tmp_path: Path) -> None:
+    git_dir = tmp_path / "gitdir"
+    (git_dir / "rebase-apply").mkdir(parents=True)
+    (git_dir / "rebase-apply" / "head-name").write_text("refs/heads/feature/1-x\n")
+    raw = RawWorktree(path=Path("/repo"), branch=None)
+    status = _main_status(tmp_path, raw, porcelain="UU src/x.py")
+    assert status.problems == ("not on develop", "dirty", "mid-rebase")
+
+
+def test_gone_branches_flags_upstream_missing_on_remote() -> None:
+    upstreams = {
+        "develop": ("origin", "develop"),
+        "feature/1-merged": ("origin", "feature/1-merged"),
+        "feature/2-live": ("origin", "feature/2-live"),
+        "feature/3-tracks-develop": ("origin", "develop"),
+    }
+    with (
+        patch(_MOD + ".git.branch_upstreams", return_value=upstreams),
+        patch(_MOD + ".git.remote_branches", return_value={"develop", "feature/2-live"}) as remote,
+    ):
+        gone = gone_branches(
+            [
+                "develop",
+                "feature/1-merged",
+                "feature/2-live",
+                "feature/3-tracks-develop",
+                "feature/4-never-pushed",
+            ]
+        )
+    assert gone == {"feature/1-merged"}
+    remote.assert_called_once_with("origin")
+
+
+def test_gone_branches_skips_remote_lookup_without_upstreams() -> None:
+    with (
+        patch(_MOD + ".git.branch_upstreams", return_value={}),
+        patch(_MOD + ".git.remote_branches") as remote,
+    ):
+        assert gone_branches(["feature/4-never-pushed"]) == set()
+    remote.assert_not_called()
+
+
+def test_gone_branches_propagates_remote_failure() -> None:
+    err = subprocess.CalledProcessError(128, ("git", "ls-remote"), stderr="no network")
+    with (
+        patch(
+            _MOD + ".git.branch_upstreams", return_value={"feature/1-x": ("origin", "feature/1-x")}
+        ),
+        patch(_MOD + ".git.remote_branches", side_effect=err),
+        pytest.raises(subprocess.CalledProcessError),
+    ):
+        gone_branches(["feature/1-x"])

@@ -188,26 +188,69 @@ ruleset rule), a branch with no PR, or a branch whose name was reused
 
 ### vrg-worktree-status
 
-List canonical `.worktrees/` worktrees with their derived lifecycle
-state, so removable cruft (merged/closed PRs whose worktree was never
-cleaned up) is distinguishable from in-flight work at a glance.
-Read-only — cleanup stays `vrg-finalize-pr`'s job. PR state is queried
-from GitHub per worktree; a failed lookup shows as `unknown` with the
-reason rather than being silently downgraded. The summary counts fall
+Show every worktree git knows about in the current repo, grouped by
+kind, so nothing with code on disk goes unseen (issue #3386). Read-only
+— cleanup stays `vrg-finalize-pr`'s job, and finalize and sweep still
+act only on development worktrees. Local branches with no worktree are
+not shown. The sections, in order:
+
+1. **Main checkout** — always shown. Its STATUS is `ok`, or `PROBLEM:`
+   followed by each issue found: not on the integration branch, dirty,
+   or mid-rebase. The integration branch comes from the
+   `branching-model` in `vergil.toml` (every current model integrates on
+   `develop`); without a `vergil.toml` it defaults to `develop` and a
+   note says so. A malformed `vergil.toml` is an error (exit 1).
+2. **Development** — `feature/<N>-<slug>` worktrees under `.worktrees/`.
+   A mid-rebase worktree is placed by the branch recovered from the
+   paused rebase or its `issue-<N>-<slug>` directory name.
+3. **Release and dependency machinery** — `release/*`, `release/post-*`
+   and `deps/update-*` worktrees. These are meant to be single-run, so
+   each row shows age, PR state and dirty state and a leftover stands out.
+4. **Other / unknown** — any other branch, a detached HEAD, or a
+   worktree outside `.worktrees/` (shown by its full path).
+
+Empty sections are omitted; the summary line counts every section,
+including the empty ones. A branch that was deleted on its remote is
+still listed, with `(branch gone)` after its name. That check queries
+each remote once; if it fails, a note gives the reason.
+
+The worktree sections share one table. PR state is queried from GitHub
+per worktree; a failed lookup shows as `unknown` with the reason rather
+than being silently downgraded. The development summary counts fall
 into disjoint buckets — **active**, **needs-attention**, **stalled
 (no-pr)**, and **cruft (removable)**. A finished-but-stuck worktree
 (merged/closed but not removable: dirty, or a reused branch name whose
 merged verdict was withheld, issue #1719) is counted under
 **needs-attention** with an actionable note, never miscounted as active
-behind a "0 cruft" message (issue #2347).
+behind a "0 cruft" message (issue #2347). A merged release or deps
+worktree shows as `merged` in its own section but is not counted as
+`vrg-finalize-pr` cruft.
+
+```text
+Main checkout (integration branch: develop)
+CHECKOUT               BRANCH   DIRTY  LAST COMMIT  STATUS
+mq-gateway-replay-lab  develop  -      23d ago      ok
+
+Development
+WORKTREE                      BRANCH                          PR  STATE  WORKFLOW  AHEAD  DIRTY  LAST COMMIT  LAST MODIFIED
+issue-315-deps-security-bump  feature/315-deps-security-bump  -   no-pr  ready     1      -      1h ago       1h ago
+
+Other / unknown
+WORKTREE         BRANCH      PR  STATE     WORKFLOW  AHEAD  DIRTY  LAST COMMIT  LAST MODIFIED
+tmp-wheel-build  (detached)  -   detached  -         0      -      82d ago      82d ago
+  note: tmp-wheel-build (detached): detached HEAD — no branch checked out; check out a branch to resume work
+
+3 worktrees: main checkout (ok), 1 development, 0 release and dependency machinery, 1 other / unknown.
+Development: 0 active, 0 needs-attention, 1 stalled (no-pr), 0 cruft (removable). 1 PR prepared.
+```
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_worktree_status` |
-| Args | `--target-branch` (default: develop) |
+| Args | `--target-branch` (default: develop) — the branch AHEAD is measured against |
 | Preconditions | Git repo; `gh` CLI on PATH for PR state |
-| Failure mode | None for classification — a failed PR lookup is reported as an `unknown` row, never a crash |
-| Exit codes | 0 always (read-only) |
+| Failure mode | None for classification — a failed PR lookup is reported as an `unknown` row and a failed branch-gone check as a note, never a crash. A malformed `vergil.toml` exits 1 with the reason |
+| Exit codes | 0 success, 1 malformed `vergil.toml` |
 | Status | Active |
 
 ### vrg-ensure-label

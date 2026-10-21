@@ -5,6 +5,11 @@ under the canonical ``.worktrees/`` container, branch lookup, and
 interactive selection. Worktrees elsewhere (developer-managed,
 outside the convention) are deliberately ignored — auto-acting on
 them would surprise the user. Issue #315.
+
+The one exception is the read-only status view: ``discover_repo_worktrees``
+lists the main checkout and every linked worktree wherever it lives, so
+nothing with code on disk goes unseen (issue #3386). It never feeds the
+finalize or sweep paths.
 """
 
 from __future__ import annotations
@@ -14,11 +19,15 @@ import sys
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import git, github
+from vergil_tooling.lib import branch_names, git, github
 from vergil_tooling.lib.pr_workflow.errors import WorkflowError
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
 from vergil_tooling.lib.repo_init import prompt_choice, prompt_multi_choice
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 
 class MergeCommitsError(Exception):
@@ -370,8 +379,16 @@ def discover_worktrees(repo_root: Path) -> list[RawWorktree]:
     the callers (finalize/submit sweeps) that must not act on a mid-operation
     worktree.
     """
+    return [raw for raw in _list_all_worktrees() if is_canonical_worktree(raw.path, repo_root)]
+
+
+def _list_all_worktrees() -> list[RawWorktree]:
+    """Parse ``git worktree list --porcelain`` into one record per worktree.
+
+    Every worktree git knows about, in git's order (the main checkout first),
+    with resolved paths. ``branch`` is ``None`` for a detached HEAD.
+    """
     output = git.read_output("worktree", "list", "--porcelain")
-    canonical_root = (repo_root / ".worktrees").resolve()
 
     records: list[RawWorktree] = []
     current_path: Path | None = None
@@ -380,13 +397,7 @@ def discover_worktrees(repo_root: Path) -> list[RawWorktree]:
     def flush() -> None:
         nonlocal current_path, current_branch
         if current_path is not None:
-            resolved = current_path.resolve()
-            try:
-                resolved.relative_to(canonical_root)
-            except ValueError:
-                pass
-            else:
-                records.append(RawWorktree(path=resolved, branch=current_branch))
+            records.append(RawWorktree(path=current_path.resolve(), branch=current_branch))
         current_path = None
         current_branch = None
 
@@ -405,7 +416,71 @@ def discover_worktrees(repo_root: Path) -> list[RawWorktree]:
     return records
 
 
-def worktree_still_present(raw: RawWorktree, repo_root: Path) -> bool:
+def is_canonical_worktree(path: Path, repo_root: Path) -> bool:
+    """Return True when *path* lies inside ``repo_root/.worktrees/``."""
+    try:
+        path.resolve().relative_to((repo_root / ".worktrees").resolve())
+    except ValueError:
+        return False
+    return True
+
+
+@dataclass(frozen=True)
+class RepoWorktrees:
+    """Every worktree in the repo: the main checkout and all linked worktrees.
+
+    ``linked`` includes worktrees outside ``.worktrees/`` and detached ones.
+    Only the read-only status view uses this; finalize and sweep keep using
+    ``discover_worktrees`` / ``list_worktrees`` (issue #3386).
+    """
+
+    main: RawWorktree
+    linked: tuple[RawWorktree, ...]
+
+
+def discover_repo_worktrees() -> RepoWorktrees:
+    """Return the main checkout and every linked worktree git knows about.
+
+    Git always lists the main worktree first.
+    """
+    main, *linked = _list_all_worktrees()
+    return RepoWorktrees(main=main, linked=tuple(linked))
+
+
+class WorktreeKind(StrEnum):
+    """The status-view section a linked worktree belongs to (issue #3386)."""
+
+    DEVELOPMENT = "development"
+    MACHINERY = "machinery"
+    OTHER = "other"
+
+
+# Branch prefixes the release and dependency-update tooling creates:
+# release/<version>, release/post-<version> and deps/update-<version>.
+_MACHINERY_PREFIXES = ("release/", "deps/update-")
+
+
+def worktree_kind(branch: str | None, *, canonical: bool) -> WorktreeKind:
+    """Classify a linked worktree by its branch and location.
+
+    ``feature/<N>-<slug>`` under ``.worktrees/`` is development work; the
+    release and dependency-update branches are machinery; everything else —
+    any other branch, a detached HEAD, or any worktree outside ``.worktrees/``
+    — is other.
+    """
+    if not canonical or branch is None:
+        return WorktreeKind.OTHER
+    parsed = branch_names.parse_issue_branch(branch)
+    if parsed is not None and parsed.type == "feature":
+        return WorktreeKind.DEVELOPMENT
+    if branch.startswith(_MACHINERY_PREFIXES):
+        return WorktreeKind.MACHINERY
+    return WorktreeKind.OTHER
+
+
+def worktree_still_present(
+    raw: RawWorktree, repo_root: Path, *, any_location: bool = False
+) -> bool:
     """Return True if *raw* still exists exactly as discovered.
 
     ``discover_worktrees`` is a snapshot; a concurrent operation (e.g. a
@@ -414,8 +489,12 @@ def worktree_still_present(raw: RawWorktree, repo_root: Path) -> bool:
     git call failed uses this to tell that race apart from a genuine failure:
     the worktree is still present only if it is re-discovered at the same path
     with the same branch and, when it has one, that branch ref still exists.
+
+    ``any_location`` re-discovers across the whole repo rather than only under
+    ``.worktrees/``, for a caller that listed every worktree (issue #3386).
     """
-    if raw not in discover_worktrees(repo_root):
+    rediscovered = _list_all_worktrees() if any_location else discover_worktrees(repo_root)
+    if raw not in rediscovered:
         return False
     return raw.branch is None or git.ref_exists(f"refs/heads/{raw.branch}")
 
@@ -527,6 +606,79 @@ def gather_detached_status(
         last_commit_ts=last_commit_ts,
         last_modified_ts=last_modified_ts,
     )
+
+
+@dataclass(frozen=True)
+class MainCheckoutStatus:
+    """The main checkout's state, for the status view's first section.
+
+    ``branch`` is the checked-out branch; during a paused rebase it is the
+    branch being rebuilt, and ``None`` for any other detached HEAD.
+    """
+
+    path: Path
+    branch: str | None
+    integration: str
+    dirty: bool
+    rebasing: bool
+    notes: tuple[str, ...]
+    last_commit_ts: float | None
+
+    @property
+    def problems(self) -> tuple[str, ...]:
+        """Why the main checkout needs attention; empty when it is fine."""
+        found: list[str] = []
+        if self.branch != self.integration:
+            found.append(f"not on {self.integration}")
+        if self.dirty:
+            found.append("dirty")
+        if self.rebasing:
+            found.append("mid-rebase")
+        return tuple(found)
+
+
+def gather_main_checkout_status(raw: RawWorktree, *, integration: str) -> MainCheckoutStatus:
+    """Gather the main checkout's branch, dirty and mid-rebase signals.
+
+    The main checkout should sit clean on *integration* (issue #3386). The
+    notes say what the dirt is and how to finish a paused rebase.
+    """
+    git_dir = git.worktree_git_dir(raw.path)
+    rebasing = _rebase_in_progress(git_dir)
+    branch = raw.branch or _rebase_head_name(git_dir)
+    porcelain = git.read_output("-C", str(raw.path), "status", "--porcelain")
+    notes: list[str] = []
+    if porcelain:
+        notes.append(_describe_dirt(porcelain))
+    if rebasing:
+        notes.append(
+            "rebase in progress — resolve conflicts and run 'vrg-git rebase --continue', "
+            "or 'vrg-git rebase --abort' to undo"
+        )
+    return MainCheckoutStatus(
+        path=raw.path,
+        branch=branch,
+        integration=integration,
+        dirty=bool(porcelain),
+        rebasing=rebasing,
+        notes=tuple(notes),
+        last_commit_ts=git.committer_timestamp(raw.path),
+    )
+
+
+def gone_branches(branches: Iterable[str]) -> set[str]:
+    """Return the *branches* whose upstream was deleted on its remote.
+
+    A branch counts as gone when it tracks a remote branch that the remote no
+    longer has. A branch with no upstream (never pushed) is not gone. Each
+    remote is queried once with ``ls-remote``; a failed query raises
+    ``CalledProcessError`` for the caller to report.
+    """
+    upstreams = git.branch_upstreams()
+    tracked = {b: upstreams[b] for b in branches if b in upstreams}
+    remotes = {remote for remote, _ in tracked.values()}
+    heads = {remote: git.remote_branches(remote) for remote in remotes}
+    return {b for b, (remote, ref) in tracked.items() if ref not in heads[remote]}
 
 
 def worktree_for_branch(branch: str, repo_root: Path) -> Path | None:

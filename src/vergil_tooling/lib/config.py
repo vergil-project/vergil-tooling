@@ -41,6 +41,16 @@ _RETIRED_PRIMARY_LANGUAGES: dict[str, str] = {
     "ruby": "Ruby support was removed in epic vergil-project/.github#407",
 }
 
+# The branch each branching model integrates feature work into. Every current
+# model integrates on develop (develop is docs-single-branch's only eternal
+# branch). The table keeps the mapping explicit, so a model that integrates
+# elsewhere is one entry here rather than a guess in each caller (issue #3386).
+INTEGRATION_BRANCH_BY_MODEL: dict[str, str] = {
+    "library-release": "develop",
+    "application-promotion": "develop",
+    "docs-single-branch": "develop",
+}
+
 # The [cpp] block (epic vergil-project/.github#207 §3.3). The compiler family ×
 # version axis rides [ci].versions (the ``clang-``/``gcc-`` tag prefix); the two
 # cheap in-build axes are single-valued [cpp] keys. v1 pins std = c++20 and
@@ -1176,6 +1186,21 @@ def primary_ci_version(repo_root: Path) -> str | None:
     except FileNotFoundError:
         return None
     return cfg.ci.versions[0]
+
+
+def integration_branch(repo_root: Path) -> str | None:
+    """Return the branch feature work integrates into, per the branching model.
+
+    Returns ``None`` when the repo has no ``vergil.toml``; the caller decides
+    the default and says so. A ``ConfigError`` from a malformed config
+    propagates, matching :func:`primary_ci_version`. The parser already rejects
+    an unknown ``branching-model``, so the lookup always succeeds.
+    """
+    try:
+        cfg = read_config(repo_root)
+    except FileNotFoundError:
+        return None
+    return INTEGRATION_BRANCH_BY_MODEL[cfg.project.branching_model]
 
 
 def declared_primary_language(repo_root: Path) -> str | None:
