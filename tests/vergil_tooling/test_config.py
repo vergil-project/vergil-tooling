@@ -8,11 +8,13 @@ from unittest.mock import patch
 import pytest
 
 from vergil_tooling.lib.config import (
+    _ENUMS,
     DEFAULT_CPP_STD,
     DEFAULT_CPP_STDLIB,
     DEFAULT_TYPESCRIPT_MODULE,
     DEFAULT_TYPESCRIPT_TARGET,
     DEFAULT_VALIDATION_COMMAND,
+    INTEGRATION_BRANCH_BY_MODEL,
     CiConfig,
     ConfigError,
     ContainerConfig,
@@ -30,6 +32,7 @@ from vergil_tooling.lib.config import (
     container_system_packages,
     declared_primary_language,
     dependency_update_hook,
+    integration_branch,
     parse_test_workers,
     parse_vm_stanza,
     primary_ci_version,
@@ -2090,3 +2093,31 @@ def test_overlay_is_ignored_without_package_section(tmp_path: Path) -> None:
     (tmp_path / "packaging").mkdir()
     (tmp_path / "packaging" / "nfpm.overlay.yaml").write_text("name: other\n")
     assert read_config(tmp_path).package is None
+
+
+# -- integration_branch (issue #3386) ------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "model", ["library-release", "application-promotion", "docs-single-branch"]
+)
+def test_integration_branch_per_model(tmp_path: Path, model: str) -> None:
+    toml = _VALID_TOML.replace('"library-release"', f'"{model}"')
+    (tmp_path / "vergil.toml").write_text(toml)
+    assert integration_branch(tmp_path) == INTEGRATION_BRANCH_BY_MODEL[model]
+
+
+def test_integration_branch_every_model_is_mapped() -> None:
+    # A new branching model must declare its integration branch, never fall
+    # through to a silent default.
+    assert set(INTEGRATION_BRANCH_BY_MODEL) == _ENUMS["branching-model"]
+
+
+def test_integration_branch_none_when_no_config(tmp_path: Path) -> None:
+    assert integration_branch(tmp_path) is None
+
+
+def test_integration_branch_propagates_config_error(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text("[invalid\n")
+    with pytest.raises(ConfigError):
+        integration_branch(tmp_path)

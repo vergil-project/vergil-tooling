@@ -302,6 +302,27 @@ def remote_branches(remote: str = "origin") -> set[str]:
     return names
 
 
+def branch_upstreams() -> dict[str, tuple[str, str]]:
+    """Map each local branch that tracks a remote branch to ``(remote, branch)``.
+
+    Read from local config with ``for-each-ref``, so it is present even after
+    the remote branch is deleted. Branches with no upstream, or with a local
+    upstream (remote ``.``), are omitted. Used to tell whether a worktree's
+    branch was deleted on its remote (issue #3386).
+    """
+    output = read_output(
+        "for-each-ref",
+        "--format=%(refname:short)%09%(upstream:remotename)%09%(upstream:remoteref)",
+        "refs/heads",
+    )
+    upstreams: dict[str, tuple[str, str]] = {}
+    for line in output.splitlines():
+        branch, remote, ref = (line.split("\t") + ["", ""])[:3]
+        if branch and remote and remote != "." and ref:
+            upstreams[branch] = (remote, ref.removeprefix("refs/heads/"))
+    return upstreams
+
+
 def working_tree_status() -> str:
     """Return ``git status --porcelain`` output (empty string when clean)."""
     return read_output("status", "--porcelain")

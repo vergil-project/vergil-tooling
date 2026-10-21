@@ -520,3 +520,28 @@ class TestNetworkRetry:
             git.read_output("ls-remote", "--heads", "origin")
         assert m_run.call_count == retry.MAX_RETRIES + 1
         assert "Could not read from remote" in capsys.readouterr().err
+
+
+def test_branch_upstreams_maps_remote_tracking_branches() -> None:
+    output = (
+        "develop\torigin\trefs/heads/develop\n"
+        "feature/12-x\torigin\trefs/heads/feature/12-x\n"
+        "feature/13-y\t\t\n"  # no upstream configured — omitted
+        "feature/14-z\t.\trefs/heads/develop"  # local upstream — not a remote
+    )
+    with patch("vergil_tooling.lib.git.read_output", return_value=output) as mock:
+        result = git.branch_upstreams()
+    assert result == {
+        "develop": ("origin", "develop"),
+        "feature/12-x": ("origin", "feature/12-x"),
+    }
+    mock.assert_called_once_with(
+        "for-each-ref",
+        "--format=%(refname:short)%09%(upstream:remotename)%09%(upstream:remoteref)",
+        "refs/heads",
+    )
+
+
+def test_branch_upstreams_empty() -> None:
+    with patch("vergil_tooling.lib.git.read_output", return_value=""):
+        assert git.branch_upstreams() == {}
