@@ -32,6 +32,7 @@ from vergil_tooling.lib.container import (
     version_window_override,
 )
 from vergil_tooling.lib.container_cache import ensure_cached_image
+from vergil_tooling.lib.process import exec_replace
 from vergil_tooling.lib.versions import VersionsError
 from vergil_tooling.lib.versions.extensions import container_env
 
@@ -197,9 +198,9 @@ def main(argv: list[str] | None = None) -> int:
         version_window=version_window,
     )
     if runtime == "nerdctl":
-        os.execvp("nerdctl", container_args)  # noqa: S606, S607
+        exec_replace("nerdctl", container_args)
     else:
-        os.execvp("docker", container_args)  # noqa: S606, S607
+        exec_replace("docker", container_args)
     return 0  # pragma: no cover
 
 

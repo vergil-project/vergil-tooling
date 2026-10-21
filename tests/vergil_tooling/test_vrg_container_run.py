@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import io
 import os
+import sys
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
@@ -631,6 +633,38 @@ def test_python_routes_through_cache(tmp_path: Path) -> None:
         mock_cache.return_value = "ghcr.io/vergil-project/dev-python:3.14--develop--aabbccdd"
         main(["--", "uv", "run", "pytest"])
     mock_cache.assert_called_once()
+
+
+def test_banner_flushed_before_exec_when_stdout_is_not_a_tty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Issue #3396: a pipe or file makes Python block-buffer stdout, and execvp
+    # replaces the process without flushing it, so the banner was silently
+    # lost. Model that stream and record what had reached it when execvp ran.
+    (tmp_path / "pyproject.toml").write_text("[project]\n")
+    raw = io.BytesIO()
+    monkeypatch.setattr(sys, "stdout", io.TextIOWrapper(raw, encoding="utf-8"))
+    written_at_exec: list[str] = []
+
+    def _exec(_prog: str, _args: list[str]) -> None:
+        written_at_exec.append(raw.getvalue().decode())
+
+    with (
+        patch("vergil_tooling.bin.vrg_container_run.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_run.assert_runtime_available"),
+        patch(
+            "vergil_tooling.bin.vrg_container_run.ensure_cached_image", return_value="cached:img"
+        ),
+        patch("vergil_tooling.bin.vrg_container_run.detect_runtime", return_value="docker"),
+        patch("vergil_tooling.bin.vrg_container_run.os.execvp", side_effect=_exec),
+        patch.dict("os.environ", {"GH_TOKEN": "tok"}, clear=True),
+    ):
+        main(["--", "echo", "hi"])
+
+    assert len(written_at_exec) == 1
+    assert "Language: python" in written_at_exec[0]
+    assert "Command:  echo hi" in written_at_exec[0]
+    assert written_at_exec[0].rstrip().endswith("---")
 
 
 # -- test-tuning env (issue #3322) ------------------------------------------

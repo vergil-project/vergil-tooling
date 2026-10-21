@@ -14,6 +14,7 @@ from vergil_tooling.lib import git
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.config import container_env_prefixes
 from vergil_tooling.lib.container import build_container_args, detect_runtime
+from vergil_tooling.lib.process import exec_replace
 
 _VALID_PREFIXES = {"dev", "prod"}
 
@@ -104,9 +105,9 @@ def main(argv: list[str] | None = None) -> int:
     print("---")
 
     if runtime == "nerdctl":
-        os.execvp("nerdctl", container_args)  # noqa: S606, S607
+        exec_replace("nerdctl", container_args)
     else:
-        os.execvp("docker", container_args)  # noqa: S606, S607
+        exec_replace("docker", container_args)
     return 0  # pragma: no cover
 
 

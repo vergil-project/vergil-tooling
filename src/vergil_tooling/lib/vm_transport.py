@@ -19,6 +19,8 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn, Protocol, runtime_checkable
 
+from vergil_tooling.lib.process import exec_replace
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -460,7 +462,7 @@ class LimaTransport:
             "-c",
             inner,
         ]
-        os.execvp(cmd[0], cmd)  # noqa: S606, S607
+        exec_replace(cmd[0], cmd)
 
     def copy_to(self, sources: list[str], dest: str) -> None:
         _run_transfer(["limactl", "copy", "--recursive", *sources, f"{self.instance}:{dest}"])
@@ -567,7 +569,7 @@ class IapTransport:
         # concurrent session's reap-on-start can't tear it down mid-use (#2345).
         # forward_term: carry the terminal env vars so Shift+Enter works (#2848).
         cmd = [*self._base(mux=False, forward_term=True), "--", "-t", remote]
-        os.execvp(cmd[0], cmd)  # noqa: S606, S607
+        exec_replace(cmd[0], cmd)
 
     def _scp_base(self) -> list[str]:
         return [
@@ -670,7 +672,7 @@ class SshTransport:
         # mux=False: keep the interactive session off the shared control socket (#2345).
         # forward_term: carry the terminal env vars so Shift+Enter works (#2848).
         cmd = [*self._base(pty=True, mux=False, forward_term=True), remote]
-        os.execvp(cmd[0], cmd)  # noqa: S606, S607
+        exec_replace(cmd[0], cmd)
 
     def _scp_base(self) -> list[str]:
         return [
