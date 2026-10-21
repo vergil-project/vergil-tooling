@@ -9,8 +9,8 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import git, github, pr_merge, progress
-from vergil_tooling.lib.labels import load_labels
+from vergil_tooling.lib import git, github, pr_merge
+from vergil_tooling.lib.labels import ensure_labels
 from vergil_tooling.lib.managed_worktree import remove_worktree
 from vergil_tooling.lib.update_deps import report
 from vergil_tooling.lib.update_deps.context import DEPS_LABEL, DepsFailure, UpdateDepsError
@@ -57,24 +57,6 @@ def build_pr_body(ctx: UpdateDepsContext) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _ensure_label(repo: str) -> None:
-    """Create the dependency-update label idempotently, as the registry defines it."""
-    spec = {entry["name"]: entry for entry in load_labels()["labels"]}[DEPS_LABEL]
-    progress.run(
-        [
-            "vrg-ensure-label",
-            "--repo",
-            repo,
-            "--label",
-            DEPS_LABEL,
-            "--color",
-            spec["color"],
-            "--description",
-            spec["description"],
-        ]
-    )
-
-
 def prepare_pr(ctx: UpdateDepsContext) -> None:
     """Push the worktree branch and open the labelled PR to develop."""
     if ctx.branch is None:
@@ -84,7 +66,7 @@ def prepare_pr(ctx: UpdateDepsContext) -> None:
             message="No branch on context — preflight did not run.",
         )
     git.run("push", "-u", "origin", ctx.branch)
-    _ensure_label(ctx.repo)
+    ensure_labels(ctx.repo, (DEPS_LABEL,))
     with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as handle:
         handle.write(build_pr_body(ctx))
         body_path = Path(handle.name)

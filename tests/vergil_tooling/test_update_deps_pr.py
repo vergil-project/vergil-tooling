@@ -110,7 +110,7 @@ def test_pr_body_stays_under_github_limit() -> None:
 def test_prepare_pr_pushes_ensures_label_and_labels_pr(monkeypatch) -> None:
     runs: list[list[str]] = []
     git_runs: list[tuple[str, ...]] = []
-    monkeypatch.setattr(_MOD + ".progress.run", lambda cmd: runs.append(cmd) or 0)
+    monkeypatch.setattr(_MOD + ".ensure_labels", lambda repo, names: runs.append([repo, *names]))
     monkeypatch.setattr(_MOD + ".git.run", lambda *a: git_runs.append(a))
     created: dict[str, object] = {}
 
@@ -123,7 +123,7 @@ def test_prepare_pr_pushes_ensures_label_and_labels_pr(monkeypatch) -> None:
     ctx = _ctx()
     pr.prepare_pr(ctx)
     assert git_runs == [("push", "-u", "origin", "deps/update-2.1.243")]
-    assert runs[0][:5] == ["vrg-ensure-label", "--repo", "o/r", "--label", "dependency-update"]
+    assert runs == [["o/r", "dependency-update"]]
     assert created["labels"] == ["dependency-update"]
     assert created["base"] == "develop"
     assert created["title"] == "chore(deps): dependency update for 2.1.243"

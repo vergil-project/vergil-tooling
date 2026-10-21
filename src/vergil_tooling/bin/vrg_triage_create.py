@@ -19,6 +19,7 @@ import sys
 
 from vergil_tooling.lib import github
 from vergil_tooling.lib.cli import cli_main
+from vergil_tooling.lib.labels import ensure_labels_or_report
 
 _KINDS = ("triage", "idea", "research")
 
@@ -45,6 +46,11 @@ def main(argv: list[str] | None = None) -> int:
     # #2070). Without this the token is minted for the wrong org and a cross-org
     # create either fails to write or misreports the issue's location (#2722).
     with github.target_org(owner):
+        # Ensure every applied label exists in the target repo first: gh refuses
+        # a label the repo lacks ('triage' not found), and an org's .github is
+        # often never label-synced (#3373).
+        if not ensure_labels_or_report("vrg-triage-create", repo, labels):
+            return 1
         url = github.create_issue(
             repo=repo,
             title=args.title,

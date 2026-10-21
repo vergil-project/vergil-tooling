@@ -386,6 +386,14 @@ up to date (see
 `vrg-release` `update-deps` stage put it on every dependency-update PR
 they open, and create the label first if the repo does not have it.
 
+Every command that applies a label works the same way: label presence is
+ensured **at the point of use**, not by a periodic sync. `vrg-triage-create`,
+`vrg-issue-create`, and the epic and ad-hoc commands create each label they
+are about to apply (idempotently, with the registry's colour and description)
+before they apply it, so a repo that was never label-synced still works. A
+label that is not in the registry is refused with an error rather than created
+or dropped, and no issue is created.
+
 ## Closing behavior
 
 - Default: auto-close issues via PR closing keywords.

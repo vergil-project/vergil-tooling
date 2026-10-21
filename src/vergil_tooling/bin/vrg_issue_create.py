@@ -19,6 +19,7 @@ from pathlib import Path
 
 from vergil_tooling.lib import epics, github
 from vergil_tooling.lib.cli import cli_main
+from vergil_tooling.lib.labels import ensure_labels_or_report
 
 
 @cli_main
@@ -107,6 +108,11 @@ def main(argv: list[str] | None = None) -> int:
                 epic = epics.resolve_epic_ref(args.epic, repo=repo)
             except ValueError as exc:
                 print(f"vrg-issue-create: {exc}", file=sys.stderr)
+                return 1
+
+            # Ensure every applied label exists in the target repo first: gh
+            # refuses a label the repo lacks ('validation' not found) (#3373).
+            if not ensure_labels_or_report("vrg-issue-create", repo, labels):
                 return 1
 
             url = github.create_issue(
