@@ -1,58 +1,125 @@
 # Validation Matrix
 
-This page maps every validation check to where it runs, its trigger,
-and its exit codes.
+This page maps every validation check to the tool that runs it and
+where it runs. No git hooks are installed: every check runs inside a
+`vrg-*` tool, in the Claude Code hook guard, or in PR CI.
 
 ## Check Summary
 
-| Check | Hook | CI | Script |
-| ----- | ---- | -- | ------ |
-| Branch naming | Yes | -- | `pre-commit` |
-| Repository profile | -- | Yes | `vrg-repo-profile` |
-| Markdown standards | -- | Yes | `vrg-validate` (common checks) |
-| Shellcheck | -- | Yes | CI workflow step |
+| Check | Run by | Local | PR CI |
+| ----- | ------ | ----- | ----- |
+| Raw `git` / `gh` blocked | Claude Code hook guard (`vrg-hook-guard`) | Agent sessions | -- |
+| Branch name format at creation | `vrg-git` | Yes | -- |
+| Worktree placement and naming | `vrg-git worktree add` | Yes | -- |
+| Branch switch in the main worktree | `vrg-git checkout` / `switch` | Yes | -- |
+| Branch and commit context | `vrg-commit` | Yes | -- |
+| No auto-close keyword in the commit body | `vrg-commit` | Yes | -- |
+| PR body issue linkage | `vrg-submit-pr` | Yes | -- |
+| Repository profile | `vrg-repo-profile` (common checks) | Yes | `quality / common` |
+| Markdown, shell, YAML, Dockerfile, workflow and Ansible lint | `vrg-validate` (common checks) | Yes | `quality / common` |
+| Lint and typecheck | `vrg-validate` | Yes (primary version) | `quality / lint / <version>`, `quality / typecheck / <version>` |
+| Tests | `vrg-validate` | Yes (primary version) | `test / unit / <version>` |
+| Dependency audit | `vrg-validate` | Yes (primary version) | `audit / dependencies / <version>` |
+| Security scans (CodeQL, Trivy, Semgrep) | `ci-security.yml` | -- | `security / *` |
+| Version bump | `ci-version-bump.yml` | -- | `version / version-bump` |
 
-## Local Hooks
+"Local" for `vrg-validate` means `vrg-container-run -- vrg-validate`,
+which runs one container on the primary `[ci].versions` entry. PR CI
+runs the same commands through the `vergil-actions` reusable workflows
+on every `[ci].versions` entry. See [CI Architecture](ci-architecture.md)
+for the jobs and the required checks.
 
-### pre-commit
+## Agent and Git Wrappers
 
-**Trigger:** Every `git commit`
+### Claude Code hook guard
 
-| Check | Error Message | Fix |
+**Trigger:** every `Bash` tool call in a Claude Code session, in a
+repository that has a `vergil.toml`.
+
+`.claude/hooks/guard.sh`, wired in `.claude/settings.json`, calls
+`vrg-hook-guard`. It blocks raw `git` and `gh` commands and lets
+`vrg-git`, `vrg-gh` and the other `vrg-*` tools through. See the
+[Claude Code Hook Guard reference](../reference/hooks/pre-commit.md).
+
+### vrg-git
+
+**Trigger:** every `vrg-git` command.
+
+- `vrg-git worktree add` must create the worktree as a direct child of
+  `<project-root>/.worktrees/`. When `-b` creates a `feature/`,
+  `bugfix/`, `hotfix/` or `chore/` branch, the branch must be
+  `<type>/<N>-<slug>` and the directory must be `issue-<N>-<slug>`.
+- `vrg-git checkout -b` and `vrg-git switch -c` apply the same branch
+  name format.
+- When `.worktrees/` exists, switching branches in the main worktree is
+  blocked, except to a protected branch.
+
+### vrg-commit
+
+**Trigger:** every `vrg-commit`.
+
+| Check | Error message | Fix |
 | ----- | ------------- | --- |
-| Detached HEAD | `detached HEAD is not allowed` | Create a branch |
-| Protected branch | `direct commits...forbidden` | Create a feature branch |
-| Bad prefix | `branch name must use...` | Rename branch |
-| Missing issue | `must include a repo issue` | Rename to `type/123-desc` |
+| Detached HEAD | `detached HEAD is not allowed for commits` | Create a branch |
+| Protected branch (`develop`, `release`, `main`) | `direct commits to protected branches are forbidden` | Create a feature branch |
+| Prefix not allowed by `[project].branching-model` | `branch name must use ...` | Rename the branch |
+| Missing issue number | `branch name must include a repo issue number` | Rename to `<type>/<N>-<slug>` |
+| Work-branch commit from the main worktree when `.worktrees/` exists | `feature-branch commits from the main worktree are forbidden` | Commit from the worktree |
+| Auto-close keyword in `--body` | `commit body contains a GitHub auto-close keyword` | Remove it; linkage goes on the PR |
 
-## CI Checks
+`vrg-commit` also refuses a commit on a branch frozen by
+`vrg-pr-workflow report-ready`, and a commit with nothing staged unless
+`--allow-empty` is given. The [Git Workflow](git-workflow.md) guide
+covers the branching models and the per-change cycle.
 
-### vrg-repo-profile
+### vrg-submit-pr
 
-**Trigger:** PR opened or updated
+**Trigger:** PR creation.
 
-Validates that `vergil.toml` is present and valid (required keys,
-enum values, dependencies) and that `README.md` follows the
-structural conventions. `vrg-validate` runs it as part of its common
-checks, locally and in CI.
+PR body issue linkage is checked when `vrg-submit-pr` builds the body.
+`Ref #N` and `Closes #N` are accepted; `Fixes` and `Resolves` are
+banned. There is no separate CI check for it.
 
-### Markdown validation (vrg-validate)
+## vrg-validate Checks
 
-**Trigger:** PR opened or updated
+**Trigger:** `vrg-container-run -- vrg-validate` locally, and the
+reusable CI workflows on every pull request.
 
-Runs markdownlint on published markdown (`docs/site/**/*.md` and
-`README.md`) using the canonical config bundled in vergil-tooling.
-See the [Markdown Validation](../reference/lint/markdown-standards.md)
-reference for config details and file scope.
+### Common checks
 
-PR body issue linkage (`Ref #N` / `Closes #N`, with `Fixes`/`Resolves`
-banned) is validated at PR construction time by `vrg-submit-pr`
-rather than as a separate CI check.
+`vrg-validate --check common` runs, in order:
 
-## Exit Code Reference
+1. `vrg-repo-profile`: `vergil.toml` is present and valid, and
+   `README.md` follows the structural conventions. See the
+   [vrg-repo-profile reference](../reference/lint/repo-profile.md).
+2. markdownlint on `docs/site/**/*.md` and `README.md`, with the
+   canonical config bundled in vergil-tooling, then on `epics/` with a
+   config that relaxes line length. See the
+   [Markdown Validation](../reference/lint/markdown-standards.md)
+   reference.
+3. shellcheck on shell scripts under `scripts/`.
+4. yamllint on YAML under `.github/` and `docs/`, with the bundled
+   config.
+5. hadolint on `Dockerfile*` at the repository root.
+6. actionlint on `.github/workflows/`.
+7. ansible-lint, when the repository has Ansible content.
 
-| Code | Meaning | Scripts |
-| ---- | ------- | ------- |
-| 0 | Success | All scripts |
-| 1 | Validation failure | All scripts |
-| 2 | Usage error | Most lint scripts (missing args or file) |
+The first failing check stops the run. In CI the common checks run once,
+as `quality / common`.
+
+### Language checks
+
+`vrg-validate` then runs the lint, typecheck, test and audit commands
+for `[project].primary-language`. Pass `--check lint`, `typecheck`,
+`test` or `audit` to run one stage.
+
+## Exit Codes
+
+Every tool above exits 0 on success and non-zero when a check fails.
+`vrg-repo-profile` distinguishes the two failure cases:
+
+| Code | Meaning |
+| ---- | ------- |
+| 0 | `vergil.toml` and `README.md` are valid |
+| 1 | `vergil.toml` is invalid, or `README.md` breaks the structural conventions |
+| 2 | `vergil.toml` not found |

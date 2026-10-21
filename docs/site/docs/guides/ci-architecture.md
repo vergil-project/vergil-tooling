@@ -1,8 +1,7 @@
 # CI Architecture
 
-This guide explains the continuous integration model used across all
-`mq-rest-admin-*` repositories and the vergil-tooling ecosystem, and
-how to implement it in new projects.
+This guide explains the continuous integration model used by every
+Vergil-managed repository, and how a repository gets it.
 
 ## Table of Contents
 
@@ -21,16 +20,17 @@ latency:
 
 | Tier | Trigger | Time | Security |
 | ---- | ------- | ---- | -------- |
-| 1 | Manual (before commit) | Seconds | No |
-| 2 | Pull request | ~8-10 min | Yes |
+| 1 | Manual (before commit) | Seconds to minutes | No |
+| 2 | Pull request | Minutes | Yes |
 
 - **Tier 1**: Single version, full local validation, dockerized
 - **Tier 2**: Full version matrix, all checks, security uploads
 
 The goal is fast local feedback for the developer and comprehensive gated
-checks on the PR itself. The Claude Code hook guard and `vrg-commit`
-enforce that Tier 1 runs before any commit lands, so by the time a PR
-opens, it should already be green.
+checks on the PR itself. Tier 1 is a discipline, not a gate: `vrg-commit`
+checks the branch and commit context but does not run validation, so run
+Tier 1 yourself before each commit. If you do, the PR should already be
+green when it opens.
 
 !!! note "Historical: three-tier CI"
     Earlier versions of this guide documented a third tier — push-CI — as
@@ -52,31 +52,33 @@ Run in a dev container on the developer's machine. Docker is the only
 host prerequisite.
 
 ```bash
-./scripts/dev/test.sh        # Unit tests + linting
-./scripts/dev/lint.sh        # Lint and formatting checks
-./scripts/dev/audit.sh       # Dependency and license audit
+vrg-container-run -- vrg-validate
 ```
 
-Each script follows the same pattern:
+This is the single Tier 1 command. `vrg-container-run` starts one
+container and runs `vrg-validate` inside it, with the repository
+bind-mounted. The image is
+`ghcr.io/vergil-project/<prefix>-<language>:<version>`: the prefix is
+`prod` unless you pass `--prefix dev`, the language comes from
+`[project].primary-language`, and the version is the primary
+`[ci].versions` entry. C++ and TypeScript carry a family in the image
+name instead (see [Dev container images](#dev-container-images)), and a
+repository with no language uses the base image. On top of that image,
+`vrg-container-run` builds a per-branch cached image with
+vergil-tooling installed. Set `DOCKER_DEV_IMAGE` to use a different
+image.
 
-1. Set `DOCKER_DEV_IMAGE` (default: `dev-<language>:<latevrg-version>`)
-2. Set `DOCKER_TEST_CMD` (language-specific command)
-3. Delegate to `vrg-container-test` if available, otherwise run `docker run`
-   directly
+`vrg-validate` first runs the common checks: `vrg-repo-profile`,
+markdownlint, shellcheck, yamllint, hadolint, actionlint, and
+ansible-lint when the repository has Ansible content. It then runs the
+language's lint, typecheck, test and audit commands. To run one stage,
+pass `--check common`, `lint`, `typecheck`, `test` or `audit`. The
+[Validation Matrix](validation-matrix.md) lists every check and where
+it runs.
 
-Environment overrides:
-
-- `DOCKER_DEV_IMAGE` — use a different container image
-- `DOCKER_TEST_CMD` — override the test command
-
-!!! tip
-    Build the dev images locally before first use:
-    `cd ../vergil-containers && docker/build.sh`
-
-Running `vrg-container-run -- vrg-validate` before each commit runs
-common checks and per-language validation. The Claude Code hook guard
-ensures agents use `vrg-commit` (which runs validation) rather than raw
-`git commit`.
+A repository can change the in-container command with
+`[validation].container-command` in `vergil.toml`. vergil-tooling
+uses this to run its own unreleased code (`uv run vrg-validate`).
 
 !!! note "Python tests run in parallel by default"
     For Python repos the validation gate's test stage runs in parallel via
@@ -107,24 +109,32 @@ for the measured evidence.
 
 Triggers on `pull_request` events. Runs the full validation suite.
 
-**What runs:**
+**What runs** (each item is one job in `ci.yml`, calling one
+`vergil-actions` reusable workflow):
 
-- Unit tests across the full version matrix
-- Integration tests across the full version matrix
-- Security scanners (CodeQL, Trivy, Semgrep) via shared reusable workflow
-- Standards compliance
-- Dependency audit
-- Release gates (version divergence, format validation)
-- Binary package build and install-test (`ci-package.yml`, only in repos
+- `audit` (`ci-audit.yml`): dependency audit across the full version
+  matrix, for languages that have an audit command
+- `quality` (`ci-quality.yml`): the common checks once (`vrg-validate
+  --check common`), then lint and typecheck across the full version
+  matrix
+- `security` (`ci-security.yml`): CodeQL, Trivy and Semgrep
+- `test` (`ci-test.yml`): the language's test command across the full
+  version matrix
+- `version` (`ci-version-bump.yml`): fails when the PR's version equals
+  the version on `main`. It is a no-op before the first release, and it
+  passes when `[project].release-model` is `none`
+- `docs` (`ci-docs.yml`): builds the docs site, only in repos with
+  `[publish].docs` enabled
+- `package`: binary package build and install-test (`ci-package.yml`, only in repos
   whose `vergil.toml` has `[package]`). Feature PRs run the **reduced**
   tier: every build cell, but one install-test cell per format (the oldest
   selected release, amd64 first). Release PRs (`release/*` into `main`)
   and non-PR events run the **full** matrix. See
   [Tiers: full and reduced](../reference/package-config.md#tiers-full-and-reduced).
 
-The workflow file is `.github/workflows/ci.yml`, which runs directly on
-`pull_request` and is also exposed as a reusable workflow via
-`workflow_call` for any specialized callers (release pipelines, etc.).
+The workflow file is `.github/workflows/ci.yml`. It runs on
+`pull_request` and is also exposed through `workflow_call` (see
+[Thin-caller pattern](#thin-caller-pattern)).
 
 !!! warning "Local validate is not full coverage parity"
     Tier 1 runs one dev container on a single Python interpreter (currently
@@ -148,8 +158,11 @@ The workflow file is `.github/workflows/ci.yml`, which runs directly on
 
 A consuming repo's `ci.yml` is a **thin caller**: each job simply `uses:` a
 `vergil-actions` reusable workflow (`ci-audit`, `ci-quality`, `ci-security`,
-`ci-test`, `ci-version-bump`, `ci-docs`) at the pinned `@v2.1` tag and passes
-only `language:` and `container-suffix:`. It does **not** pass a version matrix
+`ci-test`, `ci-version-bump`, `ci-docs`, `ci-package`) pinned to the repo's
+vergil series tag (for example `@v2.1`; `vrg-github-repo-init` uses the
+`vX.Y` series of the installed vergil-tooling). Apart from the scope
+inputs below, it passes only `language:` and `container-suffix:`, and
+`ci-docs` and `ci-package` take no inputs. It does **not** pass a version matrix
 or a container tag — the reusable workflows read `[ci].versions` from the repo's
 `vergil.toml` at run time and derive both the matrix and the primary-version
 container themselves (epic
@@ -157,49 +170,55 @@ container themselves (epic
 A `[ci].versions` change therefore takes effect fleet-wide with no edit to
 `ci.yml`.
 
-`ci.yml` still exposes `workflow_call` with two scope inputs so specialized
-callers (e.g. release pipelines) can constrain it — `run-security` (enable the
-security scanners) and `run-release` (enable the release/version gates). When
-triggered directly by `pull_request` both default on, producing the full
-Tier 2 behavior.
-
-!!! warning "String inputs, not booleans"
-    Use `type: string` for gate inputs, not `type: boolean`. Boolean
-    inputs are unreliable for job-level `if` conditions when the
-    workflow is triggered directly (inputs are empty, not `false`).
-    Use `!= 'false'` comparisons instead.
+`ci.yml` also declares `workflow_call` with two boolean inputs,
+`run-security` and `run-release`, both defaulting to `true`. On a
+`pull_request` run the inputs are empty, so the generated `ci.yml`
+compares them with `!= 'false'` and both stay on. `run-security` is
+forwarded to `ci-security.yml`. `run-release` is forwarded to
+`ci-version-bump.yml`, where it is deprecated: the version gate now
+follows `[project].release-model`.
 
 ### Shared security workflow
 
-Security scanners and standards compliance are factored into a shared
-reusable workflow at
-`vergil-project/vergil-actions/.github/workflows/ci-security.yml`.
+The security scanners live in the reusable workflow
+`vergil-project/vergil-actions/.github/workflows/ci-security.yml`. It
+runs three scanner jobs and one aggregate. Because the caller's job is
+named `security`, the checks report as:
 
-This provides four jobs:
+- `security / codeql`
+- `security / trivy`
+- `security / semgrep`
+- `security / evidence`
 
-- `ci: standards-compliance`
-- `security: codeql`
-- `security: trivy`
-- `security: semgrep`
-
-Call it from `ci.yml`:
+vergil-tooling's own `ci.yml` calls it like this:
 
 ```yaml
-security-and-standards:
-  if: ${{ inputs.run-security != 'false' }}
-  uses: vergil-project/vergil-actions/.github/workflows/ci-security.yml@develop
-  with:
-    language: python
-    # For Go, also set: semgrep-language: golang
+security:
+  uses: vergil-project/vergil-actions/.github/workflows/ci-security.yml@v2.1
   permissions:
     contents: read
     security-events: write
+    actions: read
+  with:
+    language: python
+    run-security: ${{ inputs.run-security != 'false' }}
+    container-suffix: python
 ```
 
-!!! tip "Semgrep language names"
-    Semgrep uses `p/<language>` rulesets. Most languages match their
-    common name (`python`, `java`, `rust`) but Go requires `golang`.
-    Use the `semgrep-language` input to override when needed.
+CodeQL is skipped when `run-codeql` is `false` (set for languages
+CodeQL does not support) or when `upload-sarif` is `false` (set for
+private repositories without GitHub Advanced Security).
+`container-suffix` is a deprecated no-op here, and the old
+standards-compliance job is gone: PR issue linkage is now checked by
+`vrg-submit-pr` when it builds the PR body.
+
+!!! tip "Semgrep rulesets"
+    `vrg-semgrep-scan` maps the language to a registry ruleset:
+    `python`, `java`, `ruby` and `rust` map to `p/<language>`, and `go`
+    maps to `p/golang`. It adds `p/dockerfile` when the repository has
+    Dockerfiles and `p/github-actions` when it has workflows.
+    `ci-security.yml` adds `p/c` for `cpp` and `p/typescript` for
+    `typescript`.
 
 #### Fleet-excluded semgrep rules
 
@@ -347,77 +366,55 @@ so the matrix cannot drift from `[ci].versions`.
 
 ## Implementation guide
 
-### Step 1: Define ci.yml
+A repository does not write its CI by hand. `vrg-github-repo-init`
+generates it, for a new repository or for an existing one with
+`--adopt`:
 
-Trigger on `pull_request` and (optionally) expose `workflow_call`
-alongside it for specialized callers. Define inputs with string types
-and sensible defaults.
+- **`ci.yml`** is rendered as the thin caller described above. Its jobs
+  follow the language: `audit` only when the language has an audit
+  command, `test` only when it has a test command or
+  `[ci].integration-tests` is on, `docs` only when `[publish].docs` is
+  on, `version` only when `[project].release-model` is not `none`, and
+  `package` only when `vergil.toml` has `[package]`.
+- **The `CI gates` ruleset** is applied to `main` and `develop` with
+  the required checks listed in [CI gates](#ci-gates). Before it is
+  applied, the tool checks that the generated `ci.yml` produces every
+  required check and fails if it does not.
 
-### Step 2: Factor security into shared workflow
-
-Replace inline CodeQL, Trivy, Semgrep, and standards-compliance jobs
-with a single call to `ci-security.yml`.
-
-### Step 3: Add dev scripts
-
-Create `scripts/dev/test.sh`, `scripts/dev/lint.sh`, and
-`scripts/dev/audit.sh` following the Docker-first pattern. See
-[Dev container images](#dev-container-images) for image details.
-
-### Step 4: Update CI gates
-
-Update the repository ruleset to match new check names. Key changes:
-
-- Remove `ci: docs-only` (no longer exists)
-- Replace `ci: standards-compliance` with
-  `security-and-standards / ci: standards-compliance`
-- Replace `security: *` with `security-and-standards / security: *`
-
-Use the GitHub API to update rulesets:
-
-```bash
-gh api repos/OWNER/REPO/rulesets/RULESET_ID -X PUT --input gates.json
-```
-
-### Step 5: Update CLAUDE.md
-
-Add the two-tier CI model and Docker-first testing sections to the
-repository's `CLAUDE.md`.
+After that, `vrg-github-repo-config` keeps the repository in line:
+`audit` reports drift, `diff` shows it, and `apply` reconciles the
+GitHub side, including the ruleset. `vrg-container-run -- vrg-validate`
+is the local command. Nothing else needs to be added to the repository.
 
 ## CI gates
 
-When security and standards jobs move into the shared reusable workflow,
-their check names gain a `security-and-standards /` prefix:
+The `CI gates` ruleset requires these checks. The list is computed from
+`vergil.toml`:
 
-Old names and their replacements:
+| Check | Required when |
+| ----- | ------------- |
+| `quality / common` | Always |
+| `security / trivy`, `security / semgrep` | Always |
+| `docs / docs` | `[publish].docs` is on |
+| `audit / evidence` | The language has an audit command |
+| `quality / evidence` | The language has a lint or typecheck command |
+| `test / evidence` | The language has a unit test command |
+| `version / version-bump` | `[project].release-model` is not `none` |
+| `package / evidence` | `vergil.toml` has `[package]` |
+| `security / codeql`, `CodeQL` | GHAS is available and CodeQL supports the language |
+| `Trivy`, `Semgrep OSS` | GHAS is available |
+| `test / integration / <version>` | `[ci].integration-tests` is on (one per `[ci].versions` entry) |
 
-- `ci: standards-compliance` →
-  `security-and-standards / ci: standards-compliance`
-- `security: codeql` →
-  `security-and-standards / security: codeql`
-- `security: trivy` →
-  `security-and-standards / security: trivy`
-- `security: semgrep` →
-  `security-and-standards / security: semgrep`
+GHAS (GitHub Advanced Security) is taken from `[project].ghas` when it
+is set. Otherwise it counts as available for any repository that is not
+private. The bare `CodeQL`, `Trivy` and `Semgrep OSS` checks come from
+GitHub code scanning, not from a workflow job. Without GHAS those checks
+never report, so they are not required.
 
-Jobs that remain inline keep their names unchanged:
+### Every check that runs is a gate
 
-- `ci: dependency-audit`
-- `release: gates`
-- `test: unit (<version>)`
-- `test: integration (<version>)`
-
-The docs-build job is a universal reusable-CI job emitted on every
-managed repo with no `if:` guard, so it always runs and surfaces the
-`docs / docs` check.
-
-### Every gate is required — there are no optional PR gates
-
-Every check that can gate a PR is configured as a **required status
-check** on the target branch; there is no tier of checks that runs but
-does not block. `docs / docs` is required alongside the tests, audit,
-release gates, and the security checks — the desired required-check set is
-complete, and it is pinned by a test so it cannot silently drift.
+There is no tier of checks that runs on a PR but does not block it. The
+required set above is pinned by a test so it cannot drift silently.
 
 For the matrixed kinds — audit, quality (lint + typecheck), and unit tests —
 the required check is the **stable, version-agnostic `<kind> / evidence`
@@ -445,9 +442,11 @@ set is reconciled.
 
 ## Dev container images
 
-Published to `ghcr.io/vergil-project/dev-<language>:<version>` from the
-[vergil-containers](https://github.com/vergil-project/vergil-containers)
-repository.
+Published to `ghcr.io/vergil-project/<prefix>-<language>:<version>` from
+the [vergil-containers](https://github.com/vergil-project/vergil-containers)
+repository. The `dev-` images are built from its `develop` branch and
+the `prod-` images from `main`. `vrg-container-run` and the CI
+workflows use `prod-` by default.
 
 ### Available images
 
@@ -506,9 +505,9 @@ docker build --build-arg PYTHON_VERSION=3.14 \
 
 ### Publishing
 
-Images are published automatically on push to `develop` or `main` in
-the `vergil-containers` repository via its
-`.github/workflows/docker-publish.yml` workflow.
+Images are published automatically on push to `develop` (`dev-`) or
+`main` (`prod-`) in the `vergil-containers` repository: its `cd.yml`
+calls the reusable `.github/workflows/cd-docker-publish.yml` workflow.
 
 ### Design principles
 

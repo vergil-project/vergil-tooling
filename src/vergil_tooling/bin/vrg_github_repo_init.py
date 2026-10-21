@@ -235,7 +235,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--vergil-version",
-        help="Vergil dependency version (default: v2.1)",
+        help=(
+            "Vergil dependency version (default: [dependencies].vergil when adopting, "
+            "else the installed vergil-tooling's vX.Y)"
+        ),
     )
     parser.add_argument(
         "--license",

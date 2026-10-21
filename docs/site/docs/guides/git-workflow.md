@@ -56,7 +56,10 @@ bugfix/101-fix-null-pointer
 chore/256-bump-dependency-versions
 ```
 
-Pattern: `^(feature|bugfix|hotfix|chore)/[0-9]+-[a-z0-9][a-z0-9-]*$`.
+Pattern: `^(feature|bugfix|hotfix|chore)/[0-9]+-[a-z0-9][a-z0-9.-]*$`.
+`vrg-git` applies it when the branch is created (`worktree add -b`,
+`checkout -b`, `switch -c`) and `vrg-commit` applies it again at commit
+time.
 
 The `release/*` and `promotion/*` prefixes are created by automated
 workflows and are exempt from the issue-number rule. So is
@@ -85,24 +88,34 @@ at the Claude Code tool level. The plugin catches additional
 patterns (heredocs, worktree convention enforcement) that the
 hook guard does not cover. Together they close the loop.
 
-For the hook guard detail, see
-[Git Hooks and Validation][hooks-doc].
+For the hook guard detail, see the
+[Claude Code Hook Guard reference](../reference/hooks/pre-commit.md).
+For every check and where it runs, see the
+[Validation Matrix](validation-matrix.md).
 For the plugin hook detail, see
 [vergil-claude-plugin/docs → Hooks](https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/site/docs/hooks/index.md).
 
 ## Developing a change
 
-The common path, for work that isn't running in parallel:
+Every change follows this path, whether or not other work is running
+in parallel.
 
-### 1. Branch from the integration branch
+### 1. Create a worktree on a new branch
+
+From the project root:
 
 ```bash
-git fetch origin develop
-git checkout -b feature/42-add-caching origin/develop
+vrg-git fetch origin
+vrg-git worktree add -b feature/42-add-caching \
+  .worktrees/issue-42-add-caching origin/develop
+cd .worktrees/issue-42-add-caching
 ```
 
-`vrg-commit` enforces the prefix and issue-number rule when
-you try to commit, so name the branch correctly now.
+`vrg-git` checks the branch name and the worktree directory when it
+creates them, so name both correctly now. The directory must be
+`.worktrees/issue-<N>-<slug>`, matching the branch
+`<type>/<N>-<slug>`. See [Parallel work with worktrees](#parallel-work-with-worktrees)
+for why every change gets its own worktree.
 
 ### 2. Commit with `vrg-commit`
 
@@ -224,45 +237,45 @@ See the [vrg-finalize-pr reference](../reference/dev/finalize-pr.md).
 
 ## Parallel work with worktrees
 
-Use the worktree convention when running **more than one agent in
-the same repo at the same time**, or when you want to start a second
-issue before the first is merged.
+The main worktree at the project root stays on `develop` and is
+read-only. Every change happens in its own worktree under
+`.worktrees/`, on its own branch. This lets several agents work in the
+same repository at once, and lets you start a second issue before the
+first is merged.
 
 For the full spec (rationale, trust model, failure modes, memory-path
 implications), see
 [the worktree convention][worktree-spec].
 This section is the user-level "how to."
 
-### When a worktree is required
+### What enforces it
 
-- Two or more Claude Code sessions are going to work concurrently
-  on the same repo.
-- The main working tree at the project root is serving as the
-  "canonical state" for one agent while another starts work.
+Once `.worktrees/` exists in the project root:
 
-### When a worktree is optional but recommended
+- `vrg-git checkout` and `vrg-git switch` refuse to move the main
+  worktree onto a work branch.
+- `vrg-commit` refuses a work-branch commit made from the main
+  worktree.
+- `vrg-git worktree add` refuses a worktree outside `.worktrees/`, or
+  one whose directory name does not match its branch.
 
-- Any feature branch, even for solo sequential work. The convention
-  keeps the main tree clean, and in a repo that has adopted it
-  (`.worktrees/` in `.gitignore`) both the plugin and `vrg-commit`
-  block feature-branch commits from the main tree.
+`vrg-github-repo-init` adds `.worktrees/` to the managed `.gitignore`
+block, so worktrees never show up as untracked files.
 
 ### Creating a worktree for an issue
 
 From the project root:
 
 ```bash
-git fetch origin develop
-git worktree add \
-  .worktrees/issue-42-add-caching \
-  -b feature/42-add-caching \
-  origin/develop
+vrg-git fetch origin
+vrg-git worktree add -b feature/42-add-caching \
+  .worktrees/issue-42-add-caching origin/develop
 ```
 
 Directory layout:
 
 ```text
-~/dev/github/<repo>/                      ← session starts here
+<project-root>/                           ← session starts here
   .git/
   CLAUDE.md, src/, docs/, …               ← main worktree (develop)
   .worktrees/                             ← gitignored, local-only
@@ -277,19 +290,19 @@ inside the worktree. The session's initial CWD determines the memory
 slug; starting inside a worktree creates a separate memory silo and
 loses shared project context.
 
-Then give the agent the canonical prompt (a template lives in each
+Then give the agent the canonical prompt. The template lives in each
 repo's CLAUDE.md under "Parallel AI agent development → Agent prompt
-contract"):
+contract"; filled in, it reads:
 
 ```text
 You are working on issue #42: Add LRU cache to pipeline.
 
-Your worktree is: /Users/pmoore/dev/github/<repo>/.worktrees/issue-42-add-caching/
+Your worktree is: <project-root>/.worktrees/issue-42-add-caching/
 Your branch is:   feature/42-add-caching
 
 Rules for this session:
 - Do all git operations from inside your worktree:
-    cd <absolute-worktree-path> && git <command>
+    cd <absolute-worktree-path> && vrg-git <command>
 - For Read / Edit / Write tools, use the absolute worktree path.
 - For Bash commands that touch files, cd into the worktree first
   or use absolute paths.
@@ -302,16 +315,18 @@ Rules for this session:
 
 ### Cleanup after merge
 
-`vrg-finalize-pr` handles worktree removal for the finalized branch
-when the worktree lives under the canonical `.worktrees/` directory, so
-the cleanup above is automatic. To remove one by hand:
+`vrg-finalize-pr` removes the finalized branch's worktree when it lives
+under the canonical `.worktrees/` directory, so cleanup is normally
+automatic. To remove one by hand, from the project root:
 
 ```bash
-cd ~/dev/github/<repo>
-git worktree remove .worktrees/issue-42-add-caching
-git branch -D feature/42-add-caching    # usually already deleted
-git fetch --prune                        # usually already pruned
+vrg-git worktree remove .worktrees/issue-42-add-caching
+vrg-git branch -D feature/42-add-caching   # usually already deleted
+vrg-git fetch --prune                      # usually already pruned
 ```
+
+`vrg-git branch -D` deletes a branch only when its upstream is gone or
+is an integration branch, and never deletes a protected branch.
 
 ## Releasing
 
@@ -379,14 +394,15 @@ for what each step does.
 
 ## Related
 
-- [Git Hooks and Validation][hooks-doc]
-  — pre-commit hook + validator reference
+- [Validation Matrix](validation-matrix.md)
+  — every check and where it runs
+- [Claude Code Hook Guard](../reference/hooks/pre-commit.md)
+  — hook guard and `vrg-commit` check reference
 - [Worktree convention spec][worktree-spec]
   — rationale, failure modes, trust model
 - [Releasing](releasing.md) — release workflow detail
 - [vergil-claude-plugin — Hooks][plugin-hooks]
   — plugin hook reference
 
-[hooks-doc]: https://github.com/vergil-project/vergil-tooling/blob/develop/docs/git-hooks-and-validation.md
 [worktree-spec]: https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/worktree-convention.md
 [plugin-hooks]: https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/site/docs/hooks/index.md
