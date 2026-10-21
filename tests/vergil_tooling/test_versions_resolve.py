@@ -301,9 +301,9 @@ def test_extension_may_only_narrow(
         _resolve(_cfg())
 
 
-def test_extension_registry_starts_empty() -> None:
-    # Task 9 registers python; until then the shared resolver has no extension.
-    assert EXTENSIONS == {}
+def test_extension_registry_has_python_only() -> None:
+    # Task 9 registered python; no other language narrows its candidates.
+    assert set(EXTENSIONS) == {"python"}
 
 
 # -- resolve_config / resolve_repo ---------------------------------------------

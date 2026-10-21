@@ -20,3 +20,11 @@ class VersionsError(Exception):
 
     Callers that turn a failure into an exit code catch this one type.
     """
+
+
+class ResolutionError(VersionsError):
+    """A repo's version configuration does not resolve against the window.
+
+    Defined here, not in :mod:`.resolve`, so a language extension can raise it
+    without importing the resolver that imports the extensions.
+    """

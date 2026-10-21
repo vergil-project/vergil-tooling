@@ -30,7 +30,7 @@ from vergil_tooling.lib.config import (
     _version_sort_key,
     read_config,
 )
-from vergil_tooling.lib.versions import VersionsError
+from vergil_tooling.lib.versions import ResolutionError
 from vergil_tooling.lib.versions.extensions import (
     EXTENSIONS,
     ExtensionContext,
@@ -68,10 +68,6 @@ STRICT_APP_PINS = False
 # What a repo with no language builds: the base image at ``latest``, as before.
 NO_LANGUAGE_VERSION = "latest"
 NO_LANGUAGE_SUFFIX = "base"
-
-
-class ResolutionError(VersionsError):
-    """A repo's version configuration does not resolve against the window."""
 
 
 @dataclass(frozen=True)
