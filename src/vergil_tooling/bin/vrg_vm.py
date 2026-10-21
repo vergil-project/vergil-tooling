@@ -2756,6 +2756,14 @@ def _list_sessions(config: IdentityConfig, args: argparse.Namespace) -> int:
     return 0
 
 
+def _command_override(args: argparse.Namespace) -> list[str]:
+    """The session's command override, without a leading ``--`` separator."""
+    override = list(args.cmd)
+    if override and override[0] == "--":
+        override = override[1:]
+    return override
+
+
 def _session_inner(
     args: argparse.Namespace,
     identity_name: str,
@@ -2765,9 +2773,7 @@ def _session_inner(
     """Build the in-VM command: a raw override, or the session resolver."""
     source = ". ~/.config/vergil/claude.env 2>/dev/null; . ~/.config/vergil/conan.env 2>/dev/null;"
 
-    override = list(args.cmd)
-    if override and override[0] == "--":
-        override = override[1:]
+    override = _command_override(args)
 
     # Any non-claude command runs raw (the `-- bash` escape hatch). A bare
     # `claude` (or no command) goes through the resolver for naming/resume.
@@ -2799,6 +2805,19 @@ def _session_inner(
     if extra:
         resolve_cmd += ["--", *extra]
     return f"{source} exec {shlex.join(resolve_cmd)}"
+
+
+def _lists_sessions_only(args: argparse.Namespace) -> bool:
+    """Whether the in-VM resolver will only list sessions and exit (no verb given).
+
+    Mirrors the dispatch in :func:`_session_inner` and the resolver: a raw
+    (non-claude) override runs as given, and ``--label``/``--resume``/``--fresh``
+    each open a session. Anything else is the resolver's list-and-guide path.
+    """
+    override = _command_override(args)
+    if override and override[0] != "claude":
+        return False
+    return getattr(args, "label", None) is None and args.resume is None and not args.fresh
 
 
 def _cloud_session(target: Target, args: argparse.Namespace) -> int:
@@ -2853,12 +2872,18 @@ def _cloud_session(target: Target, args: argparse.Namespace) -> int:
     # matching slug, so the cloud session reads canonical host memory rather than a
     # divergent (or empty) cloud copy. The read-only lock is applied separately
     # (#2412); this copies the files only.
-    vm_memory.project_memory(transport, claude_dir=claude_dir, host_workdir=workdir)
-    # #2413 (Component 6): verify the projection actually resolved in-guest before
-    # opening the session. A broken Component-2a host-path indirection would
-    # otherwise degrade *silently* to empty memory; verify_projection turns that
-    # into a loud ProjectionError that aborts the session (no silent continue).
-    vm_memory.verify_projection(transport, host_workdir=workdir, slug=vm_memory.host_slug(workdir))
+    #
+    # #3346: with no session verb the resolver only lists sessions and exits, so the
+    # (slow, per-file) projection is skipped; it runs on the reconnect that names one.
+    if not _lists_sessions_only(args):
+        vm_memory.project_memory(transport, claude_dir=claude_dir, host_workdir=workdir)
+        # #2413 (Component 6): verify the projection actually resolved in-guest
+        # before opening the session. A broken Component-2a host-path indirection
+        # would otherwise degrade *silently* to empty memory; verify_projection
+        # turns that into a loud ProjectionError that aborts the session.
+        vm_memory.verify_projection(
+            transport, host_workdir=workdir, slug=vm_memory.host_slug(workdir)
+        )
     print("  -> opening the session", file=sys.stderr, flush=True)
     workspace_abs = os.path.normpath(resolve_workspace(args.workspace, identity.projects_dir))
     rel_path = os.path.relpath(workspace_abs, identity.projects_dir)

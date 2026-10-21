@@ -4239,7 +4239,7 @@ class TestCloudSession:
             manager.attach_mock(m["ensure_host_path"], "ensure")
             manager.attach_mock(m["project_memory"], "project")
             manager.attach_mock(transport.exec_session, "exec")
-            main(["session", "lmf/cloud", "--config", str(_cloud_repo)])
+            main(["session", "lmf/cloud", "--label", "work", "--config", str(_cloud_repo)])
         m["project_memory"].assert_called_once()
         assert m["project_memory"].call_args.args[0] is transport
         kwargs = m["project_memory"].call_args.kwargs
@@ -4262,7 +4262,7 @@ class TestCloudSession:
             manager.attach_mock(m["project_memory"], "project")
             manager.attach_mock(m["verify_projection"], "verify")
             manager.attach_mock(transport.exec_session, "exec")
-            main(["session", "lmf/cloud", "--config", str(_cloud_repo)])
+            main(["session", "lmf/cloud", "--label", "work", "--config", str(_cloud_repo)])
         m["verify_projection"].assert_called_once()
         assert m["verify_projection"].call_args.args[0] is transport
         kwargs = m["verify_projection"].call_args.kwargs
@@ -4282,8 +4282,47 @@ class TestCloudSession:
             m["transport"].return_value = transport
             m["verify_projection"].side_effect = vm_memory.ProjectionError("broken projection")
             with pytest.raises(vm_memory.ProjectionError):
-                main(["session", "lmf/cloud", "--config", str(_cloud_repo)])
+                main(["session", "lmf/cloud", "--label", "work", "--config", str(_cloud_repo)])
         transport.exec_session.assert_not_called()
+
+    @pytest.mark.parametrize("cmd", [[], ["--", "claude", "--model", "x"]])
+    def test_cloud_session_listing_skips_memory_projection(
+        self, _cloud_repo: Path, tmp_path: Path, cmd: list[str]
+    ) -> None:
+        # #3346: with no session verb the resolver only lists sessions and exits, so
+        # the slow memory projection (and its verification) must not run; the
+        # resolver is still exec'd to print the list. A `-- claude ...` passthrough
+        # still goes through the resolver, so it lists too.
+        transport = MagicMock()
+        with _CloudPatches(tmp_path / "state") as m:
+            m["transport"].return_value = transport
+            main(["session", "lmf/cloud", "--config", str(_cloud_repo), *cmd])
+        m["project_memory"].assert_not_called()
+        m["verify_projection"].assert_not_called()
+        transport.exec_session.assert_called_once()
+        assert "vrg-vm-resolve-session" in transport.exec_session.call_args.kwargs["inner"]
+
+    @pytest.mark.parametrize(
+        "verb",
+        [
+            ["--label", "work"],
+            ["--resume", "work"],
+            ["--fresh"],
+            ["--", "bash"],
+        ],
+    )
+    def test_cloud_session_projects_memory_when_session_named(
+        self, _cloud_repo: Path, tmp_path: Path, verb: list[str]
+    ) -> None:
+        # #3346: any verb that opens a session — or a raw command override — still
+        # projects and verifies memory before the exec.
+        transport = MagicMock()
+        with _CloudPatches(tmp_path / "state") as m:
+            m["transport"].return_value = transport
+            main(["session", "lmf/cloud", "--config", str(_cloud_repo), *verb])
+        m["project_memory"].assert_called_once()
+        m["verify_projection"].assert_called_once()
+        transport.exec_session.assert_called_once()
 
     def test_cloud_session_seeds_claude_config(self, _cloud_repo: Path, tmp_path: Path) -> None:
         # #1999 (Fix A): the cloud session path must seed the operator's ~/.claude

@@ -141,6 +141,12 @@ session refreshes it. Before opening the session, `vrg-vm`:
    memory directory is non-empty, failing **loudly** otherwise — a
    broken indirection would otherwise degrade silently to empty memory.
 
+Steps 2–4 run only when the invocation names a session (`--label`,
+`--resume`, `--fresh`) or overrides the command (`-- bash`). A bare
+`vrg-vm session <workspace>` only lists the workspace's sessions and
+exits, so it skips the projection; the reconnect that names a session
+performs it.
+
 The read-only permissions are the hard backstop: a write attempt in the
 cloud fails with `EACCES` — loudly, so a futile write can no longer
 succeed-then-vanish.
