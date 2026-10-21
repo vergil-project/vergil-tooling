@@ -513,13 +513,12 @@ For a broader troubleshooting index see
 
 - [Git Workflow](git-workflow.md) — how the per-change cycle
   actually unfolds once setup is done
-- [Git Hooks and Validation][hooks-doc] —
-  hook guard + validator reference
+- [Validation Matrix](validation-matrix.md) — every check and
+  where it runs
 - [CI Architecture](ci-architecture.md) — per-language test/lint/audit
   tier wiring
 - [Releasing](releasing.md) — release workflow
 - [Worktree convention spec][worktree-spec]
   — canonical reference for the parallel-agent convention
 
-[hooks-doc]: https://github.com/vergil-project/vergil-tooling/blob/develop/docs/git-hooks-and-validation.md
 [worktree-spec]: https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/worktree-convention.md
