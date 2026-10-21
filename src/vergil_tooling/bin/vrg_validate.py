@@ -237,13 +237,27 @@ def _find_custom_validator(repo_root: Path) -> str | None:
     if entry_point is not None:
         return entry_point
     local = scripts_bin / "validate-custom"
-    if local.is_file() and os.access(local, os.X_OK):
+    # Anything present is returned, usable or not: a non-executable script must
+    # fail the custom stage loudly (_check_custom_validator), never be skipped as
+    # if the repo had no custom validator (#3349).
+    if local.exists() or local.is_symlink():
         return str(local)
     return None
 
 
 class ValidationError(Exception):
     """One or more validation commands failed."""
+
+
+def _check_custom_validator(path: Path) -> None:
+    if not path.is_file():
+        msg = f"{path} exists but is not a regular file"
+        raise ValidationError(msg)
+    if not os.access(path, os.X_OK):
+        msg = (
+            f"{path} exists but is not executable; run `chmod +x {path}` and commit the mode change"
+        )
+        raise ValidationError(msg)
 
 
 # The name of an environment variable, not a secret value. (S105 false positive.)
@@ -409,6 +423,7 @@ def _build_stages(
         if custom is not None:
 
             def custom_fn(_ctx: object) -> None:
+                _check_custom_validator(Path(custom))
                 print(f"Running: {custom}")
                 rc = progress.run((custom,), check=False)
                 if rc != 0:
