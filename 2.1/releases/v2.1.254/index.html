@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.255/">
       
       
         <link rel="next" href="../v2.1.253/">
@@ -1313,6 +1313,8 @@
       
         
       
+        
+      
     
     
     
@@ -1368,6 +1370,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.255/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.255
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15649,6 +15679,7 @@ vergil-tooling is a library repository (#3400), so with no pin vrg-ci-resolve gi
 <li><strong>allow uv python-preference and pin the interpreter source in containers (#3413)</strong>
 python-preference picks the interpreter's source (managed or system), not its version, so the toolchain check no longer reports it; .python-version stays an error. The Python container env now sets UV_PYTHON_PREFERENCE=only-system next to UV_PYTHON, which uv ranks above pyproject.toml and uv.toml settings, so a repo's only-managed can never make a Vergil container download its own interpreter. vrg-container-test now passes the same env as vrg-container-run. Spec 6.5 amendment, epic vergil-project/.github#407.</li>
 </ul>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.254/v2.1.254-ci-evidence.tar.gz">Download →</a></p>
 
 
 
