@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 from vergil_tooling.lib import branch_names, git, github
 from vergil_tooling.lib.pr_workflow.errors import WorkflowError
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
+from vergil_tooling.lib.process_errors import failure_message
 from vergil_tooling.lib.repo_init import prompt_choice, prompt_multi_choice
 
 if TYPE_CHECKING:
@@ -311,7 +312,7 @@ def gather_worktree_status(
     try:
         pr_number, pr_state, pr_head_sha = _resolve_pr_state(worktree.branch)
     except subprocess.CalledProcessError as exc:
-        detail = (exc.stderr or str(exc)).strip()
+        detail = (exc.stderr or failure_message(exc)).strip()
         return _with_workflow(
             classify_worktree(
                 worktree,

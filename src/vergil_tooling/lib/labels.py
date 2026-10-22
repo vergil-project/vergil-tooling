@@ -13,6 +13,7 @@ from importlib import resources
 from typing import TYPE_CHECKING, Any
 
 from vergil_tooling.lib import github
+from vergil_tooling.lib.process_errors import error_text
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -104,7 +105,7 @@ def ensure_labels_or_report(prog: str, repo: str, names: Sequence[str]) -> bool:
     except github.MissingGitHubTokenError:
         raise
     except subprocess.CalledProcessError as exc:
-        detail = " ".join(str(exc).split())
+        detail = " ".join(error_text(exc).split())
         print(
             f"{prog}: could not ensure label(s) {', '.join(names)} exist in {repo}, "
             f"so no issue was created: {detail}",

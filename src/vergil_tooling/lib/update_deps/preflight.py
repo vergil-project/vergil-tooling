@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import branch_sweep, config, git, github, version
 from vergil_tooling.lib.managed_worktree import ManagedWorktreeError, create_worktree
+from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.release.preflight import check_gh_auth
 from vergil_tooling.lib.update_deps.context import UpdateDepsContext, UpdateDepsError
 
@@ -51,7 +52,7 @@ def _finished_pr(
                 f"{branch} already exists, and its PRs could not be listed; "
                 "refusing to treat it as anything but in flight."
             ),
-            detail=str(exc),
+            detail=error_text(exc),
         ) from exc
     newest = branch_sweep.newest_pr(prs)
     if newest is None:
@@ -101,7 +102,7 @@ def _delete_stale_branch(
                     f"{branch} is stale (PR {url} was closed without merging), but "
                     "deleting it on origin failed. Delete it by hand and re-run."
                 ),
-                detail=str(exc),
+                detail=error_text(exc),
             ) from exc
         print(f"Deleted stale branch {branch} on origin: PR {url} was closed without merging.")
     if local:
@@ -115,7 +116,7 @@ def _delete_stale_branch(
                     f"{branch} is stale (PR {url} was closed without merging), but "
                     "deleting the local branch failed. Delete it by hand and re-run."
                 ),
-                detail=str(exc),
+                detail=error_text(exc),
             ) from exc
         print(f"Deleted stale local branch {branch}: PR {url} was closed without merging.")
 

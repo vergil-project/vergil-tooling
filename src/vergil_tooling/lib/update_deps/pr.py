@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 from vergil_tooling.lib import git, github, pr_merge
 from vergil_tooling.lib.labels import ensure_labels
 from vergil_tooling.lib.managed_worktree import remove_worktree
+from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.update_deps import report
 from vergil_tooling.lib.update_deps.context import DEPS_LABEL, DepsFailure, UpdateDepsError
 from vergil_tooling.lib.update_deps.failure import failure_markdown, tail_output
@@ -122,7 +123,8 @@ def delete_merged_branch(ctx: UpdateDepsContext) -> None:
     except subprocess.CalledProcessError as exc:
         print(
             f"WARNING: merged {ctx.pr_url}, but could not delete its branch "
-            f"{ctx.branch}: {exc}\nDelete it by hand: git push origin --delete {ctx.branch}"
+            f"{ctx.branch}: {error_text(exc)}\n"
+            f"Delete it by hand: git push origin --delete {ctx.branch}"
         )
         return
     if deleted:

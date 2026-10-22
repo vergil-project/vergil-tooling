@@ -252,6 +252,7 @@ def _cmd_install_test(args: argparse.Namespace) -> int:
     import subprocess
 
     from vergil_tooling.lib.package import install_test
+    from vergil_tooling.lib.process_errors import failure_message
 
     cwd = Path.cwd()
     try:
@@ -263,7 +264,7 @@ def _cmd_install_test(args: argparse.Namespace) -> int:
         )
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or exc.stdout or "").strip()
-        msg = f"{exc}\n{detail}".rstrip()
+        msg = f"{failure_message(exc)}\n{detail}".rstrip()
         raise PackageError(msg) from exc
     return 0
 

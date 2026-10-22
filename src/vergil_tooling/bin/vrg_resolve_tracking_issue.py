@@ -27,6 +27,7 @@ from typing import cast
 from vergil_tooling.lib import git, github
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.linkage import extract_merge_pr, extract_tracking_issue
+from vergil_tooling.lib.process_errors import error_text
 
 # Backward-compatible alias: the merge/squash subject → PR-number extraction now
 # lives in ``lib.linkage`` (shared with the CI-evidence harvest layer).
@@ -44,7 +45,7 @@ def main(argv: list[str] | None = None) -> int:
         subject = git.read_output("log", "-1", "--format=%s", args.commit)
     except subprocess.CalledProcessError as exc:
         print(
-            f"ERROR: failed to read commit {args.commit}: {exc}",
+            f"ERROR: failed to read commit {args.commit}: {error_text(exc)}",
             file=sys.stderr,
         )
         return 2
@@ -117,7 +118,7 @@ def _resolve_from_pr(pr_num: int) -> int:
         repo = github.current_repo()
         pr_data = github.read_json("api", f"repos/{repo}/pulls/{pr_num}")
     except subprocess.CalledProcessError as exc:
-        print(f"ERROR: failed to fetch PR #{pr_num}: {exc}", file=sys.stderr)
+        print(f"ERROR: failed to fetch PR #{pr_num}: {error_text(exc)}", file=sys.stderr)
         return 2
 
     if not isinstance(pr_data, dict):

@@ -59,6 +59,7 @@ from vergil_tooling.lib.lima import (
     write_instance_meta,
 )
 from vergil_tooling.lib.process import exec_replace
+from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.progress import Stage
 from vergil_tooling.lib.session import filter_recent
 from vergil_tooling.lib.session_store import SessionInfo
@@ -2704,7 +2705,8 @@ def _list_sessions(config: IdentityConfig, args: argparse.Namespace) -> int:
             active_rows.update(_off_platform_active_sessions(vm))
         except (subprocess.CalledProcessError, OSError, json.JSONDecodeError, RuntimeError) as exc:
             print(
-                f"WARNING: could not query sessions on off-platform box '{vm.scope}': {exc}",
+                f"WARNING: could not query sessions on off-platform box '{vm.scope}': "
+                f"{error_text(exc)}",
                 file=sys.stderr,
             )
 
