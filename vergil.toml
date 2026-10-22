@@ -15,7 +15,6 @@ vrg-vm update --all
 """
 
 [ci]
-versions = ["3.12", "3.13", "3.14"]
 integration-tests = false
 
 [dependencies]

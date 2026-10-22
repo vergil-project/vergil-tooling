@@ -140,8 +140,10 @@ The workflow file is `.github/workflows/ci.yml`. It runs on
     Tier 1 runs one dev container on a single Python interpreter (currently
     3.14), so its `--cov-fail-under=100` gate proves 100% coverage on that
     one interpreter only. PR-CI re-runs the test-and-coverage gate
-    **independently in a separate container per `[ci].versions` entry**
-    (3.12, 3.13, 3.14). Because branch coverage (`--cov-branch`) can
+    **independently in a separate container per resolved matrix version**
+    (currently 3.12, 3.13, 3.14: this repo is a `library` with no
+    `[ci].versions` pin, so it tests the whole version window). Because
+    branch coverage (`--cov-branch`) can
     legitimately differ across CPython versions — a branch reachable on one
     version may be dead on another, or a version-guarded code path may only
     execute on some interpreters — code that measures 100% locally can still
