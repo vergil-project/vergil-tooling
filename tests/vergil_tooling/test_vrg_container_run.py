@@ -96,6 +96,27 @@ def test_python_container_gets_version_and_source(tmp_path: Path) -> None:
     assert args[args.index("UV_PYTHON_PREFERENCE=only-system") - 1] == "-e"
 
 
+def test_python_cache_build_gets_version_and_source(tmp_path: Path) -> None:
+    # The cache build's warmup runs with the same env as the run, so a repo's
+    # python-preference cannot make it fetch a managed Python either (#3421).
+    (tmp_path / "pyproject.toml").write_text("[project]\n")
+    with (
+        patch("vergil_tooling.bin.vrg_container_run.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_run.assert_runtime_available"),
+        patch(
+            "vergil_tooling.bin.vrg_container_run.ensure_cached_image", return_value="img:1"
+        ) as mock_cache,
+        patch("vergil_tooling.bin.vrg_container_run.detect_runtime", return_value="docker"),
+        patch("vergil_tooling.bin.vrg_container_run.os.execvp"),
+        patch.dict("os.environ", {}, clear=True),
+    ):
+        main(["--", "true"])
+    assert mock_cache.call_args.kwargs["build_env"] == {
+        "UV_PYTHON": "3.14",
+        "UV_PYTHON_PREFERENCE": "only-system",
+    }
+
+
 def test_help_alone_after_separator_not_intercepted(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[project]\n")
     env = {"GH_TOKEN": "tok"}
