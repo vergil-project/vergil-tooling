@@ -645,27 +645,30 @@ def test_main_reports_ready_and_skipped(
     assert "skipped" in out
 
 
-def _capture_main(monkeypatch: pytest.MonkeyPatch, argv: list[str]) -> dict[str, object]:
+def _capture_main(
+    monkeypatch: pytest.MonkeyPatch, argv: list[str]
+) -> tuple[SweepSpec, Callable[[Path], AppResult]]:
     """Run ``vrg_fleet_sync.main`` with ``run_sweep`` captured, not executed."""
-    captured: dict[str, object] = {}
+    specs: list[SweepSpec] = []
+    applicators: list[Callable[[Path], AppResult]] = []
 
-    def fake_run_sweep(spec, applicator, *, dry_run):  # noqa: ANN001, ANN003
-        captured["spec"] = spec
-        captured["applicator"] = applicator
+    def fake_run_sweep(
+        spec: SweepSpec, applicator: Callable[[Path], AppResult], *, dry_run: bool
+    ) -> list[RepoResult]:
+        specs.append(spec)
+        applicators.append(applicator)
         return []
 
     monkeypatch.setattr(vrg_fleet_sync, "run_sweep", fake_run_sweep)
     assert vrg_fleet_sync.main(argv) == 0
-    return captured
+    return specs[0], applicators[0]
 
 
 def test_fleet_target_default_is_gitignore(monkeypatch: pytest.MonkeyPatch) -> None:
     """Regression: with no --target the sweep is exactly the gitignore sweep."""
-    default = _capture_main(monkeypatch, ["--repos", "/clones/x"])
-    explicit = _capture_main(monkeypatch, ["--repos", "/clones/x", "--target", "gitignore"])
-    assert default["spec"] == explicit["spec"]
-    spec = default["spec"]
-    assert isinstance(spec, SweepSpec)
+    spec, _app = _capture_main(monkeypatch, ["--repos", "/clones/x"])
+    explicit, _app = _capture_main(monkeypatch, ["--repos", "/clones/x", "--target", "gitignore"])
+    assert spec == explicit
     assert spec.branch_slug == "gitignore-sync"
     assert spec.title == "chore(gitignore): sync the vergil-managed .gitignore block"
     assert spec.commit_scope == "gitignore"
@@ -674,9 +677,9 @@ def test_fleet_target_default_is_gitignore(monkeypatch: pytest.MonkeyPatch) -> N
 
 def test_fleet_target_dependabot_spec(monkeypatch: pytest.MonkeyPatch) -> None:
     """--target dependabot builds the dependabot SweepSpec and applicator."""
-    captured = _capture_main(monkeypatch, ["--repos", "/clones/x", "--target", "dependabot"])
-    spec = captured["spec"]
-    assert isinstance(spec, SweepSpec)
+    spec, applicator = _capture_main(
+        monkeypatch, ["--repos", "/clones/x", "--target", "dependabot"]
+    )
     assert spec.repos == ["/clones/x"]
     assert spec.branch_slug == "dependabot-config"
     assert spec.commit_type == "chore"
@@ -693,8 +696,6 @@ def test_fleet_target_dependabot_spec(monkeypatch: pytest.MonkeyPatch) -> None:
         return _FakeProc(stdout=next(outputs))
 
     monkeypatch.setattr(vrg_fleet_sync.subprocess, "run", fake_proc_run)
-    applicator = captured["applicator"]
-    assert callable(applicator)
 
     changed = applicator(Path("/w"))
     assert proc_calls[-1] == ["vrg-dependabot-sync", "--write", "--repo", "/w"]
@@ -707,14 +708,14 @@ def test_fleet_target_dependabot_spec(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_fleet_target_dependabot_failure_names_tool(monkeypatch: pytest.MonkeyPatch) -> None:
-    captured = _capture_main(monkeypatch, ["--repos", "/clones/x", "--target", "dependabot"])
+    _spec_unused, applicator = _capture_main(
+        monkeypatch, ["--repos", "/clones/x", "--target", "dependabot"]
+    )
 
     def fake_proc_run(args, **kwargs):  # noqa: ANN001, ANN003
         return _FakeProc(returncode=2, stdout="usage")
 
     monkeypatch.setattr(vrg_fleet_sync.subprocess, "run", fake_proc_run)
-    applicator = captured["applicator"]
-    assert callable(applicator)
     with pytest.raises(RuntimeError, match=r"vrg-dependabot-sync failed \(exit 2\): usage"):
         applicator(Path("/w"))
 
