@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.254] - 2026-10-22
+
+### Bug fixes
+
+- resolve --epic adhoc against the task repo and scope adhoc-epic ensure to the target owner (#3412)
+- resolve a bare --epic #N against the task's epic home, not the cwd repo (#3416)
+
+### CI
+
+- follow the version window: remove the [ci].versions pin (#3408)
+
+### Features
+
+- allow uv python-preference and pin the interpreter source in containers (#3413)
+
 ## [2.1.253] - 2026-10-21
 
 ### Bug fixes
