@@ -4,7 +4,8 @@ Owns exactly the file change for **one** repository, and nothing else: it reads
 ``<repo>/.github/dependabot.yml``, resolves the repo's primary language from
 ``[project].primary-language``, and either checks (default) or writes the
 canonical report-only render from :mod:`vergil_tooling.lib.dependabot`
-(epic vergil-project/.github#420).
+(epic vergil-project/.github#420). A ``vergil.toml`` that fails to load is a
+config error (exit 2), never an actions-only render (#3451).
 
 The file is **exact match**: ``--write`` replaces any local additions with the
 canonical render. It has no git or PR knowledge — ``vrg-fleet-sync --target
@@ -20,13 +21,20 @@ from pathlib import Path
 
 from vergil_tooling.lib import dependabot
 from vergil_tooling.lib.cli import cli_main
+from vergil_tooling.lib.config import ConfigError
 
 
 @cli_main
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     repo_root = Path(args.repo).resolve() if args.repo else Path.cwd()
-    lang = dependabot.resolve_language(repo_root)
+    try:
+        lang = dependabot.resolve_language(repo_root)
+    except ConfigError as exc:
+        # A config that will not load is not drift: report it and exit 2 so no
+        # language-less file is written in its place (#3451).
+        print(f"vrg-dependabot-sync: {exc}", file=sys.stderr)
+        return 2
     if args.write:
         return _run_write(repo_root, lang)
     return _run_check(repo_root, lang)
@@ -43,7 +51,9 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
             "the applicator: it owns only the file change and has no git or "
             "PR knowledge."
         ),
-        epilog="Exit codes: 0 ok, 1 --check drift, 2 usage error.",
+        epilog=(
+            "Exit codes: 0 ok, 1 --check drift, 2 usage error or a vergil.toml that fails to load."
+        ),
     )
     parser.add_argument(
         "--repo",

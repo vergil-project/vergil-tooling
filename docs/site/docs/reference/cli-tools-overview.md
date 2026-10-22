@@ -376,9 +376,9 @@ leaving genuinely repo-local lines outside the fence untouched. See the
 |---|---|
 | Source | `vergil_tooling.bin.vrg_gitignore_sync` |
 | Args | `--repo PATH` (default: CWD); mutually exclusive `--check` (default) \| `--write` |
-| Preconditions | A repo whose language resolves from `[project].primary-language` (absent/unreadable config → base-only) |
-| Failure mode | `--check` prints each drift reason to stderr; `--write` always succeeds (prints `already in sync` or the synced path) |
-| Exit codes | 0 ok, 1 `--check` drift, 2 usage error |
+| Preconditions | A repo whose language resolves from `[project].primary-language` (no `vergil.toml` or no declared language → base-only; a `vergil.toml` that fails to load is an error, exit 2) |
+| Failure mode | `--check` prints each drift reason to stderr; `--write` succeeds whenever the language resolves (prints `already in sync` or the synced path) |
+| Exit codes | 0 ok, 1 `--check` drift, 2 usage error or a `vergil.toml` that fails to load (the config error is printed to stderr; nothing is written) |
 | Status | Active |
 
 ### vrg-dependabot-sync
@@ -398,9 +398,9 @@ or PR knowledge.
 |---|---|
 | Source | `vergil_tooling.bin.vrg_dependabot_sync` |
 | Args | `--repo PATH` (default: CWD); mutually exclusive `--check` (default) \| `--write` |
-| Preconditions | A repo whose language resolves from `[project].primary-language` (absent/unreadable config → `github-actions` only) |
-| Failure mode | `--check` prints `missing .github/dependabot.yml` or `differs from the canonical render` to stderr; `--write` always succeeds (prints `already in sync` or `wrote .github/dependabot.yml (<lang or none>)`) |
-| Exit codes | 0 ok, 1 `--check` drift, 2 usage error |
+| Preconditions | A repo whose language resolves from `[project].primary-language` (no `vergil.toml` or no declared language → `github-actions` only; a `vergil.toml` that fails to load is an error, exit 2) |
+| Failure mode | `--check` prints `missing .github/dependabot.yml` or `differs from the canonical render` to stderr; `--write` succeeds whenever the language resolves (prints `already in sync` or `wrote .github/dependabot.yml (<lang or none>)`) |
+| Exit codes | 0 ok, 1 `--check` drift, 2 usage error or a `vergil.toml` that fails to load (the config error is printed to stderr; nothing is written) |
 | Status | Active |
 
 ### vrg-fleet-sync

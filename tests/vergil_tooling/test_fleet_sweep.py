@@ -15,6 +15,7 @@ commit fail exactly as it did in production.
 from __future__ import annotations
 
 import subprocess  # noqa: S404 - real git in the integration-style commit test
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -834,6 +835,38 @@ def test_fleet_target_dependabot_failure_names_tool(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(vrg_fleet_sync.subprocess, "run", fake_proc_run)
     with pytest.raises(RuntimeError, match=r"vrg-dependabot-sync failed \(exit 2\): usage"):
         applicator(Path("/w"))
+
+
+@pytest.mark.parametrize(
+    ("target", "module"),
+    [
+        ("dependabot", "vergil_tooling.bin.vrg_dependabot_sync"),
+        ("gitignore", "vergil_tooling.bin.vrg_gitignore_sync"),
+    ],
+)
+def test_fleet_applicator_surfaces_config_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, target: str, module: str
+) -> None:
+    """#3451: a repo whose vergil.toml fails to load is an error row naming the cause.
+
+    The real applicator CLI runs (as ``python -m``) against a worktree holding a
+    malformed ``vergil.toml``; its exit-2 config error must reach the sweep as
+    the raised message, never a silently rendered language-less file.
+    """
+    (tmp_path / "vergil.toml").write_text("not = [valid toml", encoding="utf-8")
+    _spec_unused, applicator = _capture_main(
+        monkeypatch, ["--repos", "/clones/x", "--target", target]
+    )
+    real_run = subprocess.run
+
+    def run_real_cli(args, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        return real_run([sys.executable, "-m", module, *args[1:]], **kwargs)  # noqa: S603
+
+    monkeypatch.setattr(vrg_fleet_sync.subprocess, "run", run_real_cli)
+    with pytest.raises(RuntimeError, match=r"failed \(exit 2\): .*not valid TOML"):
+        applicator(tmp_path)
+    assert not (tmp_path / ".github").exists()
+    assert not (tmp_path / ".gitignore").exists()
 
 
 def test_fleet_target_rejects_unknown() -> None:

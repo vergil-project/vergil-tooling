@@ -52,14 +52,17 @@ def _gitignore_language(repo_root: Path) -> str | None:
 
     Uses the asserted ``[project].primary-language`` — the same source the rest
     of the validation stack trusts — normalized to ``None`` (base-only) for any
-    language without a managed fragment or when the config is absent/unreadable.
-    A base-only fence is exactly what is expected there (e.g. ``.github`` is
-    ``shell`` and ``docs`` declares nothing — both take the base fragment only).
+    language without a managed fragment, when no language is declared, or when
+    there is no ``vergil.toml``. A base-only fence is exactly what is expected
+    there (e.g. ``.github`` is ``shell`` and ``docs`` declares nothing — both
+    take the base fragment only).
+
+    A config that fails to load raises
+    :class:`~vergil_tooling.lib.config.ConfigError` rather than resolving to
+    base-only: a silent base-only would hide the real failure behind a fence
+    verdict (#3451). Every caller must surface it.
     """
-    try:
-        lang = declared_primary_language(repo_root)
-    except ConfigError:
-        return None
+    lang = declared_primary_language(repo_root)
     return lang if lang in gitignore.FRAGMENT_LANGS else None
 
 
@@ -71,11 +74,25 @@ def _check_gitignore(repo_root: Path, items: list[DiffItem]) -> None:
     removed in Task 10 once the whole fleet was fenced, so ``base +
     all-fragments`` (via :func:`gitignore.check`) is the single source of truth
     for acceptance. Each fence-compliance failure is appended as a ``DiffItem``.
+
+    When ``vergil.toml`` fails to load, the fence language is unknown, so the
+    fence is not judged at all: the check appends one explicit failure naming
+    the config error instead of a false compliant/differs verdict (#3451).
     """
     gitignore_path = repo_root / ".gitignore"
     text = gitignore_path.read_text(encoding="utf-8") if gitignore_path.is_file() else ""
 
-    lang = _gitignore_language(repo_root)
+    try:
+        lang = _gitignore_language(repo_root)
+    except ConfigError as exc:
+        items.append(
+            DiffItem(
+                field="local.gitignore",
+                expected="resolvable [project].primary-language",
+                actual=f"cannot resolve the fence language: {exc}",
+            )
+        )
+        return
     compliance = gitignore.check(text, lang)
     if compliance.compliant:
         return
