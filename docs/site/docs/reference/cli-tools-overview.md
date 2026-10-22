@@ -551,7 +551,10 @@ markdownlint, yamllint) are available on PATH.
 Shared validation checks for all repos: repository profile
 validation, markdownlint on published markdown (`docs/site/**/*.md`
 and `README.md`) using the bundled canonical config, shellcheck on
-`scripts/`, yamllint on `.github/` and `docs/` YAML files, hadolint
+`scripts/`, yamllint on `.github/` and `docs/` YAML files, the
+dependabot-limit guard (when `.github/dependabot.yml` exists, every
+`updates` entry must carry `open-pull-requests-limit: 0`, so Dependabot
+can never open a PR), hadolint
 on `Dockerfile*`, actionlint on `.github/workflows/`, and
 ansible-lint (using the bundled canonical config) when the repo
 carries Ansible content.

@@ -21,6 +21,7 @@ from vergil_tooling.bin.validate_common import (
     _has_ansible_content,
     main,
 )
+from vergil_tooling.lib import dependabot
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -717,6 +718,90 @@ def test_main_yamllint_fails(tmp_path: Path) -> None:
         ),
     ):
         assert main() == 1
+
+
+# -- main: dependabot limit-0 guard (epic vergil-project/.github#420) ---------
+
+
+def _run_main_with_dependabot(tmp_path: Path, text: str | None) -> tuple[int, list[list[str]]]:
+    """Run ``main`` with every subprocess passing and an optional dependabot.yml."""
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
+    if text is not None:
+        github_dir = tmp_path / ".github"
+        github_dir.mkdir(parents=True, exist_ok=True)
+        (github_dir / "dependabot.yml").write_text(text)
+    with (
+        patch(
+            "vergil_tooling.bin.validate_common.git.repo_root",
+            return_value=tmp_path,
+        ),
+        patch(
+            "vergil_tooling.bin.validate_common.vrg_repo_profile.main",
+            return_value=0,
+        ),
+        patch(
+            "vergil_tooling.bin.validate_common.subprocess.run",
+            return_value=subprocess.CompletedProcess(args=[], returncode=0),
+        ) as mock_run,
+    ):
+        rc = main()
+    return rc, [c[0][0] for c in mock_run.call_args_list]
+
+
+def test_validate_dependabot_absent_skips(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rc, _calls = _run_main_with_dependabot(tmp_path, None)
+    assert rc == 0
+    assert "dependabot-limit" not in capsys.readouterr().out
+
+
+def test_validate_dependabot_limit_zero_passes(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rc, _calls = _run_main_with_dependabot(tmp_path, dependabot.render("python"))
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Running: dependabot-limit (.github/dependabot.yml)" in out
+
+
+def test_validate_dependabot_nonzero_fails(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    text = (
+        "version: 2\nupdates:\n"
+        "  - package-ecosystem: npm\n    directory: /\n    open-pull-requests-limit: 5\n"
+    )
+    rc, calls = _run_main_with_dependabot(tmp_path, text)
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "dependabot.yml: updates entry npm has open-pull-requests-limit: 5" in err
+    # The guard stops the pipeline: actionlint etc. never run after it.
+    assert all(c[0] != "actionlint" for c in calls)
+
+
+def test_validate_dependabot_missing_limit_fails(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    text = "version: 2\nupdates:\n  - package-ecosystem: pip\n    directory: /\n"
+    rc, _calls = _run_main_with_dependabot(tmp_path, text)
+    assert rc == 1
+    assert "dependabot.yml: updates entry pip is missing" in capsys.readouterr().err
+
+
+def test_validate_dependabot_unparseable_fails(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rc, _calls = _run_main_with_dependabot(tmp_path, "updates: [\n")
+    assert rc == 1
+    assert "dependabot.yml: unparseable: " in capsys.readouterr().err
+
+
+def test_validate_dependabot_does_not_require_exact_match(tmp_path: Path) -> None:
+    """The guard checks only the limit; a non-canonical but limit-0 file passes."""
+    text = "version: 2\nupdates:\n  - package-ecosystem: npm\n    open-pull-requests-limit: 0\n"
+    rc, _calls = _run_main_with_dependabot(tmp_path, text)
+    assert rc == 0
 
 
 # -- _find_dockerfiles -------------------------------------------------------
