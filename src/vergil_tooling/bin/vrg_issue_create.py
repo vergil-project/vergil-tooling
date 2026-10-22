@@ -3,8 +3,13 @@
 Every issue must be born linked to an epic (a native sub-issue), so this is the
 only sanctioned issue-creation path: ``vrg-gh`` denies raw ``gh issue create``
 and redirects here. ``--epic`` is required — pass ``--epic adhoc`` to target the
-repo's ad-hoc epic in ``.github``, or an explicit ``owner/repo#N`` / ``#N`` epic
-ref.
+target repo's ad-hoc epic, or an explicit ``owner/repo#N`` / ``#N`` epic ref.
+
+The target repo is ``--repo`` (default: the current repo). ``adhoc`` and a bare
+``#N`` are both read against it, never the cwd repo: ``#N`` is issue N in the
+target repo's epic home (``<org>/.github`` for a public repo, the repo itself
+for a self-homed private one). A fully qualified ``owner/repo#N`` is taken as
+written (#3409, #3411).
 
 If the issue is created but the link fails, the created issue's URL is reported
 so it is never a silent orphan; recover with ``vrg-epic-move``.
@@ -28,9 +33,9 @@ def main(argv: list[str] | None = None) -> int:
     repo = args.repo or github.current_repo()
     owner, name = repo.split("/", 1)
     # Pre-network cross-org guard: the issue and its epic must share an owner so
-    # one App-installation token reaches both (#2070). The 'adhoc' sentinel
-    # resolves within *repo*'s org (.github), so only an explicit epic ref can
-    # diverge.
+    # one App-installation token reaches both (#2070). The 'adhoc' sentinel and
+    # a bare '#N' both resolve within *repo*'s epic home (in *repo*'s org), so
+    # only a qualified epic ref can diverge.
     if args.epic != "adhoc":
         try:
             epic_owner = epics.parse_issue_ref(args.epic, default_repo=repo).owner
@@ -148,7 +153,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Create an issue linked under an epic (native sub-issue)."
     )
-    parser.add_argument("--epic", required=True, help="Epic ref: 'adhoc', #N, or owner/repo#N")
+    parser.add_argument(
+        "--epic",
+        required=True,
+        help="Epic ref: 'adhoc' (the target repo's ad-hoc epic), #N (issue N in the "
+        "target repo's epic home: <org>/.github for a public repo, the repo itself "
+        "for a self-homed private one), or owner/repo#N (taken as written)",
+    )
     parser.add_argument("--title", required=True, help="Issue title")
     parser.add_argument("--body", default="", help="Issue body text")
     parser.add_argument("--body-file", help="Read the issue body from a file")
