@@ -11995,6 +11995,8 @@
       
         
       
+        
+      
     
     
     
@@ -12245,6 +12247,17 @@
     <span class="md-ellipsis">
       
         vrg-github-repo-config
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vrg-dependabot-audit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-dependabot-audit
       
     </span>
   </a>
@@ -12571,6 +12584,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../dependabot-audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dependabot Alert Audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../vm-spec/" class="md-nav__link">
         
   
@@ -12731,10 +12772,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_9" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_10" >
         
           
-          <label class="md-nav__link" for="__nav_4_9" id="__nav_4_9_label" tabindex="">
+          <label class="md-nav__link" for="__nav_4_10" id="__nav_4_10_label" tabindex="">
             
   
   
@@ -12752,8 +12793,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_9_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_9">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_10">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -12828,10 +12869,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_10" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_11" >
         
           
-          <label class="md-nav__link" for="__nav_4_10" id="__nav_4_10_label" tabindex="">
+          <label class="md-nav__link" for="__nav_4_11" id="__nav_4_11_label" tabindex="">
             
   
   
@@ -12849,8 +12890,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_10_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_10">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_11">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -12965,10 +13006,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_11" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_12" >
         
           
-          <label class="md-nav__link" for="__nav_4_11" id="__nav_4_11_label" tabindex="">
+          <label class="md-nav__link" for="__nav_4_12" id="__nav_4_12_label" tabindex="">
             
   
   
@@ -12986,8 +13027,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_11_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_11">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_12_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_12">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -16121,6 +16162,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-dependabot-audit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-dependabot-audit
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-github-repo-init" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -16949,6 +17001,46 @@ Runs nightly from each repo's <code>ops.yml</code> via the reusable
 <tr>
 <td>Exit codes</td>
 <td>0 compliant, 1 non-compliant (drift), 2 audit could not complete</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-dependabot-audit">vrg-dependabot-audit<a class="headerlink" href="#vrg-dependabot-audit" title="Permanent link">&para;</a></h3>
+<p>Fail on any open Dependabot alert, at any severity: the gate for the
+fleet's report-only Dependabot posture. Private repos get an itemized
+report; public repos (and any repo whose visibility cannot be resolved)
+get counts by severity and the Security-tab link only. See the
+<a href="../dependabot-audit/">Dependabot Alert Audit reference</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_dependabot_audit</code></td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>--repo OWNER/REPO</code> (required)</td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>A token with "Dependabot alerts: Read" on the repo; alerts enabled on the repo</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td>One <code>vrg-dependabot-audit:</code> diagnostic on stderr when the alerts cannot be read</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 no open alerts, 1 at least one open alert, 2 could not check</td>
 </tr>
 <tr>
 <td>Status</td>
