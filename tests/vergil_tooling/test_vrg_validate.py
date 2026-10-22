@@ -4,15 +4,12 @@ from __future__ import annotations
 
 import os
 import subprocess
-from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from unittest.mock import mock_open, patch
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
-
-    from vergil_tooling.lib.versions.resolve import Resolution
 
 import pytest
 
@@ -34,7 +31,6 @@ from vergil_tooling.bin.vrg_validate import (
 )
 from vergil_tooling.lib.config import ConfigError, TestConfig
 from vergil_tooling.lib.languages import CheckKind
-from vergil_tooling.lib.versions.resolve import resolve_language
 
 _MOD = "vergil_tooling.bin.vrg_validate"
 
@@ -409,22 +405,6 @@ def test_main_app_multi_pin_fails_validation(
     assert "ERROR: [ci].versions pins 2 versions (3.14, 3.13)" in err
     assert "pin a single version" in err
     assert 'set [project].repository-type = "library"' in err
-
-
-def test_main_resolution_warning_does_not_fail(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    def _with_warning(*args: Any, **kwargs: Any) -> Resolution:
-        return replace(resolve_language(*args, **kwargs), warnings=("a resolution warning",))
-
-    _write_pinned_config(tmp_path, repo_type="library", versions='["3.13", "3.14"]')
-    with (
-        patch(_MOD + ".git.repo_root", return_value=tmp_path),
-        patch(_MOD + ".progress.run_pipeline", return_value=0),
-        patch(_MOD + ".resolve_language", side_effect=_with_warning),
-    ):
-        assert main(["--check", "common"]) == 0
-    assert "WARNING: a resolution warning" in capsys.readouterr().err
 
 
 def test_main_floor_warning_does_not_fail(

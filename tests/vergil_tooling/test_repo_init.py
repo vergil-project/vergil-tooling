@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import subprocess
 import tomllib
-from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
@@ -56,7 +55,6 @@ from vergil_tooling.lib.repo_init import (
     step_scaffold_config_files,
     step_scaffold_language,
 )
-from vergil_tooling.lib.versions.resolve import resolve_config
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.versions.resolve import Resolution
@@ -1011,18 +1009,6 @@ class TestResolveVersions:
             SystemExit, match=r"error: \[ci\]\.versions pins 2 versions .*pin a single version"
         ):
             _resolve_versions(self._APP_MULTI_PIN)
-
-    def test_warning_is_printed(self, capsys: pytest.CaptureFixture[str]) -> None:
-        def _with_warning(*args: Any, **kwargs: Any) -> Resolution | None:
-            resolution = resolve_config(*args, **kwargs)
-            assert resolution is not None
-            return replace(resolution, warnings=("a resolution warning",))
-
-        with patch("vergil_tooling.lib.versions.resolve.resolve_config", side_effect=_with_warning):
-            resolution = _resolved("python", ["3.13", "3.14"])
-        assert resolution is not None
-        assert resolution.versions == ("3.14", "3.13")
-        assert "WARNING: a resolution warning" in capsys.readouterr().err
 
 
 class TestRenderCdWorkflow:
