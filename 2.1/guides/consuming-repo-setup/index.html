@@ -1308,6 +1308,8 @@
       
         
       
+        
+      
     
     
     
@@ -1360,6 +1362,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.256/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.256
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -11993,6 +12023,8 @@
       
         
       
+        
+      
     
     
     
@@ -12090,6 +12122,34 @@
     
   
     GitHub Config Audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/dependabot-audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dependabot Alert Audit
   
 
     
@@ -12267,10 +12327,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_9" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_10" >
         
           
-          <label class="md-nav__link" for="__nav_4_9" id="__nav_4_9_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_10" id="__nav_4_10_label" tabindex="0">
             
   
   
@@ -12288,8 +12348,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_9_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_9">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_10">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -12361,10 +12421,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_10" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_11" >
         
           
-          <label class="md-nav__link" for="__nav_4_10" id="__nav_4_10_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_11" id="__nav_4_11_label" tabindex="0">
             
   
   
@@ -12382,8 +12442,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_10_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_10">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_11">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -12495,10 +12555,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_11" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_12" >
         
           
-          <label class="md-nav__link" for="__nav_4_11" id="__nav_4_11_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_12" id="__nav_4_12_label" tabindex="0">
             
   
   
@@ -12516,8 +12576,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_11_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_11">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_12_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_12">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -16455,6 +16515,15 @@ both, so a new or adopted repo starts conforming.</p>
 rolling <code>vergil-tooling@vX.Y</code> tag, so an updated fragment released under
 that line is picked up on the next <code>vrg-gitignore-sync</code> run — and the
 nightly audit flags the drift until you run it.</p>
+<p>Repos also carry a canonical, <strong>report-only</strong> <code>.github/dependabot.yml</code>
+(epic vergil-project/.github#420): Dependabot alerts stay on, but every
+<code>updates</code> entry sets <code>open-pull-requests-limit: 0</code>, so Dependabot never
+opens a PR. The file is an exact match of the render for your
+<code>[project].primary-language</code> — no local additions. <code>vrg-github-repo-init</code>
+writes it, and <code>vrg-dependabot-sync --write</code> writes or refreshes it.
+<code>vrg-validate</code> rejects any <code>dependabot.yml</code> entry whose
+<code>open-pull-requests-limit</code> is missing (Dependabot then defaults to 5) or
+not <code>0</code>.</p>
 <p>The audit also checks <code>vergil.toml</code>, <code>CLAUDE.md</code>,
 <code>.claude/settings.json</code>, <code>.claude/hooks/guard.sh</code>, the reusable-workflow
 pins and the GitHub settings. Check your repo locally before relying on
