@@ -105,6 +105,24 @@ def test_current_org_returns_remote_owner() -> None:
         assert github.current_org() == "logical-minds-foundry"
 
 
+def test_current_repo_reads_the_cwd_remote_by_default() -> None:
+    with patch("vergil_tooling.lib.github.read_output", return_value="o/r") as mock_read:
+        assert github.current_repo() == "o/r"
+    assert mock_read.call_args.args[:2] == ("repo", "view")
+
+
+def test_current_repo_resolves_an_explicit_checkout() -> None:
+    """``cwd`` resolves another checkout's repo without changing directory."""
+    with patch("vergil_tooling.lib.github._run_with_retry") as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=["gh"], returncode=0, stdout="logical-minds-foundry/docs\n", stderr=""
+        )
+        assert github.current_repo(cwd="/clones/docs") == "logical-minds-foundry/docs"
+    assert mock_run.call_args.args[0][:3] == ("gh", "repo", "view")
+    assert mock_run.call_args.kwargs["cwd"] == "/clones/docs"
+    assert mock_run.call_args.kwargs["check"] is True
+
+
 def test_create_pr_returns_url() -> None:
     with patch(
         "vergil_tooling.lib.github.read_output", return_value="https://github.com/pr/1"
