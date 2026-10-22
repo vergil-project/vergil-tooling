@@ -16069,8 +16069,20 @@ value <code>vrg-container-run</code> resolves:</p>
 <td>npm global root, only when <code>build-command</code> is declared (see below)</td>
 <td>An explicit host value wins</td>
 </tr>
+<tr>
+<td><code>UV_PYTHON</code>, <code>UV_PYTHON_PREFERENCE</code></td>
+<td>Python only: the resolved primary version and <code>only-system</code></td>
+<td>None: the resolver decides</td>
+</tr>
 </tbody>
 </table>
+<p>For a <strong>Python</strong> repo, <code>UV_PYTHON</code> and <code>UV_PYTHON_PREFERENCE=only-system</code> make uv
+use the image's interpreter at the resolved version, so a repo's own
+<code>python-preference</code> cannot make uv download a managed interpreter. The cached-image
+build exports the same two variables for its whole setup step (vergil-tooling
+install, <code>build-command</code> and warmup), and they are part of the image's cache key,
+so a change of resolved version rebuilds the image
+(<a href="https://github.com/vergil-project/vergil-tooling/issues/3421">#3421</a>).</p>
 <p>For a <strong>cpp</strong> repo, <code>vrg-container-run</code> also forwards
 <code>CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER</code> when it can resolve one: from the
 environment if set and not blank, else from <code>~/.config/vergil/conan.env</code>, else
