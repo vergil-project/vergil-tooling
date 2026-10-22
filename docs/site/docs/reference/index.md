@@ -19,6 +19,7 @@ the dev-tree override venv.
 | [vrg-finalize-pr](dev/finalize-pr.md) | Merge a PR and run post-merge cleanup |
 | [vrg-ensure-label](cli-tools-overview.md#vrg-ensure-label) | Ensure GitHub labels exist |
 | [vrg-github-repo-config](config-audit.md) | Audit/reconcile a repo against canonical config |
+| [vrg-dependabot-audit](dependabot-audit.md) | Fail on any open Dependabot alert |
 | [vrg-github-repo-init](cli-tools-overview.md#vrg-github-repo-init) | Bootstrap a new managed repository |
 | [vrg-container-run](cli-tools-overview.md#vrg-container-run) | Run commands inside a dev container |
 | [vrg-container-test](cli-tools-overview.md#vrg-container-test) | Run test suite inside a dev container |
