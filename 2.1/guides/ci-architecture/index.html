@@ -1304,6 +1304,8 @@
       
         
       
+        
+      
     
     
     
@@ -1356,6 +1358,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.254/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.254
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -16185,8 +16215,10 @@ for the measured evidence.</p>
 <p>Tier 1 runs one dev container on a single Python interpreter (currently
 3.14), so its <code>--cov-fail-under=100</code> gate proves 100% coverage on that
 one interpreter only. PR-CI re-runs the test-and-coverage gate
-<strong>independently in a separate container per <code>[ci].versions</code> entry</strong>
-(3.12, 3.13, 3.14). Because branch coverage (<code>--cov-branch</code>) can
+<strong>independently in a separate container per resolved matrix version</strong>
+(currently 3.12, 3.13, 3.14: this repo is a <code>library</code> with no
+<code>[ci].versions</code> pin, so it tests the whole version window). Because
+branch coverage (<code>--cov-branch</code>) can
 legitimately differ across CPython versions — a branch reachable on one
 version may be dead on another, or a version-guarded code path may only
 execute on some interpreters — code that measures 100% locally can still
