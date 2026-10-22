@@ -7,15 +7,20 @@ gcc 14, ...), set through ``VRG_VERSION_WINDOW``.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from dataclasses import replace
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from vergil_tooling.bin.vrg_ci_resolve import main
+from vergil_tooling.lib.versions.resolve import resolve_config
 from vergil_tooling.lib.versions.window import WINDOW_ENV
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from vergil_tooling.lib.config import VergilConfig
+    from vergil_tooling.lib.versions.resolve import Resolution
 
 
 def _write_config(
@@ -117,17 +122,41 @@ def test_cli_invalid_config_exits_1(tmp_path: Path, capsys: pytest.CaptureFixtur
     assert "not valid TOML" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("fmt", ["json", "github-output"])
+def test_cli_app_multi_pin_exits_1(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], fmt: str
+) -> None:
+    # An app builds exactly one version: a list of two fails CI setup loudly.
+    _write_config(
+        tmp_path, language="python", repo_type="tooling", ci='versions = ["3.12", "3.13"]\n'
+    )
+    assert main(["--format", fmt, "--repo-root", str(tmp_path)]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith("vrg-ci-resolve: error: [ci].versions pins 2 versions")
+    assert "pin a single version" in captured.err
+    assert 'set [project].repository-type = "library"' in captured.err
+
+
 @pytest.mark.parametrize(
     ("fmt", "prefix"), [("json", "warning: "), ("github-output", "::warning::")]
 )
 def test_cli_prints_warnings_to_stderr(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], fmt: str, prefix: str
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    fmt: str,
+    prefix: str,
 ) -> None:
-    _write_config(
-        tmp_path, language="python", repo_type="tooling", ci='versions = ["3.12", "3.13"]\n'
-    )
+    def _with_warning(cfg: VergilConfig, **kwargs: Any) -> Resolution | None:
+        resolution = resolve_config(cfg, **kwargs)
+        assert resolution is not None
+        return replace(resolution, warnings=("a resolution warning",))
+
+    monkeypatch.setattr("vergil_tooling.bin.vrg_ci_resolve.resolve_config", _with_warning)
+    _write_config(tmp_path, language="python")
     assert main(["--format", fmt, "--repo-root", str(tmp_path)]) == 0
-    assert capsys.readouterr().err.startswith(f"{prefix}[ci].versions pins 2 versions")
+    assert capsys.readouterr().err == f"{prefix}a resolution warning\n"
 
 
 def test_cli_help(capsys: pytest.CaptureFixture[str]) -> None:
