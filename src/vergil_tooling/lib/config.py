@@ -332,8 +332,10 @@ class TestConfig:
 
 @dataclass
 class PackagePythonConfig:
-    # Exact vergil-python CPython patch to build against and depend on, or None
-    # to derive the x.y runtime from the resolved version (lib.versions).
+    # Exact CPython patch the per-series vergil-python<x.y> must serve at build
+    # time (the build fails otherwise), or None to derive the x.y runtime from
+    # the resolved version (lib.versions). Either way the build installs and
+    # depends on vergil-python<x.y> (vergil-tooling#3455).
     runtime: str | None = None
     # Optional subset of [project.scripts] to shim; None means all of them.
     commands: list[str] | None = None
@@ -804,7 +806,8 @@ def _parse_package_python(py: dict[str, Any] | None, source: str) -> PackagePyth
     py = py or {}
     # Absent, the runtime follows the resolved version (epic
     # vergil-project/.github#407, spec §7); an explicit value is an exact-patch
-    # pin, whose x.y the resolver checks against the window.
+    # pin, whose x.y the resolver checks against the window and whose patch the
+    # package build checks against the installed vergil-python<x.y>.
     runtime = py.get("runtime")
     if runtime is not None and (not isinstance(runtime, str) or not _RUNTIME_RE.fullmatch(runtime)):
         msg = (
