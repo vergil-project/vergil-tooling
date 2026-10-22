@@ -148,7 +148,11 @@ def desired_security_settings(*, ghas: bool) -> DesiredSecuritySettings:
     return DesiredSecuritySettings(
         secret_scanning="enabled" if ghas else None,  # noqa: S106
         secret_scanning_push_protection="enabled" if ghas else None,  # noqa: S106
-        vulnerability_alerts=False,
+        # Report-only Dependabot (epic vergil-project/.github#420): alerts
+        # are on for every repo, public or private, so the nightly
+        # vrg-dependabot-audit has something to read; security-update PRs
+        # stay disabled, so Dependabot never opens a PR.
+        vulnerability_alerts=True,
         dependabot_security_updates="disabled",
     )
 
