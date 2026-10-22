@@ -46,6 +46,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from vergil_tooling.lib import git
+from vergil_tooling.lib.process_errors import error_text
 
 _ISSUE_URL_RE = re.compile(r"/issues/(\d+)")
 # Strips a leading conventional-commit prefix ("chore(gitignore): ") off the
@@ -168,7 +169,10 @@ def _discard_probe(repo_dir: str, probe: Path, cause: Exception) -> None:
     try:
         git.run("-C", repo_dir, "worktree", "remove", "--force", str(probe))
     except Exception as cleanup_exc:
-        msg = f"{cause}; additionally failed to remove probe worktree {probe}: {cleanup_exc}"
+        msg = (
+            f"{error_text(cause)}; additionally failed to remove probe worktree "
+            f"{probe}: {error_text(cleanup_exc)}"
+        )
         raise RuntimeError(msg) from cause
 
 
@@ -294,5 +298,5 @@ def run_sweep(spec: SweepSpec, applicator: Applicator, *, dry_run: bool) -> list
         try:
             results.append(_process_repo(spec, applicator, repo))
         except Exception as exc:  # noqa: BLE001 - failure isolation is the contract
-            results.append(RepoResult(repo=repo, status="error", detail=str(exc)))
+            results.append(RepoResult(repo=repo, status="error", detail=error_text(exc)))
     return results

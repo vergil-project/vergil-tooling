@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import config, worktrees
 from vergil_tooling.lib.cli import cli_main
+from vergil_tooling.lib.process_errors import failure_message
 from vergil_tooling.lib.worktrees import (
     MainCheckoutStatus,
     RawWorktree,
@@ -178,7 +179,7 @@ def _lookup_gone(
     try:
         return worktrees.gone_branches(sorted(branches)), None
     except subprocess.CalledProcessError as exc:
-        return set(), (exc.stderr or str(exc)).strip()
+        return set(), (exc.stderr or failure_message(exc)).strip()
 
 
 def _label(path: Path, root: Path) -> str:

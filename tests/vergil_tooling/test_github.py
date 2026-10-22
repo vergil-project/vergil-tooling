@@ -1147,13 +1147,14 @@ class TestGitHubAPIError:
 
     def test_str_includes_both(self) -> None:
         exc = github.GitHubAPIError(1, ["gh"], output='{"message": "Bad"}', stderr="HTTP 422")
-        msg = str(exc)
-        assert "HTTP 422" in msg
-        assert "Bad" in msg
+        assert str(exc) == (
+            "Command 'gh' returned non-zero exit status 1.\n"
+            'stderr: HTTP 422\nstdout: {"message": "Bad"}'
+        )
 
-    def test_str_falls_back_to_base_when_no_output(self) -> None:
-        exc = github.GitHubAPIError(1, ["gh"])
-        assert str(exc) == str(subprocess.CalledProcessError(1, ["gh"]))
+    def test_str_falls_back_to_the_failure_message_when_no_output(self) -> None:
+        exc = github.GitHubAPIError(1, ["gh", "api"])
+        assert str(exc) == "Command 'gh api' returned non-zero exit status 1."
 
 
 # --- Retry logic ---

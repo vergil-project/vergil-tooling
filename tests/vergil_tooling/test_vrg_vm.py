@@ -1301,7 +1301,10 @@ class TestList:
         mock_cloud_sessions.side_effect = subprocess.CalledProcessError(255, "gcloud ssh")
         assert main(["list", "--sessions", "--config", str(config_file)]) == 0
         err = capsys.readouterr().err
-        assert "could not query sessions on off-platform box 'lmf/cloud'" in err
+        assert (
+            "could not query sessions on off-platform box 'lmf/cloud': "
+            "Command 'gcloud ssh' returned non-zero exit status 255."
+        ) in err
 
     @patch("vergil_tooling.bin.vrg_vm._off_platform_active_sessions")
     @patch("vergil_tooling.bin.vrg_vm.shell_run")

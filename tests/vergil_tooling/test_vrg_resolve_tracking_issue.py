@@ -366,7 +366,10 @@ def test_git_failure(capsys: pytest.CaptureFixture[str]) -> None:
     with patch(f"{_MOD}.git.read_output", side_effect=err):
         result = main([])
     assert result == 2
-    assert "failed to" in capsys.readouterr().err.lower()
+    assert (
+        "ERROR: failed to read commit HEAD: "
+        "Command 'git log' returned non-zero exit status 128.\nstderr: bad revision"
+    ) in capsys.readouterr().err
 
 
 def test_pr_flag_api_failure(capsys: pytest.CaptureFixture[str]) -> None:
@@ -377,4 +380,7 @@ def test_pr_flag_api_failure(capsys: pytest.CaptureFixture[str]) -> None:
     ):
         result = main(["--pr", "42"])
     assert result == 2
-    assert "failed to" in capsys.readouterr().err.lower()
+    assert (
+        "ERROR: failed to fetch PR #42: "
+        "Command 'gh api' returned non-zero exit status 1.\nstderr: Not Found"
+    ) in capsys.readouterr().err
