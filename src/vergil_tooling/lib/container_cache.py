@@ -19,9 +19,10 @@ from vergil_tooling.lib.container import (
     workspace_mount_args,
 )
 from vergil_tooling.lib.languages import CheckKind, language_commands
+from vergil_tooling.lib.versions.extensions import container_env
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Mapping
     from pathlib import Path
 
 _SELF_PROJECT_NAME = "vergil-tooling"
@@ -256,12 +257,22 @@ def cache_sensitive_files(repo_root: Path, lang: str) -> list[Path]:
     return [repo_root / n for n in names if (repo_root / n).is_file()]
 
 
-def compute_cache_hash(files: list[Path], *, base_digest: str = "", salt: str = "") -> str:
-    """SHA-256 over sorted file contents, base image digest, and optional salt.
+def compute_cache_hash(
+    files: list[Path],
+    *,
+    base_digest: str = "",
+    salt: str = "",
+    env: Mapping[str, str] | None = None,
+) -> str:
+    """SHA-256 over sorted file contents, base image digest, salt, and build env.
 
     Folding ``base_digest`` (the content id of the base image the cache is built
     from) into the key means a republished base tag yields a different hash, so the
-    stale cache is rebuilt instead of reused. Returns the first 8 hex chars.
+    stale cache is rebuilt instead of reused. ``env`` is the environment the setup
+    step runs with (:func:`_compose_setup`); folding it in means a change of
+    resolved version or interpreter source rebuilds the cache (#3421). An empty
+    ``env`` adds nothing, so a language without a container env keeps its key.
+    Returns the first 8 hex chars.
     """
     h = hashlib.sha256()
     for f in sorted(files):
@@ -270,6 +281,9 @@ def compute_cache_hash(files: list[Path], *, base_digest: str = "", salt: str = 
         h.update(base_digest.encode())
     if salt:
         h.update(salt.encode())
+    if env:
+        h.update(b"\0env\0")
+        h.update("\0".join(f"{k}={v}" for k, v in sorted(env.items())).encode())
     return h.hexdigest()[:8]
 
 
@@ -311,12 +325,35 @@ def find_cached_image(base_image: str, branch: str, *, runtime: str = "") -> tup
     return None
 
 
-def _compose_setup(repo_root: Path, lang: str) -> str:
+_ENV_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def _env_export(build_env: Mapping[str, str]) -> str:
+    """Return ``export K=V …`` for *build_env* (values shell-quoted), or ``""``."""
+    for name in build_env:
+        if not _ENV_NAME_RE.fullmatch(name):
+            msg = f"{name!r} is not a valid environment variable name"
+            raise ValueError(msg)
+    if not build_env:
+        return ""
+    return "export " + " ".join(f"{k}={shlex.quote(v)}" for k, v in build_env.items())
+
+
+def _compose_setup(repo_root: Path, lang: str, *, build_env: Mapping[str, str]) -> str:
     """Return the shell setup string baked into the cached image.
 
     The composed step is, in order,
-    ``<apt fragment> && <uv tool install …> && <build-command> && <warmup>``:
+    ``<export env> && <apt fragment> && <uv tool install …> && <build-command> &&
+    <warmup>``:
 
+    * **env** — *build_env*, the resolver's container env
+      (:func:`vergil_tooling.lib.versions.extensions.container_env`), exported
+      first so every later fragment runs with it, exactly as the run path passes
+      it to the run container. For Python this is ``UV_PYTHON`` plus
+      ``UV_PYTHON_PREFERENCE=only-system``, so the warmup uses the image's
+      interpreter and a repo's ``python-preference`` cannot make uv download its
+      own (spec §6.5, #3421). Exported in the shell, not set on the container, so
+      it is not baked into the committed image's config. Empty ⇒ no fragment.
     * **apt** — repo-declared ``[container].system-packages``, installed first so
       the rest of the step runs against the provisioned base (epic
       vergil-project/.github#272).
@@ -356,6 +393,9 @@ def _compose_setup(repo_root: Path, lang: str) -> str:
     apt = apt_install_command(container_system_packages(repo_root), container_platform())
     if apt:
         setup = f"{apt} && {setup}"
+    export = _env_export(build_env)
+    if export:
+        setup = f"{export} && {setup}"
     return setup
 
 
@@ -367,8 +407,11 @@ def _build_cached_image(
     *,
     runtime: str = "",
     quiet_warmup: bool = False,
+    build_env: Mapping[str, str],
 ) -> str:
     """Build a cached image with vergil-tooling installed.
+
+    ``build_env`` is exported for the whole setup step (see :func:`_compose_setup`).
 
     ``quiet_warmup`` captures the warmup subprocess's output instead of
     streaming it to the inherited terminal, surfacing it only on failure. The
@@ -390,7 +433,7 @@ def _build_cached_image(
 
     apt = apt_install_command(container_system_packages(repo_root), container_platform())
     build = container_build_command(repo_root)
-    setup = _compose_setup(repo_root, lang)
+    setup = _compose_setup(repo_root, lang, build_env=build_env)
 
     # Attribute the build clearly as an environment-provisioning step. A rebuild
     # can be triggered lazily by an operational command (the first vrg-container-run
@@ -406,6 +449,8 @@ def _build_cached_image(
         print("  Install: skipped (self-repo uses local dev version)")
     else:
         print(f"  Install: vergil-tooling@{vrg_install_tag(repo_root)}")
+    if build_env:
+        print(f"  Env:     {' '.join(f'{k}={v}' for k, v in build_env.items())}")
     if build:
         print(f"  Build:   {build}")
     if warmup:
@@ -518,11 +563,17 @@ def ensure_cached_image(
     *,
     runtime: str = "",
     quiet_warmup: bool = False,
+    build_env: Mapping[str, str],
 ) -> str:
     """Return a cached image tag, building one if needed.
 
     Returns *base_image* unchanged if no cache-sensitive files are found.
     ``quiet_warmup`` is forwarded to :func:`_build_cached_image` (see there).
+
+    ``build_env`` is the resolver's container env (``container_env(resolution)``,
+    the same env the run path passes). It is required, so no caller can build a
+    cache without deciding it: it is exported for the setup step and folded into
+    the cache key, so a change of resolved version or source rebuilds (#3421).
     """
     rt = runtime or detect_runtime()
     files = cache_sensitive_files(repo_root, lang)
@@ -533,7 +584,9 @@ def ensure_cached_image(
 
     branch = _git.current_branch()
     base_digest, _verified = resolve_base_digest(base_image, runtime=rt)
-    current_hash = compute_cache_hash(files, base_digest=base_digest, salt=repo_root.name)
+    current_hash = compute_cache_hash(
+        files, base_digest=base_digest, salt=repo_root.name, env=build_env
+    )
     existing = find_cached_image(base_image, branch, runtime=rt)
 
     if existing is not None:
@@ -561,7 +614,13 @@ def ensure_cached_image(
 
     target_tag = cache_image_tag(base_image, branch, current_hash)
     return _build_cached_image(
-        repo_root, lang, base_image, target_tag, runtime=rt, quiet_warmup=quiet_warmup
+        repo_root,
+        lang,
+        base_image,
+        target_tag,
+        runtime=rt,
+        quiet_warmup=quiet_warmup,
+        build_env=build_env,
     )
 
 
@@ -598,8 +657,16 @@ def provision_dev_image(
         return env_image, "env"
     # The version resolver picks the container version from the published
     # window, so provisioning warms the same image vrg-container-run selects.
-    base = default_image(repo_resolution(repo_root, lang), fallback=True, prefix=prefix)
-    image = ensure_cached_image(repo_root, lang, base, runtime=runtime, quiet_warmup=quiet_warmup)
+    resolution = repo_resolution(repo_root, lang)
+    base = default_image(resolution, fallback=True, prefix=prefix)
+    image = ensure_cached_image(
+        repo_root,
+        lang,
+        base,
+        runtime=runtime,
+        quiet_warmup=quiet_warmup,
+        build_env=container_env(resolution),
+    )
     return image, ("cached" if image != base else "default")
 
 
