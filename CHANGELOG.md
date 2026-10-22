@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.255] - 2026-10-22
+
+### Bug fixes
+
+- run the cache build's warmup with the resolver's UV_PYTHON and UV_PYTHON_PREFERENCE (#3422)
+
 ## [2.1.254] - 2026-10-22
 
 ### Bug fixes
