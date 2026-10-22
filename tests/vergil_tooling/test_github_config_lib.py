@@ -147,7 +147,7 @@ def test_desired_security_settings_with_ghas() -> None:
     s = desired_security_settings(ghas=True)
     assert s.secret_scanning == "enabled"  # noqa: S105
     assert s.secret_scanning_push_protection == "enabled"  # noqa: S105
-    assert s.vulnerability_alerts is False
+    assert s.vulnerability_alerts is True
     assert s.dependabot_security_updates == "disabled"
 
 
@@ -155,8 +155,12 @@ def test_desired_security_settings_without_ghas_skips_ghas_features() -> None:
     s = desired_security_settings(ghas=False)
     assert s.secret_scanning is None
     assert s.secret_scanning_push_protection is None
-    assert s.vulnerability_alerts is False
+    assert s.vulnerability_alerts is True
     assert s.dependabot_security_updates == "disabled"
+
+
+def test_desired_security_settings_alerts_on_without_ghas() -> None:
+    assert desired_security_settings(ghas=False).vulnerability_alerts is True
 
 
 def test_desired_actions_permissions_base_only() -> None:
@@ -1700,7 +1704,7 @@ def test_diff_detects_actions_permission_mismatch() -> None:
 def test_diff_detects_security_mismatch() -> None:
     desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
     actual = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
-    actual.security.vulnerability_alerts = True
+    actual.security.vulnerability_alerts = False
     diff = compute_diff(desired=desired, actual=actual)
     assert not diff.is_compliant()
     assert any(d.field == "security.vulnerability_alerts" for d in diff.items)

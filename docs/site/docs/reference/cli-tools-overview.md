@@ -295,6 +295,23 @@ Runs nightly from each repo's `ops.yml` via the reusable
 | Exit codes | 0 compliant, 1 non-compliant (drift), 2 audit could not complete |
 | Status | Active |
 
+### vrg-dependabot-audit
+
+Fail on any open Dependabot alert, at any severity: the gate for the
+fleet's report-only Dependabot posture. Private repos get an itemized
+report; public repos (and any repo whose visibility cannot be resolved)
+get counts by severity and the Security-tab link only. See the
+[Dependabot Alert Audit reference](dependabot-audit.md).
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_dependabot_audit` |
+| Args | `--repo OWNER/REPO` (required) |
+| Preconditions | A token with "Dependabot alerts: Read" on the repo; alerts enabled on the repo |
+| Failure mode | One `vrg-dependabot-audit:` diagnostic on stderr when the alerts cannot be read |
+| Exit codes | 0 no open alerts, 1 at least one open alert, 2 could not check |
+| Status | Active |
+
 ### vrg-github-repo-init
 
 Interactive (or `--non-interactive`) wizard that bootstraps a new
