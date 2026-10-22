@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from vergil_tooling.lib.process_errors import command_text, error_text
 from vergil_tooling.lib.progress import Stage, mark_warn
 from vergil_tooling.lib.promote import promote
 from vergil_tooling.lib.release.bump import back_merge_and_bump
@@ -95,8 +96,8 @@ def _tracked(name: str, fn: Callable[[ReleaseContext], None]) -> Callable[[Relea
         except Exception as exc:
             wrapped = ReleaseError(
                 phase=name,
-                command=str(getattr(exc, "cmd", type(exc).__name__)),
-                message=str(exc),
+                command=command_text(getattr(exc, "cmd", type(exc).__name__)),
+                message=error_text(exc, output=False),
                 detail=(getattr(exc, "stderr", None) or getattr(exc, "stdout", None)),
             )
             comment_phase_failed(ctx, name, wrapped)

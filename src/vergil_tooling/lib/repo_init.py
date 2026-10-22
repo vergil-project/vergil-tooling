@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from vergil_tooling.lib.github_config import DesiredState
     from vergil_tooling.lib.versions.resolve import Resolution
 
-from vergil_tooling.lib import git, github, gitignore, lang_scaffold, repo_config
+from vergil_tooling.lib import dependabot, git, github, gitignore, lang_scaffold, repo_config
 from vergil_tooling.lib.config import _ENUMS
 from vergil_tooling.lib.vergil_refs import EXPECTED_MARKETPLACE_REF
 
@@ -1308,6 +1308,12 @@ def step_scaffold_config_files(ctx: RepoInitContext) -> None:
     # primary language to a fragment (or None) with the same rule the audit uses.
     lang = ctx.primary_language if ctx.primary_language in gitignore.FRAGMENT_LANGS else None
     (wd / ".gitignore").write_text(render_gitignore(lang))
+
+    # .github/dependabot.yml — canonical report-only file (alerts on, never a
+    # Dependabot PR; epic vergil-project/.github#420).
+    dependabot_path = wd / dependabot.DEPENDABOT_PATH
+    dependabot_path.parent.mkdir(parents=True, exist_ok=True)
+    dependabot_path.write_text(dependabot.render(ctx.primary_language or None))
 
     # LICENSE
     if ctx.license_type != "none":

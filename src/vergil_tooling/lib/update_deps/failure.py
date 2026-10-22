@@ -122,15 +122,6 @@ def combined_output(exc: subprocess.CalledProcessError) -> str:
     return "\n".join(t.rstrip("\n") for t in texts if t.strip())
 
 
-def command_text(cmd: object) -> str:
-    """A CalledProcessError's ``cmd`` (a string or an argv sequence) as one string."""
-    if isinstance(cmd, str):
-        return cmd
-    if isinstance(cmd, (list, tuple)):
-        return " ".join(str(part) for part in cmd)
-    return str(cmd)
-
-
 def tail_output(text: str, *, lines: int = 200, max_chars: int = 20_000) -> str:
     """The last *lines* lines of *text*, at most *max_chars* characters.
 

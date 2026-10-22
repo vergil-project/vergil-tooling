@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.256] - 2026-10-22
+
+### Bug fixes
+
+- build failed-command messages from CalledProcessError fields (#3438)
+
+### Chores
+
+- uv lock --upgrade
+
+### Features
+
+- enable alerts fleet-wide and add vrg-dependabot-audit (#3435)
+- canonical report-only dependabot.yml, scaffolding, validate guard and fleet sync (#3436)
+
 ## [2.1.255] - 2026-10-22
 
 ### Bug fixes

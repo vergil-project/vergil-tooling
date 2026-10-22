@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from vergil_tooling.lib.cli import cli_main
+from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.promote import promote
 from vergil_tooling.lib.version import show
 
@@ -44,7 +45,7 @@ def main() -> int:
     try:
         promote(version, dry_run=args.dry_run)
     except Exception as exc:
-        print(f"Error: {exc}", file=sys.stderr)
+        print(f"Error: {error_text(exc)}", file=sys.stderr)
         return 1
     return 0
 

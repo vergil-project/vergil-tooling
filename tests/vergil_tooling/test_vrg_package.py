@@ -374,8 +374,8 @@ def test_install_test_command_failure_returns_1_with_output(
     argv = ["install-test", "--cell", "c", "--artifacts", "a", "--report", "r.json"]
     assert vrg_package.main(argv) == 1
     err = capsys.readouterr().err
-    assert "ERROR: Command '['apt-get', 'update']' returned non-zero exit status 100." in err
-    assert "E: no network" in err
+    expected = "ERROR: Command 'apt-get update' returned non-zero exit status 100.\nE: no network"
+    assert expected in err
 
 
 def test_install_test_package_error_returns_1(

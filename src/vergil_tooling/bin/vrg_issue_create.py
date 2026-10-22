@@ -25,6 +25,7 @@ from pathlib import Path
 from vergil_tooling.lib import epics, github
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.labels import ensure_labels_or_report
+from vergil_tooling.lib.process_errors import error_text
 
 
 @cli_main
@@ -135,8 +136,8 @@ def main(argv: list[str] | None = None) -> int:
             except Exception as exc:  # noqa: BLE001 - orphan-safe: never lose the created issue
                 print(
                     f"vrg-issue-create: created {url} but failed to link it under epic "
-                    f"{epic.slug}: {exc}. Link it with: vrg-epic-move --task #{task.number} "
-                    f"--epic {epic.slug}",
+                    f"{epic.slug}: {error_text(exc)}. Link it with: "
+                    f"vrg-epic-move --task #{task.number} --epic {epic.slug}",
                     file=sys.stderr,
                 )
                 return 1

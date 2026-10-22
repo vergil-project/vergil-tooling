@@ -8,9 +8,11 @@ Runs inside the dev container via ``vrg-container-run``:
   3. shellcheck on all shell scripts under ``scripts/``
   4. yamllint on YAML files under ``.github/`` and ``docs/`` using
      the bundled canonical config (issue #302, #590)
-  5. hadolint on Dockerfile* files at the repo root
-  6. actionlint on ``.github/workflows/``
-  7. ansible-lint when the repo carries Ansible content, using the
+  5. dependabot-limit: every ``.github/dependabot.yml`` ``updates`` entry
+     must carry ``open-pull-requests-limit: 0`` (epic .github#420)
+  6. hadolint on Dockerfile* files at the repo root
+  7. actionlint on ``.github/workflows/``
+  8. ansible-lint when the repo carries Ansible content, using the
      bundled canonical config as the rule baseline while honoring the
      repo's local ``skip_list`` / ``exclude_paths`` (issues #1667, #1952)
 """
@@ -25,7 +27,7 @@ from typing import TYPE_CHECKING
 import yaml
 
 from vergil_tooling.bin import vrg_repo_profile
-from vergil_tooling.lib import git
+from vergil_tooling.lib import dependabot, git
 from vergil_tooling.lib.config import read_config
 
 if TYPE_CHECKING:
@@ -97,6 +99,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
         if result.returncode != 0:
             return result.returncode
 
+    rc = _check_dependabot_limit(repo_root)
+    if rc != 0:
+        return rc
+
     dockerfile_files = _find_dockerfiles(repo_root)
     if dockerfile_files:
         print(f"Running: hadolint ({len(dockerfile_files)} Dockerfile* in repo root)")
@@ -139,6 +145,24 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
             return result.returncode
 
     return 0
+
+
+def _check_dependabot_limit(repo_root: Path) -> int:
+    """Reject any ``dependabot.yml`` entry that could open a PR (epic .github#420).
+
+    Runs only when ``.github/dependabot.yml`` exists — the file is never
+    required here. It checks **only** that every ``updates`` entry carries
+    ``open-pull-requests-limit: 0`` (a missing key means Dependabot's default
+    of 5); exact match against the canonical render is the config audit's job.
+    """
+    path = repo_root / dependabot.DEPENDABOT_PATH
+    if not path.is_file():
+        return 0
+    print(f"Running: dependabot-limit ({dependabot.DEPENDABOT_PATH.as_posix()})")
+    violations = dependabot.limit_violations(path.read_text(encoding="utf-8"))
+    for reason in violations:
+        print(f"dependabot.yml: {reason}", file=sys.stderr)
+    return 1 if violations else 0
 
 
 def _find_shell_files(repo_root: Path) -> list[str]:

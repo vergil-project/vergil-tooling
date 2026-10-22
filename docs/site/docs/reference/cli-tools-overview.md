@@ -295,6 +295,23 @@ Runs nightly from each repo's `ops.yml` via the reusable
 | Exit codes | 0 compliant, 1 non-compliant (drift), 2 audit could not complete |
 | Status | Active |
 
+### vrg-dependabot-audit
+
+Fail on any open Dependabot alert, at any severity: the gate for the
+fleet's report-only Dependabot posture. Private repos get an itemized
+report; public repos (and any repo whose visibility cannot be resolved)
+get counts by severity and the Security-tab link only. See the
+[Dependabot Alert Audit reference](dependabot-audit.md).
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_dependabot_audit` |
+| Args | `--repo OWNER/REPO` (required) |
+| Preconditions | A token with "Dependabot alerts: Read" on the repo; alerts enabled on the repo |
+| Failure mode | One `vrg-dependabot-audit:` diagnostic on stderr when the alerts cannot be read |
+| Exit codes | 0 no open alerts, 1 at least one open alert, 2 could not check |
+| Status | Active |
+
 ### vrg-github-repo-init
 
 Interactive (or `--non-interactive`) wizard that bootstraps a new
@@ -364,12 +381,38 @@ leaving genuinely repo-local lines outside the fence untouched. See the
 | Exit codes | 0 ok, 1 `--check` drift, 2 usage error |
 | Status | Active |
 
+### vrg-dependabot-sync
+
+Single-repo applicator for the canonical **report-only**
+`.github/dependabot.yml` (epic vergil-project/.github#420). Resolves the
+repo's `[project].primary-language` and either checks (default) or writes
+the render from `lib/dependabot.py`: a `github-actions` entry plus the
+language's ecosystem (`python` → `uv`, `go` → `gomod`, `rust` → `cargo`,
+`java` → `maven`, `typescript` → `npm`; any other language gets
+`github-actions` only), every entry at `open-pull-requests-limit: 0` so
+Dependabot never opens a PR. The file is **exact match**: `--write`
+replaces local additions. It owns **only** the file change and has no git
+or PR knowledge.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_dependabot_sync` |
+| Args | `--repo PATH` (default: CWD); mutually exclusive `--check` (default) \| `--write` |
+| Preconditions | A repo whose language resolves from `[project].primary-language` (absent/unreadable config → `github-actions` only) |
+| Failure mode | `--check` prints `missing .github/dependabot.yml` or `differs from the canonical render` to stderr; `--write` always succeeds (prints `already in sync` or `wrote .github/dependabot.yml (<lang or none>)`) |
+| Exit codes | 0 ok, 1 `--check` drift, 2 usage error |
+| Status | Active |
+
 ### vrg-fleet-sync
 
-Propagate the vergil-managed `.gitignore` block across a fleet of
-repositories, opening **one PR per repo whose `.gitignore` drifts**. It
+Propagate a vergil-managed file across a fleet of repositories, opening
+**one PR per repo whose file drifts**. `--target` picks the file:
+`gitignore` (default) syncs the managed `.gitignore` block via
+`vrg-gitignore-sync --write`; `dependabot` writes the report-only
+`.github/dependabot.yml` via `vrg-dependabot-sync --write` (branch slug
+`dependabot-config`, filed under epic vergil-project/.github#420). It
 drives the generic fleet-sweep driver (`lib/fleet_sweep.py`): per repo it
-creates a worktree, shells out to `vrg-gitignore-sync --write`, commits,
+creates a worktree, shells out to the target's applicator, commits,
 and runs `report-ready`. Like every agent-run task it **never submits or
 merges** — it stops at `report-ready`, leaving submission and merge to the
 human. `--dry-run` reports the intended per-repo action without touching
@@ -378,8 +421,8 @@ any git or GitHub state.
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_fleet_sync` |
-| Args | `--repos PATH [PATH …]` (required, local clone paths); `--dry-run` |
-| Preconditions | `vrg-gitignore-sync` on PATH; each `--repos` path a local clone; git/`gh` credentials for the sweep |
+| Args | `--repos PATH [PATH …]` (required, local clone paths); `--target {dependabot,gitignore}` (default `gitignore`); `--dry-run` |
+| Preconditions | The target's applicator (`vrg-gitignore-sync` or `vrg-dependabot-sync`) on PATH; each `--repos` path a local clone; git/`gh` credentials for the sweep |
 | Failure mode | Any repo that errors is recorded and reported in the per-repo status lines |
 | Exit codes | 0 all repos ok, 1 one or more repos errored |
 | Status | Active |
@@ -534,7 +577,10 @@ markdownlint, yamllint) are available on PATH.
 Shared validation checks for all repos: repository profile
 validation, markdownlint on published markdown (`docs/site/**/*.md`
 and `README.md`) using the bundled canonical config, shellcheck on
-`scripts/`, yamllint on `.github/` and `docs/` YAML files, hadolint
+`scripts/`, yamllint on `.github/` and `docs/` YAML files, the
+dependabot-limit guard (when `.github/dependabot.yml` exists, every
+`updates` entry must carry `open-pull-requests-limit: 0`, so Dependabot
+can never open a PR), hadolint
 on `Dockerfile*`, actionlint on `.github/workflows/`, and
 ansible-lint (using the bundled canonical config) when the repo
 carries Ansible content.

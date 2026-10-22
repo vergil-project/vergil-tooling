@@ -74,6 +74,7 @@ from vergil_tooling.lib.pr_workflow import batch, submission
 from vergil_tooling.lib.pr_workflow.errors import AlreadySubmittedError, WorkflowError
 from vergil_tooling.lib.pr_workflow.github_transport import GitHubTransport
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
+from vergil_tooling.lib.process_errors import error_text
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.pr_workflow.state import WorkflowState
@@ -607,7 +608,8 @@ def _run_submit_batch(
         except worktrees.MergeCommitsError as exc:
             raise batch.BatchAbortError(f"refusing to rebase: {exc}") from exc
         except subprocess.CalledProcessError as exc:
-            raise batch.BatchAbortError(f"rebase onto origin/{base} failed: {exc}") from exc
+            msg = f"rebase onto origin/{base} failed: {error_text(exc)}"
+            raise batch.BatchAbortError(msg) from exc
         os.chdir(wt.path)
         try:
             pr_url = _submit_one(wt.path, base_override=base, assume_yes=True)

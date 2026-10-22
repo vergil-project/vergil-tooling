@@ -48,14 +48,6 @@ def test_combined_output_empty() -> None:
     assert failure.combined_output(subprocess.CalledProcessError(1, ["x"])) == ""
 
 
-@pytest.mark.parametrize(
-    ("cmd", "expected"),
-    [("uv lock", "uv lock"), (["uv", "lock"], "uv lock"), (("a", 1), "a 1"), (7, "7")],
-)
-def test_command_text(cmd: object, expected: str) -> None:
-    assert failure.command_text(cmd) == expected
-
-
 def test_failure_markdown_has_tail_and_reproduce() -> None:
     f = DepsFailure(
         kind="validation",
