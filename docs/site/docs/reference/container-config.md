@@ -65,6 +65,11 @@ build exports the same two variables for its whole setup step (vergil-tooling
 install, `build-command` and warmup), and they are part of the image's cache key,
 so a change of resolved version rebuilds the image
 ([#3421](https://github.com/vergil-project/vergil-tooling/issues/3421)).
+`vrg-container-docs` resolves no version, so for a Python repo it sets only
+`UV_PYTHON_PREFERENCE=only-system`, which pins uv to the docs image's own Python,
+as the CI docs jobs do. If that Python does not satisfy `requires-python`, uv
+fails the build; there is no fallback
+([#3414](https://github.com/vergil-project/vergil-tooling/issues/3414)).
 
 For a **cpp** repo, `vrg-container-run` also forwards
 `CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER` when it can resolve one: from the
