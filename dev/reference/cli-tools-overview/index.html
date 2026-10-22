@@ -17264,13 +17264,18 @@ or PR knowledge.</p>
 <code>gitignore</code> (default) syncs the managed <code>.gitignore</code> block via
 <code>vrg-gitignore-sync --write</code>; <code>dependabot</code> writes the report-only
 <code>.github/dependabot.yml</code> via <code>vrg-dependabot-sync --write</code> (branch slug
-<code>dependabot-config</code>, filed under epic vergil-project/.github#420). It
+<code>dependabot-config</code>, filed under epic vergil-project/.github#420). A
+target's epic links only repos in the epic's own org: a repo in another
+org (read from the clone with <code>gh repo view</code>) is filed under its own
+ad-hoc epic, and the issue body still names the target's epic, because
+<code>vrg-issue-create</code> refuses a cross-org link. It
 drives the generic fleet-sweep driver (<code>lib/fleet_sweep.py</code>): per repo it
 creates a worktree, shells out to the target's applicator, commits,
 and runs <code>report-ready</code>. Like every agent-run task it <strong>never submits or
 merges</strong> — it stops at <code>report-ready</code>, leaving submission and merge to the
-human. <code>--dry-run</code> reports the intended per-repo action without touching
-any git or GitHub state.</p>
+human. <code>--dry-run</code> reports the intended per-repo action, including the
+epic each repo would be filed under, without changing any git or GitHub
+state.</p>
 <table>
 <thead>
 <tr>
