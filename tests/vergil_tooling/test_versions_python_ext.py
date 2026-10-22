@@ -279,12 +279,19 @@ def test_python_version_file_is_error(tmp_path: Path) -> None:
     assert "Fix: delete .python-version" in error
 
 
-def test_python_preference_is_error(tmp_path: Path) -> None:
+def test_python_preference_is_allowed(tmp_path: Path) -> None:
+    # python-preference picks the interpreter's source (managed or system), not
+    # its version, so a repo may keep it (spec §6.5 amendment, issue #3410).
     _pyproject(tmp_path, '[tool.uv]\npython-preference = "only-managed"\n')
     (tmp_path / "uv.toml").write_text('python-preference = "only-managed"\n')
-    pyproject_error, uv_error = py_ext.check_toolchain(tmp_path)
-    assert pyproject_error.startswith("pyproject.toml [tool.uv].python-preference selects")
-    assert uv_error.startswith("uv.toml python-preference selects")
+    assert py_ext.check_toolchain(tmp_path) == []
+
+
+def test_python_version_file_fails_beside_python_preference(tmp_path: Path) -> None:
+    _pyproject(tmp_path, '[tool.uv]\npython-preference = "only-managed"\n')
+    (tmp_path / ".python-version").write_text("3.14\n")
+    (error,) = py_ext.check_toolchain(tmp_path)
+    assert error.startswith(".python-version selects the Python interpreter")
 
 
 def test_clean_toolchain_has_no_errors(tmp_path: Path) -> None:
@@ -297,8 +304,11 @@ def test_clean_toolchain_has_no_errors(tmp_path: Path) -> None:
 # -- the container environment (spec §6.5, requirement 1) -----------------------
 
 
-def test_container_env_sets_uv_python() -> None:
-    assert container_env(_resolve(_cfg(packaged=False))) == {"UV_PYTHON": "3.15"}
+def test_container_env_sets_uv_python_and_pins_the_source() -> None:
+    assert container_env(_resolve(_cfg(packaged=False))) == {
+        "UV_PYTHON": "3.15",
+        "UV_PYTHON_PREFERENCE": "only-system",
+    }
     assert container_env(None) == {}
 
 

@@ -74,6 +74,24 @@ def test_build_container_args_python(tmp_path: Path) -> None:
     assert "ghcr.io/vergil-project/prod-python:3.14" in args
     assert "uv sync && uv run pytest tests/ -v" in args
     assert "-v" in args
+    # The same version and interpreter source vrg-container-run hands uv (#3410).
+    assert args[args.index("UV_PYTHON=3.14") - 1] == "-e"
+    assert args[args.index("UV_PYTHON_PREFERENCE=only-system") - 1] == "-e"
+
+
+def test_build_container_args_explicit_image_sets_no_version_env(tmp_path: Path) -> None:
+    # An explicit image is not resolved, so no resolved version is handed to uv,
+    # matching vrg-container-run.
+    with patch.dict("os.environ", {"DOCKER_DEV_IMAGE": "custom:img"}, clear=True):
+        args = build_test_container_args(tmp_path, "python", runtime="docker")
+    assert "custom:img" in args
+    assert not any(a.startswith("UV_PYTHON") for a in args)
+
+
+def test_build_container_args_go_sets_no_python_env(tmp_path: Path) -> None:
+    with patch.dict("os.environ", {}, clear=True):
+        args = build_test_container_args(tmp_path, "go", runtime="docker")
+    assert not any(a.startswith("UV_PYTHON") for a in args)
 
 
 def test_build_container_args_custom_env(tmp_path: Path) -> None:
