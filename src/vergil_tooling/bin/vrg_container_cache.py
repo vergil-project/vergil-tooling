@@ -32,6 +32,7 @@ from vergil_tooling.lib.container_cache import (
     resolve_base_digest,
 )
 from vergil_tooling.lib.versions import VersionsError
+from vergil_tooling.lib.versions.extensions import container_env
 
 
 @cli_main
@@ -70,9 +71,12 @@ def main(argv: list[str] | None = None) -> int:
 def _cmd_build(_args: argparse.Namespace, *, runtime: str) -> int:
     repo_root = git.repo_root()
     lang = resolve_language(repo_root)
-    base = default_image(repo_resolution(repo_root, lang), fallback=True)
+    resolution = repo_resolution(repo_root, lang)
+    base = default_image(resolution, fallback=True)
     assert_runtime_available(runtime)
-    image = ensure_cached_image(repo_root, lang, base, runtime=runtime)
+    image = ensure_cached_image(
+        repo_root, lang, base, runtime=runtime, build_env=container_env(resolution)
+    )
     if image == base:
         print("No caching applied (Python repo or no cache-sensitive files).")
     return 0
@@ -98,15 +102,22 @@ def _cmd_clean(_args: argparse.Namespace, *, runtime: str) -> int:
 def _cmd_status(_args: argparse.Namespace, *, runtime: str) -> int:
     repo_root = git.repo_root()
     lang = resolve_language(repo_root)
-    base = default_image(repo_resolution(repo_root, lang), fallback=True)
+    resolution = repo_resolution(repo_root, lang)
+    base = default_image(resolution, fallback=True)
     branch = git.current_branch()
     existing = find_cached_image(base, branch, runtime=runtime)
     files = cache_sensitive_files(repo_root, lang)
 
     def _current_hash() -> str:
-        # Match ensure_cached_image exactly: salt (repo name) + base digest.
+        # Match ensure_cached_image exactly: salt (repo name) + base digest +
+        # the resolver's container env (#3421).
         base_digest, _ = resolve_base_digest(base, runtime=runtime)
-        return compute_cache_hash(files, base_digest=base_digest, salt=repo_root.name)
+        return compute_cache_hash(
+            files,
+            base_digest=base_digest,
+            salt=repo_root.name,
+            env=container_env(resolution),
+        )
 
     if existing is None:
         print("No cached image for this branch.")

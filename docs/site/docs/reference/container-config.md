@@ -56,6 +56,15 @@ value `vrg-container-run` resolves:
 | `UV_LINK_MODE` | `copy` (the uv cache and `/workspace` are on different filesystems) | An explicit host value wins |
 | `PYTHONPYCACHEPREFIX` | `/tmp/pycache` (container-local, discarded with the container) | A non-empty host value wins; an empty value falls back to the default |
 | `NODE_PATH` | npm global root, only when `build-command` is declared (see below) | An explicit host value wins |
+| `UV_PYTHON`, `UV_PYTHON_PREFERENCE` | Python only: the resolved primary version and `only-system` | None: the resolver decides |
+
+For a **Python** repo, `UV_PYTHON` and `UV_PYTHON_PREFERENCE=only-system` make uv
+use the image's interpreter at the resolved version, so a repo's own
+`python-preference` cannot make uv download a managed interpreter. The cached-image
+build exports the same two variables for its whole setup step (vergil-tooling
+install, `build-command` and warmup), and they are part of the image's cache key,
+so a change of resolved version rebuilds the image
+([#3421](https://github.com/vergil-project/vergil-tooling/issues/3421)).
 
 For a **cpp** repo, `vrg-container-run` also forwards
 `CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER` when it can resolve one: from the

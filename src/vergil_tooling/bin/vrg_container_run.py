@@ -162,7 +162,11 @@ def main(argv: list[str] | None = None) -> int:
         for warning in resolution.warnings if resolution else ():
             print(f"WARNING: {warning}", file=sys.stderr)
         base = default_image(resolution, fallback=True, prefix=prefix)
-        image = ensure_cached_image(repo_root, lang, base, runtime=runtime)
+        # The cache build's warmup runs with the same env as the run below, and
+        # the env is part of the cache key (#3421).
+        image = ensure_cached_image(
+            repo_root, lang, base, runtime=runtime, build_env=container_env(resolution)
+        )
         image_source = "cached" if image != base else "default"
 
     print(f"Language: {lang or '<none>'}")
