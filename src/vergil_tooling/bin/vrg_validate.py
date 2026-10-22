@@ -135,8 +135,8 @@ def _versions_resolve(vergil_config: config.VergilConfig, repo_root: Path) -> bo
     Runs the single resolver CI uses (epic vergil-project/.github#407), so a pin
     outside the published window, or a window that cannot be read, fails
     validation here instead of first failing in CI. A setting that selects the
-    toolchain behind Vergil's back fails too (spec §6.5). Resolution and floor
-    warnings (spec §6.4) are printed and do not fail.
+    toolchain behind Vergil's back fails too (spec §6.5). Floor warnings (spec
+    §6.4) are printed and do not fail.
     """
     language = vergil_config.project.primary_language
     if not language:
@@ -144,7 +144,7 @@ def _versions_resolve(vergil_config: config.VergilConfig, repo_root: Path) -> bo
     try:
         window = load_window(vergil_config.dependencies["vergil"])
         resolution = resolve_language(vergil_config, window, language, repo_root=repo_root)
-        warnings = [*resolution.warnings, *check_floors(repo_root, resolution, window)]
+        warnings = check_floors(repo_root, resolution, window)
         errors = check_toolchain_selection(repo_root, language)
     except VersionsError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

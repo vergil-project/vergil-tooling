@@ -7,20 +7,15 @@ gcc 14, ...), set through ``VRG_VERSION_WINDOW``.
 from __future__ import annotations
 
 import json
-from dataclasses import replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import pytest
 
 from vergil_tooling.bin.vrg_ci_resolve import main
-from vergil_tooling.lib.versions.resolve import resolve_config
 from vergil_tooling.lib.versions.window import WINDOW_ENV
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    from vergil_tooling.lib.config import VergilConfig
-    from vergil_tooling.lib.versions.resolve import Resolution
 
 
 def _write_config(
@@ -136,27 +131,6 @@ def test_cli_app_multi_pin_exits_1(
     assert captured.err.startswith("vrg-ci-resolve: error: [ci].versions pins 2 versions")
     assert "pin a single version" in captured.err
     assert 'set [project].repository-type = "library"' in captured.err
-
-
-@pytest.mark.parametrize(
-    ("fmt", "prefix"), [("json", "warning: "), ("github-output", "::warning::")]
-)
-def test_cli_prints_warnings_to_stderr(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-    fmt: str,
-    prefix: str,
-) -> None:
-    def _with_warning(cfg: VergilConfig, **kwargs: Any) -> Resolution | None:
-        resolution = resolve_config(cfg, **kwargs)
-        assert resolution is not None
-        return replace(resolution, warnings=("a resolution warning",))
-
-    monkeypatch.setattr("vergil_tooling.bin.vrg_ci_resolve.resolve_config", _with_warning)
-    _write_config(tmp_path, language="python")
-    assert main(["--format", fmt, "--repo-root", str(tmp_path)]) == 0
-    assert capsys.readouterr().err == f"{prefix}a resolution warning\n"
 
 
 def test_cli_help(capsys: pytest.CaptureFixture[str]) -> None:

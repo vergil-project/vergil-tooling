@@ -5,7 +5,6 @@ from __future__ import annotations
 import io
 import os
 import sys
-from dataclasses import replace
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
@@ -515,19 +514,6 @@ def test_app_multi_pin_stops_the_run(tmp_path: Path, capsys: pytest.CaptureFixtu
     err = capsys.readouterr().err
     assert "error: [ci].versions pins 2 versions (3.13, 3.12)" in err
     assert "pin a single version" in err
-
-
-def test_resolution_warning_is_printed(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    def _with_warning(repo_root: Path, lang: str) -> Resolution | None:
-        resolution = container.repo_resolution(repo_root, lang)
-        assert resolution is not None
-        return replace(resolution, warnings=("a resolution warning",))
-
-    _write_python_config(tmp_path, '["3.13"]')
-    rc, mock_cache = _run_resolving(tmp_path, _with_warning)
-    assert rc == 0
-    assert mock_cache.call_args[0][2] == "ghcr.io/vergil-project/prod-python:3.13"
-    assert "WARNING: a resolution warning" in capsys.readouterr().err
 
 
 # -- validation-command override ([validation] in vergil.toml) ----------------
