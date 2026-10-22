@@ -22,10 +22,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         task = epics.parse_issue_ref(args.task, default_repo=default_repo)
         # Scope the App token to the task's owner (#2070). The epic must live in
-        # the same org — the 'adhoc' sentinel resolves within the task's org
-        # (.github), so only an explicit ref can diverge; guard that before any
-        # network call so a cross-org mistake is a clear message, not a
-        # cwd-scoped 403.
+        # the same org — the 'adhoc' sentinel resolves to the task repo's own
+        # ad-hoc epic (homed in the task's org), so only an explicit ref can
+        # diverge; guard that before any network call so a cross-org mistake
+        # is a clear message, not a cwd-scoped 403.
         if args.epic != "adhoc":
             epic_owner = epics.parse_issue_ref(args.epic, default_repo=default_repo).owner
             if epic_owner != task.owner:
@@ -39,8 +39,11 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         with github.target_org(task.owner):
+            # The 'adhoc' sentinel names the *task's* repo's ad-hoc epic, never
+            # the cwd repo's (#3409); an explicit '#N' stays cwd-relative.
+            epic_repo = f"{task.owner}/{task.repo}" if args.epic == "adhoc" else default_repo
             try:
-                epic = epics.resolve_epic_ref(args.epic, repo=default_repo)
+                epic = epics.resolve_epic_ref(args.epic, repo=epic_repo)
             except ValueError as exc:
                 print(f"vrg-epic-move: {exc}", file=sys.stderr)
                 return 1

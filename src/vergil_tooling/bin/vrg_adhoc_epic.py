@@ -75,9 +75,12 @@ def cmd_ensure(args: argparse.Namespace) -> int:
         )
         return 1
     owner, bare = repo.split("/", 1)
-    home = epics.resolve_epic_home(owner, bare)
-    print(f"-> epic home: {home} [{github.repo_visibility(home)}]")
-    epic = epics.ensure_adhoc_epic(repo)
+    # Scope the App token to the target repo's owner, not the cwd org: a
+    # cwd-scoped token cannot see a private repo in another org (#3409).
+    with github.target_org(owner):
+        home = epics.resolve_epic_home(owner, bare)
+        print(f"-> epic home: {home} [{github.repo_visibility(home)}]")
+        epic = epics.ensure_adhoc_epic(repo)
     print(f"Ad-hoc epic: {epic.slug}")
     return 0
 

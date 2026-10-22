@@ -87,6 +87,27 @@ def test_main_accepts_adhoc_epic() -> None:
     mock_add.assert_called_once_with(NEW, TASK)
 
 
+@pytest.mark.parametrize(
+    ("task_ref", "task_repo"),
+    [
+        ("other-org/proj#49", "other-org/proj"),  # different org from cwd
+        ("cwd-org/other#49", "cwd-org/other"),  # same org, different repo
+    ],
+)
+def test_main_adhoc_resolves_against_task_repo_not_cwd(task_ref: str, task_repo: str) -> None:
+    """'--epic adhoc' targets the task repo's ad-hoc epic, not the cwd repo's (#3409)."""
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="cwd-org/tooling"),
+        patch(f"{_MOD}.github.target_org"),
+        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=NEW) as mock_resolve,
+        patch(f"{_MOD}.epics.parent_of", return_value=None),
+        patch(f"{_MOD}.epics.add_child"),
+    ):
+        rc = main(["--task", task_ref, "--epic", "adhoc"])
+    assert rc == 0
+    mock_resolve.assert_called_once_with("adhoc", repo=task_repo)
+
+
 def test_main_scopes_token_to_task_owner() -> None:
     """The re-parent runs under the task's owner installation, not cwd (#2070)."""
     with (

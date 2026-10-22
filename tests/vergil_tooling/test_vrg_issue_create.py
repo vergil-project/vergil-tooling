@@ -483,13 +483,17 @@ def test_main_scopes_token_to_repo_owner() -> None:
     """Issue creation + linking run under the --repo owner installation (#2070)."""
     with (
         patch(f"{_MOD}.github.target_org") as mock_scope,
-        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
+        patch(f"{_MOD}.github.current_repo") as mock_cur,
+        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC) as mock_resolve,
         patch(f"{_MOD}.github.create_issue", return_value=_URL),
         patch(f"{_MOD}.epics.add_child"),
     ):
         rc = main(["--repo", "other-org/repo", "--epic", "adhoc", "--title", "T"])
     assert rc == 0
     mock_scope.assert_called_once_with("other-org")
+    # 'adhoc' resolves against --repo, never the cwd repo (#3409).
+    mock_resolve.assert_called_once_with("adhoc", repo="other-org/repo")
+    mock_cur.assert_not_called()
 
 
 def test_main_explicit_same_org_epic_proceeds() -> None:

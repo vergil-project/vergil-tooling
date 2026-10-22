@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from vergil_tooling.bin.vrg_adhoc_epic import main, parse_args
-from vergil_tooling.lib import epics
+from vergil_tooling.lib import epics, github
 
 _MOD = "vergil_tooling.bin.vrg_adhoc_epic"
 
@@ -52,6 +52,38 @@ def test_ensure_repo_override(capsys: pytest.CaptureFixture[str]) -> None:
     mock_ensure.assert_called_once_with("org/actions")
     mock_cur.assert_not_called()
     assert "org/.github#9" in capsys.readouterr().out
+
+
+def test_ensure_scopes_token_to_target_repo_owner() -> None:
+    """Every App-token call in ensure runs under the --repo owner, not cwd (#3409).
+
+    From a checkout in another org, a cwd-scoped token cannot see a private
+    target repo ("Could not resolve to a Repository").
+    """
+    seen: list[str | None] = []
+
+    def _home(_org: str, _bare: str) -> str:
+        seen.append(github._target_org.get())
+        return "other-org/lab"
+
+    def _visibility(_repo: str) -> str:
+        seen.append(github._target_org.get())
+        return "PRIVATE"
+
+    def _ensure(_repo: str) -> epics.IssueRef:
+        seen.append(github._target_org.get())
+        return epics.IssueRef("other-org", "lab", 3)
+
+    with (
+        patch(f"{_MOD}.github.current_repo") as mock_cur,
+        patch(f"{_MOD}.epics.resolve_epic_home", side_effect=_home),
+        patch(f"{_MOD}.github.repo_visibility", side_effect=_visibility),
+        patch(f"{_MOD}.epics.ensure_adhoc_epic", side_effect=_ensure),
+    ):
+        rc = main(["ensure", "--repo", "other-org/lab"])
+    assert rc == 0
+    mock_cur.assert_not_called()
+    assert seen == ["other-org", "other-org", "other-org"]
 
 
 def test_ensure_malformed_repo_errors(capsys: pytest.CaptureFixture[str]) -> None:
