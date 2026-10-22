@@ -12287,6 +12287,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-dependabot-sync" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-dependabot-sync
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-fleet-sync" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -16195,6 +16206,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-dependabot-sync" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-dependabot-sync
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-fleet-sync" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17161,11 +17183,60 @@ leaving genuinely repo-local lines outside the fence untouched. See the
 </tr>
 </tbody>
 </table>
+<h3 id="vrg-dependabot-sync">vrg-dependabot-sync<a class="headerlink" href="#vrg-dependabot-sync" title="Permanent link">&para;</a></h3>
+<p>Single-repo applicator for the canonical <strong>report-only</strong>
+<code>.github/dependabot.yml</code> (epic vergil-project/.github#420). Resolves the
+repo's <code>[project].primary-language</code> and either checks (default) or writes
+the render from <code>lib/dependabot.py</code>: a <code>github-actions</code> entry plus the
+language's ecosystem (<code>python</code> → <code>uv</code>, <code>go</code> → <code>gomod</code>, <code>rust</code> → <code>cargo</code>,
+<code>java</code> → <code>maven</code>, <code>typescript</code> → <code>npm</code>; any other language gets
+<code>github-actions</code> only), every entry at <code>open-pull-requests-limit: 0</code> so
+Dependabot never opens a PR. The file is <strong>exact match</strong>: <code>--write</code>
+replaces local additions. It owns <strong>only</strong> the file change and has no git
+or PR knowledge.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_dependabot_sync</code></td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>--repo PATH</code> (default: CWD); mutually exclusive <code>--check</code> (default) | <code>--write</code></td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>A repo whose language resolves from <code>[project].primary-language</code> (absent/unreadable config → <code>github-actions</code> only)</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td><code>--check</code> prints <code>missing .github/dependabot.yml</code> or <code>differs from the canonical render</code> to stderr; <code>--write</code> always succeeds (prints <code>already in sync</code> or <code>wrote .github/dependabot.yml (&lt;lang or none&gt;)</code>)</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 ok, 1 <code>--check</code> drift, 2 usage error</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
 <h3 id="vrg-fleet-sync">vrg-fleet-sync<a class="headerlink" href="#vrg-fleet-sync" title="Permanent link">&para;</a></h3>
-<p>Propagate the vergil-managed <code>.gitignore</code> block across a fleet of
-repositories, opening <strong>one PR per repo whose <code>.gitignore</code> drifts</strong>. It
+<p>Propagate a vergil-managed file across a fleet of repositories, opening
+<strong>one PR per repo whose file drifts</strong>. <code>--target</code> picks the file:
+<code>gitignore</code> (default) syncs the managed <code>.gitignore</code> block via
+<code>vrg-gitignore-sync --write</code>; <code>dependabot</code> writes the report-only
+<code>.github/dependabot.yml</code> via <code>vrg-dependabot-sync --write</code> (branch slug
+<code>dependabot-config</code>, filed under epic vergil-project/.github#420). It
 drives the generic fleet-sweep driver (<code>lib/fleet_sweep.py</code>): per repo it
-creates a worktree, shells out to <code>vrg-gitignore-sync --write</code>, commits,
+creates a worktree, shells out to the target's applicator, commits,
 and runs <code>report-ready</code>. Like every agent-run task it <strong>never submits or
 merges</strong> — it stops at <code>report-ready</code>, leaving submission and merge to the
 human. <code>--dry-run</code> reports the intended per-repo action without touching
@@ -17184,11 +17255,11 @@ any git or GitHub state.</p>
 </tr>
 <tr>
 <td>Args</td>
-<td><code>--repos PATH [PATH …]</code> (required, local clone paths); <code>--dry-run</code></td>
+<td><code>--repos PATH [PATH …]</code> (required, local clone paths); <code>--target {dependabot,gitignore}</code> (default <code>gitignore</code>); <code>--dry-run</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td><code>vrg-gitignore-sync</code> on PATH; each <code>--repos</code> path a local clone; git/<code>gh</code> credentials for the sweep</td>
+<td>The target's applicator (<code>vrg-gitignore-sync</code> or <code>vrg-dependabot-sync</code>) on PATH; each <code>--repos</code> path a local clone; git/<code>gh</code> credentials for the sweep</td>
 </tr>
 <tr>
 <td>Failure mode</td>
@@ -17535,7 +17606,10 @@ markdownlint, yamllint) are available on PATH.</p>
 <p>Shared validation checks for all repos: repository profile
 validation, markdownlint on published markdown (<code>docs/site/**/*.md</code>
 and <code>README.md</code>) using the bundled canonical config, shellcheck on
-<code>scripts/</code>, yamllint on <code>.github/</code> and <code>docs/</code> YAML files, hadolint
+<code>scripts/</code>, yamllint on <code>.github/</code> and <code>docs/</code> YAML files, the
+dependabot-limit guard (when <code>.github/dependabot.yml</code> exists, every
+<code>updates</code> entry must carry <code>open-pull-requests-limit: 0</code>, so Dependabot
+can never open a PR), hadolint
 on <code>Dockerfile*</code>, actionlint on <code>.github/workflows/</code>, and
 ansible-lint (using the bundled canonical config) when the repo
 carries Ansible content.</p>

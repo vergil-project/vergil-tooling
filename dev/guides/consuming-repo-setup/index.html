@@ -16485,6 +16485,15 @@ both, so a new or adopted repo starts conforming.</p>
 rolling <code>vergil-tooling@vX.Y</code> tag, so an updated fragment released under
 that line is picked up on the next <code>vrg-gitignore-sync</code> run — and the
 nightly audit flags the drift until you run it.</p>
+<p>Repos also carry a canonical, <strong>report-only</strong> <code>.github/dependabot.yml</code>
+(epic vergil-project/.github#420): Dependabot alerts stay on, but every
+<code>updates</code> entry sets <code>open-pull-requests-limit: 0</code>, so Dependabot never
+opens a PR. The file is an exact match of the render for your
+<code>[project].primary-language</code> — no local additions. <code>vrg-github-repo-init</code>
+writes it, and <code>vrg-dependabot-sync --write</code> writes or refreshes it.
+<code>vrg-validate</code> rejects any <code>dependabot.yml</code> entry whose
+<code>open-pull-requests-limit</code> is missing (Dependabot then defaults to 5) or
+not <code>0</code>.</p>
 <p>The audit also checks <code>vergil.toml</code>, <code>CLAUDE.md</code>,
 <code>.claude/settings.json</code>, <code>.claude/hooks/guard.sh</code>, the reusable-workflow
 pins and the GitHub settings. Check your repo locally before relying on
