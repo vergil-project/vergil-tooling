@@ -366,17 +366,36 @@ def is_epic(ref: IssueRef) -> bool:
     return "epic" in _labels(ref)
 
 
-def resolve_epic_ref(ref: str, *, repo: str) -> IssueRef:
-    """Resolve an epic ref, accepting the ``"adhoc"`` sentinel.
+def qualify_epic_ref(ref: str, *, repo: str) -> IssueRef:
+    """Parse an explicit epic ref, reading a bare ``#N`` against *repo*'s epic home.
 
-    ``"adhoc"`` ensures *repo*'s ad-hoc epic exists in ``<org>/.github`` —
-    creating it if absent and reusing it otherwise — via
-    :func:`ensure_adhoc_epic`. Any other ref is parsed with
-    :func:`parse_issue_ref` and validated to carry the ``epic`` label.
+    *repo* (``"owner/name"``) is the repo of the **task** the epic is for — never
+    simply the cwd repo. Epics live in their epic home
+    (:func:`resolve_epic_home`), so a bare ``#N`` names ``<org>/.github#N`` for a
+    public task and ``<repo>#N`` for a self-homed private one (#3411). A fully
+    qualified ``owner/repo#N`` is returned as written, with no network call.
+
+    A bare ref probes repo visibility, so call it under
+    ``github.target_org(<task owner>)``. Fail-loud: a visibility error propagates.
+    """
+    parsed = parse_issue_ref(ref, default_repo=repo)
+    if not ref.strip().startswith("#"):
+        return parsed
+    home_owner, home_repo = resolve_epic_home(parsed.owner, parsed.repo).split("/", 1)
+    return IssueRef(owner=home_owner, repo=home_repo, number=parsed.number)
+
+
+def resolve_epic_ref(ref: str, *, repo: str) -> IssueRef:
+    """Resolve an epic ref for a task in *repo*, accepting the ``"adhoc"`` sentinel.
+
+    ``"adhoc"`` ensures *repo*'s ad-hoc epic exists in its epic home — creating
+    it if absent and reusing it otherwise — via :func:`ensure_adhoc_epic`. Any
+    other ref is parsed with :func:`qualify_epic_ref` (a bare ``#N`` reads
+    against *repo*'s epic home) and validated to carry the ``epic`` label.
     """
     if ref == "adhoc":
         return ensure_adhoc_epic(repo)
-    epic = parse_issue_ref(ref, default_repo=repo)
+    epic = qualify_epic_ref(ref, repo=repo)
     if not is_epic(epic):
         raise ValueError(f"{epic.slug} is not an epic (missing the 'epic' label)")
     return epic
