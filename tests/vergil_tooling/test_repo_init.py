@@ -10,7 +10,7 @@ from unittest.mock import patch
 import pytest
 import yaml
 
-from vergil_tooling.lib import gitignore, repo_init
+from vergil_tooling.lib import dependabot, gitignore, repo_init
 from vergil_tooling.lib.config import CiConfig, ProjectConfig, _parse_raw_config
 from vergil_tooling.lib.github_config import ClassicProtectionReport
 from vergil_tooling.lib.repo_init import (
@@ -1697,6 +1697,22 @@ class TestStepScaffoldConfigFiles:
             step_scaffold_config_files(ctx)
 
         assert not (tmp_path / "LICENSE").exists()
+
+    @pytest.mark.parametrize("lang", ["python", "cpp", ""])
+    def test_config_files_writes_dependabot_yml(self, tmp_path: Path, lang: str) -> None:
+        """Every new repo is scaffolded with the canonical report-only dependabot.yml."""
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+        ctx.work_dir = tmp_path
+        ctx.description = "Test"
+        ctx.license_type = "none"
+        ctx.primary_language = lang
+
+        with patch("vergil_tooling.lib.repo_init.git.run"):
+            step_scaffold_config_files(ctx)
+
+        written = (tmp_path / ".github" / "dependabot.yml").read_text(encoding="utf-8")
+        assert written == dependabot.render(lang or None)
+        assert dependabot.check(written, lang or None) == []
 
     def test_no_githooks_created(self, tmp_path: Path) -> None:
         ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
