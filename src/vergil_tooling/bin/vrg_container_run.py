@@ -192,8 +192,9 @@ def main(argv: list[str] | None = None) -> int:
         pull_policy=pull_policy,
         env_prefixes=env_prefixes,
         env_names=token_names,
-        # The resolved version reaches the language's own tooling (UV_PYTHON
-        # for Python), so it cannot pick another interpreter (spec §6.5).
+        # The resolved version reaches the language's own tooling (for Python,
+        # UV_PYTHON plus UV_PYTHON_PREFERENCE=only-system), so it cannot pick
+        # another interpreter (spec §6.5).
         extra_env={**_test_tuning_env(), **container_env(resolution)},
         version_window=version_window,
     )

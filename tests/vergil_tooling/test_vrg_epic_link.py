@@ -31,6 +31,55 @@ def test_main_links_task_under_epic() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("task_ref", "public", "expected_epic"),
+    [
+        # Public task: its epics home in <org>/.github.
+        ("org/tooling#9", {"org/tooling", "org/.github"}, epics.IssueRef("org", ".github", 407)),
+        # Private task with a public .github: its epics home in the repo itself.
+        ("org/lab#9", {"org/.github"}, epics.IssueRef("org", "lab", 407)),
+    ],
+)
+def test_main_bare_epic_resolves_against_task_epic_home(
+    task_ref: str, public: set[str], expected_epic: epics.IssueRef
+) -> None:
+    """A bare '--epic #N' reads against the task's epic home, not the cwd repo (#3411).
+
+    Every visibility probe runs under the task owner's App token.
+    """
+    seen_orgs: list[str | None] = []
+
+    def is_public(nwo: str) -> bool:
+        seen_orgs.append(github._target_org.get())
+        return nwo in public
+
+    task = epics.parse_issue_ref(task_ref, default_repo="unused/unused")
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="cwd-org/elsewhere"),
+        patch("vergil_tooling.lib.github.is_public", side_effect=is_public),
+        patch(f"{_MOD}.epics.add_child") as mock_add,
+    ):
+        rc = main(["--epic", "#407", "--task", task_ref])
+    assert rc == 0
+    mock_add.assert_called_once_with(expected_epic, task)
+    assert seen_orgs
+    assert set(seen_orgs) == {"org"}
+
+
+def test_main_bare_epic_and_bare_task_use_cwd_repo_as_task() -> None:
+    """A bare task stays cwd-relative; the bare epic follows that task's home."""
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/tooling"),
+        patch("vergil_tooling.lib.github.is_public", return_value=True),
+        patch(f"{_MOD}.epics.add_child") as mock_add,
+    ):
+        rc = main(["--epic", "#407", "--task", "#9"])
+    assert rc == 0
+    mock_add.assert_called_once_with(
+        epics.IssueRef("org", ".github", 407), epics.IssueRef("org", "tooling", 9)
+    )
+
+
 def test_main_rejects_bad_ref() -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),

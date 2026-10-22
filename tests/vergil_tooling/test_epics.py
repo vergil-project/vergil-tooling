@@ -873,7 +873,64 @@ def test_resolve_epic_ref_explicit_non_epic_raises() -> None:
         patch("vergil_tooling.lib.epics.is_epic", return_value=False),
         pytest.raises(ValueError, match="not an epic"),
     ):
-        epics.resolve_epic_ref("#123", repo="org/repo")
+        epics.resolve_epic_ref("org/.github#123", repo="org/repo")
+
+
+def _visibility(public: set[str]) -> object:
+    """An is_public fake: True only for the repos in *public*."""
+    return lambda nwo: nwo in public
+
+
+def test_resolve_epic_ref_bare_ref_public_task_homes_in_dotgithub() -> None:
+    # A bare '#N' is read against the *task repo's* epic home, never the repo
+    # itself: a public task's epics live in <org>/.github (#3411).
+    with (
+        patch(
+            "vergil_tooling.lib.github.is_public",
+            side_effect=_visibility({"org/tooling", "org/.github"}),
+        ),
+        patch("vergil_tooling.lib.epics.is_epic", return_value=True) as mock_is_epic,
+    ):
+        epic = epics.resolve_epic_ref("#407", repo="org/tooling")
+    assert epic == IssueRef("org", ".github", 407)
+    mock_is_epic.assert_called_once_with(IssueRef("org", ".github", 407))
+
+
+def test_resolve_epic_ref_bare_ref_private_task_homes_in_itself() -> None:
+    # A private task with a public .github self-homes its epics, so a bare
+    # '#N' resolves to the repo itself (#3411).
+    with (
+        patch("vergil_tooling.lib.github.is_public", side_effect=_visibility({"org/.github"})),
+        patch("vergil_tooling.lib.epics.is_epic", return_value=True),
+    ):
+        assert epics.resolve_epic_ref("#12", repo="org/lab") == IssueRef("org", "lab", 12)
+
+
+def test_resolve_epic_ref_qualified_ref_skips_home_resolution() -> None:
+    # A fully qualified ref is taken as written: no visibility probe at all.
+    with (
+        patch("vergil_tooling.lib.github.is_public") as mock_public,
+        patch("vergil_tooling.lib.epics.is_epic", return_value=True),
+    ):
+        assert epics.resolve_epic_ref("org/tooling#9", repo="org/lab") == IssueRef(
+            "org", "tooling", 9
+        )
+    mock_public.assert_not_called()
+
+
+def test_qualify_epic_ref_visibility_error_propagates() -> None:
+    # Fail loud: an unreadable visibility never falls back to a guessed home.
+    err = github.GitHubAPIError(1, "gh repo view", "boom")
+    with (
+        patch("vergil_tooling.lib.github.is_public", side_effect=err),
+        pytest.raises(github.GitHubAPIError),
+    ):
+        epics.qualify_epic_ref("#12", repo="org/lab")
+
+
+def test_qualify_epic_ref_rejects_malformed_ref() -> None:
+    with pytest.raises(ValueError, match="not an issue ref"):
+        epics.qualify_epic_ref("not-a-ref", repo="org/lab")
 
 
 def test_ensure_adhoc_epic_repo_without_owner_raises() -> None:

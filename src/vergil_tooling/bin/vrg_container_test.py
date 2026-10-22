@@ -27,6 +27,7 @@ from vergil_tooling.lib.container import (
 )
 from vergil_tooling.lib.process import exec_replace
 from vergil_tooling.lib.versions import VersionsError
+from vergil_tooling.lib.versions.extensions import container_env
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -98,7 +99,11 @@ def build_test_container_args(
     env_prefixes: Sequence[str] = (),
 ) -> list[str]:
     """Build the container run argument list for test execution."""
-    image = os.environ.get("DOCKER_DEV_IMAGE") or default_image(repo_resolution(repo_root, lang))
+    # An explicit image is used as given and not resolved, as in vrg-container-run.
+    image = os.environ.get("DOCKER_DEV_IMAGE")
+    resolution = None if image else repo_resolution(repo_root, lang)
+    if not image:
+        image = default_image(resolution)
     test_cmd = os.environ.get("DOCKER_TEST_CMD") or _DEFAULT_TEST_COMMANDS.get(lang, "")
     network = os.environ.get("DOCKER_NETWORK", "")
 
@@ -118,7 +123,14 @@ def build_test_container_args(
     print("---")
 
     return build_container_args(
-        repo_root, image, ["bash", "-c", test_cmd], runtime=runtime, env_prefixes=env_prefixes
+        repo_root,
+        image,
+        ["bash", "-c", test_cmd],
+        runtime=runtime,
+        env_prefixes=env_prefixes,
+        # The resolved version and interpreter source reach uv, exactly as in
+        # vrg-container-run (spec §6.5, vergil-tooling#3410).
+        extra_env=container_env(resolution),
     )
 
 

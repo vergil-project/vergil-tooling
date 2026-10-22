@@ -12,9 +12,14 @@ Every Python-specific version rule lives here, and nowhere in the shared code:
   window version.
 * **Floor.** ``requires-python`` below the window's oldest version, or an
   upper bound that excludes its newest, is a warning (spec §6.4).
-* **Toolchain selection.** ``.python-version`` and uv's ``python-preference``
-  choose the interpreter behind Vergil's back, so they are errors (spec §6.5).
-  Vergil hands uv the resolved version through ``UV_PYTHON`` instead.
+* **Toolchain selection.** ``.python-version`` chooses the interpreter version
+  behind Vergil's back, so it is an error (spec §6.5). Vergil hands uv the
+  resolved version through ``UV_PYTHON`` instead. uv's ``python-preference`` is
+  allowed: it picks the interpreter's *source* (managed installs or the system
+  Python), not its version (spec §6.5 amendment, vergil-tooling#3410). Wherever
+  Vergil runs Python it pins the source itself with
+  ``UV_PYTHON_PREFERENCE=only-system`` (:func:`container_env`), so a repo's
+  preference never makes uv fetch its own interpreter in place of the image's.
 """
 
 from __future__ import annotations
@@ -49,8 +54,6 @@ __all__ = [
 _LANGUAGE = "python"
 _PYTHON_VERSION_FILE = ".python-version"
 _PYPROJECT = "pyproject.toml"
-_UV_TOML = "uv.toml"
-_PREFERENCE_KEY = "python-preference"
 # Specifier operators that bound the version from below or above.
 _LOWER_OPS = frozenset({">=", ">", "~=", "=="})
 _UPPER_OPS = frozenset({"<", "<=", "~=", "=="})
@@ -201,29 +204,32 @@ def check_floor(repo_root: Path, oldest: str, newest: str) -> list[str]:
 
 
 def check_toolchain(repo_root: Path) -> list[str]:
-    """Errors for every setting that picks the interpreter behind Vergil's back."""
-    why = "Vergil hands uv the resolved version through UV_PYTHON"
-    errors: list[str] = []
-    if (repo_root / _PYTHON_VERSION_FILE).exists():
-        errors.append(
-            f"{_PYTHON_VERSION_FILE} selects the Python interpreter, which belongs to "
-            f"Vergil ({why}). Fix: delete {_PYTHON_VERSION_FILE}"
-        )
-    pyproject = _read_toml(repo_root / _PYPROJECT) or {}
-    if _PREFERENCE_KEY in pyproject.get("tool", {}).get("uv", {}):
-        errors.append(
-            f"{_PYPROJECT} [tool.uv].{_PREFERENCE_KEY} selects the Python interpreter, "
-            f"which belongs to Vergil ({why}). Fix: remove it"
-        )
-    uv_toml = _read_toml(repo_root / _UV_TOML) or {}
-    if _PREFERENCE_KEY in uv_toml:
-        errors.append(
-            f"{_UV_TOML} {_PREFERENCE_KEY} selects the Python interpreter, which "
-            f"belongs to Vergil ({why}). Fix: remove it"
-        )
-    return errors
+    """Errors for every setting that picks the interpreter version behind Vergil's back.
+
+    Only ``.python-version`` does. uv's ``python-preference`` (in
+    ``[tool.uv]`` or ``uv.toml``) picks the source, not the version, so it is
+    not reported; :func:`container_env` overrides it inside Vergil's containers.
+    """
+    if not (repo_root / _PYTHON_VERSION_FILE).exists():
+        return []
+    return [
+        f"{_PYTHON_VERSION_FILE} selects the Python interpreter, which belongs to "
+        f"Vergil (Vergil hands uv the resolved version through UV_PYTHON). "
+        f"Fix: delete {_PYTHON_VERSION_FILE}"
+    ]
 
 
 def container_env(primary: str) -> Mapping[str, str]:
-    """``UV_PYTHON`` names the resolved version, so uv uses the image's interpreter."""
-    return {"UV_PYTHON": primary}
+    """The environment that makes uv use the image's interpreter at *primary*.
+
+    ``UV_PYTHON`` names the resolved version. ``UV_PYTHON_PREFERENCE=only-system``
+    pins the source to the image's own Python, so a repo's
+    ``python-preference = "only-managed"`` cannot make uv download a managed
+    interpreter instead. The env var wins over the repo's setting: uv's
+    configuration docs state "Settings provided via environment variables take
+    precedence over persistent configuration, and settings provided via the
+    command line take precedence over both"
+    (https://docs.astral.sh/uv/concepts/configuration-files/), where persistent
+    configuration is ``[tool.uv]`` in ``pyproject.toml`` and ``uv.toml``.
+    """
+    return {"UV_PYTHON": primary, "UV_PYTHON_PREFERENCE": "only-system"}

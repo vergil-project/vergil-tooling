@@ -87,6 +87,80 @@ def test_main_accepts_adhoc_epic() -> None:
     mock_add.assert_called_once_with(NEW, TASK)
 
 
+@pytest.mark.parametrize(
+    ("task_ref", "task_repo"),
+    [
+        ("other-org/proj#49", "other-org/proj"),  # different org from cwd
+        ("cwd-org/other#49", "cwd-org/other"),  # same org, different repo
+    ],
+)
+def test_main_adhoc_resolves_against_task_repo_not_cwd(task_ref: str, task_repo: str) -> None:
+    """'--epic adhoc' targets the task repo's ad-hoc epic, not the cwd repo's (#3409)."""
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="cwd-org/tooling"),
+        patch(f"{_MOD}.github.target_org"),
+        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=NEW) as mock_resolve,
+        patch(f"{_MOD}.epics.parent_of", return_value=None),
+        patch(f"{_MOD}.epics.add_child"),
+    ):
+        rc = main(["--task", task_ref, "--epic", "adhoc"])
+    assert rc == 0
+    mock_resolve.assert_called_once_with("adhoc", repo=task_repo)
+
+
+@pytest.mark.parametrize(
+    ("task_ref", "public", "expected_epic"),
+    [
+        # Public task: its epics home in <org>/.github.
+        ("org/tooling#123", {"org/tooling", "org/.github"}, epics.IssueRef("org", ".github", 407)),
+        # Private task with a public .github: its epics home in the repo itself.
+        ("org/lab#123", {"org/.github"}, epics.IssueRef("org", "lab", 407)),
+    ],
+)
+def test_main_bare_epic_resolves_against_task_epic_home(
+    task_ref: str, public: set[str], expected_epic: epics.IssueRef
+) -> None:
+    """A bare '--epic #N' reads against the task's epic home, not the cwd repo (#3411).
+
+    The visibility probes behind the epic-home lookup run under the task
+    owner's App token, never the cwd org's.
+    """
+    seen_orgs: list[str | None] = []
+
+    def is_public(nwo: str) -> bool:
+        seen_orgs.append(github._target_org.get())
+        return nwo in public
+
+    task = epics.parse_issue_ref(task_ref, default_repo="unused/unused")
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="cwd-org/elsewhere"),
+        patch("vergil_tooling.lib.github.is_public", side_effect=is_public),
+        patch("vergil_tooling.lib.epics.is_epic", return_value=True) as mock_is_epic,
+        patch(f"{_MOD}.epics.parent_of", return_value=None),
+        patch(f"{_MOD}.epics.add_child") as mock_add,
+    ):
+        rc = main(["--task", task_ref, "--epic", "#407"])
+    assert rc == 0
+    mock_is_epic.assert_called_once_with(expected_epic)
+    mock_add.assert_called_once_with(expected_epic, task)
+    assert seen_orgs
+    assert set(seen_orgs) == {"org"}
+
+
+def test_main_bare_epic_with_cross_org_task_is_not_rejected() -> None:
+    """A bare epic ref homes in the task's org, so it never trips the cross-org guard."""
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="cwd-org/elsewhere"),
+        patch(f"{_MOD}.github.target_org"),
+        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=NEW) as mock_resolve,
+        patch(f"{_MOD}.epics.parent_of", return_value=None),
+        patch(f"{_MOD}.epics.add_child"),
+    ):
+        rc = main(["--task", "other-org/proj#49", "--epic", "#407"])
+    assert rc == 0
+    mock_resolve.assert_called_once_with("#407", repo="other-org/proj")
+
+
 def test_main_scopes_token_to_task_owner() -> None:
     """The re-parent runs under the task's owner installation, not cwd (#2070)."""
     with (

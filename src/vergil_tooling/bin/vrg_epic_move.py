@@ -4,6 +4,12 @@ GitHub sub-issues allow only one parent, so re-parenting is unlink-then-link.
 The target epic is resolved via :func:`epics.resolve_epic_ref` (accepting the
 ``adhoc`` sentinel and validating epic-ness); moving a task already under the
 target epic is a no-op.
+
+Both ``adhoc`` and a bare ``#N`` epic ref are read against the **task's**
+repo, never the cwd repo: ``adhoc`` is the task repo's ad-hoc epic, and ``#N``
+is issue N in the task repo's epic home (``<org>/.github`` for a public repo,
+the repo itself for a self-homed private one). A fully qualified
+``owner/repo#N`` is taken as written (#3409, #3411).
 """
 
 from __future__ import annotations
@@ -21,13 +27,14 @@ def main(argv: list[str] | None = None) -> int:
     default_repo = github.current_repo()
     try:
         task = epics.parse_issue_ref(args.task, default_repo=default_repo)
+        task_repo = f"{task.owner}/{task.repo}"
         # Scope the App token to the task's owner (#2070). The epic must live in
-        # the same org — the 'adhoc' sentinel resolves within the task's org
-        # (.github), so only an explicit ref can diverge; guard that before any
-        # network call so a cross-org mistake is a clear message, not a
-        # cwd-scoped 403.
+        # the same org — 'adhoc' and a bare '#N' both resolve within the task
+        # repo's epic home (in the task's org), so only a qualified ref can
+        # diverge; guard that before any network call so a cross-org mistake
+        # is a clear message, not a cwd-scoped 403.
         if args.epic != "adhoc":
-            epic_owner = epics.parse_issue_ref(args.epic, default_repo=default_repo).owner
+            epic_owner = epics.parse_issue_ref(args.epic, default_repo=task_repo).owner
             if epic_owner != task.owner:
                 raise ValueError(
                     "cross-org operation is out of scope: task owner "
@@ -39,8 +46,11 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         with github.target_org(task.owner):
+            # 'adhoc' and a bare '#N' resolve against the *task's* repo (its
+            # ad-hoc epic / its epic home), never the cwd repo (#3409, #3411).
+            # The epic-home visibility probes run under the task owner's token.
             try:
-                epic = epics.resolve_epic_ref(args.epic, repo=default_repo)
+                epic = epics.resolve_epic_ref(args.epic, repo=task_repo)
             except ValueError as exc:
                 print(f"vrg-epic-move: {exc}", file=sys.stderr)
                 return 1
@@ -61,8 +71,16 @@ def main(argv: list[str] | None = None) -> int:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description="Move a task under a different epic.")
-    parser.add_argument("--task", required=True, help="Task ref: owner/repo#N or #N")
-    parser.add_argument("--epic", required=True, help="Target epic: 'adhoc', #N, or owner/repo#N")
+    parser.add_argument(
+        "--task", required=True, help="Task ref: owner/repo#N, or #N in the current repo"
+    )
+    parser.add_argument(
+        "--epic",
+        required=True,
+        help="Target epic: 'adhoc' (the task repo's ad-hoc epic), #N (issue N in the "
+        "task repo's epic home: <org>/.github for a public repo, the repo itself for "
+        "a self-homed private one), or owner/repo#N (taken as written)",
+    )
     return parser.parse_args(argv)
 
 

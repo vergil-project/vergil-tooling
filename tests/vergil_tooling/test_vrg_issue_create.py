@@ -483,13 +483,54 @@ def test_main_scopes_token_to_repo_owner() -> None:
     """Issue creation + linking run under the --repo owner installation (#2070)."""
     with (
         patch(f"{_MOD}.github.target_org") as mock_scope,
-        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
+        patch(f"{_MOD}.github.current_repo") as mock_cur,
+        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC) as mock_resolve,
         patch(f"{_MOD}.github.create_issue", return_value=_URL),
         patch(f"{_MOD}.epics.add_child"),
     ):
         rc = main(["--repo", "other-org/repo", "--epic", "adhoc", "--title", "T"])
     assert rc == 0
     mock_scope.assert_called_once_with("other-org")
+    # 'adhoc' resolves against --repo, never the cwd repo (#3409).
+    mock_resolve.assert_called_once_with("adhoc", repo="other-org/repo")
+    mock_cur.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("repo", "public", "expected_epic"),
+    [
+        # Public target: its epics home in <org>/.github.
+        ("org/tooling", {"org/tooling", "org/.github"}, epics.IssueRef("org", ".github", 407)),
+        # Private target with a public .github: its epics home in the repo itself.
+        ("org/lab", {"org/.github"}, epics.IssueRef("org", "lab", 407)),
+    ],
+)
+def test_main_bare_epic_resolves_against_target_epic_home(
+    repo: str, public: set[str], expected_epic: epics.IssueRef
+) -> None:
+    """A bare '--epic #N' reads against --repo's epic home, not the cwd repo (#3411).
+
+    The visibility probes run under the --repo owner's App token.
+    """
+    seen_orgs: list[str | None] = []
+
+    def is_public(nwo: str) -> bool:
+        seen_orgs.append(github._target_org.get())
+        return nwo in public
+
+    owner, name = repo.split("/", 1)
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="cwd-org/elsewhere"),
+        patch("vergil_tooling.lib.github.is_public", side_effect=is_public),
+        patch("vergil_tooling.lib.epics.is_epic", return_value=True),
+        patch(f"{_MOD}.github.create_issue", return_value=f"https://github.com/{repo}/issues/9"),
+        patch(f"{_MOD}.epics.add_child") as mock_add,
+    ):
+        rc = main(["--repo", repo, "--epic", "#407", "--title", "T"])
+    assert rc == 0
+    mock_add.assert_called_once_with(expected_epic, epics.IssueRef(owner, name, 9))
+    assert seen_orgs
+    assert set(seen_orgs) == {"org"}
 
 
 def test_main_explicit_same_org_epic_proceeds() -> None:
