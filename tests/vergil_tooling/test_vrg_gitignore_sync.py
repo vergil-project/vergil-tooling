@@ -141,6 +141,27 @@ class TestWrite:
         assert (tmp_path / ".gitignore").read_text(encoding="utf-8") == gitignore.render_block(None)
 
 
+class TestConfigError:
+    """An unreadable vergil.toml is a config error, never a base-only fence (#3451)."""
+
+    @pytest.mark.parametrize("mode", ["--check", "--write"])
+    def test_config_error_exits_2_without_writing(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], mode: str
+    ) -> None:
+        _write_repo(tmp_path, "not = [valid toml", gitignore.render_block(None))
+        rc = vrg_gitignore_sync.main(["--repo", str(tmp_path), mode])
+        assert rc == 2
+        err = capsys.readouterr().err
+        assert err.startswith("vrg-gitignore-sync: ")
+        assert "not valid TOML" in err
+        assert (tmp_path / ".gitignore").read_text(encoding="utf-8") == gitignore.render_block(None)
+
+    def test_absent_config_is_base_only(self, tmp_path: Path) -> None:
+        """No vergil.toml at all is legitimate: base-only, not an error."""
+        (tmp_path / ".gitignore").write_text(gitignore.render_block(None), encoding="utf-8")
+        assert vrg_gitignore_sync.main(["--repo", str(tmp_path), "--check"]) == 0
+
+
 class TestArgs:
     def test_check_and_write_are_mutually_exclusive(self, tmp_path: Path) -> None:
         with pytest.raises(SystemExit) as exc:

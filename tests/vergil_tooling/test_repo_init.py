@@ -1969,6 +1969,14 @@ class TestLoadExistingConfig:
         assert result is not None
         assert result["project"]["repository-type"] == "tooling"
 
+    def test_malformed_toml_fails_loudly(self, tmp_path: Path) -> None:
+        # #3451: the scaffolded dependabot.yml / .gitignore follow the language
+        # read from here, so an unreadable vergil.toml must stop repo-init, not
+        # fall back to a language-less default.
+        (tmp_path / "vergil.toml").write_text("not = [valid toml")
+        with pytest.raises(tomllib.TOMLDecodeError):
+            _load_existing_config(tmp_path)
+
 
 class TestRemoteBranchExists:
     def test_returns_true_when_exists(self) -> None:

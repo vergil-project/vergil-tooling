@@ -98,6 +98,14 @@ actual=<reason>)`; a repo with no `.gitignore` fails because no fence is
 present. Genuinely repo-local lines outside the fence are never asserted
 against.
 
+The resolved language is `[project].primary-language`. No `vergil.toml`,
+or no declared language, means base-only. A `vergil.toml` that fails to
+load is **not** treated as base-only: the fence cannot be judged, so the
+check reports one explicit failure,
+`DiffItem(field="local.gitignore", expected="resolvable [project].primary-language",
+actual="cannot resolve the fence language: <config error>")`, and nothing
+else for the file (#3451).
+
 The resolved language is the repo's `[project].primary-language`,
 normalized to base-only for any language without a managed fragment — the
 same rule scaffolding uses, so a freshly inited repo is fenced-compliant
