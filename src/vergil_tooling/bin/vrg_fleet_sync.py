@@ -9,7 +9,9 @@ applicator CLI that the sweep shells out to once per repo worktree:
 * ``gitignore`` (default) — ``vrg-gitignore-sync --write --repo <worktree>``,
   the managed ``.gitignore`` block (epic #325).
 * ``dependabot`` — ``vrg-dependabot-sync --write --repo <worktree>``, the
-  canonical report-only ``.github/dependabot.yml`` (epic .github#420).
+  canonical report-only ``.github/dependabot.yml`` (epic .github#420). A repo
+  outside the ``vergil-project`` org is filed under its own ad-hoc epic
+  instead, since a cross-org epic link is refused (#3447).
 
 The sweep opens one PR per repo whose file actually drifts. The target table is
 hard-coded; a config-driven or general change-script CLI is follow-on #328.

@@ -22,8 +22,8 @@ Per repo, :func:`run_sweep`:
 2. Runs the applicator against that worktree.
 3. If nothing changed, removes the probe worktree and records ``"skipped"`` —
    no issue, no branch, no PR.
-4. If something changed, ensures a tracking issue (under ``spec.epic`` when set,
-   else the repo's ad-hoc epic), renames the probe worktree to the repo's
+4. If something changed, ensures a tracking issue (under ``spec.epic`` when set
+   and in the repo's own org, else the repo's ad-hoc epic), renames the probe worktree to the repo's
    ``.worktrees/issue-<N>-<slug>`` convention, creates the
    ``feature/<issue>-<slug>`` branch carrying the working-tree change, **stages**
    it, commits via ``vrg-commit``, and hands off via ``vrg-pr-workflow
@@ -45,7 +45,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from vergil_tooling.lib import git
+from vergil_tooling.lib import git, github
 from vergil_tooling.lib.process_errors import error_text
 
 _ISSUE_URL_RE = re.compile(r"/issues/(\d+)")
@@ -126,14 +126,65 @@ def _run_tool(args: list[str], *, cwd: str | Path | None = None) -> str:
     return result.stdout
 
 
+def _epic_owner(epic: str) -> str | None:
+    """Return the owner of an ``owner/repo#N`` epic ref, else ``None``.
+
+    ``adhoc`` and a bare ``#N`` carry no owner: ``vrg-issue-create`` resolves
+    both inside the target repo's own org, so they can never cross orgs.
+    """
+    repo_part, sep, _number = epic.partition("#")
+    if not sep or "/" not in repo_part:
+        return None
+    return repo_part.split("/", 1)[0]
+
+
+def _resolve_epic(spec: SweepSpec, repo_dir: str) -> str:
+    """Pick the epic *repo_dir*'s tracking issue is filed under.
+
+    ``spec.epic`` when set and in the repo's own org; otherwise the repo's
+    ad-hoc epic. ``vrg-issue-create`` refuses a cross-org sub-issue link, so a
+    repo outside the epic's org falls back to ``adhoc`` rather than failing
+    (#3447). The repo's owner is read from the clone exactly as
+    ``vrg-issue-create`` reads it (``gh repo view`` in the checkout), and only
+    when there is an owner to compare against.
+    """
+    if not spec.epic:
+        return "adhoc"
+    epic_owner = _epic_owner(spec.epic)
+    if epic_owner is None:
+        return spec.epic
+    repo_owner = github.current_repo(cwd=repo_dir).split("/", 1)[0]
+    return spec.epic if repo_owner == epic_owner else "adhoc"
+
+
+def _issue_body(spec: SweepSpec, epic: str) -> str:
+    """Return the tracking-issue body, naming ``spec.epic`` when there is one.
+
+    The epic is named in both the linked and the cross-org fallback case, so an
+    issue filed under the repo's ad-hoc epic still says which initiative it
+    belongs to.
+    """
+    if not spec.epic:
+        return spec.body
+    if epic == spec.epic:
+        note = f"Part of epic {spec.epic}."
+    else:
+        note = (
+            f"Part of epic {spec.epic}. Filed under this repository's ad-hoc epic "
+            "because that epic is in another organization, and a cross-org "
+            "sub-issue link is out of scope."
+        )
+    return f"{spec.body}\n\n{note}"
+
+
 def _ensure_issue(spec: SweepSpec, repo: str) -> int:
     """Create the tracking issue for *repo* and return its number.
 
-    Targets ``spec.epic`` when set, else the repo's ad-hoc epic. Runs with the
-    repo clone as cwd so ``vrg-issue-create`` resolves the target repo from the
-    checkout (no path/name derivation needed).
+    Targets the epic :func:`_resolve_epic` picks. Runs with the repo clone as
+    cwd so ``vrg-issue-create`` resolves the target repo from the checkout (no
+    path/name derivation needed).
     """
-    epic = spec.epic if spec.epic else "adhoc"
+    epic = _resolve_epic(spec, repo)
     stdout = _run_tool(
         [
             "vrg-issue-create",
@@ -142,7 +193,7 @@ def _ensure_issue(spec: SweepSpec, repo: str) -> int:
             "--title",
             spec.title,
             "--body",
-            spec.body,
+            _issue_body(spec, epic),
         ],
         cwd=repo,
     )
@@ -278,25 +329,27 @@ def run_sweep(spec: SweepSpec, applicator: Applicator, *, dry_run: bool) -> list
     ``dry_run=True`` performs **no** mutation at all — no worktree, no issue, no
     commit, no PR. It resolves the repo list and reports the intended action per
     repo (``status="ready"``, the terminal action a live run would drive
-    toward), touching no git or GitHub state.
+    toward), including the epic each repo's issue would be filed under, touching
+    no git or GitHub state (resolving that epic may *read* the repo's owner).
     """
     results: list[RepoResult] = []
     for repo in spec.repos:
-        if dry_run:
-            results.append(
-                RepoResult(
-                    repo=repo,
-                    status="ready",
-                    detail=(
-                        f"dry-run: would ensure issue "
-                        f"({spec.epic or 'adhoc'}), create feature/<issue>-{spec.branch_slug}, "
-                        f"apply the change, commit, and report-ready"
-                    ),
-                )
-            )
-            continue
         try:
-            results.append(_process_repo(spec, applicator, repo))
+            if dry_run:
+                epic = _resolve_epic(spec, str(Path(repo).resolve()))
+                results.append(
+                    RepoResult(
+                        repo=repo,
+                        status="ready",
+                        detail=(
+                            f"dry-run: would ensure issue under epic {epic}, "
+                            f"create feature/<issue>-{spec.branch_slug}, "
+                            f"apply the change, commit, and report-ready"
+                        ),
+                    )
+                )
+            else:
+                results.append(_process_repo(spec, applicator, repo))
         except Exception as exc:  # noqa: BLE001 - failure isolation is the contract
             results.append(RepoResult(repo=repo, status="error", detail=error_text(exc)))
     return results
