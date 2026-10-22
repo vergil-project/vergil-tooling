@@ -429,6 +429,21 @@ def test_main_toolchain_selection_fails_validation(
     assert "ERROR: .python-version selects the Python interpreter" in capsys.readouterr().err
 
 
+def test_main_python_preference_passes_validation(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # python-preference picks the interpreter's source, not its version (#3410).
+    _write_pinned_config(tmp_path, repo_type="library", versions='["3.14"]')
+    (tmp_path / "pyproject.toml").write_text('[tool.uv]\npython-preference = "only-managed"\n')
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".progress.run_pipeline", return_value=0) as m_pipeline,
+    ):
+        assert main([]) == 0
+    m_pipeline.assert_called_once()
+    assert "ERROR" not in capsys.readouterr().err
+
+
 def test_main_floor_check_failure_fails_validation(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

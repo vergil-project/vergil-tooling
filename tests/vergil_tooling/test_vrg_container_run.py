@@ -78,6 +78,24 @@ def test_help_after_separator_not_intercepted(tmp_path: Path) -> None:
     assert args[-2:] == ["some-tool", "--help"]
 
 
+def test_python_container_gets_version_and_source(tmp_path: Path) -> None:
+    # The resolved version and the interpreter source both reach uv, so a repo's
+    # own python-preference cannot make it fetch a managed Python (#3410).
+    (tmp_path / "pyproject.toml").write_text("[project]\n")
+    with (
+        patch("vergil_tooling.bin.vrg_container_run.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_run.assert_runtime_available"),
+        patch("vergil_tooling.bin.vrg_container_run.ensure_cached_image", return_value="img:1"),
+        patch("vergil_tooling.bin.vrg_container_run.detect_runtime", return_value="docker"),
+        patch("vergil_tooling.bin.vrg_container_run.os.execvp") as mock_exec,
+        patch.dict("os.environ", {}, clear=True),
+    ):
+        main(["--", "true"])
+    args = mock_exec.call_args[0][1]
+    assert args[args.index("UV_PYTHON=3.14") - 1] == "-e"
+    assert args[args.index("UV_PYTHON_PREFERENCE=only-system") - 1] == "-e"
+
+
 def test_help_alone_after_separator_not_intercepted(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[project]\n")
     env = {"GH_TOKEN": "tok"}
