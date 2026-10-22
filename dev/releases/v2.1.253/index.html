@@ -15679,6 +15679,7 @@ vergil-tooling is installed into every consumer's image, so it is a library unde
 <li><strong>add the Python resolver extension, toolchain-selection and floor checks (#3401)</strong>
 A packaged Python app resolves to the newest window version with a published vergil-python runtime, and fails loud when none has one; a packaged library keeps its whole matrix and only its deployed runtime needs a published package. [package.python].runtime becomes optional: unset, the builder derives the x.y runtime (vergil-python<x.y> at /opt/vergil/python/<x.y>); set, its x.y must be in the window. vrg-validate warns on a requires-python or go.mod floor below the window and an upper bound that excludes its newest version, and fails on .python-version or uv python-preference. vrg-container-run passes UV_PYTHON=<primary> into the container. Language rules live only in lib/versions/extensions/{python,go}.py; floors.py dispatches. Ref vergil-project/vergil-tooling#3368</li>
 </ul>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.253/v2.1.253-ci-evidence.tar.gz">Download →</a></p>
 
 
 

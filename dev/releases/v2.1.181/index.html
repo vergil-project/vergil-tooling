@@ -15671,6 +15671,7 @@ vrg-adhoc-epic archive drains closed ad-hoc children into per-quarter archives; 
 The daily epic-sweep (vrg-epic-audit --close) now also runs the org-wide ad-hoc drain — the backstop for missed close events, the one-time backlog distribution, and past-archive closing — under the same human/VRG_EPIC_SWEEP gate. The read-only report path prints a preview of what the drain would archive. The write-path drain is wrapped in github.target_org(org) since main() has no other org scope. No new cron. Part of epic #238.</p>
 </li>
 </ul>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.181/v2.1.181-ci-evidence.tar.gz">Download →</a></p>
 
 
 

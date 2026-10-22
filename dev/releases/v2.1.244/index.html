@@ -15638,6 +15638,7 @@
 <li><strong>close a dependency-update PR at preflight once its fix task completes (#3287)</strong>
 A squash-merged fix PR never marks the dependency-update PR merged, so the release gate stayed shut after the fix landed (#3281/#3282/#3284). Preflight now looks up each open deps PR's fix task: closed as COMPLETED -&gt; comment and close the PR, record it on the release context, and name it in the prepare-stage tracking comment. Closed for any other reason, open, or missing keeps blocking (non-completed closure gets its own refusal text). All fix tasks are looked up before any PR is closed; lookup, comment and close failures raise ReleaseError naming the PR's state. --allow-pending-deps applies only to what still blocks; --resume still skips the check. Also corrects the fix-task body, which claimed GitHub marks the deps PR merged.</li>
 </ul>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.244/v2.1.244-ci-evidence.tar.gz">Download →</a></p>
 
 
 

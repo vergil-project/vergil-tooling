@@ -15619,6 +15619,7 @@
 <li><strong>report missing or malformed harvest state as a one-line error (#3120)</strong>
 vrg-ci-evidence assemble crashed with a traceback when the pre-publish harvest failed and left no harvest-state.json. read_harvest_state now raises HarvestStateError (a ValueError subclass) for a missing, unreadable, non-JSON, wrong-shape or unknown-schema state file, with a message naming the staging dir and that the pre-publish evidence gate did not complete. resolve_release_pr's unresolvable case now raises ReleasePrUnresolvedError. The CLI catches both and emits a single ERROR / ::error line with exit 1.</li>
 </ul>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.230/v2.1.230-ci-evidence.tar.gz">Download →</a></p>
 
 
 

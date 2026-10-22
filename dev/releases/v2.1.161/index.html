@@ -15619,6 +15619,7 @@
 <li><strong>reclaim anonymous venv mask volume on cache-build cleanup (#2501)</strong>
 The cache-build path creates a build container, commits it, then removes it in the finally block. The cleanup used <code>rm</code> without <code>-v</code>, orphaning the anonymous /workspace/.venv mask volume introduced in #2495 — <code>nerdctl volume ls</code> grew by one per cold build. Add <code>-v</code> so the container's anonymous volumes are reclaimed on removal, matching the run path's <code>run --rm</code> behavior.</li>
 </ul>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.161/v2.1.161-ci-evidence.tar.gz">Download →</a></p>
 
 
 

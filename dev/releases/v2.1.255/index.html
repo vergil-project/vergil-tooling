@@ -15619,6 +15619,7 @@
 <li><strong>run the cache build's warmup with the resolver's UV_PYTHON and UV_PYTHON_PREFERENCE (#3422)</strong>
 The cached-image build ran its setup step (vergil-tooling install, build-command, warmup) with uv's defaults plus the repo's own settings, so a repo with python-preference = "only-managed" and no .python-version made uv download a managed interpreter instead of using the image's. ensure_cached_image now takes a required build_env, the same container_env(resolution) the run path passes; the setup step exports it before every fragment (in the shell, so it is not baked into the committed image), and it is folded into the cache key so a change of resolved version or source rebuilds. An empty env adds nothing to the key, so languages without a container env keep their existing caches. vrg-container-run, vrg-container-cache (build and status) and provision_dev_image pass it.</li>
 </ul>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.255/v2.1.255-ci-evidence.tar.gz">Download →</a></p>
 
 
 

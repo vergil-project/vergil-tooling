@@ -15619,6 +15619,7 @@
 <li><strong>tolerate worktrees removed mid-scan by a concurrent operation (#3190)</strong>
 discover_worktrees() is a snapshot; a parallel vrg-finalize-pr can remove a worktree and delete its branch before the status scan reaches it, crashing with a CalledProcessError traceback. On a per-worktree git failure, re-check whether the worktree still exists: if it vanished, drop it with a visible note; otherwise re-raise unchanged. Ref #3187</li>
 </ul>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.238/v2.1.238-ci-evidence.tar.gz">Download →</a></p>
 
 
 
