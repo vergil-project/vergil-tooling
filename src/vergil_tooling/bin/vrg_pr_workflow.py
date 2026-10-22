@@ -34,6 +34,7 @@ from vergil_tooling.lib.pr_workflow import engine
 from vergil_tooling.lib.pr_workflow.errors import WorkflowError
 from vergil_tooling.lib.pr_workflow.github_transport import GitHubTransport
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
+from vergil_tooling.lib.process_errors import error_text
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.pr_workflow.state import WorkflowState
@@ -190,7 +191,7 @@ def _push_relay_ref(state: WorkflowState, base: str) -> None:
         relay.write(state)
     except (subprocess.CalledProcessError, OSError) as exc:
         print(
-            f"warning: could not push pr-workflow relay ref {relay.ref}: {exc}",
+            f"warning: could not push pr-workflow relay ref {relay.ref}: {error_text(exc)}",
             file=sys.stderr,
         )
 

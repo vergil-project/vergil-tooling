@@ -117,8 +117,10 @@ def test_listing_failure_exits_nonzero(
     monkeypatch.setattr(branch_sweep, "sweep", boom)
     assert main(["--repo", REPO]) == 1
     err = capsys.readouterr().err
-    assert f"cannot list branches of {REPO}" in err
-    assert "HTTP 404: Not Found" in err
+    assert (
+        f"cannot list branches of {REPO}: Command 'gh api' returned non-zero exit status 1. "
+        "stderr: HTTP 404: Not Found"
+    ) in err
 
 
 def test_missing_token_uses_cli_boundary(

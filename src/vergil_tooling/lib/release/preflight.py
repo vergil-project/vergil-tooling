@@ -17,6 +17,7 @@ from vergil_tooling.lib.managed_worktree import (
 )
 from vergil_tooling.lib.package import PackageError
 from vergil_tooling.lib.package.index import published
+from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 from vergil_tooling.lib.release.tracking import find_existing_tracking_issue
 from vergil_tooling.lib.update_deps.context import DEPS_LABEL
@@ -161,7 +162,7 @@ def pending_deps_prs(repo: str) -> list[PendingDepsPr]:
             phase="preflight",
             command=_PENDING_DEPS_COMMAND,
             message="Could not list open dependency-update PRs; refusing to release blind.",
-            detail=str(exc),
+            detail=error_text(exc),
         ) from exc
     if not isinstance(raw, list):
         raise ReleaseError(
@@ -193,9 +194,8 @@ def pending_deps_prs(repo: str) -> list[PendingDepsPr]:
 
 
 def _gh_error_detail(exc: Exception) -> str:
-    """A gh failure's stderr when it has one, else the exception text."""
-    stderr = getattr(exc, "stderr", None)
-    return f"{exc}\n{stderr}" if stderr else str(exc)
+    """A gh failure's message with its stderr and stdout, else the exception text."""
+    return error_text(exc)
 
 
 def fix_task_status(url: str) -> tuple[str, str | None]:
@@ -449,7 +449,7 @@ def check_gh_auth() -> str:
             phase="preflight",
             command="gh repo view",
             message="GitHub CLI authentication failed.",
-            detail=str(exc),
+            detail=error_text(exc),
         ) from exc
 
 

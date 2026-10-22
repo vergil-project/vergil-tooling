@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import git
+from vergil_tooling.lib.process_errors import command_text, failure_message
 from vergil_tooling.lib.progress import Stage
 from vergil_tooling.lib.update_deps import pr, report, validate
 from vergil_tooling.lib.update_deps.context import (
@@ -22,7 +23,6 @@ from vergil_tooling.lib.update_deps.context import (
 )
 from vergil_tooling.lib.update_deps.failure import (
     combined_output,
-    command_text,
     failure_summary,
     tail_output,
 )
@@ -102,7 +102,7 @@ def run_updaters_stage(state: UpdateDepsState) -> None:
         except subprocess.CalledProcessError as exc:
             ctx.failure = DepsFailure(
                 kind="update",
-                message=f"{updater.name}: {exc}",
+                message=f"{updater.name}: {failure_message(exc)}",
                 output_tail=tail_output(combined_output(exc)),
                 reproduce=command_text(exc.cmd),
             )

@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from vergil_tooling.lib import retry
+from vergil_tooling.lib.process_errors import error_text, failure_detail, failure_message
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Generator, Iterator, Sequence
@@ -359,12 +360,13 @@ def get_installation_token(
             method="POST",
         )
     except (subprocess.CalledProcessError, OSError, ValueError) as exc:
-        detail = str(exc)
         if isinstance(exc, subprocess.CalledProcessError):
             output = exc.stderr or b""
             if isinstance(output, bytes):
                 output = output.decode(errors="replace")
-            detail = output.strip() or detail
+            detail = output.strip() or failure_message(exc)
+        else:
+            detail = str(exc)
         raise AppAuthError(org, app_id, key_path, detail) from exc
 
     minted = data.get("token") if isinstance(data, dict) else None
@@ -478,15 +480,7 @@ class GitHubAPIError(subprocess.CalledProcessError):
     """``CalledProcessError`` that includes captured API output in its message."""
 
     def __str__(self) -> str:
-        base = super().__str__()
-        parts: list[str] = []
-        if self.stderr:
-            parts.append(f"stderr: {self.stderr.strip()}")
-        if self.stdout:
-            parts.append(f"stdout: {self.stdout.strip()}")
-        if parts:
-            return f"{base}\n{'\n'.join(parts)}"
-        return base
+        return failure_detail(self)
 
 
 # gh in a GitHub Actions runner exits non-zero with this guidance when no auth
@@ -1120,7 +1114,7 @@ def _stale_job_problem(link: str) -> tuple[str | None, Exception | None]:
     try:
         conclusion = job_conclusion(match.group(1), match.group(2))
     except (subprocess.CalledProcessError, ValueError) as exc:
-        detail = (getattr(exc, "stderr", None) or str(exc)).strip()
+        detail = (getattr(exc, "stderr", None) or error_text(exc)).strip()
         return f"job conclusion could not be read: {detail}", exc
     if conclusion == "success":
         return None, None
@@ -1271,7 +1265,7 @@ def required_check_names(pr: str) -> frozenset[str] | None:
     except MissingGitHubTokenError:
         raise
     except (subprocess.CalledProcessError, json.JSONDecodeError) as exc:
-        lines = str(exc).strip().splitlines()
+        lines = error_text(exc).strip().splitlines()
         detail = lines[-1] if lines else type(exc).__name__
         print(
             f"Warning: could not read the base branch's required status checks for PR {pr} "

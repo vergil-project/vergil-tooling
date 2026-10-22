@@ -203,6 +203,21 @@ def test_tracked_stage_wraps_and_comments_on_failure() -> None:
     m_failed.assert_called_once()
 
 
+def test_tracked_stage_wraps_a_failed_command_from_its_fields() -> None:
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
+    state.ctx = _ctx()
+    failed = subprocess.CalledProcessError(1, ["git", "push"], stderr="rejected")
+    fn = MagicMock(side_effect=failed)
+    with (
+        patch(_MOD + ".comment_phase_failed"),
+        pytest.raises(ReleaseError) as excinfo,
+    ):
+        _tracked("prepare", fn)(state)
+    assert excinfo.value.command == "git push"
+    assert str(excinfo.value) == "Command 'git push' returned non-zero exit status 1."
+    assert excinfo.value.detail == "rejected"
+
+
 def test_tracked_stage_requires_ctx() -> None:
     state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
     with pytest.raises(ReleaseError, match="preflight did not run"):

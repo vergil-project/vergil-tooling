@@ -34,6 +34,7 @@ from typing import cast
 from urllib.parse import quote
 
 from vergil_tooling.lib import github
+from vergil_tooling.lib.process_errors import error_text
 
 #: Branch names that are never deleted, whatever their PR history.
 RESERVED_BRANCHES = frozenset({"develop", "main", "gh-pages"})
@@ -286,7 +287,7 @@ def sweep(repo: str, *, apply: bool) -> list[Outcome]:
         except github.MissingGitHubTokenError:
             raise
         except (subprocess.CalledProcessError, ValueError) as exc:
-            detail = " ".join(str(exc).split())
+            detail = " ".join(error_text(exc).split())
             outcomes.append(Outcome(branch.name, None, Action.ERROR, detail))
     return outcomes
 
