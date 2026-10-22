@@ -298,14 +298,16 @@ via the `[validation]` override in `vergil.toml` — see
 [Validation](#validation).)
 
 **Tier 2 — PR CI (~5-8 min):** Triggers on `pull_request`. Runs every
-quality check across the full Python version matrix (3.12, 3.13, 3.14),
-security scanners (CodeQL, Trivy, Semgrep), and release gates. Workflow: `.github/workflows/ci.yml`. `ci.yml` is a **thin
+quality check across the full Python version matrix (currently 3.12, 3.13,
+3.14), security scanners (CodeQL, Trivy, Semgrep), and release gates. Workflow: `.github/workflows/ci.yml`. `ci.yml` is a **thin
 caller** of the `vergil-actions` reusable workflows, passing only
-`language:`/`container-suffix:`; the matrix is read from `[ci].versions` in
-`vergil.toml` at run time, and branch protection requires the stable,
-version-agnostic `audit / evidence`, `quality / evidence`, and
-`test / evidence` gates rather than per-version checks — so a `[ci].versions`
-change needs no edit to `ci.yml` or the ruleset (epic
+`language:`/`container-suffix:`; the matrix is resolved at run time by
+`vrg-ci-resolve` from the published version window. This repo sets
+`repository-type = "library"` and has no `[ci].versions` pin, so it tests
+the whole window (epic vergil-project/.github#407). Branch protection
+requires the stable, version-agnostic `audit / evidence`,
+`quality / evidence`, and `test / evidence` gates rather than per-version
+checks — so a matrix change needs no edit to `ci.yml` or the ruleset (epic
 vergil-project/.github#338).
 
 Push-CI was retired once `vrg-validate` matched the checks push-CI ran.
@@ -314,7 +316,7 @@ Note one deliberate gap in the "parity with PR-CI" framing: local
 Python interpreter (currently 3.14), so its `--cov-fail-under=100` gate
 proves 100% coverage on that interpreter only. PR-CI re-runs the
 test-and-coverage gate independently in a separate container per
-`[ci].versions` entry (3.12, 3.13, 3.14). Because branch coverage
+resolved matrix version (currently 3.12, 3.13, 3.14). Because branch coverage
 (`--cov-branch`) can legitimately differ across CPython versions, code at
 100% locally can still fall below 100% on a 3.12 or 3.13 leg and fail CI —
 the multi-version coverage matrix is a PR-CI-only gate. See
