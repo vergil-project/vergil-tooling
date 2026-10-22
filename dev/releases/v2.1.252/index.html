@@ -1313,6 +1313,8 @@
       
         
       
+        
+      
     
     
     
@@ -1368,6 +1370,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.255/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.255
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15877,7 +15907,6 @@ Add lib/versions: window.py loads the schema-1 window.json that vergil-container
 Ruby is dropped from the language lifecycle (epic vergil-project/.github#407, spec section 9) and its only consumer is archived, so its support is dead code. Remove it from the primary-language enum, the language registry, version detection and bumping, repo-init scaffolding and cd-release secrets, container image and Gemfile detection, cache and warmup files, semgrep rulesets, the CodeQL and action-pattern sets, vrg-generate-commands, and the gitignore fragment, together with the packaged license_finder config and the tests that covered them.</li>
 </ul>
 <p>A vergil.toml that still declares primary-language = "ruby" now fails with a ConfigError naming the retirement, instead of the generic warn-and-treat-as-unset path that would have validated it silently as a language-less repo.</p>
-<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.252/v2.1.252-ci-evidence.tar.gz">Download →</a></p>
 
 
 

@@ -1313,6 +1313,8 @@
       
         
       
+        
+      
     
     
     
@@ -1368,6 +1370,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.255/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.255
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15589,7 +15619,6 @@
 <li><strong>fall back to base image for language-less repos regardless of declared version (#2476)</strong>
 default_image built a malformed prod-:<version> tag when a repo has no detected language (detect_language() == '') but declares [ci].versions — the #2468 change let 'version or default' short-circuit the no-language base fallback, breaking vrg-container-run in config/docs-only repos like .github (versions=['latest'] -&gt; prod-:latest). Gate the version override on the language having a per-language image: a language-less/unknown repo always uses the base, and the declared version overrides only for a real language. Ref #2475.</li>
 </ul>
-<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.158/v2.1.158-ci-evidence.tar.gz">Download →</a></p>
 
 
 

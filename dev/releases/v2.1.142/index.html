@@ -1313,6 +1313,8 @@
       
         
       
+        
+      
     
     
     
@@ -1368,6 +1370,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.255/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.255
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15589,7 +15619,6 @@
 <li><strong>add GitHubTransport relay over refs/vergil/pr-workflow (#2372)</strong>
 Add GitHubTransport(Transport) carrying pr-workflow.json across filesystems via the reserved ref refs/vergil/pr-workflow/<branch>. read() fetches the ref and parses the payload (None when absent); write() builds a single-file commit out-of-band with git plumbing (hash-object -&gt; mktree -&gt; commit-tree) and force-pushes the SHA straight to the ref, never running git commit and never touching HEAD/index/worktree so it stays freeze-neutral under the epic #146 report-ready freeze; delete() removes the ref (no-op when absent). Adds git.read_output_stdin for plumbing that reads its payload from stdin. Ref #2366</li>
 </ul>
-<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.142/v2.1.142-ci-evidence.tar.gz">Download →</a></p>
 
 
 

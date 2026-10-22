@@ -1313,6 +1313,8 @@
       
         
       
+        
+      
     
     
     
@@ -1368,6 +1370,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.255/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.255
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15590,7 +15620,6 @@
 The ad-hoc drain re-parented a closed child from the live ad-hoc epic into its close-quarter archive with add-before-remove (add_child then remove_child). GitHub's native sub-issues enforce a single parent, so addSubIssue was rejected while the child was still linked to the live epic, deadlocking the drain against real GitHub. Proven live by #2677.</li>
 </ul>
 <p>Add reparent_child() using addSubIssue with replaceParent: true, which moves a child to a new parent in one atomic call (no orphan window, no separate remove). Replace the add-before-remove pair in both apply_adhoc_drain and the rollup() ad-hoc event-path branch. add_child/remove_child are left intact for their other callers.</p>
-<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.182/v2.1.182-ci-evidence.tar.gz">Download →</a></p>
 
 
 

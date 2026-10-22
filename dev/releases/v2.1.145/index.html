@@ -1313,6 +1313,8 @@
       
         
       
+        
+      
     
     
     
@@ -1368,6 +1370,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.255/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.255
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15591,7 +15621,6 @@ vrg-github-repo-init was interactive-only: apart from repo, --adopt, and --visib
 </ul>
 <p>Add a flag for each remaining prompt (--description, --repository-type, --language, --branching-model, --versioning-scheme, --release-model, --versions, --integration-tests/--no-, --publish-release/--no-, --publish-docs/--no-, --vergil-version, --license, --initial-version) plus a --non-interactive/--yes mode. Each flag overrides its prompt exactly as --visibility already did; supplying all of them runs the tool with zero prompts.</p>
 <p>--non-interactive fails loud on any missing required value rather than silently defaulting: parse_args names each missing no-default flag for a new repo up front, and step_generate_config catches the adopt path where an existing (or absent) vergil.toml leaves a required enum empty. Optional prompts fall back to their documented interactive defaults. The adopt Continue? and clone confirmations are auto-accepted under --yes. Omitting flags preserves today's interactive behaviour unchanged. Ref #2382</p>
-<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.145/v2.1.145-ci-evidence.tar.gz">Download →</a></p>
 
 
 

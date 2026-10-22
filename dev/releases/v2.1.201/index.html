@@ -1313,6 +1313,8 @@
       
         
       
+        
+      
     
     
     
@@ -1368,6 +1370,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.255/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.255
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15591,7 +15621,6 @@ The report-ready e2e tests ran in a temp repo with no origin, so report-ready's 
 </ul>
 <p>Add an autouse fixture stubbing vrg_pr_workflow.GitHubTransport for the module, so the relay push is a no-op. The two tests that assert on the transport re-patch it locally and keep exercising the real contract, which is also covered by test_github_transport.py. Production behaviour is unchanged; this is test hygiene only.</p>
 <p>The file now runs in ~1s (was ~386s) and the full vrg-validate drops from ~7:10 to ~0:29.</p>
-<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.201/v2.1.201-ci-evidence.tar.gz">Download →</a></p>
 
 
 

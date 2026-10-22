@@ -1313,6 +1313,8 @@
       
         
       
+        
+      
     
     
     
@@ -1368,6 +1370,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.255/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.255
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15590,7 +15620,6 @@
 Interactive Claude Code sessions on cloud VMs (GCP via IAP, Azure via plain SSH) submitted the prompt on Shift+Enter instead of inserting a newline. Claude Code detects kitty-keyboard-protocol support from COLORTERM/TERM_PROGRAM/TERM_PROGRAM_VERSION; without them Shift+Enter and plain Enter are indistinguishable over SSH. The guest sshd already AcceptEnvs these and the Lima path forwards them via LIMA_SHELLENV_ALLOW, but neither cloud transport sent them.</li>
 </ul>
 <p>Forward the same set on the interactive session of both cloud transports, reusing a single _TERMINAL_ENV_NAMES source of truth: SshTransport adds -o SendEnv=<var> pairs; IapTransport adds glued --ssh-flag=-oSendEnv=<var> flags (gcloud splits --ssh-flag on spaces). Forwarding stays interactive-only, mirroring the Lima path; provisioning commands are unaffected.</p>
-<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.198/v2.1.198-ci-evidence.tar.gz">Download →</a></p>
 
 
 

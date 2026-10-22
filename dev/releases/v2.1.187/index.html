@@ -1313,6 +1313,8 @@
       
         
       
+        
+      
     
     
     
@@ -1368,6 +1370,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.255/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.255
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15670,7 +15700,6 @@ Add TypeScript to the CodeQL gate-emission set and wire repo-init container scaf
 Add the TypeScript language to the registry: INSTALL (npm ci), LINT (prettier + type-aware eslint with ban-ts-comment), TYPECHECK (tsc --noEmit), TEST (vitest V8 coverage at 100% line), and AUDIT (npm audit --omit=dev + best-effort license surfacing). Declares TYPECHECK/LINT/AUDIT once and TEST per-version via the existing Cardinality field. Ships the packaged shareable strict base tsconfig.base.json (strict + curated warnings-to-11 extras) plus the ESLint flat config and Prettier config consumers reference. Adds a TypeScript license allowlist constant for the future hardened gate (ledger #7). Ref vergil-project/.github#284</p>
 </li>
 </ul>
-<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.187/v2.1.187-ci-evidence.tar.gz">Download →</a></p>
 
 
 

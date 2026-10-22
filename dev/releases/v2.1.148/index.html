@@ -1313,6 +1313,8 @@
       
         
       
+        
+      
     
     
     
@@ -1368,6 +1370,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.255/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.255
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15621,7 +15651,6 @@
 </li>
 </ul>
 <p>The helper's body (platform_env.py lines 114-116) was only covered incidentally by an environment-dependent code path — locally the dev-box smoke run hit the local-vm branch, but in CI the runner's reachable 169.254.169.254 metadata endpoint routes resolve_platform down the cloud-vm branch, so _lima_marker_present is never called and coverage drops to 98% (&lt; fail-under=100). Add dedicated real-body tests for _lima_marker_present (marker present -&gt; True, absent -&gt; False), mirroring the existing _cloud_metadata_reachable tests, so coverage is deterministic regardless of environment.</p>
-<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.148/v2.1.148-ci-evidence.tar.gz">Download →</a></p>
 
 
 
