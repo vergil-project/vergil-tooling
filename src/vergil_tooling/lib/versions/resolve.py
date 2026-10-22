@@ -13,8 +13,8 @@ The rules (spec §6.3):
 * No ``[ci].versions``: a library builds the whole window, an app the newest
   version. A language whose tokens carry a family (a ``token_prefix``, or more
   than one family) must pin until its lifecycle turn.
-* A ``[ci].versions`` pin must lie inside the window. An app pin should name
-  one version: more is a warning, or an error once :data:`STRICT_APP_PINS`.
+* A ``[ci].versions`` pin must lie inside the window. An app pin must name
+  one version: more is an error (:data:`STRICT_APP_PINS`).
 * ``[ci].primary-version`` must name a resolved version; without it the
   primary is the newest resolved version.
 """
@@ -61,9 +61,9 @@ __all__ = [
     "resolve_repo",
 ]
 
-# An app with more than one [ci].versions entry warns while the fleet sweep
-# removes the lists, and becomes fatal once it is done (spec §6.3, Task 14).
-STRICT_APP_PINS = False
+# An app with more than one [ci].versions entry is fatal (spec §6.3, Task 14).
+# It warned while the fleet sweep removed the lists; the sweep is done.
+STRICT_APP_PINS = True
 
 # What a repo with no language builds: the base image at ``latest``, as before.
 NO_LANGUAGE_VERSION = "latest"
@@ -171,9 +171,11 @@ def resolve_language(
             msg = (
                 f"[ci].versions pins {len(candidates)} versions ({', '.join(candidates)}), "
                 f"but repository-type '{cfg.project.repository_type}' resolves as an app, "
-                f"which builds exactly one version. Fix: keep one entry in [ci].versions, "
-                f"or remove the list to follow the newest window version. A library is a "
-                f"repo that {REPOSITORY_TYPE_DEFINITIONS['library']}"
+                f"which builds exactly one version. Fix: pin a single version (keep one "
+                f"entry in [ci].versions, or remove the list to follow the newest window "
+                f"version). If this repo really is a library, set "
+                f'[project].repository-type = "library" instead: a library is a repo that '
+                f"{REPOSITORY_TYPE_DEFINITIONS['library']}"
             )
             if strict_app_pins:
                 raise ResolutionError(msg)

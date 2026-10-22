@@ -86,7 +86,7 @@ def _cfg(
     return _parse_raw_config({"project": project, "ci": ci, "dependencies": {"vergil": "v2.1"}})
 
 
-def _resolve(cfg: VergilConfig, *, strict: bool = False) -> Resolution:
+def _resolve(cfg: VergilConfig, *, strict: bool = STRICT_APP_PINS) -> Resolution:
     result = resolve(cfg, WINDOW, repo_root=None, strict_app_pins=strict)
     assert result is not None
     return result
@@ -109,8 +109,8 @@ def test_resolution_kind(repo_type: str, kind: str) -> None:
     assert resolution_kind(repo_type) == kind
 
 
-def test_strict_app_pins_off_during_the_sweep() -> None:
-    assert STRICT_APP_PINS is False
+def test_strict_app_pins_on_after_the_sweep() -> None:
+    assert STRICT_APP_PINS is True
 
 
 # -- no pin ------------------------------------------------------------------
@@ -183,7 +183,7 @@ def test_app_single_pin_is_clean() -> None:
 
 
 def test_app_multi_pin_warns_when_not_strict() -> None:
-    result = _resolve(_cfg(repo_type="tooling", versions=["3.13", "3.14"]))
+    result = _resolve(_cfg(repo_type="tooling", versions=["3.13", "3.14"]), strict=False)
     assert result.versions == ("3.14", "3.13")
     assert result.primary == "3.14"
     (warning,) = result.warnings
@@ -192,9 +192,18 @@ def test_app_multi_pin_warns_when_not_strict() -> None:
     assert "installed there as a tool" in warning
 
 
-def test_app_multi_pin_fatal_when_strict() -> None:
-    with pytest.raises(ResolutionError, match="builds exactly one version"):
-        _resolve(_cfg(versions=["3.13", "3.14"]), strict=True)
+def test_app_multi_pin_default_is_fatal() -> None:
+    # No strict_app_pins argument: the default every caller (vrg-ci-resolve,
+    # vrg-validate, vrg-container-run, repo init) gets.
+    with pytest.raises(ResolutionError) as exc:
+        resolve(_cfg(repo_type="tooling", versions=["3.13", "3.14"]), WINDOW, repo_root=None)
+    message = str(exc.value)
+    assert "[ci].versions pins 2 versions (3.14, 3.13)" in message
+    assert "repository-type 'tooling' resolves as an app" in message
+    assert "builds exactly one version" in message
+    assert "Fix: pin a single version (keep one entry in [ci].versions" in message
+    assert 'set [project].repository-type = "library"' in message
+    assert "installed there as a tool" in message
 
 
 # -- primary-version ---------------------------------------------------------

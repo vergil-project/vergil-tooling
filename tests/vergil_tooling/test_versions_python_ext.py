@@ -110,9 +110,10 @@ def test_python_packaged_pin_without_runtime_fails_loud() -> None:
         _resolve(_cfg(versions=["3.13"]))
 
 
-def test_python_packaged_app_multi_pin_keeps_newest_with_runtime() -> None:
-    result = _resolve(_cfg(versions=["3.15", "3.14", "3.13"]))
-    assert result.versions == ("3.14",)
+def test_python_packaged_app_multi_pin_is_fatal_before_the_extension() -> None:
+    # An app may pin only one version, so the extension never sees a list.
+    with pytest.raises(ResolutionError, match="builds exactly one version"):
+        _resolve(_cfg(versions=["3.15", "3.14", "3.13"]))
 
 
 def test_python_packaged_library_keeps_every_version() -> None:

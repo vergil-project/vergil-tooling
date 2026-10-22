@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import tomllib
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
@@ -55,6 +56,7 @@ from vergil_tooling.lib.repo_init import (
     step_scaffold_config_files,
     step_scaffold_language,
 )
+from vergil_tooling.lib.versions.resolve import resolve_config
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.versions.resolve import Resolution
@@ -991,23 +993,36 @@ class TestResolveVersions:
         with pytest.raises(SystemExit, match="cpp must pin"):
             _resolved("cpp")
 
+    _APP_MULTI_PIN = (
+        "[project]\n"
+        'repository-type = "application"\n'
+        'versioning-scheme = "semver"\n'
+        'branching-model = "library-release"\n'
+        'release-model = "tagged-release"\n'
+        'primary-language = "python"\n'
+        "[ci]\n"
+        'versions = ["3.13", "3.14"]\n'
+        "[dependencies]\n"
+        'vergil = "v2.1"\n'
+    )
+
+    def test_app_multi_pin_stops_the_wizard(self) -> None:
+        with pytest.raises(
+            SystemExit, match=r"error: \[ci\]\.versions pins 2 versions .*pin a single version"
+        ):
+            _resolve_versions(self._APP_MULTI_PIN)
+
     def test_warning_is_printed(self, capsys: pytest.CaptureFixture[str]) -> None:
-        toml = (
-            "[project]\n"
-            'repository-type = "application"\n'
-            'versioning-scheme = "semver"\n'
-            'branching-model = "library-release"\n'
-            'release-model = "tagged-release"\n'
-            'primary-language = "python"\n'
-            "[ci]\n"
-            'versions = ["3.13", "3.14"]\n'
-            "[dependencies]\n"
-            'vergil = "v2.1"\n'
-        )
-        resolution = _resolve_versions(toml)
+        def _with_warning(*args: Any, **kwargs: Any) -> Resolution | None:
+            resolution = resolve_config(*args, **kwargs)
+            assert resolution is not None
+            return replace(resolution, warnings=("a resolution warning",))
+
+        with patch("vergil_tooling.lib.versions.resolve.resolve_config", side_effect=_with_warning):
+            resolution = _resolved("python", ["3.13", "3.14"])
         assert resolution is not None
         assert resolution.versions == ("3.14", "3.13")
-        assert "WARNING: [ci].versions pins 2 versions" in capsys.readouterr().err
+        assert "WARNING: a resolution warning" in capsys.readouterr().err
 
 
 class TestRenderCdWorkflow:
@@ -1567,7 +1582,7 @@ class TestStepGenerateConfig:
         ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
         ctx.work_dir = tmp_path
         ctx.non_interactive = True
-        ctx.opt_repository_type = "tooling"
+        ctx.opt_repository_type = "library"
         ctx.opt_primary_language = "python"
         ctx.opt_branching_model = "library-release"
         ctx.opt_versioning_scheme = "semver"
@@ -1589,7 +1604,7 @@ class TestStepGenerateConfig:
         ):
             step_generate_config(ctx)
 
-        assert ctx.repository_type == "tooling"
+        assert ctx.repository_type == "library"
         assert ctx.primary_language == "python"
         assert ctx.branching_model == "library-release"
         assert ctx.versioning_scheme == "semver"
