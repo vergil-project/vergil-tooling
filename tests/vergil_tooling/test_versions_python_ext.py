@@ -313,6 +313,13 @@ def test_container_env_sets_uv_python_and_pins_the_source() -> None:
     assert container_env(None) == {}
 
 
+def test_source_env_pins_only_the_interpreter_source() -> None:
+    # vergil-tooling#3414: a docs build resolves no version, so it takes the
+    # source pin alone; container_env is that pin plus UV_PYTHON.
+    assert py_ext.source_env() == {"UV_PYTHON_PREFERENCE": "only-system"}
+    assert py_ext.container_env("3.15") == {"UV_PYTHON": "3.15", **py_ext.source_env()}
+
+
 def test_container_env_empty_for_a_language_without_a_hook() -> None:
     go = Resolution(
         language="go",
