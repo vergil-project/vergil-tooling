@@ -16406,6 +16406,20 @@ remembered.</p>
   install or an earlier dev install) is removed, because the copy in
   <code>~/.local/bin</code> would shadow <code>/usr/bin</code>. A failed packaged install
   leaves the existing tooling in place.</li>
+<li>After that, obsolete <code>vergil-python*</code> runtimes are purged, so a
+  runtime move (for example from <code>vergil-python3.14</code> to
+  <code>vergil-python3.15</code>) does not leave the old runtime and its
+  <code>/opt/vergil/python/&lt;…&gt;</code> tree behind. A runtime is obsolete only
+  when it is auto-installed (<code>apt-mark showauto</code>) <strong>and</strong> apt would
+  autoremove it (<code>apt-get -s autoremove</code>, a simulation), so a runtime
+  that an installed package still needs, or one installed by hand, is
+  kept. The obsolete runtimes are named in one explicit
+  <code>apt-get purge -y &lt;names&gt;</code> and printed. <code>vrg-vm</code> never runs a
+  blanket <code>apt-get autoremove</code>, which could remove unrelated orphaned
+  OS packages. A failed purge fails the update, and a failed install
+  purges nothing.</li>
+<li>This applies to apt only. Agent VMs are always Ubuntu (<code>noble</code> or
+  <code>resolute</code>), so there are no dnf VMs to clean up.</li>
 </ul>
 <p><strong>Dev install</strong> (explicit, for a git ref that is not a release version,
 such as <code>develop</code> or a feature branch):</p>
