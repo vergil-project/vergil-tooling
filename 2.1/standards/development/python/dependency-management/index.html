@@ -1324,6 +1324,8 @@
       
         
       
+        
+      
     
     
     
@@ -1376,6 +1378,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../releases/v2.1.263/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.263
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -14214,6 +14244,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#vulnerability-audit-scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Vulnerability audit scope
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#locked-dependency-review" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -16151,6 +16192,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#vulnerability-audit-scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Vulnerability audit scope
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#locked-dependency-review" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -16395,6 +16447,22 @@ immediately:</p>
 <li>Re-export any requirements files derived from the lockfile.</li>
 <li>Run a dependency audit against the exported requirements before committing.</li>
 </ul>
+<h2 id="vulnerability-audit-scope">Vulnerability audit scope<a class="headerlink" href="#vulnerability-audit-scope" title="Permanent link">&para;</a></h2>
+<p>The <code>vrg-validate</code> audit stage, which is also the CI <code>audit</code> gate, checks
+every package pinned in <code>uv.lock</code>. That covers all dependency groups and
+extras, not only the <code>dev</code> environment that validation installs. A
+vulnerable pin in a <code>docs</code> group, or in any other group, fails the audit.</p>
+<p>The stage exports the lock with <code>uv export --frozen --all-groups --all-extras
+--no-emit-project --no-emit-local</code> to <code>.vergil/pip-audit-requirements.txt</code>. It
+then runs <code>pip-audit --requirement=&lt;export&gt; --disable-pip --require-hashes</code>
+and writes the JSON report to <code>pip-audit.json</code>, which names each vulnerable
+package. The export leaves out the project itself and local path packages,
+because neither is published to an index. Any other requirement without a
+hash, such as a VCS or URL dependency, fails the audit instead of being
+skipped.</p>
+<p>Only the vulnerability audit covers the whole lock. The install step, the
+<code>uv sync --check</code> drift check and the <code>pip-licenses</code> license check still run
+against the installed <code>dev</code> environment.</p>
 <h2 id="locked-dependency-review">Locked dependency review<a class="headerlink" href="#locked-dependency-review" title="Permanent link">&para;</a></h2>
 <p>At the start of each upgrade cycle (<code>PATCH</code>, <code>MINOR</code>, or <code>MAJOR</code>), review any
 pinned or tightly constrained dependencies and confirm each pin is still

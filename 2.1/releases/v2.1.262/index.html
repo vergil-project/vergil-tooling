@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.263/">
       
       
         <link rel="next" href="../v2.1.261/">
@@ -1329,6 +1329,8 @@
       
         
       
+        
+      
     
     
     
@@ -1384,6 +1386,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.263/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.263
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15892,6 +15922,7 @@ cd-release always passes the resolver's primary-container-tag to validate-inputs
 <li><strong>stop passing container-tag to cd-release (#3495)</strong>
 cd-release.yml@v2.1 derives the release image tag from the resolver's primary (vergil-project/vergil-actions#1017) and ignores a caller-supplied container-tag. Stop emitting it in the generated cd.yml release block, remove the now-unused _container_tag helper, drop it from this repo's own cd.yml and the package-config docs example. Ref #3484</li>
 </ul>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.262/v2.1.262-ci-evidence.tar.gz">Download →</a></p>
 
 
 
