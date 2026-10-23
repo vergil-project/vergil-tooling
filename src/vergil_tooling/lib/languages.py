@@ -98,6 +98,14 @@ PYTHON_REPORT_FILES = (
     LICENSES_REPORT,
 )
 
+# The pip-audit input: every package pinned in ``uv.lock`` — all dependency
+# groups and extras, not just the synced ``dev`` environment (issue #3498). An
+# installed-environment audit never saw a ``docs``-only pin, so a vulnerable
+# mkdocs-material/pymdown-extensions pin stayed green. It is an intermediate
+# file, not evidence, so it lives under the already-ignored ``.vergil/`` (``uv
+# export`` creates the directory) rather than widening the managed gitignore.
+PIP_AUDIT_REQUIREMENTS = ".vergil/pip-audit-requirements.txt"
+
 
 # -- License allowlists (unchanged from validate_commands) --------------------
 
@@ -348,7 +356,34 @@ _REGISTRY: dict[str, Language] = {
             CheckKind.AUDIT: [
                 ["uv", "sync", "--check", "--frozen", "--group", "dev"],
                 ["uv", "lock", "--check"],
-                ["pip-audit", "--format=json", f"--output={PIP_AUDIT_REPORT}"],
+                # Audit the whole lock, not the installed env (issue #3498).
+                # ``--no-emit-project`` / ``--no-emit-local`` drop the project
+                # itself and local path packages (nothing on an index to audit).
+                # Hashes stay in the export so pip-audit can run
+                # ``--disable-pip`` under ``--require-hashes``: any other
+                # unhashed requirement (a VCS or URL dependency) fails the audit
+                # loudly instead of being skipped. ``--quiet`` stops uv echoing
+                # the export to stdout. Install and license check stay on ``dev``.
+                [
+                    "uv",
+                    "export",
+                    "--frozen",
+                    "--all-groups",
+                    "--all-extras",
+                    "--no-emit-project",
+                    "--no-emit-local",
+                    "--format=requirements.txt",
+                    "--quiet",
+                    f"--output-file={PIP_AUDIT_REQUIREMENTS}",
+                ],
+                [
+                    "pip-audit",
+                    f"--requirement={PIP_AUDIT_REQUIREMENTS}",
+                    "--disable-pip",
+                    "--require-hashes",
+                    "--format=json",
+                    f"--output={PIP_AUDIT_REPORT}",
+                ],
                 [
                     "pip-licenses",
                     f"--allow-only={_PIP_LICENSES_ALLOWLIST}",

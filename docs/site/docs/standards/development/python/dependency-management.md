@@ -221,6 +221,26 @@ immediately:
 - Re-export any requirements files derived from the lockfile.
 - Run a dependency audit against the exported requirements before committing.
 
+## Vulnerability audit scope
+
+The `vrg-validate` audit stage, which is also the CI `audit` gate, checks
+every package pinned in `uv.lock`. That covers all dependency groups and
+extras, not only the `dev` environment that validation installs. A
+vulnerable pin in a `docs` group, or in any other group, fails the audit.
+
+The stage exports the lock with `uv export --frozen --all-groups --all-extras
+--no-emit-project --no-emit-local` to `.vergil/pip-audit-requirements.txt`. It
+then runs `pip-audit --requirement=<export> --disable-pip --require-hashes`
+and writes the JSON report to `pip-audit.json`, which names each vulnerable
+package. The export leaves out the project itself and local path packages,
+because neither is published to an index. Any other requirement without a
+hash, such as a VCS or URL dependency, fails the audit instead of being
+skipped.
+
+Only the vulnerability audit covers the whole lock. The install step, the
+`uv sync --check` drift check and the `pip-licenses` license check still run
+against the installed `dev` environment.
+
 ## Locked dependency review
 
 At the start of each upgrade cycle (`PATCH`, `MINOR`, or `MAJOR`), review any
