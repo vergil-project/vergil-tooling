@@ -1972,6 +1972,80 @@ def test_queue_kind_reads_epic_labels(labels: set[str], expected: str | None) ->
     mock_labels.assert_called_once_with(EPIC)
 
 
+@pytest.mark.parametrize(
+    ("labels", "expected"),
+    [
+        ({"epic", "intake"}, "intake"),
+        ({"epic", "planning"}, "planning"),
+        ({"epic", "ad-hoc"}, None),  # a routed task under ad-hoc is buildable
+        ({"epic"}, None),  # a task under a finite epic is buildable
+        ({"archive", "intake"}, None),  # a drained, closed item is not queued
+    ],
+)
+def test_queue_item_kind_reads_native_parent_labels(labels: set[str], expected: str | None) -> None:
+    with (
+        patch("vergil_tooling.lib.epics.native_parent_of", return_value=EPIC) as mock_parent,
+        patch("vergil_tooling.lib.epics._labels", return_value=labels) as mock_labels,
+    ):
+        assert epics.queue_item_kind("org/repo-a#101", default_repo="org/x") == expected
+    mock_parent.assert_called_once_with(IssueRef("org", "repo-a", 101))
+    mock_labels.assert_called_once_with(EPIC)
+
+
+def test_queue_item_kind_bare_ref_uses_default_repo() -> None:
+    with (
+        patch("vergil_tooling.lib.epics.native_parent_of", return_value=EPIC) as mock_parent,
+        patch("vergil_tooling.lib.epics._labels", return_value={"epic", "intake"}),
+    ):
+        assert epics.queue_item_kind("#101", default_repo="org/repo-a") == "intake"
+    mock_parent.assert_called_once_with(TASK)
+
+
+def test_queue_item_kind_unparented_is_none() -> None:
+    with (
+        patch("vergil_tooling.lib.epics.native_parent_of", return_value=None),
+        patch("vergil_tooling.lib.epics._labels") as mock_labels,
+    ):
+        assert epics.queue_item_kind("#101", default_repo="org/repo-a") is None
+    mock_labels.assert_not_called()
+
+
+def test_queue_item_kind_unparseable_ref_is_none() -> None:
+    with patch("vergil_tooling.lib.epics.native_parent_of") as mock_parent:
+        assert epics.queue_item_kind("#101", default_repo="") is None
+        assert epics.queue_item_kind("not-a-ref", default_repo="org/repo") is None
+    mock_parent.assert_not_called()
+
+
+def test_queue_item_kind_propagates_lookup_failure() -> None:
+    # A failed lookup is never read as "not queued": it raises, and the caller
+    # decides (report-ready defers loudly; vrg-submit-pr fails).
+    with (
+        patch("vergil_tooling.lib.epics.native_parent_of", side_effect=OSError("gh")),
+        pytest.raises(OSError, match="gh"),
+    ):
+        epics.queue_item_kind("#101", default_repo="org/repo-a")
+
+
+def test_queue_refusal_message_intake() -> None:
+    assert epics.queue_refusal_message("#7", "intake") == (
+        "--issue (#7) is in the intake queue; it is not buildable until it is routed. "
+        "Route it with intake-review first."
+    )
+
+
+def test_queue_refusal_message_planning() -> None:
+    assert epics.queue_refusal_message("org/repo#7", "planning") == (
+        "--issue (org/repo#7) is in the planning queue; it is not buildable until its "
+        "epic is expanded. Expand it with epic-create first."
+    )
+
+
+def test_queue_refusal_message_rejects_unknown_kind() -> None:
+    with pytest.raises(ValueError, match="not a queue kind: 'ad-hoc'"):
+        epics.queue_refusal_message("#7", "ad-hoc")
+
+
 def test_is_managed_repo_true_when_vergil_toml_present() -> None:
     with patch(
         "vergil_tooling.lib.github.read_json", return_value={"name": "vergil.toml"}

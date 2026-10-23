@@ -170,6 +170,29 @@ def _reject_operational_issue(issue_ref: str) -> None:
         )
 
 
+def _reject_queue_issue(issue_ref: str) -> None:
+    """Refuse an intake or planning queue item at report time — it is not buildable.
+
+    Mirrors vrg-submit-pr's ``_reject_if_queue_item`` so the error surfaces where
+    the value is entered (#2485). The test is the issue's native parent: a child
+    of the intake or planning epic must be routed out before it can take a PR.
+    Best-effort like :func:`_reject_operational_issue`: if the parent cannot be
+    read (no remote, no gh auth), defer to vrg-submit-pr's authoritative check —
+    but say so on stderr rather than passing silently.
+    """
+    try:
+        kind = epics.queue_item_kind(issue_ref, default_repo=github.current_repo())
+    except (subprocess.CalledProcessError, OSError) as exc:
+        print(
+            f"warning: could not check whether --issue ({issue_ref}) is in the intake or "
+            f"planning queue ({error_text(exc)}); vrg-submit-pr will check it at submit time.",
+            file=sys.stderr,
+        )
+        return
+    if kind is not None:
+        raise WorkflowError(epics.queue_refusal_message(issue_ref, kind))
+
+
 def _push_relay_ref(state: WorkflowState, base: str) -> None:
     """Mirror the ready state onto the reserved relay ref, after the local write.
 
@@ -211,6 +234,7 @@ def cmd_report_ready(args: argparse.Namespace, transport: LocalFileTransport) ->
     _reject_cross_repo_issue(issue_ref)
     _reject_epic_issue(issue_ref)
     _reject_operational_issue(issue_ref)
+    _reject_queue_issue(issue_ref)
     try:
         linkage, linkage_warning = normalize_linkage(args.linkage)
     except ValueError as exc:

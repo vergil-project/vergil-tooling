@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from vergil_tooling.bin.vrg_epic_audit import main
+from vergil_tooling.lib.epic_audit import Orphan, RetiredLabels, StandingEpicFull
 from vergil_tooling.lib.epics import ChildState, IssueRef
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator, Iterator
 
 _MOD = "vergil_tooling.bin.vrg_epic_audit"
 
@@ -23,7 +25,12 @@ def standing_drain() -> Iterator[MagicMock]:
     # Every audit path also drains the intake/planning queue epics; stub it out
     # by default so tests that do not exercise it make no GitHub calls. Tests
     # that do exercise it patch drain_standing_org themselves (innermost wins).
-    with patch(f"{_MOD}.epics.drain_standing_org", return_value=[]) as mock_drain:
+    # Likewise the org-wide open-issue enumeration behind the orphan pass: an
+    # empty org makes every pass a no-op with no GitHub calls.
+    with (
+        patch(f"{_MOD}.epics.drain_standing_org", return_value=[]) as mock_drain,
+        patch(f"{_MOD}.epic_audit.open_issues", return_value=[]),
+    ):
         yield mock_drain
 
 
@@ -291,7 +298,8 @@ def test_close_sweep_drain_scoped_to_org(capsys: pytest.CaptureFixture[str]) -> 
         rc = main(["--close"])
     assert rc == 0
     assert scope.call_args.args[0] == "org"
-    assert order == ["enter", "drain", "exit"]
+    # The second scoped block is the orphan pass (no-op on an empty org).
+    assert order == ["enter", "drain", "exit", "enter", "exit"]
 
 
 def test_close_sweep_drain_summary(capsys: pytest.CaptureFixture[str]) -> None:
@@ -395,7 +403,7 @@ def test_epic_audit_close_runs_standing_drain(
     ):
         rc = main(["--close"])
     assert rc == 0
-    assert order == ["enter", "standing", "exit"]
+    assert order == ["enter", "standing", "exit", "enter", "exit"]
     assert standing_drain.call_args.args[0] == "org"
     assert standing_drain.call_args.kwargs["apply"] is True
     out = capsys.readouterr().out
@@ -424,3 +432,185 @@ def test_report_path_previews_standing_drain(
     assert standing_drain.call_args.kwargs["apply"] is False
     out = capsys.readouterr().out
     assert "Intake/planning drain (preview): 1 child(ren) would be archived." in out
+
+
+# -- orphan pass, label retirement, queue visibility (epic .github#176, Task 5) --
+
+_ORPHAN = Orphan(IssueRef("org", "tool", 5), home="org/.github", name="org")
+_RETIRED = RetiredLabels(IssueRef("org", "tool", 6), ("idea",))
+_BODY_ONLY = (IssueRef("org", "tool", 7), IssueRef("org", ".github", 40))
+_PUBLIC_QUEUE = IssueRef("org", "lab", 2)
+
+
+def _derivations() -> dict[str, MagicMock]:
+    return {
+        "orphan_drift": MagicMock(return_value=[_ORPHAN]),
+        "retired_label_drift": MagicMock(return_value=[_RETIRED]),
+        "body_only_parents": MagicMock(return_value=[_BODY_ONLY]),
+        "public_self_homed_queues": MagicMock(return_value=[_PUBLIC_QUEUE]),
+        "private_under_public_epic": MagicMock(return_value=["org/secret#3"]),
+    }
+
+
+@contextlib.contextmanager
+def _patched(patches: list[Any]) -> Generator[None]:
+    with contextlib.ExitStack() as stack:
+        for p in patches:
+            stack.enter_context(p)
+        yield
+
+
+def _close_patches(**extra: MagicMock) -> list[Any]:
+    base = {
+        "task_drift": MagicMock(return_value=[]),
+        "epic_drift": MagicMock(return_value=[]),
+        "closed_epic_open_child": MagicMock(return_value=[]),
+        "close_drift": MagicMock(return_value=[]),
+        "reopen_epics_with_open_children": MagicMock(return_value=[]),
+        **_derivations(),
+        **extra,
+    }
+    return [patch(f"{_MOD}.epic_audit.{name}", mock) for name, mock in base.items()]
+
+
+def test_vrg_epic_audit_preview_lists_orphans_without_mutating(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    issues = [object()]
+    derived = _derivations()
+    writers = {
+        name: MagicMock()
+        for name in (
+            "attach_orphans",
+            "strip_retired_labels",
+            "nativize_parents",
+            "move_public_queues",
+        )
+    }
+    patches = [patch(f"{_MOD}.epic_audit.{n}", m) for n, m in {**derived, **writers}.items()]
+    with (
+        patch(f"{_MOD}.github.detect_org", return_value="org"),
+        patch(f"{_MOD}.epic_audit.open_issues", return_value=issues) as enum,
+        patch(f"{_MOD}.epic_audit.operational_pending", return_value=[]),
+        patch(f"{_MOD}.epic_audit.closed_operational_without_success", return_value=[]),
+        patch(f"{_MOD}.epic_audit.task_drift", return_value=[]),
+        patch(f"{_MOD}.epic_audit.epic_drift", return_value=[]),
+        patch(f"{_MOD}.epic_audit.epic_outside_dotgithub", return_value=[]),
+        patch(f"{_MOD}.epic_audit.stray_dotgithub_issue", return_value=[]),
+        patch(f"{_MOD}.epic_audit.closed_epic_open_child", return_value=[]),
+        patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[]),
+        _patched(patches),
+    ):
+        rc = main([])
+    assert rc == 0
+    enum.assert_called_once_with("org")  # one shared enumeration
+    for mock in derived.values():
+        assert mock.call_args.kwargs["issues"] is issues
+    for mock in writers.values():
+        mock.assert_not_called()
+    out = capsys.readouterr().out
+    assert "org/tool#5 → Epic (intake): org in org/.github" in out
+    assert "org/tool#6 — idea" in out
+    assert "org/tool#7 → org/.github#40" in out
+    assert "org/lab#2" in out
+    assert "org/secret#3" in out
+
+
+def test_vrg_epic_audit_close_applies_in_order(capsys: pytest.CaptureFixture[str]) -> None:
+    order: list[str] = []
+    scope = MagicMock()
+    scope.return_value.__enter__ = lambda *_: order.append("enter")
+    scope.return_value.__exit__ = lambda *_: order.append("exit") or False
+
+    def _writer(name: str, result: int) -> MagicMock:
+        return MagicMock(side_effect=lambda *_a, **_k: order.append(name) or result)
+
+    writers = {
+        "nativize_parents": _writer("nativize", 1),
+        "strip_retired_labels": _writer("strip", 2),
+        "move_public_queues": _writer("move", 3),
+        "attach_orphans": _writer("attach", 4),
+    }
+    with (
+        patch(f"{_MOD}.identity_mode.is_human", return_value=True),
+        patch(f"{_MOD}.github.detect_org", return_value="org"),
+        patch(f"{_MOD}.github.target_org", scope),
+        patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[]),
+        _patched(_close_patches(**writers)),
+    ):
+        rc = main(["--close"])
+    assert rc == 0
+    # The existing passes run in the first org-scoped block; the orphan pass
+    # applies in its own, in the order nativize -> strip -> move -> attach.
+    assert order == ["enter", "exit", "enter", "nativize", "strip", "move", "attach", "exit"]
+    writers["nativize_parents"].assert_called_once_with([_BODY_ONLY])
+    writers["strip_retired_labels"].assert_called_once_with([_RETIRED])
+    writers["move_public_queues"].assert_called_once_with([_PUBLIC_QUEUE], org="org")
+    writers["attach_orphans"].assert_called_once_with([_ORPHAN])
+    out = capsys.readouterr().out
+    assert "Body-only Parent: links nativized: 1." in out
+    assert "Retired kind labels stripped: 2 issue(s)." in out
+    assert "Public-repo queue items moved to org/.github: 3." in out
+    assert "Orphans attached to intake: 4." in out
+    assert "org/secret#3" in out  # the report-only check still surfaces
+
+
+def test_vrg_epic_audit_close_reports_full_queue_and_exits_1(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    full = StandingEpicFull(
+        IssueRef("org", ".github", 100),
+        95,
+        [IssueRef("org", "tool", n) for n in (5, 6, 7)],
+    )
+    with (
+        patch(f"{_MOD}.identity_mode.is_human", return_value=True),
+        patch(f"{_MOD}.github.detect_org", return_value="org"),
+        patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[]),
+        _patched(
+            _close_patches(
+                nativize_parents=MagicMock(return_value=0),
+                strip_retired_labels=MagicMock(return_value=0),
+                move_public_queues=MagicMock(return_value=0),
+                attach_orphans=MagicMock(side_effect=full),
+            )
+        ),
+    ):
+        rc = main(["--close"])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert (
+        "intake epic org/.github#100 is full (95 open); 3 orphan(s) not attached: "
+        "org/tool#5, org/tool#6, org/tool#7. Run intake-review." in captured.err
+    )
+    assert "Orphans attached" not in captured.out
+
+
+def test_vrg_epic_audit_close_stops_when_queue_move_overflows(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    full = StandingEpicFull(
+        IssueRef("org", ".github", 101),
+        95,
+        [IssueRef("org", "lab", 10)],
+        kind="planning",
+        noun="queue item(s) not moved",
+    )
+    attach = MagicMock()
+    with (
+        patch(f"{_MOD}.identity_mode.is_human", return_value=True),
+        patch(f"{_MOD}.github.detect_org", return_value="org"),
+        patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[]),
+        _patched(
+            _close_patches(
+                nativize_parents=MagicMock(return_value=0),
+                strip_retired_labels=MagicMock(return_value=0),
+                move_public_queues=MagicMock(side_effect=full),
+                attach_orphans=attach,
+            )
+        ),
+    ):
+        rc = main(["--close"])
+    assert rc == 1
+    attach.assert_not_called()  # a full queue stops the pass; nothing is skipped past
+    assert "planning epic org/.github#101 is full" in capsys.readouterr().err
