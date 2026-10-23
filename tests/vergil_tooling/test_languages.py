@@ -15,6 +15,7 @@ from vergil_tooling.lib.languages import (
     LICENSES_REPORT,
     MYPY_REPORT,
     PIP_AUDIT_REPORT,
+    PIP_AUDIT_REQUIREMENTS,
     PYTHON_REPORT_FILES,
     RUFF_REPORT,
     Cardinality,
@@ -219,6 +220,57 @@ def test_python_audit_pip_audit_emits_json_report() -> None:
     assert len(pip_audit_cmd) == 1
     assert "--format=json" in pip_audit_cmd[0]
     assert f"--output={PIP_AUDIT_REPORT}" in pip_audit_cmd[0]
+
+
+def test_python_audit_exports_every_lock_group_and_extra() -> None:
+    """The audit input is the whole uv.lock, not the synced dev env (#3498)."""
+    cmds = language_commands("python", CheckKind.AUDIT)
+    export_cmd = [c for c in cmds if c[:2] == ["uv", "export"]]
+    assert len(export_cmd) == 1
+    for flag in (
+        "--frozen",
+        "--all-groups",
+        "--all-extras",
+        "--no-emit-project",
+        "--no-emit-local",
+        "--format=requirements.txt",
+        f"--output-file={PIP_AUDIT_REQUIREMENTS}",
+    ):
+        assert flag in export_cmd[0]
+    # Hashes are kept: --require-hashes below depends on them.
+    assert "--no-hashes" not in export_cmd[0]
+    assert not any(arg.startswith("--group") or arg == "--only-dev" for arg in export_cmd[0])
+
+
+def test_python_audit_pip_audit_reads_the_lock_export() -> None:
+    """pip-audit audits the exported lock with pip disabled, hashes required."""
+    cmds = language_commands("python", CheckKind.AUDIT)
+    pip_audit_cmd = next(c for c in cmds if c[0] == "pip-audit")
+    assert f"--requirement={PIP_AUDIT_REQUIREMENTS}" in pip_audit_cmd
+    assert "--disable-pip" in pip_audit_cmd
+    assert "--require-hashes" in pip_audit_cmd
+    assert "--no-deps" not in pip_audit_cmd
+
+
+def test_python_audit_export_runs_before_pip_audit() -> None:
+    cmds = language_commands("python", CheckKind.AUDIT)
+    export_idx = next(i for i, c in enumerate(cmds) if c[:2] == ["uv", "export"])
+    audit_idx = next(i for i, c in enumerate(cmds) if c[0] == "pip-audit")
+    assert export_idx < audit_idx
+
+
+def test_python_audit_requirements_is_an_ignored_intermediate() -> None:
+    """The export lives under the already-gitignored .vergil/, not as evidence."""
+    assert PIP_AUDIT_REQUIREMENTS.startswith(".vergil/")
+    assert PIP_AUDIT_REQUIREMENTS not in PYTHON_REPORT_FILES
+
+
+def test_python_install_and_license_check_stay_on_dev_env() -> None:
+    """Only the vulnerability audit widens; install and sync check stay on dev."""
+    install = language_commands("python", CheckKind.INSTALL)
+    assert install == [["uv", "sync", "--frozen", "--group", "dev"]]
+    audit = language_commands("python", CheckKind.AUDIT)
+    assert ["uv", "sync", "--check", "--frozen", "--group", "dev"] in audit
 
 
 def test_python_audit_pip_licenses_allowlist_intact() -> None:
