@@ -16068,6 +16068,13 @@ may appear loose outside the fence. Each failed condition is reported as
 actual=&lt;reason&gt;)</code>; a repo with no <code>.gitignore</code> fails because no fence is
 present. Genuinely repo-local lines outside the fence are never asserted
 against.</p>
+<p>The resolved language is <code>[project].primary-language</code>. No <code>vergil.toml</code>,
+or no declared language, means base-only. A <code>vergil.toml</code> that fails to
+load is <strong>not</strong> treated as base-only: the fence cannot be judged, so the
+check reports one explicit failure,
+<code>DiffItem(field="local.gitignore", expected="resolvable [project].primary-language",
+actual="cannot resolve the fence language: &lt;config error&gt;")</code>, and nothing
+else for the file (#3451).</p>
 <p>The resolved language is the repo's <code>[project].primary-language</code>,
 normalized to base-only for any language without a managed fragment — the
 same rule scaffolding uses, so a freshly inited repo is fenced-compliant

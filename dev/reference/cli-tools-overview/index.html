@@ -17197,15 +17197,15 @@ leaving genuinely repo-local lines outside the fence untouched. See the
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>A repo whose language resolves from <code>[project].primary-language</code> (absent/unreadable config → base-only)</td>
+<td>A repo whose language resolves from <code>[project].primary-language</code> (no <code>vergil.toml</code> or no declared language → base-only; a <code>vergil.toml</code> that fails to load is an error, exit 2)</td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td><code>--check</code> prints each drift reason to stderr; <code>--write</code> always succeeds (prints <code>already in sync</code> or the synced path)</td>
+<td><code>--check</code> prints each drift reason to stderr; <code>--write</code> succeeds whenever the language resolves (prints <code>already in sync</code> or the synced path)</td>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 ok, 1 <code>--check</code> drift, 2 usage error</td>
+<td>0 ok, 1 <code>--check</code> drift, 2 usage error or a <code>vergil.toml</code> that fails to load (the config error is printed to stderr; nothing is written)</td>
 </tr>
 <tr>
 <td>Status</td>
@@ -17242,15 +17242,15 @@ or PR knowledge.</p>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>A repo whose language resolves from <code>[project].primary-language</code> (absent/unreadable config → <code>github-actions</code> only)</td>
+<td>A repo whose language resolves from <code>[project].primary-language</code> (no <code>vergil.toml</code> or no declared language → <code>github-actions</code> only; a <code>vergil.toml</code> that fails to load is an error, exit 2)</td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td><code>--check</code> prints <code>missing .github/dependabot.yml</code> or <code>differs from the canonical render</code> to stderr; <code>--write</code> always succeeds (prints <code>already in sync</code> or <code>wrote .github/dependabot.yml (&lt;lang or none&gt;)</code>)</td>
+<td><code>--check</code> prints <code>missing .github/dependabot.yml</code> or <code>differs from the canonical render</code> to stderr; <code>--write</code> succeeds whenever the language resolves (prints <code>already in sync</code> or <code>wrote .github/dependabot.yml (&lt;lang or none&gt;)</code>)</td>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 ok, 1 <code>--check</code> drift, 2 usage error</td>
+<td>0 ok, 1 <code>--check</code> drift, 2 usage error or a <code>vergil.toml</code> that fails to load (the config error is printed to stderr; nothing is written)</td>
 </tr>
 <tr>
 <td>Status</td>
