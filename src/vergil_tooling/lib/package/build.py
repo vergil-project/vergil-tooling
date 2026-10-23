@@ -35,6 +35,9 @@ class BuildContext:
     version: str
     staging_root: Path
     out_dir: Path
+    # The runtime ``vrg-package matrix`` recorded for the release (``--runtime``);
+    # ``None`` for a local build, which resolves its own (vergil-tooling#3478).
+    runtime: str | None = None
 
 
 def _empty_depends() -> dict[str, list[str]]:
@@ -131,12 +134,20 @@ def glibc_floor(cell: BuildCell) -> tuple[int, int]:
 
 
 def run_build(
-    repo_root: Path, cell_id: str, version: str, out_dir: Path, staging_root: Path
+    repo_root: Path,
+    cell_id: str,
+    version: str,
+    out_dir: Path,
+    staging_root: Path,
+    *,
+    runtime: str | None = None,
 ) -> list[Path]:
     """Build every package format of build cell ``cell_id``; return the artifact paths.
 
     ``version`` is the repo version; ``[package].version`` overrides it when set.
     ``staging_root`` is wiped and recreated; artifacts land in ``out_dir``.
+    ``runtime`` is the runtime ``vrg-package matrix`` recorded for the release;
+    only the ``python`` builder has one, so it is an error for any other.
     """
     cfg = read_config(repo_root)
     if cfg.package is None:
@@ -152,6 +163,9 @@ def run_build(
     if builder is None:
         msg = f"no builder registered for [package].builder = {pkg.builder!r}"
         raise PackageError(msg)
+    if runtime is not None and pkg.builder != "python":
+        msg = f'--runtime applies only to builder = "python" (this is {pkg.builder!r})'
+        raise PackageError(msg)
     if staging_root.exists():
         shutil.rmtree(staging_root)
     staging_root.mkdir(parents=True)
@@ -164,6 +178,7 @@ def run_build(
         version=pkg.version or version,
         staging_root=staging_root,
         out_dir=out_dir,
+        runtime=runtime,
     )
     result = builder(ctx)
     elf.check_glibc_floor(staging_root, glibc_floor(cell))

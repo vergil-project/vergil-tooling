@@ -559,13 +559,6 @@ def _cd_release_secrets(language: str | None) -> list[str]:
     return secrets_map.get(language or "", [])
 
 
-def _container_tag(resolution: Resolution | None) -> str:
-    """The container tag of the resolved primary version (``clang-20`` is ``20``)."""
-    from vergil_tooling.lib.versions.resolve import NO_LANGUAGE_VERSION
-
-    return resolution.primary_container_tag if resolution else NO_LANGUAGE_VERSION
-
-
 _CODEQL_LANGUAGES = frozenset(
     {
         "python",
@@ -776,7 +769,9 @@ def render_cd_workflow(ctx: RepoInitContext) -> str:
 
     if ctx.publish_release:
         suffix = _container_suffix(ctx.resolution)
-        tag = _container_tag(ctx.resolution)
+        # No ``container-tag:``: cd-release derives the release image tag from
+        # the resolver's primary, exactly as ci.yml's thin caller does (issue
+        # #3484, vergil-project/vergil-actions#1017).
         lines.append("\n")
         lines.extend(
             [
@@ -785,7 +780,6 @@ def render_cd_workflow(ctx: RepoInitContext) -> str:
                 _uses_line("cd-release", ctx.vergil_version),
                 "    with:\n",
                 f"      language: {suffix}\n",
-                f'      container-tag: "{tag}"\n',
             ]
         )
         # Forward only the secrets this ecosystem's publisher needs, keyed on

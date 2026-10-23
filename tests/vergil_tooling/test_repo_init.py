@@ -19,7 +19,6 @@ from vergil_tooling.lib.repo_init import (
     _cd_release_secrets,
     _check_remote_steps,
     _container_suffix,
-    _container_tag,
     _load_existing_config,
     _remote_branch_exists,
     _resolve,
@@ -942,31 +941,26 @@ def _resolved(language: str, versions: list[str] | None = None) -> Resolution | 
 
 
 class TestContainerHelpers:
-    def test_no_resolution_is_base_latest(self) -> None:
+    def test_no_resolution_is_base(self) -> None:
         assert _container_suffix(None) == "base"
-        assert _container_tag(None) == "latest"
 
     def test_python_primary_is_newest(self) -> None:
         resolution = _resolved("python")
         assert _container_suffix(resolution) == "python"
-        assert _container_tag(resolution) == "3.14"
 
     def test_cpp_family_rides_the_suffix(self) -> None:
-        # The window family is the image suffix and only the version is the
-        # tag, so clang-20 is prod-cpp-clang:20 (epic vergil-project/.github#207).
+        # The window family is the image suffix, so clang-20 runs on
+        # prod-cpp-clang (epic vergil-project/.github#207).
         resolution = _resolved("cpp", ["clang-20"])
         assert _container_suffix(resolution) == "cpp-clang"
-        assert _container_tag(resolution) == "20"
 
     def test_cpp_gcc(self) -> None:
         resolution = _resolved("cpp", ["gcc-14"])
         assert _container_suffix(resolution) == "cpp-gcc"
-        assert _container_tag(resolution) == "14"
 
     def test_typescript_node(self) -> None:
         resolution = _resolved("typescript", ["node-24", "node-22"])
         assert _container_suffix(resolution) == "ts-node"
-        assert _container_tag(resolution) == "24"
 
 
 class TestResolveVersions:
@@ -1038,7 +1032,9 @@ class TestRenderCdWorkflow:
         assert "cd-release.yml@v2.1" in content
         assert "if: github.ref == 'refs/heads/main'" in content
         assert "language: python" in content
-        assert 'container-tag: "3.14"' in content
+        # cd-release@v2.1 derives the release image tag from the resolver's
+        # primary, so the caller passes no container tag (issue #3484).
+        assert "container-tag" not in content
         # python publishes via OIDC trusted publishing — no repo secret, and
         # the blanket `secrets: inherit` must never be emitted (epic .github#189).
         assert "secrets: inherit" not in content
@@ -1070,8 +1066,9 @@ class TestRenderCdWorkflow:
         assert "cd-docs.yml@v2.1" in content
         assert "cd-release.yml@v2.1" in content
         assert "language: go" in content
-        # The release job runs on the resolved primary's image, prod-go:1.26.
-        assert 'container-tag: "1.26"' in content
+        # cd-release resolves the release image (prod-go:1.26) itself; the
+        # caller passes no container tag (issue #3484).
+        assert "container-tag" not in content
         assert "attestations: write" in content
         # go needs no publishing token — no secrets block, never blanket inherit.
         assert "secrets: inherit" not in content

@@ -111,6 +111,18 @@ def test_json_and_manifest_shapes() -> None:
     }
 
 
+def test_runtime_rides_every_build_cell_and_the_manifest() -> None:
+    m = matrix.resolve(_pkg())
+    j = matrix.to_json(m, runtime="3.14")
+    assert [c["runtime"] for c in j["build"]] == ["3.14", "3.14"]
+    assert all("runtime" not in c for c in j["test"])
+    without = matrix.to_json(m)
+    assert all("runtime" not in c for c in without["build"])
+    assert [{k: v for k, v in c.items() if k != "runtime"} for c in j["build"]] == without["build"]
+    assert matrix.manifest(m, runtime="3.14") == {**matrix.manifest(m), "runtime": "3.14"}
+    assert "runtime" not in matrix.manifest(m)
+
+
 def test_manifest_noarch_and_native() -> None:
     assert matrix.manifest(matrix.resolve(_pkg(noarch=True))) == {
         "artifacts": [

@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.262] - 2026-10-23
+
+### Bug fixes
+
+- resolve the python runtime once per release, not per build cell (#3496)
+- accept the resolver's container tag for every language in vrg-release-validate-inputs (#3497)
+
+### Refactoring
+
+- stop passing container-tag to cd-release (#3495)
+
 ## [2.1.261] - 2026-10-23
 
 ### Documentation

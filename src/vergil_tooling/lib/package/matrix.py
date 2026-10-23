@@ -203,15 +203,31 @@ def _resolve_full(pkg: PackageConfig) -> Matrix:
     return Matrix(tuple(build), test)
 
 
-def to_json(m: Matrix) -> dict[str, Any]:
-    """The JSON-serialisable ``{"build": [...], "test": [...]}`` form of ``m``."""
-    return {"build": [asdict(c) for c in m.build], "test": [asdict(c) for c in m.test]}
+def to_json(m: Matrix, *, runtime: str | None = None) -> dict[str, Any]:
+    """The JSON-serialisable ``{"build": [...], "test": [...]}`` form of ``m``.
+
+    With ``runtime`` (the release's resolved ``vergil-python`` runtime), every
+    build cell carries it as ``"runtime"``, so each cell builds against the one
+    value resolved here rather than re-reading the window (vergil-tooling#3478).
+    """
+    extra = {} if runtime is None else {"runtime": runtime}
+    return {
+        "build": [{**asdict(c), **extra} for c in m.build],
+        "test": [asdict(c) for c in m.test],
+    }
 
 
-def manifest(m: Matrix) -> dict[str, Any]:
-    """The release artifact manifest: one ``(fmt, arch, suite)`` per artifact built."""
+def manifest(m: Matrix, *, runtime: str | None = None) -> dict[str, Any]:
+    """The release artifact manifest: one ``(fmt, arch, suite)`` per artifact built.
+
+    With ``runtime``, the manifest records it as ``"runtime"``: every package of
+    the release must depend on that runtime (``runtime.check_consistent``).
+    """
     arts: list[dict[str, Any]] = []
     for c in m.build:
         arch = "all" if c.id == NOARCH_CELL_ID else c.arch
         arts.extend({"fmt": f, "arch": arch, "suite": c.suite} for f in c.fmts)
-    return {"artifacts": arts}
+    out: dict[str, Any] = {"artifacts": arts}
+    if runtime is not None:
+        out["runtime"] = runtime
+    return out

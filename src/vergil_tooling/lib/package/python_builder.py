@@ -3,8 +3,10 @@
 Builds a Python product as a venv on a ``vergil-python`` runtime, from
 ``uv.lock`` only. The runtime's ``x.y`` series is derived from the resolved
 version, or taken from an exact-patch ``[package.python].runtime`` pin
-(vergil-tooling#3455). It runs as root in a clean container of the build
-cell's OS:
+(vergil-tooling#3455). A release resolves it once, in ``vrg-package matrix``,
+and every build cell builds against that recorded value (``--runtime``,
+vergil-tooling#3478); only a local build without one resolves it itself. It
+runs as root in a clean container of the build cell's OS:
 
 1. Trust the **vergil** package repository (the runtime always comes from the
    vergil org, whatever the product's vendor — D7) and install the per-series
@@ -27,6 +29,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -40,13 +43,14 @@ from vergil_tooling.lib.package.build import (
     contents_from_tree,
     register,
 )
+from vergil_tooling.lib.package.runtime import runtime_package, series_of
 from vergil_tooling.lib.versions import VersionsError
-from vergil_tooling.lib.versions.extensions.python import derived_runtime, runtime_series
+from vergil_tooling.lib.versions.extensions.python import derived_runtime
 from vergil_tooling.lib.versions.resolve import resolve_language
 from vergil_tooling.lib.versions.window import load_window
 
 if TYPE_CHECKING:
-    from vergil_tooling.lib.config import PackageConfig
+    from vergil_tooling.lib.config import PackageConfig, PackagePythonConfig
 
 # Where the venv is built. Always /opt for real builds (the venv must sit at its
 # final install path); tests point it at a temporary directory.
@@ -68,11 +72,6 @@ def _run(
     return subprocess.run(  # noqa: S603 - fixed tool argv built by this module
         list(argv), check=True, stdout=subprocess.PIPE, text=True, env=env, cwd=cwd
     )
-
-
-def runtime_package(series: str) -> str:
-    """The per-series runtime package: ``vergil-python<x.y>``, whose patch floats."""
-    return f"vergil-python{series}"
 
 
 def runtime_dir(vendor: str, series: str) -> str:
@@ -121,6 +120,45 @@ def package_runtime(repo_root: Path) -> str:
     except VersionsError as exc:
         msg = f"cannot derive the vergil-python runtime: {exc}"
         raise PackageError(msg) from exc
+
+
+def release_runtime(repo_root: Path, pkg: PackageConfig) -> str | None:
+    """The runtime a release records once for every build cell (vergil-tooling#3478).
+
+    The ``[package.python].runtime`` pin, else the derived runtime; ``None`` for
+    a builder other than ``python``, which has no runtime to record.
+    """
+    if pkg.builder != "python":
+        return None
+    if pkg.python is None:
+        msg = 'builder = "python": [package.python] is required'
+        raise PackageError(msg)
+    return pkg.python.runtime or package_runtime(repo_root)
+
+
+def _choose_runtime(ctx: BuildContext, py: PackagePythonConfig) -> str:
+    """The runtime this cell builds against, printed with where it came from.
+
+    A runtime recorded by ``vrg-package matrix`` (``--runtime``) wins, so every
+    cell of one release builds against the same runtime. It must agree with a
+    ``[package.python].runtime`` pin. Without one (a local build), the runtime
+    resolves here, exactly as the matrix would.
+    """
+    if ctx.runtime is not None:
+        if py.runtime is not None and ctx.runtime != py.runtime:
+            msg = (
+                f"--runtime {ctx.runtime} disagrees with the [package.python].runtime "
+                f"pin {py.runtime}; pass the runtime vrg-package matrix recorded"
+            )
+            raise PackageError(msg)
+        runtime, source = ctx.runtime, "recorded by vrg-package matrix (--runtime)"
+    elif py.runtime is not None:
+        runtime, source = py.runtime, "pinned by [package.python].runtime"
+    else:
+        runtime = package_runtime(ctx.repo_root)
+        source = "derived from the version window; no --runtime was given"
+    print(f"vrg-package: vergil-python runtime {runtime} ({source})", file=sys.stderr)
+    return runtime
 
 
 def shim_commands(repo_root: Path, pkg: PackageConfig) -> list[str]:
@@ -188,11 +226,7 @@ def build_python(ctx: BuildContext) -> BuildResult:
     else:
         fmt, suite = "deb", _SHARED_SUITE
 
-    runtime = py.runtime or package_runtime(ctx.repo_root)
-    try:
-        series = runtime_series(runtime)
-    except VersionsError as exc:
-        raise PackageError(str(exc)) from exc
+    series = series_of(_choose_runtime(ctx, py))
     rt_pkg = runtime_package(series)
     interpreter = f"{runtime_dir(_RUNTIME_VENDOR, series)}/bin/python{series}"
     product = Path(_OPT) / ctx.pkg.vendor / ctx.name

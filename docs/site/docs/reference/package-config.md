@@ -322,7 +322,6 @@ fatal before tagging. The caller has two requirements:
     uses: vergil-project/vergil-actions/.github/workflows/cd-release.yml@v2.1
     with:
       language: python
-      container-tag: "3.14"
     # `inherit` is required: environment secrets reach a job in a cross-repo
     # reusable workflow only with `secrets: inherit`. The callee is first-party.
     secrets: inherit  # nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit
@@ -374,6 +373,41 @@ To fix a refusal, bump `[package].version`. For example, use a new
 `+<date>` build suffix, or add a rebuild counter
 (`3.14.8+20261003` → `3.14.8+20261003.1`). The revision (`-1`) is set by
 the tooling and cannot be configured.
+
+### One runtime per release
+
+A `python` release must depend on one runtime on every architecture.
+Build cells run in parallel and at slightly different times, so if each
+cell read the version window itself, a window change mid-release could
+give each architecture a different runtime. This happened to
+vergil-tooling 2.1.258: amd64 got `vergil-python3.15` and arm64 got
+`vergil-python3.14` (vergil-project/vergil-tooling#3478).
+
+To prevent it, the runtime is resolved once:
+
+1. **`vrg-package matrix`** resolves the runtime: the `runtime` pin, or
+   the derived series. It records the result as `runtime` on every build
+   cell and in `packages-manifest.json`, and prints it on stderr.
+   Other builders record no runtime.
+2. **`vrg-package build --runtime <runtime>`** builds against the
+   recorded value and never re-reads the window. Pass the cell's
+   `runtime` unchanged. An empty value counts as none recorded, so the
+   same line works for every builder. A value that differs from a
+   `runtime` pin is an error. Without `--runtime`, as in a local build,
+   the build resolves the runtime itself. Either way it prints the
+   runtime it chose and where that came from.
+3. **`vrg-package check-runtime`** fails the release if any package
+   disagrees. Run it where every cell's packages are together, before
+   anything is published:
+
+   ```bash
+   vrg-package check-runtime --manifest packages-manifest.json --artifacts dist/packages
+   ```
+
+   Every `.deb` and `.rpm` must depend on exactly the recorded
+   `vergil-python<X.Y>` and on no other runtime series. Each mismatch is
+   listed. A directory with no packages fails. A manifest with no
+   `runtime` (a non-`python` release) passes.
 
 ## The package index (`packages.toml`)
 
