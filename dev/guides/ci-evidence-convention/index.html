@@ -16253,7 +16253,7 @@ evidence, so it does not satisfy the gate.</p>
 <p>The set of gates that MUST emit evidence is <strong>not a hand-maintained list.</strong> It
 is <strong>derived from the same source of truth that drives branch protection</strong>:
 <code>lib/github_config.py:desired_ci_gates_ruleset()</code> computes a repo's required
-status checks from its <code>VergilConfig</code> (language, <code>[ci]</code> versions, GHAS
+status checks from its <code>VergilConfig</code> (language, resolved versions, GHAS
 availability, and whether a <code>[package]</code> section is present). The evidence
 layer consumes that <em>same</em> computation, so the gates that are <strong>enforced to
 merge</strong> and the gates that are <strong>required to have evidence</strong> are provably the
@@ -16339,8 +16339,9 @@ carry only an <code>evidence.json</code> envelope and no report is an <strong>em
 there is no point publishing empty reports.</strong></p>
 <p>Producers must therefore emit real report files at the workspace-root paths the
 producer composite globs for:</p>
-<p>The test, audit, and quality report files are emitted <strong>per Python version</strong>
-(<code>&lt;ver&gt;</code> ∈ <code>3.12</code> / <code>3.13</code> / <code>3.14</code>); the security SARIF are <strong>not</strong>
+<p>The test, audit, and quality report files are emitted <strong>once per resolved
+version</strong> (<code>&lt;ver&gt;</code> ∈ <code>3.12</code> / <code>3.13</code> / <code>3.14</code> / <code>3.15</code> for this repo today);
+the security SARIF are <strong>not</strong>
 per-version:</p>
 <table>
 <thead>

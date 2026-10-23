@@ -15741,10 +15741,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#dynamic-matrix-from-vergiltoml" class="md-nav__link">
+  <a href="#version-resolution" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Dynamic matrix from vergil.toml
+        Version resolution
       
     </span>
   </a>
@@ -16122,10 +16122,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#dynamic-matrix-from-vergiltoml" class="md-nav__link">
+  <a href="#version-resolution" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Dynamic matrix from vergil.toml
+        Version resolution
       
     </span>
   </a>
@@ -16350,8 +16350,10 @@ container and runs <code>vrg-validate</code> inside it, with the repository
 bind-mounted. The image is
 <code>ghcr.io/vergil-project/&lt;prefix&gt;-&lt;language&gt;:&lt;version&gt;</code>: the prefix is
 <code>prod</code> unless you pass <code>--prefix dev</code>, the language comes from
-<code>[project].primary-language</code>, and the version is the primary
-<code>[ci].versions</code> entry. C++ and TypeScript carry a family in the image
+<code>[project].primary-language</code>, and the version is the resolver's
+primary version: <code>[ci].primary-version</code> when it is set, otherwise the
+newest resolved version (see <a href="#version-resolution">Version resolution</a>).
+C++ and TypeScript carry a family in the image
 name instead (see <a href="#dev-container-images">Dev container images</a>), and a
 repository with no language uses the base image. On top of that image,
 <code>vrg-container-run</code> builds a per-branch cached image with
@@ -16423,16 +16425,16 @@ for the measured evidence.</p>
 <div class="admonition warning">
 <p class="admonition-title">Local validate is not full coverage parity</p>
 <p>Tier 1 runs one dev container on a single Python interpreter (currently
-3.14), so its <code>--cov-fail-under=100</code> gate proves 100% coverage on that
+3.15, the newest window version), so its <code>--cov-fail-under=100</code> gate proves 100% coverage on that
 one interpreter only. PR-CI re-runs the test-and-coverage gate
 <strong>independently in a separate container per resolved matrix version</strong>
-(currently 3.12, 3.13, 3.14: this repo is a <code>library</code> with no
+(currently 3.12, 3.13, 3.14 and 3.15: this repo is a <code>library</code> with no
 <code>[ci].versions</code> pin, so it tests the whole version window). Because
 branch coverage (<code>--cov-branch</code>) can
 legitimately differ across CPython versions — a branch reachable on one
 version may be dead on another, or a version-guarded code path may only
 execute on some interpreters — code that measures 100% locally can still
-fall below 100% on a 3.12 or 3.13 leg and fail CI. The multi-version
+fall below 100% on a 3.12, 3.13 or 3.14 leg and fail CI. The multi-version
 coverage matrix is therefore a <strong>PR-CI-only</strong> gate: local validate covers
 a single interpreter and cannot reproduce it. This is a known, accepted
 limitation, not a bug — closing it would mean running the full version
@@ -16448,12 +16450,13 @@ vergil series tag (for example <code>@v2.1</code>; <code>vrg-github-repo-init</c
 <code>vX.Y</code> series of the installed vergil-tooling). Apart from the scope
 inputs below, it passes only <code>language:</code> and <code>container-suffix:</code>, and
 <code>ci-docs</code> and <code>ci-package</code> take no inputs. It does <strong>not</strong> pass a version matrix
-or a container tag — the reusable workflows read <code>[ci].versions</code> from the repo's
-<code>vergil.toml</code> at run time and derive both the matrix and the primary-version
-container themselves (epic
-<a href="https://github.com/vergil-project/.github/issues/338">vergil-project/.github#338</a>).
-A <code>[ci].versions</code> change therefore takes effect fleet-wide with no edit to
-<code>ci.yml</code>.</p>
+or a container tag — the reusable workflows run <code>vrg-ci-resolve</code> against the
+repo's <code>vergil.toml</code> at run time and take both the matrix and the
+primary-version container from it (epics
+<a href="https://github.com/vergil-project/.github/issues/338">vergil-project/.github#338</a>
+and <a href="https://github.com/vergil-project/.github/issues/407">vergil-project/.github#407</a>).
+A window change or a <code>[ci].versions</code> change therefore takes effect with no
+edit to <code>ci.yml</code>.</p>
 <p><code>ci.yml</code> also declares <code>workflow_call</code> with one boolean input,
 <code>run-security</code>, defaulting to <code>true</code>. On a <code>pull_request</code> run the input
 is empty, so the generated <code>ci.yml</code> compares it with <code>!= 'false'</code> and it
@@ -16627,16 +16630,38 @@ exception. <code>vrg-repo-init</code> generates this caller for <code>[package]<
 (<a href="https://github.com/vergil-project/vergil-tooling/issues/3144">vergil-project/vergil-tooling#3144</a>).
 See the <a href="../../reference/package-config/#cd">CD section of the package config reference</a>
 for the full caller.</p>
-<h3 id="dynamic-matrix-from-vergiltoml">Dynamic matrix from <code>vergil.toml</code><a class="headerlink" href="#dynamic-matrix-from-vergiltoml" title="Permanent link">&para;</a></h3>
-<p>The matrix is <strong>not</strong> embedded in the workflow or passed as an input. Each
-matrixed reusable workflow (<code>ci-audit</code>, <code>ci-quality</code>, <code>ci-test</code>) reads
-<code>[ci].versions</code> from the consuming repo's <code>vergil.toml</code> at run time and fans its
-matrix out over that list. Single-container jobs (<code>ci-security</code>,
-<code>ci-version-bump</code>, <code>ci-docs</code>) run on the <strong>primary version</strong> —
-<code>[ci].primary-version</code> if it is set, otherwise the highest entry of
-<code>[ci].versions</code> (so <code>3.14</code> for <code>["3.12", "3.13", "3.14"]</code>). <code>vergil.toml</code> is the
-single stored source of the version set; nothing is hand-maintained in <code>ci.yml</code>,
-so the matrix cannot drift from <code>[ci].versions</code>.</p>
+<h3 id="version-resolution">Version resolution<a class="headerlink" href="#version-resolution" title="Permanent link">&para;</a></h3>
+<p>The matrix is <strong>not</strong> embedded in the workflow or passed as an input. The
+supported versions of each language live in one place: the version manifest in
+<a href="https://github.com/vergil-project/vergil-containers">vergil-containers</a>, which
+publishes them as <code>docker/versions/window.json</code> at every Vergil ref (the
+<em>version window</em>). The lifecycle job in vergil-containers adds versions to the
+window and drops them from it as they enter and leave support; consuming repos
+do not edit anything when the window moves.</p>
+<p>One resolver (<code>src/vergil_tooling/lib/versions/resolve.py</code>) turns a repo's
+<code>vergil.toml</code> and the window into the versions it builds. It reads the window at
+the repo's <code>[dependencies].vergil</code> ref (for example <code>v2.1</code>), so a window change
+reaches the repo without a tooling release. The dev container, <code>vrg-validate</code>,
+the required-check computation and the CI setup step (through
+<a href="../../reference/cli-tools-overview/"><code>vrg-ci-resolve</code></a>) all call it. The rules:</p>
+<ul>
+<li><code>[project].repository-type = "library"</code> resolves as a <strong>library</strong> and builds
+  every window version. Every other type resolves as an <strong>app</strong> and builds one
+  version, the newest in the window.</li>
+<li><code>[ci].versions</code> is an optional pin. Every pinned version must be in the
+  window, and an app pin must name exactly one version; either violation is an
+  error. C++ and TypeScript versions carry a family (<code>clang-20</code>, <code>node-24</code>), so
+  those repos must pin.</li>
+<li>The <strong>primary version</strong> is <code>[ci].primary-version</code> when it is set (it must name
+  a resolved version), otherwise the newest resolved version.</li>
+</ul>
+<p>Each matrixed reusable workflow (<code>ci-audit</code>, <code>ci-quality</code>, <code>ci-test</code>) fans out
+over the resolved versions. Single-container jobs (<code>ci-security</code>,
+<code>ci-version-bump</code>, <code>ci-docs</code>) run on the primary version. Nothing is
+hand-maintained in <code>ci.yml</code>, so the matrix cannot drift from the window.
+Set <code>VRG_VERSION_WINDOW=&lt;path&gt;</code> to resolve against a local <code>window.json</code> for
+deliberate offline work; a window that cannot be fetched is an error, never a
+silent default.</p>
 <h2 id="implementation-guide">Implementation guide<a class="headerlink" href="#implementation-guide" title="Permanent link">&para;</a></h2>
 <p>A repository does not write its CI by hand. <code>vrg-github-repo-init</code>
 generates it, for a new repository or for an existing one with
@@ -16710,7 +16735,7 @@ is the local command. Nothing else needs to be added to the repository.</p>
 </tr>
 <tr>
 <td><code>test / integration / &lt;version&gt;</code></td>
-<td><code>[ci].integration-tests</code> is on (one per <code>[ci].versions</code> entry)</td>
+<td><code>[ci].integration-tests</code> is on (one per resolved version)</td>
 </tr>
 </tbody>
 </table>
@@ -16780,7 +16805,9 @@ is the single source of truth.</p>
 <p>C++ is the one language with a compiler-family axis: it ships <strong>two</strong>
 image families (<code>dev-cpp-clang</code> / <code>dev-cpp-gcc</code>, and matching <code>prod-</code>
 images) so TYPECHECK and TEST run per compiler and per version. The
-family rides the <code>[ci].versions</code> tag prefix (<code>clang-20</code>, <code>gcc-14</code>).</p>
+family rides the <code>[ci].versions</code> tag prefix (<code>clang-20</code>, <code>gcc-14</code>), so a
+C++ repo must pin <code>[ci].versions</code>. Only a <code>library</code> can pin more than one
+entry; an app builds exactly one.</p>
 <h3 id="building-locally">Building locally<a class="headerlink" href="#building-locally" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nb">cd</span><span class="w"> </span>../vergil-containers
 <a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>docker/build.sh

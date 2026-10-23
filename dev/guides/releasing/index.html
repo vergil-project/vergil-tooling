@@ -16660,8 +16660,8 @@ version when unset) and the build matrix, without building anything.
 It runs before the dependency-update gate, so a refusal changes
 nothing. The refusal names each conflicting package and the release
 that first published it:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>vergil-project/vergil-python@v1.0.1 would re-publish 4 package(s) at a version an earlier release already published:
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>  - vergil-python3.14.8 3.14.8+20261003-1 amd64 (deb): already published by vergil-project/vergil-python@v1.0.0
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>vergil-project/vergil-python@v1.0.4 would re-publish 4 package(s) at a version an earlier release already published:
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>  - vergil-python3.15 3.15.1+20261021-1 amd64 (deb): already published by vergil-project/vergil-python@v1.0.3
 <a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>  ...
 </code></pre></div>
 <p>To fix it, bump <code>[package].version</code> in <code>vergil.toml</code>, for example to a

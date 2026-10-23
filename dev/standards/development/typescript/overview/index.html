@@ -16066,10 +16066,16 @@ matrix:</p>
   gain from typechecking, formatting, or scanning dependencies more than once —
   <code>tsc --noEmit</code>, Prettier + ESLint, and <code>npm audit</code> each run a single time.</li>
 <li><strong>Only TEST fans out per Node version.</strong> Runtime behavior differs across Node
-  majors, so the test-and-coverage stage runs once per supported Node major (v1:
-  <code>node-22</code> and <code>node-24</code>, with <code>node-24</code> as the primary). See
+  majors, so the test-and-coverage stage runs once per resolved Node major. See
   <a href="../testing-and-coverage/">Testing and Coverage</a>.</li>
 </ul>
+<p>Node majors are <code>[ci].versions</code> entries with a family prefix (<code>node-24</code>), so a
+TypeScript repo must pin <code>[ci].versions</code>. Fanning out over several majors is a
+property of a <strong>library</strong>: a <code>library</code> may pin any subset of the window (today
+<code>node-22</code> and <code>node-24</code>), and each pinned major is a hard CI leg. Every other
+repository type resolves as an app and builds exactly one version, so an app
+that pins more than one major fails resolution (see
+<a href="../../../../guides/ci-architecture/#version-resolution">Version resolution</a>).</p>
 <h2 id="npm-esm-layout">npm + ESM Layout<a class="headerlink" href="#npm-esm-layout" title="Permanent link">&para;</a></h2>
 <p>Package management is <strong>npm</strong>, chosen for universality at zero adoption barrier:</p>
 <ul>
@@ -16150,9 +16156,8 @@ exercised — see <a href="../testing-and-coverage/">Testing and Coverage</a> fo
 philosophy and the <code>/* v8 ignore */</code> exclusion discipline.</p>
 <h2 id="ci-gates">CI Gates<a class="headerlink" href="#ci-gates" title="Permanent link">&para;</a></h2>
 <p>See <a href="../../../source-control-guidelines/#ci-gates">Source Control Guidelines</a>
-for the hard-gates-only standard: every CI check is a hard gate, and the only
-sanctioned non-blocking category is the advisory-on-unsupported-versions
-carve-out (see the
+for the hard-gates-only standard: every CI check is a hard gate, and every
+version a repo resolves from the version window is a hard CI leg (see the
 <a href="../../runtime-version-support-policy/">Runtime Version Support Policy</a>).</p>
 <p>TypeScript hard gates:</p>
 <ul>

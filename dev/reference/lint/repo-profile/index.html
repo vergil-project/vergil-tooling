@@ -12675,6 +12675,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#repository-type-and-versions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Repository type and versions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#readmemd-checks" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -15827,6 +15838,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#repository-type-and-versions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Repository type and versions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#readmemd-checks" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -15888,7 +15910,7 @@ and any value that loader rejects fails the check. The core rules:</p>
 <tbody>
 <tr>
 <td><code>[project].repository-type</code></td>
-<td>Required; one of <code>application</code>, <code>documentation</code>, <code>infrastructure</code>, <code>library</code>, <code>tooling</code></td>
+<td>Required; one of <code>application</code>, <code>documentation</code>, <code>infrastructure</code>, <code>library</code>, <code>tooling</code> (see <a href="#repository-type-and-versions">Repository type and versions</a>)</td>
 </tr>
 <tr>
 <td><code>[project].versioning-scheme</code></td>
@@ -15908,7 +15930,11 @@ and any value that loader rejects fails the check. The core rules:</p>
 </tr>
 <tr>
 <td><code>[ci].versions</code></td>
-<td>Required; a non-empty list of strings</td>
+<td>Optional pin; when set, a non-empty list of strings</td>
+</tr>
+<tr>
+<td><code>[ci].primary-version</code></td>
+<td>Optional; a string</td>
 </tr>
 <tr>
 <td><code>[dependencies].vergil</code></td>
@@ -15916,14 +15942,59 @@ and any value that loader rejects fails the check. The core rules:</p>
 </tr>
 </tbody>
 </table>
-<p>An unrecognized <code>[project].primary-language</code> is a warning, not a
-failure: the language is treated as unset. The recognized values are
-<code>cpp</code>, <code>go</code>, <code>java</code>, <code>python</code>, <code>rust</code> and <code>typescript</code>.
+<p>The recognized <code>[project].primary-language</code> values are <code>cpp</code>, <code>go</code>,
+<code>java</code>, <code>python</code>, <code>rust</code> and <code>typescript</code>. A retired language
+(<code>ruby</code>) is rejected outright. Any other unrecognized value is a
+warning, not a failure: the language is treated as unset.
 Unrecognized sections and keys are also reported as warnings. The
 optional tables have their own references, such as
 <a href="../../container-config/"><code>[container]</code></a>,
 <a href="../../test-config/"><code>[test]</code></a> and
 <a href="../../package-config/"><code>[package]</code></a>.</p>
+<h2 id="repository-type-and-versions">Repository type and versions<a class="headerlink" href="#repository-type-and-versions" title="Permanent link">&para;</a></h2>
+<p>A repo's CI versions come from the language version window that
+vergil-containers publishes as <code>window.json</code>, read at the repo's
+<code>[dependencies].vergil</code> ref (see
+<a href="../../../guides/ci-architecture/#version-resolution">Version resolution</a>).
+<code>[project].repository-type</code> decides how many of them the repo builds:</p>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>Resolves as</th>
+<th>Builds</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>library</code></td>
+<td>library</td>
+<td>Every version in the window</td>
+</tr>
+<tr>
+<td><code>application</code>, <code>infrastructure</code>, <code>tooling</code>, <code>documentation</code></td>
+<td>app</td>
+<td>One version: the newest in the window</td>
+</tr>
+</tbody>
+</table>
+<p>A library is a repo whose code runs in other repos' environments,
+whether imported there or installed there as a tool, so it must work
+on every supported version.</p>
+<p><code>[ci].versions</code> is an optional pin that replaces the default:</p>
+<ul>
+<li>every pinned version must be in the window;</li>
+<li>an app pin must name exactly one version;</li>
+<li>C++ and TypeScript versions carry a compiler or runtime family
+  (<code>clang-20</code>, <code>gcc-14</code>, <code>node-24</code>), so those repos must pin.</li>
+</ul>
+<p>Each violation is an error. <code>[ci].primary-version</code>, when set, must
+name a resolved version; without it the primary is the newest resolved
+version.</p>
+<p><code>vrg-repo-profile</code> checks only the shape of these keys. The window
+rules are enforced by the resolver (<code>lib/versions/resolve.py</code>), which
+<code>vrg-validate</code>, <code>vrg-container-run</code> and the CI setup step
+(<code>vrg-ci-resolve</code>) all run.</p>
 <h2 id="readmemd-checks"><code>README.md</code> checks<a class="headerlink" href="#readmemd-checks" title="Permanent link">&para;</a></h2>
 <p>When <code>README.md</code> exists, outside fenced code blocks it must have:</p>
 <ol>

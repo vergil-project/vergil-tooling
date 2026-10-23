@@ -16074,6 +16074,12 @@ where it runs. No git hooks are installed: every check runs inside a
 <td><code>quality / common</code></td>
 </tr>
 <tr>
+<td>Versions resolve against the window; toolchain selection; language floor</td>
+<td><code>vrg-validate</code> (config check, before any stage)</td>
+<td>Yes</td>
+<td>Every <code>vrg-validate</code> job</td>
+</tr>
+<tr>
 <td>Markdown, shell, YAML, Dockerfile, workflow and Ansible lint</td>
 <td><code>vrg-validate</code> (common checks)</td>
 <td>Yes</td>
@@ -16112,10 +16118,21 @@ where it runs. No git hooks are installed: every check runs inside a
 </tbody>
 </table>
 <p>"Local" for <code>vrg-validate</code> means <code>vrg-container-run -- vrg-validate</code>,
-which runs one container on the primary <code>[ci].versions</code> entry. PR CI
+which runs one container on the resolved primary version. PR CI
 runs the same commands through the <code>vergil-actions</code> reusable workflows
-on every <code>[ci].versions</code> entry. See <a href="../ci-architecture/">CI Architecture</a>
-for the jobs and the required checks.</p>
+on every resolved version (see
+<a href="../ci-architecture/#version-resolution">Version resolution</a>). See
+<a href="../ci-architecture/">CI Architecture</a> for the jobs and the required
+checks.</p>
+<p>The config check runs on every <code>vrg-validate</code> invocation, whatever
+<code>--check</code> selects. It fails when the repo's versions do not resolve
+against the published window (a pin outside the window, an app pin of
+more than one version, an unreadable window) or when a file selects the
+toolchain behind Vergil's back (for Python, <code>.python-version</code>). A
+declared floor that falls below the window's oldest version, or an
+upper bound that excludes its newest (for Python, <code>requires-python</code>),
+is printed as a warning and does not fail. See
+<a href="../../standards/development/python/version-management/#toolchain-selection-in-the-repo">Python version management</a>.</p>
 <h2 id="agent-and-git-wrappers">Agent and Git Wrappers<a class="headerlink" href="#agent-and-git-wrappers" title="Permanent link">&para;</a></h2>
 <h3 id="claude-code-hook-guard">Claude Code hook guard<a class="headerlink" href="#claude-code-hook-guard" title="Permanent link">&para;</a></h3>
 <p><strong>Trigger:</strong> every <code>Bash</code> tool call in a Claude Code session, in a
