@@ -117,17 +117,20 @@ def test_cli_invalid_config_exits_1(tmp_path: Path, capsys: pytest.CaptureFixtur
     assert "not valid TOML" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize(
-    ("fmt", "prefix"), [("json", "warning: "), ("github-output", "::warning::")]
-)
-def test_cli_prints_warnings_to_stderr(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], fmt: str, prefix: str
+@pytest.mark.parametrize("fmt", ["json", "github-output"])
+def test_cli_app_multi_pin_exits_1(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], fmt: str
 ) -> None:
+    # An app builds exactly one version: a list of two fails CI setup loudly.
     _write_config(
         tmp_path, language="python", repo_type="tooling", ci='versions = ["3.12", "3.13"]\n'
     )
-    assert main(["--format", fmt, "--repo-root", str(tmp_path)]) == 0
-    assert capsys.readouterr().err.startswith(f"{prefix}[ci].versions pins 2 versions")
+    assert main(["--format", fmt, "--repo-root", str(tmp_path)]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith("vrg-ci-resolve: error: [ci].versions pins 2 versions")
+    assert "pin a single version" in captured.err
+    assert 'set [project].repository-type = "library"' in captured.err
 
 
 def test_cli_help(capsys: pytest.CaptureFixture[str]) -> None:

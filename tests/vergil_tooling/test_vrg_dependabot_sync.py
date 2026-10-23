@@ -105,6 +105,24 @@ def test_sync_write_overwrites_noncanonical(tmp_path: Path) -> None:
     assert path.read_text(encoding="utf-8") == dependabot.render("python")
 
 
+# --- unreadable vergil.toml (#3451) ------------------------------------------
+
+
+@pytest.mark.parametrize("mode", ["--check", "--write"])
+def test_sync_config_error_exits_2_without_writing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], mode: str
+) -> None:
+    """A vergil.toml that fails to load is a config error, never drift or an actions-only file."""
+    _write_repo(tmp_path, "python")
+    with (tmp_path / "vergil.toml").open("a", encoding="utf-8") as f:
+        f.write('\n[package]\nbuilder = "python"\nvendor = "v"\nsummary = "s"\nsmoke = "true"\n')
+    assert vrg_dependabot_sync.main(["--repo", str(tmp_path), mode]) == 2
+    err = capsys.readouterr().err
+    assert err.startswith("vrg-dependabot-sync: ")
+    assert "requires a uv.lock" in err
+    assert not (tmp_path / ".github" / "dependabot.yml").exists()
+
+
 def test_sync_check_and_write_are_exclusive(tmp_path: Path) -> None:
     with pytest.raises(SystemExit) as exc:
         vrg_dependabot_sync.main(["--repo", str(tmp_path), "--check", "--write"])

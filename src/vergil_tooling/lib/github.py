@@ -1647,9 +1647,17 @@ def merge_status(pr: str) -> dict[str, str]:
     return {"mergeStateStatus": state, "reviewDecision": str(review) if review else ""}
 
 
-def current_repo() -> str:
-    """Return ``OWNER/REPO`` for the current directory's git remote."""
-    return read_output("repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner")
+def current_repo(*, cwd: str | Path | None = None) -> str:
+    """Return ``OWNER/REPO`` for the git remote of *cwd* (default: the current directory).
+
+    *cwd* lets a caller resolve another local checkout (e.g. a fleet sweep's
+    clone) the same way, without changing the process's directory.
+    """
+    args = ("repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner")
+    if cwd is None:
+        return read_output(*args)
+    result = _run_with_retry(("gh", *args), check=True, text=True, capture_output=True, cwd=cwd)  # noqa: S607
+    return result.stdout.strip()
 
 
 def current_org() -> str:

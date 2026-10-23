@@ -1094,8 +1094,6 @@ def _resolve_versions(vergil_toml: str) -> Resolution | None:
         resolution = resolve_config(cfg, repo_root=None)
     except VersionsError as exc:
         raise SystemExit(f"error: {exc}") from exc
-    for warning in resolution.warnings if resolution else ():
-        print(f"  WARNING: {warning}", file=sys.stderr)
     return resolution
 
 

@@ -390,16 +390,21 @@ def test_main_pin_outside_window_fails_validation(
     assert "remove it from [ci].versions" in err
 
 
-def test_main_resolution_warning_does_not_fail(
+def test_main_app_multi_pin_fails_validation(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    # An app builds exactly one version: the same fatal rule vrg-ci-resolve applies.
     _write_pinned_config(tmp_path, repo_type="tooling", versions='["3.13", "3.14"]')
     with (
         patch(_MOD + ".git.repo_root", return_value=tmp_path),
-        patch(_MOD + ".progress.run_pipeline", return_value=0),
+        patch(_MOD + ".progress.run_pipeline", return_value=0) as m_pipeline,
     ):
-        assert main(["--check", "common"]) == 0
-    assert "WARNING: [ci].versions pins 2 versions" in capsys.readouterr().err
+        assert main([]) == 1
+    m_pipeline.assert_not_called()
+    err = capsys.readouterr().err
+    assert "ERROR: [ci].versions pins 2 versions (3.14, 3.13)" in err
+    assert "pin a single version" in err
+    assert 'set [project].repository-type = "library"' in err
 
 
 def test_main_floor_warning_does_not_fail(

@@ -417,3 +417,33 @@ def test_serve_sets_no_mkdocs_2_warning(tmp_path: Path) -> None:
     idx = args.index("NO_MKDOCS_2_WARNING=1")
     assert args[idx - 1] == "-e"
     assert idx < args.index("ghcr.io/vergil-project/prod-base:latest")
+
+
+# -- the interpreter source (vergil-tooling#3414) -------------------------------
+
+
+def test_python_repo_only_managed_pins_the_image_python(tmp_path: Path) -> None:
+    # Regression for #3414: a repo with python-preference = "only-managed" must
+    # not make uv in the docs image fetch (or fail to find) a managed
+    # interpreter. UV_PYTHON_PREFERENCE=only-system pins the image's Python,
+    # matching the CI docs jobs (vergil-actions#1002); the env var beats the
+    # repo's [tool.uv] setting. No fallback: if the image's Python misses
+    # requires-python, uv fails loudly.
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "x"\n\n[tool.uv]\npython-preference = "only-managed"\n'
+        'python-downloads = "manual"\n'
+    )
+    for command in ("build", "serve"):
+        args = _docker_args_for(tmp_path, command)
+        idx = args.index("UV_PYTHON_PREFERENCE=only-system")
+        assert args[idx - 1] == "-e"
+        assert idx < args.index("ghcr.io/vergil-project/prod-base:latest")
+        # A docs build resolves no version, so uv is not handed one.
+        assert not any(a.startswith("UV_PYTHON=") for a in args)
+        assert "NO_MKDOCS_2_WARNING=1" in args
+
+
+def test_non_python_repo_sets_no_interpreter_source(tmp_path: Path) -> None:
+    # Without a pyproject.toml the docs build never runs uv.
+    args = _docker_args_for(tmp_path, "build")
+    assert not any(a.startswith("UV_PYTHON") for a in args)

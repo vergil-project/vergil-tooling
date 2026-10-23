@@ -376,9 +376,9 @@ leaving genuinely repo-local lines outside the fence untouched. See the
 |---|---|
 | Source | `vergil_tooling.bin.vrg_gitignore_sync` |
 | Args | `--repo PATH` (default: CWD); mutually exclusive `--check` (default) \| `--write` |
-| Preconditions | A repo whose language resolves from `[project].primary-language` (absent/unreadable config → base-only) |
-| Failure mode | `--check` prints each drift reason to stderr; `--write` always succeeds (prints `already in sync` or the synced path) |
-| Exit codes | 0 ok, 1 `--check` drift, 2 usage error |
+| Preconditions | A repo whose language resolves from `[project].primary-language` (no `vergil.toml` or no declared language → base-only; a `vergil.toml` that fails to load is an error, exit 2) |
+| Failure mode | `--check` prints each drift reason to stderr; `--write` succeeds whenever the language resolves (prints `already in sync` or the synced path) |
+| Exit codes | 0 ok, 1 `--check` drift, 2 usage error or a `vergil.toml` that fails to load (the config error is printed to stderr; nothing is written) |
 | Status | Active |
 
 ### vrg-dependabot-sync
@@ -398,9 +398,9 @@ or PR knowledge.
 |---|---|
 | Source | `vergil_tooling.bin.vrg_dependabot_sync` |
 | Args | `--repo PATH` (default: CWD); mutually exclusive `--check` (default) \| `--write` |
-| Preconditions | A repo whose language resolves from `[project].primary-language` (absent/unreadable config → `github-actions` only) |
-| Failure mode | `--check` prints `missing .github/dependabot.yml` or `differs from the canonical render` to stderr; `--write` always succeeds (prints `already in sync` or `wrote .github/dependabot.yml (<lang or none>)`) |
-| Exit codes | 0 ok, 1 `--check` drift, 2 usage error |
+| Preconditions | A repo whose language resolves from `[project].primary-language` (no `vergil.toml` or no declared language → `github-actions` only; a `vergil.toml` that fails to load is an error, exit 2) |
+| Failure mode | `--check` prints `missing .github/dependabot.yml` or `differs from the canonical render` to stderr; `--write` succeeds whenever the language resolves (prints `already in sync` or `wrote .github/dependabot.yml (<lang or none>)`) |
+| Exit codes | 0 ok, 1 `--check` drift, 2 usage error or a `vergil.toml` that fails to load (the config error is printed to stderr; nothing is written) |
 | Status | Active |
 
 ### vrg-fleet-sync
@@ -410,13 +410,18 @@ Propagate a vergil-managed file across a fleet of repositories, opening
 `gitignore` (default) syncs the managed `.gitignore` block via
 `vrg-gitignore-sync --write`; `dependabot` writes the report-only
 `.github/dependabot.yml` via `vrg-dependabot-sync --write` (branch slug
-`dependabot-config`, filed under epic vergil-project/.github#420). It
+`dependabot-config`, filed under epic vergil-project/.github#420). A
+target's epic links only repos in the epic's own org: a repo in another
+org (read from the clone with `gh repo view`) is filed under its own
+ad-hoc epic, and the issue body still names the target's epic, because
+`vrg-issue-create` refuses a cross-org link. It
 drives the generic fleet-sweep driver (`lib/fleet_sweep.py`): per repo it
 creates a worktree, shells out to the target's applicator, commits,
 and runs `report-ready`. Like every agent-run task it **never submits or
 merges** — it stops at `report-ready`, leaving submission and merge to the
-human. `--dry-run` reports the intended per-repo action without touching
-any git or GitHub state.
+human. `--dry-run` reports the intended per-repo action, including the
+epic each repo would be filed under, without changing any git or GitHub
+state.
 
 | Attribute | Value |
 |---|---|
@@ -460,7 +465,10 @@ language and selects appropriate image and test command.
 
 Preview or build MkDocs documentation inside a dev container.
 Supports `serve` (live-reload) and `build` subcommands. For Python
-repos, wraps with `uv sync --group docs`. Always sets
+repos, wraps with `uv sync --group docs` and sets
+`UV_PYTHON_PREFERENCE=only-system`, so uv uses the docs image's own Python
+(as CI does) whatever the repo's `python-preference`, and fails loudly if
+that Python does not satisfy `requires-python`. Always sets
 `NO_MKDOCS_2_WARNING=1` in the container, so local builds suppress the
 mkdocs-material MkDocs 2.0 warning banner the same way CI does.
 

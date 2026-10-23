@@ -18,7 +18,8 @@ Every Python-specific version rule lives here, and nowhere in the shared code:
   allowed: it picks the interpreter's *source* (managed installs or the system
   Python), not its version (spec §6.5 amendment, vergil-tooling#3410). Wherever
   Vergil runs Python it pins the source itself with
-  ``UV_PYTHON_PREFERENCE=only-system`` (:func:`container_env`), so a repo's
+  ``UV_PYTHON_PREFERENCE=only-system`` (:func:`container_env`, or
+  :func:`source_env` where no version is resolved), so a repo's
   preference never makes uv fetch its own interpreter in place of the image's.
 """
 
@@ -49,6 +50,7 @@ __all__ = [
     "derived_runtime",
     "python_extension",
     "runtime_series",
+    "source_env",
 ]
 
 _LANGUAGE = "python"
@@ -232,4 +234,16 @@ def container_env(primary: str) -> Mapping[str, str]:
     (https://docs.astral.sh/uv/concepts/configuration-files/), where persistent
     configuration is ``[tool.uv]`` in ``pyproject.toml`` and ``uv.toml``.
     """
-    return {"UV_PYTHON": primary, "UV_PYTHON_PREFERENCE": "only-system"}
+    return {"UV_PYTHON": primary, **source_env()}
+
+
+def source_env() -> Mapping[str, str]:
+    """The environment that pins uv to the image's own Python, with no version.
+
+    ``UV_PYTHON_PREFERENCE=only-system`` alone, for a container that resolves
+    no version: ``vrg-container-docs`` runs uv in the docs image, matching the
+    CI docs jobs (vergil-actions#1002, vergil-tooling#3414). There is no
+    fallback: if the image's Python does not satisfy ``requires-python``, uv
+    fails loudly rather than fetching a managed interpreter.
+    """
+    return {"UV_PYTHON_PREFERENCE": "only-system"}

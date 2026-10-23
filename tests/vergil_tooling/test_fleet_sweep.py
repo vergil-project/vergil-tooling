@@ -15,6 +15,7 @@ commit fail exactly as it did in production.
 from __future__ import annotations
 
 import subprocess  # noqa: S404 - real git in the integration-style commit test
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -57,7 +58,11 @@ def calls(monkeypatch: pytest.MonkeyPatch) -> dict[str, list]:
     ``("proc", args)`` in call order — so a test can assert one call *precedes*
     another across the two mocks (e.g. staging before commit).
     """
-    record: dict[str, list] = {"git": [], "proc": [], "seq": []}
+    record: dict[str, list] = {"git": [], "proc": [], "seq": [], "repo_lookup": []}
+
+    def fake_current_repo(*, cwd: str | Path | None = None) -> str:
+        record["repo_lookup"].append(cwd)
+        return "vergil-project/demo"
 
     def fake_git_run(*args: str) -> None:
         record["git"].append(tuple(args))
@@ -75,6 +80,7 @@ def calls(monkeypatch: pytest.MonkeyPatch) -> dict[str, list]:
 
     monkeypatch.setattr(fleet_sweep.git, "run", fake_git_run)
     monkeypatch.setattr(fleet_sweep.subprocess, "run", fake_proc_run)
+    monkeypatch.setattr(fleet_sweep.github, "current_repo", fake_current_repo)
     return record
 
 
@@ -164,6 +170,117 @@ def test_epic_repo_links_issue_under_epic(calls: dict[str, list]) -> None:
     issue = next(args for args, _cwd in calls["proc"] if args[0] == "vrg-issue-create")
     assert "vergil-project/.github#325" in issue
     assert "adhoc" not in issue
+
+
+def _changed(_worktree: Path) -> AppResult:
+    return AppResult(changed=True, summary="synced")
+
+
+def _issue_create_args(calls: dict[str, list]) -> tuple:
+    return next(args for args, _cwd in calls["proc"] if args[0] == "vrg-issue-create")
+
+
+def _flag(args: tuple, flag: str) -> str:
+    return args[args.index(flag) + 1]
+
+
+def test_same_org_repo_keeps_the_spec_epic(calls: dict[str, list]) -> None:
+    """A repo in the epic's org is linked under spec.epic, resolved from its clone."""
+
+    run_sweep(_spec(["/clones/demo"], epic="vergil-project/.github#420"), _changed, dry_run=False)
+
+    issue = _issue_create_args(calls)
+    assert _flag(issue, "--epic") == "vergil-project/.github#420"
+    assert "Part of epic vergil-project/.github#420." in _flag(issue, "--body")
+    # The owner comes from the clone itself, as vrg-issue-create resolves it.
+    assert calls["repo_lookup"] == ["/clones/demo"]
+
+
+def test_cross_org_repo_falls_back_to_its_adhoc_epic(
+    calls: dict[str, list], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A repo outside the epic's org goes under its own ad-hoc epic (#3447).
+
+    vrg-issue-create refuses a cross-org sub-issue link, so the sweep must not
+    ask for one; the body still names the initiative's epic.
+    """
+    monkeypatch.setattr(
+        fleet_sweep.github, "current_repo", lambda *, cwd=None: "logical-minds-foundry/docs"
+    )
+
+    results = run_sweep(
+        _spec(["/clones/docs"], epic="vergil-project/.github#420"), _changed, dry_run=False
+    )
+
+    assert results[0].status == "ready"
+    issue = _issue_create_args(calls)
+    assert _flag(issue, "--epic") == "adhoc"
+    body = _flag(issue, "--body")
+    assert body.startswith("Propagate the composed managed .gitignore block.")
+    assert "vergil-project/.github#420" in body
+    assert "ad-hoc epic" in body
+
+
+def test_no_epic_uses_adhoc_without_a_repo_lookup(calls: dict[str, list]) -> None:
+    """epic=None -> adhoc, body unchanged, and no owner lookup is needed."""
+
+    run_sweep(_spec(["/clones/demo"]), _changed, dry_run=False)
+
+    issue = _issue_create_args(calls)
+    assert _flag(issue, "--epic") == "adhoc"
+    assert _flag(issue, "--body") == "Propagate the composed managed .gitignore block."
+    assert calls["repo_lookup"] == []
+
+
+def test_ownerless_epic_ref_is_used_as_is(calls: dict[str, list]) -> None:
+    """A bare ``#N`` resolves inside the repo's own epic home: no owner to compare."""
+
+    run_sweep(_spec(["/clones/demo"], epic="#12"), _changed, dry_run=False)
+
+    assert _flag(_issue_create_args(calls), "--epic") == "#12"
+    assert calls["repo_lookup"] == []
+
+
+def test_dry_run_names_the_chosen_epic(
+    calls: dict[str, list], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The dry-run line reports which epic each repo would be filed under."""
+    owners = {"/clones/same": "vergil-project/same", "/clones/other": "mnemosys-project/other"}
+    monkeypatch.setattr(fleet_sweep.github, "current_repo", lambda *, cwd=None: owners[str(cwd)])
+
+    results = run_sweep(
+        _spec(["/clones/same", "/clones/other"], epic="vergil-project/.github#420"),
+        _changed,
+        dry_run=True,
+    )
+
+    assert "would ensure issue under epic vergil-project/.github#420," in results[0].detail
+    assert "would ensure issue under epic adhoc," in results[1].detail
+    assert calls["git"] == []
+    assert calls["proc"] == []
+
+    no_epic = run_sweep(_spec(["/clones/same"]), _changed, dry_run=True)
+    assert "would ensure issue under epic adhoc," in no_epic[0].detail
+
+
+def test_dry_run_owner_lookup_failure_is_an_error(
+    calls: dict[str, list], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A repo whose owner cannot be resolved is a recorded error, not a guess."""
+
+    def failing_lookup(*, cwd: str | Path | None = None) -> str:
+        raise RuntimeError("no git remote")
+
+    monkeypatch.setattr(fleet_sweep.github, "current_repo", failing_lookup)
+
+    results = run_sweep(
+        _spec(["/clones/a", "/clones/b"], epic="vergil-project/.github#420"),
+        _changed,
+        dry_run=True,
+    )
+
+    assert [r.status for r in results] == ["error", "error"]
+    assert "no git remote" in results[0].detail
 
 
 def test_unchanged_repo_is_skipped_without_issue_or_branch(calls: dict[str, list]) -> None:
@@ -718,6 +835,38 @@ def test_fleet_target_dependabot_failure_names_tool(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(vrg_fleet_sync.subprocess, "run", fake_proc_run)
     with pytest.raises(RuntimeError, match=r"vrg-dependabot-sync failed \(exit 2\): usage"):
         applicator(Path("/w"))
+
+
+@pytest.mark.parametrize(
+    ("target", "module"),
+    [
+        ("dependabot", "vergil_tooling.bin.vrg_dependabot_sync"),
+        ("gitignore", "vergil_tooling.bin.vrg_gitignore_sync"),
+    ],
+)
+def test_fleet_applicator_surfaces_config_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, target: str, module: str
+) -> None:
+    """#3451: a repo whose vergil.toml fails to load is an error row naming the cause.
+
+    The real applicator CLI runs (as ``python -m``) against a worktree holding a
+    malformed ``vergil.toml``; its exit-2 config error must reach the sweep as
+    the raised message, never a silently rendered language-less file.
+    """
+    (tmp_path / "vergil.toml").write_text("not = [valid toml", encoding="utf-8")
+    _spec_unused, applicator = _capture_main(
+        monkeypatch, ["--repos", "/clones/x", "--target", target]
+    )
+    real_run = subprocess.run
+
+    def run_real_cli(args, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        return real_run([sys.executable, "-m", module, *args[1:]], **kwargs)  # noqa: S603
+
+    monkeypatch.setattr(vrg_fleet_sync.subprocess, "run", run_real_cli)
+    with pytest.raises(RuntimeError, match=r"failed \(exit 2\): .*not valid TOML"):
+        applicator(tmp_path)
+    assert not (tmp_path / ".github").exists()
+    assert not (tmp_path / ".gitignore").exists()
 
 
 def test_fleet_target_rejects_unknown() -> None:

@@ -11,7 +11,9 @@ Task 7) shells out to it once per repo, and everything git-shaped lives there.
 The fence language is resolved with the *same* rule the ``.gitignore`` audit
 uses (:func:`vergil_tooling.lib.repo_config._gitignore_language`): the asserted
 ``[project].primary-language``, normalized to ``None`` (base-only) for any
-language without a managed fragment or when the config is absent/unreadable.
+language without a managed fragment, when no language is declared, or when
+there is no ``vergil.toml``. A ``vergil.toml`` that fails to load is a config
+error (exit 2), never a base-only fence (#3451).
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from pathlib import Path
 
 from vergil_tooling.lib import gitignore
 from vergil_tooling.lib.cli import cli_main
+from vergil_tooling.lib.config import ConfigError
 from vergil_tooling.lib.repo_config import _gitignore_language
 
 
@@ -29,7 +32,13 @@ from vergil_tooling.lib.repo_config import _gitignore_language
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     repo_root = Path(args.repo).resolve() if args.repo else Path.cwd()
-    lang = _gitignore_language(repo_root)
+    try:
+        lang = _gitignore_language(repo_root)
+    except ConfigError as exc:
+        # A config that will not load is not drift: report it and exit 2 so no
+        # base-only block is written in its place (#3451).
+        print(f"vrg-gitignore-sync: {exc}", file=sys.stderr)
+        return 2
     if args.write:
         return _run_write(repo_root, lang)
     return _run_check(repo_root, lang)
@@ -45,7 +54,9 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
             "language without a managed fragment. This is the applicator: it "
             "owns only the file change and has no git or PR knowledge."
         ),
-        epilog="Exit codes: 0 ok, 1 --check drift, 2 usage error.",
+        epilog=(
+            "Exit codes: 0 ok, 1 --check drift, 2 usage error or a vergil.toml that fails to load."
+        ),
     )
     parser.add_argument(
         "--repo",

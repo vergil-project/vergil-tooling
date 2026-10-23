@@ -13,8 +13,8 @@ The rules (spec §6.3):
 * No ``[ci].versions``: a library builds the whole window, an app the newest
   version. A language whose tokens carry a family (a ``token_prefix``, or more
   than one family) must pin until its lifecycle turn.
-* A ``[ci].versions`` pin must lie inside the window. An app pin should name
-  one version: more is a warning, or an error once :data:`STRICT_APP_PINS`.
+* A ``[ci].versions`` pin must lie inside the window. An app pin must name
+  one version: more is an error.
 * ``[ci].primary-version`` must name a resolved version; without it the
   primary is the newest resolved version.
 """
@@ -22,7 +22,7 @@ The rules (spec §6.3):
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib.config import (
@@ -48,7 +48,6 @@ if TYPE_CHECKING:
 __all__ = [
     "NO_LANGUAGE_SUFFIX",
     "NO_LANGUAGE_VERSION",
-    "STRICT_APP_PINS",
     "Resolution",
     "ResolutionError",
     "ResolutionKind",
@@ -60,10 +59,6 @@ __all__ = [
     "resolve_language",
     "resolve_repo",
 ]
-
-# An app with more than one [ci].versions entry warns while the fleet sweep
-# removes the lists, and becomes fatal once it is done (spec §6.3, Task 14).
-STRICT_APP_PINS = False
 
 # What a repo with no language builds: the base image at ``latest``, as before.
 NO_LANGUAGE_VERSION = "latest"
@@ -81,7 +76,6 @@ class Resolution:
     container_tags: Mapping[str, str]
     # version token -> image suffix ("clang-20" -> "cpp-clang", "3.14" -> "python").
     container_suffixes: Mapping[str, str]
-    warnings: tuple[str, ...] = field(default=())
 
     @property
     def primary_container_tag(self) -> str:
@@ -110,15 +104,12 @@ def resolve(
     window: Window,
     *,
     repo_root: Path | None,
-    strict_app_pins: bool = STRICT_APP_PINS,
 ) -> Resolution | None:
     """Resolve *cfg* against *window*; ``None`` for a repo with no language."""
     language = cfg.project.primary_language
     if not language:
         return None
-    return resolve_language(
-        cfg, window, language, repo_root=repo_root, strict_app_pins=strict_app_pins
-    )
+    return resolve_language(cfg, window, language, repo_root=repo_root)
 
 
 def resolve_language(
@@ -127,7 +118,6 @@ def resolve_language(
     language: str,
     *,
     repo_root: Path | None,
-    strict_app_pins: bool = STRICT_APP_PINS,
 ) -> Resolution:
     """Resolve *cfg* for *language*, which may be detected rather than declared."""
     families = window.languages.get(language)
@@ -146,8 +136,6 @@ def resolve_language(
     window_list = ", ".join(window_tokens)
     kind = resolution_kind(cfg.project.repository_type)
     pins = cfg.ci.versions
-    warnings: list[str] = []
-
     if pins is None:
         if _is_family_keyed(families):
             msg = (
@@ -171,13 +159,13 @@ def resolve_language(
             msg = (
                 f"[ci].versions pins {len(candidates)} versions ({', '.join(candidates)}), "
                 f"but repository-type '{cfg.project.repository_type}' resolves as an app, "
-                f"which builds exactly one version. Fix: keep one entry in [ci].versions, "
-                f"or remove the list to follow the newest window version. A library is a "
-                f"repo that {REPOSITORY_TYPE_DEFINITIONS['library']}"
+                f"which builds exactly one version. Fix: pin a single version (keep one "
+                f"entry in [ci].versions, or remove the list to follow the newest window "
+                f"version). If this repo really is a library, set "
+                f'[project].repository-type = "library" instead: a library is a repo that '
+                f"{REPOSITORY_TYPE_DEFINITIONS['library']}"
             )
-            if strict_app_pins:
-                raise ResolutionError(msg)
-            warnings.append(msg)
+            raise ResolutionError(msg)
 
     extension = EXTENSIONS.get(language)
     if extension is not None:
@@ -218,7 +206,6 @@ def resolve_language(
         primary=primary,
         container_tags={token: tags[token] for token in resolved},
         container_suffixes={token: suffixes[token] for token in resolved},
-        warnings=tuple(warnings),
     )
 
 
@@ -228,7 +215,6 @@ def resolve_config(
     repo_root: Path | None,
     language: str | None = None,
     env: Mapping[str, str] = os.environ,
-    strict_app_pins: bool = STRICT_APP_PINS,
 ) -> Resolution | None:
     """Load the window at *cfg*'s Vergil ref and resolve.
 
@@ -240,7 +226,7 @@ def resolve_config(
     if not lang:
         return None
     window = load_window(cfg.dependencies["vergil"], env=env)
-    return resolve_language(cfg, window, lang, repo_root=repo_root, strict_app_pins=strict_app_pins)
+    return resolve_language(cfg, window, lang, repo_root=repo_root)
 
 
 def resolve_repo(

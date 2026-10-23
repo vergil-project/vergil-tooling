@@ -110,9 +110,10 @@ def test_python_packaged_pin_without_runtime_fails_loud() -> None:
         _resolve(_cfg(versions=["3.13"]))
 
 
-def test_python_packaged_app_multi_pin_keeps_newest_with_runtime() -> None:
-    result = _resolve(_cfg(versions=["3.15", "3.14", "3.13"]))
-    assert result.versions == ("3.14",)
+def test_python_packaged_app_multi_pin_is_fatal_before_the_extension() -> None:
+    # An app may pin only one version, so the extension never sees a list.
+    with pytest.raises(ResolutionError, match="builds exactly one version"):
+        _resolve(_cfg(versions=["3.15", "3.14", "3.13"]))
 
 
 def test_python_packaged_library_keeps_every_version() -> None:
@@ -310,6 +311,13 @@ def test_container_env_sets_uv_python_and_pins_the_source() -> None:
         "UV_PYTHON_PREFERENCE": "only-system",
     }
     assert container_env(None) == {}
+
+
+def test_source_env_pins_only_the_interpreter_source() -> None:
+    # vergil-tooling#3414: a docs build resolves no version, so it takes the
+    # source pin alone; container_env is that pin plus UV_PYTHON.
+    assert py_ext.source_env() == {"UV_PYTHON_PREFERENCE": "only-system"}
+    assert py_ext.container_env("3.15") == {"UV_PYTHON": "3.15", **py_ext.source_env()}
 
 
 def test_container_env_empty_for_a_language_without_a_hook() -> None:

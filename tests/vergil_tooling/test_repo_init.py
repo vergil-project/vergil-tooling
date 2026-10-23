@@ -991,23 +991,24 @@ class TestResolveVersions:
         with pytest.raises(SystemExit, match="cpp must pin"):
             _resolved("cpp")
 
-    def test_warning_is_printed(self, capsys: pytest.CaptureFixture[str]) -> None:
-        toml = (
-            "[project]\n"
-            'repository-type = "application"\n'
-            'versioning-scheme = "semver"\n'
-            'branching-model = "library-release"\n'
-            'release-model = "tagged-release"\n'
-            'primary-language = "python"\n'
-            "[ci]\n"
-            'versions = ["3.13", "3.14"]\n'
-            "[dependencies]\n"
-            'vergil = "v2.1"\n'
-        )
-        resolution = _resolve_versions(toml)
-        assert resolution is not None
-        assert resolution.versions == ("3.14", "3.13")
-        assert "WARNING: [ci].versions pins 2 versions" in capsys.readouterr().err
+    _APP_MULTI_PIN = (
+        "[project]\n"
+        'repository-type = "application"\n'
+        'versioning-scheme = "semver"\n'
+        'branching-model = "library-release"\n'
+        'release-model = "tagged-release"\n'
+        'primary-language = "python"\n'
+        "[ci]\n"
+        'versions = ["3.13", "3.14"]\n'
+        "[dependencies]\n"
+        'vergil = "v2.1"\n'
+    )
+
+    def test_app_multi_pin_stops_the_wizard(self) -> None:
+        with pytest.raises(
+            SystemExit, match=r"error: \[ci\]\.versions pins 2 versions .*pin a single version"
+        ):
+            _resolve_versions(self._APP_MULTI_PIN)
 
 
 class TestRenderCdWorkflow:
@@ -1567,7 +1568,7 @@ class TestStepGenerateConfig:
         ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
         ctx.work_dir = tmp_path
         ctx.non_interactive = True
-        ctx.opt_repository_type = "tooling"
+        ctx.opt_repository_type = "library"
         ctx.opt_primary_language = "python"
         ctx.opt_branching_model = "library-release"
         ctx.opt_versioning_scheme = "semver"
@@ -1589,7 +1590,7 @@ class TestStepGenerateConfig:
         ):
             step_generate_config(ctx)
 
-        assert ctx.repository_type == "tooling"
+        assert ctx.repository_type == "library"
         assert ctx.primary_language == "python"
         assert ctx.branching_model == "library-release"
         assert ctx.versioning_scheme == "semver"
@@ -1967,6 +1968,14 @@ class TestLoadExistingConfig:
         result = _load_existing_config(tmp_path)
         assert result is not None
         assert result["project"]["repository-type"] == "tooling"
+
+    def test_malformed_toml_fails_loudly(self, tmp_path: Path) -> None:
+        # #3451: the scaffolded dependabot.yml / .gitignore follow the language
+        # read from here, so an unreadable vergil.toml must stop repo-init, not
+        # fall back to a language-less default.
+        (tmp_path / "vergil.toml").write_text("not = [valid toml")
+        with pytest.raises(tomllib.TOMLDecodeError):
+            _load_existing_config(tmp_path)
 
 
 class TestRemoteBranchExists:

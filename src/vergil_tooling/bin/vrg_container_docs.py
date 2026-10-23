@@ -15,6 +15,7 @@ from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.config import container_env_prefixes
 from vergil_tooling.lib.container import build_container_args, detect_runtime
 from vergil_tooling.lib.process import exec_replace
+from vergil_tooling.lib.versions.extensions.python import source_env
 
 _VALID_PREFIXES = {"dev", "prod"}
 
@@ -80,8 +81,15 @@ def main(argv: list[str] | None = None) -> int:
     image = _docs_image(prefix)
 
     container_cmd = mkdocs_cmd
+    docs_env = dict(_DOCS_ENV)
     if (repo_root / "pyproject.toml").is_file():
         container_cmd = f"uv sync --group docs && uv run {mkdocs_cmd}"
+        # Pin uv to the docs image's own Python, as the CI docs jobs do
+        # (vergil-actions#1002), so a repo's python-preference cannot make uv
+        # fetch a managed interpreter. The docs build resolves no version, so
+        # only the source is set. No fallback: if the image's Python misses
+        # requires-python, uv fails loudly (vergil-tooling#3414).
+        docs_env.update(source_env())
 
     env_prefixes = container_env_prefixes(repo_root)
     container_args = build_container_args(
@@ -90,7 +98,7 @@ def main(argv: list[str] | None = None) -> int:
         ["bash", "-c", container_cmd],
         runtime=runtime,
         env_prefixes=env_prefixes,
-        extra_env=_DOCS_ENV,
+        extra_env=docs_env,
     )
 
     if command == "serve":

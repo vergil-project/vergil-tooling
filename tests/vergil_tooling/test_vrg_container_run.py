@@ -18,9 +18,11 @@ from vergil_tooling.lib.platform_env import Platform
 from vergil_tooling.lib.versions.window import WINDOW_ENV
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
     from pathlib import Path
     from unittest.mock import MagicMock
+
+    from vergil_tooling.lib.versions.resolve import Resolution
 
 
 @pytest.fixture(autouse=True)
@@ -458,13 +460,12 @@ def _write_python_config(root: Path, versions: str) -> None:
     )
 
 
-def _run_resolving(root: Path) -> tuple[int, MagicMock]:
+def _run_resolving(
+    root: Path, resolver: Callable[[Path, str], Resolution | None] = container.repo_resolution
+) -> tuple[int, MagicMock]:
     env = {"GH_TOKEN": "tok", WINDOW_ENV: str(FIXTURE_WINDOW)}
     with (
-        patch(
-            "vergil_tooling.bin.vrg_container_run.repo_resolution",
-            side_effect=container.repo_resolution,
-        ),
+        patch("vergil_tooling.bin.vrg_container_run.repo_resolution", side_effect=resolver),
         patch("vergil_tooling.bin.vrg_container_run.git.repo_root", return_value=root),
         patch("vergil_tooling.bin.vrg_container_run.assert_runtime_available"),
         patch(
@@ -503,13 +504,16 @@ def test_pin_outside_window_stops_the_run(
     assert "DOCKER_DEV_IMAGE" in err
 
 
-def test_resolution_warning_is_printed(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    # An app (repository-type tooling) pinning two versions warns while the
-    # fleet sweep runs, and the run goes ahead on the newest.
+def test_app_multi_pin_stops_the_run(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # An app (repository-type tooling) builds exactly one version, so a list
+    # of two fails loudly instead of picking one.
     _write_python_config(tmp_path, '["3.12", "3.13"]')
-    _rc, mock_cache = _run_resolving(tmp_path)
-    assert mock_cache.call_args[0][2] == "ghcr.io/vergil-project/prod-python:3.13"
-    assert "WARNING: [ci].versions pins 2 versions" in capsys.readouterr().err
+    rc, mock_cache = _run_resolving(tmp_path)
+    assert rc == 1
+    mock_cache.assert_not_called()
+    err = capsys.readouterr().err
+    assert "error: [ci].versions pins 2 versions (3.13, 3.12)" in err
+    assert "pin a single version" in err
 
 
 # -- validation-command override ([validation] in vergil.toml) ----------------

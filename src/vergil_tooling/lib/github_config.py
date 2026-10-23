@@ -408,13 +408,21 @@ def desired_ci_gates_ruleset(
 # vergil-project/.github#338).
 
 _CI_JOB_RE = re.compile(r"^ {2}([a-z][a-z0-9_-]*):\s*$")
-_CI_USES_RE = re.compile(r"^ {4}uses:\s+\S+/([a-z0-9-]+\.yml)@")
+# A reusable-workflow call is either remote (``<owner>/<repo>/.github/workflows/
+# <name>.yml@<ref>``) or local (``./.github/workflows/<name>.yml``, no ``@<ref>``
+# — how vergil-actions dogfoods its own reusable workflows, issue #3454). Both
+# map to the same ``<name>.yml``, so a local call is exactly as producible as the
+# equivalent remote one.
+_CI_USES_RE = re.compile(
+    r"^ {4}uses:\s+(?:\./\.github/workflows/([a-z0-9-]+\.yml)\s*$|\S+/([a-z0-9-]+\.yml)@)"
+)
 
 
 def _ci_caller_jobs(ci_workflow_yaml: str) -> list[tuple[str, str]]:
     """Parse a generated ci.yml into ``(caller_job, reusable_workflow_file)`` pairs.
 
-    Only jobs that delegate to a reusable workflow via ``uses:`` are returned.
+    Only jobs that delegate to a reusable workflow via ``uses:`` (remote or
+    local) are returned.
     The check-run context a reusable-workflow job produces is
     ``<caller_job> / <reusable job name>``, so the caller job id is the first
     segment of every context that job emits.
@@ -428,7 +436,7 @@ def _ci_caller_jobs(ci_workflow_yaml: str) -> list[tuple[str, str]]:
             continue
         uses = _CI_USES_RE.match(line)
         if uses and current is not None:
-            pairs.append((current, uses.group(1)))
+            pairs.append((current, uses.group(1) or uses.group(2)))
             current = None
     return pairs
 

@@ -40,9 +40,6 @@ def main(argv: list[str] | None = None) -> int:
     except (FileNotFoundError, ConfigError, VersionsError) as exc:
         print(f"vrg-ci-resolve: error: {exc}", file=sys.stderr)
         return 1
-    for warning in resolution.warnings if resolution else ():
-        prefix = "::warning::" if args.format == "github-output" else "warning: "
-        print(f"{prefix}{warning}", file=sys.stderr)
     print(_render(ci_outputs(resolution), args.format))
     return 0
 

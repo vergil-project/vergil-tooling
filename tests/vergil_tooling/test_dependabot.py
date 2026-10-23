@@ -7,6 +7,17 @@ from pathlib import Path
 import pytest
 
 from vergil_tooling.lib import dependabot
+from vergil_tooling.lib.config import ConfigError
+
+# A ``[package]`` overlay that fails to load because no ``uv.lock`` sits beside
+# the ``vergil.toml`` it is appended to (the #3451 repro).
+PACKAGE_PYTHON_NO_LOCK = """
+[package]
+builder = "python"
+vendor = "vergil"
+summary = "test package"
+smoke = "true"
+"""
 
 _PYTHON_CANONICAL = """\
 # Managed by vergil-tooling (epic vergil-project/.github#420). Do not edit.
@@ -212,9 +223,20 @@ def test_resolve_language_undeclared(tmp_path: Path) -> None:
     assert dependabot.resolve_language(tmp_path) is None
 
 
-def test_resolve_language_config_error(tmp_path: Path) -> None:
+def test_resolve_language_config_error_propagates(tmp_path: Path) -> None:
+    """A vergil.toml that fails to load is loud, never an actions-only ``None`` (#3451)."""
     (tmp_path / "vergil.toml").write_text("not = [valid toml", encoding="utf-8")
-    assert dependabot.resolve_language(tmp_path) is None
+    with pytest.raises(ConfigError, match="not valid TOML"):
+        dependabot.resolve_language(tmp_path)
+
+
+def test_resolve_language_package_overlay_error_propagates(tmp_path: Path) -> None:
+    """The #3451 repro: ``builder = "python"`` with no ``uv.lock`` must not drop ``uv``."""
+    _write_toml(tmp_path, "python")
+    with (tmp_path / "vergil.toml").open("a", encoding="utf-8") as f:
+        f.write(PACKAGE_PYTHON_NO_LOCK)
+    with pytest.raises(ConfigError, match="requires a uv.lock"):
+        dependabot.resolve_language(tmp_path)
 
 
 def test_resolve_language_no_config(tmp_path: Path) -> None:

@@ -1,16 +1,19 @@
 """The ``python`` builder (spec §6.1).
 
-Builds a Python product as a venv on the pinned ``vergil-python`` runtime, from
-``uv.lock`` only. It runs as root in a clean container of the build cell's OS:
+Builds a Python product as a venv on a ``vergil-python`` runtime, from
+``uv.lock`` only. The runtime's ``x.y`` series is derived from the resolved
+version, or taken from an exact-patch ``[package.python].runtime`` pin
+(vergil-tooling#3455). It runs as root in a clean container of the build
+cell's OS:
 
 1. Trust the **vergil** package repository (the runtime always comes from the
-   vergil org, whatever the product's vendor — D7) and install
-   ``vergil-python<runtime>`` the way consumers do: apt in the shared Ubuntu
+   vergil org, whatever the product's vendor — D7) and install the per-series
+   ``vergil-python<x.y>`` the way consumers do: apt in the shared Ubuntu
    24.04 cell or a ``native`` Ubuntu cell, dnf in a ``native`` RHEL cell. The
-   installed version (the PBS build) becomes the package's runtime dependency
-   floor.
+   installed version (``<cpython>+<pbs_tag>``) becomes the package's runtime
+   dependency floor. With a pin, its CPython part must equal the pinned patch.
 2. Create the venv at its **final** path, ``/opt/<vendor>/<name>/venv`` (venvs
-   are not relocatable), from ``/opt/vergil/python/<runtime>/bin/python<X.Y>``.
+   are not relocatable), from ``/opt/vergil/python/<x.y>/bin/python<x.y>``.
 3. ``uv sync --frozen --no-dev --no-editable --compile-bytecode`` into it.
 4. Copy the product tree into the staging root and add ``/usr/bin`` shims for
    ``[project.scripts]`` (or the ``[package.python].commands`` subset).
@@ -67,15 +70,39 @@ def _run(
     )
 
 
-def runtime_dir(vendor: str, runtime: str) -> str:
-    """The install prefix of the ``vergil-python<runtime>`` package (spec §6.3)."""
-    return f"/opt/{vendor}/python/{runtime}"
+def runtime_package(series: str) -> str:
+    """The per-series runtime package: ``vergil-python<x.y>``, whose patch floats."""
+    return f"vergil-python{series}"
 
 
-def runtime_depends(runtime: str, pbs_version: str) -> dict[str, list[str]]:
+def runtime_dir(vendor: str, series: str) -> str:
+    """The install prefix of the ``vergil-python<x.y>`` package (spec §6.3)."""
+    return f"/opt/{vendor}/python/{series}"
+
+
+def runtime_depends(series: str, pbs_version: str) -> dict[str, list[str]]:
     """The per-format dependency on the runtime the venv was built against."""
-    name = f"vergil-python{runtime}"
+    name = runtime_package(series)
     return {"deb": [f"{name} (>= {pbs_version})"], "rpm": [f"{name} >= {pbs_version}"]}
+
+
+def check_pinned_patch(pin: str, rt_pkg: str, pbs_version: str) -> None:
+    """Fail unless the installed runtime is the CPython patch ``pin`` names.
+
+    ``pbs_version`` is the installed upstream version, ``<cpython>+<pbs_tag>``;
+    its CPython part must equal ``pin`` exactly. The per-series package's patch
+    floats, so a pinned patch the repository no longer serves (or does not yet
+    serve) fails here rather than building on a different CPython.
+    """
+    served = pbs_version.split("+", 1)[0]
+    if served != pin:
+        msg = (
+            f"[package.python].runtime pins CPython {pin}, but the vergil package "
+            f"repository serves {rt_pkg} {pbs_version}. Fix: remove "
+            f"[package.python].runtime so the runtime follows the resolved version, "
+            f"or update the pin to {served}"
+        )
+        raise PackageError(msg)
 
 
 def package_runtime(repo_root: Path) -> str:
@@ -144,7 +171,7 @@ def _install_runtime(fmt: str, rt_pkg: str) -> str:
 
 @register("python")
 def build_python(ctx: BuildContext) -> BuildResult:
-    """Build the product venv on the pinned runtime and stage it with its shims."""
+    """Build the product venv on the vergil-python runtime and stage it with its shims."""
     py = ctx.pkg.python
     if py is None:
         msg = 'builder = "python": [package.python] is required'
@@ -166,7 +193,8 @@ def build_python(ctx: BuildContext) -> BuildResult:
         series = runtime_series(runtime)
     except VersionsError as exc:
         raise PackageError(str(exc)) from exc
-    interpreter = f"{runtime_dir(_RUNTIME_VENDOR, runtime)}/bin/python{series}"
+    rt_pkg = runtime_package(series)
+    interpreter = f"{runtime_dir(_RUNTIME_VENDOR, series)}/bin/python{series}"
     product = Path(_OPT) / ctx.pkg.vendor / ctx.name
     venv = product / "venv"
     if product.exists():
@@ -178,7 +206,9 @@ def build_python(ctx: BuildContext) -> BuildResult:
         repo_setup.bootstrap(
             repo_setup.local_run, orgs.for_vendor(_RUNTIME_VENDOR), fmt, suite, sudo=False
         )
-        pbs_version = _install_runtime(fmt, f"vergil-python{runtime}")
+        pbs_version = _install_runtime(fmt, rt_pkg)
+        if py.runtime is not None:
+            check_pinned_patch(py.runtime, rt_pkg, pbs_version)
         _run("uv", "venv", "--python", interpreter, str(venv))
         sync_env = {
             **os.environ,
@@ -213,4 +243,4 @@ def build_python(ctx: BuildContext) -> BuildResult:
     contents += [
         {"src": f"{final_bin}/{c}", "dst": f"/usr/bin/{c}", "type": "symlink"} for c in commands
     ]
-    return BuildResult(contents=contents, depends=runtime_depends(runtime, pbs_version))
+    return BuildResult(contents=contents, depends=runtime_depends(series, pbs_version))

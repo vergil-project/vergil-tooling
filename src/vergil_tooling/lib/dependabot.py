@@ -23,7 +23,7 @@ from pathlib import Path
 
 import yaml
 
-from vergil_tooling.lib.config import ConfigError, declared_primary_language
+from vergil_tooling.lib.config import declared_primary_language
 
 DEPENDABOT_PATH = Path(".github/dependabot.yml")
 
@@ -75,15 +75,14 @@ def render(lang: str | None) -> str:
 def resolve_language(repo_root: Path) -> str | None:
     """Return the repo's asserted ``[project].primary-language``, or ``None``.
 
-    Mirrors :func:`vergil_tooling.lib.repo_config._gitignore_language`: an
-    absent or unreadable config resolves to ``None`` (actions-only render).
-    Unmapped languages are returned unchanged; :func:`render` maps them to the
-    actions-only file.
+    An absent ``vergil.toml`` or an undeclared language resolves to ``None``
+    (the actions-only render). A config that fails to load raises
+    :class:`~vergil_tooling.lib.config.ConfigError`: rendering it as
+    actions-only would silently drop the language's ecosystem (#3451), so every
+    caller must surface the error. Unmapped languages are returned unchanged;
+    :func:`render` maps them to the actions-only file.
     """
-    try:
-        return declared_primary_language(repo_root)
-    except ConfigError:
-        return None
+    return declared_primary_language(repo_root)
 
 
 def check(text: str | None, lang: str | None) -> list[str]:

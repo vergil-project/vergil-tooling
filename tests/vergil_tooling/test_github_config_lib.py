@@ -716,6 +716,142 @@ def test_assert_ci_gates_producible_no_ci_gates_ruleset_is_a_no_op() -> None:
     assert_ci_gates_producible(_desired_with([]), "", ghas=True, source="ci.yml")
 
 
+# -- Local reusable-workflow calls (``uses: ./.github/workflows/...``, #3454)
+
+
+def _local_ci_yaml(*, jobs: dict[str, str]) -> str:
+    """`_ci_yaml`, but each job calls its reusable workflow by local path.
+
+    vergil-actions dogfoods its own reusable workflows this way
+    (``uses: ./.github/workflows/<name>.yml``, no ``@<ref>``) — issue #3454.
+    """
+    lines = ["name: CI\n", "on:\n", "  pull_request:\n", "jobs:\n"]
+    for job, reusable in jobs.items():
+        lines.append(f"  {job}:\n")
+        lines.append(f"    uses: ./.github/workflows/{reusable}\n")
+    return "".join(lines)
+
+
+# vergil-actions' real ``.github/workflows/ci.yml`` (develop), verbatim: every
+# job calls its reusable workflow by local path (issue #3454).
+_VERGIL_ACTIONS_CI_YAML = """\
+name: CI
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docs:
+    uses: ./.github/workflows/ci-docs.yml
+
+  quality:
+    uses: ./.github/workflows/ci-quality.yml
+    with:
+      language: shell
+      container-prefix: dev
+      container-suffix: base
+
+  security:
+    uses: ./.github/workflows/ci-security.yml
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    with:
+      language: shell
+      run-codeql: false
+      container-prefix: dev
+      container-suffix: base
+
+  version:
+    uses: ./.github/workflows/ci-version-bump.yml
+    with:
+      language: shell
+      container-prefix: dev
+      container-suffix: base
+"""
+
+
+def test_local_reusable_workflow_calls_produce_same_contexts_as_remote() -> None:
+    """A ci.yml calling its reusable workflows by local path is exactly as
+    producible as the equivalent remote-call ci.yml (issue #3454)."""
+    contexts = [
+        "Semgrep OSS",
+        "Trivy",
+        "CodeQL",
+        "docs / docs",
+        "quality / common",
+        "quality / evidence",
+        "quality / lint / 3.14",
+        "security / semgrep",
+        "security / trivy",
+        "security / codeql",
+        "audit / evidence",
+        "audit / dependencies / 3.14",
+        "test / evidence",
+        "test / unit / 3.14",
+        "test / integration / 3.14",
+        "version / version-bump",
+    ]
+    for ghas, expected in (
+        (True, ["test / integration / 3.14"]),
+        (False, ["CodeQL", "Semgrep OSS", "Trivy", "test / integration / 3.14"]),
+    ):
+        local = unproducible_ci_yaml_contexts(
+            _local_ci_yaml(jobs=_FULL_CI_JOBS), contexts, ghas=ghas
+        )
+        remote = unproducible_ci_yaml_contexts(_ci_yaml(jobs=_FULL_CI_JOBS), contexts, ghas=ghas)
+        assert local == remote == expected
+
+
+def test_vergil_actions_real_ci_yaml_passes_the_guard() -> None:
+    """vergil-actions' committed ci.yml emits every context its desired CI-gates
+    ruleset requires — the exact set `apply` falsely refused (issue #3454)."""
+    ruleset = desired_ci_gates_ruleset(_project(language="shell"), _ci(), ghas=True, docs=True)
+    assert sorted(required_status_contexts(ruleset)) == [
+        "Semgrep OSS",
+        "Trivy",
+        "docs / docs",
+        "quality / common",
+        "security / semgrep",
+        "security / trivy",
+        "version / version-bump",
+    ]
+    assert_ci_gates_producible(
+        _desired_with([ruleset]),
+        _VERGIL_ACTIONS_CI_YAML,
+        ghas=True,
+        source="vergil-project/vergil-actions@develop:.github/workflows/ci.yml",
+    )
+
+
+def test_vergil_actions_real_ci_yaml_still_refuses_unproducible_context() -> None:
+    """Local calls widen nothing: a context no local job emits is still refused
+    (vergil-actions has no test job, so `test / evidence` cannot report)."""
+    missing = unproducible_ci_yaml_contexts(
+        _VERGIL_ACTIONS_CI_YAML, ["docs / docs", "test / evidence"], ghas=True
+    )
+    assert missing == ["test / evidence"]
+
+
+def test_local_uses_outside_workflows_dir_is_not_a_reusable_call() -> None:
+    """Only ``./.github/workflows/<name>.yml`` is a local reusable-workflow call;
+    any other local path contributes nothing to the producible set."""
+    ci_yaml = "jobs:\n  quality:\n    uses: ./actions/ci-quality.yml\n"
+    assert unproducible_ci_yaml_contexts(ci_yaml, ["quality / common"], ghas=True) == [
+        "quality / common"
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Producibility cross-check in the live audit — set-based path
 # (epic vergil-project/.github#338, Task 2)

@@ -159,8 +159,6 @@ def main(argv: list[str] | None = None) -> int:
             print(f"error: {exc}", file=sys.stderr)
             print("(set DOCKER_DEV_IMAGE to choose the image explicitly)", file=sys.stderr)
             return 1
-        for warning in resolution.warnings if resolution else ():
-            print(f"WARNING: {warning}", file=sys.stderr)
         base = default_image(resolution, fallback=True, prefix=prefix)
         # The cache build's warmup runs with the same env as the run below, and
         # the env is part of the cache key (#3421).

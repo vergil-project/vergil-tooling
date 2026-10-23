@@ -6,7 +6,10 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import pytest
+
 from vergil_tooling.lib import gitignore, repo_config
+from vergil_tooling.lib.config import ConfigError
 from vergil_tooling.lib.repo_config import audit_local_config
 
 if TYPE_CHECKING:
@@ -482,6 +485,17 @@ class TestIntegration:
         diff = audit_local_config(tmp_path)
         assert diff.is_compliant(), [f"{i.field}: {i.actual}" for i in diff.items]
 
+    def test_unreadable_config_fails_gitignore_explicitly(self, tmp_path: Path) -> None:
+        # #3451: the aggregate audit names the config failure on the gitignore
+        # row too, rather than judging the fence against a silent base-only.
+        _write_compliant_repo(tmp_path)
+        (tmp_path / "vergil.toml").write_text("not = [valid toml")
+        diff = audit_local_config(tmp_path)
+        assert not diff.is_compliant()
+        rows = [i for i in diff.items if i.field == "local.gitignore"]
+        assert len(rows) == 1
+        assert "cannot resolve the fence language" in str(rows[0].actual)
+
     def test_missing_ops_yml_makes_repo_non_compliant(self, tmp_path: Path) -> None:
         # Fleet-visible signal (epic #338, Task 12): a missing ops.yml is a
         # first-class non-compliance surfaced by the top-level audit the fleet
@@ -761,6 +775,39 @@ class TestCheckGitignore:
         repo_config._check_gitignore(tmp_path, items)
         assert items, "an absent .gitignore has no fence and must fail"
         assert {i.field for i in items} == {"local.gitignore"}
+
+    def test_unreadable_config_is_an_explicit_failure(self, tmp_path: Path) -> None:
+        # #3451: a vergil.toml that fails to load must not resolve to base-only
+        # and pass a base-only fence; the audit names the config failure instead.
+        (tmp_path / "vergil.toml").write_text("not = [valid toml")
+        _write_gitignore(tmp_path / ".gitignore", gitignore.render_block(None))
+        items: list = []
+        repo_config._check_gitignore(tmp_path, items)
+        assert len(items) == 1
+        assert items[0].field == "local.gitignore"
+        assert items[0].expected == "resolvable [project].primary-language"
+        assert items[0].actual.startswith("cannot resolve the fence language: ")
+        assert "not valid TOML" in items[0].actual
+
+    def test_absent_config_is_base_only(self, tmp_path: Path) -> None:
+        _write_gitignore(tmp_path / ".gitignore", gitignore.render_block(None))
+        items: list = []
+        repo_config._check_gitignore(tmp_path, items)
+        assert items == []
+
+
+class TestGitignoreLanguage:
+    def test_config_error_propagates(self, tmp_path: Path) -> None:
+        (tmp_path / "vergil.toml").write_text("not = [valid toml")
+        with pytest.raises(ConfigError, match="not valid TOML"):
+            repo_config._gitignore_language(tmp_path)
+
+    def test_absent_config_is_none(self, tmp_path: Path) -> None:
+        assert repo_config._gitignore_language(tmp_path) is None
+
+    def test_undeclared_language_is_none(self, tmp_path: Path) -> None:
+        (tmp_path / "vergil.toml").write_text(_VERGIL_TOML_NO_LANG)
+        assert repo_config._gitignore_language(tmp_path) is None
 
 
 _WIRED = (
