@@ -8,9 +8,11 @@ version. ``normalize`` rewrites drifting refs; ``bump`` first rewrites the
 source of truth, then normalizes. Refs are normalized in workflows and in every
 composite ``action.yml``/``action.yaml``.
 
-Either way, a ``[package.python] runtime`` pin is bumped to the newest patch on
-its minor line that every build and install-test index serves (spec §8.2); a
-newer served minor is reported as held back, never applied.
+Either way, a ``[package.python] runtime`` pin (``x.y.z``) is bumped to the
+CPython patch its per-series ``vergil-python<x.y>`` package serves on every
+build and install-test index (spec §8.2, vergil-tooling#3456). The pin never
+leaves its series: a newer served series is reported as held back, never
+applied.
 """
 
 from __future__ import annotations
@@ -32,12 +34,14 @@ from vergil_tooling.lib.vergil_refs import (
     format_version,
     read_source_version,
 )
+from vergil_tooling.lib.versions.extensions.python import runtime_series
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
     from pathlib import Path
 
     from vergil_tooling.lib.update_deps.context import UpdateDepsContext
+    from vergil_tooling.lib.update_deps.vergil_index import ServedRuntime
 
 # Re-exported from vergil_refs for back-compatibility with existing importers.
 __all__ = [
@@ -64,7 +68,7 @@ def set_source_version(base: Path, target: str) -> bool:
 _SKIP_DIRS = frozenset({".git", ".venv", ".worktrees", "node_modules", ".tox"})
 _ACTION_FILES = frozenset({"action.yml", "action.yaml"})
 _RUNTIME_LINE_RE = r'^(runtime\s*=\s*")({old})(")'
-_MINOR_NOTE = "[package.python] runtime: a new minor is a judgement call"
+_SERIES_NOTE = "[package.python] runtime: a new series is a reviewed change, never applied"
 
 
 def _ref_files(base: Path) -> Iterator[Path]:
@@ -101,11 +105,16 @@ def _declared_runtime(text: str) -> str | None:
     return runtime if isinstance(runtime, str) else None
 
 
-def bump_runtime(base: Path, served: set[str]) -> tuple[str | None, HeldBack | None]:
-    """Bump ``[package.python] runtime`` to the newest served patch; report a newer minor.
+def _patch_key(v: str) -> tuple[int, ...]:
+    return tuple(int(p) for p in v.split("."))
+
+
+def bump_runtime(base: Path, served: ServedRuntime) -> tuple[str | None, HeldBack | None]:
+    """Bump ``[package.python] runtime`` to the served patch; report a newer series.
 
     Returns the new runtime (``None`` if unchanged) and the held-back entry for a
-    newer served minor (``None`` if there is none).
+    newer served series (``None`` if there is none). A served patch on another
+    series, or older than the pin, fails loud rather than moving the pin.
     """
     path = base / "vergil.toml"
     text = path.read_text()
@@ -113,18 +122,33 @@ def bump_runtime(base: Path, served: set[str]) -> tuple[str | None, HeldBack | N
     if current is None:
         return None, None
     entry = None
-    minor = vergil_index.newer_minor(current, served)
-    if minor is not None:
+    if served.newer_series is not None:
         entry = HeldBack(
             source="vergil",
             name="vergil-python",
             current=current,
-            latest=minor,
-            note=_MINOR_NOTE,
+            latest=served.newer_series,
+            note=_SERIES_NOTE,
         )
-    patch = vergil_index.newest_patch(current, served)
-    if patch is None:
+    patch = served.patch
+    series = runtime_series(current)
+    if runtime_series(patch) != series:
+        msg = (
+            f"vergil-python{series} serves CPython {patch}, which is not on the pin's "
+            f"series {series}; refusing to move [package.python] runtime {current} "
+            f"across series."
+        )
+        raise UpdateDepsError(phase="update", command="bump_runtime", message=msg)
+    if patch == current:
         return None, entry
+    if _patch_key(patch) < _patch_key(current):
+        msg = (
+            f"[package.python] runtime pins CPython {current}, but vergil-python{series} "
+            f"serves the older {patch}, so the package build would fail. Refusing to "
+            f"downgrade the pin; set it to {patch} by hand, or remove it so the runtime "
+            f"follows the resolved version."
+        )
+        raise UpdateDepsError(phase="update", command="bump_runtime", message=msg)
     pattern = re.compile(_RUNTIME_LINE_RE.format(old=re.escape(current)), re.MULTILINE)
     new_text, count = pattern.subn(lambda m: m.group(1) + patch + m.group(3), text)
     if count != 1:
@@ -170,9 +194,9 @@ class VergilUpdater:
 
     def __init__(
         self,
-        served_runtimes: Callable[[Path], set[str]] = vergil_index.served_runtimes_for,
+        served_runtime: Callable[[Path], ServedRuntime] = vergil_index.served_runtime_for,
     ) -> None:
-        self._served_runtimes = served_runtimes
+        self._served_runtime = served_runtime
 
     def applies(self, ctx: UpdateDepsContext) -> bool:
         return (_base(ctx) / "vergil.toml").is_file()
@@ -181,7 +205,7 @@ class VergilUpdater:
         """Bump the runtime pin from the live index; never query it without a pin."""
         if _declared_runtime((base / "vergil.toml").read_text()) is None:
             return None, []
-        new, entry = bump_runtime(base, self._served_runtimes(base))
+        new, entry = bump_runtime(base, self._served_runtime(base))
         return new, [entry] if entry is not None else []
 
     def apply(self, ctx: UpdateDepsContext) -> UpdateResult:

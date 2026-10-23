@@ -190,30 +190,42 @@ def test_rpm_has_repomd_without_primary_is_an_error() -> None:
         package_index.rpm_has("https://b", "el9", "x86_64", "t", "1", "1", lambda _u: repomd)
 
 
-# -- deb_package_names / rpm_package_names ----------------------------------
+# -- deb_package_versions / rpm_package_versions ----------------------------
 
 
-def test_deb_package_names_lists_every_package() -> None:
-    text = b"Package: a\nVersion: 1\n Continued: x\n\nPackage: b\nVersion: 2\n\nVersion: 3\n"
+def test_deb_package_versions_maps_names_to_upstream_versions() -> None:
+    text = (
+        b"Package: a\nVersion: 1.0+2-1\n Continued: x\n\n"
+        b"Package: a\nVersion: 1.1+3-1~noble\n\n"
+        b"Package: b\nVersion: 2\n\n"
+        b"Package: c\n\n"
+        b"Version: 3\n"
+    )
     seen: list[str] = []
 
     def fetch(url: str) -> bytes:
         seen.append(url)
         return text
 
-    assert package_index.deb_package_names("https://x", "noble", "amd64", fetch) == {"a", "b"}
+    assert package_index.deb_package_versions("https://x", "noble", "amd64", fetch) == {
+        "a": {"1.0+2", "1.1+3"},
+        "b": {"2"},
+    }
     assert seen == ["https://x/deb/dists/noble/main/binary-amd64/Packages"]
 
 
-def test_deb_package_names_empty_index() -> None:
-    assert package_index.deb_package_names("https://x", "noble", "amd64", lambda _u: b"") == set()
+def test_deb_package_versions_empty_index() -> None:
+    assert package_index.deb_package_versions("https://x", "noble", "amd64", lambda _u: b"") == {}
 
 
-def test_rpm_package_names_lists_every_package() -> None:
+def test_rpm_package_versions_maps_names_to_versions() -> None:
     primary = gzip.compress(
         b'<metadata xmlns="http://linux.duke.edu/metadata/common">'
         b'<package><name>a</name><version ver="1" rel="1"/></package>'
+        b'<package><name>a</name><version ver="1.1" rel="1"/></package>'
         b'<package><name>b</name><version ver="2" rel="1"/></package>'
+        b'<package><name>c</name><version rel="1"/></package>'
+        b"<package><name>d</name></package>"
         b'<package><name></name><version ver="3" rel="1"/></package>'
         b'<package><version ver="4" rel="1"/></package></metadata>'
     )
@@ -223,26 +235,29 @@ def test_rpm_package_names_lists_every_package() -> None:
         seen.append(url)
         return _REPOMD if url.endswith("repomd.xml") else primary
 
-    assert package_index.rpm_package_names("https://x", "el9", "x86_64", fetch) == {"a", "b"}
+    assert package_index.rpm_package_versions("https://x", "el9", "x86_64", fetch) == {
+        "a": {"1", "1.1"},
+        "b": {"2"},
+    }
     assert seen == [
         "https://x/rpm/el9/x86_64/repodata/repomd.xml",
         "https://x/rpm/el9/x86_64/repodata/abc-primary.xml.gz",
     ]
 
 
-def test_rpm_package_names_unpublished_repo_is_empty() -> None:
-    assert package_index.rpm_package_names("https://x", "el9", "x86_64", lambda _u: b"") == set()
+def test_rpm_package_versions_unpublished_repo_is_empty() -> None:
+    assert package_index.rpm_package_versions("https://x", "el9", "x86_64", lambda _u: b"") == {}
 
     def fetch(url: str) -> bytes:
         return _REPOMD if url.endswith("repomd.xml") else b""
 
-    assert package_index.rpm_package_names("https://x", "el9", "x86_64", fetch) == set()
+    assert package_index.rpm_package_versions("https://x", "el9", "x86_64", fetch) == {}
 
 
-def test_rpm_package_names_repomd_without_primary_is_an_error() -> None:
+def test_rpm_package_versions_repomd_without_primary_is_an_error() -> None:
     repomd = b'<repomd><data type="primary"/></repomd>'
     with pytest.raises(ReleaseError, match="no primary metadata"):
-        package_index.rpm_package_names("https://x", "el9", "x86_64", lambda _u: repomd)
+        package_index.rpm_package_versions("https://x", "el9", "x86_64", lambda _u: repomd)
 
 
 # -- wait_for_index ---------------------------------------------------------
