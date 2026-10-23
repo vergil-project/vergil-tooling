@@ -156,14 +156,20 @@ def _load_app_config() -> tuple[str, Path] | None:
     return app_id, key_file
 
 
-def detect_org() -> str | None:
-    """Detect the GitHub org from the current repo's git remote."""
+def detect_org(*, cwd: str | Path | None = None) -> str | None:
+    """Detect the GitHub org from a checkout's ``origin`` remote.
+
+    *cwd* names the checkout to read (default: the current directory), so a
+    caller acting on another clone resolves that clone's org rather than the
+    org of the directory it was started in (#3463).
+    """
     try:
         result = subprocess.run(  # noqa: S603
             ["git", "remote", "get-url", "origin"],  # noqa: S607
             capture_output=True,
             text=True,
             check=True,
+            cwd=cwd,
         )
     except (subprocess.CalledProcessError, FileNotFoundError):
         return None
@@ -1651,12 +1657,24 @@ def current_repo(*, cwd: str | Path | None = None) -> str:
     """Return ``OWNER/REPO`` for the git remote of *cwd* (default: the current directory).
 
     *cwd* lets a caller resolve another local checkout (e.g. a fleet sweep's
-    clone) the same way, without changing the process's directory.
+    clone) the same way, without changing the process's directory. The App
+    token is then minted for the clone's own org, read from its ``origin``
+    remote, never the org of the process's directory: another installation's
+    token cannot see the clone's repo when it is private (#3463). A clone
+    whose org cannot be detected raises :class:`ValueError`, and an org with
+    no App installation raises :class:`NoInstallationError`.
     """
     args = ("repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner")
     if cwd is None:
         return read_output(*args)
-    result = _run_with_retry(("gh", *args), check=True, text=True, capture_output=True, cwd=cwd)  # noqa: S607
+    org = detect_org(cwd=cwd)
+    if org is None:
+        msg = f"cannot determine the GitHub owner of {cwd}: no GitHub 'origin' remote"
+        raise ValueError(msg)
+    with target_org(org):
+        result = _run_with_retry(  # noqa: S607
+            ("gh", *args), check=True, text=True, capture_output=True, cwd=cwd
+        )
     return result.stdout.strip()
 
 
