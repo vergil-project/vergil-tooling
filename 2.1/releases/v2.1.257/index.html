@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.258/">
       
       
         <link rel="next" href="../v2.1.256/">
@@ -1319,6 +1319,8 @@
       
         
       
+        
+      
     
     
     
@@ -1374,6 +1376,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.258/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.258
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15807,6 +15837,7 @@ Flip STRICT_APP_PINS to True (epic vergil-project/.github#407, Task 14): an app 
 <li><strong>remove the strict-app-pins switch and resolution warnings (#3452)</strong>
 Task 14 made an app multi-pin fatal, which left the transition machinery dead: the STRICT_APP_PINS constant, the strict_app_pins parameter on resolve, resolve_language and resolve_config, and Resolution.warnings, whose only producer was the app multi-pin warning. Remove them, and the loops in vrg-ci-resolve, vrg-container-run, vrg-validate and repo init that printed those warnings, along with the tests that injected a fake warning to cover them. Floor warnings from check_floors still print in vrg-validate. Behaviour is unchanged: an app multi-pin is fatal everywhere, and the vrg-ci-resolve JSON shape is the same. Ref #3442</li>
 </ul>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.257/v2.1.257-ci-evidence.tar.gz">Download →</a></p>
 
 
 
