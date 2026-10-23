@@ -1,9 +1,10 @@
 """Generate the project roadmap from open finite epics in a repo's resolved epic home.
 
 "Where we're going", derived mechanically from epic metadata — no hand editing.
-``gather`` reads the open ``epic``-labelled issues (skipping perpetual ``ad-hoc`` buckets)
-and rolls up each one's children via :mod:`vergil_tooling.lib.epics`; ``render``
-turns the summaries into markdown grouped by milestone.
+``gather`` reads the open ``epic``-labelled issues (skipping the perpetual standing
+epics: ad-hoc, intake, and planning) and rolls up each one's children via
+:mod:`vergil_tooling.lib.epics`; ``render`` turns the summaries into markdown
+grouped by milestone.
 """
 
 from __future__ import annotations
@@ -47,10 +48,10 @@ def _open_epics(home: str) -> list[Any]:
 
 
 def _is_perpetual(epic: Any) -> bool:
-    """True if the epic is a perpetual ``ad-hoc`` bucket — excluded from the
-    strategic roadmap."""
-    names = {(label or {}).get("name") for label in (epic.get("labels") or [])}
-    return "ad-hoc" in names
+    """True if the epic is a perpetual standing epic (ad-hoc, intake, or
+    planning) — excluded from the strategic roadmap."""
+    names = {str((label or {}).get("name", "")) for label in (epic.get("labels") or [])}
+    return epics.is_standing(names)
 
 
 def gather(org: str | None = None, *, home: str | None = None) -> list[EpicSummary]:

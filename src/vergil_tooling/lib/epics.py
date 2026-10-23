@@ -20,7 +20,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from vergil_tooling.lib import github
+from vergil_tooling.lib import github, release, remote_config
+from vergil_tooling.lib.config import CONFIG_FILE
 from vergil_tooling.lib.labels import ensure_labels
 
 if TYPE_CHECKING:
@@ -305,12 +306,25 @@ def all_blockers_closed(task: IssueRef) -> bool:
     return all(_issue_state(dep) == "CLOSED" for dep in blockers_of(task))
 
 
-def parent_of(task: IssueRef) -> IssueRef | None:
-    """The epic *task* belongs to: native parent preferred, reflink fallback."""
+def native_parent_of(task: IssueRef) -> IssueRef | None:
+    """*task*'s native sub-issue parent, or None — never the body ``Parent:`` line.
+
+    The orphan sweep and the queue checks key off the native link only: a task
+    whose sole link is a body ``Parent:`` reference is not attached on GitHub,
+    so it must read as unparented here (unlike :func:`parent_of`).
+    """
     data: Any = github.graphql(_PARENT_QUERY, id=_node_id(task))
     parent = ((data or {}).get("node") or {}).get("parent")
     if isinstance(parent, dict):
         return _ref_from_node(parent)
+    return None
+
+
+def parent_of(task: IssueRef) -> IssueRef | None:
+    """The epic *task* belongs to: native parent preferred, reflink fallback."""
+    native = native_parent_of(task)
+    if native is not None:
+        return native
     body = github.read_output("api", _issue_endpoint(task), "--jq", ".body")
     match = _PARENT_RE.search(body or "")
     if match:
@@ -386,15 +400,22 @@ def qualify_epic_ref(ref: str, *, repo: str) -> IssueRef:
 
 
 def resolve_epic_ref(ref: str, *, repo: str) -> IssueRef:
-    """Resolve an epic ref for a task in *repo*, accepting the ``"adhoc"`` sentinel.
+    """Resolve an epic ref for a task in *repo*, accepting the standing sentinels.
 
     ``"adhoc"`` ensures *repo*'s ad-hoc epic exists in its epic home — creating
-    it if absent and reusing it otherwise — via :func:`ensure_adhoc_epic`. Any
-    other ref is parsed with :func:`qualify_epic_ref` (a bare ``#N`` reads
-    against *repo*'s epic home) and validated to carry the ``epic`` label.
+    it if absent and reusing it otherwise — via :func:`ensure_adhoc_epic`.
+    ``"intake"`` and ``"planning"`` likewise ensure *repo*'s intake or planning
+    queue epic in its queue home (:func:`ensure_intake_epic`,
+    :func:`ensure_planning_epic`). Any other ref is parsed with
+    :func:`qualify_epic_ref` (a bare ``#N`` reads against *repo*'s epic home)
+    and validated to carry the ``epic`` label.
     """
     if ref == "adhoc":
         return ensure_adhoc_epic(repo)
+    if ref == "intake":
+        return ensure_intake_epic(repo)
+    if ref == "planning":
+        return ensure_planning_epic(repo)
     epic = qualify_epic_ref(ref, repo=repo)
     if not is_epic(epic):
         raise ValueError(f"{epic.slug} is not an epic (missing the 'epic' label)")
@@ -419,30 +440,97 @@ def resolve_epic_home(org: str, target_repo: str) -> str:
     return f"{org}/.github"
 
 
-_ADHOC_EPIC_TITLE_PREFIX = "Epic (ad hoc): "
-_ADHOC_EPIC_LABELS = ("epic", "ad-hoc")
-_ADHOC_ARCHIVE_TITLE_PREFIX = "Archive (ad hoc): "
-_ADHOC_ARCHIVE_LABELS = ("archive", "ad-hoc")
-_ADHOC_EPIC_BODY = (
-    "Perpetual umbrella for ad-hoc work in {repo}. Created and reused "
-    "idempotently; tasks routed to the ad-hoc epic are linked here.\n"
+@dataclass(frozen=True)
+class StandingKind:
+    """One kind of perpetual standing epic: ad-hoc, intake, or planning.
+
+    ``key`` is the discriminating label that, alongside ``epic``, marks a live
+    standing epic of this kind (and, alongside ``archive``, its per-quarter
+    archives). ``body`` is a :meth:`str.format` template taking ``owner`` (the
+    home's owner) and ``name`` (the ``<name>`` in the title); ``archive_body``
+    takes the same plus ``quarter``. Standing epics are never rolled up: they
+    stay open forever (see :func:`rollup`), and their closed children drain into
+    per-quarter archives (see :func:`drain_standing_child`).
+    """
+
+    key: str
+    title_prefix: str
+    labels: tuple[str, str]
+    archive_prefix: str
+    archive_labels: tuple[str, str]
+    body: str
+    archive_body: str
+
+
+ADHOC = StandingKind(
+    key="ad-hoc",
+    title_prefix="Epic (ad hoc): ",
+    labels=("epic", "ad-hoc"),
+    archive_prefix="Archive (ad hoc): ",
+    archive_labels=("archive", "ad-hoc"),
+    body=(
+        "Perpetual umbrella for ad-hoc work in {owner}/{name}. Created and reused "
+        "idempotently; tasks routed to the ad-hoc epic are linked here.\n"
+    ),
+    archive_body="Ad-hoc work in {owner}/{name} finished in {quarter}. Managed automatically.\n",
 )
-# A stamped per-quarter archive: "Archive (ad hoc): <bare> — <YYYY>-Qn". The
-# separator is a space, U+2014 em-dash, space. Matching this distinguishes a
-# terminal archive from the live canonical ad-hoc epic (which has no stamp). A
-# busy quarter overflows GitHub's 100-sub-issue cap into further segments stamped
-# " (N)" for N≥2 (issue #2872); the optional segment group captures that suffix
-# (absent → segment 1, the unsuffixed original form, so existing archives match).
-_ADHOC_ARCHIVE_RE = re.compile(
-    r"^Archive \(ad hoc\): (?P<bare>.+) — (?P<quarter>\d{4}-Q[1-4])(?: \((?P<segment>\d+)\))?$"
+INTAKE = StandingKind(
+    key="intake",
+    title_prefix="Epic (intake): ",
+    labels=("epic", "intake"),
+    archive_prefix="Archive (intake): ",
+    archive_labels=("archive", "intake"),
+    body=(
+        "Perpetual intake queue for {name}: every captured, unreviewed item and "
+        "every orphan the sweep finds. Reviewed oldest first by intake-review.\n"
+    ),
+    archive_body="Intake items for {name} closed in {quarter}. Managed automatically.\n",
 )
+PLANNING = StandingKind(
+    key="planning",
+    title_prefix="Epic (planning): ",
+    labels=("epic", "planning"),
+    archive_prefix="Archive (planning): ",
+    archive_labels=("archive", "planning"),
+    body=(
+        "Perpetual planning queue for {name}: items that need a full epic, each "
+        "tracked through its epic-create session.\n"
+    ),
+    archive_body="Planning items for {name} closed in {quarter}. Managed automatically.\n",
+)
+STANDING_KINDS: tuple[StandingKind, ...] = (ADHOC, INTAKE, PLANNING)
+# The single per-item label on a planning-queue item undergoing epic-create.
+PLANNING_IN_PROGRESS_LABEL = "in-progress"
+
+# A stamped per-quarter archive of each standing kind:
+# "<archive_prefix><name> — <YYYY>-Qn", e.g. "Archive (ad hoc): <bare> — 2026-Q3"
+# or "Archive (intake): <org> — 2026-Q3". The separator is a space, U+2014
+# em-dash, space. Matching this distinguishes a terminal archive from the live
+# canonical standing epic (which has no stamp). A busy quarter overflows GitHub's
+# 100-sub-issue cap into further segments stamped " (N)" for N≥2 (issue #2872);
+# the optional segment group captures that suffix (absent → segment 1, the
+# unsuffixed original form, so existing archives match).
+_ARCHIVE_RES: dict[str, re.Pattern[str]] = {
+    kind.key: re.compile(
+        rf"^{re.escape(kind.archive_prefix)}(?P<name>.+) — "
+        r"(?P<quarter>\d{4}-Q[1-4])(?: \((?P<segment>\d+)\))?$"
+    )
+    for kind in STANDING_KINDS
+}
+
+
+def archive_re(kind: StandingKind) -> re.Pattern[str]:
+    """The stamped per-quarter archive recognizer for *kind* (groups: name, quarter, segment)."""
+    return _ARCHIVE_RES[kind.key]
+
+
 # GitHub rejects a 101st sub-issue, so an archive segment is treated as full at
 # this count and the drain rolls to the next segment. The 5-slot margin below the
 # hard 100 cap absorbs races between concurrent drain runs near the boundary.
 _ADHOC_ARCHIVE_SEGMENT_CAP = 95
 # Legacy pre-rename archive title ("Epic (ad hoc): <bare> — <YYYY>-Qn"), used
 # ONLY by the self-healing creation path and the normalize sweep to find
-# archives still in the old form. Steady-state code keys off _ADHOC_ARCHIVE_RE.
+# archives still in the old form. Steady-state code keys off archive_re(ADHOC).
 _LEGACY_ADHOC_ARCHIVE_RE = re.compile(
     r"^Epic \(ad hoc\): (?P<bare>.+) — (?P<quarter>\d{4}-Q[1-4])$"
 )
@@ -455,12 +543,13 @@ def _find_epic_by_title(
     prefer_oldest: bool = False,
     labels: Sequence[str] = ("epic", "ad-hoc"),
 ) -> IssueRef | None:
-    """Return the open ``ad-hoc`` epic in *home* whose title is exactly *title*.
+    """Return the open issue in *home* carrying *labels* whose title is exactly *title*.
 
-    Shared title search for the ad-hoc epic finders. Scoped to open ``epic`` +
-    ``ad-hoc`` issues in *home*; returns None when absent. On more than one match
-    the default raises (ambiguous — name an explicit ref rather than guess), which
-    is correct for the *live* ad-hoc epic where two rows is real corruption. When
+    Shared title search for the standing-epic and archive finders. Scoped to open
+    issues in *home* carrying every one of *labels* (default ``epic`` +
+    ``ad-hoc``); returns None when absent. On more than one match the default
+    raises (ambiguous — name an explicit ref rather than guess), which is correct
+    for a *live* standing epic where two rows is real corruption. When
     *prefer_oldest* is True the lowest-numbered match is returned instead: archive
     resolution tolerates the transient duplicate archives produced by the
     list-consistency race (#2698) and reuses the oldest.
@@ -487,8 +576,9 @@ def _find_epic_by_title(
             oldest = min(int(r["number"]) for r in rows)
             return IssueRef(owner=owner, repo=home_repo, number=oldest)
         nums = ", ".join(f"#{r['number']}" for r in rows)
+        kind = labels[-1]
         raise ValueError(
-            f"multiple ad-hoc epics titled {title!r} in {home} ({nums}) — pass an explicit --epic"
+            f"multiple {kind} epics titled {title!r} in {home} ({nums}) — pass an explicit --epic"
         )
     if rows:
         return IssueRef(owner=owner, repo=home_repo, number=int(rows[0]["number"]))
@@ -510,34 +600,136 @@ def ensure_adhoc_epic(target_repo: str) -> IssueRef:
     if "/" not in target_repo:
         raise ValueError(f"cannot resolve repo for ad-hoc epic (repo={target_repo!r})")
     owner, bare = target_repo.split("/", 1)
-    home = resolve_epic_home(owner, bare)
-    home_repo = home.split("/", 1)[1]
-    title = f"{_ADHOC_EPIC_TITLE_PREFIX}{bare}"
-    found = _find_epic_by_title(home, title)
+    return ensure_standing_epic(ADHOC, resolve_epic_home(owner, bare), bare)
+
+
+def ensure_standing_epic(kind: StandingKind, home: str, name: str) -> IssueRef:
+    """Return the *kind* standing epic ``<title_prefix><name>`` in *home*, creating it if absent.
+
+    Idempotent: an open issue in *home* carrying ``kind.labels`` with exactly
+    that title is reused; none means ensure the labels exist and create it; two
+    sharing the title is ambiguous and raises rather than guessing.
+    """
+    home_owner, home_repo = home.split("/", 1)
+    title = f"{kind.title_prefix}{name}"
+    found = _find_epic_by_title(home, title, labels=kind.labels)
     if found is not None:
         return found
-    ensure_labels(home, _ADHOC_EPIC_LABELS)
+    ensure_labels(home, kind.labels)
     url = github.create_issue(
         repo=home,
         title=title,
-        body=_ADHOC_EPIC_BODY.format(repo=target_repo),
-        labels=list(_ADHOC_EPIC_LABELS),
+        body=kind.body.format(owner=home_owner, name=name),
+        labels=list(kind.labels),
     )
     number = int(url.rstrip("/").rsplit("/", 1)[-1])
-    return IssueRef(owner=owner, repo=home_repo, number=number)
+    return IssueRef(owner=home_owner, repo=home_repo, number=number)
 
 
-def find_adhoc_epic(target_repo: str) -> IssueRef | None:
-    """Return the live canonical ad-hoc epic for *target_repo*, or None.
+def queue_home(target_repo: str) -> tuple[str, str]:
+    """Map *target_repo* (``"owner/repo"``) to its intake/planning queue home and name.
 
-    Unlike :func:`ensure_adhoc_epic`, this never creates: it is the read-only
+    Returns ``(home, name)``. Queues follow the epic-home rule
+    (:func:`resolve_epic_home`): a repo homed in ``<org>/.github`` (every public
+    repo, and ``.github`` itself) shares the org's queues, named for the org; a
+    self-homed private repo keeps its own queues, named for its bare repo name.
+    """
+    if "/" not in target_repo:
+        raise ValueError(f"cannot resolve repo for queue home (repo={target_repo!r})")
+    owner, bare = target_repo.split("/", 1)
+    home = resolve_epic_home(owner, bare)
+    name = owner if home == f"{owner}/.github" else bare
+    return home, name
+
+
+def ensure_intake_epic(target_repo: str) -> IssueRef:
+    """Return the intake queue epic for *target_repo*'s queue home, creating it if absent."""
+    home, name = queue_home(target_repo)
+    return ensure_standing_epic(INTAKE, home, name)
+
+
+def ensure_planning_epic(target_repo: str) -> IssueRef:
+    """Return the planning queue epic for *target_repo*'s queue home, creating it if absent.
+
+    Also ensures the per-item ``in-progress`` label exists in that home, every
+    time, so ``epic-create`` can apply it in any planning home.
+    """
+    home, name = queue_home(target_repo)
+    epic = ensure_standing_epic(PLANNING, home, name)
+    ensure_labels(home, (PLANNING_IN_PROGRESS_LABEL,))
+    return epic
+
+
+def resolve_orphan_epic(repo: str) -> IssueRef:
+    """The epic an orphaned issue in *repo* is attached to: its intake queue epic."""
+    return ensure_intake_epic(repo)
+
+
+def standing_kind_of(labels: set[str]) -> StandingKind | None:
+    """The :class:`StandingKind` a live standing epic with *labels* is, else None.
+
+    A live standing epic carries ``epic`` plus its kind's key label; an archive
+    (``archive`` + key, no ``epic``) is not a live standing epic.
+    """
+    if "epic" not in labels:
+        return None
+    return next((kind for kind in STANDING_KINDS if kind.key in labels), None)
+
+
+def is_standing(labels: set[str]) -> bool:
+    """True iff *labels* mark a perpetual standing epic (ad-hoc, intake, or planning)."""
+    return standing_kind_of(labels) is not None
+
+
+def queue_kind(epic: IssueRef) -> str | None:
+    """``"intake"`` or ``"planning"`` when *epic* is a live queue epic, else None."""
+    kind = standing_kind_of(_labels(epic))
+    if kind is INTAKE or kind is PLANNING:
+        return kind.key
+    return None
+
+
+def is_legitimate_top_level(labels: set[str], title: str, body: str) -> bool:
+    """True iff an issue may stand without an epic parent.
+
+    The legitimate top-level kinds are epics (``epic``, including the standing
+    epics), per-quarter archives (``archive``), and release tracking issues
+    (:func:`release.is_release_tracking_issue`). Everything else needs a parent.
+    """
+    if "epic" in labels or "archive" in labels:
+        return True
+    return release.is_release_tracking_issue(title, body)
+
+
+def is_managed_repo(repo: str) -> bool:
+    """True iff *repo* (``"owner/repo"``) has ``vergil.toml`` on its default branch.
+
+    A 404 means the file is absent (unmanaged). Any other API error propagates.
+    """
+    try:
+        github.read_json("api", f"repos/{repo}/contents/{CONFIG_FILE}")
+    except github.GitHubAPIError as exc:
+        if remote_config.is_not_found(exc):
+            return False
+        raise
+    return True
+
+
+def find_standing_epic(kind: StandingKind, home: str, name: str) -> IssueRef | None:
+    """Return the live canonical *kind* standing epic ``<title_prefix><name>`` in *home*, or None.
+
+    Unlike :func:`ensure_standing_epic`, this never creates: it is the read-only
     lookup the drain uses to find the epic whose closed children it archives.
     """
+    return _find_epic_by_title(home, f"{kind.title_prefix}{name}", labels=kind.labels)
+
+
+def _adhoc_home(target_repo: str) -> tuple[str, str]:
+    """``(home, bare)`` for *target_repo*'s ad-hoc epic and archives (visibility-resolved)."""
     if "/" not in target_repo:
         raise ValueError(f"cannot resolve repo for ad-hoc epic (repo={target_repo!r})")
     owner, bare = target_repo.split("/", 1)
-    home = resolve_epic_home(owner, bare)
-    return _find_epic_by_title(home, f"{_ADHOC_EPIC_TITLE_PREFIX}{bare}")
+    return resolve_epic_home(owner, bare), bare
 
 
 def _normalize_archive_in_place(ref: IssueRef, new_title: str) -> None:
@@ -564,15 +756,16 @@ def _normalize_archive_in_place(ref: IssueRef, new_title: str) -> None:
     )
 
 
-def _archive_title(bare: str, quarter: str, segment: int) -> str:
-    """Title of *bare*'s ``quarter`` archive segment.
+def archive_title(kind: StandingKind, name: str, quarter: str, segment: int = 1) -> str:
+    """Title of the *kind* standing epic *name*'s ``quarter`` archive segment.
 
+    ``<archive_prefix><name> — <quarter>``, e.g. ``Archive (intake): org — 2026-Q4``.
     Segment 1 is the original unsuffixed form (so archives created before
     segmentation keep their exact title, no migration); segment N≥2 appends
     ``" (N)"`` — the overflow buckets for a quarter past GitHub's 100-sub-issue
     cap (issue #2872).
     """
-    base = f"{_ADHOC_ARCHIVE_TITLE_PREFIX}{bare} — {quarter}"
+    base = f"{kind.archive_prefix}{name} — {quarter}"
     return base if segment <= 1 else f"{base} ({segment})"
 
 
@@ -583,7 +776,7 @@ def _segment_placements(
 
     Fills *start_segment* (already holding *start_occupancy* children), rolling to
     the next segment each time one reaches *cap*. Pure — the read-then-mutate fill
-    core of :func:`apply_adhoc_drain`, split out so the roll logic is testable
+    core of :func:`apply_standing_drain`, split out so the roll logic is testable
     without any GitHub IO.
     """
     placements: list[int] = []
@@ -597,106 +790,112 @@ def _segment_placements(
     return placements
 
 
-def ensure_adhoc_archive(target_repo: str, quarter: str, segment: int = 1) -> IssueRef:
-    """Return *target_repo*'s ``— <quarter>`` archive *segment*, creating it if absent.
+def ensure_standing_archive(
+    kind: StandingKind, home: str, name: str, quarter: str, segment: int = 1
+) -> IssueRef:
+    """Return the *kind* epic *name*'s ``— <quarter>`` archive *segment* in *home*, creating it.
 
-    The archive is the stamped sibling of the live ad-hoc epic — same home,
-    labelled ``archive`` + ``ad-hoc`` — into which closed children of *quarter*
-    are re-parented. *segment* selects the overflow bucket: 1 is the original
-    unsuffixed archive, N≥2 the ``" (N)"``-suffixed spillover for a quarter that
-    exceeds GitHub's 100-sub-issue cap (issue #2872). Self-healing and idempotent:
-    an existing new-form archive is reused; else — **for segment 1 only** — a
-    legacy-form archive (old ``Epic (ad hoc): … — Qn`` title, ``epic`` +
-    ``ad-hoc``) is normalized in place and returned; else a fresh new-form archive
-    is created. This makes creation race-free regardless of whether the bulk
-    normalize sweep has run. Pre-existing duplicate archives (the list-consistency
-    race, #2698) collapse to the oldest.
+    The archive is the stamped sibling of the live standing epic — same home,
+    labelled ``kind.archive_labels`` (``archive`` + the kind's key) — into which
+    closed children of *quarter* are re-parented. *segment* selects the overflow
+    bucket: 1 is the original unsuffixed archive, N≥2 the ``" (N)"``-suffixed
+    spillover for a quarter that exceeds GitHub's 100-sub-issue cap (issue
+    #2872). Self-healing and idempotent: an existing new-form archive is reused;
+    else — **for an ad-hoc segment 1 only** — a legacy-form archive (old
+    ``Epic (ad hoc): … — Qn`` title, ``epic`` + ``ad-hoc``) is normalized in place
+    and returned; else a fresh new-form archive is created. Intake and planning
+    never had a legacy form. Pre-existing duplicate archives (the
+    list-consistency race, #2698) collapse to the oldest.
     """
-    owner, bare = target_repo.split("/", 1)
-    home = resolve_epic_home(owner, bare)
-    home_repo = home.split("/", 1)[1]
-    title = _archive_title(bare, quarter, segment)
-    existing = _find_epic_by_title(home, title, prefer_oldest=True, labels=_ADHOC_ARCHIVE_LABELS)
+    home_owner, home_repo = home.split("/", 1)
+    title = archive_title(kind, name, quarter, segment)
+    existing = _find_epic_by_title(home, title, prefer_oldest=True, labels=kind.archive_labels)
     if existing is not None:
         return existing
-    if segment <= 1:
-        legacy_title = f"{_ADHOC_EPIC_TITLE_PREFIX}{bare} — {quarter}"
+    if kind is ADHOC and segment <= 1:
+        legacy_title = f"{ADHOC.title_prefix}{name} — {quarter}"
         legacy = _find_epic_by_title(home, legacy_title, prefer_oldest=True)
         if legacy is not None:
             _normalize_archive_in_place(legacy, title)
             return legacy
-    ensure_labels(home, _ADHOC_ARCHIVE_LABELS)
+    ensure_labels(home, kind.archive_labels)
     url = github.create_issue(
         repo=home,
         title=title,
-        body=f"Ad-hoc work in {target_repo} finished in {quarter}. Managed automatically.\n",
-        labels=list(_ADHOC_ARCHIVE_LABELS),
+        body=kind.archive_body.format(owner=home_owner, name=name, quarter=quarter),
+        labels=list(kind.archive_labels),
     )
-    return IssueRef(owner=owner, repo=home_repo, number=int(url.rstrip("/").rsplit("/", 1)[-1]))
+    return IssueRef(
+        owner=home_owner, repo=home_repo, number=int(url.rstrip("/").rsplit("/", 1)[-1])
+    )
 
 
-def _adhoc_archive_segments(home: str, bare: str, quarter: str) -> list[tuple[int, IssueRef]]:
-    """Open archive segments for *bare*'s *quarter* in *home*, sorted by segment.
+def _open_standing_archive_rows(kind: StandingKind, home: str) -> list[tuple[int, re.Match[str]]]:
+    """``(number, title-match)`` for every open stamped *kind* archive in *home*.
 
-    Returns ``(segment_number, ref)`` pairs for every open ``archive``-labelled
-    issue whose title matches *bare* + *quarter* (segment absent → 1). Used by the
-    drain to find a quarter's current write head before filling (issue #2872).
+    The one listing both the segment discovery and the past-archive close read,
+    so the two cannot disagree about which issues are *kind* archives.
     """
-    owner, home_repo = home.split("/", 1)
     raw: Any = github.read_json(
         "issue",
         "list",
         "--repo",
         home,
-        *[arg for label in _ADHOC_ARCHIVE_LABELS for arg in ("--label", label)],
+        *[arg for label in kind.archive_labels for arg in ("--label", label)],
         "--state",
         "open",
         "--json",
         "number,title",
     )
-    out: list[tuple[int, IssueRef]] = []
+    pattern = archive_re(kind)
+    out: list[tuple[int, re.Match[str]]] = []
     for r in raw if isinstance(raw, list) else []:
-        m = _ADHOC_ARCHIVE_RE.match(str(r.get("title", ""))) if isinstance(r, dict) else None
-        if m and m.group("bare") == bare and m.group("quarter") == quarter:
+        m = pattern.match(str(r.get("title", ""))) if isinstance(r, dict) else None
+        if m:
+            out.append((int(r["number"]), m))
+    return out
+
+
+def _standing_archive_segments(
+    kind: StandingKind, home: str, name: str, quarter: str
+) -> list[tuple[int, IssueRef]]:
+    """Open *kind* archive segments for *name*'s *quarter* in *home*, sorted by segment.
+
+    Returns ``(segment_number, ref)`` pairs for every open archive whose title
+    matches *name* + *quarter* (segment absent → 1). Used by the drain to find a
+    quarter's current write head before filling (issue #2872).
+    """
+    owner, home_repo = home.split("/", 1)
+    out: list[tuple[int, IssueRef]] = []
+    for number, m in _open_standing_archive_rows(kind, home):
+        if m.group("name") == name and m.group("quarter") == quarter:
             segment = int(m.group("segment")) if m.group("segment") else 1
-            out.append((segment, IssueRef(owner, home_repo, int(r["number"]))))
+            out.append((segment, IssueRef(owner, home_repo, number)))
     return sorted(out, key=lambda pair: pair[0])
 
 
-def list_open_adhoc_archives(home: str) -> list[tuple[IssueRef, str]]:
-    """Open ``ad-hoc`` archive epics in *home* with their ``YYYY-Qn`` quarter.
+def list_open_standing_archives(kind: StandingKind, home: str) -> list[tuple[IssueRef, str]]:
+    """Open *kind* archives in *home* with their ``YYYY-Qn`` quarter.
 
     Only stamped archives (title carrying a ``— YYYY-Qn`` suffix) are returned;
-    the live canonical ad-hoc epic (no stamp) is skipped. Used to find archives
+    the live canonical standing epic (no stamp) is skipped. Used to find archives
     whose quarter is now past and should be closed.
     """
     owner, home_repo = home.split("/", 1)
-    raw: Any = github.read_json(
-        "issue",
-        "list",
-        "--repo",
-        home,
-        *[arg for label in _ADHOC_ARCHIVE_LABELS for arg in ("--label", label)],
-        "--state",
-        "open",
-        "--json",
-        "number,title",
-    )
-    out: list[tuple[IssueRef, str]] = []
-    for r in raw if isinstance(raw, list) else []:
-        m = _ADHOC_ARCHIVE_RE.match(str(r.get("title", ""))) if isinstance(r, dict) else None
-        if m:
-            out.append((IssueRef(owner, home_repo, int(r["number"])), m.group("quarter")))
-    return out
+    return [
+        (IssueRef(owner, home_repo, number), m.group("quarter"))
+        for number, m in _open_standing_archive_rows(kind, home)
+    ]
 
 
 @dataclass(frozen=True)
 class DrainPlan:
-    """A per-repo ad-hoc drain: what to re-parent and what to close.
+    """A per-epic standing drain: what to re-parent and what to close.
 
-    ``live`` is the canonical (unstamped) ad-hoc epic. ``moves`` pairs each
-    closed child with its close-quarter (``YYYY-Qn``) archive bucket. ``close``
-    lists open archive epics whose quarter is now past and should be closed.
+    ``live`` is the canonical (unstamped) standing epic — ad-hoc, intake, or
+    planning. ``moves`` pairs each closed child with its close-quarter
+    (``YYYY-Qn``) archive bucket. ``close`` lists open archives of the same kind
+    whose quarter is now past and should be closed.
     """
 
     live: IssueRef
@@ -704,14 +903,16 @@ class DrainPlan:
     close: list[IssueRef]  # open archives whose quarter is now past
 
 
-def plan_adhoc_drain(target_repo: str, *, now: datetime) -> DrainPlan | None:
-    """Plan *target_repo*'s ad-hoc drain, or None if it has no live ad-hoc epic.
+def plan_standing_drain(
+    kind: StandingKind, home: str, name: str, *, now: datetime
+) -> DrainPlan | None:
+    """Plan the *kind* epic *name*'s drain in *home*, or None if that epic does not exist.
 
     Buckets each closed child of the live epic by its close-quarter and lists the
-    open archive epics whose quarter is strictly before the current quarter (so
-    they are eligible to close). Pure/read-only: no mutation happens here.
+    open *kind* archives in *home* whose quarter is strictly before the current
+    quarter (so they are eligible to close). Pure/read-only: no mutation here.
     """
-    live = find_adhoc_epic(target_repo)
+    live = find_standing_epic(kind, home, name)
     if live is None:
         return None
     moves = [
@@ -719,11 +920,15 @@ def plan_adhoc_drain(target_repo: str, *, now: datetime) -> DrainPlan | None:
         for c in child_states(live)
         if c.state == "CLOSED" and c.closed_at
     ]
-    owner, bare = target_repo.split("/", 1)
-    home = resolve_epic_home(owner, bare)
     cur = current_quarter(now)
-    close = [ref for ref, q in list_open_adhoc_archives(home) if q < cur]
+    close = [ref for ref, q in list_open_standing_archives(kind, home) if q < cur]
     return DrainPlan(live=live, moves=moves, close=close)
+
+
+def plan_adhoc_drain(target_repo: str, *, now: datetime) -> DrainPlan | None:
+    """Plan *target_repo*'s ad-hoc drain, or None if it has no live ad-hoc epic."""
+    home, bare = _adhoc_home(target_repo)
+    return plan_standing_drain(ADHOC, home, bare, now=now)
 
 
 def _archive_child_count(archive: IssueRef) -> int:
@@ -737,40 +942,43 @@ def _archive_child_count(archive: IssueRef) -> int:
     return len(_native_child_states(archive))
 
 
-def _adhoc_archive_head(target_repo: str, quarter: str) -> tuple[int, IssueRef]:
-    """The current write-head segment for (*target_repo*, *quarter*): ``(segment, ref)``.
+def _standing_archive_head(
+    kind: StandingKind, home: str, name: str, quarter: str
+) -> tuple[int, IssueRef]:
+    """The current write-head segment for (*kind*, *home*, *name*, *quarter*): ``(segment, ref)``.
 
     The highest existing archive segment for the quarter, or a freshly ensured
     segment 1 when none exist yet. Shared by the single-child event path
-    (:func:`ensure_writable_adhoc_archive`) and the batch drain
-    (:func:`apply_adhoc_drain`) so both resolve the head identically (issue #2872).
+    (:func:`ensure_writable_standing_archive`) and the batch drain
+    (:func:`apply_standing_drain`) so both resolve the head identically (issue
+    #2872).
     """
-    owner, bare = target_repo.split("/", 1)
-    home = resolve_epic_home(owner, bare)
-    segments = dict(_adhoc_archive_segments(home, bare, quarter))
+    segments = dict(_standing_archive_segments(kind, home, name, quarter))
     if segments:
         head = max(segments)
         return head, segments[head]
-    return 1, ensure_adhoc_archive(target_repo, quarter, segment=1)
+    return 1, ensure_standing_archive(kind, home, name, quarter, segment=1)
 
 
-def ensure_writable_adhoc_archive(target_repo: str, quarter: str) -> IssueRef:
-    """The quarter's archive segment with room for one more child, rolling if full.
+def ensure_writable_standing_archive(
+    kind: StandingKind, home: str, name: str, quarter: str
+) -> IssueRef:
+    """The quarter's *kind* archive segment with room for one more child, rolling if full.
 
-    Single-child entry point (the ``on: issues.closed`` :func:`rollup` path):
-    resolve the write-head segment and, if it has reached
-    :data:`_ADHOC_ARCHIVE_SEGMENT_CAP`, create and return the next segment so the
-    child never lands in a full archive — GitHub rejects a 101st sub-issue (issue
-    #2872). The batch drain does not use this; it fills across segments in one pass
-    via :func:`_segment_placements`.
+    Single-child entry point (the ``on: issues.closed`` :func:`rollup` path via
+    :func:`drain_standing_child`): resolve the write-head segment and, if it has
+    reached :data:`_ADHOC_ARCHIVE_SEGMENT_CAP`, create and return the next segment
+    so the child never lands in a full archive — GitHub rejects a 101st sub-issue
+    (issue #2872). The batch drain does not use this; it fills across segments
+    in one pass via :func:`_segment_placements`.
     """
-    head_segment, head_ref = _adhoc_archive_head(target_repo, quarter)
+    head_segment, head_ref = _standing_archive_head(kind, home, name, quarter)
     if _archive_child_count(head_ref) >= _ADHOC_ARCHIVE_SEGMENT_CAP:
-        return ensure_adhoc_archive(target_repo, quarter, segment=head_segment + 1)
+        return ensure_standing_archive(kind, home, name, quarter, segment=head_segment + 1)
     return head_ref
 
 
-def apply_adhoc_drain(target_repo: str, plan: DrainPlan) -> None:
+def apply_standing_drain(kind: StandingKind, home: str, name: str, plan: DrainPlan) -> None:
     """Execute *plan*: ensure each archive segment, atomically re-parent, close past.
 
     Each closed child is atomically re-parented from the live epic into its
@@ -789,18 +997,19 @@ def apply_adhoc_drain(target_repo: str, plan: DrainPlan) -> None:
     create their own archive before the first became visible (duplicate archives,
     #2698). Caching per (quarter, segment) closes that race.
     """
-    # SIBLING RE-PARENT SITE: rollup() moves single closed children into these same
-    # ad-hoc archives on the on:issues.closed event. Both sites must honour the
+    # SIBLING RE-PARENT SITE: drain_standing_child() (called from rollup()) moves
+    # single closed children into these same archives — ad-hoc, intake, and
+    # planning alike — on the on:issues.closed event. Both sites must honour the
     # per-segment cap; they can't merge (batch vs single-child) but they share
-    # _adhoc_archive_head + _ADHOC_ARCHIVE_SEGMENT_CAP. Change a capacity rule in
-    # those helpers — never open-code a reparent that skips them — and if you
+    # _standing_archive_head + _ADHOC_ARCHIVE_SEGMENT_CAP. Change a capacity rule
+    # in those helpers — never open-code a reparent that skips them — and if you
     # touch how one site fills or rolls segments, make the matching change in the
-    # other. See rollup().
+    # other. See drain_standing_child().
     by_quarter: dict[str, list[IssueRef]] = {}
     for child, quarter in plan.moves:
         by_quarter.setdefault(quarter, []).append(child)
     for quarter, children in by_quarter.items():
-        head_segment, head_ref = _adhoc_archive_head(target_repo, quarter)
+        head_segment, head_ref = _standing_archive_head(kind, home, name, quarter)
         cache: dict[int, IssueRef] = {head_segment: head_ref}
         occupancy = _archive_child_count(head_ref)
         placements = _segment_placements(
@@ -809,7 +1018,7 @@ def apply_adhoc_drain(target_repo: str, plan: DrainPlan) -> None:
         for child, segment in zip(children, placements, strict=True):
             archive = cache.get(segment)
             if archive is None:
-                archive = ensure_adhoc_archive(target_repo, quarter, segment=segment)
+                archive = ensure_standing_archive(kind, home, name, quarter, segment=segment)
                 cache[segment] = archive
             if archive == plan.live:
                 continue  # defensive: never re-parent into the live epic
@@ -818,6 +1027,12 @@ def apply_adhoc_drain(target_repo: str, plan: DrainPlan) -> None:
         github.run(
             "issue", "close", str(archive.number), "--repo", f"{archive.owner}/{archive.repo}"
         )
+
+
+def apply_adhoc_drain(target_repo: str, plan: DrainPlan) -> None:
+    """Execute *target_repo*'s ad-hoc drain *plan* (see :func:`apply_standing_drain`)."""
+    home, bare = _adhoc_home(target_repo)
+    apply_standing_drain(ADHOC, home, bare, plan)
 
 
 def drain_adhoc_repo(target_repo: str, *, apply: bool, now: datetime) -> DrainPlan | None:
@@ -836,7 +1051,7 @@ def drain_adhoc_org(org: str, *, apply: bool, now: datetime) -> list[DrainPlan]:
     """Drain every repo in *org*, isolating per-repo failures (spec §7).
 
     Each repo resolves its own epic home via :func:`drain_adhoc_repo` →
-    :func:`find_adhoc_epic` → :func:`resolve_epic_home`, so public
+    :func:`plan_adhoc_drain` → :func:`resolve_epic_home`, so public
     (``.github``-homed) and private (self-homed) ad-hoc epics are both covered. A
     corrupted repo (e.g. two ad-hoc epics sharing a title) is reported and
     skipped — never aborting the whole sweep. Returns one plan per repo that has
@@ -852,6 +1067,107 @@ def drain_adhoc_org(org: str, *, apply: bool, now: datetime) -> list[DrainPlan]:
         if plan is not None:
             plans.append(plan)
     return plans
+
+
+# The queue kinds: one intake and one planning epic per queue home.
+_QUEUE_KINDS: tuple[StandingKind, ...] = (INTAKE, PLANNING)
+
+
+def _queue_homes(org: str) -> dict[str, str]:
+    """Every intake/planning queue home in *org* mapped to its queue name.
+
+    ``<org>/.github`` (named for the org) always, plus each private repo that
+    self-homes its queues (named for its bare repo name) — the same rule
+    :func:`queue_home` applies to a single repo. Insertion-ordered, deduped.
+    """
+    homes: dict[str, str] = {f"{org}/.github": org}
+    for bare in github.list_org_repos(org):
+        home, name = queue_home(f"{org}/{bare}")
+        homes.setdefault(home, name)
+    return homes
+
+
+def drain_standing_org(org: str, *, apply: bool, now: datetime) -> list[DrainPlan]:
+    """Drain the intake and planning epics of every queue home in *org*.
+
+    Covers ``<org>/.github``'s pair and every private repo's self-homed pair
+    (:func:`_queue_homes`). Each (kind, home) is planned and, when *apply*,
+    executed via :func:`apply_standing_drain`. A corrupted home (e.g. two intake
+    epics sharing a title) is reported on stderr and skipped — never aborting the
+    sweep. Returns one plan per live queue epic. Ad-hoc epics are drained by
+    :func:`drain_adhoc_org`, not here.
+    """
+    plans: list[DrainPlan] = []
+    for home, name in _queue_homes(org).items():
+        for kind in _QUEUE_KINDS:
+            try:
+                plan = plan_standing_drain(kind, home, name, now=now)
+                if plan is not None and apply:
+                    apply_standing_drain(kind, home, name, plan)
+            except (ValueError, RuntimeError) as exc:
+                print(f"skipped {kind.key} drain in {home}: {exc}", file=sys.stderr)
+                continue
+            if plan is not None:
+                plans.append(plan)
+    return plans
+
+
+def drain_standing_child(kind: StandingKind, parent: IssueRef, task: IssueRef) -> None:
+    """Drain one just-closed *task* from its live standing epic *parent* into an archive.
+
+    The single-child ``on: issues.closed`` path of :func:`rollup`. *task* is
+    re-parented into the *kind* archive for its close-quarter, rolling to the next
+    segment when the head is full. A no-op when *parent* is not the live
+    canonical epic of *kind* or *task* has no ``closedAt``:
+
+    - **ad-hoc**: the name is the bare repo in the title (``Epic (ad hoc):
+      <bare>``), which must be a real repo; its home is resolved by visibility.
+      A stamped archive title or a non-repo special epic is left untouched.
+    - **intake / planning**: the epic must be titled for its home — the org in
+      ``<org>/.github``, the bare repo name in a self-homed private repo. Any
+      other title is reported on stderr and skipped (never guessed at).
+    """
+    title = _issue_title(parent)
+    if kind is ADHOC:
+        # Only the LIVE canonical ad-hoc epic drains; archives (stamped) are terminal.
+        if archive_re(ADHOC).match(title):
+            return
+        # Derive the target repo from the epic's OWN bare name, not parent.repo:
+        # a public repo's ad-hoc epic lives in <org>/.github, so parent.repo is
+        # always ".github" and would misfile every public-repo child into one
+        # ".github" bucket (#2709). Drain only for a canonical per-repo epic —
+        # <bare> must be a real repo. A repo name has no space or "/", so reject
+        # those fast (also skips non-repo special epics whose bare is a prose
+        # description); then confirm via a direct existence probe (repo_exists,
+        # not list membership, so a self-homed private repo still passes).
+        name = title.removeprefix(ADHOC.title_prefix)
+        if " " in name or "/" in name or not github.repo_exists(parent.owner, name):
+            return
+    else:
+        name = parent.owner if parent.repo == ".github" else parent.repo
+        if title != f"{kind.title_prefix}{name}":
+            print(
+                f"skipped {kind.key} drain of {task.slug}: parent {parent.slug} is titled "
+                f"{title!r}, not the canonical {kind.title_prefix + name!r}",
+                file=sys.stderr,
+            )
+            return
+    closed_at = _issue_closed_at(task)
+    if not closed_at:
+        return
+    # An ad-hoc archive homes where the repo's epics home (by visibility); a queue
+    # archive is the sibling of its queue epic, in the queue epic's own repo.
+    home = (
+        resolve_epic_home(parent.owner, name) if kind is ADHOC else f"{parent.owner}/{parent.repo}"
+    )
+    # SIBLING RE-PARENT SITE: apply_standing_drain() moves closed children into
+    # these same archives in the scheduled batch drain. Both sites must honour the
+    # per-segment cap — this single-child path rolls via
+    # ensure_writable_standing_archive(); if you change how segments fill or when
+    # they roll, make the matching change there too. See apply_standing_drain().
+    archive = ensure_writable_standing_archive(kind, home, name, quarter_of(closed_at))
+    if archive != parent:
+        reparent_child(archive, task)  # atomic move: single-parent safe (#2691)
 
 
 @dataclass(frozen=True)
@@ -901,9 +1217,7 @@ def plan_normalize_adhoc(org: str) -> list[ArchiveConversion]:
             old_title = str(item.get("title", ""))
             if not _LEGACY_ADHOC_ARCHIVE_RE.match(old_title):
                 continue
-            new_title = _ADHOC_ARCHIVE_TITLE_PREFIX + old_title.removeprefix(
-                _ADHOC_EPIC_TITLE_PREFIX
-            )
+            new_title = ADHOC.archive_prefix + old_title.removeprefix(ADHOC.title_prefix)
             conversions.append(
                 ArchiveConversion(
                     IssueRef(owner, home_repo, int(item["number"])), old_title, new_title
@@ -990,42 +1304,19 @@ def rollup(task: IssueRef) -> None:
     """Close *task*'s parent epic if the epic is finite and all children closed.
 
     A no-op unless the task has an ``epic``-labeled parent (the transition gate):
-    legacy issues have no epic parent, so finalize never rolls them up. An
-    ``ad-hoc`` epic is perpetual and never auto-closes; instead, when the
-    just-closed child's parent is the **live** ad-hoc epic, drain that one child
-    into its close-quarter archive (the steady-state event path). A parent that
-    is itself a stamped archive is terminal and left untouched.
+    legacy issues have no epic parent, so finalize never rolls them up. Every
+    standing epic (ad-hoc, intake, planning — :func:`standing_kind_of`) is
+    perpetual and never auto-closes. Instead, the just-closed child of a **live**
+    standing epic drains into its close-quarter archive of the same kind (the
+    steady-state event path, :func:`drain_standing_child`). A parent that is
+    itself an archive is terminal and left untouched.
     """
     parent = parent_of(task)
     if parent is None or not is_epic(parent):
         return
-    if "ad-hoc" in _labels(parent):
-        title = _issue_title(parent)
-        # Only the LIVE canonical ad-hoc epic drains; archives (stamped) are terminal.
-        if _ADHOC_ARCHIVE_RE.match(title):
-            return
-        # Derive the target repo from the epic's OWN bare name, not parent.repo:
-        # a public repo's ad-hoc epic lives in <org>/.github, so parent.repo is
-        # always ".github" and would misfile every public-repo child into one
-        # ".github" bucket (#2709). Drain only for a canonical per-repo epic —
-        # <bare> must be a real repo. A repo name has no space or "/", so reject
-        # those fast (also skips non-repo special epics whose bare is a prose
-        # description); then confirm via a direct existence probe (repo_exists,
-        # not list membership, so a self-homed private repo still passes).
-        bare = title.removeprefix(_ADHOC_EPIC_TITLE_PREFIX)
-        if " " in bare or "/" in bare or not github.repo_exists(parent.owner, bare):
-            return
-        closed_at = _issue_closed_at(task)
-        if not closed_at:
-            return
-        # SIBLING RE-PARENT SITE: apply_adhoc_drain() moves closed children into
-        # these same ad-hoc archives in the scheduled batch drain. Both sites must
-        # honour the per-segment cap — this single-child path rolls via
-        # ensure_writable_adhoc_archive(); if you change how segments fill or when
-        # they roll, make the matching change there too. See apply_adhoc_drain().
-        archive = ensure_writable_adhoc_archive(f"{parent.owner}/{bare}", quarter_of(closed_at))
-        if archive != parent:
-            reparent_child(archive, task)  # atomic move: single-parent safe (#2691)
+    kind = standing_kind_of(_labels(parent))
+    if kind is not None:
+        drain_standing_child(kind, parent, task)
         return
     if all_children_closed(parent):
         print(f"Rolling up epic {parent.slug} — all child tasks closed.")

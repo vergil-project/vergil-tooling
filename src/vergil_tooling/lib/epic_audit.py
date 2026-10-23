@@ -373,8 +373,8 @@ def closed_epic_open_child(org: str, *, home: str | None = None) -> list[EpicOpe
     violations: list[EpicOpenChildViolation] = []
     for item in raw if isinstance(raw, list) else []:
         labels = {str((label or {}).get("name", "")) for label in (item.get("labels") or [])}
-        if "ad-hoc" in labels:
-            continue  # perpetual epics never roll up; closed-with-open-child doesn't apply
+        if epics.is_standing(labels):
+            continue  # standing epics never roll up; closed-with-open-child doesn't apply
         epic = epics.IssueRef(home_owner, home_repo, int(item["number"]))
         open_kids = tuple(cs.ref for cs in epics.child_states(epic) if cs.state == "OPEN")
         if open_kids:

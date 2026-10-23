@@ -7,6 +7,7 @@ products = ["vergil-project/packages", "vergil-project/vergil-tooling"]
 [retention]          # optional
 keep = 3             # releases kept per major.minor line
 lines = 2            # newest major.minor lines kept per product
+retire = []          # exact package names dropped from the index (every fmt and arch)
 ```
 """
 
@@ -26,7 +27,7 @@ DEFAULT_KEEP = 3
 DEFAULT_LINES = 2
 
 _TOP_KEYS = frozenset({"vendor", "products", "retention"})
-_RETENTION_KEYS = frozenset({"keep", "lines"})
+_RETENTION_KEYS = frozenset({"keep", "lines", "retire"})
 _PRODUCT_RE = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 
 
@@ -36,6 +37,7 @@ class IndexConfig:
     products: list[str]
     keep: int
     lines: int
+    retire: tuple[str, ...] = ()
 
 
 def _positive_int(table: dict[str, Any], key: str, default: int, name: str) -> int:
@@ -45,6 +47,23 @@ def _positive_int(table: dict[str, Any], key: str, default: int, name: str) -> i
         msg = f"{name}: retention.{key} must be an integer >= 1, got {value!r}"
         raise PackageError(msg)
     return value
+
+
+def _retire(table: dict[str, Any], name: str) -> tuple[str, ...]:
+    value = table.get("retire", [])
+    if not isinstance(value, list):
+        msg = f"{name}: retention.retire must be a list of package names, got {value!r}"
+        raise PackageError(msg)
+    names: list[str] = []
+    for entry in value:
+        if not isinstance(entry, str) or not entry:
+            msg = f"{name}: retention.retire entry {entry!r} is not a non-empty string"
+            raise PackageError(msg)
+        if entry in names:
+            msg = f"{name}: retention.retire lists {entry!r} more than once"
+            raise PackageError(msg)
+        names.append(entry)
+    return tuple(names)
 
 
 def load(path: Path) -> IndexConfig:
@@ -97,4 +116,5 @@ def load(path: Path) -> IndexConfig:
         products=names,
         keep=_positive_int(retention, "keep", DEFAULT_KEEP, name),
         lines=_positive_int(retention, "lines", DEFAULT_LINES, name),
+        retire=_retire(retention, name),
     )

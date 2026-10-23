@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 _LINE = re.compile(r"v(\d+)\.(\d+)")
 _EXACT = re.compile(r"v(\d+)\.(\d+)\.(\d+)")
 _PACKAGE = "vergil-tooling"
+_RUNTIME_PREFIX = "vergil-python"
 _VENDOR = "vergil"
 _PIN_FILE = "/etc/apt/preferences.d/vergil-tooling"
 _DEV_REF_FILE = "~/.config/vergil/tooling-dev-ref"
@@ -101,12 +102,42 @@ def _remove_uv_copy(transport: Transport) -> None:
     transport.run("bash", "-c", f"rm -f {_DEV_REF_FILE}")
 
 
+def _package_names(lines: list[str]) -> set[str]:
+    """Package names from apt output lines, dropping any ``:<arch>`` qualifier."""
+    return {line.split(":", 1)[0] for line in lines}
+
+
+def _purge_obsolete_runtimes(transport: Transport) -> None:
+    """Purge the ``vergil-python*`` runtimes that nothing installed needs any more.
+
+    A runtime is purged only when it is auto-installed **and** apt itself would
+    autoremove it (``apt-get -s autoremove``, a simulation that changes nothing),
+    so a runtime that is still a dependency, or that someone installed by hand,
+    is kept. The purge names those runtimes explicitly; a blanket
+    ``apt-get autoremove`` is never run, because it would also remove unrelated
+    orphaned OS packages.
+    """
+    auto = _package_names(transport.run("apt-mark", "showauto").stdout.split())
+    simulated = transport.run("apt-get", "-s", "autoremove").stdout
+    orphaned = _package_names(re.findall(r"^Remv (\S+)", simulated, re.MULTILINE))
+    obsolete = sorted(n for n in auto & orphaned if n.startswith(_RUNTIME_PREFIX))
+    if not obsolete:
+        return
+    names = " ".join(obsolete)
+    print(f"  Purging obsolete vergil-python runtimes: {names}")
+    try:
+        transport.run("sudo", *repo_setup.apt_get("purge", "-y", *obsolete))
+    except subprocess.CalledProcessError as exc:
+        _die(f"could not purge the obsolete runtimes {names} (exit {exc.returncode})")
+
+
 def packaged_install(transport: Transport, ref: str) -> None:
     """Install (or upgrade within the pin) vergil-tooling from the org apt repository.
 
     Exits with an actionable error, installing nothing, when the repository has
-    no package matching ``ref``. Any uv-installed copy is removed only after the
-    apt install succeeds, so a failed install never leaves the VM without tooling.
+    no package matching ``ref``. Any uv-installed copy is removed, and any
+    obsolete ``vergil-python*`` runtime purged, only after the apt install
+    succeeds, so a failed install never leaves the VM without tooling.
     """
     kind = _require_release(ref)
     codename = _codename(transport)
@@ -129,6 +160,7 @@ def packaged_install(transport: Transport, ref: str) -> None:
     # An explicit pin may move the VM to an older release (identity pinned back).
     transport.run("sudo", *repo_setup.apt_get("install", "-y", "--allow-downgrades", spec))
     _remove_uv_copy(transport)
+    _purge_obsolete_runtimes(transport)
 
 
 def _uv_tool_install(transport: Transport, install_spec: str, *, reinstall: bool) -> None:

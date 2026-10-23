@@ -156,7 +156,7 @@ def build_site(
     rpmdb = workdir / "rpmdb"
     shutil.rmtree(rpmdb, ignore_errors=True)
     collect.verify(artifacts, keyfile, run, rpmdb=rpmdb)
-    kept = retention.select(artifacts, cfg.keep, cfg.lines)
+    kept = retention.select(artifacts, cfg.keep, cfg.lines, retire=frozenset(cfg.retire))
     print(f"indexing {len(kept)} of {len(artifacts)} collected package(s)")
 
     _wipe(out, config, keys_dir, workdir)

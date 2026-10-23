@@ -91,12 +91,22 @@ def main(argv: list[str] | None = None) -> int:
         # ad-hoc epic into per-quarter archives and close past archives. main() has
         # no other org scope, so scope the App token to the org before this
         # mutation (spec §7), matching vrg-adhoc-epic and vrg-epic-move.
+        # The intake and planning queue epics drain the same way (epic
+        # vergil-project/.github#176), under the same org scope.
+        now = datetime.now(UTC)
         with github.target_org(org):
-            drained = epics.drain_adhoc_org(org, apply=True, now=datetime.now(UTC))
+            drained = epics.drain_adhoc_org(org, apply=True, now=now)
+            queue_drained = epics.drain_standing_org(org, apply=True, now=now)
         moved = sum(len(p.moves) for p in drained)
         closed_archives = sum(len(p.close) for p in drained)
         print(
             f"Ad-hoc drain: {moved} child(ren) archived, {closed_archives} past archive(s) closed."
+        )
+        qmoved = sum(len(p.moves) for p in queue_drained)
+        qclosed = sum(len(p.close) for p in queue_drained)
+        print(
+            f"Intake/planning drain: {qmoved} child(ren) archived, "
+            f"{qclosed} past archive(s) closed."
         )
         print(
             epic_audit.render_closed(
@@ -110,9 +120,13 @@ def main(argv: list[str] | None = None) -> int:
     closed_operational_no_success = epic_audit.closed_operational_without_success(org)
     # Read-only preview of the ad-hoc drain the --close sweep would perform (epic
     # #238): apply=False mutates nothing, so no org scope is needed.
-    preview = epics.drain_adhoc_org(org, apply=False, now=datetime.now(UTC))
+    now = datetime.now(UTC)
+    preview = epics.drain_adhoc_org(org, apply=False, now=now)
     pmoved = sum(len(p.moves) for p in preview)
     print(f"Ad-hoc drain (preview): {pmoved} child(ren) would be archived.")
+    queue_preview = epics.drain_standing_org(org, apply=False, now=now)
+    qpmoved = sum(len(p.moves) for p in queue_preview)
+    print(f"Intake/planning drain (preview): {qpmoved} child(ren) would be archived.")
     print(
         epic_audit.render(
             tasks,
