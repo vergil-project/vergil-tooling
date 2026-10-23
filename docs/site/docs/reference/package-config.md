@@ -375,6 +375,35 @@ To fix a refusal, bump `[package].version`. For example, use a new
 (`3.14.8+20261003` → `3.14.8+20261003.1`). The revision (`-1`) is set by
 the tooling and cannot be configured.
 
+## The package index (`packages.toml`)
+
+The org's package repository lists the products it indexes in
+`packages.toml`, which `vrg-package index` reads. Retention is optional:
+
+```toml
+vendor = "vergil"
+products = ["vergil-project/packages", "vergil-project/vergil-tooling"]
+
+[retention]
+keep = 3                          # releases kept per major.minor line (default 3)
+lines = 2                         # newest major.minor lines kept per product (default 2)
+retire = ["vergil-python3.14.8"]  # exact package names to drop (default: none)
+```
+
+The index is rebuilt from scratch on every run. For each product it keeps
+the newest `keep` releases in each of the newest `lines` major.minor lines,
+then adds the newest provider of every dependency of a kept package, so
+everything indexed is installable.
+
+`retire` drops packages by exact name, for every format (`deb` and `rpm`)
+and architecture, whichever release ships them. A retired package is dropped
+before dependencies are resolved, so it keeps none of its own dependencies in
+the index. Each entry must be a non-empty string, listed once. If a package
+the index keeps still depends on a retired name, the index build fails rather
+than publishing a package that cannot be installed. To fix it, remove the name
+from `retire` or make sure retention no longer keeps the dependent release.
+Omitting `retire`, or setting it to `[]`, retires nothing.
+
 ## Inspecting the matrix
 
 ```bash

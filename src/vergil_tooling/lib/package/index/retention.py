@@ -6,6 +6,11 @@ kept. Then, for every dependency name of a retained artifact that some
 collected artifact provides (same format, same arch or ``all``), the newest
 provider is also kept, transitively — so anything indexed is installable.
 
+Every artifact whose package name is in ``retire`` is dropped, for every format
+and arch, before the closure runs, so a retired package pulls in none of its
+own dependencies. A kept artifact that still depends on a retired name is a
+hard error: the index would publish something that cannot be installed.
+
 Duplicates share ``(fmt, name, full_version, arch)``. Different bytes are fatal
 (across *all* collected artifacts, not only retained ones); identical bytes
 collapse to one.
@@ -90,10 +95,29 @@ def _close(artifacts: list[Artifact], kept: set[int]) -> set[int]:
     return kept
 
 
-def select(artifacts: list[Artifact], keep: int, lines: int) -> list[Artifact]:
+def _check_retired(artifacts: list[Artifact], kept: set[int], retire: frozenset[str]) -> None:
+    """Refuse a kept artifact that depends on a retired package name."""
+    for i in sorted(kept):
+        a = artifacts[i]
+        hit = sorted(retire.intersection(a.depends))
+        if hit:
+            msg = (
+                f"{a.identity} from {a.product}@{a.tag} depends on retired package(s) "
+                f"{', '.join(hit)}; un-retire them or stop the index keeping this release"
+            )
+            raise PackageError(msg)
+
+
+def select(
+    artifacts: list[Artifact], keep: int, lines: int, *, retire: frozenset[str] = frozenset()
+) -> list[Artifact]:
     """Return the artifacts the index keeps, in input order."""
     _check_conflicts(artifacts)
-    kept = _close(artifacts, _by_lines(artifacts, keep, lines))
+    by_lines = {i for i in _by_lines(artifacts, keep, lines) if artifacts[i].name not in retire}
+    kept = _close(artifacts, by_lines)
+    # A retired artifact enters the closure only as a dependency of a kept one,
+    # so this check also guarantees none is kept.
+    _check_retired(artifacts, kept, retire)
     out: list[Artifact] = []
     seen: set[Identity] = set()
     for i, a in enumerate(artifacts):
