@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.260/">
       
       
         <link rel="next" href="../v2.1.258/">
@@ -1323,6 +1323,8 @@
       
         
       
+        
+      
     
     
     
@@ -1378,6 +1380,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.260/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.260
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15774,6 +15804,7 @@
 <li>fix(update-deps): hold the runtime bump back while the package indexes disagree</li>
 </ul>
 <p>The deb and rpm indexes publish separately, so right after a vergil-python release they briefly serve different patches. That was a hard failure, which made the next vrg-update-deps run file a fix task for a normal, transient state. The updater now leaves the pin unchanged and records a held-back entry naming each served patch and the indexes serving it until they agree. Every other loud failure is unchanged, and a served patch on another series still fails even while the indexes disagree. Ref #3456</p>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.259/v2.1.259-ci-evidence.tar.gz">Download →</a></p>
 
 
 

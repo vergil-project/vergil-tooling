@@ -1316,6 +1316,8 @@
       
         
       
+        
+      
     
     
     
@@ -1368,6 +1370,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.260/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.260
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -12637,6 +12667,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#the-package-index-packagestoml" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The package index (packages.toml)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#inspecting-the-matrix" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -16196,6 +16237,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#the-package-index-packagestoml" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The package index (packages.toml)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#inspecting-the-matrix" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -16686,8 +16738,38 @@ passes.</p>
 <code>+&lt;date&gt;</code> build suffix, or add a rebuild counter
 (<code>3.14.8+20261003</code> → <code>3.14.8+20261003.1</code>). The revision (<code>-1</code>) is set by
 the tooling and cannot be configured.</p>
+<h2 id="the-package-index-packagestoml">The package index (<code>packages.toml</code>)<a class="headerlink" href="#the-package-index-packagestoml" title="Permanent link">&para;</a></h2>
+<p>The org's package repository lists the products it indexes in
+<code>packages.toml</code>, which <code>vrg-package index</code> reads. Retention is optional:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">vendor</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"vergil"</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">products</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"vergil-project/packages"</span><span class="p">,</span><span class="w"> </span><span class="s2">"vergil-project/vergil-tooling"</span><span class="p">]</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="k">[retention]</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="n">keep</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">3</span><span class="w">                          </span><span class="c1"># releases kept per major.minor line (default 3)</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="n">lines</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">2</span><span class="w">                         </span><span class="c1"># newest major.minor lines kept per product (default 2)</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="n">retire</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"vergil-python3.14.8"</span><span class="p">]</span><span class="w">  </span><span class="c1"># exact package names to drop (default: none)</span>
+</code></pre></div>
+<p>The index is rebuilt from scratch on every run. For each product it keeps
+the newest <code>keep</code> releases in each of the newest <code>lines</code> major.minor lines,
+then adds the newest provider of every dependency of a kept package, so
+everything indexed is installable.</p>
+<p><code>retire</code> drops packages by exact name, for every format (<code>deb</code> and <code>rpm</code>)
+and architecture, whichever release ships them. A retired package is dropped
+before dependencies are resolved, so it keeps none of its own dependencies in
+the index. Each entry must be a non-empty string, listed once. If a package
+the index keeps still depends on a retired name, the index build fails rather
+than publishing a package that cannot be installed. To fix it, remove the name
+from <code>retire</code> or make sure retention no longer keeps the dependent release.
+Omitting <code>retire</code>, or setting it to <code>[]</code>, retires nothing.</p>
+<p>Every <code>retire</code> entry must name a package that some collected release ships,
+in any format or architecture. The check runs against everything collected
+before retention drops anything, so a name found only in releases that
+retention would evict still counts. An entry that matches nothing fails the
+index build. It is either a typo, which would otherwise leave the package
+published, or a package whose releases are gone; either way, remove it from
+<code>packages.toml</code>.</p>
 <h2 id="inspecting-the-matrix">Inspecting the matrix<a class="headerlink" href="#inspecting-the-matrix" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>vrg-container-run<span class="w"> </span>--<span class="w"> </span>vrg-package<span class="w"> </span>matrix
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>vrg-container-run<span class="w"> </span>--<span class="w"> </span>vrg-package<span class="w"> </span>matrix
 </code></pre></div>
 <p>prints the resolved build and test cells as JSON without building anything.
 Add <code>--tier reduced</code> to see the reduced feature-PR matrix.</p>
