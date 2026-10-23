@@ -18,6 +18,7 @@ from vergil_tooling.bin.vrg_submit_pr import (
     _reject_if_cross_repo,
     _reject_if_epic_link,
     _reject_if_operational_task,
+    _reject_if_queue_item,
     _resolve_linkage,
     _resolve_ready_state,
     _run_submit_batch,
@@ -54,6 +55,7 @@ def _no_epic_link_check() -> Iterator[None]:
         patch(_MOD + "._reject_if_cross_repo"),
         patch(_MOD + "._reject_if_epic_link"),
         patch(_MOD + "._reject_if_operational_task"),
+        patch(_MOD + "._reject_if_queue_item"),
         patch(_MOD + "._task_linkage", side_effect=lambda _ref, requested: (requested, None)),
     ):
         yield
@@ -1840,6 +1842,81 @@ def test_reject_if_operational_task_passes_for_plain_task() -> None:
     ):
         _reject_if_operational_task("#42")
     mock_is_operational.assert_called_once_with(epics.IssueRef("org", "repo", 42))
+
+
+# -- _reject_if_queue_item (intake/planning items are not buildable, #2485) ----
+
+
+@pytest.mark.parametrize(
+    ("kind", "phrases"),
+    [
+        ("intake", ("is in the intake queue", "Route it with intake-review first.")),
+        ("planning", ("is in the planning queue", "Expand it with epic-create first.")),
+    ],
+)
+def test_reject_if_queue_item_refuses_queue_item(kind: str, phrases: tuple[str, str]) -> None:
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.epics.native_parent_of", return_value=epics.IssueRef("org", ".github", 9)),
+        patch(f"{_MOD}.epics._labels", return_value={"epic", kind}),
+        pytest.raises(SystemExit) as excinfo,
+    ):
+        _reject_if_queue_item("#42")
+    message = str(excinfo.value)
+    assert message.startswith("vrg-submit-pr: --issue (#42) ")
+    for phrase in phrases:
+        assert phrase in message
+
+
+def test_reject_if_queue_item_passes_for_routed_task() -> None:
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(
+            f"{_MOD}.epics.native_parent_of", return_value=epics.IssueRef("org", ".github", 9)
+        ) as mock_parent,
+        patch(f"{_MOD}.epics._labels", return_value={"epic", "ad-hoc"}),
+    ):
+        _reject_if_queue_item("#42")
+    mock_parent.assert_called_once_with(epics.IssueRef("org", "repo", 42))
+
+
+def test_reject_if_queue_item_lookup_failure_is_not_swallowed() -> None:
+    # Authoritative check: a failed lookup aborts rather than reading as "buildable".
+    err = subprocess.CalledProcessError(1, ["gh"])
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.epics.native_parent_of", side_effect=err),
+        pytest.raises(subprocess.CalledProcessError),
+    ):
+        _reject_if_queue_item("#42")
+
+
+def test_main_cli_mode_refuses_queue_item(tmp_path: Path) -> None:
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".git.current_branch", return_value="feature/x"),
+        patch(_MOD + "._reject_if_queue_item", side_effect=SystemExit("queued")) as guard,
+        patch(_MOD + ".github.create_pr") as create,
+        pytest.raises(SystemExit, match="queued"),
+    ):
+        main(["--issue", "42", "--summary", "Fix bug", "--title", "fix: bug"])
+    guard.assert_called_once_with("#42")
+    create.assert_not_called()
+
+
+def test_open_pr_refuses_queue_item() -> None:
+    metadata = {"issue": "42", "title": "fix: bug", "summary": "s", "notes": "", "linkage": "Ref"}
+    with (
+        patch(_MOD + ".resolve_issue_ref", return_value="#42"),
+        patch(_MOD + "._reject_if_queue_item", side_effect=SystemExit("queued")) as guard,
+        patch(_MOD + "._push_branch") as push,
+        patch(_MOD + ".github.create_pr") as create,
+        pytest.raises(SystemExit, match="queued"),
+    ):
+        _open_pr("feature/x", "develop", metadata, push=True, assume_yes=True)
+    guard.assert_called_once_with("#42")
+    push.assert_not_called()
+    create.assert_not_called()
 
 
 # -- _task_linkage (managed tasks auto-close via Closes) ----------------------

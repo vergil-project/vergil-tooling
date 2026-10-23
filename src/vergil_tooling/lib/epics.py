@@ -689,6 +689,46 @@ def queue_kind(epic: IssueRef) -> str | None:
     return None
 
 
+def queue_item_kind(ref: str, *, default_repo: str) -> str | None:
+    """``"intake"`` / ``"planning"`` when *ref*'s parent is a live queue epic, else None.
+
+    The PR refusal's test (#2485): an item under the intake or planning epic is
+    not buildable until it is routed out, so ``vrg-pr-workflow report-ready``
+    and ``vrg-submit-pr`` refuse it. Keys off the **native** parent only
+    (:func:`native_parent_of`), the same link intake review lists and the
+    orphan migration writes. Self-scoping: an unparseable ref is never queued
+    and returns None. A failed lookup raises — it is never read as "not queued".
+    """
+    try:
+        issue = parse_issue_ref(ref, default_repo=default_repo)
+    except ValueError:
+        return None
+    parent = native_parent_of(issue)
+    if parent is None:
+        return None
+    return queue_kind(parent)
+
+
+_QUEUE_REFUSAL_TAILS = {
+    INTAKE.key: "it is not buildable until it is routed. Route it with intake-review first.",
+    PLANNING.key: (
+        "it is not buildable until its epic is expanded. Expand it with epic-create first."
+    ),
+}
+
+
+def queue_refusal_message(ref: str, kind: str) -> str:
+    """The one refusal text for a queue item, shared by every PR-path guard.
+
+    *kind* is a :func:`queue_item_kind` result (``"intake"`` or ``"planning"``);
+    anything else is a caller bug and raises ``ValueError``.
+    """
+    tail = _QUEUE_REFUSAL_TAILS.get(kind)
+    if tail is None:
+        raise ValueError(f"not a queue kind: {kind!r}")
+    return f"--issue ({ref}) is in the {kind} queue; {tail}"
+
+
 def is_legitimate_top_level(labels: set[str], title: str, body: str) -> bool:
     """True iff an issue may stand without an epic parent.
 

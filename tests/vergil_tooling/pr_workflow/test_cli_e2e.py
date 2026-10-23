@@ -4,15 +4,16 @@ from __future__ import annotations
 
 import json
 import subprocess
+from contextlib import contextmanager
 from typing import TYPE_CHECKING
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from vergil_tooling.bin import vrg_pr_workflow
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator, Iterator
     from pathlib import Path
 
 
@@ -226,6 +227,92 @@ def test_report_ready_rejects_operational_task(
         )
     assert rc == 1
     assert "operational task" in capsys.readouterr().err.lower()
+
+
+_REPORT_READY_ARGS = [
+    "--base",
+    "develop",
+    "report-ready",
+    "--issue",
+    "120",
+    "--title",
+    "t",
+    "--summary",
+    "s",
+    "--notes",
+    "n",
+]
+
+
+@contextmanager
+def _queue_guard(
+    return_value: str | None = None, side_effect: Exception | None = None
+) -> Generator[MagicMock]:
+    """Pass the earlier guards and stub ``epics.queue_item_kind`` as given."""
+    with (
+        patch("vergil_tooling.bin.vrg_pr_workflow.github.current_repo", return_value="org/repo"),
+        patch("vergil_tooling.bin.vrg_pr_workflow.epics.is_epic_linkage", return_value=False),
+        patch("vergil_tooling.bin.vrg_pr_workflow.epics.is_operational_task", return_value=False),
+        patch(
+            "vergil_tooling.bin.vrg_pr_workflow.epics.queue_item_kind",
+            return_value=return_value,
+            side_effect=side_effect,
+        ) as mock_queue,
+    ):
+        yield mock_queue
+
+
+def test_report_ready_refuses_intake_item(
+    in_git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # An item parented by the intake epic is unreviewed — not buildable (#2485).
+    with _queue_guard(return_value="intake") as mock_queue:
+        rc = vrg_pr_workflow.main(_REPORT_READY_ARGS)
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "--issue (#120) is in the intake queue" in err
+    assert "Route it with intake-review first." in err
+    mock_queue.assert_called_once_with("#120", default_repo="org/repo")
+    assert not (in_git_repo / ".vergil" / "pr-workflow.json").exists()
+
+
+def test_report_ready_refuses_planning_item(
+    in_git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with _queue_guard(return_value="planning"):
+        rc = vrg_pr_workflow.main(_REPORT_READY_ARGS)
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "--issue (#120) is in the planning queue" in err
+    assert "Expand it with epic-create first." in err
+
+
+def test_report_ready_allows_non_queue_item(
+    in_git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with _queue_guard(return_value=None):
+        rc = vrg_pr_workflow.main(_REPORT_READY_ARGS)
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == {"ok": True, "status": "ready"}
+    assert "queue" not in captured.err
+
+
+@pytest.mark.parametrize("exc", [subprocess.CalledProcessError(1, ["gh"]), OSError("gh not found")])
+def test_report_ready_defers_when_queue_check_cannot_run(
+    in_git_repo: Path, capsys: pytest.CaptureFixture[str], exc: Exception
+) -> None:
+    # Best-effort, like the operational guard — but never silent: it says it
+    # deferred to vrg-submit-pr's authoritative check.
+    with _queue_guard(side_effect=exc):
+        rc = vrg_pr_workflow.main(_REPORT_READY_ARGS)
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == {"ok": True, "status": "ready"}
+    assert "could not check whether --issue (#120) is in the intake or planning queue" in (
+        captured.err
+    )
+    assert "vrg-submit-pr" in captured.err
 
 
 def test_report_ready_bare_number_epic_is_caught(

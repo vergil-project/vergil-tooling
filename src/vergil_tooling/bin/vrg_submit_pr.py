@@ -404,6 +404,22 @@ def _reject_if_operational_task(issue_ref: str) -> None:
         )
 
 
+def _reject_if_queue_item(issue_ref: str) -> None:
+    """Abort if the linkage is an intake or planning queue item — it is not buildable.
+
+    An item whose native parent is the intake or planning epic has not been
+    routed (intake) or expanded into an epic (planning), so it must not take a
+    PR and close as though it were groomed work (#2485, closing
+    vergil-project/.github#175). The authoritative check: unlike report-ready's
+    best-effort mirror, a failed parent lookup propagates and aborts submission
+    rather than reading as "buildable". Self-scoping: an unparseable ref is
+    never a queue item, so it passes.
+    """
+    kind = epics.queue_item_kind(issue_ref, default_repo=github.current_repo())
+    if kind is not None:
+        raise SystemExit(f"vrg-submit-pr: {epics.queue_refusal_message(issue_ref, kind)}")
+
+
 def _task_linkage(issue_ref: str, requested: str) -> tuple[str, str | None]:
     """Choose the PR-body linkage keyword for *issue_ref*.
 
@@ -455,6 +471,7 @@ def _run_cli_mode(args: argparse.Namespace) -> int:
     _reject_if_cross_repo(issue_ref)
     _reject_if_epic_link(issue_ref)
     _reject_if_operational_task(issue_ref)
+    _reject_if_queue_item(issue_ref)
     linkage = _resolve_linkage(issue_ref, args.linkage)
     branch = git.current_branch()
     target = _target_branch(args.base)
@@ -716,6 +733,7 @@ def _open_pr(
     _reject_if_cross_repo(issue_ref)
     _reject_if_epic_link(issue_ref)
     _reject_if_operational_task(issue_ref)
+    _reject_if_queue_item(issue_ref)
     try:
         linkage, linkage_warning = normalize_linkage(metadata.get("linkage", "Ref"))
     except ValueError as exc:
