@@ -320,7 +320,8 @@ def test_closed_epic_open_child_flags_closed_epic_with_open_child() -> None:
     listing = [
         {"number": 19, "title": "MQ Guides", "labels": []},  # has an open child -> violation
         {"number": 15, "title": "Cockpit", "labels": []},  # all children closed -> ok
-        {"number": 99, "title": "Ad hoc", "labels": [{"name": "ad-hoc"}]},  # perpetual -> skipped
+        # perpetual -> skipped
+        {"number": 99, "title": "Ad hoc", "labels": [{"name": "epic"}, {"name": "ad-hoc"}]},
     ]
 
     def fake_child_states(epic: epics.IssueRef) -> list[epics.ChildState]:
@@ -339,9 +340,14 @@ def test_closed_epic_open_child_flags_closed_epic_with_open_child() -> None:
     assert result == [(epics.IssueRef("org", ".github", 19), (epics.IssueRef("org", "lab", 462),))]
 
 
-def test_closed_epic_open_child_skips_perpetual_before_fetching_children() -> None:
-    # A perpetual (ad-hoc) epic is skipped without a children lookup.
-    listing = [{"number": 99, "title": "Ad hoc", "labels": [{"name": "ad-hoc"}]}]
+@pytest.mark.parametrize("kind_label", ["ad-hoc", "intake", "planning"])
+def test_closed_epic_open_child_skips_perpetual_before_fetching_children(
+    kind_label: str,
+) -> None:
+    # A perpetual standing epic (ad-hoc, intake, planning) is skipped without a
+    # children lookup.
+    labels = [{"name": "epic"}, {"name": kind_label}]
+    listing = [{"number": 99, "title": "Standing", "labels": labels}]
     child_states = MagicMock()
     with (
         patch("vergil_tooling.lib.github.read_json", return_value=listing),
