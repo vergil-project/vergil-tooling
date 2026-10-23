@@ -40,11 +40,12 @@ If the patch upgrade fails, determine root cause before pinning. If the failure
 is attributable to the runtime, anchor to the prior patch and document the
 failure evidence.
 
-For a packaged product (`[package.python] runtime` in `vergil.toml`), steps 1
-and 2 are automated: the `vergil` updater in the `vrg-release` `update-deps`
-stage bumps the runtime to the newest `vergil-python` patch on the same minor
-line that the package indexes serve, and the update's single validation run
-covers step 3. A newer minor line is only reported. See the
+For a packaged product with an exact `[package.python] runtime` pin in
+`vergil.toml`, steps 1 and 2 are automated: the `vergil` updater in the
+`vrg-release` `update-deps` stage bumps the pin to the CPython patch that the
+pin's per-series `vergil-python<x.y>` package serves on every package index,
+and the update's single validation run covers step 3. The pin never leaves its
+series; a newer series is only reported. See the
 [dependency-update reference](../../../reference/dependency-update-config.md#vergil).
 
 ### Minor- or major-level

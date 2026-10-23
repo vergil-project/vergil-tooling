@@ -16,6 +16,7 @@ from vergil_tooling.lib.update_deps.updaters.vergil_eco import (
     read_source_version,
     set_source_version,
 )
+from vergil_tooling.lib.update_deps.vergil_index import ServedRuntime
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -23,7 +24,7 @@ if TYPE_CHECKING:
 _DRIFT = "    - uses: vergil-project/vergil-actions/actions/y@v2.0\n"
 _RUNTIME_TOML = '[package.python]\n# comment\nruntime = "3.14.8"\n'
 _SOURCE_TOML = '[dependencies]\nvergil = "v2.1"\n'
-_MINOR_NOTE = "[package.python] runtime: a new minor is a judgement call"
+_SERIES_NOTE = "[package.python] runtime: a new series is a reviewed change, never applied"
 
 
 def _ctx(worktree: Path) -> UpdateDepsContext:
@@ -269,45 +270,122 @@ def test_apply_normalize_rewrites_action_file_without_workflows(tmp_path: Path) 
 # -- vergil-python runtime ----------------------------------------------------
 
 
-def test_bump_runtime_rewrites_to_newest_served_patch(tmp_path: Path) -> None:
-    (tmp_path / "vergil.toml").write_text(_RUNTIME_TOML)
-    new, entry = bump_runtime(tmp_path, {"3.14.8", "3.14.9", "3.14.10"})
-    assert new == "3.14.10"
-    assert entry is None
-    assert (tmp_path / "vergil.toml").read_text() == _RUNTIME_TOML.replace("3.14.8", "3.14.10")
-
-
-def test_bump_runtime_never_picks_unserved(tmp_path: Path) -> None:
-    (tmp_path / "vergil.toml").write_text(_RUNTIME_TOML)
-    assert bump_runtime(tmp_path, {"3.14.8"}) == (None, None)
-    assert (tmp_path / "vergil.toml").read_text() == _RUNTIME_TOML
-
-
-def test_bump_runtime_reports_newer_minor_without_applying_it(tmp_path: Path) -> None:
-    (tmp_path / "vergil.toml").write_text(_RUNTIME_TOML)
-    new, entry = bump_runtime(tmp_path, {"3.14.8", "3.15.1"})
-    assert new is None
-    assert entry == HeldBack(
-        source="vergil",
-        name="vergil-python",
-        current="3.14.8",
-        latest="3.15.1",
-        note=_MINOR_NOTE,
+def _served(patch: str, newer_series: str | None = None) -> ServedRuntime:
+    return ServedRuntime(
+        package="vergil-python3.14",
+        patches={"deb noble/amd64": patch, "rpm el9/x86_64": patch},
+        newer_series=newer_series,
     )
+
+
+def test_bump_runtime_rewrites_to_the_served_patch(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_RUNTIME_TOML)
+    new, held = bump_runtime(tmp_path, _served("3.14.9"))
+    assert new == "3.14.9"
+    assert held == []
+    assert (tmp_path / "vergil.toml").read_text() == _RUNTIME_TOML.replace("3.14.8", "3.14.9")
+
+
+def test_bump_runtime_already_served_is_noop(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_RUNTIME_TOML)
+    assert bump_runtime(tmp_path, _served("3.14.8")) == (None, [])
     assert (tmp_path / "vergil.toml").read_text() == _RUNTIME_TOML
 
 
-def test_bump_runtime_patch_and_newer_minor(tmp_path: Path) -> None:
+def test_bump_runtime_reports_newer_series_without_applying_it(tmp_path: Path) -> None:
     (tmp_path / "vergil.toml").write_text(_RUNTIME_TOML)
-    new, entry = bump_runtime(tmp_path, {"3.14.9", "3.15.1"})
+    new, held = bump_runtime(tmp_path, _served("3.14.8", "3.15"))
+    assert new is None
+    assert held == [
+        HeldBack(
+            source="vergil",
+            name="vergil-python",
+            current="3.14.8",
+            latest="3.15",
+            note=_SERIES_NOTE,
+        )
+    ]
+    assert (tmp_path / "vergil.toml").read_text() == _RUNTIME_TOML
+
+
+def test_bump_runtime_patch_and_newer_series(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_RUNTIME_TOML)
+    new, held = bump_runtime(tmp_path, _served("3.14.9", "3.15"))
     assert new == "3.14.9"
-    assert entry is not None
-    assert entry.latest == "3.15.1"
+    assert [h.latest for h in held] == ["3.15"]
+    assert 'runtime = "3.14.9"' in (tmp_path / "vergil.toml").read_text()
+
+
+def test_bump_runtime_holds_back_while_indexes_disagree(tmp_path: Path) -> None:
+    # Right after a vergil-python release the deb and rpm indexes briefly serve
+    # different patches: no bump, and a visible held-back entry naming both.
+    (tmp_path / "vergil.toml").write_text(_RUNTIME_TOML)
+    served = ServedRuntime(
+        package="vergil-python3.14",
+        patches={
+            "deb noble/amd64": "3.14.9",
+            "deb noble/arm64": "3.14.9",
+            "rpm el9/x86_64": "3.14.8",
+        },
+        newer_series="3.15",
+    )
+    new, held = bump_runtime(tmp_path, served)
+    assert new is None
+    assert held == [
+        HeldBack(
+            source="vergil",
+            name="vergil-python",
+            current="3.14.8",
+            latest="3.15",
+            note=_SERIES_NOTE,
+        ),
+        HeldBack(
+            source="vergil",
+            name="vergil-python3.14",
+            current="3.14.8",
+            latest="3.14.9",
+            note=(
+                "indexes disagree (3.14.9 on deb noble/amd64, deb noble/arm64; "
+                "3.14.8 on rpm el9/x86_64); bump held until they agree"
+            ),
+        ),
+    ]
+    assert (tmp_path / "vergil.toml").read_text() == _RUNTIME_TOML
+
+
+def test_bump_runtime_never_crosses_series(tmp_path: Path) -> None:
+    # A 3.14 pin is never moved to a 3.15 patch, even if one were handed in.
+    (tmp_path / "vergil.toml").write_text(_RUNTIME_TOML)
+    with pytest.raises(UpdateDepsError, match="series 3.14") as info:
+        bump_runtime(tmp_path, _served("3.15.1"))
+    assert "3.15.1" in str(info.value)
+    assert (tmp_path / "vergil.toml").read_text() == _RUNTIME_TOML
+
+
+def test_bump_runtime_cross_series_fails_loud_even_while_disagreeing(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_RUNTIME_TOML)
+    served = ServedRuntime(
+        package="vergil-python3.14",
+        patches={"deb noble/amd64": "3.14.9", "rpm el9/x86_64": "3.15.1"},
+        newer_series=None,
+    )
+    with pytest.raises(UpdateDepsError, match="series 3.14"):
+        bump_runtime(tmp_path, served)
+    assert (tmp_path / "vergil.toml").read_text() == _RUNTIME_TOML
+
+
+def test_bump_runtime_never_downgrades(tmp_path: Path) -> None:
+    text = _RUNTIME_TOML.replace("3.14.8", "3.14.10")
+    (tmp_path / "vergil.toml").write_text(text)
+    with pytest.raises(UpdateDepsError, match="older") as info:
+        bump_runtime(tmp_path, _served("3.14.9"))
+    assert "3.14.10" in str(info.value)
+    assert (tmp_path / "vergil.toml").read_text() == text
 
 
 def test_bump_runtime_absent_is_noop(tmp_path: Path) -> None:
     (tmp_path / "vergil.toml").write_text(_SOURCE_TOML)
-    assert bump_runtime(tmp_path, {"3.14.9"}) == (None, None)
+    assert bump_runtime(tmp_path, _served("3.14.9")) == (None, [])
 
 
 def test_bump_runtime_unrewritable_line_fails_loud(tmp_path: Path) -> None:
@@ -315,17 +393,17 @@ def test_bump_runtime_unrewritable_line_fails_loud(tmp_path: Path) -> None:
     text = "[package.python]\nruntime = '3.14.8'\n"
     (tmp_path / "vergil.toml").write_text(text)
     with pytest.raises(UpdateDepsError, match="found 0"):
-        bump_runtime(tmp_path, {"3.14.9"})
+        bump_runtime(tmp_path, _served("3.14.9"))
     assert (tmp_path / "vergil.toml").read_text() == text
 
 
 def test_apply_skips_index_when_no_runtime(tmp_path: Path) -> None:
     (tmp_path / "vergil.toml").write_text(_SOURCE_TOML)
 
-    def must_not_call(base: Path) -> set[str]:
+    def must_not_call(base: Path) -> ServedRuntime:
         raise AssertionError("index lookup without [package.python] runtime")
 
-    result = VergilUpdater(served_runtimes=must_not_call).apply(_ctx(tmp_path))
+    result = VergilUpdater(served_runtime=must_not_call).apply(_ctx(tmp_path))
     assert result.changed is False
     assert result.held_back == []
 
@@ -334,11 +412,11 @@ def test_apply_normalize_combines_runtime_bump(tmp_path: Path) -> None:
     (tmp_path / "vergil.toml").write_text(_SOURCE_TOML + "\n" + _RUNTIME_TOML)
     seen: list[Path] = []
 
-    def served(base: Path) -> set[str]:
+    def served(base: Path) -> ServedRuntime:
         seen.append(base)
-        return {"3.14.9"}
+        return _served("3.14.9")
 
-    result = VergilUpdater(served_runtimes=served).apply(_ctx(tmp_path))
+    result = VergilUpdater(served_runtime=served).apply(_ctx(tmp_path))
     assert seen == [tmp_path]
     assert result.changed is True
     assert result.summary == "vergil-python runtime 3.14.9"
@@ -350,21 +428,25 @@ def test_apply_normalize_refs_and_runtime_with_held_back(tmp_path: Path) -> None
     _seed(tmp_path, "v2.0")
     with (tmp_path / "vergil.toml").open("a") as fh:
         fh.write("\n" + _RUNTIME_TOML)
-    result = VergilUpdater(served_runtimes=lambda _b: {"3.14.9", "3.15.0"}).apply(_ctx(tmp_path))
+    result = VergilUpdater(served_runtime=lambda _b: _served("3.14.9", "3.15")).apply(
+        _ctx(tmp_path)
+    )
     assert result.commit_message == (
         "chore(deps): normalize vergil refs to v2.1; vergil-python runtime 3.14.9"
     )
-    assert [h.latest for h in result.held_back] == ["3.15.0"]
+    assert [h.latest for h in result.held_back] == ["3.15"]
 
 
 def test_apply_normalize_reports_held_back_without_change(tmp_path: Path) -> None:
     _seed(tmp_path, "v2.1")
     with (tmp_path / "vergil.toml").open("a") as fh:
         fh.write("\n" + _RUNTIME_TOML)
-    result = VergilUpdater(served_runtimes=lambda _b: {"3.14.8", "3.15.0"}).apply(_ctx(tmp_path))
+    result = VergilUpdater(served_runtime=lambda _b: _served("3.14.8", "3.15")).apply(
+        _ctx(tmp_path)
+    )
     assert result.changed is False
     assert result.summary == "vergil refs already at v2.1"
-    assert [h.latest for h in result.held_back] == ["3.15.0"]
+    assert [h.latest for h in result.held_back] == ["3.15"]
 
 
 def test_apply_bump_combines_runtime_bump(tmp_path: Path) -> None:
@@ -373,7 +455,7 @@ def test_apply_bump_combines_runtime_bump(tmp_path: Path) -> None:
         fh.write("\n" + _RUNTIME_TOML)
     ctx = _ctx(tmp_path)
     ctx.vergil_bump = "2.2"
-    result = VergilUpdater(served_runtimes=lambda _b: {"3.14.9"}).apply(ctx)
+    result = VergilUpdater(served_runtime=lambda _b: _served("3.14.9")).apply(ctx)
     assert result.changed is True
     assert result.commit_message == "chore(deps): bump vergil to v2.2; vergil-python runtime 3.14.9"
 
@@ -383,17 +465,74 @@ def test_apply_bump_runtime_only_change(tmp_path: Path) -> None:
     (tmp_path / "vergil.toml").write_text(_SOURCE_TOML + "\n" + _RUNTIME_TOML)
     ctx = _ctx(tmp_path)
     ctx.vergil_bump = "2.1"
-    result = VergilUpdater(served_runtimes=lambda _b: {"3.14.9", "3.15.0"}).apply(ctx)
+    result = VergilUpdater(served_runtime=lambda _b: _served("3.14.9", "3.15")).apply(ctx)
     assert result.changed is True
-    assert [h.latest for h in result.held_back] == ["3.15.0"]
+    assert [h.latest for h in result.held_back] == ["3.15"]
 
 
 def test_apply_runtime_lookup_failure_propagates(tmp_path: Path) -> None:
     (tmp_path / "vergil.toml").write_text(_SOURCE_TOML + "\n" + _RUNTIME_TOML)
 
-    def served(base: Path) -> set[str]:
+    def served(base: Path) -> ServedRuntime:
         raise UpdateDepsError(phase="update", command="x", message="index down")
 
     with pytest.raises(UpdateDepsError, match="index down"):
-        VergilUpdater(served_runtimes=served).apply(_ctx(tmp_path))
+        VergilUpdater(served_runtime=served).apply(_ctx(tmp_path))
+    assert (tmp_path / "vergil.toml").read_text() == _SOURCE_TOML + "\n" + _RUNTIME_TOML
+
+
+def test_apply_end_to_end_bumps_pin_from_the_series_package(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The default lookup reads the real vergil.toml and the (faked) index: a
+    # 3.14.8 pin, with vergil-python3.14 serving 3.14.9 and a 3.15 series also
+    # published, is bumped to 3.14.9 and the 3.15 series is only reported.
+    toml = (
+        '[project]\nrepository-type = "library"\nversioning-scheme = "semver"\n'
+        'branching-model = "library-release"\nrelease-model = "tagged-release"\n'
+        'primary-language = "python"\n\n'
+        '[dependencies]\nvergil = "v2.1"\n\n[ci]\nversions = ["3.14"]\n\n'
+        '[package]\nbuilder = "python"\n'
+        'vendor = "vergil"\nsummary = "s"\nsmoke = "x --version"\n\n'
+        '[package.python]\nruntime = "3.14.8"\n'
+    )
+    (tmp_path / "vergil.toml").write_text(toml)
+    (tmp_path / "uv.lock").write_text("")
+    deb = (
+        b"Package: vergil-python3.14\nVersion: 3.14.9+20261020-1\n\n"
+        b"Package: vergil-python3.14.8\nVersion: 3.14.8+20261003-1\n\n"
+        b"Package: vergil-python3.15\nVersion: 3.15.1+20261021-1\n"
+    )
+    monkeypatch.setattr(
+        "vergil_tooling.lib.update_deps.vergil_index.runtime_indexes",
+        lambda pkg: [("deb", "noble", "amd64")],
+    )
+    monkeypatch.setattr(
+        "vergil_tooling.lib.update_deps.vergil_index.served_runtime.__kwdefaults__",
+        {"fetch": lambda url: deb},
+    )
+    result = VergilUpdater().apply(_ctx(tmp_path))
+    assert result.changed is True
+    assert result.summary == "vergil-python runtime 3.14.9"
+    assert [(h.current, h.latest) for h in result.held_back] == [("3.14.8", "3.15")]
+    assert 'runtime = "3.14.9"' in (tmp_path / "vergil.toml").read_text()
+
+
+def test_apply_holds_the_bump_while_indexes_disagree(tmp_path: Path) -> None:
+    # Not a failure (which would file a fix task): no change, and a visible
+    # held-back entry until the deb and rpm indexes serve the same patch.
+    (tmp_path / "vergil.toml").write_text(_SOURCE_TOML + "\n" + _RUNTIME_TOML)
+    served = ServedRuntime(
+        package="vergil-python3.14",
+        patches={"deb noble/amd64": "3.14.9", "rpm el9/x86_64": "3.14.8"},
+        newer_series=None,
+    )
+    result = VergilUpdater(served_runtime=lambda _b: served).apply(_ctx(tmp_path))
+    assert result.changed is False
+    assert [(h.name, h.current, h.latest) for h in result.held_back] == [
+        ("vergil-python3.14", "3.14.8", "3.14.9")
+    ]
+    note = result.held_back[0].note
+    assert note is not None
+    assert "3.14.9 on deb noble/amd64; 3.14.8 on rpm el9/x86_64" in note
     assert (tmp_path / "vergil.toml").read_text() == _SOURCE_TOML + "\n" + _RUNTIME_TOML

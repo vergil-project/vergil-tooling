@@ -81,10 +81,18 @@ def deb_has(
     )
 
 
-def deb_package_names(base_url: str, suite: str, arch: str, fetch: Fetch) -> set[str]:
-    """Every ``Package:`` name in the suite's ``binary-<arch>/Packages`` index."""
+def deb_package_versions(base_url: str, suite: str, arch: str, fetch: Fetch) -> dict[str, set[str]]:
+    """Each package in the suite's ``binary-<arch>/Packages`` index, with its upstream versions.
+
+    The Debian revision (``-1``, ``-1~noble``) is dropped, so a version reads as
+    the package's upstream version. A stanza without both fields is skipped.
+    """
     text = fetch(_deb_url(base_url, suite, arch)).decode("utf-8")
-    return {s["Package"] for s in _stanzas(text) if "Package" in s}
+    versions: dict[str, set[str]] = {}
+    for s in _stanzas(text):
+        if "Package" in s and "Version" in s:
+            versions.setdefault(s["Package"], set()).add(s["Version"].rsplit("-", 1)[0])
+    return versions
 
 
 def _local(tag: str) -> str:
@@ -123,17 +131,26 @@ def _rpm_primary(base_url: str, el: str, rpm_arch: str, fetch: Fetch) -> ET.Elem
     return ET.fromstring(gzip.decompress(primary))  # noqa: S314
 
 
-def rpm_package_names(base_url: str, el: str, rpm_arch: str, fetch: Fetch) -> set[str]:
-    """Every package name in ``<el>/<rpm_arch>``'s primary metadata (empty if unpublished)."""
+def rpm_package_versions(
+    base_url: str, el: str, rpm_arch: str, fetch: Fetch
+) -> dict[str, set[str]]:
+    """Each package in ``<el>/<rpm_arch>``'s primary metadata, with its versions.
+
+    A version is the ``ver`` attribute (no release). Empty if unpublished; a
+    package entry without a name or a version is skipped.
+    """
     meta = _rpm_primary(base_url, el, rpm_arch, fetch)
     if meta is None:
-        return set()
-    names: set[str] = set()
+        return {}
+    versions: dict[str, set[str]] = {}
     for pkg in meta:
-        name_el = next((c for c in pkg if _local(c.tag) == "name"), None)
-        if name_el is not None and name_el.text:
-            names.add(name_el.text)
-    return names
+        fields = {_local(c.tag): c for c in pkg}
+        name_el = fields.get("name")
+        ver_el = fields.get("version")
+        ver = ver_el.get("ver") if ver_el is not None else None
+        if name_el is not None and name_el.text and ver:
+            versions.setdefault(name_el.text, set()).add(ver)
+    return versions
 
 
 def rpm_has(
