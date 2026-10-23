@@ -58,13 +58,35 @@ Keeps the vergil ecosystem references consistent with
   sets `[dependencies].vergil` to `vX.Y`, then rewrites the refs to
   match.
 
-For a repo with `[package.python] runtime` (see
-[Package Config](package-config.md)), it also bumps the runtime to the
-newest `vergil-python` patch on the same minor line. A patch counts only
-when every apt and rpm index the package build and install test read it
-from serves it, so the bump cannot pass validation and then break the
-next release. A newer minor line is reported as held back and never
-applied.
+For a repo with an exact `[package.python] runtime` pin such as `3.14.8`
+(see [Package Config](package-config.md)), it also bumps the pin to the
+CPython patch that the pin's series package, `vergil-python3.14`, serves.
+That package's version is `<cpython>+<pbs_tag>` (for example
+`3.14.9+20261020`), and the patch is the part before the `+`. Each
+index installs the newest version it lists, and the patch counts only
+when every apt and rpm index the package build and install test read
+from serves the same one, so the bump cannot pass validation and then
+break the next release.
+
+The pin never leaves its series. A newer series, such as
+`vergil-python3.15`, is reported as held back and never applied; moving
+to it is a reviewed change.
+
+The deb and rpm indexes publish separately, so right after a
+vergil-python release they can briefly serve different patches. While
+they disagree the pin is left unchanged and the held-back report names
+each patch and the indexes serving it, for example
+`indexes disagree (3.14.9 on deb noble/amd64; 3.14.8 on rpm el9/x86_64);
+bump held until they agree`. A later run bumps the pin once they agree.
+
+The update fails loudly, rather than reporting "no change", when:
+
+- any of those indexes lacks the series package, or cannot be read.
+  The legacy per-patch packages (`vergil-python3.14.8`) are retired and
+  are not read;
+- a series package version is not `<cpython>+<pbs_tag>`;
+- the series package serves a patch on another series, or a patch
+  older than the pin.
 
 ### `images`
 
