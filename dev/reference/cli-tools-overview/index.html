@@ -17961,11 +17961,19 @@ workflows; <code>matrix</code> is also useful locally. See the
   them as JSON (read-only). <code>--tier {full,reduced}</code> (default <code>full</code>),
   <code>--github-output</code> (append <code>enabled</code>/<code>build</code>/<code>test</code>/<code>tier</code> to
   <code>$GITHUB_OUTPUT</code>), <code>--manifest PATH</code> (also write the release artifact
-  manifest). A repo without <code>[package]</code> reports <code>enabled: false</code>.</li>
+  manifest). A repo without <code>[package]</code> reports <code>enabled: false</code>. A
+  <code>python</code> release resolves its runtime here, once, and records it as
+  <code>runtime</code> on every build cell and in the manifest.</li>
 <li><code>build</code> — build every format of one build cell: <code>--cell</code> (required),
   <code>--version</code> (required), <code>--out</code> (default <code>dist/packages</code>),
-  <code>--staging</code> (default <code>.vergil/package-staging</code>, wiped first). Needs
-  <code>nfpm</code> on <code>PATH</code>.</li>
+  <code>--staging</code> (default <code>.vergil/package-staging</code>, wiped first),
+  <code>--runtime</code> (the cell's recorded runtime; when empty or absent, the
+  build resolves the runtime itself). Prints the runtime it chose.
+  Needs <code>nfpm</code> on <code>PATH</code>.</li>
+<li><code>check-runtime</code> — refuse (exit 1) when any <code>.deb</code>/<code>.rpm</code> in
+  <code>--artifacts DIR</code> does not depend on exactly the runtime that
+  <code>--manifest PATH</code> records. Read-only. See
+  <a href="../package-config/#one-runtime-per-release">one runtime per release</a>.</li>
 <li><code>check-unpublished</code> — refuse (exit 1) when a release at <code>--version</code>
   (required) would publish a package with the same name, full version,
   architecture and format as one an earlier stable release of <code>--repo</code>
@@ -17997,7 +18005,7 @@ workflows; <code>matrix</code> is also useful locally. See the
 </tr>
 <tr>
 <td>Args</td>
-<td>Subcommand (<code>matrix</code>, <code>build</code>, <code>check-unpublished</code>, <code>install-test</code>, <code>index</code>) with the flags above</td>
+<td>Subcommand (<code>matrix</code>, <code>build</code>, <code>check-runtime</code>, <code>check-unpublished</code>, <code>install-test</code>, <code>index</code>) with the flags above</td>
 </tr>
 <tr>
 <td>Preconditions</td>

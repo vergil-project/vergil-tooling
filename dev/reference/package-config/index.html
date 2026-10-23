@@ -12691,6 +12691,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#one-runtime-per-release" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One runtime per release
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -16261,6 +16272,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#one-runtime-per-release" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One runtime per release
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -16767,16 +16789,46 @@ passes.</p>
 <code>+&lt;date&gt;</code> build suffix, or add a rebuild counter
 (<code>3.14.8+20261003</code> → <code>3.14.8+20261003.1</code>). The revision (<code>-1</code>) is set by
 the tooling and cannot be configured.</p>
+<h3 id="one-runtime-per-release">One runtime per release<a class="headerlink" href="#one-runtime-per-release" title="Permanent link">&para;</a></h3>
+<p>A <code>python</code> release must depend on one runtime on every architecture.
+Build cells run in parallel and at slightly different times, so if each
+cell read the version window itself, a window change mid-release could
+give each architecture a different runtime. This happened to
+vergil-tooling 2.1.258: amd64 got <code>vergil-python3.15</code> and arm64 got
+<code>vergil-python3.14</code> (vergil-project/vergil-tooling#3478).</p>
+<p>To prevent it, the runtime is resolved once:</p>
+<ol>
+<li><strong><code>vrg-package matrix</code></strong> resolves the runtime: the <code>runtime</code> pin, or
+   the derived series. It records the result as <code>runtime</code> on every build
+   cell and in <code>packages-manifest.json</code>, and prints it on stderr.
+   Other builders record no runtime.</li>
+<li><strong><code>vrg-package build --runtime &lt;runtime&gt;</code></strong> builds against the
+   recorded value and never re-reads the window. Pass the cell's
+   <code>runtime</code> unchanged. An empty value counts as none recorded, so the
+   same line works for every builder. A value that differs from a
+   <code>runtime</code> pin is an error. Without <code>--runtime</code>, as in a local build,
+   the build resolves the runtime itself. Either way it prints the
+   runtime it chose and where that came from.</li>
+<li><strong><code>vrg-package check-runtime</code></strong> fails the release if any package
+   disagrees. Run it where every cell's packages are together, before
+   anything is published:</li>
+</ol>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>vrg-package<span class="w"> </span>check-runtime<span class="w"> </span>--manifest<span class="w"> </span>packages-manifest.json<span class="w"> </span>--artifacts<span class="w"> </span>dist/packages
+</code></pre></div>
+<p>Every <code>.deb</code> and <code>.rpm</code> must depend on exactly the recorded
+   <code>vergil-python&lt;X.Y&gt;</code> and on no other runtime series. Each mismatch is
+   listed. A directory with no packages fails. A manifest with no
+   <code>runtime</code> (a non-<code>python</code> release) passes.</p>
 <h2 id="the-package-index-packagestoml">The package index (<code>packages.toml</code>)<a class="headerlink" href="#the-package-index-packagestoml" title="Permanent link">&para;</a></h2>
 <p>The org's package repository lists the products it indexes in
 <code>packages.toml</code>, which <code>vrg-package index</code> reads. Retention is optional:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">vendor</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"vergil"</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">products</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"vergil-project/packages"</span><span class="p">,</span><span class="w"> </span><span class="s2">"vergil-project/vergil-tooling"</span><span class="p">]</span>
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="k">[retention]</span>
-<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="n">keep</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">3</span><span class="w">                          </span><span class="c1"># releases kept per major.minor line (default 3)</span>
-<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="n">lines</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">2</span><span class="w">                         </span><span class="c1"># newest major.minor lines kept per product (default 2)</span>
-<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="n">retire</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"vergil-python3.14.8"</span><span class="p">]</span><span class="w">  </span><span class="c1"># exact package names to drop (default: none)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">vendor</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"vergil"</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="n">products</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"vergil-project/packages"</span><span class="p">,</span><span class="w"> </span><span class="s2">"vergil-project/vergil-tooling"</span><span class="p">]</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="k">[retention]</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="n">keep</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">3</span><span class="w">                          </span><span class="c1"># releases kept per major.minor line (default 3)</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="n">lines</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">2</span><span class="w">                         </span><span class="c1"># newest major.minor lines kept per product (default 2)</span>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="n">retire</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"vergil-python3.14.8"</span><span class="p">]</span><span class="w">  </span><span class="c1"># exact package names to drop (default: none)</span>
 </code></pre></div>
 <p>The index is rebuilt from scratch on every run. For each product it keeps
 the newest <code>keep</code> releases in each of the newest <code>lines</code> major.minor lines,
@@ -16798,7 +16850,7 @@ index build. It is either a typo, which would otherwise leave the package
 published, or a package whose releases are gone; either way, remove it from
 <code>packages.toml</code>.</p>
 <h2 id="inspecting-the-matrix">Inspecting the matrix<a class="headerlink" href="#inspecting-the-matrix" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>vrg-container-run<span class="w"> </span>--<span class="w"> </span>vrg-package<span class="w"> </span>matrix
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>vrg-container-run<span class="w"> </span>--<span class="w"> </span>vrg-package<span class="w"> </span>matrix
 </code></pre></div>
 <p>prints the resolved build and test cells as JSON without building anything.
 Add <code>--tier reduced</code> to see the reduced feature-PR matrix.</p>
