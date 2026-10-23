@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -120,7 +121,7 @@ class _Fake:
             # The venv lands at the final path (under the patched _OPT).
             venv = Path(argv[-1])
             (venv / "bin").mkdir(parents=True)
-            (venv / "bin/python").symlink_to("/opt/vergil/python/3.14.4/bin/python3.14")
+            (venv / "bin/python").symlink_to("/opt/vergil/python/3.14/bin/python3.14")
         elif argv[:2] == ("uv", "sync"):
             venv = self.opt / self.vendor / "vergil-tooling/venv"
             for cmd in ("vrg-a", "vrg-b"):
@@ -142,14 +143,14 @@ def _repo(tmp_path: Path, pyproject: str = _PYPROJECT, *, lock: bool = True) -> 
 
 
 def test_runtime_depends_formats() -> None:
-    assert python_builder.runtime_depends("3.14.4", "3.14.4+20261001") == {
-        "deb": ["vergil-python3.14.4 (>= 3.14.4+20261001)"],
-        "rpm": ["vergil-python3.14.4 >= 3.14.4+20261001"],
+    assert python_builder.runtime_depends("3.14", "3.14.4+20261001") == {
+        "deb": ["vergil-python3.14 (>= 3.14.4+20261001)"],
+        "rpm": ["vergil-python3.14 >= 3.14.4+20261001"],
     }
 
 
 def test_runtime_dir() -> None:
-    assert python_builder.runtime_dir("vergil", "3.14.4") == "/opt/vergil/python/3.14.4"
+    assert python_builder.runtime_dir("vergil", "3.14") == "/opt/vergil/python/3.14"
 
 
 def test_shims_default_to_all_project_scripts_sorted(tmp_path: Path) -> None:
@@ -229,14 +230,14 @@ def test_build_sequence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     res = python_builder.build_python(ctx)
 
     venv = f"{fake.opt}/vergil/vergil-tooling/venv"
-    interp = "/opt/vergil/python/3.14.4/bin/python3.14"
+    interp = "/opt/vergil/python/3.14/bin/python3.14"
     assert fake.flat == [
         "bootstrap",
         # Only the vergil source the keyring package wrote; never the Ubuntu archive.
         f"apt-get {_FAST} -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/vergil.sources"
         " -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0 update",
-        f"apt-get {_FAST} install -y vergil-python3.14.4",
-        "dpkg-query -W -f=${Version} vergil-python3.14.4",
+        f"apt-get {_FAST} install -y vergil-python3.14",
+        "dpkg-query -W -f=${Version} vergil-python3.14",
         f"uv venv --python {interp} {venv}",
         "uv sync --frozen --no-dev --no-editable --compile-bytecode",
     ]
@@ -259,14 +260,14 @@ def test_build_sequence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     assert fake.cwds["uv sync"] == tmp_path
 
     assert res.depends == {
-        "deb": ["vergil-python3.14.4 (>= 3.14.4+20261001)"],
-        "rpm": ["vergil-python3.14.4 >= 3.14.4+20261001"],
+        "deb": ["vergil-python3.14 (>= 3.14.4+20261001)"],
+        "rpm": ["vergil-python3.14 >= 3.14.4+20261001"],
     }
     staged_bin = ctx.staging_root / "opt/vergil/vergil-tooling/venv/bin"
     assert (staged_bin / "vrg-a").read_text() == "#!x\n"
     assert (staged_bin / "python").is_symlink()
     assert {
-        "src": "/opt/vergil/python/3.14.4/bin/python3.14",
+        "src": "/opt/vergil/python/3.14/bin/python3.14",
         "dst": "/opt/vergil/vergil-tooling/venv/bin/python",
         "type": "symlink",
     } in res.contents
@@ -288,7 +289,7 @@ def test_runtime_always_comes_from_vergil_org(
     fake = _Fake(tmp_path, monkeypatch, vendor="acme")
     res = python_builder.build_python(_py_ctx(tmp_path, pkg=_pkg(vendor="acme")))
     assert fake.boot[0][1] is orgs.ORGS["vergil"]
-    assert any(c.startswith("uv venv --python /opt/vergil/python/3.14.4/") for c in fake.flat)
+    assert any(c.startswith("uv venv --python /opt/vergil/python/3.14/") for c in fake.flat)
     assert {"dst": "/opt/acme/vergil-tooling", "type": "dir"} in res.contents
     assert {
         "src": "/opt/acme/vergil-tooling/venv/bin/vrg-a",
@@ -303,11 +304,11 @@ def test_native_rhel_cell_uses_dnf(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     res = python_builder.build_python(_py_ctx(tmp_path, cell=_NATIVE_RHEL9))
     assert fake.boot[0][2:4] == ("rpm", "el9")
     assert fake.flat[1:3] == [
-        "dnf install -y vergil-python3.14.4",
-        "rpm -q --qf %{VERSION} vergil-python3.14.4",
+        "dnf install -y vergil-python3.14",
+        "rpm -q --qf %{VERSION} vergil-python3.14",
     ]
     assert not any(c.startswith("apt-get") for c in fake.flat)
-    assert res.depends["rpm"] == ["vergil-python3.14.4 >= 3.14.4+20261001"]
+    assert res.depends["rpm"] == ["vergil-python3.14 >= 3.14.4+20261001"]
 
 
 def test_native_ubuntu_cell_uses_its_own_suite(
@@ -322,11 +323,61 @@ def test_native_ubuntu_cell_uses_its_own_suite(
 def test_python_minor_comes_from_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _repo(tmp_path)
     fake = _Fake(tmp_path, monkeypatch)
+    fake.installed = "3.13.12+20261001-1"
     pkg = _pkg(python=PackagePythonConfig(runtime="3.13.12"))
-    python_builder.build_python(_py_ctx(tmp_path, pkg=pkg))
-    assert f"apt-get {_FAST} install -y vergil-python3.13.12" in fake.flat
-    interp = "/opt/vergil/python/3.13.12/bin/python3.13"
+    res = python_builder.build_python(_py_ctx(tmp_path, pkg=pkg))
+    assert f"apt-get {_FAST} install -y vergil-python3.13" in fake.flat
+    interp = "/opt/vergil/python/3.13/bin/python3.13"
     assert any(c.startswith(f"uv venv --python {interp} ") for c in fake.flat)
+    assert res.depends["deb"] == ["vergil-python3.13 (>= 3.13.12+20261001)"]
+
+
+def test_pinned_patch_uses_the_per_series_package(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # vergil-tooling#3455: a 3.14.8 pin once installed the legacy per-patch
+    # vergil-python3.14.8 at /opt/vergil/python/3.14.8. It must use the
+    # per-series vergil-python3.14 at /opt/vergil/python/3.14.
+    _repo(tmp_path)
+    fake = _Fake(tmp_path, monkeypatch)
+    fake.installed = "3.14.8+20261020-1"
+    pkg = _pkg(python=PackagePythonConfig(runtime="3.14.8"))
+    res = python_builder.build_python(_py_ctx(tmp_path, pkg=pkg))
+    assert f"apt-get {_FAST} install -y vergil-python3.14" in fake.flat
+    assert "dpkg-query -W -f=${Version} vergil-python3.14" in fake.flat
+    assert not any("vergil-python3.14.8" in c for c in fake.flat)
+    interp = "/opt/vergil/python/3.14/bin/python3.14"
+    assert any(c.startswith(f"uv venv --python {interp} ") for c in fake.flat)
+    sync_env = fake.envs["uv sync"]
+    assert sync_env is not None
+    assert sync_env["UV_PYTHON"] == interp
+    assert res.depends == {
+        "deb": ["vergil-python3.14 (>= 3.14.8+20261020)"],
+        "rpm": ["vergil-python3.14 >= 3.14.8+20261020"],
+    }
+
+
+@pytest.mark.parametrize("cell", [_SHARED_AMD64, _NATIVE_RHEL9])
+@pytest.mark.parametrize("installed", ["3.14.9+20261101-1", "3.14.7+20260901-1", "3.14.80-1"])
+def test_pinned_patch_not_served_is_fatal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cell: BuildCell, installed: str
+) -> None:
+    # The per-series package floats; a pin to a patch it no longer (or not yet)
+    # serves fails loudly instead of building on a different CPython.
+    _repo(tmp_path)
+    fake = _Fake(tmp_path, monkeypatch)
+    fake.installed = installed
+    pkg = _pkg(python=PackagePythonConfig(runtime="3.14.8"))
+    served = re.escape(installed.rsplit("-", 1)[0])
+    with pytest.raises(
+        PackageError,
+        match=(
+            r"\[package\.python\]\.runtime pins CPython 3\.14\.8, but the vergil package "
+            rf"repository serves vergil-python3\.14 {served}\. Fix: remove"
+        ),
+    ):
+        python_builder.build_python(_py_ctx(tmp_path, cell=cell, pkg=pkg))
+    assert not any(c.startswith("uv ") for c in fake.flat)
 
 
 _VERGIL_TOML = (
@@ -405,7 +456,7 @@ def test_unreadable_runtime_version_is_fatal(
     _repo(tmp_path)
     fake = _Fake(tmp_path, monkeypatch)
     fake.installed = installed
-    with pytest.raises(PackageError, match=r"could not read the installed vergil-python3\.14\.4"):
+    with pytest.raises(PackageError, match=r"could not read the installed vergil-python3\.14"):
         python_builder.build_python(_py_ctx(tmp_path))
 
 
@@ -416,7 +467,7 @@ def test_deb_version_without_revision_is_used_whole(
     fake = _Fake(tmp_path, monkeypatch)
     fake.installed = "3.14.4+20261001"
     res = python_builder.build_python(_py_ctx(tmp_path))
-    assert res.depends["deb"] == ["vergil-python3.14.4 (>= 3.14.4+20261001)"]
+    assert res.depends["deb"] == ["vergil-python3.14 (>= 3.14.4+20261001)"]
 
 
 def test_failed_command_becomes_package_error(

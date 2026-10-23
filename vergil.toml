@@ -25,15 +25,14 @@ vergil = "v2.1"
 # /opt/vergil/vergil-tooling/venv against the packaged vergil-python runtime,
 # shims every [project.scripts] command into /usr/bin, and is built and
 # install-tested on every default target (docs/site/docs/reference/package-config.md).
+# There is no [package.python].runtime pin: the runtime is derived as the newest
+# resolved version with a published runtime, and the package installs and
+# depends on the per-series vergil-python<x.y> (vergil-tooling#3455).
 [package]
 builder = "python"
 vendor = "vergil"
 summary = "Shared development tooling for Vergil-managed repositories"
 smoke = "vrg-whoami --mode"
-
-[package.python]
-# The released, indexed vergil-python patch (vergil-project/vergil-python#2).
-runtime = "3.14.8"
 
 # This repo dogfoods its own unreleased code: the cached dev image deliberately
 # skips `uv tool install` for the self-repo, so `vrg-validate` is not on PATH —

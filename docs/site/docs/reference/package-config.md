@@ -36,8 +36,8 @@ smoke   = "vrg-whoami --mode" # the install test runs this after install
 # version = "3.14.4+20261001"   # explicit package version; default: the repo version
 # noarch  = true                # architecture-independent: built once, deb `all` / rpm `noarch`
 
-[package.python]
-runtime = "3.14.8"            # exact vergil-python CPython patch to build against and depend on
+[package.python]               # optional for builder = "python"
+# runtime = "3.14.8"          # exact-patch pin; default: derived from the resolved version
 # commands = ["vrg-git"]      # subset of [project.scripts] to shim; default: all
 
 # For builder = "staged" instead of [package.python]:
@@ -62,20 +62,35 @@ runtime = "3.14.8"            # exact vergil-python CPython patch to build again
 
 ### `[package.python]`
 
-Valid only with `builder = "python"`, and required there.
+Valid only with `builder = "python"`, and optional there.
 
 | Key | Type | Default | Semantics |
 |---|---|---|---|
-| `runtime` | string | *(required)* | Exact CPython patch (`3.Y.Z`) of the `vergil-python` runtime to build against and depend on |
+| `runtime` | string | derived | Exact-patch pin (`3.Y.Z`) on the `vergil-python` runtime. Absent, the runtime is derived (see below) |
 | `commands` | list of strings | all of `[project.scripts]` | The commands to shim into `/usr/bin`; each must be in `[project.scripts]` |
 
-You do not need to edit `runtime` to pick up a new CPython patch. The
-`vergil` updater, which every `vrg-release` runs in its `update-deps`
-stage, bumps it to the newest patch on the same minor line once every
-index the build and install test read it from serves that patch. A
-newer minor line is only reported, in the held-back report; moving to it
-is a deliberate edit. See the
-[dependency-update reference](dependency-update-config.md#vergil).
+`vergil-python` publishes one package per CPython series,
+`vergil-python<X.Y>`, versioned `<cpython>+<pbs-tag>` (for example
+`3.14.8+20261020`). Its patch floats: each release replaces the previous
+patch. A package always builds against, installs and depends on the
+per-series package, at `/opt/vergil/python/<X.Y>`.
+
+With no `runtime`, the series is derived: it is the newest resolved
+version whose window entry marks the runtime published (epic
+[vergil-project/.github#407](https://github.com/vergil-project/.github/issues/407),
+spec §7). The build takes whatever patch the series package serves. This
+is the recommended setting.
+
+A `runtime` pin keeps its `X.Y` in the window and builds on
+`vergil-python<X.Y>`, never the legacy per-patch `vergil-python<X.Y.Z>`.
+It is exact: after installing the series package, the build checks that
+the CPython part of the installed version equals the pinned `X.Y.Z`. If
+the repository serves any other patch, the build fails with the served
+version and a fix: remove the pin, or update it to the served patch.
+A pin cannot hold the build on an older patch, because the series
+package no longer serves it. The pin governs the build only. The built
+package depends on `vergil-python<X.Y> (>= <installed version>)`, so
+consumers still take later patches of the series.
 
 ### `[package.staged]`
 
@@ -163,17 +178,18 @@ The package revision is `1` for shared builds, and `1~<suite>` (deb) or
 In each build cell, as root:
 
 1. Enable the vergil package repository and install
-   `vergil-python<runtime>` with the OS package manager, as a consumer would.
+   `vergil-python<X.Y>` with the OS package manager, as a consumer would.
+   With a `runtime` pin, check that it serves the pinned patch.
 2. Create the venv at its final path, `/opt/<vendor>/<name>/venv`, against
-   `/opt/vergil/python/<runtime>/bin/python3.Y`.
+   `/opt/vergil/python/<X.Y>/bin/python<X.Y>`.
 3. Install from `uv.lock` only (`uv sync --frozen --no-dev --no-editable
    --compile-bytecode`). `uv.lock` must exist next to `vergil.toml`.
 4. Apply the glibc floor guard.
 5. Add `/usr/bin/<cmd>` symlinks to `venv/bin/<cmd>` for each shimmed command.
 
 The package depends on the runtime it was built against:
-`vergil-python<X.Y.Z> (>= <pbs-version>)` (deb) or
-`vergil-python<X.Y.Z> >= <pbs-version>` (rpm).
+`vergil-python<X.Y> (>= <installed-version>)` (deb) or
+`vergil-python<X.Y> >= <installed-version>` (rpm).
 
 ### `staged`
 
@@ -184,7 +200,7 @@ root, and packages the result. Used for `vergil-python` itself and for the
 ## Install layout
 
 ```text
-/opt/<vendor>/python/<X.Y.Z>/      runtime (vergil-python)
+/opt/<vendor>/python/<X.Y>/        runtime (vergil-python)
 /opt/<vendor>/<name>/venv/         product venv
 /usr/bin/<cmd>  -> venv/bin/<cmd>  command shims
 /etc/<vendor>/<name>/              config (overlay, noreplace)
@@ -238,8 +254,7 @@ Install tests run in plain containers without systemd as PID 1, so:
 - `exclude` and `targets` both set;
 - a selection that resolves to zero targets;
 - `native` combined with `noarch = true`;
-- `builder = "python"` without `[package.python].runtime`, or a runtime that is
-  not an exact `3.Y.Z` patch;
+- a `[package.python].runtime` that is not an exact `3.Y.Z` patch;
 - a missing `uv.lock` for the python builder;
 - `builder = "staged"` without `name`, or with neither a `build-command` nor
   overlay `contents`;
