@@ -304,6 +304,39 @@ def test_run_build_staged_command_and_version_override(
     assert {"dst": "/opt/vergil/thing", "type": "dir"} in cfg["contents"]
 
 
+def test_run_build_hands_the_recorded_runtime_to_the_builder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "vergil.toml").write_text(
+        _BASE_TOML
+        + '\n[package]\nbuilder = "python"\nvendor = "vergil"\nname = "vergil-thing"\n'
+        + 'summary = "A thing"\nsmoke = "true"\n[package.python]\n'
+    )
+    (tmp_path / "uv.lock").write_text("version = 1\n")
+    seen: list[str | None] = []
+
+    def fake(ctx: build.BuildContext) -> build.BuildResult:
+        seen.append(ctx.runtime)
+        return build.BuildResult(contents=[{"src": "x", "dst": "/x"}])
+
+    monkeypatch.setitem(build.BUILDERS, "python", fake)
+    monkeypatch.setattr(build.nfpm, "load_overlay", lambda _root: {})
+    monkeypatch.setattr(nfpm, "package", _fake_package([]))
+    build.run_build(tmp_path, "shared-amd64", "1.0.0", tmp_path / "o", tmp_path / "s")
+    kw = {"runtime": "3.14"}
+    build.run_build(tmp_path, "shared-arm64", "1.0.0", tmp_path / "o", tmp_path / "s", **kw)
+    assert seen == [None, "3.14"]
+
+
+def test_run_build_refuses_a_runtime_for_a_non_python_builder(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_staged_toml(build_command="true"))
+    with pytest.raises(PackageError, match=r'--runtime applies only to builder = "python"'):
+        build.run_build(
+            tmp_path, "shared-amd64", "1.0.0", tmp_path / "o", tmp_path / "s", runtime="3.14"
+        )
+    assert not (tmp_path / "s").exists()
+
+
 def test_run_build_without_package_section_is_fatal(tmp_path: Path) -> None:
     (tmp_path / "vergil.toml").write_text(_BASE_TOML)
     with pytest.raises(PackageError, match=r"no \[package\] section"):
