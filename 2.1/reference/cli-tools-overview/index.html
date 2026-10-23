@@ -1310,6 +1310,8 @@
       
         
       
+        
+      
     
     
     
@@ -1362,6 +1364,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.257/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.257
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17197,15 +17227,15 @@ leaving genuinely repo-local lines outside the fence untouched. See the
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>A repo whose language resolves from <code>[project].primary-language</code> (absent/unreadable config → base-only)</td>
+<td>A repo whose language resolves from <code>[project].primary-language</code> (no <code>vergil.toml</code> or no declared language → base-only; a <code>vergil.toml</code> that fails to load is an error, exit 2)</td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td><code>--check</code> prints each drift reason to stderr; <code>--write</code> always succeeds (prints <code>already in sync</code> or the synced path)</td>
+<td><code>--check</code> prints each drift reason to stderr; <code>--write</code> succeeds whenever the language resolves (prints <code>already in sync</code> or the synced path)</td>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 ok, 1 <code>--check</code> drift, 2 usage error</td>
+<td>0 ok, 1 <code>--check</code> drift, 2 usage error or a <code>vergil.toml</code> that fails to load (the config error is printed to stderr; nothing is written)</td>
 </tr>
 <tr>
 <td>Status</td>
@@ -17242,15 +17272,15 @@ or PR knowledge.</p>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>A repo whose language resolves from <code>[project].primary-language</code> (absent/unreadable config → <code>github-actions</code> only)</td>
+<td>A repo whose language resolves from <code>[project].primary-language</code> (no <code>vergil.toml</code> or no declared language → <code>github-actions</code> only; a <code>vergil.toml</code> that fails to load is an error, exit 2)</td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td><code>--check</code> prints <code>missing .github/dependabot.yml</code> or <code>differs from the canonical render</code> to stderr; <code>--write</code> always succeeds (prints <code>already in sync</code> or <code>wrote .github/dependabot.yml (&lt;lang or none&gt;)</code>)</td>
+<td><code>--check</code> prints <code>missing .github/dependabot.yml</code> or <code>differs from the canonical render</code> to stderr; <code>--write</code> succeeds whenever the language resolves (prints <code>already in sync</code> or <code>wrote .github/dependabot.yml (&lt;lang or none&gt;)</code>)</td>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 ok, 1 <code>--check</code> drift, 2 usage error</td>
+<td>0 ok, 1 <code>--check</code> drift, 2 usage error or a <code>vergil.toml</code> that fails to load (the config error is printed to stderr; nothing is written)</td>
 </tr>
 <tr>
 <td>Status</td>
@@ -17264,13 +17294,18 @@ or PR knowledge.</p>
 <code>gitignore</code> (default) syncs the managed <code>.gitignore</code> block via
 <code>vrg-gitignore-sync --write</code>; <code>dependabot</code> writes the report-only
 <code>.github/dependabot.yml</code> via <code>vrg-dependabot-sync --write</code> (branch slug
-<code>dependabot-config</code>, filed under epic vergil-project/.github#420). It
+<code>dependabot-config</code>, filed under epic vergil-project/.github#420). A
+target's epic links only repos in the epic's own org: a repo in another
+org (read from the clone with <code>gh repo view</code>) is filed under its own
+ad-hoc epic, and the issue body still names the target's epic, because
+<code>vrg-issue-create</code> refuses a cross-org link. It
 drives the generic fleet-sweep driver (<code>lib/fleet_sweep.py</code>): per repo it
 creates a worktree, shells out to the target's applicator, commits,
 and runs <code>report-ready</code>. Like every agent-run task it <strong>never submits or
 merges</strong> — it stops at <code>report-ready</code>, leaving submission and merge to the
-human. <code>--dry-run</code> reports the intended per-repo action without touching
-any git or GitHub state.</p>
+human. <code>--dry-run</code> reports the intended per-repo action, including the
+epic each repo would be filed under, without changing any git or GitHub
+state.</p>
 <table>
 <thead>
 <tr>
@@ -17383,7 +17418,10 @@ language and selects appropriate image and test command.</p>
 <h3 id="vrg-container-docs">vrg-container-docs<a class="headerlink" href="#vrg-container-docs" title="Permanent link">&para;</a></h3>
 <p>Preview or build MkDocs documentation inside a dev container.
 Supports <code>serve</code> (live-reload) and <code>build</code> subcommands. For Python
-repos, wraps with <code>uv sync --group docs</code>. Always sets
+repos, wraps with <code>uv sync --group docs</code> and sets
+<code>UV_PYTHON_PREFERENCE=only-system</code>, so uv uses the docs image's own Python
+(as CI does) whatever the repo's <code>python-preference</code>, and fails loudly if
+that Python does not satisfy <code>requires-python</code>. Always sets
 <code>NO_MKDOCS_2_WARNING=1</code> in the container, so local builds suppress the
 mkdocs-material MkDocs 2.0 warning banner the same way CI does.</p>
 <table>

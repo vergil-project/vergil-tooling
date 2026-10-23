@@ -1310,6 +1310,8 @@
       
         
       
+        
+      
     
     
     
@@ -1362,6 +1364,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.257/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.257
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -16172,7 +16202,12 @@ use the image's interpreter at the resolved version, so a repo's own
 build exports the same two variables for its whole setup step (vergil-tooling
 install, <code>build-command</code> and warmup), and they are part of the image's cache key,
 so a change of resolved version rebuilds the image
-(<a href="https://github.com/vergil-project/vergil-tooling/issues/3421">#3421</a>).</p>
+(<a href="https://github.com/vergil-project/vergil-tooling/issues/3421">#3421</a>).
+<code>vrg-container-docs</code> resolves no version, so for a Python repo it sets only
+<code>UV_PYTHON_PREFERENCE=only-system</code>, which pins uv to the docs image's own Python,
+as the CI docs jobs do. If that Python does not satisfy <code>requires-python</code>, uv
+fails the build; there is no fallback
+(<a href="https://github.com/vergil-project/vergil-tooling/issues/3414">#3414</a>).</p>
 <p>For a <strong>cpp</strong> repo, <code>vrg-container-run</code> also forwards
 <code>CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER</code> when it can resolve one: from the
 environment if set and not blank, else from <code>~/.config/vergil/conan.env</code>, else
