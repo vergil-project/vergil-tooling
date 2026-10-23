@@ -1318,6 +1318,8 @@
       
         
       
+        
+      
     
     
     
@@ -1370,6 +1372,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.261/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.261
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -12361,6 +12391,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#_check_dependabot_yml-report-only-dependabot-config" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        _check_dependabot_yml — report-only Dependabot config
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#_check_required_workflows-opsyml-wiring" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -15960,6 +16001,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#_check_dependabot_yml-report-only-dependabot-config" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        _check_dependabot_yml — report-only Dependabot config
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#_check_required_workflows-opsyml-wiring" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -16061,8 +16113,8 @@ two independent halves:</p>
 <li><strong>Local filesystem checks</strong> (<code>audit_local_config</code>) — pure local file
   I/O, no network. They verify the files every managed repo checks in:
   <code>vergil.toml</code>, <code>CLAUDE.md</code>, <code>.claude/settings.json</code>,
-  <code>.claude/hooks/guard.sh</code>, reusable-workflow pins, <code>.gitignore</code>, and
-  <code>.github/workflows/ops.yml</code>.</li>
+  <code>.claude/hooks/guard.sh</code>, reusable-workflow pins, <code>.gitignore</code>,
+  <code>.github/dependabot.yml</code>, and <code>.github/workflows/ops.yml</code>.</li>
 <li><strong>GitHub API checks</strong> — repo settings, branch rulesets, and the
   required-status-check set, fetched from the GitHub API.</li>
 </ul>
@@ -16154,6 +16206,10 @@ divergence:</p>
 <td><code>.gitignore</code> carries the correct <code>base + &lt;language&gt;</code> vergil-managed fence <strong>(#311, #325)</strong></td>
 </tr>
 <tr>
+<td><code>_check_dependabot_yml</code></td>
+<td><code>.github/dependabot.yml</code> is the canonical report-only render for the repo's language <strong>(.github#420)</strong></td>
+</tr>
+<tr>
 <td><code>_check_required_workflows</code></td>
 <td><code>ops.yml</code> is present, wires the audit, and is scheduled <strong>(new, #311)</strong></td>
 </tr>
@@ -16201,6 +16257,24 @@ same rule scaffolding uses, so a freshly inited repo is fenced-compliant
 by construction. The transitional legacy monolith-superset acceptance was
 removed in epic
 <a href="https://github.com/vergil-project/.github/issues/325">#325</a>, Task 10.</p>
+<h3 id="_check_dependabot_yml-report-only-dependabot-config"><code>_check_dependabot_yml</code> — report-only Dependabot config<a class="headerlink" href="#_check_dependabot_yml-report-only-dependabot-config" title="Permanent link">&para;</a></h3>
+<p>The repo's <code>.github/dependabot.yml</code> must be <strong>exactly</strong> the canonical
+report-only render for its <code>[project].primary-language</code> (epic
+<a href="https://github.com/vergil-project/.github/issues/420">vergil-project/.github#420</a>):
+a <code>github-actions</code> entry plus the language's ecosystem, each with
+<code>open-pull-requests-limit: 0</code>. The comparison is an exact match with no
+local additions — the same <code>lib/dependabot.py::check</code> that
+<code>vrg-dependabot-sync --check</code> uses. Each failure is reported as
+<code>DiffItem(field="local.dependabot", expected="canonical report-only dependabot.yml",
+actual=&lt;reason&gt;)</code>, where the reason is <code>missing .github/dependabot.yml</code>
+or <code>differs from the canonical render</code>. Fix either with
+<code>vrg-dependabot-sync --write</code>.</p>
+<p>No <code>vergil.toml</code>, or no declared language, means the actions-only
+render. A <code>vergil.toml</code> that fails to load is <strong>not</strong> treated as
+actions-only: the check reports one explicit failure,
+<code>DiffItem(field="local.dependabot", expected="resolvable [project].primary-language",
+actual="cannot resolve the dependabot language: &lt;config error&gt;")</code>, and
+nothing else for the file (#3451).</p>
 <h3 id="_check_required_workflows-opsyml-wiring"><code>_check_required_workflows</code> — ops.yml wiring<a class="headerlink" href="#_check_required_workflows-opsyml-wiring" title="Permanent link">&para;</a></h3>
 <p>A <strong>wiring validator</strong> for a <em>present</em> <code>ops.yml</code>. It asserts the file
 (a) exists, (b) references <code>ops-github-config.yml</code> (so a repo cannot

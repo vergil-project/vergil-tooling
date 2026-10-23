@@ -1318,6 +1318,8 @@
       
         
       
+        
+      
     
     
     
@@ -1370,6 +1372,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.261/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.261
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -12586,6 +12616,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-ci-resolve" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-ci-resolve
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-package" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -16505,6 +16546,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-ci-resolve" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-ci-resolve
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-package" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17141,7 +17193,8 @@ defines are listed in
 <p>Audit a managed repo against the canonical Vergil configuration, and
 in <code>apply</code> mode reconcile the GitHub half. Combines local filesystem
 checks (<code>vergil.toml</code>, <code>CLAUDE.md</code>, <code>.claude/settings.json</code>, hook-guard
-shim, workflow pins, <code>.gitignore</code> managed fence, <code>ops.yml</code> wiring)
+shim, workflow pins, <code>.gitignore</code> managed fence, canonical
+<code>dependabot.yml</code>, <code>ops.yml</code> wiring)
 with GitHub-API checks (repo settings, rulesets, required-check set).
 Runs nightly from each repo's <code>ops.yml</code> via the reusable
 <code>ops-github-config.yml</code> workflow, where drift is fatal. See the
@@ -17838,6 +17891,58 @@ keys, enum values, dependencies) and the <code>README.md</code> structure
 <tr>
 <td>Exit codes</td>
 <td>0 valid, 1 invalid, 2 <code>vergil.toml</code> not found</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-ci-resolve">vrg-ci-resolve<a class="headerlink" href="#vrg-ci-resolve" title="Permanent link">&para;</a></h3>
+<p>Resolve the repo's CI versions from the published version window, with
+the same resolver <code>vrg-validate</code> and the dev container use. The CI
+setup step of the <code>vergil-actions</code> reusable workflows runs it to build
+the version matrix and pick the primary-version container. The window
+is read at the repo's <code>[dependencies].vergil</code> ref; set
+<code>VRG_VERSION_WINDOW=&lt;path&gt;</code> to resolve against a local <code>window.json</code>.
+A repo with no language resolves to <code>latest</code>. See
+<a href="../../guides/ci-architecture/#version-resolution">Version resolution</a>.</p>
+<ul>
+<li><code>--format json</code> (default) — one JSON object with <code>versions</code>,
+  <code>primary-version</code>, <code>primary-container-tag</code>, <code>container-tags</code> and
+  <code>container-suffixes</code>.</li>
+<li><code>--format github-output</code> — <code>versions</code>, <code>primary-version</code> and
+  <code>primary-container-tag</code> as <code>key=value</code> lines for <code>$GITHUB_OUTPUT</code>.</li>
+<li><code>--repo-root PATH</code> — the directory holding <code>vergil.toml</code> (default:
+  the current directory).</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_ci_resolve</code></td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>--format {json,github-output}</code>, <code>--repo-root PATH</code></td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td><code>vergil.toml</code> in the repo root; network access to the published window, or <code>VRG_VERSION_WINDOW</code></td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td><code>vrg-ci-resolve: error:</code> on stderr for a missing or invalid <code>vergil.toml</code>, an unreadable or malformed window, or a resolution error (a pin outside the window, an app pin of more than one version, a C++ or TypeScript repo with no pin)</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 success, 1 error</td>
 </tr>
 <tr>
 <td>Status</td>
