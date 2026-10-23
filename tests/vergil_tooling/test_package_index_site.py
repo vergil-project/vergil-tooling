@@ -161,7 +161,9 @@ def _art(tmp_path: Path, fmt: str) -> Artifact:
 
 def _inputs(tmp_path: Path) -> tuple[Path, Path]:
     config = tmp_path / "packages.toml"
-    config.write_text('vendor = "v"\nproducts = ["o/t"]\n[retention]\nkeep = 2\nlines = 1\nretire = ["old-rt"]\n')
+    config.write_text(
+        'vendor = "v"\nproducts = ["o/t"]\n[retention]\nkeep = 2\nlines = 1\nretire = ["old-rt"]\n'
+    )
     keys = tmp_path / "keys"
     keys.mkdir()
     (keys / "v.asc").write_text("PUBLIC KEY")
