@@ -410,7 +410,8 @@ opens a PR. The file is an exact match of the render for your
 writes it, and `vrg-dependabot-sync --write` writes or refreshes it.
 `vrg-validate` rejects any `dependabot.yml` entry whose
 `open-pull-requests-limit` is missing (Dependabot then defaults to 5) or
-not `0`.
+not `0`, and the nightly audit flags a missing or non-canonical file
+until you run `vrg-dependabot-sync --write`.
 
 The audit also checks `vergil.toml`, `CLAUDE.md`,
 `.claude/settings.json`, `.claude/hooks/guard.sh`, the reusable-workflow
