@@ -371,7 +371,9 @@ class TestPurgeObsoleteRuntimes:
         assert _SHOWAUTO in flat
         assert _SIMULATE in flat
         out = capsys.readouterr().out
-        assert "Purging obsolete vergil-python runtimes: vergil-python3.14 vergil-python3.14.8" in out
+        assert (
+            "Purging obsolete vergil-python runtimes: vergil-python3.14 vergil-python3.14.8" in out
+        )
         assert boot
 
     def test_never_runs_a_blanket_autoremove(self, boot: list[tuple[Any, ...]]) -> None:
