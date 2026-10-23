@@ -214,10 +214,14 @@ def test_kept_artifact_depending_on_a_retired_name_is_fatal(fmt: str) -> None:
         retention.select([rt, app], keep=3, lines=2, retire=frozenset({"rt"}))
 
 
-def test_retired_dependency_is_fatal_even_without_a_collected_provider() -> None:
+def test_every_retired_dependency_is_named() -> None:
+    gone = _a("o/py", "v1.0.0", "gone", "1.0.0")
+    also = _a("o/py", "v1.0.0", "also-gone", "1.0.0")
     app = _a("o/t", "v2.0.0", "t", "2.0.0", depends=("gone", "also-gone"))
     with pytest.raises(PackageError, match=r"depends on retired package\(s\) also-gone, gone;"):
-        retention.select([app], keep=1, lines=1, retire=frozenset({"gone", "also-gone"}))
+        retention.select(
+            [gone, also, app], keep=1, lines=1, retire=frozenset({"gone", "also-gone"})
+        )
 
 
 def test_dependency_of_an_evicted_artifact_on_a_retired_name_is_not_an_error() -> None:
@@ -261,3 +265,34 @@ def test_retire_still_checks_conflicts_among_retired_artifacts() -> None:
     b = _a("o/py", "v1.0.1", "rt", "1", sha="bbb")
     with pytest.raises(PackageError, match=r"differs between"):
         retention.select([a, b], keep=3, lines=2, retire=frozenset({"rt"}))
+
+
+def test_unmatched_retire_entry_is_fatal() -> None:
+    app = _a("o/t", "v1.0.0", "t", "1.0.0")
+    with pytest.raises(
+        PackageError,
+        match=(
+            r"^\[retention\]\.retire lists vergil-pyhton3\.14\.8, which matches no collected "
+            r"package; remove it from packages\.toml \(a typo, or the package already aged out\)$"
+        ),
+    ):
+        retention.select([app], keep=1, lines=1, retire=frozenset({"vergil-pyhton3.14.8"}))
+
+
+def test_every_unmatched_retire_entry_is_named() -> None:
+    rt = _a("o/py", "v1.0.0", "rt", "1.0.0")
+    with pytest.raises(PackageError, match=r"retire lists nope, zap, which match no collected"):
+        retention.select([rt], keep=1, lines=1, retire=frozenset({"rt", "zap", "nope"}))
+
+
+def test_matched_retire_entry_passes() -> None:
+    rt = _a("o/py", "v1.0.0", "rt", "1.0.0", fmt="rpm", arch="arm64")
+    app = _a("o/t", "v1.0.0", "t", "1.0.0")
+    assert retention.select([rt, app], keep=1, lines=1, retire=frozenset({"rt"})) == [app]
+
+
+def test_retire_entry_only_in_releases_retention_drops_still_matches() -> None:
+    # rt ships only in v1.0.0, which keep=1/lines=1 evicts in favour of v2.0.0
+    rt = _a("o/py", "v1.0.0", "rt", "1.0.0")
+    rt_ng = _a("o/py", "v2.0.0", "rt-ng", "2.0.0")
+    assert retention.select([rt, rt_ng], keep=1, lines=1, retire=frozenset({"rt"})) == [rt_ng]

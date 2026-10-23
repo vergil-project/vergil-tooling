@@ -404,6 +404,14 @@ than publishing a package that cannot be installed. To fix it, remove the name
 from `retire` or make sure retention no longer keeps the dependent release.
 Omitting `retire`, or setting it to `[]`, retires nothing.
 
+Every `retire` entry must name a package that some collected release ships,
+in any format or architecture. The check runs against everything collected
+before retention drops anything, so a name found only in releases that
+retention would evict still counts. An entry that matches nothing fails the
+index build. It is either a typo, which would otherwise leave the package
+published, or a package whose releases are gone; either way, remove it from
+`packages.toml`.
+
 ## Inspecting the matrix
 
 ```bash
