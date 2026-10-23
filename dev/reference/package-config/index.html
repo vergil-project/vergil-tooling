@@ -16166,8 +16166,8 @@ sees no change in CI or CD.</p>
 <a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="c1"># version = "3.14.4+20261001"   # explicit package version; default: the repo version</span>
 <a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="c1"># noarch  = true                # architecture-independent: built once, deb `all` / rpm `noarch`</span>
 <a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>
-<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="k">[package.python]</span>
-<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="n">runtime</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"3.14.8"</span><span class="w">            </span><span class="c1"># exact vergil-python CPython patch to build against and depend on</span>
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="k">[package.python]</span><span class="w">               </span><span class="c1"># optional for builder = "python"</span>
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="c1"># runtime = "3.14.8"          # exact-patch pin; default: derived from the resolved version</span>
 <a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a><span class="c1"># commands = ["vrg-git"]      # subset of [project.scripts] to shim; default: all</span>
 <a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>
 <a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="c1"># For builder = "staged" instead of [package.python]:</span>
@@ -16248,7 +16248,7 @@ sees no change in CI or CD.</p>
 </tbody>
 </table>
 <h3 id="packagepython"><code>[package.python]</code><a class="headerlink" href="#packagepython" title="Permanent link">&para;</a></h3>
-<p>Valid only with <code>builder = "python"</code>, and required there.</p>
+<p>Valid only with <code>builder = "python"</code>, and optional there.</p>
 <table>
 <thead>
 <tr>
@@ -16262,8 +16262,8 @@ sees no change in CI or CD.</p>
 <tr>
 <td><code>runtime</code></td>
 <td>string</td>
-<td><em>(required)</em></td>
-<td>Exact CPython patch (<code>3.Y.Z</code>) of the <code>vergil-python</code> runtime to build against and depend on</td>
+<td>derived</td>
+<td>Exact-patch pin (<code>3.Y.Z</code>) on the <code>vergil-python</code> runtime. Absent, the runtime is derived (see below)</td>
 </tr>
 <tr>
 <td><code>commands</code></td>
@@ -16273,13 +16273,26 @@ sees no change in CI or CD.</p>
 </tr>
 </tbody>
 </table>
-<p>You do not need to edit <code>runtime</code> to pick up a new CPython patch. The
-<code>vergil</code> updater, which every <code>vrg-release</code> runs in its <code>update-deps</code>
-stage, bumps it to the newest patch on the same minor line once every
-index the build and install test read it from serves that patch. A
-newer minor line is only reported, in the held-back report; moving to it
-is a deliberate edit. See the
-<a href="../dependency-update-config/#vergil">dependency-update reference</a>.</p>
+<p><code>vergil-python</code> publishes one package per CPython series,
+<code>vergil-python&lt;X.Y&gt;</code>, versioned <code>&lt;cpython&gt;+&lt;pbs-tag&gt;</code> (for example
+<code>3.14.8+20261020</code>). Its patch floats: each release replaces the previous
+patch. A package always builds against, installs and depends on the
+per-series package, at <code>/opt/vergil/python/&lt;X.Y&gt;</code>.</p>
+<p>With no <code>runtime</code>, the series is derived: it is the newest resolved
+version whose window entry marks the runtime published (epic
+<a href="https://github.com/vergil-project/.github/issues/407">vergil-project/.github#407</a>,
+spec §7). The build takes whatever patch the series package serves. This
+is the recommended setting.</p>
+<p>A <code>runtime</code> pin keeps its <code>X.Y</code> in the window and builds on
+<code>vergil-python&lt;X.Y&gt;</code>, never the legacy per-patch <code>vergil-python&lt;X.Y.Z&gt;</code>.
+It is exact: after installing the series package, the build checks that
+the CPython part of the installed version equals the pinned <code>X.Y.Z</code>. If
+the repository serves any other patch, the build fails with the served
+version and a fix: remove the pin, or update it to the served patch.
+A pin cannot hold the build on an older patch, because the series
+package no longer serves it. The pin governs the build only. The built
+package depends on <code>vergil-python&lt;X.Y&gt; (&gt;= &lt;installed version&gt;)</code>, so
+consumers still take later patches of the series.</p>
 <h3 id="packagestaged"><code>[package.staged]</code><a class="headerlink" href="#packagestaged" title="Permanent link">&para;</a></h3>
 <p>Valid only with <code>builder = "staged"</code>.</p>
 <table>
@@ -16398,23 +16411,24 @@ hard error. Trip it, and the fix is to mark the affected targets <code>native</c
 <p>In each build cell, as root:</p>
 <ol>
 <li>Enable the vergil package repository and install
-   <code>vergil-python&lt;runtime&gt;</code> with the OS package manager, as a consumer would.</li>
+   <code>vergil-python&lt;X.Y&gt;</code> with the OS package manager, as a consumer would.
+   With a <code>runtime</code> pin, check that it serves the pinned patch.</li>
 <li>Create the venv at its final path, <code>/opt/&lt;vendor&gt;/&lt;name&gt;/venv</code>, against
-   <code>/opt/vergil/python/&lt;runtime&gt;/bin/python3.Y</code>.</li>
+   <code>/opt/vergil/python/&lt;X.Y&gt;/bin/python&lt;X.Y&gt;</code>.</li>
 <li>Install from <code>uv.lock</code> only (<code>uv sync --frozen --no-dev --no-editable
    --compile-bytecode</code>). <code>uv.lock</code> must exist next to <code>vergil.toml</code>.</li>
 <li>Apply the glibc floor guard.</li>
 <li>Add <code>/usr/bin/&lt;cmd&gt;</code> symlinks to <code>venv/bin/&lt;cmd&gt;</code> for each shimmed command.</li>
 </ol>
 <p>The package depends on the runtime it was built against:
-<code>vergil-python&lt;X.Y.Z&gt; (&gt;= &lt;pbs-version&gt;)</code> (deb) or
-<code>vergil-python&lt;X.Y.Z&gt; &gt;= &lt;pbs-version&gt;</code> (rpm).</p>
+<code>vergil-python&lt;X.Y&gt; (&gt;= &lt;installed-version&gt;)</code> (deb) or
+<code>vergil-python&lt;X.Y&gt; &gt;= &lt;installed-version&gt;</code> (rpm).</p>
 <h3 id="staged"><code>staged</code><a class="headerlink" href="#staged" title="Permanent link">&para;</a></h3>
 <p>Runs the optional <code>build-command</code>, merges the overlay's files over the staging
 root, and packages the result. Used for <code>vergil-python</code> itself and for the
 <code>&lt;org&gt;-archive-keyring</code> package.</p>
 <h2 id="install-layout">Install layout<a class="headerlink" href="#install-layout" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>/opt/&lt;vendor&gt;/python/&lt;X.Y.Z&gt;/      runtime (vergil-python)
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>/opt/&lt;vendor&gt;/python/&lt;X.Y&gt;/        runtime (vergil-python)
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>/opt/&lt;vendor&gt;/&lt;name&gt;/venv/         product venv
 <a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>/usr/bin/&lt;cmd&gt;  -&gt; venv/bin/&lt;cmd&gt;  command shims
 <a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>/etc/&lt;vendor&gt;/&lt;name&gt;/              config (overlay, noreplace)
@@ -16479,8 +16493,7 @@ dependencies differently. Put it under <code>overrides.deb.depends</code> and
 <li><code>exclude</code> and <code>targets</code> both set;</li>
 <li>a selection that resolves to zero targets;</li>
 <li><code>native</code> combined with <code>noarch = true</code>;</li>
-<li><code>builder = "python"</code> without <code>[package.python].runtime</code>, or a runtime that is
-  not an exact <code>3.Y.Z</code> patch;</li>
+<li>a <code>[package.python].runtime</code> that is not an exact <code>3.Y.Z</code> patch;</li>
 <li>a missing <code>uv.lock</code> for the python builder;</li>
 <li><code>builder = "staged"</code> without <code>name</code>, or with neither a <code>build-command</code> nor
   overlay <code>contents</code>;</li>
