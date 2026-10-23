@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,7 +12,19 @@ import pytest
 from vergil_tooling.bin.vrg_epic_audit import main
 from vergil_tooling.lib.epics import ChildState, IssueRef
 
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
 _MOD = "vergil_tooling.bin.vrg_epic_audit"
+
+
+@pytest.fixture(autouse=True)
+def standing_drain() -> Iterator[MagicMock]:
+    # Every audit path also drains the intake/planning queue epics; stub it out
+    # by default so tests that do not exercise it make no GitHub calls. Tests
+    # that do exercise it patch drain_standing_org themselves (innermost wins).
+    with patch(f"{_MOD}.epics.drain_standing_org", return_value=[]) as mock_drain:
+        yield mock_drain
 
 
 def test_main_repo_scopes_to_resolved_home() -> None:
@@ -344,3 +357,70 @@ def test_close_reopens_closed_epic_with_open_child(capsys: pytest.CaptureFixture
     out = capsys.readouterr().out
     assert "Reopened" in out
     assert "vergil-project/.github#19" in out
+
+
+# -- intake/planning queue drain (epic vergil-project/.github#176, Task 2) -----
+
+
+def test_epic_audit_close_runs_standing_drain(
+    standing_drain: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # --close drains the intake/planning queue epics beside the ad-hoc drain,
+    # inside the same org-scoped token block, and summarizes what moved.
+    order: list[str] = []
+    scope = MagicMock()
+    scope.return_value.__enter__ = lambda *_: order.append("enter")
+    scope.return_value.__exit__ = lambda *_: order.append("exit") or False
+
+    plan = MagicMock()
+    plan.moves = [object(), object(), object()]
+    plan.close = [object()]
+
+    def _standing(_org: str, *, apply: bool, now: datetime) -> list[object]:
+        order.append("standing")
+        return [plan]
+
+    standing_drain.side_effect = _standing
+    with (
+        patch(f"{_MOD}.identity_mode.is_human", return_value=True),
+        patch(f"{_MOD}.github.detect_org", return_value="org"),
+        patch(f"{_MOD}.github.target_org", scope),
+        patch(f"{_MOD}.epic_audit.task_drift", return_value=[]),
+        patch(f"{_MOD}.epic_audit.epic_drift", return_value=[]),
+        patch(f"{_MOD}.epic_audit.closed_epic_open_child", return_value=[]),
+        patch(f"{_MOD}.epic_audit.close_drift", return_value=[]),
+        patch(f"{_MOD}.epic_audit.reopen_epics_with_open_children", return_value=[]),
+        patch(f"{_MOD}.epic_audit.render_closed", return_value=""),
+        patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[]),
+    ):
+        rc = main(["--close"])
+    assert rc == 0
+    assert order == ["enter", "standing", "exit"]
+    assert standing_drain.call_args.args[0] == "org"
+    assert standing_drain.call_args.kwargs["apply"] is True
+    out = capsys.readouterr().out
+    assert "Intake/planning drain: 3 child(ren) archived, 1 past archive(s) closed." in out
+
+
+def test_report_path_previews_standing_drain(
+    standing_drain: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    plan = MagicMock()
+    plan.moves = [object()]
+    standing_drain.return_value = [plan]
+    with (
+        patch(f"{_MOD}.github.detect_org", return_value="org"),
+        patch(f"{_MOD}.epic_audit.operational_pending", return_value=[]),
+        patch(f"{_MOD}.epic_audit.closed_operational_without_success", return_value=[]),
+        patch(f"{_MOD}.epic_audit.task_drift", return_value=[]),
+        patch(f"{_MOD}.epic_audit.epic_drift", return_value=[]),
+        patch(f"{_MOD}.epic_audit.epic_outside_dotgithub", return_value=[]),
+        patch(f"{_MOD}.epic_audit.stray_dotgithub_issue", return_value=[]),
+        patch(f"{_MOD}.epic_audit.closed_epic_open_child", return_value=[]),
+        patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[]),
+    ):
+        rc = main([])
+    assert rc == 0
+    assert standing_drain.call_args.kwargs["apply"] is False
+    out = capsys.readouterr().out
+    assert "Intake/planning drain (preview): 1 child(ren) would be archived." in out
