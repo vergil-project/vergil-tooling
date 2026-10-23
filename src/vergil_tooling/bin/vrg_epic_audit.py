@@ -97,6 +97,8 @@ def main(argv: list[str] | None = None) -> int:
         with github.target_org(org):
             drained = epics.drain_adhoc_org(org, apply=True, now=now)
             queue_drained = epics.drain_standing_org(org, apply=True, now=now)
+            # One org-wide enumeration feeds every orphan-pass check.
+            issues = epic_audit.open_issues(org)
         moved = sum(len(p.moves) for p in drained)
         closed_archives = sum(len(p.close) for p in drained)
         print(
@@ -110,10 +112,15 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(
             epic_audit.render_closed(
-                closed, org=org, window_days=args.window_days, home=home, reopened=reopened
+                closed,
+                org=org,
+                window_days=args.window_days,
+                home=home,
+                reopened=reopened,
+                private_under_public=epic_audit.private_under_public_epic(org, issues=issues),
             )
         )
-        return 0
+        return _apply_orphan_pass(org, issues)
     epics_outside = epic_audit.epic_outside_dotgithub(org)
     stray = epic_audit.stray_dotgithub_issue(org, home=home)
     pending_operational = epic_audit.operational_pending(org, home=home)
@@ -127,6 +134,9 @@ def main(argv: list[str] | None = None) -> int:
     queue_preview = epics.drain_standing_org(org, apply=False, now=now)
     qpmoved = sum(len(p.moves) for p in queue_preview)
     print(f"Intake/planning drain (preview): {qpmoved} child(ren) would be archived.")
+    # Read-only preview of the orphan pass: one shared enumeration, no writes
+    # (an absent intake epic is named, not created).
+    issues = epic_audit.open_issues(org)
     print(
         epic_audit.render(
             tasks,
@@ -139,8 +149,41 @@ def main(argv: list[str] | None = None) -> int:
             pending_operational=pending_operational,
             closed_operational_no_success=closed_operational_no_success,
             closed_epic_open_children=closed_epic_open_children,
+            orphans=epic_audit.orphan_drift(org, issues=issues),
+            retired_labels=epic_audit.retired_label_drift(org, issues=issues),
+            body_only=epic_audit.body_only_parents(org, issues=issues),
+            public_queues=epic_audit.public_self_homed_queues(org, issues=issues),
+            private_under_public=epic_audit.private_under_public_epic(org, issues=issues),
         )
     )
+    return 0
+
+
+def _apply_orphan_pass(org: str, issues: list[epic_audit.OpenIssue]) -> int:
+    """Apply the orphan pass (epic .github#176) after the existing ``--close`` passes.
+
+    Order: nativize body-only ``Parent:`` links -> strip retired kind labels ->
+    move now-public repos' queue items -> attach orphans to intake. Every write is
+    scoped to the org's token. A full queue epic stops the pass with the
+    unlinked items on stderr and exit 1 — never a silent skip.
+    """
+    with github.target_org(org):
+        nativized = epic_audit.nativize_parents(epic_audit.body_only_parents(org, issues=issues))
+        print(f"Body-only Parent: links nativized: {nativized}.")
+        stripped = epic_audit.strip_retired_labels(
+            epic_audit.retired_label_drift(org, issues=issues)
+        )
+        print(f"Retired kind labels stripped: {stripped} issue(s).")
+        try:
+            moved = epic_audit.move_public_queues(
+                epic_audit.public_self_homed_queues(org, issues=issues), org=org
+            )
+            print(f"Public-repo queue items moved to {org}/.github: {moved}.")
+            attached = epic_audit.attach_orphans(epic_audit.orphan_drift(org, issues=issues))
+        except epic_audit.StandingEpicFull as exc:
+            print(f"vrg-epic-audit: {exc}", file=sys.stderr)
+            return 1
+        print(f"Orphans attached to intake: {attached}.")
     return 0
 
 
@@ -151,7 +194,9 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
             "Report epic/task drift and invariant violations for the current "
             "repo's GitHub org: merged PRs whose Ref'd task is still open, open "
             "non-perpetual epics whose children are all closed, and issues in "
-            "the wrong place (epics outside .github; stray .github issues). "
+            "the wrong place (epics outside .github; stray .github issues; "
+            "orphans with no epic parent; private-repo work under public .github "
+            "epics). "
             "Read-only by default; pass --close (as a human) to close the drift "
             "it finds (invariant violations are report-only)."
         ),
@@ -198,7 +243,12 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         help=(
             "Close the drifted task issues and rolled-up epics, and reopen any "
             "epic wrongly closed while a child was still open (with an "
-            "explanatory comment on each), instead of only reporting them. A "
+            "explanatory comment on each), instead of only reporting them. Then "
+            "run the org-wide orphan pass: link body-only Parent: lines natively, "
+            "remove the retired triage/idea/research labels, move now-public "
+            "repos' queue items under .github, and attach every orphan to its "
+            "intake epic (exit 1, listing what was not attached, if an intake "
+            "epic is full). A "
             "human action (or the scheduled reconciliation sweep) — refused in "
             "interactive agent sessions. Default: read-only."
         ),
