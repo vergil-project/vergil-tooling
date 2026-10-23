@@ -1314,6 +1314,8 @@
       
         
       
+        
+      
     
     
     
@@ -1366,6 +1368,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.259/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.259
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15989,13 +16019,33 @@ packages are never reported.</p>
   sets <code>[dependencies].vergil</code> to <code>vX.Y</code>, then rewrites the refs to
   match.</li>
 </ul>
-<p>For a repo with <code>[package.python] runtime</code> (see
-<a href="../package-config/">Package Config</a>), it also bumps the runtime to the
-newest <code>vergil-python</code> patch on the same minor line. A patch counts only
-when every apt and rpm index the package build and install test read it
-from serves it, so the bump cannot pass validation and then break the
-next release. A newer minor line is reported as held back and never
-applied.</p>
+<p>For a repo with an exact <code>[package.python] runtime</code> pin such as <code>3.14.8</code>
+(see <a href="../package-config/">Package Config</a>), it also bumps the pin to the
+CPython patch that the pin's series package, <code>vergil-python3.14</code>, serves.
+That package's version is <code>&lt;cpython&gt;+&lt;pbs_tag&gt;</code> (for example
+<code>3.14.9+20261020</code>), and the patch is the part before the <code>+</code>. Each
+index installs the newest version it lists, and the patch counts only
+when every apt and rpm index the package build and install test read
+from serves the same one, so the bump cannot pass validation and then
+break the next release.</p>
+<p>The pin never leaves its series. A newer series, such as
+<code>vergil-python3.15</code>, is reported as held back and never applied; moving
+to it is a reviewed change.</p>
+<p>The deb and rpm indexes publish separately, so right after a
+vergil-python release they can briefly serve different patches. While
+they disagree the pin is left unchanged and the held-back report names
+each patch and the indexes serving it, for example
+<code>indexes disagree (3.14.9 on deb noble/amd64; 3.14.8 on rpm el9/x86_64);
+bump held until they agree</code>. A later run bumps the pin once they agree.</p>
+<p>The update fails loudly, rather than reporting "no change", when:</p>
+<ul>
+<li>any of those indexes lacks the series package, or cannot be read.
+  The legacy per-patch packages (<code>vergil-python3.14.8</code>) are retired and
+  are not read;</li>
+<li>a series package version is not <code>&lt;cpython&gt;+&lt;pbs_tag&gt;</code>;</li>
+<li>the series package serves a patch on another series, or a patch
+  older than the pin.</li>
+</ul>
 <h3 id="images"><code>images</code><a class="headerlink" href="#images" title="Permanent link">&para;</a></h3>
 <p>Updates container image tags in Dockerfile <code>FROM</code> lines, workflow
 <code>container:</code> and <code>image:</code> values, and the defaults of <code>action.yml</code>
