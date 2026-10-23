@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from vergil_tooling.lib import gitignore, repo_config
+from vergil_tooling.lib import dependabot, gitignore, repo_config
 from vergil_tooling.lib.config import ConfigError
 from vergil_tooling.lib.repo_config import audit_local_config
 
@@ -468,6 +468,8 @@ def _write_compliant_repo(root: Path) -> None:
     wf = root / ".github" / "workflows"
     wf.mkdir(parents=True, exist_ok=True)
     (wf / "ops.yml").write_text(_SCHED + "\njobs:\n" + _WIRED, encoding="utf-8")
+    # ...and the canonical report-only dependabot.yml for python (epic #420).
+    (root / dependabot.DEPENDABOT_PATH).write_text(dependabot.render("python"), encoding="utf-8")
 
 
 class TestIntegration:
@@ -495,6 +497,24 @@ class TestIntegration:
         rows = [i for i in diff.items if i.field == "local.gitignore"]
         assert len(rows) == 1
         assert "cannot resolve the fence language" in str(rows[0].actual)
+
+    def test_unreadable_config_fails_dependabot_explicitly(self, tmp_path: Path) -> None:
+        # #3451: the dependabot row names the config failure too, rather than
+        # comparing against a silent actions-only render.
+        _write_compliant_repo(tmp_path)
+        (tmp_path / "vergil.toml").write_text("not = [valid toml")
+        diff = audit_local_config(tmp_path)
+        rows = [i for i in diff.items if i.field == "local.dependabot"]
+        assert len(rows) == 1
+        assert "cannot resolve the dependabot language" in str(rows[0].actual)
+
+    def test_missing_dependabot_makes_repo_non_compliant(self, tmp_path: Path) -> None:
+        _write_compliant_repo(tmp_path)
+        (tmp_path / dependabot.DEPENDABOT_PATH).unlink()
+        diff = audit_local_config(tmp_path)
+        assert not diff.is_compliant()
+        rows = [i for i in diff.items if i.field == "local.dependabot"]
+        assert [i.actual for i in rows] == ["missing .github/dependabot.yml"]
 
     def test_missing_ops_yml_makes_repo_non_compliant(self, tmp_path: Path) -> None:
         # Fleet-visible signal (epic #338, Task 12): a missing ops.yml is a
@@ -808,6 +828,62 @@ class TestGitignoreLanguage:
     def test_undeclared_language_is_none(self, tmp_path: Path) -> None:
         (tmp_path / "vergil.toml").write_text(_VERGIL_TOML_NO_LANG)
         assert repo_config._gitignore_language(tmp_path) is None
+
+
+def _write_dependabot(root: Path, text: str) -> None:
+    path = root / dependabot.DEPENDABOT_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+class TestCheckDependabotYml:
+    def test_audit_dependabot_canonical_passes(self, tmp_path: Path) -> None:
+        (tmp_path / "vergil.toml").write_text(_MINIMAL_VERGIL_TOML)
+        _write_dependabot(tmp_path, dependabot.render("python"))
+        items: list = []
+        repo_config._check_dependabot_yml(tmp_path, items)
+        assert items == []
+
+    def test_audit_dependabot_absent_config_is_actions_only(self, tmp_path: Path) -> None:
+        _write_dependabot(tmp_path, dependabot.render(None))
+        items: list = []
+        repo_config._check_dependabot_yml(tmp_path, items)
+        assert items == []
+
+    def test_audit_dependabot_missing(self, tmp_path: Path) -> None:
+        (tmp_path / "vergil.toml").write_text(_MINIMAL_VERGIL_TOML)
+        items: list = []
+        repo_config._check_dependabot_yml(tmp_path, items)
+        assert len(items) == 1
+        assert items[0].field == "local.dependabot"
+        assert items[0].expected == "canonical report-only dependabot.yml"
+        assert items[0].actual == "missing .github/dependabot.yml"
+
+    def test_audit_dependabot_noncanonical(self, tmp_path: Path) -> None:
+        # The actions-only render is non-canonical for a python repo: it drops
+        # the uv ecosystem.
+        (tmp_path / "vergil.toml").write_text(_MINIMAL_VERGIL_TOML)
+        _write_dependabot(tmp_path, dependabot.render(None))
+        items: list = []
+        repo_config._check_dependabot_yml(tmp_path, items)
+        assert len(items) == 1
+        assert items[0].field == "local.dependabot"
+        assert items[0].actual == "differs from the canonical render"
+
+    def test_audit_dependabot_unreadable_config_is_an_explicit_failure(
+        self, tmp_path: Path
+    ) -> None:
+        # #3451: a vergil.toml that fails to load must not resolve to the
+        # actions-only render and pass it; the audit names the config failure.
+        (tmp_path / "vergil.toml").write_text("not = [valid toml")
+        _write_dependabot(tmp_path, dependabot.render(None))
+        items: list = []
+        repo_config._check_dependabot_yml(tmp_path, items)
+        assert len(items) == 1
+        assert items[0].field == "local.dependabot"
+        assert items[0].expected == "resolvable [project].primary-language"
+        assert items[0].actual.startswith("cannot resolve the dependabot language: ")
+        assert "not valid TOML" in items[0].actual
 
 
 _WIRED = (
