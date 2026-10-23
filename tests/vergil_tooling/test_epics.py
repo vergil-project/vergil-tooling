@@ -9,6 +9,7 @@ import pytest
 
 from vergil_tooling.lib import epics, github
 from vergil_tooling.lib.epics import _SUBISSUES_QUERY, ChildState, IssueRef
+from vergil_tooling.lib.labels import load_labels
 
 EPIC = IssueRef("org", ".github", 40)
 TASK = IssueRef("org", "repo-a", 101)
@@ -1757,3 +1758,276 @@ def test_list_open_adhoc_archives_includes_segmented_titles() -> None:
         got = epics.list_open_adhoc_archives("org/.github")
     assert (IssueRef("org", ".github", 88), "2026-Q3") in got
     assert (IssueRef("org", ".github", 91), "2026-Q3") in got
+
+
+# -- standing kinds: intake / planning queues (epic vergil-project/.github#176) --
+
+
+def test_standing_kinds_table() -> None:
+    assert epics.STANDING_KINDS == (epics.ADHOC, epics.INTAKE, epics.PLANNING)
+    assert epics.ADHOC.title_prefix == "Epic (ad hoc): "
+    assert epics.ADHOC.labels == ("epic", "ad-hoc")
+    assert epics.ADHOC.archive_prefix == "Archive (ad hoc): "
+    assert epics.ADHOC.archive_labels == ("archive", "ad-hoc")
+    assert epics.INTAKE.title_prefix == "Epic (intake): "
+    assert epics.INTAKE.labels == ("epic", "intake")
+    assert epics.INTAKE.archive_prefix == "Archive (intake): "
+    assert epics.INTAKE.archive_labels == ("archive", "intake")
+    assert epics.PLANNING.title_prefix == "Epic (planning): "
+    assert epics.PLANNING.labels == ("epic", "planning")
+    assert epics.PLANNING.archive_prefix == "Archive (planning): "
+    assert epics.PLANNING.archive_labels == ("archive", "planning")
+    assert [k.key for k in epics.STANDING_KINDS] == ["ad-hoc", "intake", "planning"]
+
+
+def test_standing_kind_labels_are_in_registry() -> None:
+    # ensure_standing_epic self-heals its labels from the canonical registry, so
+    # every standing and archive label (and the planning in-progress label) must
+    # be registered, or ensure_labels raises UnknownLabelError.
+    names = {label["name"] for label in load_labels()["labels"]}
+    for kind in epics.STANDING_KINDS:
+        assert set(kind.labels) <= names
+        assert set(kind.archive_labels) <= names
+    assert "in-progress" in names
+
+
+def test_queue_home_public_repo_uses_org_dotgithub(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(epics, "resolve_epic_home", lambda org, bare: "org/.github")
+    assert epics.queue_home("org/tool") == ("org/.github", "org")
+
+
+def test_queue_home_private_repo_self_homes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(epics, "resolve_epic_home", lambda org, bare: "org/secret")
+    assert epics.queue_home("org/secret") == ("org/secret", "secret")
+
+
+def test_queue_home_dotgithub_itself_names_org(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(epics, "resolve_epic_home", lambda org, bare: "org/.github")
+    assert epics.queue_home("org/.github") == ("org/.github", "org")
+
+
+def test_queue_home_repo_without_owner_raises() -> None:
+    with pytest.raises(ValueError, match="cannot resolve repo"):
+        epics.queue_home("tool")
+
+
+def test_ensure_intake_epic_reuses_by_title_and_labels(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_find(
+        home: str,
+        title: str,
+        *,
+        prefer_oldest: bool = False,
+        labels: tuple[str, ...] = ("epic", "ad-hoc"),
+    ) -> IssueRef:
+        seen.update(home=home, title=title, labels=labels)
+        return IssueRef("org", ".github", 7)
+
+    monkeypatch.setattr(epics, "queue_home", lambda r: ("org/.github", "org"))
+    monkeypatch.setattr(epics, "_find_epic_by_title", fake_find)
+    with patch("vergil_tooling.lib.github.create_issue") as mock_create:
+        assert epics.ensure_intake_epic("org/tool") == IssueRef("org", ".github", 7)
+    mock_create.assert_not_called()
+    assert seen == {
+        "home": "org/.github",
+        "title": "Epic (intake): org",
+        "labels": ("epic", "intake"),
+    }
+
+
+def test_ensure_intake_epic_private_repo_creates_in_self() -> None:
+    created = "https://github.com/org/secret/issues/4"
+    with (
+        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/secret"),
+        patch("vergil_tooling.lib.github.read_json", return_value=[]),
+        patch("vergil_tooling.lib.epics.ensure_labels") as mock_ensure,
+        patch("vergil_tooling.lib.github.create_issue", return_value=created) as mock_create,
+    ):
+        assert epics.ensure_intake_epic("org/secret") == IssueRef("org", "secret", 4)
+    mock_ensure.assert_called_once_with("org/secret", ("epic", "intake"))
+    kwargs = mock_create.call_args.kwargs
+    assert kwargs["repo"] == "org/secret"
+    assert kwargs["title"] == "Epic (intake): secret"
+    assert kwargs["labels"] == ["epic", "intake"]
+    assert kwargs["body"].startswith("Perpetual intake queue for secret:")
+
+
+def test_ensure_planning_epic_creates_when_absent() -> None:
+    created = "https://github.com/org/.github/issues/90"
+    with (
+        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
+        patch("vergil_tooling.lib.github.read_json", return_value=[]),
+        patch("vergil_tooling.lib.epics.ensure_labels") as mock_ensure,
+        patch("vergil_tooling.lib.github.create_issue", return_value=created) as mock_create,
+    ):
+        assert epics.ensure_planning_epic("org/tool") == IssueRef("org", ".github", 90)
+    kwargs = mock_create.call_args.kwargs
+    assert kwargs["repo"] == "org/.github"
+    assert kwargs["title"] == "Epic (planning): org"
+    assert kwargs["labels"] == ["epic", "planning"]
+    assert kwargs["body"].startswith("Perpetual planning queue for org:")
+    ensured = [c.args for c in mock_ensure.call_args_list]
+    assert ("org/.github", ("epic", "planning")) in ensured
+    assert ("org/.github", ("in-progress",)) in ensured
+
+
+def test_ensure_planning_epic_ensures_in_progress_label() -> None:
+    # The per-item planning label is ensured in the planning home even when the
+    # planning epic already exists, so epic-create can always apply it.
+    rows = [{"number": 90, "title": "Epic (planning): org"}]
+    with (
+        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
+        patch("vergil_tooling.lib.github.read_json", return_value=rows),
+        patch("vergil_tooling.lib.epics.ensure_labels") as mock_ensure,
+        patch("vergil_tooling.lib.github.create_issue") as mock_create,
+    ):
+        assert epics.ensure_planning_epic("org/tool") == IssueRef("org", ".github", 90)
+    mock_create.assert_not_called()
+    mock_ensure.assert_called_once_with("org/.github", ("in-progress",))
+
+
+def test_ensure_standing_epic_duplicate_title_raises_naming_kind() -> None:
+    rows = [
+        {"number": 1, "title": "Epic (intake): org"},
+        {"number": 2, "title": "Epic (intake): org"},
+    ]
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=rows),
+        pytest.raises(ValueError, match="multiple intake epics"),
+    ):
+        epics.ensure_standing_epic(epics.INTAKE, "org/.github", "org")
+
+
+def test_is_standing() -> None:
+    assert epics.is_standing({"epic", "intake"})
+    assert epics.is_standing({"epic", "planning"})
+    assert epics.is_standing({"epic", "ad-hoc"})
+    assert not epics.is_standing({"epic"})
+    assert not epics.is_standing({"archive", "intake"})
+    assert not epics.is_standing(set())
+
+
+def test_standing_kind_of() -> None:
+    assert epics.standing_kind_of({"epic", "intake"}) is epics.INTAKE
+    assert epics.standing_kind_of({"epic", "planning", "bug"}) is epics.PLANNING
+    assert epics.standing_kind_of({"epic", "ad-hoc"}) is epics.ADHOC
+    assert epics.standing_kind_of({"epic"}) is None
+    assert epics.standing_kind_of({"archive", "planning"}) is None
+
+
+def test_is_legitimate_top_level() -> None:
+    assert epics.is_legitimate_top_level({"epic"}, "x", "")
+    archive_title = "Archive (ad hoc): t — 2026-Q4"
+    assert epics.is_legitimate_top_level({"archive", "ad-hoc"}, archive_title, "")
+    assert epics.is_legitimate_top_level(set(), "release: 2.1.258", "")
+    assert epics.is_legitimate_top_level(set(), "anything", "<!-- vrg-release:progress -->")
+    assert not epics.is_legitimate_top_level({"bug"}, "fix: thing", "")
+    assert not epics.is_legitimate_top_level(set(), "fix: thing", "plain body")
+
+
+@pytest.mark.parametrize(
+    ("labels", "expected"),
+    [
+        ({"epic", "intake"}, "intake"),
+        ({"epic", "planning"}, "planning"),
+        ({"epic", "ad-hoc"}, None),
+        ({"archive", "intake"}, None),  # archives are not queues
+        ({"epic"}, None),
+    ],
+)
+def test_queue_kind_reads_epic_labels(labels: set[str], expected: str | None) -> None:
+    with patch("vergil_tooling.lib.epics._labels", return_value=labels) as mock_labels:
+        assert epics.queue_kind(EPIC) == expected
+    mock_labels.assert_called_once_with(EPIC)
+
+
+def test_is_managed_repo_true_when_vergil_toml_present() -> None:
+    with patch(
+        "vergil_tooling.lib.github.read_json", return_value={"name": "vergil.toml"}
+    ) as mock_read:
+        assert epics.is_managed_repo("org/tool") is True
+    assert mock_read.call_args.args == ("api", "repos/org/tool/contents/vergil.toml")
+
+
+def test_is_managed_repo_false_on_404() -> None:
+    err = github.GitHubAPIError(1, ["gh", "api"], "", "gh: Not Found (HTTP 404)")
+    with patch("vergil_tooling.lib.github.read_json", side_effect=err):
+        assert epics.is_managed_repo("org/tool") is False
+
+
+def test_is_managed_repo_propagates_other_api_errors() -> None:
+    err = github.GitHubAPIError(1, ["gh", "api"], "", "HTTP 502: bad gateway")
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=err),
+        pytest.raises(github.GitHubAPIError),
+    ):
+        epics.is_managed_repo("org/tool")
+
+
+def test_native_parent_of_returns_native_parent() -> None:
+    data = {"node": {"parent": {"number": 40, "repository": _repo_node("org", ".github")}}}
+    with (
+        patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
+        patch("vergil_tooling.lib.github.graphql", return_value=data),
+    ):
+        assert epics.native_parent_of(TASK) == IssueRef("org", ".github", 40)
+
+
+def test_native_parent_of_ignores_body_parent_line() -> None:
+    no_parent = {"node": {"parent": None}}
+    with (
+        patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
+        patch("vergil_tooling.lib.github.graphql", return_value=no_parent),
+        patch(
+            "vergil_tooling.lib.github.read_output", return_value="Parent: org/.github#5\n"
+        ) as mock_body,
+    ):
+        assert epics.native_parent_of(TASK) is None
+    mock_body.assert_not_called()
+
+
+def test_native_parent_of_none_when_graphql_returns_nothing() -> None:
+    with (
+        patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
+        patch("vergil_tooling.lib.github.graphql", return_value=None),
+    ):
+        assert epics.native_parent_of(TASK) is None
+
+
+def test_resolve_orphan_epic_is_the_intake_epic() -> None:
+    intake = IssueRef("org", ".github", 7)
+    with patch("vergil_tooling.lib.epics.ensure_intake_epic", return_value=intake) as mock_in:
+        assert epics.resolve_orphan_epic("org/tool") == intake
+    mock_in.assert_called_once_with("org/tool")
+
+
+def test_resolve_epic_ref_intake_and_planning_sentinels() -> None:
+    intake = IssueRef("org", ".github", 7)
+    planning = IssueRef("org", ".github", 8)
+    with (
+        patch("vergil_tooling.lib.epics.ensure_intake_epic", return_value=intake) as mock_in,
+        patch("vergil_tooling.lib.epics.ensure_planning_epic", return_value=planning) as mock_pl,
+        patch("vergil_tooling.lib.epics.is_epic") as mock_is_epic,
+    ):
+        assert epics.resolve_epic_ref("intake", repo="org/tool") == intake
+        assert epics.resolve_epic_ref("planning", repo="org/tool") == planning
+    mock_in.assert_called_once_with("org/tool")
+    mock_pl.assert_called_once_with("org/tool")
+    mock_is_epic.assert_not_called()
+
+
+@pytest.mark.parametrize("kind_label", ["intake", "planning"])
+def test_rollup_never_closes_intake_or_planning_epic(kind_label: str) -> None:
+    live = IssueRef("org", ".github", 7)
+    with (
+        patch("vergil_tooling.lib.epics.parent_of", return_value=live),
+        patch("vergil_tooling.lib.epics._labels", return_value={"epic", kind_label}),
+        patch("vergil_tooling.lib.epics.all_children_closed", return_value=True) as mock_all,
+        patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
+        patch("vergil_tooling.lib.github.run") as mock_run,
+    ):
+        epics.rollup(TASK)
+    mock_run.assert_not_called()
+    mock_all.assert_not_called()
+    mock_reparent.assert_not_called()

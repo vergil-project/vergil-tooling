@@ -20,7 +20,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from vergil_tooling.lib import github
+from vergil_tooling.lib import github, release, remote_config
+from vergil_tooling.lib.config import CONFIG_FILE
 from vergil_tooling.lib.labels import ensure_labels
 
 if TYPE_CHECKING:
@@ -305,12 +306,25 @@ def all_blockers_closed(task: IssueRef) -> bool:
     return all(_issue_state(dep) == "CLOSED" for dep in blockers_of(task))
 
 
-def parent_of(task: IssueRef) -> IssueRef | None:
-    """The epic *task* belongs to: native parent preferred, reflink fallback."""
+def native_parent_of(task: IssueRef) -> IssueRef | None:
+    """*task*'s native sub-issue parent, or None — never the body ``Parent:`` line.
+
+    The orphan sweep and the queue checks key off the native link only: a task
+    whose sole link is a body ``Parent:`` reference is not attached on GitHub,
+    so it must read as unparented here (unlike :func:`parent_of`).
+    """
     data: Any = github.graphql(_PARENT_QUERY, id=_node_id(task))
     parent = ((data or {}).get("node") or {}).get("parent")
     if isinstance(parent, dict):
         return _ref_from_node(parent)
+    return None
+
+
+def parent_of(task: IssueRef) -> IssueRef | None:
+    """The epic *task* belongs to: native parent preferred, reflink fallback."""
+    native = native_parent_of(task)
+    if native is not None:
+        return native
     body = github.read_output("api", _issue_endpoint(task), "--jq", ".body")
     match = _PARENT_RE.search(body or "")
     if match:
@@ -386,15 +400,22 @@ def qualify_epic_ref(ref: str, *, repo: str) -> IssueRef:
 
 
 def resolve_epic_ref(ref: str, *, repo: str) -> IssueRef:
-    """Resolve an epic ref for a task in *repo*, accepting the ``"adhoc"`` sentinel.
+    """Resolve an epic ref for a task in *repo*, accepting the standing sentinels.
 
     ``"adhoc"`` ensures *repo*'s ad-hoc epic exists in its epic home — creating
-    it if absent and reusing it otherwise — via :func:`ensure_adhoc_epic`. Any
-    other ref is parsed with :func:`qualify_epic_ref` (a bare ``#N`` reads
-    against *repo*'s epic home) and validated to carry the ``epic`` label.
+    it if absent and reusing it otherwise — via :func:`ensure_adhoc_epic`.
+    ``"intake"`` and ``"planning"`` likewise ensure *repo*'s intake or planning
+    queue epic in its queue home (:func:`ensure_intake_epic`,
+    :func:`ensure_planning_epic`). Any other ref is parsed with
+    :func:`qualify_epic_ref` (a bare ``#N`` reads against *repo*'s epic home)
+    and validated to carry the ``epic`` label.
     """
     if ref == "adhoc":
         return ensure_adhoc_epic(repo)
+    if ref == "intake":
+        return ensure_intake_epic(repo)
+    if ref == "planning":
+        return ensure_planning_epic(repo)
     epic = qualify_epic_ref(ref, repo=repo)
     if not is_epic(epic):
         raise ValueError(f"{epic.slug} is not an epic (missing the 'epic' label)")
@@ -419,14 +440,61 @@ def resolve_epic_home(org: str, target_repo: str) -> str:
     return f"{org}/.github"
 
 
-_ADHOC_EPIC_TITLE_PREFIX = "Epic (ad hoc): "
-_ADHOC_EPIC_LABELS = ("epic", "ad-hoc")
-_ADHOC_ARCHIVE_TITLE_PREFIX = "Archive (ad hoc): "
-_ADHOC_ARCHIVE_LABELS = ("archive", "ad-hoc")
-_ADHOC_EPIC_BODY = (
-    "Perpetual umbrella for ad-hoc work in {repo}. Created and reused "
-    "idempotently; tasks routed to the ad-hoc epic are linked here.\n"
+@dataclass(frozen=True)
+class StandingKind:
+    """One kind of perpetual standing epic: ad-hoc, intake, or planning.
+
+    ``key`` is the discriminating label that, alongside ``epic``, marks a live
+    standing epic of this kind (and, alongside ``archive``, its per-quarter
+    archives). ``body`` is a :meth:`str.format` template taking ``owner`` (the
+    home's owner) and ``name`` (the ``<name>`` in the title). Standing epics are
+    never rolled up: they stay open forever (see :func:`rollup`).
+    """
+
+    key: str
+    title_prefix: str
+    labels: tuple[str, str]
+    archive_prefix: str
+    archive_labels: tuple[str, str]
+    body: str
+
+
+ADHOC = StandingKind(
+    key="ad-hoc",
+    title_prefix="Epic (ad hoc): ",
+    labels=("epic", "ad-hoc"),
+    archive_prefix="Archive (ad hoc): ",
+    archive_labels=("archive", "ad-hoc"),
+    body=(
+        "Perpetual umbrella for ad-hoc work in {owner}/{name}. Created and reused "
+        "idempotently; tasks routed to the ad-hoc epic are linked here.\n"
+    ),
 )
+INTAKE = StandingKind(
+    key="intake",
+    title_prefix="Epic (intake): ",
+    labels=("epic", "intake"),
+    archive_prefix="Archive (intake): ",
+    archive_labels=("archive", "intake"),
+    body=(
+        "Perpetual intake queue for {name}: every captured, unreviewed item and "
+        "every orphan the sweep finds. Reviewed oldest first by intake-review.\n"
+    ),
+)
+PLANNING = StandingKind(
+    key="planning",
+    title_prefix="Epic (planning): ",
+    labels=("epic", "planning"),
+    archive_prefix="Archive (planning): ",
+    archive_labels=("archive", "planning"),
+    body=(
+        "Perpetual planning queue for {name}: items that need a full epic, each "
+        "tracked through its epic-create session.\n"
+    ),
+)
+STANDING_KINDS: tuple[StandingKind, ...] = (ADHOC, INTAKE, PLANNING)
+# The single per-item label on a planning-queue item undergoing epic-create.
+PLANNING_IN_PROGRESS_LABEL = "in-progress"
 # A stamped per-quarter archive: "Archive (ad hoc): <bare> — <YYYY>-Qn". The
 # separator is a space, U+2014 em-dash, space. Matching this distinguishes a
 # terminal archive from the live canonical ad-hoc epic (which has no stamp). A
@@ -455,12 +523,13 @@ def _find_epic_by_title(
     prefer_oldest: bool = False,
     labels: Sequence[str] = ("epic", "ad-hoc"),
 ) -> IssueRef | None:
-    """Return the open ``ad-hoc`` epic in *home* whose title is exactly *title*.
+    """Return the open issue in *home* carrying *labels* whose title is exactly *title*.
 
-    Shared title search for the ad-hoc epic finders. Scoped to open ``epic`` +
-    ``ad-hoc`` issues in *home*; returns None when absent. On more than one match
-    the default raises (ambiguous — name an explicit ref rather than guess), which
-    is correct for the *live* ad-hoc epic where two rows is real corruption. When
+    Shared title search for the standing-epic and archive finders. Scoped to open
+    issues in *home* carrying every one of *labels* (default ``epic`` +
+    ``ad-hoc``); returns None when absent. On more than one match the default
+    raises (ambiguous — name an explicit ref rather than guess), which is correct
+    for a *live* standing epic where two rows is real corruption. When
     *prefer_oldest* is True the lowest-numbered match is returned instead: archive
     resolution tolerates the transient duplicate archives produced by the
     list-consistency race (#2698) and reuses the oldest.
@@ -487,8 +556,9 @@ def _find_epic_by_title(
             oldest = min(int(r["number"]) for r in rows)
             return IssueRef(owner=owner, repo=home_repo, number=oldest)
         nums = ", ".join(f"#{r['number']}" for r in rows)
+        kind = labels[-1]
         raise ValueError(
-            f"multiple ad-hoc epics titled {title!r} in {home} ({nums}) — pass an explicit --epic"
+            f"multiple {kind} epics titled {title!r} in {home} ({nums}) — pass an explicit --epic"
         )
     if rows:
         return IssueRef(owner=owner, repo=home_repo, number=int(rows[0]["number"]))
@@ -510,21 +580,119 @@ def ensure_adhoc_epic(target_repo: str) -> IssueRef:
     if "/" not in target_repo:
         raise ValueError(f"cannot resolve repo for ad-hoc epic (repo={target_repo!r})")
     owner, bare = target_repo.split("/", 1)
-    home = resolve_epic_home(owner, bare)
-    home_repo = home.split("/", 1)[1]
-    title = f"{_ADHOC_EPIC_TITLE_PREFIX}{bare}"
-    found = _find_epic_by_title(home, title)
+    return ensure_standing_epic(ADHOC, resolve_epic_home(owner, bare), bare)
+
+
+def ensure_standing_epic(kind: StandingKind, home: str, name: str) -> IssueRef:
+    """Return the *kind* standing epic ``<title_prefix><name>`` in *home*, creating it if absent.
+
+    Idempotent: an open issue in *home* carrying ``kind.labels`` with exactly
+    that title is reused; none means ensure the labels exist and create it; two
+    sharing the title is ambiguous and raises rather than guessing.
+    """
+    home_owner, home_repo = home.split("/", 1)
+    title = f"{kind.title_prefix}{name}"
+    found = _find_epic_by_title(home, title, labels=kind.labels)
     if found is not None:
         return found
-    ensure_labels(home, _ADHOC_EPIC_LABELS)
+    ensure_labels(home, kind.labels)
     url = github.create_issue(
         repo=home,
         title=title,
-        body=_ADHOC_EPIC_BODY.format(repo=target_repo),
-        labels=list(_ADHOC_EPIC_LABELS),
+        body=kind.body.format(owner=home_owner, name=name),
+        labels=list(kind.labels),
     )
     number = int(url.rstrip("/").rsplit("/", 1)[-1])
-    return IssueRef(owner=owner, repo=home_repo, number=number)
+    return IssueRef(owner=home_owner, repo=home_repo, number=number)
+
+
+def queue_home(target_repo: str) -> tuple[str, str]:
+    """Map *target_repo* (``"owner/repo"``) to its intake/planning queue home and name.
+
+    Returns ``(home, name)``. Queues follow the epic-home rule
+    (:func:`resolve_epic_home`): a repo homed in ``<org>/.github`` (every public
+    repo, and ``.github`` itself) shares the org's queues, named for the org; a
+    self-homed private repo keeps its own queues, named for its bare repo name.
+    """
+    if "/" not in target_repo:
+        raise ValueError(f"cannot resolve repo for queue home (repo={target_repo!r})")
+    owner, bare = target_repo.split("/", 1)
+    home = resolve_epic_home(owner, bare)
+    name = owner if home == f"{owner}/.github" else bare
+    return home, name
+
+
+def ensure_intake_epic(target_repo: str) -> IssueRef:
+    """Return the intake queue epic for *target_repo*'s queue home, creating it if absent."""
+    home, name = queue_home(target_repo)
+    return ensure_standing_epic(INTAKE, home, name)
+
+
+def ensure_planning_epic(target_repo: str) -> IssueRef:
+    """Return the planning queue epic for *target_repo*'s queue home, creating it if absent.
+
+    Also ensures the per-item ``in-progress`` label exists in that home, every
+    time, so ``epic-create`` can apply it in any planning home.
+    """
+    home, name = queue_home(target_repo)
+    epic = ensure_standing_epic(PLANNING, home, name)
+    ensure_labels(home, (PLANNING_IN_PROGRESS_LABEL,))
+    return epic
+
+
+def resolve_orphan_epic(repo: str) -> IssueRef:
+    """The epic an orphaned issue in *repo* is attached to: its intake queue epic."""
+    return ensure_intake_epic(repo)
+
+
+def standing_kind_of(labels: set[str]) -> StandingKind | None:
+    """The :class:`StandingKind` a live standing epic with *labels* is, else None.
+
+    A live standing epic carries ``epic`` plus its kind's key label; an archive
+    (``archive`` + key, no ``epic``) is not a live standing epic.
+    """
+    if "epic" not in labels:
+        return None
+    return next((kind for kind in STANDING_KINDS if kind.key in labels), None)
+
+
+def is_standing(labels: set[str]) -> bool:
+    """True iff *labels* mark a perpetual standing epic (ad-hoc, intake, or planning)."""
+    return standing_kind_of(labels) is not None
+
+
+def queue_kind(epic: IssueRef) -> str | None:
+    """``"intake"`` or ``"planning"`` when *epic* is a live queue epic, else None."""
+    kind = standing_kind_of(_labels(epic))
+    if kind is INTAKE or kind is PLANNING:
+        return kind.key
+    return None
+
+
+def is_legitimate_top_level(labels: set[str], title: str, body: str) -> bool:
+    """True iff an issue may stand without an epic parent.
+
+    The legitimate top-level kinds are epics (``epic``, including the standing
+    epics), per-quarter archives (``archive``), and release tracking issues
+    (:func:`release.is_release_tracking_issue`). Everything else needs a parent.
+    """
+    if "epic" in labels or "archive" in labels:
+        return True
+    return release.is_release_tracking_issue(title, body)
+
+
+def is_managed_repo(repo: str) -> bool:
+    """True iff *repo* (``"owner/repo"``) has ``vergil.toml`` on its default branch.
+
+    A 404 means the file is absent (unmanaged). Any other API error propagates.
+    """
+    try:
+        github.read_json("api", f"repos/{repo}/contents/{CONFIG_FILE}")
+    except github.GitHubAPIError as exc:
+        if remote_config.is_not_found(exc):
+            return False
+        raise
+    return True
 
 
 def find_adhoc_epic(target_repo: str) -> IssueRef | None:
@@ -537,7 +705,7 @@ def find_adhoc_epic(target_repo: str) -> IssueRef | None:
         raise ValueError(f"cannot resolve repo for ad-hoc epic (repo={target_repo!r})")
     owner, bare = target_repo.split("/", 1)
     home = resolve_epic_home(owner, bare)
-    return _find_epic_by_title(home, f"{_ADHOC_EPIC_TITLE_PREFIX}{bare}")
+    return _find_epic_by_title(home, f"{ADHOC.title_prefix}{bare}")
 
 
 def _normalize_archive_in_place(ref: IssueRef, new_title: str) -> None:
@@ -572,7 +740,7 @@ def _archive_title(bare: str, quarter: str, segment: int) -> str:
     ``" (N)"`` — the overflow buckets for a quarter past GitHub's 100-sub-issue
     cap (issue #2872).
     """
-    base = f"{_ADHOC_ARCHIVE_TITLE_PREFIX}{bare} — {quarter}"
+    base = f"{ADHOC.archive_prefix}{bare} — {quarter}"
     return base if segment <= 1 else f"{base} ({segment})"
 
 
@@ -616,21 +784,21 @@ def ensure_adhoc_archive(target_repo: str, quarter: str, segment: int = 1) -> Is
     home = resolve_epic_home(owner, bare)
     home_repo = home.split("/", 1)[1]
     title = _archive_title(bare, quarter, segment)
-    existing = _find_epic_by_title(home, title, prefer_oldest=True, labels=_ADHOC_ARCHIVE_LABELS)
+    existing = _find_epic_by_title(home, title, prefer_oldest=True, labels=ADHOC.archive_labels)
     if existing is not None:
         return existing
     if segment <= 1:
-        legacy_title = f"{_ADHOC_EPIC_TITLE_PREFIX}{bare} — {quarter}"
+        legacy_title = f"{ADHOC.title_prefix}{bare} — {quarter}"
         legacy = _find_epic_by_title(home, legacy_title, prefer_oldest=True)
         if legacy is not None:
             _normalize_archive_in_place(legacy, title)
             return legacy
-    ensure_labels(home, _ADHOC_ARCHIVE_LABELS)
+    ensure_labels(home, ADHOC.archive_labels)
     url = github.create_issue(
         repo=home,
         title=title,
         body=f"Ad-hoc work in {target_repo} finished in {quarter}. Managed automatically.\n",
-        labels=list(_ADHOC_ARCHIVE_LABELS),
+        labels=list(ADHOC.archive_labels),
     )
     return IssueRef(owner=owner, repo=home_repo, number=int(url.rstrip("/").rsplit("/", 1)[-1]))
 
@@ -648,7 +816,7 @@ def _adhoc_archive_segments(home: str, bare: str, quarter: str) -> list[tuple[in
         "list",
         "--repo",
         home,
-        *[arg for label in _ADHOC_ARCHIVE_LABELS for arg in ("--label", label)],
+        *[arg for label in ADHOC.archive_labels for arg in ("--label", label)],
         "--state",
         "open",
         "--json",
@@ -676,7 +844,7 @@ def list_open_adhoc_archives(home: str) -> list[tuple[IssueRef, str]]:
         "list",
         "--repo",
         home,
-        *[arg for label in _ADHOC_ARCHIVE_LABELS for arg in ("--label", label)],
+        *[arg for label in ADHOC.archive_labels for arg in ("--label", label)],
         "--state",
         "open",
         "--json",
@@ -901,9 +1069,7 @@ def plan_normalize_adhoc(org: str) -> list[ArchiveConversion]:
             old_title = str(item.get("title", ""))
             if not _LEGACY_ADHOC_ARCHIVE_RE.match(old_title):
                 continue
-            new_title = _ADHOC_ARCHIVE_TITLE_PREFIX + old_title.removeprefix(
-                _ADHOC_EPIC_TITLE_PREFIX
-            )
+            new_title = ADHOC.archive_prefix + old_title.removeprefix(ADHOC.title_prefix)
             conversions.append(
                 ArchiveConversion(
                     IssueRef(owner, home_repo, int(item["number"])), old_title, new_title
@@ -990,16 +1156,18 @@ def rollup(task: IssueRef) -> None:
     """Close *task*'s parent epic if the epic is finite and all children closed.
 
     A no-op unless the task has an ``epic``-labeled parent (the transition gate):
-    legacy issues have no epic parent, so finalize never rolls them up. An
-    ``ad-hoc`` epic is perpetual and never auto-closes; instead, when the
-    just-closed child's parent is the **live** ad-hoc epic, drain that one child
-    into its close-quarter archive (the steady-state event path). A parent that
-    is itself a stamped archive is terminal and left untouched.
+    legacy issues have no epic parent, so finalize never rolls them up. Every
+    standing epic (ad-hoc, intake, planning — :func:`standing_kind_of`) is
+    perpetual and never auto-closes. When the just-closed child's parent is the
+    **live** ad-hoc epic, drain that one child into its close-quarter archive
+    (the steady-state event path). A parent that is itself a stamped archive is
+    terminal and left untouched.
     """
     parent = parent_of(task)
     if parent is None or not is_epic(parent):
         return
-    if "ad-hoc" in _labels(parent):
+    kind = standing_kind_of(_labels(parent))
+    if kind is ADHOC:
         title = _issue_title(parent)
         # Only the LIVE canonical ad-hoc epic drains; archives (stamped) are terminal.
         if _ADHOC_ARCHIVE_RE.match(title):
@@ -1012,7 +1180,7 @@ def rollup(task: IssueRef) -> None:
         # those fast (also skips non-repo special epics whose bare is a prose
         # description); then confirm via a direct existence probe (repo_exists,
         # not list membership, so a self-homed private repo still passes).
-        bare = title.removeprefix(_ADHOC_EPIC_TITLE_PREFIX)
+        bare = title.removeprefix(ADHOC.title_prefix)
         if " " in bare or "/" in bare or not github.repo_exists(parent.owner, bare):
             return
         closed_at = _issue_closed_at(task)
@@ -1026,6 +1194,12 @@ def rollup(task: IssueRef) -> None:
         archive = ensure_writable_adhoc_archive(f"{parent.owner}/{bare}", quarter_of(closed_at))
         if archive != parent:
             reparent_child(archive, task)  # atomic move: single-parent safe (#2691)
+        return
+    if kind is not None:
+        # Intake and planning are perpetual too: never close them. Draining their
+        # closed children into per-quarter archives is the generalized drain
+        # (epic vergil-project/.github#176, Task 2); until then the closed child
+        # simply stays linked under its queue epic.
         return
     if all_children_closed(parent):
         print(f"Rolling up epic {parent.slug} — all child tasks closed.")

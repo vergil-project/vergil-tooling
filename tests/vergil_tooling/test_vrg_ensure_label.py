@@ -131,8 +131,9 @@ def test_main_sync_provisions_all_labels() -> None:
     # 18 again after adding the 'retrospective' kind label;
     # 19 after adding the 'archive' label (adhoc-archive-rename epic #281);
     # 21 after adding 'bug' and 'docs' to complete the kind axis (issue #1971);
-    # 22 after adding 'dependency-update' (issue #3253).
-    assert len(label_calls) == 22
+    # 22 after adding 'dependency-update' (issue #3253);
+    # 25 after adding 'intake', 'planning', and 'in-progress' (issue #2481).
+    assert len(label_calls) == 25
 
 
 def test_main_sync_uses_force_with_color_description() -> None:
