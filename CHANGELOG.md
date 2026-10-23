@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.260] - 2026-10-23
+
+### Features
+
+- add intake and planning standing epics, queue homes, and the legitimate-top-level predicate (#3476)
+- drain closed intake and planning children into per-quarter archives (#3477)
+- retire packages from the index by name ([retention].retire) (#3483)
+- purge obsolete vergil-python runtimes on vrg-vm update (#3485)
+
 ## [2.1.259] - 2026-10-23
 
 ### Bug fixes

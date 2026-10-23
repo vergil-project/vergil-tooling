@@ -620,6 +620,34 @@ keys, enum values, dependencies) and the `README.md` structure
 | Exit codes | 0 valid, 1 invalid, 2 `vergil.toml` not found |
 | Status | Active |
 
+### vrg-ci-resolve
+
+Resolve the repo's CI versions from the published version window, with
+the same resolver `vrg-validate` and the dev container use. The CI
+setup step of the `vergil-actions` reusable workflows runs it to build
+the version matrix and pick the primary-version container. The window
+is read at the repo's `[dependencies].vergil` ref; set
+`VRG_VERSION_WINDOW=<path>` to resolve against a local `window.json`.
+A repo with no language resolves to `latest`. See
+[Version resolution](../guides/ci-architecture.md#version-resolution).
+
+- `--format json` (default) — one JSON object with `versions`,
+  `primary-version`, `primary-container-tag`, `container-tags` and
+  `container-suffixes`.
+- `--format github-output` — `versions`, `primary-version` and
+  `primary-container-tag` as `key=value` lines for `$GITHUB_OUTPUT`.
+- `--repo-root PATH` — the directory holding `vergil.toml` (default:
+  the current directory).
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_ci_resolve` |
+| Args | `--format {json,github-output}`, `--repo-root PATH` |
+| Preconditions | `vergil.toml` in the repo root; network access to the published window, or `VRG_VERSION_WINDOW` |
+| Failure mode | `vrg-ci-resolve: error:` on stderr for a missing or invalid `vergil.toml`, an unreadable or malformed window, or a resolution error (a pin outside the window, an app pin of more than one version, a C++ or TypeScript repo with no pin) |
+| Exit codes | 0 success, 1 error |
+| Status | Active |
+
 ### vrg-package
 
 Build, install-test and index binary OS packages (`.deb`/`.rpm`) from

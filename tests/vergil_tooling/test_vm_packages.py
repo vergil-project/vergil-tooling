@@ -20,6 +20,9 @@ _FAST = (
 )
 _UPDATE = f"sudo apt-get {_FAST} update"
 _INSTALL = f"sudo apt-get {_FAST} install -y --allow-downgrades vergil-tooling"
+_PURGE = f"sudo apt-get {_FAST} purge -y"
+_SHOWAUTO = "apt-mark showauto"
+_SIMULATE = "apt-get -s autoremove"
 
 
 def _transport_answering(answers: dict[str, str]) -> MagicMock:
@@ -53,6 +56,24 @@ _NOBLE = "NAME=Ubuntu\nVERSION_CODENAME=noble\nID=ubuntu\n"
 
 def _policy(candidate: str) -> str:
     return f"vergil-tooling:\n  Installed: (none)\n  Candidate: {candidate}\n"
+
+
+# The lab VM after vergil-tooling moved to vergil-python3.15 (2026-10-23): all
+# three runtimes are auto-installed, and apt would autoremove the two 3.14 ones.
+_SIMULATED_AUTOREMOVE = (
+    "NOTE: This is only a simulation!\n"
+    "Reading package lists...\n"
+    "The following packages will be REMOVED:\n"
+    "  vergil-python3.14 vergil-python3.14.8\n"
+    "0 upgraded, 0 newly installed, 2 to remove and 60 not upgraded.\n"
+    "Remv vergil-python3.14 [3.14.8+20261013-1]\n"
+    "Remv vergil-python3.14.8 [3.14.8+20261003-1]\n"
+)
+_RUNTIMES = {
+    "cat /etc/os-release": _NOBLE,
+    _SHOWAUTO: "libfoo1\nvergil-python3.14\nvergil-python3.14.8\nvergil-python3.15\n",
+    _SIMULATE: _SIMULATED_AUTOREMOVE,
+}
 
 
 @pytest.fixture
@@ -246,6 +267,24 @@ class TestPackagedInstall:
         assert not any("tooling-dev-ref" in c for c in flat)
         assert boot
 
+    def test_failed_apt_install_purges_nothing(self, boot: list[tuple[Any, ...]]) -> None:
+        answers = {**_RUNTIMES, "apt-cache policy vergil-tooling": _policy("2.1.240-1")}
+        base = _transport_answering(answers).run.side_effect
+
+        def run(*args: str, **kw: Any) -> subprocess.CompletedProcess[str]:
+            if args[:2] == ("sudo", "apt-get") and "install" in args:
+                raise subprocess.CalledProcessError(100, list(args))
+            return base(*args, **kw)
+
+        t = _transport_answering(answers)
+        t.run.side_effect = run
+        with pytest.raises(subprocess.CalledProcessError):
+            vm_packages.packaged_install(t, "v2.1")
+        flat = _flat(t)
+        assert not any(_SIMULATE in c for c in flat)
+        assert not any("purge" in c for c in flat)
+        assert boot
+
     def test_unrelated_uv_tool_is_not_uninstalled(self, boot: list[tuple[Any, ...]]) -> None:
         t = _transport_answering(
             {
@@ -308,6 +347,102 @@ class TestPackagedInstall:
     def test_dev_ref_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="develop"):
             vm_packages.packaged_install(_transport_answering({}), "develop")
+
+
+class TestPurgeObsoleteRuntimes:
+    def _install(self, answers: dict[str, str]) -> MagicMock:
+        t = _transport_answering(
+            {**answers, "apt-cache policy vergil-tooling": _policy("2.1.240-1")}
+        )
+        vm_packages.packaged_install(t, "v2.1")
+        return t
+
+    def test_obsolete_runtimes_are_purged(
+        self, boot: list[tuple[Any, ...]], capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        t = self._install(_RUNTIMES)
+        flat = _flat(t)
+        purge = f"{_PURGE} vergil-python3.14 vergil-python3.14.8"
+        assert purge in flat
+        # Only after the install and the uv-copy cleanup.
+        assert _index(flat, _INSTALL) < _index(flat, purge)
+        assert _index(flat, "rm -f ~/.config/vergil/tooling-dev-ref") < _index(flat, purge)
+        # The queries run unprivileged; only the purge needs root.
+        assert _SHOWAUTO in flat
+        assert _SIMULATE in flat
+        out = capsys.readouterr().out
+        assert (
+            "Purging obsolete vergil-python runtimes: vergil-python3.14 vergil-python3.14.8" in out
+        )
+        assert boot
+
+    def test_never_runs_a_blanket_autoremove(self, boot: list[tuple[Any, ...]]) -> None:
+        flat = _flat(self._install(_RUNTIMES))
+        assert [c for c in flat if "autoremove" in c] == [_SIMULATE]
+        assert boot
+
+    def test_runtime_still_needed_is_kept(self, boot: list[tuple[Any, ...]]) -> None:
+        # vergil-python3.15 is auto-installed but apt keeps it: vergil-tooling needs it.
+        purge = next(c for c in _flat(self._install(_RUNTIMES)) if "purge" in c)
+        assert "vergil-python3.15" not in purge
+        assert boot
+
+    def test_manually_installed_runtime_is_kept(self, boot: list[tuple[Any, ...]]) -> None:
+        # vergil-python3.14.8 was installed by hand, so it is not in the auto set.
+        answers = {**_RUNTIMES, _SHOWAUTO: "vergil-python3.14\nvergil-python3.15\n"}
+        purge = next(c for c in _flat(self._install(answers)) if "purge" in c)
+        assert purge == f"{_PURGE} vergil-python3.14"
+        assert boot
+
+    def test_unrelated_orphans_are_never_purged(self, boot: list[tuple[Any, ...]]) -> None:
+        answers = {
+            **_RUNTIMES,
+            _SIMULATE: "Remv libfoo1 [1.0-1]\nRemv vergil-python3.14 [3.14.8+20261013-1]\n",
+        }
+        purge = next(c for c in _flat(self._install(answers)) if "purge" in c)
+        assert purge == f"{_PURGE} vergil-python3.14"
+        assert boot
+
+    def test_arch_qualified_names_are_matched(self, boot: list[tuple[Any, ...]]) -> None:
+        answers = {
+            **_RUNTIMES,
+            _SHOWAUTO: "vergil-python3.14:amd64\nvergil-python3.15:amd64\n",
+            _SIMULATE: "Remv vergil-python3.14:amd64 [3.14.8+20261013-1]\n",
+        }
+        purge = next(c for c in _flat(self._install(answers)) if "purge" in c)
+        assert purge == f"{_PURGE} vergil-python3.14"
+        assert boot
+
+    def test_nothing_to_purge_makes_no_purge_call(
+        self, boot: list[tuple[Any, ...]], capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        answers = {**_RUNTIMES, _SIMULATE: "0 upgraded, 0 newly installed, 0 to remove\n"}
+        flat = _flat(self._install(answers))
+        assert not any("purge" in c for c in flat)
+        assert "Purging" not in capsys.readouterr().out
+        assert boot
+
+    def test_purge_failure_is_fatal(
+        self, boot: list[tuple[Any, ...]], capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        base = _transport_answering(
+            {**_RUNTIMES, "apt-cache policy vergil-tooling": _policy("2.1.240-1")}
+        ).run.side_effect
+
+        def run(*args: str, **kw: Any) -> subprocess.CompletedProcess[str]:
+            if "purge" in args:
+                raise subprocess.CalledProcessError(100, list(args))
+            return base(*args, **kw)
+
+        t = _transport_answering({})
+        t.run.side_effect = run
+        with pytest.raises(SystemExit) as exc:
+            vm_packages.packaged_install(t, "v2.1")
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert "vergil-python3.14 vergil-python3.14.8" in err
+        assert "exit 100" in err
+        assert boot
 
 
 class TestDevInstall:

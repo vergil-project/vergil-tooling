@@ -161,7 +161,9 @@ def _art(tmp_path: Path, fmt: str) -> Artifact:
 
 def _inputs(tmp_path: Path) -> tuple[Path, Path]:
     config = tmp_path / "packages.toml"
-    config.write_text('vendor = "v"\nproducts = ["o/t"]\n[retention]\nkeep = 2\nlines = 1\n')
+    config.write_text(
+        'vendor = "v"\nproducts = ["o/t"]\n[retention]\nkeep = 2\nlines = 1\nretire = ["old-rt"]\n'
+    )
     keys = tmp_path / "keys"
     keys.mkdir()
     (keys / "v.asc").write_text("PUBLIC KEY")
@@ -189,8 +191,10 @@ class _Patched:
         ) -> None:
             ev.append(("verify", len(arts), keyfile.name, rpmdb.name, rpmdb.exists()))
 
-        def fake_select(arts: list[Artifact], keep: int, lines: int) -> list[Artifact]:
-            ev.append(("select", keep, lines))
+        def fake_select(
+            arts: list[Artifact], keep: int, lines: int, *, retire: frozenset[str]
+        ) -> list[Artifact]:
+            ev.append(("select", keep, lines, sorted(retire)))
             return arts[:1]
 
         def fake_apt(
@@ -254,7 +258,7 @@ def test_build_site_runs_every_step_in_order(
         ("fingerprint", "v.asc"),
         ("collect", "v", ["o/t"], "work"),
         ("verify", 2, "v.asc", "rpmdb", False),
-        ("select", 2, 1),
+        ("select", 2, 1, ["old-rt"]),
         ("apt", ["deb"], ["noble", "resolute"], "v", []),
         ("rpm", "https://v.github.io/p/", ["el9", "el10"]),
         ("import_key", "PACKAGE_SIGNING_KEY", "PACKAGE_SIGNING_PASSPHRASE"),

@@ -16,6 +16,7 @@ where it runs. No git hooks are installed: every check runs inside a
 | No auto-close keyword in the commit body | `vrg-commit` | Yes | -- |
 | PR body issue linkage | `vrg-submit-pr` | Yes | -- |
 | Repository profile | `vrg-repo-profile` (common checks) | Yes | `quality / common` |
+| Versions resolve against the window; toolchain selection; language floor | `vrg-validate` (config check, before any stage) | Yes | Every `vrg-validate` job |
 | Markdown, shell, YAML, Dockerfile, workflow and Ansible lint | `vrg-validate` (common checks) | Yes | `quality / common` |
 | Lint and typecheck | `vrg-validate` | Yes (primary version) | `quality / lint / <version>`, `quality / typecheck / <version>` |
 | Tests | `vrg-validate` | Yes (primary version) | `test / unit / <version>` |
@@ -24,10 +25,22 @@ where it runs. No git hooks are installed: every check runs inside a
 | Version bump | `ci-version-bump.yml` | -- | `version / version-bump` |
 
 "Local" for `vrg-validate` means `vrg-container-run -- vrg-validate`,
-which runs one container on the primary `[ci].versions` entry. PR CI
+which runs one container on the resolved primary version. PR CI
 runs the same commands through the `vergil-actions` reusable workflows
-on every `[ci].versions` entry. See [CI Architecture](ci-architecture.md)
-for the jobs and the required checks.
+on every resolved version (see
+[Version resolution](ci-architecture.md#version-resolution)). See
+[CI Architecture](ci-architecture.md) for the jobs and the required
+checks.
+
+The config check runs on every `vrg-validate` invocation, whatever
+`--check` selects. It fails when the repo's versions do not resolve
+against the published window (a pin outside the window, an app pin of
+more than one version, an unreadable window) or when a file selects the
+toolchain behind Vergil's back (for Python, `.python-version`). A
+declared floor that falls below the window's oldest version, or an
+upper bound that excludes its newest (for Python, `requires-python`),
+is printed as a warning and does not fail. See
+[Python version management](../standards/development/python/version-management.md#toolchain-selection-in-the-repo).
 
 ## Agent and Git Wrappers
 
