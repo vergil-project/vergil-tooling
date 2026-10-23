@@ -280,7 +280,8 @@ defines are listed in
 Audit a managed repo against the canonical Vergil configuration, and
 in `apply` mode reconcile the GitHub half. Combines local filesystem
 checks (`vergil.toml`, `CLAUDE.md`, `.claude/settings.json`, hook-guard
-shim, workflow pins, `.gitignore` managed fence, `ops.yml` wiring)
+shim, workflow pins, `.gitignore` managed fence, canonical
+`dependabot.yml`, `ops.yml` wiring)
 with GitHub-API checks (repo settings, rulesets, required-check set).
 Runs nightly from each repo's `ops.yml` via the reusable
 `ops-github-config.yml` workflow, where drift is fatal. See the
@@ -617,6 +618,34 @@ keys, enum values, dependencies) and the `README.md` structure
 | Preconditions | Run from the repository root; `vergil.toml` exists |
 | Failure mode | Exit 2 if `vergil.toml` is not found; exit 1 for an invalid `vergil.toml` or a `README.md` structure error |
 | Exit codes | 0 valid, 1 invalid, 2 `vergil.toml` not found |
+| Status | Active |
+
+### vrg-ci-resolve
+
+Resolve the repo's CI versions from the published version window, with
+the same resolver `vrg-validate` and the dev container use. The CI
+setup step of the `vergil-actions` reusable workflows runs it to build
+the version matrix and pick the primary-version container. The window
+is read at the repo's `[dependencies].vergil` ref; set
+`VRG_VERSION_WINDOW=<path>` to resolve against a local `window.json`.
+A repo with no language resolves to `latest`. See
+[Version resolution](../guides/ci-architecture.md#version-resolution).
+
+- `--format json` (default) — one JSON object with `versions`,
+  `primary-version`, `primary-container-tag`, `container-tags` and
+  `container-suffixes`.
+- `--format github-output` — `versions`, `primary-version` and
+  `primary-container-tag` as `key=value` lines for `$GITHUB_OUTPUT`.
+- `--repo-root PATH` — the directory holding `vergil.toml` (default:
+  the current directory).
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_ci_resolve` |
+| Args | `--format {json,github-output}`, `--repo-root PATH` |
+| Preconditions | `vergil.toml` in the repo root; network access to the published window, or `VRG_VERSION_WINDOW` |
+| Failure mode | `vrg-ci-resolve: error:` on stderr for a missing or invalid `vergil.toml`, an unreadable or malformed window, or a resolution error (a pin outside the window, an app pin of more than one version, a C++ or TypeScript repo with no pin) |
+| Exit codes | 0 success, 1 error |
 | Status | Active |
 
 ### vrg-package

@@ -28,9 +28,16 @@ matrix:
   gain from typechecking, formatting, or scanning dependencies more than once —
   `tsc --noEmit`, Prettier + ESLint, and `npm audit` each run a single time.
 - **Only TEST fans out per Node version.** Runtime behavior differs across Node
-  majors, so the test-and-coverage stage runs once per supported Node major (v1:
-  `node-22` and `node-24`, with `node-24` as the primary). See
+  majors, so the test-and-coverage stage runs once per resolved Node major. See
   [Testing and Coverage](testing-and-coverage.md).
+
+Node majors are `[ci].versions` entries with a family prefix (`node-24`), so a
+TypeScript repo must pin `[ci].versions`. Fanning out over several majors is a
+property of a **library**: a `library` may pin any subset of the window (today
+`node-22` and `node-24`), and each pinned major is a hard CI leg. Every other
+repository type resolves as an app and builds exactly one version, so an app
+that pins more than one major fails resolution (see
+[Version resolution](../../../guides/ci-architecture.md#version-resolution)).
 
 ## npm + ESM Layout
 
@@ -135,9 +142,8 @@ philosophy and the `/* v8 ignore */` exclusion discipline.
 ## CI Gates
 
 See [Source Control Guidelines](../../source-control-guidelines.md#ci-gates)
-for the hard-gates-only standard: every CI check is a hard gate, and the only
-sanctioned non-blocking category is the advisory-on-unsupported-versions
-carve-out (see the
+for the hard-gates-only standard: every CI check is a hard gate, and every
+version a repo resolves from the version window is a hard CI leg (see the
 [Runtime Version Support Policy](../runtime-version-support-policy.md)).
 
 TypeScript hard gates:

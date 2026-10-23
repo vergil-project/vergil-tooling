@@ -60,8 +60,10 @@ container and runs `vrg-validate` inside it, with the repository
 bind-mounted. The image is
 `ghcr.io/vergil-project/<prefix>-<language>:<version>`: the prefix is
 `prod` unless you pass `--prefix dev`, the language comes from
-`[project].primary-language`, and the version is the primary
-`[ci].versions` entry. C++ and TypeScript carry a family in the image
+`[project].primary-language`, and the version is the resolver's
+primary version: `[ci].primary-version` when it is set, otherwise the
+newest resolved version (see [Version resolution](#version-resolution)).
+C++ and TypeScript carry a family in the image
 name instead (see [Dev container images](#dev-container-images)), and a
 repository with no language uses the base image. On top of that image,
 `vrg-container-run` builds a per-branch cached image with
@@ -138,16 +140,16 @@ The workflow file is `.github/workflows/ci.yml`. It runs on
 
 !!! warning "Local validate is not full coverage parity"
     Tier 1 runs one dev container on a single Python interpreter (currently
-    3.14), so its `--cov-fail-under=100` gate proves 100% coverage on that
+    3.15, the newest window version), so its `--cov-fail-under=100` gate proves 100% coverage on that
     one interpreter only. PR-CI re-runs the test-and-coverage gate
     **independently in a separate container per resolved matrix version**
-    (currently 3.12, 3.13, 3.14: this repo is a `library` with no
+    (currently 3.12, 3.13, 3.14 and 3.15: this repo is a `library` with no
     `[ci].versions` pin, so it tests the whole version window). Because
     branch coverage (`--cov-branch`) can
     legitimately differ across CPython versions — a branch reachable on one
     version may be dead on another, or a version-guarded code path may only
     execute on some interpreters — code that measures 100% locally can still
-    fall below 100% on a 3.12 or 3.13 leg and fail CI. The multi-version
+    fall below 100% on a 3.12, 3.13 or 3.14 leg and fail CI. The multi-version
     coverage matrix is therefore a **PR-CI-only** gate: local validate covers
     a single interpreter and cannot reproduce it. This is a known, accepted
     limitation, not a bug — closing it would mean running the full version
@@ -165,12 +167,13 @@ vergil series tag (for example `@v2.1`; `vrg-github-repo-init` uses the
 `vX.Y` series of the installed vergil-tooling). Apart from the scope
 inputs below, it passes only `language:` and `container-suffix:`, and
 `ci-docs` and `ci-package` take no inputs. It does **not** pass a version matrix
-or a container tag — the reusable workflows read `[ci].versions` from the repo's
-`vergil.toml` at run time and derive both the matrix and the primary-version
-container themselves (epic
-[vergil-project/.github#338](https://github.com/vergil-project/.github/issues/338)).
-A `[ci].versions` change therefore takes effect fleet-wide with no edit to
-`ci.yml`.
+or a container tag — the reusable workflows run `vrg-ci-resolve` against the
+repo's `vergil.toml` at run time and take both the matrix and the
+primary-version container from it (epics
+[vergil-project/.github#338](https://github.com/vergil-project/.github/issues/338)
+and [vergil-project/.github#407](https://github.com/vergil-project/.github/issues/407)).
+A window change or a `[ci].versions` change therefore takes effect with no
+edit to `ci.yml`.
 
 `ci.yml` also declares `workflow_call` with one boolean input,
 `run-security`, defaulting to `true`. On a `pull_request` run the input
@@ -355,17 +358,40 @@ exception. `vrg-repo-init` generates this caller for `[package]` repos
 See the [CD section of the package config reference](../reference/package-config.md#cd)
 for the full caller.
 
-### Dynamic matrix from `vergil.toml`
+### Version resolution
 
-The matrix is **not** embedded in the workflow or passed as an input. Each
-matrixed reusable workflow (`ci-audit`, `ci-quality`, `ci-test`) reads
-`[ci].versions` from the consuming repo's `vergil.toml` at run time and fans its
-matrix out over that list. Single-container jobs (`ci-security`,
-`ci-version-bump`, `ci-docs`) run on the **primary version** —
-`[ci].primary-version` if it is set, otherwise the highest entry of
-`[ci].versions` (so `3.14` for `["3.12", "3.13", "3.14"]`). `vergil.toml` is the
-single stored source of the version set; nothing is hand-maintained in `ci.yml`,
-so the matrix cannot drift from `[ci].versions`.
+The matrix is **not** embedded in the workflow or passed as an input. The
+supported versions of each language live in one place: the version manifest in
+[vergil-containers](https://github.com/vergil-project/vergil-containers), which
+publishes them as `docker/versions/window.json` at every Vergil ref (the
+*version window*). The lifecycle job in vergil-containers adds versions to the
+window and drops them from it as they enter and leave support; consuming repos
+do not edit anything when the window moves.
+
+One resolver (`src/vergil_tooling/lib/versions/resolve.py`) turns a repo's
+`vergil.toml` and the window into the versions it builds. It reads the window at
+the repo's `[dependencies].vergil` ref (for example `v2.1`), so a window change
+reaches the repo without a tooling release. The dev container, `vrg-validate`,
+the required-check computation and the CI setup step (through
+[`vrg-ci-resolve`](../reference/cli-tools-overview.md)) all call it. The rules:
+
+- `[project].repository-type = "library"` resolves as a **library** and builds
+  every window version. Every other type resolves as an **app** and builds one
+  version, the newest in the window.
+- `[ci].versions` is an optional pin. Every pinned version must be in the
+  window, and an app pin must name exactly one version; either violation is an
+  error. C++ and TypeScript versions carry a family (`clang-20`, `node-24`), so
+  those repos must pin.
+- The **primary version** is `[ci].primary-version` when it is set (it must name
+  a resolved version), otherwise the newest resolved version.
+
+Each matrixed reusable workflow (`ci-audit`, `ci-quality`, `ci-test`) fans out
+over the resolved versions. Single-container jobs (`ci-security`,
+`ci-version-bump`, `ci-docs`) run on the primary version. Nothing is
+hand-maintained in `ci.yml`, so the matrix cannot drift from the window.
+Set `VRG_VERSION_WINDOW=<path>` to resolve against a local `window.json` for
+deliberate offline work; a window that cannot be fetched is an error, never a
+silent default.
 
 ## Implementation guide
 
@@ -406,7 +432,7 @@ The `CI gates` ruleset requires these checks. The list is computed from
 | `package / evidence` | `vergil.toml` has `[package]` |
 | `security / codeql`, `CodeQL` | GHAS is available and CodeQL supports the language |
 | `Trivy`, `Semgrep OSS` | GHAS is available |
-| `test / integration / <version>` | `[ci].integration-tests` is on (one per `[ci].versions` entry) |
+| `test / integration / <version>` | `[ci].integration-tests` is on (one per resolved version) |
 
 GHAS (GitHub Advanced Security) is taken from `[project].ghas` when it
 is set. Otherwise it counts as available for any repository that is not
@@ -489,7 +515,9 @@ is the single source of truth.
 C++ is the one language with a compiler-family axis: it ships **two**
 image families (`dev-cpp-clang` / `dev-cpp-gcc`, and matching `prod-`
 images) so TYPECHECK and TEST run per compiler and per version. The
-family rides the `[ci].versions` tag prefix (`clang-20`, `gcc-14`).
+family rides the `[ci].versions` tag prefix (`clang-20`, `gcc-14`), so a
+C++ repo must pin `[ci].versions`. Only a `library` can pin more than one
+entry; an app builds exactly one.
 
 ### Building locally
 

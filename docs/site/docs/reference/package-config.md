@@ -71,7 +71,7 @@ Valid only with `builder = "python"`, and optional there.
 
 `vergil-python` publishes one package per CPython series,
 `vergil-python<X.Y>`, versioned `<cpython>+<pbs-tag>` (for example
-`3.14.8+20261020`). Its patch floats: each release replaces the previous
+`3.15.1+20261021`). Its patch floats: each release replaces the previous
 patch. A package always builds against, installs and depends on the
 per-series package, at `/opt/vergil/python/<X.Y>`.
 

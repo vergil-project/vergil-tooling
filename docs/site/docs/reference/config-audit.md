@@ -7,8 +7,8 @@ two independent halves:
 - **Local filesystem checks** (`audit_local_config`) — pure local file
   I/O, no network. They verify the files every managed repo checks in:
   `vergil.toml`, `CLAUDE.md`, `.claude/settings.json`,
-  `.claude/hooks/guard.sh`, reusable-workflow pins, `.gitignore`, and
-  `.github/workflows/ops.yml`.
+  `.claude/hooks/guard.sh`, reusable-workflow pins, `.gitignore`,
+  `.github/dependabot.yml`, and `.github/workflows/ops.yml`.
 - **GitHub API checks** — repo settings, branch rulesets, and the
   required-status-check set, fetched from the GitHub API.
 
@@ -59,6 +59,7 @@ divergence:
 | `_check_claude_settings` | `.claude/settings.json` marketplace, `enabledPlugins` and `attribution` match the template |
 | `_check_workflow_refs` | every `vergil-*` reusable-workflow pin matches the `vergil.toml` version |
 | `_check_gitignore` | `.gitignore` carries the correct `base + <language>` vergil-managed fence **(#311, #325)** |
+| `_check_dependabot_yml` | `.github/dependabot.yml` is the canonical report-only render for the repo's language **(.github#420)** |
 | `_check_required_workflows` | `ops.yml` is present, wires the audit, and is scheduled **(new, #311)** |
 
 ### `_check_claude_settings` — attribution
@@ -112,6 +113,27 @@ same rule scaffolding uses, so a freshly inited repo is fenced-compliant
 by construction. The transitional legacy monolith-superset acceptance was
 removed in epic
 [#325](https://github.com/vergil-project/.github/issues/325), Task 10.
+
+### `_check_dependabot_yml` — report-only Dependabot config
+
+The repo's `.github/dependabot.yml` must be **exactly** the canonical
+report-only render for its `[project].primary-language` (epic
+[vergil-project/.github#420](https://github.com/vergil-project/.github/issues/420)):
+a `github-actions` entry plus the language's ecosystem, each with
+`open-pull-requests-limit: 0`. The comparison is an exact match with no
+local additions — the same `lib/dependabot.py::check` that
+`vrg-dependabot-sync --check` uses. Each failure is reported as
+`DiffItem(field="local.dependabot", expected="canonical report-only dependabot.yml",
+actual=<reason>)`, where the reason is `missing .github/dependabot.yml`
+or `differs from the canonical render`. Fix either with
+`vrg-dependabot-sync --write`.
+
+No `vergil.toml`, or no declared language, means the actions-only
+render. A `vergil.toml` that fails to load is **not** treated as
+actions-only: the check reports one explicit failure,
+`DiffItem(field="local.dependabot", expected="resolvable [project].primary-language",
+actual="cannot resolve the dependabot language: <config error>")`, and
+nothing else for the file (#3451).
 
 ### `_check_required_workflows` — ops.yml wiring
 

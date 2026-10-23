@@ -1,7 +1,8 @@
 """Local repository configuration audit checks.
 
 Checks files on disk — vergil.toml, CLAUDE.md, .claude/settings.json,
-.claude/hooks/guard.sh — without making any API calls.
+.claude/hooks/guard.sh, .gitignore, .github/dependabot.yml and
+.github/workflows/ops.yml — without making any API calls.
 """
 
 from __future__ import annotations
@@ -10,7 +11,7 @@ import importlib.resources
 import json
 from typing import TYPE_CHECKING, Any
 
-from vergil_tooling.lib import gitignore
+from vergil_tooling.lib import dependabot, gitignore
 from vergil_tooling.lib.config import ConfigError, declared_primary_language, read_config
 from vergil_tooling.lib.github_config import ConfigDiff, DiffItem
 from vergil_tooling.lib.update_deps.context import UpdateDepsError
@@ -103,6 +104,42 @@ def _check_gitignore(repo_root: Path, items: list[DiffItem]) -> None:
         )
 
 
+def _check_dependabot_yml(repo_root: Path, items: list[DiffItem]) -> None:
+    """Assert ``.github/dependabot.yml`` is the canonical report-only file (epic #420).
+
+    Exact-match against :func:`dependabot.render` for the repo's resolved
+    primary language (via :func:`dependabot.check`), so a missing file, a local
+    addition, or a stale render all fail. Each reason is appended as a
+    ``DiffItem``.
+
+    When ``vergil.toml`` fails to load, the language is unknown, so the file is
+    not judged at all: the check appends one explicit failure naming the config
+    error instead of comparing against a silent actions-only render (#3451).
+    """
+    path = repo_root / dependabot.DEPENDABOT_PATH
+    text = path.read_text(encoding="utf-8") if path.is_file() else None
+
+    try:
+        lang = dependabot.resolve_language(repo_root)
+    except ConfigError as exc:
+        items.append(
+            DiffItem(
+                field="local.dependabot",
+                expected="resolvable [project].primary-language",
+                actual=f"cannot resolve the dependabot language: {exc}",
+            )
+        )
+        return
+    for reason in dependabot.check(text, lang):
+        items.append(
+            DiffItem(
+                field="local.dependabot",
+                expected="canonical report-only dependabot.yml",
+                actual=reason,
+            )
+        )
+
+
 def _check_required_workflows(repo_root: Path, items: list[DiffItem]) -> None:
     """Assert .github/workflows/ops.yml exists, wires the audit, and is scheduled.
 
@@ -156,6 +193,7 @@ def audit_local_config(repo_root: Path) -> ConfigDiff:
     _check_claude_settings(repo_root, items, warnings)
     _check_workflow_refs(repo_root, items)
     _check_gitignore(repo_root, items)
+    _check_dependabot_yml(repo_root, items)
     _check_required_workflows(repo_root, items)
     return ConfigDiff(items=items, warnings=warnings)
 

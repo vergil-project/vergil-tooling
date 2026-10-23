@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.261] - 2026-10-23
+
+### Documentation
+
+- reflect the version window, optional pins and per-series runtimes (#3489)
+
+### Features
+
+- audit dependabot.yml against the canonical render nightly (#3490)
+
 ## [2.1.260] - 2026-10-23
 
 ### Features

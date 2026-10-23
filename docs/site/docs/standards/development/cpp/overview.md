@@ -33,6 +33,15 @@ The compiler-sensitive stages — TYPECHECK (the warnings build) and TEST
 (coverage and sanitizers) — run **per compiler and per version**, so both
 families gate every change equally.
 
+Each compiler×version is one entry in `[ci].versions` (`clang-20`, `gcc-14`),
+and C++ repos must pin that list. Running both families is therefore a
+property of a **library**: a `library` may pin any subset of the window, such
+as `["clang-20", "gcc-14"]`, and every pinned entry is a hard CI leg. Every
+other repository type resolves as an app and builds exactly one version, so
+an app that pins more than one entry fails resolution. An app gets one
+compiler in CI; to gate on both, the repo must be a `library` (see
+[Version resolution](../../../guides/ci-architecture.md#version-resolution)).
+
 ## Prebuilt Toolchains Only
 
 Compiler toolchains come **exclusively from prebuilt stable binary packages —
@@ -40,13 +49,12 @@ never built from source**. Building a compiler from source in the validation
 path is slow, non-reproducible, and a supply-chain liability; the dev images
 pin prebuilt stable releases instead.
 
-The target is **two recent majors per family**, taken from whatever is cleanly
-available prebuilt. The shipped v1 matrix is **Clang 20 (primary) and Clang 19**
-plus **GCC 14 (primary) and GCC 13**. GCC illustrates the availability rule: the
-spec's target pair was gcc-15/14, but gcc-15 is not cleanly prebuilt for the
-image base (Debian trixie), so the matrix steps back one release to gcc-13/14
-rather than dropping a compiler. The matrix bends to availability; it never
-drops to one compiler.
+Which versions are available is set by the version window that vergil-containers
+publishes, limited to what is cleanly available prebuilt for the image base
+(Debian trixie). Today the window holds **Clang 20 and Clang 19** and **GCC 14**
+only: the GCC policy covers the maintained series the image base packages, and
+newer GCC majors are not installable there. The window bends to availability;
+it never drops a compiler family.
 
 ## Build System and Dependency Management
 
@@ -156,12 +164,12 @@ framework, tests are registered with CTest so the runner contract holds.
 ## CI Gates
 
 See [Source Control Guidelines](../../source-control-guidelines.md#ci-gates)
-for the hard-gates-only standard: every CI check is a hard gate, and the only
-sanctioned non-blocking category is the advisory-on-unsupported-versions
-carve-out (see the
+for the hard-gates-only standard: every CI check is a hard gate, and every
+version a repo resolves from the version window is a hard CI leg (see the
 [Runtime Version Support Policy](../runtime-version-support-policy.md)).
 
-C++ hard gates run per compiler and per version:
+C++ hard gates run per resolved compiler×version: every entry a `library`
+pins, or the single entry an app pins:
 
 - **TYPECHECK** — the warnings build under each compiler×version (see
   [Toolchain and Warnings](toolchain-and-warnings.md)).

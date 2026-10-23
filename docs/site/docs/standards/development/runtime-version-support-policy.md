@@ -2,203 +2,132 @@
 
 ## Purpose
 
-Define a tiered runtime version support policy that balances forward progress
-with consumer compatibility. This policy provides cross-language guidance for
-which runtime versions to test, which CI results block merges, and when to drop
-a version.
+Define which language versions Vergil-managed repositories build and test,
+where that set comes from, and how it changes. This policy is cross-language;
+language pages such as
+[Python version management](python/version-management.md) apply it.
 
 ## Scope
 
-Applies to all repositories that declare a language runtime dependency (Python,
-Java, Go, or any other language with discrete runtime releases). This policy
-complements language-specific upgrade workflows such as the Python version
-management standard; it does not replace them.
+Applies to every repository that declares a `[project].primary-language` in
+`vergil.toml`: Python, Java, Go, Rust, C++ and TypeScript.
 
 ## Definitions
 
 - **GA release**: A production-ready version published through the language's
-  official release channel.
-- **Active bugfix**: A GA release series receiving regular bug fixes and
-  security patches from the upstream maintainer.
-- **Security-fix-only**: A GA release series receiving only critical security
-  patches, with no further bug fixes.
+  official release channel. Pre-releases (alphas, betas, release candidates)
+  are never GA.
 - **EOL (end of life)**: A release series no longer receiving any patches from
-  the upstream maintainer.
+  its upstream.
+- **Version window**: The set of versions of a language that Vergil supports
+  and builds images for, published by vergil-containers.
 - **Hard gate**: A CI check that blocks PR merge when it fails. Every CI gate
-  is a hard gate — a check either blocks as a required status check or it is
-  not a gate. See
+  is a hard gate. See
   [Source Control Guidelines](../source-control-guidelines.md#ci-gates) and the
-  [CI Architecture](../../guides/ci-architecture.md) guide for the
-  hard-gates-only standard.
-- **Advisory-on-unsupported-versions carve-out**: The single sanctioned
-  non-blocking category. A check is advisory *only because* the runtime version
-  it runs against is outside the supported set — a preview version not yet
-  promoted into the supported set, or an EOL version past upstream support. The
-  version, not the check, is what makes it non-blocking; the same check on a
-  supported version is a hard gate. This is deliberately distinct from a
-  generic soft gate on a supported check, which the hard-gates-only standard
-  does not permit.
+  [CI Architecture](../../guides/ci-architecture.md) guide.
 
-## Support tiers
+## The version window
 
-Each runtime version in a CI matrix must be assigned to exactly one tier.
+The window is recorded in one place: the version manifest in
+[vergil-containers](https://github.com/vergil-project/vergil-containers),
+`docker/versions/manifest.yml`. vergil-containers generates every other version
+list from it, including `docker/versions/window.json`, the published window
+that consuming repos read at their `[dependencies].vergil` ref.
 
-### Tier 1 — active bugfix
+Each language's window follows its upstream community's own support rule. The
+shared rules and each language's policy page live in vergil-containers'
+[language version lifecycle](https://github.com/vergil-project/vergil-containers/blob/develop/docs/site/docs/languages/lifecycle.md)
+docs. In short:
 
-The primary supported version. This is the version used for development,
-deployment, and release artifacts.
+- a version joins the window once it is GA, and leaves it at upstream EOL with
+  no exceptions;
+- the window grows only at the top: an older version is never backfilled;
+- versions are compared at `x.y` (or at the major, for languages numbered by
+  whole majors), so any patch release satisfies a version.
 
-- Gate type: hard gate (blocking).
-- All tests and validation checks must pass.
-- Production deployments use a Tier 1 version.
+## The lifecycle job
 
-### Tier 2 — next development release
+The lifecycle job in vergil-containers adds and drops versions. For each
+language it reads upstream release and EOL data, applies that language's
+policy and computes the target window. For a language whose automation is
+`pr` it opens the pull request that changes the manifest; for one whose
+automation is `report` it reports the gap in an issue until a human acts.
 
-The upcoming version that has entered GA but has not yet been promoted to the
-primary development version.
+Repos do not edit anything when the window moves, and there are no per-repo
+tiers, preview periods or job labels to maintain.
 
-- Gate type: advisory under the advisory-on-unsupported-versions carve-out —
-  non-blocking *because* the version is not yet in the supported set, not
-  because the check itself is a soft gate.
-- Failures are tracked as issues but do not block PRs.
-- Purpose: early detection of incompatibilities before the next version becomes
-  Tier 1.
+## Which versions a repo builds
 
-### Tier 3 — security-fix-only
-
-A prior version still receiving security patches from the upstream maintainer.
-Relevant primarily for libraries that must support consumers on older runtimes.
-
-- Gate type: hard gate while the version remains supportable.
-- Dropped when continued support inhibits forward progress (see
-  [Drop criteria](#drop-criteria)).
-
-### Tier 4 — EOL
-
-A version that has reached end of life upstream.
-
-- Gate type: advisory under the advisory-on-unsupported-versions carve-out —
-  non-blocking *because* the version has left the supported set.
-- Failures are logged but never block merges.
-- Do not invest effort maintaining compatibility with EOL versions.
-
-## CI matrix mapping
-
-| Tier | CI job label | Gate type | Merge impact |
-| --- | --- | --- | --- |
-| 1 — active bugfix | `bugfix-<version>` | Hard gate | Blocks merge |
-| 2 — next development | `preview-<version>` | Advisory (unsupported-version carve-out) | Warning only |
-| 3 — security-fix-only | `security-<version>` | Hard gate | Blocks merge |
-| 4 — EOL | `eol-<version>` | Advisory (unsupported-version carve-out) | No impact |
-
-Every label includes the version because each tier may contain more than one
-version simultaneously.
-
-Each repository must document its CI matrix with tier assignments in its
-repository standards or CI configuration.
-
-## Application versus library scope
-
-### Applications
-
-Applications target a single runtime version (Tier 1). They do not maintain
-backward compatibility with older runtimes.
-
-- CI matrix: Tier 1 only, plus optionally Tier 2 for forward-looking testing.
-- Production deployments always use the Tier 1 version.
+One resolver (`src/vergil_tooling/lib/versions/resolve.py`) turns a repo's
+`vergil.toml` and the window into the versions it builds. See
+[Version resolution](../../guides/ci-architecture.md#version-resolution).
 
 ### Libraries
 
-Libraries test against all Tier 1 versions and conditionally against Tier 3
-versions to support consumers on older runtimes.
+A repo with `repository-type = "library"` provides code that runs in other
+repos' environments, so it must work on every version its consumers can be on.
 
-- CI matrix: Tier 1 (hard gate), Tier 3 if consumers require it (hard gate),
-  Tier 2 (advisory under the unsupported-version carve-out).
-- Tier 4 is advisory under the same carve-out and included only when the cost
-  is negligible.
+- Default: every window version.
+- Every window version is a **hard CI leg**. There is no advisory tier.
+- A `[ci].versions` pin may narrow the set to any non-empty subset of the
+  window.
 
-## Drop criteria
+### Applications
 
-A runtime version should be considered for removal from the CI matrix when any
-of the following conditions apply:
+Every other repository type resolves as an app: it ships its own environment
+and builds one version.
 
-- Supporting the version requires pinning dependencies to older versions that
-  block upgrades for other supported versions.
-- Maintaining compatibility shims or conditional code paths that degrade
-  readability or test coverage.
-- Continued support prevents adopting language features or library APIs that
-  benefit all other supported versions.
-- The upstream maintainer has moved the version to EOL status.
+- Default: the newest window version.
+- A `[ci].versions` pin must name exactly one window version. Pinning more than
+  one is an error; a repo that needs several versions is a library.
+- A packaged Python app resolves to the newest version that has a published
+  `vergil-python` runtime (see
+  [Python version management](python/version-management.md#packaged-runtime)).
 
-A single criterion is sufficient justification to begin the drop procedure.
+### Pins
 
-## Drop procedure
+`[ci].versions` is optional. A pin is visible technical debt, not a tier:
 
-1. **Open an issue** documenting which version is being dropped and the
-   evidence supporting the decision (reference the applicable drop criteria).
-2. **Update the CI matrix** to remove the version or reclassify it to Tier 4
-   (advisory) as an intermediate step.
-3. **Update build configuration** to remove any compatibility shims, conditional
-   code paths, or pinned dependencies that existed solely to support the
-   dropped version.
-4. **Add a release note** entry (or changelog entry, per the repository's
-   versioning scheme) stating the minimum supported runtime version.
-5. **Update repository documentation** (repository standards, README, or
-   equivalent) to reflect the new minimum version.
+- every pinned version must be in the window, so a pin on a dropped version
+  fails the repo's own build;
+- C++ and TypeScript versions carry a compiler or runtime family (`clang-20`,
+  `gcc-14`, `node-24`), so those repos must pin;
+- `[ci].primary-version` chooses the primary among the resolved versions;
+  without it the primary is the newest.
 
-## Language lifecycle references
+## Moving forward
 
-These summaries describe how major languages classify their release phases.
-Use them to map upstream status to the tier definitions above.
+A new window version reaches every unpinned repo on its next build. If it
+breaks a repo, fix forward, or pin and file an issue. A version that leaves the
+window leaves every unpinned repo's matrix the same way.
 
-### Python
+When a version leaves a library's matrix, remove the compatibility shims,
+conditional code paths and dependency pins that existed only for it, and raise
+the `requires-python` floor (or the language's equivalent) to the new oldest
+version. `vrg-validate` warns when a declared floor falls below the window's
+oldest version.
 
-Python uses three lifecycle phases per minor release:
+## Per-language support rules
 
-- **Bugfix** (approximately 18 months after GA): active bugfix releases.
-  Maps to Tier 1 or Tier 2.
-- **Security** (approximately 3.5 years after bugfix phase ends): security
-  patches only. Maps to Tier 3.
-- **EOL**: no further patches. Maps to Tier 4.
+The window's contents are in the manifest; this page does not repeat them. The
+rule each language's window follows, from its vergil-containers policy page:
 
-Reference: Python Developer's Guide, Status of Python Versions.
+| Language | Support rule |
+| --- | --- |
+| Python | Every GA minor that is not EOL |
+| Go | The two newest releases |
+| Rust | The newest stable release and the one before it (N-1) |
+| Java | LTS releases that are not EOL |
+| TypeScript (Node.js) | LTS majors that are not EOL |
+| C++ (Clang) | The newest LLVM major and the one before it |
+| C++ (GCC) | The maintained series that the image's base distribution packages |
 
-### Java
+Rust's upstream supports only the newest stable release. Vergil keeps one
+more (N-1) to absorb the six-week cadence, so a consumer is not forced to move
+on the day a release ships.
 
-Java release lifecycle varies by distribution:
-
-- **LTS releases** (for example, 17, 21): extended support from the
-  distribution vendor. Typically maps to Tier 1 or Tier 3 depending on
-  the project's adoption timeline.
-- **Non-LTS releases**: short support windows (six months). Typically map to
-  Tier 2 for forward-looking testing only.
-
-Determine support commitment based on the distribution's published support
-schedule, not the OpenJDK upstream alone.
-
-### Go
-
-Go supports the two most recent major releases:
-
-- **Current release**: maps to Tier 1.
-- **Previous release**: maps to Tier 3 (still receiving security patches).
-- **Older releases**: maps to Tier 4 (EOL).
-
-Reference: Go Release Policy.
-
-### Rust
-
-Rust uses a six-week release cadence. Only the latest stable release receives
-patches; there is no extended security-fix window for prior releases.
-
-- **Current stable release**: maps to Tier 1.
-- **Previous two releases (N-1, N-2)**: maps to Tier 3. Rust does not patch
-  these, but they remain recent enough for library consumers. This project
-  uses an N-2 policy (~18 weeks of coverage), matching Go's two-release
-  approach.
-- **Older releases**: maps to Tier 4 (EOL).
-
-Reference: Rust Release Process (Rust Forge).
+A language whose automation is `report` can lag its rule until a human applies
+the reported change, so its manifest entry, not the rule, is what repos build.
 
 ## Related documents
 
