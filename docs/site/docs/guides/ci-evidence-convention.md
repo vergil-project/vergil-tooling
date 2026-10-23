@@ -135,7 +135,7 @@ evidence, so it does not satisfy the gate.
 The set of gates that MUST emit evidence is **not a hand-maintained list.** It
 is **derived from the same source of truth that drives branch protection**:
 `lib/github_config.py:desired_ci_gates_ruleset()` computes a repo's required
-status checks from its `VergilConfig` (language, `[ci]` versions, GHAS
+status checks from its `VergilConfig` (language, resolved versions, GHAS
 availability, and whether a `[package]` section is present). The evidence
 layer consumes that *same* computation, so the gates that are **enforced to
 merge** and the gates that are **required to have evidence** are provably the
@@ -196,8 +196,9 @@ there is no point publishing empty reports.**
 Producers must therefore emit real report files at the workspace-root paths the
 producer composite globs for:
 
-The test, audit, and quality report files are emitted **per Python version**
-(`<ver>` ∈ `3.12` / `3.13` / `3.14`); the security SARIF are **not**
+The test, audit, and quality report files are emitted **once per resolved
+version** (`<ver>` ∈ `3.12` / `3.13` / `3.14` / `3.15` for this repo today);
+the security SARIF are **not**
 per-version:
 
 | Gate      | Required report file(s)                                             |

@@ -174,7 +174,6 @@ release-model = "tagged-release"
 primary-language = "python"
 
 [ci]
-versions = ["3.12", "3.13", "3.14"]
 integration-tests = false
 
 [publish]
@@ -185,16 +184,20 @@ docs = true
 vergil = "v2.1"
 ```
 
+The wizard writes no `[ci].versions` line unless you pass
+`--versions` (a comma-separated pin), so a new repo follows the
+version window.
+
 Required keys and accepted values:
 
 | Key | Values | Notes |
 |---|---|---|
-| `[project].repository-type` | `application`, `documentation`, `infrastructure`, `library`, `tooling` | Required. |
+| `[project].repository-type` | `application`, `documentation`, `infrastructure`, `library`, `tooling` | Required. A `library` builds every version in the version window; every other type resolves as an app and builds one version, the newest in the window. |
 | `[project].versioning-scheme` | `application`, `library`, `none`, `semver` | Required. |
 | `[project].branching-model` | `application-promotion`, `docs-single-branch`, `library-release` | Required. Determines which branch prefixes `vrg-commit` allows. |
 | `[project].release-model` | `artifact-publishing`, `environment-promotion`, `none`, `tagged-release` | Required. |
 | `[project].primary-language` | `cpp`, `go`, `java`, `python`, `rust`, `typescript` | Optional. Omit it for a repo with no primary language; it selects the per-language checks, container image and `.gitignore` fragment. |
-| `[ci].versions` | non-empty list of strings | Required. The PR-CI version matrix. |
+| `[ci].versions` | non-empty list of strings | Optional pin. Omit it to follow the version window. Every pinned version must be in the window, and an app may pin only one version; either violation is an error. C++ and TypeScript repos must pin. |
 | `[dependencies].vergil` | `vX.Y` | Required. The vergil release line; new repos get the line of the vergil-tooling that created them. |
 
 `[publish]` (`release`, default `false`; `docs`, default `true`) and
@@ -306,7 +309,8 @@ For how to use worktrees during development, see
 caller of the reusable workflows in `vergil-project/vergil-actions`,
 pinned to the `[dependencies].vergil` line. It passes only
 `language:` and `container-suffix:`; the reusable workflows read the
-version matrix from `[ci].versions` themselves. Depending on the
+version matrix from `vrg-ci-resolve` themselves (see
+[Version resolution](ci-architecture.md#version-resolution)). Depending on the
 profile, it calls `ci-audit`, `ci-quality`, `ci-security`, `ci-docs`,
 `ci-test`, `ci-version-bump` and `ci-package`. Step 9 of the wizard
 creates the CI-gates ruleset that requires the checks these jobs

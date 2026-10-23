@@ -38,14 +38,10 @@ Hard gate definition:
 - Merge-blocking. A required status check must be configured on the target
   branch. Any failure blocks merge until a new commit passes.
 
-The only sanctioned non-blocking category is the
-**advisory-on-unsupported-versions carve-out**: a check is advisory *because*
-the runtime version it runs against is outside the supported set (a preview
-version not yet promoted, or an EOL version past upstream support), not because
-the check itself is a generic soft gate. See the
-[Runtime Version Support Policy](../runtime-version-support-policy.md) for the
-carve-out. Rust runs no version-matrix advisory jobs today, so all of its gates
-are hard gates.
+There is no non-blocking category: every version a repo resolves from the
+version window (for Rust, the newest stable release and the one before it) is
+a hard CI leg. See the
+[Runtime Version Support Policy](../runtime-version-support-policy.md).
 
 Hard gates (all are required status checks):
 

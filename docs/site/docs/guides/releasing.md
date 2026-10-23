@@ -377,8 +377,8 @@ nothing. The refusal names each conflicting package and the release
 that first published it:
 
 ```text
-vergil-project/vergil-python@v1.0.1 would re-publish 4 package(s) at a version an earlier release already published:
-  - vergil-python3.14.8 3.14.8+20261003-1 amd64 (deb): already published by vergil-project/vergil-python@v1.0.0
+vergil-project/vergil-python@v1.0.4 would re-publish 4 package(s) at a version an earlier release already published:
+  - vergil-python3.15 3.15.1+20261021-1 amd64 (deb): already published by vergil-project/vergil-python@v1.0.3
   ...
 ```
 
