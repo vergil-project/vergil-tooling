@@ -322,7 +322,6 @@ fatal before tagging. The caller has two requirements:
     uses: vergil-project/vergil-actions/.github/workflows/cd-release.yml@v2.1
     with:
       language: python
-      container-tag: "3.14"
     # `inherit` is required: environment secrets reach a job in a cross-repo
     # reusable workflow only with `secrets: inherit`. The callee is first-party.
     secrets: inherit  # nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit
