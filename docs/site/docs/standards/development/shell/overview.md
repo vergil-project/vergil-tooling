@@ -30,9 +30,8 @@ readability, and long-term maintainability across repositories.
 ## CI Gates
 
 See [Source Control Guidelines](../../source-control-guidelines.md#ci-gates)
-for the hard-gates-only standard: every CI check is a hard gate, and the only
-sanctioned non-blocking category is the advisory-on-unsupported-versions
-carve-out (see the
+for the hard-gates-only standard: every CI check is a hard gate, and every
+version a repo resolves from the version window is a hard CI leg (see the
 [Runtime Version Support Policy](../runtime-version-support-policy.md)).
 
 Required checks for shell/infrastructure repositories are maintained in the

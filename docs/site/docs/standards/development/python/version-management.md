@@ -2,159 +2,142 @@
 
 ## Purpose
 
-Define a repeatable Python version strategy that keeps runtime behavior stable
-within a development cycle while enabling controlled upgrades.
+Define how a Vergil-managed repository chooses the Python versions it builds,
+tests and deploys on, and how those versions change over time.
 
 ## Scope
 
-These rules apply to the Python runtime version used in development, CI, and
-production deployments.
+These rules apply to the Python interpreter used in development, CI, and
+packaged deployments. The cross-language model is in the
+[Runtime Version Support Policy](../runtime-version-support-policy.md); this
+page applies it to Python.
 
 ## Core principles
 
-- Use a fixed Python patch version (`x.y.z`) for an entire development cycle.
-- Align development, CI, and production runtimes to the same version.
-- Evaluate Python patch upgrades at the same time as dependency upgrades.
-- Treat the Python runtime as a dependency with higher upgrade cost and risk.
-- Document any non-latest Python pin using the anchored dependency process.
+- **Vergil owns the version.** A repo does not choose its interpreter. The
+  supported versions come from one published version window, and every tool
+  that runs Python reads them from it.
+- **One source, no hand-maintained lists.** The window is generated from the
+  version manifest in vergil-containers. Nothing in a consuming repo, its
+  `ci.yml` or its container setup repeats the version list.
+- **Moving forward is the default.** A new window version reaches every repo
+  that does not pin on its next build. Pinning is an explicit, visible choice.
+- **Development, CI and deployment agree.** The local container, every CI leg
+  and the packaged runtime all come from the same window.
 
 ## Sources of truth
 
-- The canonical Python version is declared once in repository configuration.
-- All other references (CI config, container image tags, tooling configs) must
-  derive from the canonical value.
+- **The version manifest.** vergil-containers records every supported Python
+  version in `docker/versions/manifest.yml` and publishes it as
+  `docker/versions/window.json` at every Vergil ref (the *version window*).
+  The current Python window is 3.12, 3.13, 3.14 and 3.15. The Python support
+  rule (every GA minor that is not EOL, with no backfill) is set out in
+  vergil-containers'
+  [Python support policy](https://github.com/vergil-project/vergil-containers/blob/develop/docs/site/docs/languages/python.md).
+- **The repo's `vergil.toml`.** `[project].repository-type` decides how many
+  window versions the repo builds, and `[ci].versions` optionally pins them
+  (see below). The window is read at the repo's `[dependencies].vergil` ref
+  (for example `v2.1`), so a window change reaches the repo without a
+  vergil-tooling release.
+- **One resolver.** `src/vergil_tooling/lib/versions/resolve.py` turns the two
+  into the versions the repo builds and its primary version. The dev container,
+  `vrg-validate`, the required-check computation and the CI setup step
+  (`vrg-ci-resolve`) all call it. See
+  [Version resolution](../../../guides/ci-architecture.md#version-resolution).
 
-## Upgrade workflow
+## Which versions a repo builds
 
-### Patch-level
+| Repository type | Default | `[ci].versions` pin |
+| --- | --- | --- |
+| `library` | Every window version | Any non-empty subset of the window |
+| Any other type (an app) | The newest window version | Exactly one window version |
 
-During the patch-cycle dependency update:
+- A library's code runs in other repos' environments, so its CI builds every
+  version a consumer can be on. Every window version is a hard CI leg.
+- An app ships its own environment, so it builds one version. Pinning more
+  than one version is an error: if a repo really needs several, it is a
+  library and should say so.
+- A pin outside the window is an error. When a pinned version leaves the
+  window, the repo fails its own build, which is how end of life reaches a
+  repo.
+- `[ci].primary-version` sets the primary (the local container's version and
+  the version single-container CI jobs use). Without it, the primary is the
+  newest resolved version.
 
-1. Check for a newer Python patch release in the current minor series.
-2. If available, update the runtime to the new patch version.
-3. Run the full validation and test suite.
-4. If validation passes, fix the runtime to the new patch for the remainder of
-   the cycle.
+vergil-tooling itself is a `library` with no pin: its CI covers 3.12 to 3.15
+and local validation runs on 3.15.
 
-If the patch upgrade fails, determine root cause before pinning. If the failure
-is attributable to the runtime, anchor to the prior patch and document the
-failure evidence.
+## Toolchain selection in the repo
 
-For a packaged product with an exact `[package.python] runtime` pin in
-`vergil.toml`, steps 1 and 2 are automated: the `vergil` updater in the
-`vrg-release` `update-deps` stage bumps the pin to the CPython patch that the
-pin's per-series `vergil-python<x.y>` package serves on every package index,
-and the update's single validation run covers step 3. The pin never leaves its
-series; a newer series is only reported. See the
-[dependency-update reference](../../../reference/dependency-update-config.md#vergil).
+`vrg-validate` checks the repo's own Python settings against the window
+(`src/vergil_tooling/lib/versions/extensions/python.py`):
 
-### Minor- or major-level
+- **`.python-version` is an error.** It selects the interpreter version behind
+  Vergil's back. Delete it.
+- **A `requires-python` floor below the window's oldest version, or an upper
+  bound that excludes its newest, is a warning.** A floor above the oldest
+  version is a deliberate restriction and is not reported. Keep
+  `requires-python` as a floor with no upper bound.
+- **uv's `python-preference` and `python-downloads` are allowed.** They choose
+  where an interpreter comes from, not which version, and Vergil overrides the
+  source wherever it runs Python.
 
-When incrementing the application `MINOR` or `MAJOR` version:
+Vergil hands uv the resolved version itself. The dev container, the
+cached-image build and every CI leg set `UV_PYTHON` to the resolved version
+and `UV_PYTHON_PREFERENCE=only-system`, so uv always uses the image's own
+interpreter. The docs builds resolve no version and set only
+`UV_PYTHON_PREFERENCE=only-system`. See
+[Container Config](../../../reference/container-config.md).
 
-1. Perform the patch-level workflow.
-2. Evaluate whether upgrading the Python minor or major version is required or
-   beneficial for the next cycle.
-3. If a runtime upgrade is attempted, test each candidate version individually
-   before combining with other changes.
+## Packaged runtime
 
-### Minor release preview (dual-CI)
+A repo with `[package].builder = "python"` deploys on a `vergil-python`
+runtime. The runtime is published **per series**: the package
+`vergil-python<x.y>` installs at `/opt/vergil/python/<x.y>` and floats on the
+newest CPython patch of that series.
 
-When the next Python minor series transitions from pre-release to bugfix
-(stable) status:
+- **Derived by default.** Without a pin, the runtime series is the newest
+  resolved version whose `vergil-python` runtime is published (the window
+  records this as `runtime_published`). Today that is 3.15. A packaged app
+  resolves only to a version that has a published runtime; a packaged library
+  still tests every resolved version, and only the derived series needs a
+  runtime.
+- **A pin is an exact patch check.** `[package.python].runtime = "x.y.z"`
+  selects the `x.y` series, and the build fails unless the per-series package
+  serves exactly that CPython patch
+  ([#3455](https://github.com/vergil-project/vergil-tooling/issues/3455)).
+  The pinned series must be in the window.
+- **`vrg-update-deps` moves a pin within its series.** The `vergil` updater
+  bumps the pin to the patch every build and install-test index serves, and
+  holds it back while the indexes disagree. A newer series is reported as held
+  back, never applied
+  ([#3456](https://github.com/vergil-project/vergil-tooling/issues/3456); see
+  the [dependency-update reference](../../../reference/dependency-update-config.md#vergil)).
 
-1. At the start of the next development cycle, add the next minor version to
-   the CI matrix.
-2. Label CI jobs using the runtime version support policy convention:
-   `bugfix-<version>`, `preview-<version>`, and (when applicable)
-   `security-<version>`.
-3. Keep `bugfix-<version>` jobs as the only hard gate. The
-   `preview-<version>` check is non-blocking under the
-   advisory-on-unsupported-versions carve-out — advisory *because* the preview
-   minor is not yet in the supported set, not because it is a generic soft
-   gate. See the
-   [Runtime Version Support Policy](../runtime-version-support-policy.md) for
-   the carve-out and
-   [Source Control Guidelines](../../source-control-guidelines.md#ci-gates)
-   for the hard-gates-only standard.
-4. Record any failures in the preview check and track them as issues, but do
-   not block PRs unless a bugfix-tier job fails.
+See the [package config reference](../../../reference/package-config.md) for
+the `[package.python]` keys.
 
-### Cutover criteria
+## How versions change
 
-Promote the preview version to bugfix tier only after it has been stable in
-CI for at least two full development cycles.
+The lifecycle job in vergil-containers adds and drops Python versions. When a
+new minor is GA it opens the pull request that adds it to the manifest; when a
+minor reaches end of life it opens the one that drops it. Once the change is
+in the published window:
 
-At the start of the next development cycle after meeting the stability
-threshold:
+- an unpinned library gains or loses a CI leg on its next build;
+- an unpinned app moves to the newest version on its next build (a packaged
+  app moves once that version's runtime is published);
+- a repo that pins a dropped version fails until it updates the pin.
 
-1. Update the canonical Python version to the new minor series.
-2. Make the new minor the required (hard-gate) CI runtime and relabel it as
-   `bugfix-<version>`.
-3. Relabel the prior bugfix minor as `security-<version>` and keep it
-   non-blocking under the advisory-on-unsupported-versions carve-out to
-   preserve rollback capability — advisory *because* the minor has left the
-   primary supported set, not as a generic soft gate.
-4. Keep `security-<version>` advisory under the same carve-out until humans
-   explicitly decide to drop it. Do not auto-remove based on elapsed cycles
-   alone.
-
-### Stability tracking
-
-Once dual-CI begins, record stability status at the start of each development
-cycle. Capture:
-
-- cycle start date
-- bugfix-tier minor version
-- preview-tier minor version (candidate for promotion)
-- security-tier minor version (if retained)
-- CI status summary and any open issues blocking promotion
-
-Store the stability log in a repository-local doc (for example,
-`docs/development/python/version-stability-log.md`) and keep it updated until
-the cutover is complete.
-
-## Host decoupling and parity
-
-### Parity requirements
-
-- Prefer running development and test workflows in an environment that matches
-  the deployment operating system and runtime.
-- Avoid relying on the host OS Python for anything beyond ad-hoc commands.
-- Ensure CI validates the same runtime version used for development and
-  production.
-
-### Decoupling strategies
-
-Evaluate one or more of the following approaches:
-
-- Containerized development environments that mirror production runtime
-  versions and base operating system.
-- Standardized dev shells or wrapper scripts that run tests and tooling inside
-  the controlled runtime.
-- Remote or hosted development environments running the deployment OS.
-- Toolchain managers that install and isolate Python without modifying the
-  system runtime.
-
-## Enforcement
-
-Violations are fatal exceptions that block merges, releases, and deployments.
-
-CI must fail when:
-
-- The Python version drifts across development, CI, and production.
-- The runtime version is modified mid-cycle without the upgrade workflow.
-- A non-latest runtime pin lacks anchored dependency documentation.
-
-## Examples (TODO)
-
-- Patch upgrade with a runtime regression and anchor record.
-- Minor or major runtime upgrade checklist.
-- Containerized development workflow that matches production.
+There is no per-repo preview period, tier label or cutover step. A repo that
+breaks on a new version fixes forward, or pins and files an issue; a pin is
+visible technical debt.
 
 ## Related documents
 
 - Runtime version support policy:
   [runtime-version-support-policy.md](../runtime-version-support-policy.md)
+- CI architecture:
+  [Version resolution](../../../guides/ci-architecture.md#version-resolution)
 - Python dependency management: [dependency-management.md](dependency-management.md)
 - Dependency anchor records: [dependency anchor records](../../dependency-anchor-records.md)
