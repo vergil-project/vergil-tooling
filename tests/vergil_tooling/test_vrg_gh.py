@@ -191,6 +191,16 @@ def test_issue_create_denied_redirects_to_vrg_issue_create(
     assert "vrg-issue-create" in err
 
 
+def test_issue_create_denied_names_vrg_intake_create(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["issue", "create"]) != 0
+    err = capsys.readouterr().err
+    assert "vrg-intake-create" in err
+    assert "intake issue linked under the intake epic" in err
+    assert "vrg-triage-create" not in err
+
+
 # -- top-level denials -------------------------------------------------------
 
 

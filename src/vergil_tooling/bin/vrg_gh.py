@@ -39,11 +39,12 @@ _DENIED_ALWAYS: dict[str, dict[str, str]] = {
         # Issue creation must go through a shape-specific tool so there is no
         # bypass around linkage. Denied for every identity. See issues #2017,
         # #2069. Each tool forces its shape: a task is born linked to an epic, an
-        # epic is top-level in <org>/.github, a triage issue is unlinked.
+        # epic is top-level in <org>/.github, an intake capture is born linked
+        # under its home's intake epic.
         "create": (
             "Use vrg-issue-create (task under an epic), vrg-epic-create "
-            "(top-level epic), or vrg-triage-create (unlinked triage issue) "
-            "instead of gh issue create."
+            "(top-level epic), or vrg-intake-create (intake issue linked under "
+            "the intake epic) instead of gh issue create."
         ),
     },
     "pr": {
