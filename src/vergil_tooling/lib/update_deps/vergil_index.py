@@ -8,7 +8,9 @@ package from the shared deb suite (non-native cells) or the target's own suite
 index. Each index installs the **newest** version it lists, so the patch a
 series serves is the CPython part of that newest version, and it counts only
 when **every** one of those indexes serves the same patch. A patch any of them
-does not serve would merge green and then fail the next release.
+does not serve would merge green and then fail the next release. The deb and
+rpm indexes publish separately, so while they disagree the bump is held back
+(and reported), not failed.
 
 The rpm package carries the same name as the deb (``vergil-python<x.y>``, from
 vergil-python's ``[package].name``); both are read the same way. The legacy
@@ -48,11 +50,35 @@ _SERVED_RE = re.compile(r"^(\d+\.\d+\.\d+)\+(\d+)$")
 class ServedRuntime:
     """What the pinned runtime's series serves on every build and install-test index."""
 
-    # The CPython patch ``vergil-python<x.y>`` serves (the part before ``+``).
-    patch: str
+    # The series package, ``vergil-python<x.y>``.
+    package: str
+    # The CPython patch (the part of the newest version before ``+``) each index
+    # serves, keyed by index (``"deb noble/amd64"``), in index order.
+    patches: dict[str, str]
     # The newest later ``x.y`` series package every index lists, if any. It is
     # reported, never applied: moving to a new series is a reviewed change.
     newer_series: str | None
+
+    @property
+    def patch(self) -> str | None:
+        """The patch every index serves, or ``None`` while they disagree.
+
+        The deb and rpm indexes publish separately, so right after a
+        vergil-python release they briefly serve different patches; no pin
+        builds on all of them until they agree.
+        """
+        served = set(self.patches.values())
+        return served.pop() if len(served) == 1 else None
+
+    def disagreement(self) -> str:
+        """The served patches grouped by patch: ``3.14.9 on deb …; 3.14.8 on rpm …``."""
+        by_patch: dict[str, list[str]] = {}
+        for where, patch in self.patches.items():
+            by_patch.setdefault(patch, []).append(where)
+        return "; ".join(
+            f"{patch} on {', '.join(wheres)}"
+            for patch, wheres in sorted(by_patch.items(), key=lambda kv: _key(kv[0]), reverse=True)
+        )
 
 
 def _key(v: str) -> tuple[int, ...]:
@@ -108,11 +134,12 @@ def served_runtime(
     *,
     fetch: package_index.Fetch = package_index._fetch,  # noqa: SLF001
 ) -> ServedRuntime:
-    """The patch the pin's ``vergil-python<x.y>`` serves on every index; fail loud otherwise.
+    """The patch the pin's ``vergil-python<x.y>`` serves on each index; fail loud otherwise.
 
     Fails when the package has no ``[package.python].runtime`` pin, when any index
-    lacks the series package or cannot be read, when a version is malformed, and
-    when the indexes serve different CPython patches.
+    lacks the series package or cannot be read, and when a version is malformed.
+    Indexes that serve different patches are not an error here: the result's
+    ``patch`` is then ``None`` and the updater holds the bump back.
     """
     pin = pkg.python.runtime if pkg.python is not None else None
     if pin is None:
@@ -145,21 +172,13 @@ def served_runtime(
                 f"read. Refusing to treat a missing runtime as 'no change'."
             ),
         )
-    patches = {v.split("+", 1)[0] for v in newest.values()}
-    if len(patches) != 1:
-        listing = "; ".join(f"{where}: {v}" for where, v in newest.items())
-        raise UpdateDepsError(
-            phase="update",
-            command=f"list {rt_pkg} in {base}",
-            message=(
-                f"The build and install-test indexes disagree on the CPython patch {rt_pkg} "
-                f"serves ({listing}), so no pin builds on all of them. Wait for the package "
-                f"index to finish publishing, then re-run."
-            ),
-        )
     series = runtime_series(pin)
     newer = [s for s in set.intersection(*series_per_index) if _key(s) > _key(series)]
-    return ServedRuntime(patch=patches.pop(), newer_series=max(newer, key=_key) if newer else None)
+    return ServedRuntime(
+        package=rt_pkg,
+        patches={where: v.split("+", 1)[0] for where, v in newest.items()},
+        newer_series=max(newer, key=_key) if newer else None,
+    )
 
 
 def served_runtime_for(base: Path) -> ServedRuntime:

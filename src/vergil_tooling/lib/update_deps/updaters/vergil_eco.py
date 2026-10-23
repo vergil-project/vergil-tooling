@@ -12,7 +12,8 @@ Either way, a ``[package.python] runtime`` pin (``x.y.z``) is bumped to the
 CPython patch its per-series ``vergil-python<x.y>`` package serves on every
 build and install-test index (spec §8.2, vergil-tooling#3456). The pin never
 leaves its series: a newer served series is reported as held back, never
-applied.
+applied. While the indexes serve different patches, the bump is held back and
+reported until they agree.
 """
 
 from __future__ import annotations
@@ -109,38 +110,55 @@ def _patch_key(v: str) -> tuple[int, ...]:
     return tuple(int(p) for p in v.split("."))
 
 
-def bump_runtime(base: Path, served: ServedRuntime) -> tuple[str | None, HeldBack | None]:
-    """Bump ``[package.python] runtime`` to the served patch; report a newer series.
+def bump_runtime(base: Path, served: ServedRuntime) -> tuple[str | None, list[HeldBack]]:
+    """Bump ``[package.python] runtime`` to the served patch; report what is held back.
 
-    Returns the new runtime (``None`` if unchanged) and the held-back entry for a
-    newer served series (``None`` if there is none). A served patch on another
-    series, or older than the pin, fails loud rather than moving the pin.
+    Returns the new runtime (``None`` if unchanged) and the held-back entries: a
+    newer served series, and a bump held while the indexes serve different
+    patches (the deb and rpm indexes publish separately, so they briefly
+    disagree after each vergil-python release). A served patch on another
+    series, or an agreed patch older than the pin, fails loud rather than
+    moving the pin.
     """
     path = base / "vergil.toml"
     text = path.read_text()
     current = _declared_runtime(text)
     if current is None:
-        return None, None
-    entry = None
+        return None, []
+    held: list[HeldBack] = []
     if served.newer_series is not None:
-        entry = HeldBack(
-            source="vergil",
-            name="vergil-python",
-            current=current,
-            latest=served.newer_series,
-            note=_SERIES_NOTE,
+        held.append(
+            HeldBack(
+                source="vergil",
+                name="vergil-python",
+                current=current,
+                latest=served.newer_series,
+                note=_SERIES_NOTE,
+            )
         )
-    patch = served.patch
     series = runtime_series(current)
-    if runtime_series(patch) != series:
-        msg = (
-            f"vergil-python{series} serves CPython {patch}, which is not on the pin's "
-            f"series {series}; refusing to move [package.python] runtime {current} "
-            f"across series."
+    for index_patch in served.patches.values():
+        if runtime_series(index_patch) != series:
+            msg = (
+                f"{served.package} serves CPython {index_patch}, which is not on the pin's "
+                f"series {series}; refusing to move [package.python] runtime {current} "
+                f"across series."
+            )
+            raise UpdateDepsError(phase="update", command="bump_runtime", message=msg)
+    patch = served.patch
+    if patch is None:
+        held.append(
+            HeldBack(
+                source="vergil",
+                name=served.package,
+                current=current,
+                latest=max(served.patches.values(), key=_patch_key),
+                note=f"indexes disagree ({served.disagreement()}); bump held until they agree",
+            )
         )
-        raise UpdateDepsError(phase="update", command="bump_runtime", message=msg)
+        return None, held
     if patch == current:
-        return None, entry
+        return None, held
     if _patch_key(patch) < _patch_key(current):
         msg = (
             f"[package.python] runtime pins CPython {current}, but vergil-python{series} "
@@ -155,7 +173,7 @@ def bump_runtime(base: Path, served: ServedRuntime) -> tuple[str | None, HeldBac
         msg = f'Expected exactly one runtime = "{current}" line in vergil.toml, found {count}.'
         raise UpdateDepsError(phase="update", command="bump_runtime", message=msg)
     path.write_text(new_text)
-    return patch, entry
+    return patch, held
 
 
 def normalize_claude_ref(base: Path, target: str) -> Path | None:
@@ -205,8 +223,7 @@ class VergilUpdater:
         """Bump the runtime pin from the live index; never query it without a pin."""
         if _declared_runtime((base / "vergil.toml").read_text()) is None:
             return None, []
-        new, entry = bump_runtime(base, self._served_runtime(base))
-        return new, [entry] if entry is not None else []
+        return bump_runtime(base, self._served_runtime(base))
 
     def apply(self, ctx: UpdateDepsContext) -> UpdateResult:
         base = _base(ctx)

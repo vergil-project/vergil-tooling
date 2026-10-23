@@ -111,7 +111,11 @@ def test_served_runtime_reads_the_series_package_patch() -> None:
         ("vergil-tooling", "2.1.258"),
     )
     served = vergil_index.served_runtime(_PKG, fetch=_fetch(pkgs, pkgs))
-    assert served == ServedRuntime(patch="3.14.9", newer_series=None)
+    assert served == ServedRuntime(
+        package="vergil-python3.14",
+        patches={"deb noble/amd64": "3.14.9", "rpm el9/x86_64": "3.14.9"},
+        newer_series=None,
+    )
 
 
 @pytest.mark.usefixtures("two_indexes")
@@ -139,7 +143,8 @@ def test_served_runtime_reports_newer_series_served_everywhere() -> None:
         ("vergil-python3.15", "3.15.1+20261021"),
     )
     served = vergil_index.served_runtime(_PKG, fetch=_fetch(deb, rpm))
-    assert served == ServedRuntime(patch="3.14.8", newer_series="3.15")
+    assert served.patch == "3.14.8"
+    assert served.newer_series == "3.15"
 
 
 @pytest.mark.usefixtures("two_indexes")
@@ -170,13 +175,14 @@ def test_served_runtime_unpublished_rpm_index_fails_loud() -> None:
 
 
 @pytest.mark.usefixtures("two_indexes")
-def test_served_runtime_indexes_disagreeing_on_the_patch_fails_loud() -> None:
+def test_served_runtime_indexes_disagreeing_have_no_patch() -> None:
+    # Not an error: the deb and rpm indexes briefly disagree after each release.
     deb = (("vergil-python3.14", "3.14.9+20261020"),)
     rpm = (("vergil-python3.14", "3.14.8+20261013"),)
-    with pytest.raises(UpdateDepsError, match="disagree") as info:
-        vergil_index.served_runtime(_PKG, fetch=_fetch(deb, rpm))
-    assert "deb noble/amd64: 3.14.9+20261020" in str(info.value)
-    assert "rpm el9/x86_64: 3.14.8+20261013" in str(info.value)
+    served = vergil_index.served_runtime(_PKG, fetch=_fetch(deb, rpm))
+    assert served.patch is None
+    assert served.patches == {"deb noble/amd64": "3.14.9", "rpm el9/x86_64": "3.14.8"}
+    assert served.disagreement() == "3.14.9 on deb noble/amd64; 3.14.8 on rpm el9/x86_64"
 
 
 @pytest.mark.usefixtures("two_indexes")
@@ -219,7 +225,9 @@ def test_served_runtime_for_reads_package(monkeypatch: pytest.MonkeyPatch) -> No
     class _Cfg:
         package = _PKG
 
-    expected = ServedRuntime(patch="3.14.9", newer_series=None)
+    expected = ServedRuntime(
+        package="vergil-python3.14", patches={"deb noble/amd64": "3.14.9"}, newer_series=None
+    )
     monkeypatch.setattr(_MOD + ".config.read_config", lambda base: _Cfg())
     monkeypatch.setattr(_MOD + ".served_runtime", lambda pkg: expected)
     assert vergil_index.served_runtime_for(Path("/r")) == expected

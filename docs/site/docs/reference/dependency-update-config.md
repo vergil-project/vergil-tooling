@@ -70,14 +70,23 @@ break the next release.
 
 The pin never leaves its series. A newer series, such as
 `vergil-python3.15`, is reported as held back and never applied; moving
-to it is a reviewed change. The update fails loudly, rather than
-reporting "no change", when:
+to it is a reviewed change.
+
+The deb and rpm indexes publish separately, so right after a
+vergil-python release they can briefly serve different patches. While
+they disagree the pin is left unchanged and the held-back report names
+each patch and the indexes serving it, for example
+`indexes disagree (3.14.9 on deb noble/amd64; 3.14.8 on rpm el9/x86_64);
+bump held until they agree`. A later run bumps the pin once they agree.
+
+The update fails loudly, rather than reporting "no change", when:
 
 - any of those indexes lacks the series package, or cannot be read.
   The legacy per-patch packages (`vergil-python3.14.8`) are retired and
   are not read;
-- the indexes serve different patches (the index is still publishing);
-- the series package serves a patch older than the pin.
+- a series package version is not `<cpython>+<pbs_tag>`;
+- the series package serves a patch on another series, or a patch
+  older than the pin.
 
 ### `images`
 
