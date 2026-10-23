@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.257] - 2026-10-23
+
+### Bug fixes
+
+- pin uv to the docs image's Python in vrg-container-docs (#3448)
+- use the repo's ad-hoc epic when the sweep epic is in another org (#3450)
+- surface an unreadable vergil.toml in the managed-file renders (#3453)
+- recognise local reusable-workflow calls in the CI-gates guard (#3457)
+- build against the per-series vergil-python package and derive vergil-tooling's runtime (#3458)
+
+### Chores
+
+- uv lock --upgrade
+- add the report-only dependabot.yml (#3449)
+
+### Features
+
+- an app pins exactly one version (#3445)
+
+### Refactoring
+
+- remove the strict-app-pins switch and resolution warnings (#3452)
+
 ## [2.1.256] - 2026-10-22
 
 ### Bug fixes
