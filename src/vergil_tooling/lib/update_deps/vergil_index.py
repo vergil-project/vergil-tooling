@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import config
 from vergil_tooling.lib.package import matrix, orgs, python_builder
+from vergil_tooling.lib.package.runtime import runtime_package
 from vergil_tooling.lib.package.targets import ARCHES
 from vergil_tooling.lib.release import package_index
 from vergil_tooling.lib.release.context import ReleaseError
@@ -148,7 +149,7 @@ def served_runtime(
             command="served_runtime",
             message="[package] has no [package.python].runtime pin, so there is nothing to bump.",
         )
-    rt_pkg = python_builder.runtime_package(runtime_series(pin))
+    rt_pkg = runtime_package(runtime_series(pin))
     base = orgs.for_vendor(_RUNTIME_VENDOR).base_url
     newest: dict[str, str] = {}
     missing: list[str] = []
