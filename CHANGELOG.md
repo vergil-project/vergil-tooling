@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.263] - 2026-10-23
+
+### Bug fixes
+
+- audit every uv.lock group, not just the synced dev environment (#3508)
+
+### Features
+
+- rename vrg-triage-create to vrg-intake-create and link captures under the intake epic (#3503)
+- attach orphans to intake, retire intake kind labels, and check queue visibility in the sweep (#3504)
+- refuse PRs against intake and planning queue items (#3505)
+- add vrg-intake-route for deterministic intake routing (#3506)
+- add vrg-queue to view the intake and planning queues (#3507)
+
 ## [2.1.262] - 2026-10-23
 
 ### Bug fixes
