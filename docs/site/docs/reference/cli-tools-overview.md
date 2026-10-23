@@ -660,11 +660,19 @@ workflows; `matrix` is also useful locally. See the
   them as JSON (read-only). `--tier {full,reduced}` (default `full`),
   `--github-output` (append `enabled`/`build`/`test`/`tier` to
   `$GITHUB_OUTPUT`), `--manifest PATH` (also write the release artifact
-  manifest). A repo without `[package]` reports `enabled: false`.
+  manifest). A repo without `[package]` reports `enabled: false`. A
+  `python` release resolves its runtime here, once, and records it as
+  `runtime` on every build cell and in the manifest.
 - `build` — build every format of one build cell: `--cell` (required),
   `--version` (required), `--out` (default `dist/packages`),
-  `--staging` (default `.vergil/package-staging`, wiped first). Needs
-  `nfpm` on `PATH`.
+  `--staging` (default `.vergil/package-staging`, wiped first),
+  `--runtime` (the cell's recorded runtime; when empty or absent, the
+  build resolves the runtime itself). Prints the runtime it chose.
+  Needs `nfpm` on `PATH`.
+- `check-runtime` — refuse (exit 1) when any `.deb`/`.rpm` in
+  `--artifacts DIR` does not depend on exactly the runtime that
+  `--manifest PATH` records. Read-only. See
+  [one runtime per release](package-config.md#one-runtime-per-release).
 - `check-unpublished` — refuse (exit 1) when a release at `--version`
   (required) would publish a package with the same name, full version,
   architecture and format as one an earlier stable release of `--repo`
@@ -685,7 +693,7 @@ workflows; `matrix` is also useful locally. See the
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_package` |
-| Args | Subcommand (`matrix`, `build`, `check-unpublished`, `install-test`, `index`) with the flags above |
+| Args | Subcommand (`matrix`, `build`, `check-runtime`, `check-unpublished`, `install-test`, `index`) with the flags above |
 | Preconditions | `vergil.toml` in the current directory (`index`: a `packages.toml`) |
 | Failure mode | `ERROR:` diagnostic on stderr for config, package, or missing-file errors |
 | Exit codes | 0 success, 1 error |

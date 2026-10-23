@@ -56,12 +56,23 @@ def _pkg(
 
 
 def _py_ctx(
-    tmp_path: Path, *, cell: BuildCell = _SHARED_AMD64, pkg: PackageConfig | None = None
+    tmp_path: Path,
+    *,
+    cell: BuildCell = _SHARED_AMD64,
+    pkg: PackageConfig | None = None,
+    runtime: str | None = None,
 ) -> BuildContext:
     staging = tmp_path / "s"
     staging.mkdir(exist_ok=True)
     return BuildContext(
-        tmp_path, pkg or _pkg(), cell, "vergil-tooling", "2.1.0", staging, tmp_path / "o"
+        tmp_path,
+        pkg or _pkg(),
+        cell,
+        "vergil-tooling",
+        "2.1.0",
+        staging,
+        tmp_path / "o",
+        runtime=runtime,
     )
 
 
@@ -420,6 +431,118 @@ def test_malformed_derived_runtime_is_a_package_error(
     monkeypatch.setattr(python_builder, "package_runtime", lambda _root: "bogus")
     with pytest.raises(PackageError, match="'bogus' is not an x.y or x.y.z version"):
         python_builder.build_python(_py_ctx(tmp_path, pkg=_pkg(python=PackagePythonConfig())))
+
+
+# --- one runtime per release (#3478) -----------------------------------------
+
+_SHARED_ARM64 = BuildCell(
+    "shared-arm64",
+    "arm64",
+    "ubuntu-24.04-arm",
+    "ubuntu:24.04",
+    ("deb", "rpm"),
+    ("rhel/9/arm64", "ubuntu/24.04/arm64"),
+    native=False,
+    suite=None,
+)
+
+
+def _flipping_window(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """``package_runtime`` answers 3.15 then 3.14: the window flips between cells."""
+    answers = ["3.15", "3.14"]
+    monkeypatch.setattr(python_builder, "package_runtime", lambda _root: answers.pop(0))
+    return answers
+
+
+def _build_cell(
+    root: Path, monkeypatch: pytest.MonkeyPatch, cell: BuildCell, runtime: str | None
+) -> tuple[_Fake, build.BuildResult]:
+    root.mkdir()
+    _repo(root)
+    fake = _Fake(root, monkeypatch)
+    pkg = _pkg(python=PackagePythonConfig())
+    return fake, python_builder.build_python(_py_ctx(root, cell=cell, pkg=pkg, runtime=runtime))
+
+
+def test_cells_use_the_matrix_recorded_runtime_whatever_the_window_says(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # vergil-tooling 2.1.258: amd64 resolved 3.15, arm64 3.14. With the runtime
+    # recorded once, both cells build on it and never re-read the window.
+    answers = _flipping_window(monkeypatch)
+    results = [
+        _build_cell(tmp_path / cell.id, monkeypatch, cell, "3.14")
+        for cell in (_SHARED_AMD64, _SHARED_ARM64)
+    ]
+    assert answers == ["3.15", "3.14"]
+    for fake, res in results:
+        assert f"apt-get {_FAST} install -y vergil-python3.14" in fake.flat
+        assert res.depends["deb"] == ["vergil-python3.14 (>= 3.14.4+20261001)"]
+    err = capsys.readouterr().err
+    assert err.count("vergil-python runtime 3.14 (recorded by vrg-package matrix") == 2
+
+
+def test_local_build_without_a_recorded_runtime_resolves_its_own(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Unchanged local path: no --runtime, so each build reads the window itself.
+    _flipping_window(monkeypatch)
+    fake, _ = _build_cell(tmp_path / "a", monkeypatch, _SHARED_AMD64, None)
+    assert f"apt-get {_FAST} install -y vergil-python3.15" in fake.flat
+    assert (
+        "vrg-package: vergil-python runtime 3.15 (derived from the version window; "
+        "no --runtime was given)"
+    ) in capsys.readouterr().err
+
+
+def test_pinned_runtime_is_printed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _repo(tmp_path)
+    _Fake(tmp_path, monkeypatch)
+    python_builder.build_python(_py_ctx(tmp_path))
+    err = capsys.readouterr().err
+    assert "vergil-python runtime 3.14.4 (pinned by [package.python].runtime)" in err
+
+
+def test_recorded_runtime_matching_the_pin_is_used(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _repo(tmp_path)
+    fake = _Fake(tmp_path, monkeypatch)
+    python_builder.build_python(_py_ctx(tmp_path, runtime="3.14.4"))
+    assert f"apt-get {_FAST} install -y vergil-python3.14" in fake.flat
+
+
+def test_recorded_runtime_disagreeing_with_the_pin_is_fatal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _repo(tmp_path)
+    fake = _Fake(tmp_path, monkeypatch)
+    with pytest.raises(
+        PackageError,
+        match=r"--runtime 3\.15 disagrees with the \[package\.python\]\.runtime pin 3\.14\.4",
+    ):
+        python_builder.build_python(_py_ctx(tmp_path, runtime="3.15"))
+    assert fake.calls == []
+
+
+def test_release_runtime_is_none_for_other_builders(tmp_path: Path) -> None:
+    pkg = PackageConfig(builder="staged", vendor="vergil", summary="s", smoke="true")
+    assert python_builder.release_runtime(tmp_path, pkg) is None
+
+
+def test_release_runtime_needs_the_python_table(tmp_path: Path) -> None:
+    with pytest.raises(PackageError, match=r"\[package\.python\] is required"):
+        python_builder.release_runtime(tmp_path, _pkg(default_py=False))
+
+
+def test_release_runtime_is_the_pin_or_the_derived_runtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(python_builder, "package_runtime", lambda _root: "3.14")
+    assert python_builder.release_runtime(tmp_path, _pkg()) == "3.14.4"
+    assert python_builder.release_runtime(tmp_path, _pkg(python=PackagePythonConfig())) == "3.14"
 
 
 def test_shim_subset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
