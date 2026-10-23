@@ -18,6 +18,8 @@ from vergil_tooling.lib import github
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from tests.vergil_tooling.conftest import FakeApp
+
 _real_gh_env = github._gh_env
 
 
@@ -113,7 +115,10 @@ def test_current_repo_reads_the_cwd_remote_by_default() -> None:
 
 def test_current_repo_resolves_an_explicit_checkout() -> None:
     """``cwd`` resolves another checkout's repo without changing directory."""
-    with patch("vergil_tooling.lib.github._run_with_retry") as mock_run:
+    with (
+        patch("vergil_tooling.lib.github.detect_org", return_value="logical-minds-foundry"),
+        patch("vergil_tooling.lib.github._run_with_retry") as mock_run,
+    ):
         mock_run.return_value = subprocess.CompletedProcess(
             args=["gh"], returncode=0, stdout="logical-minds-foundry/docs\n", stderr=""
         )
@@ -121,6 +126,63 @@ def test_current_repo_resolves_an_explicit_checkout() -> None:
     assert mock_run.call_args.args[0][:3] == ("gh", "repo", "view")
     assert mock_run.call_args.kwargs["cwd"] == "/clones/docs"
     assert mock_run.call_args.kwargs["check"] is True
+
+
+def test_current_repo_mints_the_token_for_the_clones_org(
+    fake_app: FakeApp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A clone in another org gets that org's token, not the process cwd's (#3463).
+
+    The process sits in a ``cwd-org`` checkout; the clone is in ``target-org``.
+    A ``cwd-org`` token cannot see a private ``target-org`` repo, so the
+    ``gh repo view`` must run under the clone's installation.
+    """
+    monkeypatch.setattr(github, "_gh_env", _real_gh_env)
+    fake_app.cwd_org = "cwd-org"
+    fake_app.clone_orgs = {"/clones/private": "target-org"}
+    owners: list[str] = []
+
+    def _run(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        owners.append(fake_app.token_owner())
+        return _completed(stdout="target-org/private\n")
+
+    with patch("vergil_tooling.lib.github._run_with_retry", side_effect=_run):
+        assert github.current_repo(cwd="/clones/private") == "target-org/private"
+    assert owners == ["target-org"]
+    # The scope ends with the call: the process cwd's org is the default again.
+    assert fake_app.token_owner() == "cwd-org"
+
+
+def test_current_repo_fails_loudly_when_the_clones_org_is_undetectable(
+    fake_app: FakeApp,
+) -> None:
+    """No GitHub remote in the clone raises; it never uses the process cwd's org."""
+    fake_app.cwd_org = "cwd-org"
+    with (
+        patch("vergil_tooling.lib.github._run_with_retry") as mock_run,
+        pytest.raises(ValueError, match="cannot determine the GitHub owner of /clones/bare"),
+    ):
+        github.current_repo(cwd="/clones/bare")
+    mock_run.assert_not_called()
+
+
+def test_current_repo_fails_loudly_when_the_clones_org_has_no_installation(
+    fake_app: FakeApp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A clone whose org the App is not installed on raises, never falls back."""
+    monkeypatch.setattr(github, "_gh_env", _real_gh_env)
+    fake_app.cwd_org = "cwd-org"
+    fake_app.clone_orgs = {"/clones/foreign": "foreign-org"}
+
+    def _run(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        github._gh_env()
+        return _completed(stdout="foreign-org/repo\n")
+
+    with (
+        patch("vergil_tooling.lib.github._run_with_retry", side_effect=_run),
+        pytest.raises(github.NoInstallationError),
+    ):
+        github.current_repo(cwd="/clones/foreign")
 
 
 def test_create_pr_returns_url() -> None:
@@ -1724,6 +1786,21 @@ class TestDetectOrg:
                 stdout="ssh://git@github.com/vergil-project/vergil-tooling.git\n"
             )
             assert github.detect_org() == "vergil-project"
+
+    def test_reads_the_remote_of_the_process_cwd_by_default(self) -> None:
+        with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
+            mock_run.return_value = _completed(stdout="git@github.com:vergil-project/x.git\n")
+            github.detect_org()
+        assert mock_run.call_args.kwargs["cwd"] is None
+
+    def test_reads_the_remote_of_an_explicit_checkout(self) -> None:
+        """``cwd`` reads another clone's remote, not the process cwd's (#3463)."""
+        with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
+            mock_run.return_value = _completed(
+                stdout="git@github.com:logical-minds-foundry/mq-protocol-gateway.git\n"
+            )
+            assert github.detect_org(cwd="/clones/mq") == "logical-minds-foundry"
+        assert mock_run.call_args.kwargs["cwd"] == "/clones/mq"
 
     def test_returns_none_on_git_failure(self) -> None:
         with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:

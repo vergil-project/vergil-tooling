@@ -124,12 +124,15 @@ class FakeApp:
     cwd git remote resolves to (``None`` = outside any GitHub checkout). Every
     minted token is ``ghs_fake_<owner>``, so :meth:`token_owner` reports which
     installation the current context's ``gh`` calls would run under.
+    ``clone_orgs`` maps a checkout path -> owner for ``detect_org(cwd=...)``;
+    an unlisted path resolves to ``None`` (no GitHub remote).
     """
 
     installations: dict[str, str] = field(
         default_factory=lambda: {"target-org": "101", "cwd-org": "202"}
     )
     cwd_org: str | None = None
+    clone_orgs: dict[str, str] = field(default_factory=dict)
 
     @staticmethod
     def token_owner() -> str:
@@ -159,7 +162,11 @@ def fake_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakeApp:
     monkeypatch.setattr(github, "_generate_jwt", lambda _app_id, _key: "fake-jwt")
     monkeypatch.setattr(github, "_resolve_installations", lambda _jwt: dict(app.installations))
     monkeypatch.setattr(github, "_jwt_api_request", _jwt_api_request)
-    monkeypatch.setattr(github, "detect_org", lambda: app.cwd_org)
+    monkeypatch.setattr(
+        github,
+        "detect_org",
+        lambda *, cwd=None: app.cwd_org if cwd is None else app.clone_orgs.get(str(cwd)),
+    )
     monkeypatch.setattr(github, "_token_cache", {})
     monkeypatch.setattr(github, "_warned_no_installation", set())
     return app
