@@ -35,6 +35,27 @@ def test_load_explicit_retention(tmp_path: Path) -> None:
     assert index_config.load(p) == IndexConfig("vergil", ["a/b", "c/d"], keep=5, lines=1)
 
 
+def test_load_without_retire_retires_nothing(tmp_path: Path) -> None:
+    p = _write(tmp_path, 'vendor = "v"\nproducts = ["a/b"]\n[retention]\nkeep = 2\n')
+    assert index_config.load(p).retire == ()
+
+
+def test_load_retire(tmp_path: Path) -> None:
+    p = _write(
+        tmp_path,
+        'vendor = "v"\nproducts = ["a/b"]\n[retention]\n'
+        'retire = ["vergil-python3.14.8", "old-tool"]\n',
+    )
+    assert index_config.load(p) == IndexConfig(
+        "v", ["a/b"], keep=3, lines=2, retire=("vergil-python3.14.8", "old-tool")
+    )
+
+
+def test_load_empty_retire_retires_nothing(tmp_path: Path) -> None:
+    p = _write(tmp_path, 'vendor = "v"\nproducts = ["a/b"]\n[retention]\nretire = []\n')
+    assert index_config.load(p).retire == ()
+
+
 @pytest.mark.parametrize(
     ("body", "match"),
     [
@@ -67,6 +88,22 @@ def test_load_explicit_retention(tmp_path: Path) -> None:
         (
             'vendor = "v"\nproducts = ["a/b"]\n[retention]\nlines = "2"\n',
             r"retention\.lines must be an integer >= 1",
+        ),
+        (
+            'vendor = "v"\nproducts = ["a/b"]\n[retention]\nretire = "p"\n',
+            r"retention\.retire must be a list of package names, got 'p'",
+        ),
+        (
+            'vendor = "v"\nproducts = ["a/b"]\n[retention]\nretire = ["p", 3]\n',
+            r"retention\.retire entry 3 is not a non-empty string",
+        ),
+        (
+            'vendor = "v"\nproducts = ["a/b"]\n[retention]\nretire = [""]\n',
+            r"retention\.retire entry '' is not a non-empty string",
+        ),
+        (
+            'vendor = "v"\nproducts = ["a/b"]\n[retention]\nretire = ["p", "q", "p"]\n',
+            r"retention\.retire lists 'p' more than once",
         ),
         (
             'vendor = "v"\nproducts = ["a/b"]\nretention = 3\n',
