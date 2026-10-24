@@ -31,8 +31,9 @@ from vergil_tooling.bin.vrg_submit_pr import (
     parse_args,
 )
 from vergil_tooling.lib import epics, worktrees
-from vergil_tooling.lib.pr_workflow import engine
+from vergil_tooling.lib.pr_workflow import engine, freeze
 from vergil_tooling.lib.pr_workflow.errors import AlreadySubmittedError, WorkflowError
+from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
 from vergil_tooling.lib.worktrees import MergeCommitsError, Worktree
 
 if TYPE_CHECKING:
@@ -2288,6 +2289,7 @@ class TestRelayBranchPath:
             patch(_MOD + ".GitHubTransport") as gh_cls,
             patch(_MOD + ".git.read_output", return_value="abc123\trefs/heads/feature/x"),
             patch(_MOD + "._push_branch"),
+            patch(_MOD + ".submission.record_submission"),
             patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/5"),
         ):
             rc = main(["feature/x", "--yes"])
@@ -2336,12 +2338,76 @@ class TestRelayBranchPath:
             patch(_MOD + ".LocalFileTransport", return_value=local),
             patch(_MOD + ".git.read_output", return_value="abc123\trefs/heads/feature/x"),
             patch(_MOD + "._push_branch") as push,
+            patch(_MOD + ".submission.record_submission") as record,
             patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/7") as create,
         ):
             rc = main(["feature/x", "--yes"])
         assert rc == 0
         push.assert_not_called()
         assert create.call_args.kwargs["head"] == "feature/x"
+        # Regression (issue #3525): the relay open records the submission on
+        # the local worktree too, so the hybrid branch does not stay frozen.
+        record.assert_called_once_with(wt.path, pr_url="https://github.com/pr/7")
+
+    def test_relay_open_with_local_worktree_lifts_the_freeze(self, tmp_path: Path) -> None:
+        """Regression (issue #3525): a branch on origin that also has a local
+        ready worktree is marked submitted after the relay open, so the freeze
+        that refuses pr-watch fix commits and pushes lifts."""
+        wt = Worktree(path=tmp_path, branch="feature/x")
+        LocalFileTransport(tmp_path).write(_ready_state(branch="feature/x", head_sha="abc123"))
+        assert freeze.check_worktree(tmp_path, action="commit").frozen
+        with (
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[wt]),
+            patch(_MOD + ".git.read_output", return_value="abc123\trefs/heads/feature/x"),
+            patch(_MOD + "._push_branch") as push,
+            patch(_MOD + ".github.create_pr", return_value="https://github.com/o/r/pull/7"),
+        ):
+            rc = main(["feature/x", "--yes"])
+        assert rc == 0
+        push.assert_not_called()
+        recorded = LocalFileTransport(tmp_path).read()
+        assert recorded is not None
+        assert recorded.submitted is not None
+        assert recorded.submitted["pr_url"] == "https://github.com/o/r/pull/7"
+        assert not freeze.check_worktree(tmp_path, action="commit").frozen
+
+    def test_relay_open_without_local_worktree_records_nothing(self) -> None:
+        """The pure cloud-to-Mac relay has no local state to mark (issue #3525)."""
+        transport = MagicMock()
+        transport.read.return_value = _ready_state(branch="feature/x", head_sha="abc123")
+        with (
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
+            patch(_MOD + ".GitHubTransport", return_value=transport),
+            patch(_MOD + ".git.read_output", return_value="abc123\trefs/heads/feature/x"),
+            patch(_MOD + ".submission.record_submission") as record,
+            patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/5"),
+        ):
+            rc = main(["feature/x", "--yes"])
+        assert rc == 0
+        record.assert_not_called()
+
+    def test_relay_open_failure_with_local_worktree_records_nothing(self) -> None:
+        """A failed relay open records nothing (issue #3525): only an opened PR
+        is a submission, so the local worktree stays ready and frozen."""
+        wt = Worktree(path=Path("/repo/.worktrees/issue-42-x"), branch="feature/x")
+        local = MagicMock()
+        local.read.return_value = _ready_state(branch="feature/x", head_sha="abc123")
+        with (
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[wt]),
+            patch(_MOD + ".LocalFileTransport", return_value=local),
+            patch(_MOD + ".git.read_output", return_value="abc123\trefs/heads/feature/x"),
+            patch(_MOD + ".submission.record_submission") as record,
+            patch(
+                _MOD + ".github.create_pr",
+                side_effect=subprocess.CalledProcessError(1, ["gh", "pr", "create"]),
+            ),
+            pytest.raises(subprocess.CalledProcessError),
+        ):
+            main(["feature/x", "--yes"])
+        record.assert_not_called()
 
     def test_relay_head_sha_mismatch_errors(self) -> None:
         state = _ready_state(branch="feature/x", head_sha="abc123")

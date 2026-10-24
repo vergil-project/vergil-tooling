@@ -1034,6 +1034,14 @@ def _relay_open(
     the recorded ``head_sha``). The fallback is a live-run concern only: a dry
     run merely previews the body (push vs no-push does not change it) and never
     touches origin, so it stays on the relay preview.
+
+    Whenever the named branch has a local ready worktree, a successful live open
+    records the submission in that worktree's ``pr-workflow.json`` — on the
+    relay path as well as the push fallback (issue #3525). Without it a branch
+    that was pushed before ``report-ready`` and submitted by name would keep
+    ``status == "ready"`` with no submission, so the freeze would refuse every
+    pr-watch fix. A branch with no local worktree has nothing to mark, and a
+    failed open raises before anything is recorded.
     """
     state = _resolve_ready_state(root, branch)
     if state.submitted is not None:
@@ -1041,19 +1049,20 @@ def _relay_open(
     metadata = _metadata_from_state(state, branch)
     base = _target_branch(args.base, state.base)
 
-    if not args.dry_run:
-        wt_path = _local_worktree_with_state(root, branch)
-        if wt_path is not None and not _origin_has_branch(branch):
-            pr_url = _open_pr(branch, base, metadata, push=True, assume_yes=assume_yes)
-            if pr_url is None:  # pragma: no cover - a live push=True open always yields a URL
-                raise SystemExit("vrg-submit-pr: internal error: local submit returned no PR URL")
-            submission.record_submission(wt_path, pr_url=pr_url)
-            return pr_url, None
-        _verify_origin_tip(branch, state)
+    if args.dry_run:
+        return _open_pr(branch, base, metadata, push=False, dry_run=True), None
 
-    pr_url = _open_pr(
-        branch, base, metadata, push=False, dry_run=args.dry_run, assume_yes=assume_yes
-    )
+    wt_path = _local_worktree_with_state(root, branch)
+    push = wt_path is not None and not _origin_has_branch(branch)
+    if not push:
+        _verify_origin_tip(branch, state)
+    pr_url = _open_pr(branch, base, metadata, push=push, assume_yes=assume_yes)
+    if pr_url is None:  # pragma: no cover - a live open always yields a URL
+        raise SystemExit("vrg-submit-pr: internal error: live submit returned no PR URL")
+    if wt_path is not None:
+        # A branch with a local ready worktree is marked submitted on either
+        # path, so the freeze lifts for pr-watch fixes (issue #3525).
+        submission.record_submission(wt_path, pr_url=pr_url)
     return pr_url, None
 
 
