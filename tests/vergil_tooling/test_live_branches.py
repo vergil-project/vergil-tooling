@@ -133,12 +133,44 @@ def test_repo_without_origin_contributes_local_branches(tmp_path: Path) -> None:
     m_rem.assert_not_called()
 
 
-def test_origin_failure_propagates(tmp_path: Path) -> None:
+def test_unreadable_origin_falls_back_to_tracking_refs_with_a_warning(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    err = subprocess.CalledProcessError(
+        128, ("git", "ls-remote"), stderr="remote: Repository not found.\n"
+    )
+    with (
+        patch(_MOD + ".git.local_branches", return_value={"develop"}),
+        patch(_MOD + ".git.remote_names", return_value={"origin"}),
+        patch(_MOD + ".git.remote_branches", side_effect=err),
+        patch(
+            _MOD + ".git.remote_tracking_branches", return_value={"feature/7-tracked"}
+        ) as m_tracking,
+    ):
+        assert repo_live_branches(tmp_path) == {"develop", "feature/7-tracked"}
+    m_tracking.assert_called_once_with("origin", tmp_path)
+    err_out = capsys.readouterr().err
+    assert f"warning: cannot read origin of {tmp_path}" in err_out
+    assert "Repository not found" in err_out
+    assert "refs/remotes/origin/*" in err_out
+
+
+def test_unreadable_tracking_refs_propagate(tmp_path: Path) -> None:
     err = subprocess.CalledProcessError(128, ("git", "ls-remote"))
     with (
         patch(_MOD + ".git.local_branches", return_value={"develop"}),
         patch(_MOD + ".git.remote_names", return_value={"origin"}),
         patch(_MOD + ".git.remote_branches", side_effect=err),
+        patch(_MOD + ".git.remote_tracking_branches", side_effect=err),
+        pytest.raises(subprocess.CalledProcessError),
+    ):
+        repo_live_branches(tmp_path)
+
+
+def test_unreadable_local_branches_propagate(tmp_path: Path) -> None:
+    err = subprocess.CalledProcessError(128, ("git", "branch"))
+    with (
+        patch(_MOD + ".git.local_branches", side_effect=err),
         pytest.raises(subprocess.CalledProcessError),
     ):
         repo_live_branches(tmp_path)
@@ -179,3 +211,12 @@ def test_repo_live_branches_against_real_git(tmp_path: Path) -> None:
     with patch("vergil_tooling.lib.git.github.get_installation_token", return_value=None):
         live = repo_live_branches(clone)
     assert live == {"develop", "feature/8-local-only", "feature/9-remote-only"}
+
+    # The origin disappears: ls-remote fails, and the clone's tracking refs
+    # (still holding the remote-only branch) stand in, with a warning.
+    origin.rename(tmp_path / "gone.git")
+    with (
+        patch("vergil_tooling.lib.git.github.get_installation_token", return_value=None),
+        patch("vergil_tooling.lib.git.time.sleep"),  # the failure may look transient
+    ):
+        assert repo_live_branches(clone) == live

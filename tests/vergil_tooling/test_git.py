@@ -653,3 +653,19 @@ def test_remote_names_none_configured() -> None:
     with patch("vergil_tooling.lib.git.read_output", return_value="") as mock:
         assert git.remote_names() == set()
     mock.assert_called_once_with("remote")
+
+
+def test_remote_tracking_branches_omits_head(tmp_path: Path) -> None:
+    with patch(
+        "vergil_tooling.lib.git.read_output",
+        return_value="HEAD\ndevelop\nfeature/12-x",
+    ) as mock:
+        assert git.remote_tracking_branches("origin", tmp_path) == {"develop", "feature/12-x"}
+    mock.assert_called_once_with(
+        "-C", str(tmp_path), "for-each-ref", "--format=%(refname:lstrip=3)", "refs/remotes/origin"
+    )
+
+
+def test_remote_tracking_branches_empty() -> None:
+    with patch("vergil_tooling.lib.git.read_output", return_value=""):
+        assert git.remote_tracking_branches() == set()

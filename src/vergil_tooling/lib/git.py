@@ -288,6 +288,22 @@ def commit_sha(ref: str) -> str:
     return read_output("rev-parse", ref)
 
 
+def remote_tracking_branches(remote: str = "origin", repo: Path | None = None) -> set[str]:
+    """Return the branch names under ``refs/remotes/<remote>/`` (local, no network).
+
+    As of the last fetch, so possibly stale: a branch deleted on the remote stays
+    listed until a pruning fetch. ``<remote>/HEAD`` is a pointer, not a branch,
+    and is omitted.
+    """
+    output = read_output(
+        *_in_repo(repo),
+        "for-each-ref",
+        "--format=%(refname:lstrip=3)",
+        f"refs/remotes/{remote}",
+    )
+    return {name for name in output.splitlines() if name and name != "HEAD"}
+
+
 def remote_names(repo: Path | None = None) -> set[str]:
     """Return the names of the remotes configured in *repo* (or the CWD's repo)."""
     output = read_output(*_in_repo(repo), "remote")

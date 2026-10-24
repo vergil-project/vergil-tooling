@@ -11,18 +11,21 @@ so ``vrg-container-cache prune`` (#3481) and the finalize-time orphan prune
 A branch is *live* in a repo when it is a local branch there (which covers every
 worktree's branch) or exists on the repo's ``origin``. Origin is read with
 ``ls-remote``, not the possibly-stale remote-tracking refs, so a branch deleted
-on GitHub is seen as gone. Every git failure propagates: a repo whose branches
-cannot be read must stop the caller, never count as "no live branches".
+on GitHub is seen as gone; only when the origin cannot be read do the tracking
+refs stand in, with a warning. Any other git failure propagates: a repo whose
+branches cannot be read must stop the caller, never count as "no live branches".
 """
 
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import git
 from vergil_tooling.lib.platform_env import Platform, current_platform
+from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.vm_cloud import CLOUD_PROJECTS_VOLUME
 
 if TYPE_CHECKING:
@@ -112,12 +115,27 @@ def repo_live_branches(repo: Path) -> frozenset[str]:
     A repository with no ``origin`` remote contributes its local branches only.
     The ``ls-remote`` authenticates as *repo*'s own org, not the CWD's (see
     ``git._git_env``), so a repo set spanning orgs reads each origin with the
-    right App installation. Git failures (an unreadable repo, an unreachable or
-    unauthorised origin) raise ``CalledProcessError``.
+    right App installation.
+
+    When ``ls-remote`` fails — typically a private repo in the mounted projects
+    tree that the agent's App cannot read — the repo's ``refs/remotes/origin/*``
+    stand in, with a warning naming the repo and the error. The fallback errs
+    toward keeping: tracking refs are stale only in the direction of listing
+    branches the remote has since deleted. Failing to read the repo itself (its
+    local branches, remotes or tracking refs) still raises ``CalledProcessError``.
     """
     live = git.local_branches(repo)
     if "origin" in git.remote_names(repo):
-        live |= git.remote_branches("origin", repo)
+        try:
+            live |= git.remote_branches("origin", repo)
+        except subprocess.CalledProcessError as exc:
+            detail = " ".join(error_text(exc).split())
+            print(
+                f"warning: cannot read origin of {repo} ({detail}); "
+                "using its local refs/remotes/origin/* instead",
+                file=sys.stderr,
+            )
+            live |= git.remote_tracking_branches("origin", repo)
     return frozenset(live)
 
 
