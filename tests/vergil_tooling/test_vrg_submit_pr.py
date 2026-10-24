@@ -16,7 +16,7 @@ from vergil_tooling.bin.vrg_submit_pr import (
     _origin_has_branch,
     _push_branch,
     _reject_if_cross_repo,
-    _reject_if_epic_link,
+    _reject_if_non_task,
     _reject_if_operational_task,
     _reject_if_queue_item,
     _resolve_linkage,
@@ -54,7 +54,7 @@ def _no_epic_link_check() -> Iterator[None]:
     """
     with (
         patch(_MOD + "._reject_if_cross_repo"),
-        patch(_MOD + "._reject_if_epic_link"),
+        patch(_MOD + "._reject_if_non_task"),
         patch(_MOD + "._reject_if_operational_task"),
         patch(_MOD + "._reject_if_queue_item"),
         patch(_MOD + "._task_linkage", side_effect=lambda _ref, requested: (requested, None)),
@@ -1850,25 +1850,29 @@ def test_reject_if_cross_repo_noop_for_unparseable_ref() -> None:
         _reject_if_cross_repo("not-a-ref")
 
 
-# -- _reject_if_epic_link (PRs link tasks, not epics) ------------------------
+# -- _reject_if_non_task (PRs link tasks, not epics or archives) ------------
 
 
-def test_reject_if_epic_link_raises_for_epic() -> None:
+@pytest.mark.parametrize("kind", ["epic", "archive"])
+def test_reject_if_non_task_raises_for_epic_or_archive(kind: str) -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
-        patch(f"{_MOD}.epics.is_epic", return_value=True),
-        pytest.raises(SystemExit, match="links an epic"),
+        patch(f"{_MOD}.epics.non_task_kind", return_value=kind),
+        pytest.raises(
+            SystemExit,
+            match=rf"^vrg-submit-pr: --issue \(org/\.github#40\) is an {kind}, not a task",
+        ),
     ):
-        _reject_if_epic_link("org/.github#40")
+        _reject_if_non_task("org/.github#40")
 
 
-def test_reject_if_epic_link_passes_for_task() -> None:
+def test_reject_if_non_task_passes_for_task() -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
-        patch(f"{_MOD}.epics.is_epic", return_value=False) as mock_is_epic,
+        patch(f"{_MOD}.epics.non_task_kind", return_value=None) as mock_kind,
     ):
-        _reject_if_epic_link("#42")
-    mock_is_epic.assert_called_once_with(epics.IssueRef("org", "repo", 42))
+        _reject_if_non_task("#42")
+    mock_kind.assert_called_once_with(epics.IssueRef("org", "repo", 42))
 
 
 # -- _reject_if_operational_task (operational tasks are not PR-workable) -------
@@ -2019,10 +2023,10 @@ def test_resolve_linkage_returns_requested_without_note() -> None:
         assert _resolve_linkage("#42", "Ref") == "Ref"
 
 
-def test_reject_if_epic_link_noop_when_repo_unresolvable() -> None:
+def test_reject_if_non_task_noop_when_repo_unresolvable() -> None:
     # A bare ref with no resolvable default repo is skipped, not an error.
     with patch(f"{_MOD}.github.current_repo", return_value=""):
-        _reject_if_epic_link("#42")
+        _reject_if_non_task("#42")
 
 
 # -- shared _open_pr core + worktree-free relay branch path (issue #2368) ------

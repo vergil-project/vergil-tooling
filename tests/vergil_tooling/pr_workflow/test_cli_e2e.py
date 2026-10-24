@@ -179,7 +179,7 @@ def test_report_ready_rejects_epic(in_git_repo: Path, capsys: pytest.CaptureFixt
     # the point the value is entered, instead of only failing later at submit.
     with (
         patch("vergil_tooling.bin.vrg_pr_workflow.github.current_repo", return_value="org/repo"),
-        patch("vergil_tooling.bin.vrg_pr_workflow.epics.is_epic_linkage", return_value=True),
+        patch("vergil_tooling.bin.vrg_pr_workflow.epics.non_task_ref_kind", return_value="epic"),
     ):
         rc = vrg_pr_workflow.main(
             [
@@ -197,7 +197,22 @@ def test_report_ready_rejects_epic(in_git_repo: Path, capsys: pytest.CaptureFixt
             ]
         )
     assert rc == 1
-    assert "epic" in capsys.readouterr().err.lower()
+    assert "--issue (#72) is an epic, not a task" in capsys.readouterr().err
+
+
+def test_report_ready_rejects_archive(
+    in_git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # #2842: a standing epic's per-quarter archive is no more a task than the
+    # epic itself; report-ready refuses it with the shared refusal text.
+    with (
+        patch("vergil_tooling.bin.vrg_pr_workflow.github.current_repo", return_value="org/repo"),
+        patch("vergil_tooling.lib.epics.non_task_kind", return_value="archive"),
+    ):
+        rc = vrg_pr_workflow.main(_REPORT_READY_ARGS)
+    assert rc == 1
+    assert "--issue (#120) is an archive, not a task" in capsys.readouterr().err
+    assert not (in_git_repo / ".vergil" / "pr-workflow.json").exists()
 
 
 def test_report_ready_rejects_operational_task(
@@ -207,7 +222,7 @@ def test_report_ready_rejects_operational_task(
     # it is not PR-workable (its result is a comment, not a PR).
     with (
         patch("vergil_tooling.bin.vrg_pr_workflow.github.current_repo", return_value="org/repo"),
-        patch("vergil_tooling.bin.vrg_pr_workflow.epics.is_epic_linkage", return_value=False),
+        patch("vergil_tooling.bin.vrg_pr_workflow.epics.non_task_ref_kind", return_value=None),
         patch("vergil_tooling.bin.vrg_pr_workflow.epics.is_operational_task", return_value=True),
     ):
         rc = vrg_pr_workflow.main(
@@ -251,7 +266,7 @@ def _queue_guard(
     """Pass the earlier guards and stub ``epics.queue_item_kind`` as given."""
     with (
         patch("vergil_tooling.bin.vrg_pr_workflow.github.current_repo", return_value="org/repo"),
-        patch("vergil_tooling.bin.vrg_pr_workflow.epics.is_epic_linkage", return_value=False),
+        patch("vergil_tooling.bin.vrg_pr_workflow.epics.non_task_ref_kind", return_value=None),
         patch("vergil_tooling.bin.vrg_pr_workflow.epics.is_operational_task", return_value=False),
         patch(
             "vergil_tooling.bin.vrg_pr_workflow.epics.queue_item_kind",
@@ -319,12 +334,12 @@ def test_report_ready_bare_number_epic_is_caught(
     in_git_repo: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     # #2213 regression: a bare --issue number must be resolved to '#N' before the
-    # epic guard. Patching the deeper epics.is_epic (not is_epic_linkage) exercises
-    # the real parse_issue_ref path — which rejects a bare number, so on the old
-    # code the guard silently no-ops and this would pass through (rc 0).
+    # epic guard. Patching the deeper epics.non_task_kind (not non_task_ref_kind)
+    # exercises the real parse_issue_ref path — which rejects a bare number, so on
+    # the old code the guard silently no-ops and this would pass through (rc 0).
     with (
         patch("vergil_tooling.bin.vrg_pr_workflow.github.current_repo", return_value="org/repo"),
-        patch("vergil_tooling.lib.epics.is_epic", return_value=True) as mock_is_epic,
+        patch("vergil_tooling.lib.epics.non_task_kind", return_value="epic") as mock_kind,
     ):
         rc = vrg_pr_workflow.main(
             [
@@ -346,7 +361,7 @@ def test_report_ready_bare_number_epic_is_caught(
     assert "epic" in err.lower()
     assert "#120" in err  # the canonical ref, not a doubled '##120'
     # The guard actually reached the epic-ness check with a parseable ref.
-    assert mock_is_epic.call_args.args[0].number == 120
+    assert mock_kind.call_args.args[0].number == 120
 
 
 def test_report_ready_bare_number_operational_is_caught(
@@ -354,10 +369,10 @@ def test_report_ready_bare_number_operational_is_caught(
 ) -> None:
     # #2213 regression, operational variant: a bare --issue number must resolve
     # before the operational guard. epics.is_operational is patched so real
-    # parse_issue_ref runs; the epic check (is_epic) is left to return False.
+    # parse_issue_ref runs; the epic check (non_task_kind) is left to return None.
     with (
         patch("vergil_tooling.bin.vrg_pr_workflow.github.current_repo", return_value="org/repo"),
-        patch("vergil_tooling.lib.epics.is_epic", return_value=False),
+        patch("vergil_tooling.lib.epics.non_task_kind", return_value=None),
         patch("vergil_tooling.lib.epics.is_operational", return_value=True),
     ):
         rc = vrg_pr_workflow.main(
@@ -467,7 +482,7 @@ def test_report_ready_defers_cross_repo_when_repo_empty(
     # blocking; a bare same-repo issue then proceeds normally.
     with (
         patch("vergil_tooling.bin.vrg_pr_workflow.github.current_repo", return_value=""),
-        patch("vergil_tooling.bin.vrg_pr_workflow.epics.is_epic_linkage", return_value=False),
+        patch("vergil_tooling.bin.vrg_pr_workflow.epics.non_task_ref_kind", return_value=None),
     ):
         rc = vrg_pr_workflow.main(
             [
@@ -495,7 +510,7 @@ def test_report_ready_allows_explicit_same_repo_ref(
     # guard (same repo) and proceeds.
     with (
         patch("vergil_tooling.bin.vrg_pr_workflow.github.current_repo", return_value="org/repo"),
-        patch("vergil_tooling.bin.vrg_pr_workflow.epics.is_epic_linkage", return_value=False),
+        patch("vergil_tooling.bin.vrg_pr_workflow.epics.non_task_ref_kind", return_value=None),
         patch("vergil_tooling.bin.vrg_pr_workflow.epics.is_operational_task", return_value=False),
     ):
         rc = vrg_pr_workflow.main(
@@ -523,7 +538,7 @@ def test_report_ready_allows_non_epic_task(
     # The guard resolves the repo and finds a task (not an epic): proceeds.
     with (
         patch("vergil_tooling.bin.vrg_pr_workflow.github.current_repo", return_value="org/repo"),
-        patch("vergil_tooling.bin.vrg_pr_workflow.epics.is_epic_linkage", return_value=False),
+        patch("vergil_tooling.bin.vrg_pr_workflow.epics.non_task_ref_kind", return_value=None),
     ):
         rc = vrg_pr_workflow.main(
             [
@@ -768,7 +783,7 @@ def test_report_ready_rejects_linkage_keyword_in_notes(
 ) -> None:
     with (
         patch("vergil_tooling.bin.vrg_pr_workflow.github.current_repo", return_value="org/repo"),
-        patch("vergil_tooling.bin.vrg_pr_workflow.epics.is_epic_linkage", return_value=False),
+        patch("vergil_tooling.bin.vrg_pr_workflow.epics.non_task_ref_kind", return_value=None),
     ):
         rc = vrg_pr_workflow.main(
             [

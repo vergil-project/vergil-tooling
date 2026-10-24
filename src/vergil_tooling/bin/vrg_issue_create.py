@@ -118,6 +118,16 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"vrg-issue-create: {exc}", file=sys.stderr)
                 return 1
 
+            # Dependency guard (#2842): a Blocked-by ref names the task this one
+            # waits on, never an epic or a standing epic's archive. Checked
+            # before the issue is created; a failed label read propagates.
+            for dep in deps:
+                kind = epics.non_task_kind(dep)
+                if kind is not None:
+                    message = epics.non_task_refusal_message("--blocked-by", dep.slug, kind)
+                    print(f"vrg-issue-create: {message}", file=sys.stderr)
+                    return 1
+
             # Ensure every applied label exists in the target repo first: gh
             # refuses a label the repo lacks ('validation' not found) (#3373).
             if not ensure_labels_or_report("vrg-issue-create", repo, labels):

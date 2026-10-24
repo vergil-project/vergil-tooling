@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from datetime import UTC, datetime
 from unittest.mock import patch
 
@@ -419,22 +420,69 @@ def test_is_epic_false_without_label() -> None:
         assert epics.is_epic(TASK) is False
 
 
-def test_is_epic_linkage_true_for_epic() -> None:
-    with patch("vergil_tooling.lib.epics.is_epic", return_value=True) as mock:
-        assert epics.is_epic_linkage("org/.github#40", default_repo="org/repo") is True
+@pytest.mark.parametrize(
+    ("labels", "expected"),
+    [
+        (["epic", "enhancement"], "epic"),
+        (["epic", "adhoc"], "epic"),  # a live standing epic is still an epic
+        (["archive", "adhoc"], "archive"),  # a per-quarter standing-epic archive
+        (["archive", "epic"], "epic"),  # both: the epic it still is
+        (["bug"], None),
+        ([], None),
+    ],
+)
+def test_non_task_kind(labels: list[str], expected: str | None) -> None:
+    raw = {"labels": [{"name": name} for name in labels]}
+    with patch("vergil_tooling.lib.github.read_json", return_value=raw):
+        assert epics.non_task_kind(TASK) == expected
+
+
+def test_non_task_ref_kind_resolves_ref() -> None:
+    with patch("vergil_tooling.lib.epics.non_task_kind", return_value="archive") as mock:
+        assert epics.non_task_ref_kind("org/.github#40", default_repo="org/repo") == "archive"
     mock.assert_called_once_with(IssueRef("org", ".github", 40))
 
 
-def test_is_epic_linkage_false_for_task() -> None:
-    with patch("vergil_tooling.lib.epics.is_epic", return_value=False):
-        assert epics.is_epic_linkage("#42", default_repo="org/repo") is False
+def test_non_task_ref_kind_bare_ref_uses_default_repo() -> None:
+    with patch("vergil_tooling.lib.epics.non_task_kind", return_value=None) as mock:
+        assert epics.non_task_ref_kind("#42", default_repo="org/repo") is None
+    mock.assert_called_once_with(IssueRef("org", "repo", 42))
 
 
-def test_is_epic_linkage_false_for_unparseable_ref() -> None:
-    # No resolvable default repo -> parse fails -> never an epic (is_epic unused).
-    with patch("vergil_tooling.lib.epics.is_epic") as mock:
-        assert epics.is_epic_linkage("#42", default_repo="") is False
+def test_non_task_ref_kind_none_for_unparseable_ref() -> None:
+    # No resolvable default repo -> parse fails -> never a non-task (no lookup).
+    with patch("vergil_tooling.lib.epics.non_task_kind") as mock:
+        assert epics.non_task_ref_kind("#42", default_repo="") is None
     mock.assert_not_called()
+
+
+def test_non_task_ref_kind_propagates_lookup_failure() -> None:
+    # Fail closed: a failed label read is never taken as "a task".
+    with (
+        patch(
+            "vergil_tooling.lib.github.read_json",
+            side_effect=subprocess.CalledProcessError(1, ["gh"]),
+        ),
+        pytest.raises(subprocess.CalledProcessError),
+    ):
+        epics.non_task_ref_kind("#42", default_repo="org/repo")
+
+
+def test_non_task_refusal_message_epic() -> None:
+    msg = epics.non_task_refusal_message("--task", "org/.github#40", "epic")
+    assert msg.startswith("--task (org/.github#40) is an epic, not a task; ")
+    assert "Create the task under the epic first" in msg
+
+
+def test_non_task_refusal_message_archive() -> None:
+    msg = epics.non_task_refusal_message("--issue", "#7", "archive")
+    assert msg.startswith("--issue (#7) is an archive, not a task; ")
+    assert "closed tasks" in msg
+
+
+def test_non_task_refusal_message_rejects_unknown_kind() -> None:
+    with pytest.raises(ValueError, match="not a non-task kind"):
+        epics.non_task_refusal_message("--issue", "#7", "intake")
 
 
 def test_is_operational_true_when_labeled() -> None:

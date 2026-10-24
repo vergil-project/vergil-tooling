@@ -501,6 +501,16 @@ with intake review, or expand it with `epic-create`. Routing it out of the queue
 is the only way to lift the refusal. The check reads the issue's native parent,
 not a label.
 
+### Epics and archives are not tasks
+
+An `epic`- or `archive`-labelled issue is an umbrella, never a task, so the
+tooling refuses one wherever a task is expected: `vrg-pr-workflow report-ready
+--issue` and `vrg-submit-pr` (a PR closes exactly one task, and an epic is
+closed only by rollup), `vrg-epic-link --task`, and `vrg-issue-create
+--blocked-by`. Create the task under the epic first and use its number. This
+check reads the issue's labels; a failed read refuses rather than passing,
+except at `report-ready`, which defers to `vrg-submit-pr`'s check.
+
 ## Labels
 
 Every managed repo carries the same label set. The canonical registry is

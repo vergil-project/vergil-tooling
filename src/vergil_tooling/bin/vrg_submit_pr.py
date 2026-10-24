@@ -393,18 +393,19 @@ def _reject_if_cross_repo(issue_ref: str) -> None:
         )
 
 
-def _reject_if_epic_link(issue_ref: str) -> None:
-    """Abort if the linkage points at an epic — PRs link a task, never an epic.
+def _reject_if_non_task(issue_ref: str) -> None:
+    """Abort if the linkage is an epic or archive — PRs link a task, never an umbrella.
 
     This lives here, at PR construction time, because deciding epic-ness needs
     an authenticated, cross-repo ``gh`` call (e.g. an epic in ``.github``) —
-    which vrg-submit-pr has via the App installation token. Self-scoping:
-    legacy issues are never epics, so they pass.
+    which vrg-submit-pr has via the App installation token. An ``archive`` (a
+    standing epic's per-quarter archive) is refused the same way (#2842).
+    Self-scoping: legacy issues are never epics or archives, so they pass.
     """
-    if epics.is_epic_linkage(issue_ref, default_repo=github.current_repo()):
+    kind = epics.non_task_ref_kind(issue_ref, default_repo=github.current_repo())
+    if kind is not None:
         raise SystemExit(
-            "vrg-submit-pr: --issue links an epic; link a task, not an epic "
-            "(epics are closed by rollup when their tasks complete)."
+            f"vrg-submit-pr: {epics.non_task_refusal_message('--issue', issue_ref, kind)}"
         )
 
 
@@ -449,7 +450,7 @@ def _task_linkage(issue_ref: str, requested: str) -> tuple[str, str | None]:
     single PR, so it links with ``Closes`` to auto-close on merge to the default
     branch (epic vergil-project/.github#75). Legacy issues (no epic parent) keep
     *requested* (default ``Ref``) and stay open for manual close. Assumes the
-    epic-target case was already rejected by :func:`_reject_if_epic_link`.
+    epic-target case was already rejected by :func:`_reject_if_non_task`.
 
     Deciding task-ness needs the same authenticated cross-repo ``gh`` call as the
     epic rejection — a parent epic may live in ``.github``. Returns
@@ -491,7 +492,7 @@ def _run_cli_mode(args: argparse.Namespace) -> int:
         raise SystemExit(msg)
     issue_ref = resolve_issue_ref(args.issue)
     _reject_if_cross_repo(issue_ref)
-    _reject_if_epic_link(issue_ref)
+    _reject_if_non_task(issue_ref)
     _reject_if_operational_task(issue_ref)
     _reject_if_queue_item(issue_ref)
     linkage = _resolve_linkage(issue_ref, args.linkage)
@@ -753,7 +754,7 @@ def _open_pr(
     """
     issue_ref = resolve_issue_ref(metadata["issue"])
     _reject_if_cross_repo(issue_ref)
-    _reject_if_epic_link(issue_ref)
+    _reject_if_non_task(issue_ref)
     _reject_if_operational_task(issue_ref)
     _reject_if_queue_item(issue_ref)
     try:
