@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.264] - 2026-10-24
+
+### Bug fixes
+
+- accept intake and planning --epic sentinels in vrg-epic-move and vrg-issue-create (#3516)
+
+### Documentation
+
+- document the intake and planning queues and the every-issue-has-an-epic invariant (#3515)
+
 ## [2.1.263] - 2026-10-23
 
 ### Bug fixes
