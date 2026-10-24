@@ -186,8 +186,8 @@ class Compliance:
 def check(text: str, lang: str | None) -> Compliance:
     """Check ``text`` against the managed block expected for ``lang``.
 
-    Compliant iff a well-formed fence is present, that fence equals
-    ``render_block(lang)`` (modulo a single trailing newline), and no pattern
+    Compliance requires a well-formed fence, that fence equal to
+    ``render_block(lang)``, the canonical layout (below), and that no pattern
     from *this repo's own* composed fence (``compose(lang)`` — base ∪ the
     declared language) appears among the repo-local (outside-fence) lines. Each
     failed condition contributes a human-readable reason.
@@ -198,21 +198,47 @@ def check(text: str, lang: str | None) -> Compliance:
     it) is not part of this repo's fence, so it is legitimately repo-local and
     must not be flagged — while a genuine leak of one of this repo's own managed
     patterns out of the fence is still caught (issue #2966).
+
+    The layout ``sync`` writes is part of compliance too: the fence must come
+    first and the file must end in a newline. The verdict is exactly ``sync``'s,
+    so ``check`` drifts iff ``sync`` would change the file, and ``sync``'s output
+    always passes (issue #3568). Drift with no more specific reason (e.g. CRLF
+    line endings) gets a generic one, so a drifting file never has no reason.
     """
     repo_local, fence = parse(text)
     reasons: list[str] = []
 
     if fence is None:
         reasons.append("no well-formed vergil-managed fence found")
-    elif fence.rstrip("\n") != render_block(lang).rstrip("\n"):
-        reasons.append("the vergil-managed fence does not match the expected rendered block")
+    else:
+        if fence.rstrip("\n") != render_block(lang).rstrip("\n"):
+            reasons.append("the vergil-managed fence does not match the expected rendered block")
+        # parse() opens the fence at the first begin-marker line, so the fence
+        # is first exactly when the file's first line is that marker.
+        if not text.startswith(MANAGED_BEGIN_PREFIX):
+            reasons.append("the vergil-managed fence is not first in the file")
+        if not text.endswith("\n"):
+            reasons.append("the file is missing its trailing newline")
 
-    vocab = set(compose(lang))
-    stray = [line for line in repo_local if line.rstrip() in vocab]
+    stray = _strays(repo_local, lang)
     if stray:
         reasons.append("managed patterns appear outside the fence: " + ", ".join(stray))
 
+    if not reasons and sync(text, lang).changed:
+        reasons.append("the file differs from the canonical layout vrg-gitignore-sync writes")
+
     return Compliance(compliant=not reasons, reasons=reasons)
+
+
+def _strays(repo_local: list[str], lang: str | None) -> list[str]:
+    """Return the repo-local lines that repeat a pattern of this repo's own fence.
+
+    Matched on rstripped exact equality against ``compose(lang)`` — never the
+    global vocabulary, so a foreign-language managed pattern stays repo-local
+    (issue #2966).
+    """
+    vocab = set(compose(lang))
+    return [line for line in repo_local if line.rstrip() in vocab]
 
 
 @dataclass
@@ -220,8 +246,9 @@ class SyncResult:
     """The result of syncing a ``.gitignore``'s managed block.
 
     ``text`` is the new file content, ``changed`` is whether it differs from the
-    input, and ``removed`` lists the managed-vocabulary lines that a bootstrap
-    dropped from a loose monolith (always empty for an update).
+    input, and ``removed`` lists the managed-pattern lines dropped from outside
+    the fence: every managed-vocabulary line of a loose monolith on bootstrap,
+    or the repeats of this repo's own fence patterns on update.
     """
 
     text: str
@@ -275,8 +302,12 @@ def sync(text: str, lang: str | None) -> SyncResult:
       genuine remains). Every dropped managed *pattern* is reported in
       ``removed``; stripped comments are not.
     * **Update** (fence present): the fence is rewritten to the canonical
-      ``render_block(lang)`` and the parsed repo-local section is trusted as-is
-      (never re-filtered); ``removed`` is empty.
+      ``render_block(lang)`` and moved to the top. The parsed repo-local
+      section is kept in order, less any exact repeat of a pattern of this
+      repo's own fence (``compose(lang)``): the fence is the single source of
+      truth, so a repeat outside it is the drift ``check`` reports, and those
+      dropped lines are reported in ``removed`` (issue #3568). Foreign-language
+      managed patterns, comments and blank lines are never filtered on update.
 
     ``changed`` reports whether the new text differs from the input. ``sync`` is
     idempotent: syncing its own output is always a no-op.
@@ -297,7 +328,7 @@ def sync(text: str, lang: str | None) -> SyncResult:
         section = ["", *kept] if kept else []
         new_text = _assemble(fence_block, section)
     else:
-        removed = []
-        new_text = _assemble(fence_block, repo_local)
+        removed = _strays(repo_local, lang)
+        new_text = _assemble(fence_block, [line for line in repo_local if line not in removed])
 
     return SyncResult(text=new_text, changed=new_text != text, removed=removed)

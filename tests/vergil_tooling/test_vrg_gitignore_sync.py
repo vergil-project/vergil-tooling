@@ -130,6 +130,20 @@ class TestWrite:
         assert "this repo is base-only" in out
         assert (tmp_path / ".gitignore").read_text(encoding="utf-8") == gitignore.render_block(None)
 
+    def test_fenced_file_drops_repeated_own_pattern(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A repeat of the fence's own pattern outside it is removed (#3568)."""
+        block = gitignore.render_block("python")
+        own = gitignore.compose("python")[0]
+        _write_repo(tmp_path, _VERGIL_TOML_PYTHON, f"{block}{own}\nmylocal.log\n")
+        rc = vrg_gitignore_sync.main(["--repo", str(tmp_path), "--write"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "dropped 1 managed-pattern line(s) from outside the fence" in out
+        assert (tmp_path / ".gitignore").read_text(encoding="utf-8") == f"{block}mylocal.log\n"
+        assert vrg_gitignore_sync.main(["--repo", str(tmp_path), "--check"]) == 0
+
     def test_missing_gitignore_bootstraps_without_removed(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:

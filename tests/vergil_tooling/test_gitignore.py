@@ -556,3 +556,91 @@ def test_sync_bootstrap_comment_strip_is_idempotent() -> None:
     assert second.changed is False
     assert second.text == first.text
     assert second.removed == []
+
+
+# --- check() and sync() agree (issue #3568) ---------------------------------
+
+
+def _check_write_cases() -> list[tuple[str, str | None, str]]:
+    """Inputs on which ``check`` and ``sync`` must reach the same verdict."""
+    block = gitignore.render_block("python")
+    base = gitignore.render_block(None)
+    own = gitignore.compose("python")[0]
+    return [
+        ("canonical", "python", block),
+        ("canonical with repo-local", "python", block + "\n# mine\nkeep-me/\n"),
+        ("empty file", "python", ""),
+        ("no fence", "python", "keep-me/\n"),
+        ("stale fence body", "python", block.replace("__pycache__/", "__pycache__/EDITED")),
+        ("own pattern repeated after fence", "python", block + "\n" + own + "\n"),
+        ("own pattern repeated before fence", "python", own + "\n" + block),
+        ("own pattern with trailing space", "python", block + own + "   \n"),
+        ("fence not first", "python", "keep-me/\n" + block),
+        ("missing trailing newline", "python", block.rstrip("\n")),
+        ("repo-local missing trailing newline", "python", block + "keep-me/"),
+        ("crlf line endings", "python", block.replace("\n", "\r\n")),
+        ("foreign pattern beside base-only fence", None, base + "__pycache__/\n"),
+    ]
+
+
+def test_check_agrees_with_sync_and_write_then_check_passes() -> None:
+    """``check`` drifts exactly when ``sync`` would change the file (#3568).
+
+    And the file ``sync`` writes always passes ``check``, so ``--write`` then
+    ``--check`` is clean for every input.
+    """
+    for name, lang, text in _check_write_cases():
+        result = gitignore.sync(text, lang)
+        compliance = gitignore.check(text, lang)
+        assert compliance.compliant is (not result.changed), name
+        assert bool(compliance.reasons) is result.changed, name
+        after = gitignore.check(result.text, lang)
+        assert after.compliant is True, (name, after.reasons)
+        assert gitignore.sync(result.text, lang).changed is False, name
+
+
+def test_sync_update_removes_own_pattern_repeated_outside_fence() -> None:
+    """The fence is the single source of truth: an exact repeat outside it goes.
+
+    Each repeated line is reported in ``removed``; genuine repo-local lines and
+    their order survive, and the fence moves to the top.
+    """
+    block = gitignore.render_block("python")
+    own = gitignore.compose("python")[0]
+    text = "early/\n" + own + "\n" + block + "\nlate/\n" + own + "  \n"
+
+    result = gitignore.sync(text, "python")
+
+    assert result.changed is True
+    assert result.removed == [own, own + "  "]
+    assert result.text == block + "early/\n\nlate/\n"
+
+
+def test_sync_update_keeps_foreign_pattern_outside_fence() -> None:
+    """A foreign-language managed pattern stays repo-local on update (#2966)."""
+    text = gitignore.render_block(None) + "\n__pycache__/\n"
+
+    result = gitignore.sync(text, None)
+
+    assert result.changed is False
+    assert result.removed == []
+
+
+def test_check_reports_fence_not_first() -> None:
+    result = gitignore.check("keep-me/\n" + gitignore.render_block("python"), "python")
+    assert result.compliant is False
+    assert any("first" in reason for reason in result.reasons)
+
+
+def test_check_reports_missing_trailing_newline() -> None:
+    result = gitignore.check(gitignore.render_block("python") + "keep-me/", "python")
+    assert result.compliant is False
+    assert any("trailing newline" in reason for reason in result.reasons)
+
+
+def test_check_reports_other_layout_drift() -> None:
+    """Drift with no more specific reason (CRLF line endings) still gets one."""
+    text = gitignore.render_block("python").replace("\n", "\r\n")
+    result = gitignore.check(text, "python")
+    assert result.compliant is False
+    assert any("canonical" in reason for reason in result.reasons)

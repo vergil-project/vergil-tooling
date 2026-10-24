@@ -187,15 +187,19 @@ between a `# >>> vergil-managed: base + <language> …` begin marker and a
 `# <<< vergil-managed <<<` end marker. The audit
 (`lib/gitignore.py::check`) is **fenced-only**: it requires a well-formed
 fence whose body equals the composed block for the repo's language
-**exactly**, with no managed pattern left loose outside the fence. (The
+**exactly**, with no managed pattern left loose outside the fence, in the
+exact layout `vrg-gitignore-sync --write` produces: the fence first and a
+trailing newline, so the audit drifts exactly when `--write` would change
+the file (#3568). (The
 transitional legacy monolith-superset acceptance and the monolithic
 `gitignore.baseline` asset were removed in epic
 [#325](https://github.com/vergil-project/.github/issues/325), Task 10,
 once the whole fleet was fenced.)
 
 **Local additions are expected.** Genuinely repo-local lines live
-*outside* the fence and are never asserted against or touched; a repo
-freely adds its own entries above or below the managed block.
+*outside* the fence and are never asserted against; a repo freely adds
+its own entries below the managed block (`--write` moves any above it to
+below it, in order).
 
 ### Propagation — the rolling `vX.Y` pin
 
@@ -211,7 +215,7 @@ that line — including its fragment set. So:
 Because the fence must match the composed block *exactly* (not merely be
 a superset), a fragment change is applied — not auto-satisfied — by
 re-running `vrg-gitignore-sync`, which rewrites the managed block in
-place and leaves the repo-local section untouched. The fleet driver runs
+place and leaves the genuinely repo-local section untouched. The fleet driver runs
 that applicator across every repo as reviewed per-repo PRs; the rolling
 pin delivers the new fragments to the tool, and the applicator writes the
 fence.
