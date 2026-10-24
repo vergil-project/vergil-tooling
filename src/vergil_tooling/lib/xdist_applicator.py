@@ -34,6 +34,17 @@ and for a recognized shape whose concrete target cannot be located — it makes
 **no edit** and returns an :class:`~vergil_tooling.lib.fleet_sweep.AppResult`
 flagged ``needs_followup=True`` so the driver reports loudly and files a
 follow-up, never a silent no-op (repo "no silent failures" policy).
+
+**Scope (#3549).** Only Python repos are in scope. A repo whose resolved
+language is not Python — or that declares none and has no Python project file
+(``pyproject.toml``, ``setup.py``, ``setup.cfg``, or a requirements file) — is
+skipped (``changed=False``, no follow-up), so a sweep
+over a mixed fleet never files a follow-up issue against a docs or container
+repo.
+
+**Check-only mode (#3549).** ``check=True`` (the sweep's dry-run preview) makes
+no edit and runs no ``uv lock``; it returns the verdict the write would reach,
+with a "would add" summary. A missing ``uv`` still raises, as the write would.
 """
 
 from __future__ import annotations
@@ -44,6 +55,7 @@ import subprocess  # noqa: S404 - fixed `uv lock` argv, never shell
 import tomllib
 from typing import TYPE_CHECKING, cast
 
+from vergil_tooling.lib.container import resolve_language
 from vergil_tooling.lib.dev_deps import DevDepShape, classify_dev_deps
 from vergil_tooling.lib.fleet_sweep import AppResult
 
@@ -65,6 +77,10 @@ _GROUP_PREFERENCE = ("dev", "test")
 
 _UV_LOCK = "uv.lock"
 
+#: Files that mark a repo declaring no ``primary-language`` as a Python repo, and
+#: so in scope for the sweep (#3549).
+_PYTHON_MARKERS = ("pyproject.toml", "setup.py", "setup.cfg", *_REQUIREMENTS_FILES)
+
 
 class UvLockError(RuntimeError):
     """``uv.lock`` could not be refreshed after editing ``pyproject.toml``.
@@ -72,6 +88,18 @@ class UvLockError(RuntimeError):
     Raised (never swallowed) so the sweep driver records the repo as an
     ``error`` instead of committing a ``pyproject.toml`` whose lockfile is stale.
     """
+
+
+def _require_uv(worktree: Path) -> str:
+    """Return the ``uv`` executable, raising :class:`UvLockError` when absent."""
+    uv = shutil.which("uv")
+    if uv is None:
+        raise UvLockError(
+            f"{worktree}: pyproject.toml was edited but `uv` is not on PATH, so "
+            f"{_UV_LOCK} cannot be refreshed; install uv and re-run the sweep "
+            f"(refusing to commit a stale {_UV_LOCK})"
+        )
+    return uv
 
 
 def _refresh_uv_lock(worktree: Path) -> bool:
@@ -83,13 +111,7 @@ def _refresh_uv_lock(worktree: Path) -> bool:
     """
     if not (worktree / _UV_LOCK).is_file():
         return False
-    uv = shutil.which("uv")
-    if uv is None:
-        raise UvLockError(
-            f"{worktree}: pyproject.toml was edited but `uv` is not on PATH, so "
-            f"{_UV_LOCK} cannot be refreshed; install uv and re-run the sweep "
-            f"(refusing to commit a stale {_UV_LOCK})"
-        )
+    uv = _require_uv(worktree)
     result = subprocess.run(  # noqa: S603 - fixed `uv lock` argv, no shell
         [uv, "lock"],
         cwd=worktree,
@@ -106,8 +128,20 @@ def _refresh_uv_lock(worktree: Path) -> bool:
     return True
 
 
-def _write_and_lock(worktree: Path, pyproject: Path, new_text: str, where: str) -> AppResult:
-    """Write the edited *pyproject*, refresh ``uv.lock`` if present, report it."""
+def _write_and_lock(
+    worktree: Path, pyproject: Path, new_text: str, where: str, *, check: bool
+) -> AppResult:
+    """Write the edited *pyproject*, refresh ``uv.lock`` if present, report it.
+
+    With *check* nothing is written and ``uv lock`` is not run (it may touch the
+    network); a missing ``uv`` still raises, since the live run would fail on
+    it. A ``uv lock`` failure itself cannot be previewed.
+    """
+    if check:
+        if (worktree / _UV_LOCK).is_file():
+            _require_uv(worktree)
+            return _added(f"{where} (and refresh {_UV_LOCK})", check=True)
+        return _added(where, check=True)
     pyproject.write_text(new_text, encoding="utf-8")
     if _refresh_uv_lock(worktree):
         return _added(f"{where} (and refreshed {_UV_LOCK})")
@@ -174,7 +208,7 @@ def _insert_into_array(text: str, header: str, key: str, package: str) -> str | 
     return text[: am.start()] + new_array + text[am.end() :]
 
 
-def _apply_uv_groups(worktree: Path) -> AppResult:
+def _apply_uv_groups(worktree: Path, *, check: bool) -> AppResult:
     """Add ``pytest-xdist`` to the ``dev`` array under ``[dependency-groups]``."""
     pyproject = worktree / "pyproject.toml"
     data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
@@ -188,7 +222,7 @@ def _apply_uv_groups(worktree: Path) -> AppResult:
     )
     if new_text is None:  # pragma: no cover - guarded by the isinstance check above
         return _cannot_place("could not locate the [dependency-groups].dev array")
-    return _write_and_lock(worktree, pyproject, new_text, "[dependency-groups].dev")
+    return _write_and_lock(worktree, pyproject, new_text, "[dependency-groups].dev", check=check)
 
 
 def _select_group(groups: dict[str, object]) -> str | None:
@@ -211,7 +245,7 @@ def _has_pytest(entries: Iterable[object]) -> bool:
     return any(isinstance(e, str) and _normalize_req_name(e) == "pytest" for e in entries)
 
 
-def _apply_pep621_optional(worktree: Path) -> AppResult:
+def _apply_pep621_optional(worktree: Path, *, check: bool) -> AppResult:
     """Add ``pytest-xdist`` to the dev/test group under optional-dependencies."""
     pyproject = worktree / "pyproject.toml"
     data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
@@ -231,11 +265,11 @@ def _apply_pep621_optional(worktree: Path) -> AppResult:
     if new_text is None:  # pragma: no cover - the target came from the parsed table
         return _cannot_place(f"could not locate the [project.optional-dependencies].{target} array")
     return _write_and_lock(
-        worktree, pyproject, new_text, f"[project.optional-dependencies].{target}"
+        worktree, pyproject, new_text, f"[project.optional-dependencies].{target}", check=check
     )
 
 
-def _apply_requirements(worktree: Path) -> AppResult:
+def _apply_requirements(worktree: Path, *, check: bool) -> AppResult:
     """Append a ``pytest-xdist`` line to the repo's requirements-*.txt file."""
     for name in _REQUIREMENTS_FILES:
         path = worktree / name
@@ -247,6 +281,8 @@ def _apply_requirements(worktree: Path) -> AppResult:
         ]
         if _has_package(lines):
             return _already(name)
+        if check:
+            return _added(name, check=True)
         suffix = "" if text.endswith("\n") or text == "" else "\n"
         path.write_text(f"{text}{suffix}{_PACKAGE}\n", encoding="utf-8")
         return _added(name)
@@ -257,13 +293,14 @@ def _apply_requirements(worktree: Path) -> AppResult:
     )  # pragma: no cover
 
 
-def _apply_poetry(worktree: Path) -> AppResult:
+def _apply_poetry(worktree: Path, *, check: bool) -> AppResult:  # noqa: ARG001 - never writes
     """Refuse a Poetry repo that needs ``pytest-xdist``: no edit, loud follow-up.
 
     The sweep does not run ``poetry lock``, so editing the dependency table
     would commit a stale ``poetry.lock`` (the uv analogue is #2980). Until
     Poetry is supported the repo is flagged ``needs_followup``. A repo that
     already declares ``pytest-xdist`` needs no change and is reported as such.
+    It never writes, so *check* changes nothing.
     """
     pyproject = worktree / "pyproject.toml"
     data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
@@ -297,8 +334,9 @@ def _select_poetry_table(poetry: dict[str, object]) -> tuple[str | None, object]
     return None, None
 
 
-def _added(where: str) -> AppResult:
-    return AppResult(changed=True, summary=f"added {_PACKAGE} to {where}")
+def _added(where: str, *, check: bool = False) -> AppResult:
+    verb = "would add" if check else "added"
+    return AppResult(changed=True, summary=f"{verb} {_PACKAGE} to {where}")
 
 
 def _already(where: str) -> AppResult:
@@ -322,14 +360,46 @@ _HANDLERS = {
 }
 
 
-def add_xdist(worktree: Path) -> AppResult:
+def _out_of_scope(worktree: Path) -> str | None:
+    """Return why *worktree* is not a Python repo, or ``None`` when it is one.
+
+    The repo's language is :func:`~vergil_tooling.lib.container.resolve_language`
+    — the asserted ``[project].primary-language``, else filesystem markers. A
+    resolved language other than Python is out of scope. With no language at
+    all, the repo is out of scope only when it also carries none of
+    :data:`_PYTHON_MARKERS`, so a ``setup.cfg``- or requirements-file-only
+    Python repo stays in scope (and is reported loudly if it cannot be changed).
+    A ``vergil.toml`` that fails to load raises rather than guessing.
+    """
+    lang = resolve_language(worktree)
+    if lang == "python":
+        return None
+    if lang:
+        return f"primary-language is {lang}"
+    if any((worktree / name).is_file() for name in _PYTHON_MARKERS):
+        return None
+    return "no primary-language declared and no Python project files"
+
+
+def add_xdist(worktree: Path, *, check: bool = False) -> AppResult:
     """Add ``pytest-xdist`` to ``worktree``'s dev deps in its declared shape.
 
     Dispatches on :func:`classify_dev_deps`. Idempotent (no-op when already
-    present). For an :attr:`~DevDepShape.UNKNOWN` shape it makes **no** edit and
+    present). A repo that is not a Python repo (:func:`_out_of_scope`) is
+    skipped with no edit and no follow-up (#3549). For an
+    :attr:`~DevDepShape.UNKNOWN` shape in a Python repo it makes **no** edit and
     returns an :class:`AppResult` flagged ``needs_followup=True`` so the sweep
     driver reports loudly and files a follow-up.
+
+    With ``check=True`` (the sweep's dry-run preview) it writes nothing and runs
+    no ``uv lock``, returning the verdict the write would reach.
     """
+    reason = _out_of_scope(worktree)
+    if reason is not None:
+        return AppResult(
+            changed=False,
+            summary=f"out of scope: {reason}; not a Python repo, {_PACKAGE} not applicable",
+        )
     shape = classify_dev_deps(worktree)
     handler = _HANDLERS.get(shape)
     if handler is None:  # DevDepShape.UNKNOWN
@@ -341,4 +411,4 @@ def add_xdist(worktree: Path) -> AppResult:
             ),
             needs_followup=True,
         )
-    return handler(worktree)
+    return handler(worktree, check=check)

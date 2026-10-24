@@ -500,9 +500,12 @@ drives the generic fleet-sweep driver (`lib/fleet_sweep.py`): per repo it
 creates a worktree, shells out to the target's applicator, commits,
 and runs `report-ready`. Like every agent-run task it **never submits or
 merges** — it stops at `report-ready`, leaving submission and merge to the
-human. `--dry-run` reports the intended per-repo action, including the
-epic each repo would be filed under, without changing any git or GitHub
-state.
+human. `--dry-run` reports the verdict a live run would reach per repo
+(would change, naming the epic it would be filed under, or skip) from a
+disposable probe worktree, without opening an issue, branch, commit, or
+PR. The `dependabot` target previews with `vrg-dependabot-sync --check`;
+the `gitignore` target runs `--write` inside the discarded probe, since
+`vrg-gitignore-sync --check` is stricter than `--write`.
 
 | Attribute | Value |
 |---|---|

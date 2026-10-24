@@ -21,12 +21,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from vergil_tooling.bin import vrg_fleet_sync
-from vergil_tooling.lib import fleet_sweep
+from vergil_tooling.bin import vrg_fleet_sync, vrg_gitignore_sync
+from vergil_tooling.lib import fleet_sweep, gitignore
 from vergil_tooling.lib.fleet_sweep import AppResult, RepoResult, SweepSpec, run_sweep
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from vergil_tooling.lib.fleet_sweep import Applicator
 
 
 def _spec(repos: list[str], *, epic: str | None = None) -> SweepSpec:
@@ -92,7 +92,7 @@ def test_changed_repo_runs_full_chain(calls: dict[str, list]) -> None:
     """A changed repo drives issue-create -> worktree -> commit -> report-ready."""
     seen: list[Path] = []
 
-    def applicator(worktree: Path) -> AppResult:
+    def applicator(worktree: Path, *, check: bool = False) -> AppResult:
         seen.append(worktree)
         return AppResult(changed=True, summary="synced managed block")
 
@@ -162,7 +162,7 @@ def test_changed_repo_runs_full_chain(calls: dict[str, list]) -> None:
 def test_epic_repo_links_issue_under_epic(calls: dict[str, list]) -> None:
     """When spec.epic is set, issue-create targets that epic, not adhoc."""
 
-    def applicator(_worktree: Path) -> AppResult:
+    def applicator(_worktree: Path, *, check: bool = False) -> AppResult:
         return AppResult(changed=True, summary="synced")
 
     run_sweep(_spec(["/clones/demo"], epic="vergil-project/.github#325"), applicator, dry_run=False)
@@ -172,8 +172,8 @@ def test_epic_repo_links_issue_under_epic(calls: dict[str, list]) -> None:
     assert "adhoc" not in issue
 
 
-def _changed(_worktree: Path) -> AppResult:
-    return AppResult(changed=True, summary="synced")
+def _changed(_worktree: Path, *, check: bool = False) -> AppResult:
+    return AppResult(changed=True, summary="would sync" if check else "synced")
 
 
 def _issue_create_args(calls: dict[str, list]) -> tuple:
@@ -256,7 +256,6 @@ def test_dry_run_names_the_chosen_epic(
 
     assert "would ensure issue under epic vergil-project/.github#420," in results[0].detail
     assert "would ensure issue under epic adhoc," in results[1].detail
-    assert calls["git"] == []
     assert calls["proc"] == []
 
     no_epic = run_sweep(_spec(["/clones/same"]), _changed, dry_run=True)
@@ -286,7 +285,7 @@ def test_dry_run_owner_lookup_failure_is_an_error(
 def test_unchanged_repo_is_skipped_without_issue_or_branch(calls: dict[str, list]) -> None:
     """changed=False -> skipped: no issue, no feature branch, no report-ready."""
 
-    def applicator(_worktree: Path) -> AppResult:
+    def applicator(_worktree: Path, *, check: bool = False) -> AppResult:
         return AppResult(changed=False, summary="already in sync")
 
     results = run_sweep(_spec(["/clones/demo"]), applicator, dry_run=False)
@@ -315,7 +314,7 @@ def test_unchanged_repo_is_skipped_without_issue_or_branch(calls: dict[str, list
 def test_failure_is_isolated_and_sweep_continues(calls: dict[str, list]) -> None:
     """One repo raising is recorded status=error; the next repo still runs."""
 
-    def applicator(worktree: Path) -> AppResult:
+    def applicator(worktree: Path, *, check: bool = False) -> AppResult:
         if worktree.parts and "boom" in str(worktree):
             raise RuntimeError("kaboom")
         return AppResult(changed=True, summary="synced")
@@ -329,19 +328,70 @@ def test_failure_is_isolated_and_sweep_continues(calls: dict[str, list]) -> None
     assert results[1].status == "ready"
 
 
-def test_dry_run_performs_no_mutations(calls: dict[str, list]) -> None:
-    """dry_run=True touches no git/gh state and reports intended actions."""
+def test_dry_run_reports_the_live_verdict_per_repo(calls: dict[str, list]) -> None:
+    """dry_run=True runs the applicator check-only and reports its real verdict (#3549).
 
-    def applicator(_worktree: Path) -> AppResult:  # pragma: no cover - must not run
-        raise AssertionError("applicator must not run in a dry run")
+    Before the fix the applicator never ran in a dry run, so every repo was
+    reported ``ready`` whatever a live run would do. Now a change, a skip, and a
+    follow-up are told apart, and no issue, branch, commit, or PR is touched.
+    """
+    seen: list[tuple[Path, bool]] = []
+    verdicts = {
+        "change": AppResult(changed=True, summary="would sync"),
+        "same": AppResult(changed=False, summary="already in sync"),
+        "odd": AppResult(changed=False, summary="cannot place", needs_followup=True),
+    }
 
-    results = run_sweep(_spec(["/clones/a", "/clones/b"]), applicator, dry_run=True)
+    def applicator(worktree: Path, *, check: bool = False) -> AppResult:
+        seen.append((worktree, check))
+        return verdicts[worktree.parent.parent.name]
 
-    assert calls["git"] == []
+    results = run_sweep(
+        _spec(["/clones/change", "/clones/same", "/clones/odd"]), applicator, dry_run=True
+    )
+
+    assert results == [
+        RepoResult(
+            repo="/clones/change",
+            status="ready",
+            detail=(
+                "dry-run: would ensure issue under epic adhoc, create "
+                "feature/<issue>-gitignore-sync, commit, and report-ready: would sync"
+            ),
+        ),
+        RepoResult(repo="/clones/same", status="skipped", detail="dry-run: already in sync"),
+        RepoResult(
+            repo="/clones/odd",
+            status="skipped",
+            detail="dry-run: cannot place",
+            needs_followup=True,
+        ),
+    ]
+    # The applicator ran check-only, in each repo's probe worktree.
+    assert seen == [
+        (Path(f"/clones/{name}/.worktrees/probe-gitignore-sync"), True)
+        for name in ("change", "same", "odd")
+    ]
+    # Each probe is added and removed again; nothing else touches git or GitHub.
+    for name in ("change", "same", "odd"):
+        repo, probe = f"/clones/{name}", f"/clones/{name}/.worktrees/probe-gitignore-sync"
+        assert ("-C", repo, "worktree", "add", "--detach", probe, "origin/develop") in calls["git"]
+        assert ("-C", repo, "worktree", "remove", "--force", probe) in calls["git"]
+    assert len(calls["git"]) == 6
     assert calls["proc"] == []
-    assert [r.repo for r in results] == ["/clones/a", "/clones/b"]
-    assert all(r.status == "ready" for r in results)
-    assert all("dry-run" in r.detail for r in results)
+
+
+def test_dry_run_applicator_failure_discards_probe(calls: dict[str, list]) -> None:
+    """A check-only applicator raising is an error row, and its probe is removed."""
+
+    def applicator(_worktree: Path, *, check: bool = False) -> AppResult:
+        raise RuntimeError("check exploded")
+
+    results = run_sweep(_spec(["/clones/demo"]), applicator, dry_run=True)
+
+    assert results == [RepoResult(repo="/clones/demo", status="error", detail="check exploded")]
+    assert calls["git"][-1] == _PROBE_REMOVE
+    assert calls["proc"] == []
 
 
 def test_tool_failure_surfaces_stderr(
@@ -354,7 +404,7 @@ def test_tool_failure_surfaces_stderr(
 
     monkeypatch.setattr(fleet_sweep.subprocess, "run", failing_run)
 
-    def applicator(_worktree: Path) -> AppResult:
+    def applicator(_worktree: Path, *, check: bool = False) -> AppResult:
         return AppResult(changed=True, summary="synced")
 
     results = run_sweep(_spec(["/clones/demo"]), applicator, dry_run=False)
@@ -374,7 +424,7 @@ def test_unparseable_issue_url_is_an_error(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(fleet_sweep.git, "run", fake_git_run)
     monkeypatch.setattr(fleet_sweep.subprocess, "run", fake_proc_run)
 
-    def applicator(_worktree: Path) -> AppResult:
+    def applicator(_worktree: Path, *, check: bool = False) -> AppResult:
         return AppResult(changed=True, summary="synced")
 
     results = run_sweep(_spec(["/clones/demo"]), applicator, dry_run=False)
@@ -397,7 +447,7 @@ _PROBE_REMOVE = (
 def test_applicator_failure_removes_probe(calls: dict[str, list]) -> None:
     """An applicator raising discards the probe so the next sweep can re-add it."""
 
-    def applicator(_worktree: Path) -> AppResult:
+    def applicator(_worktree: Path, *, check: bool = False) -> AppResult:
         raise RuntimeError("applicator exploded")
 
     results = run_sweep(_spec(["/clones/demo"]), applicator, dry_run=False)
@@ -418,7 +468,7 @@ def test_issue_create_failure_removes_probe(
 
     monkeypatch.setattr(fleet_sweep.subprocess, "run", refusing_run)
 
-    def applicator(_worktree: Path) -> AppResult:
+    def applicator(_worktree: Path, *, check: bool = False) -> AppResult:
         return AppResult(changed=True, summary="synced")
 
     results = run_sweep(_spec(["/clones/demo"]), applicator, dry_run=False)
@@ -446,7 +496,7 @@ def test_failure_after_rename_keeps_issue_worktree(
 
     monkeypatch.setattr(fleet_sweep.subprocess, "run", fake_proc_run)
 
-    def applicator(_worktree: Path) -> AppResult:
+    def applicator(_worktree: Path, *, check: bool = False) -> AppResult:
         return AppResult(changed=True, summary="synced")
 
     results = run_sweep(_spec(["/clones/demo"]), applicator, dry_run=False)
@@ -467,7 +517,7 @@ def test_probe_cleanup_failure_reports_both_errors(monkeypatch: pytest.MonkeyPat
 
     monkeypatch.setattr(fleet_sweep.git, "run", fake_git_run)
 
-    def applicator(_worktree: Path) -> AppResult:
+    def applicator(_worktree: Path, *, check: bool = False) -> AppResult:
         raise RuntimeError("applicator exploded")
 
     results = run_sweep(_spec(["/clones/demo"]), applicator, dry_run=False)
@@ -514,7 +564,7 @@ def _make_real_clone(tmp_path: Path) -> Path:
     return clone
 
 
-def _real_applicator(worktree: Path) -> AppResult:
+def _real_applicator(worktree: Path, *, check: bool = False) -> AppResult:
     (worktree / "managed.txt").write_text("propagated content\n")
     return AppResult(changed=True, summary="added managed.txt")
 
@@ -618,7 +668,7 @@ def test_failed_sweep_does_not_strand_probe_in_a_real_repo(
     clone = _make_real_clone(tmp_path)
     monkeypatch.setattr(fleet_sweep, "_run_tool", _fake_run_tool)
 
-    def failing_applicator(_worktree: Path) -> AppResult:
+    def failing_applicator(_worktree: Path, *, check: bool = False) -> AppResult:
         raise RuntimeError("applicator exploded")
 
     first = run_sweep(_spec([str(clone)]), failing_applicator, dry_run=False)
@@ -628,6 +678,34 @@ def test_failed_sweep_does_not_strand_probe_in_a_real_repo(
     second = run_sweep(_spec([str(clone)]), _real_applicator, dry_run=False)
     assert second == [RepoResult(repo=str(clone), status="ready", detail="added managed.txt")]
     _assert_committed_in_issue_worktree(clone)
+
+
+def test_dry_run_leaves_a_real_repo_untouched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A dry run over a REAL repo previews the change and leaves nothing behind (#3549)."""
+    clone = _make_real_clone(tmp_path)
+
+    def no_tools(args: list[str], *, cwd: Path | str | None = None) -> str:  # pragma: no cover
+        raise AssertionError(f"dry run must not run {args[0]}")
+
+    monkeypatch.setattr(fleet_sweep, "_run_tool", no_tools)
+    probes: list[Path] = []
+
+    def applicator(worktree: Path, *, check: bool = False) -> AppResult:
+        assert check is True
+        assert (worktree / "existing.txt").is_file()  # a real origin/develop checkout
+        probes.append(worktree)
+        return AppResult(changed=True, summary="would add managed.txt")
+
+    results = run_sweep(_spec([str(clone)]), applicator, dry_run=True)
+
+    assert [r.status for r in results] == ["ready"]
+    assert results[0].detail.endswith("report-ready: would add managed.txt")
+    assert probes == [clone / ".worktrees" / "probe-gitignore-sync"]
+    assert not probes[0].exists()
+    assert _git("-C", str(clone), "worktree", "list").count("\n") == 1
+    assert "feature/" not in _git("-C", str(clone), "branch", "--list")
 
 
 # --- vrg_fleet_sync entry -------------------------------------------------
@@ -662,7 +740,7 @@ def test_main_builds_gitignore_spec(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_main_applicator_maps_gitignore_output(monkeypatch: pytest.MonkeyPatch) -> None:
     """The gitignore applicator maps the CLI's output to AppResult."""
-    captured: dict[str, Callable[[Path], AppResult]] = {}
+    captured: dict[str, Applicator] = {}
 
     def fake_run_sweep(spec, applicator, *, dry_run):  # noqa: ANN001, ANN003
         captured["applicator"] = applicator
@@ -695,7 +773,7 @@ def test_main_applicator_maps_gitignore_output(monkeypatch: pytest.MonkeyPatch) 
 
 def test_main_applicator_detects_already_in_sync(monkeypatch: pytest.MonkeyPatch) -> None:
     """'already in sync' output maps to changed=False."""
-    captured: dict[str, Callable[[Path], AppResult]] = {}
+    captured: dict[str, Applicator] = {}
 
     def fake_run_sweep(spec, applicator, *, dry_run):  # noqa: ANN001, ANN003
         captured["applicator"] = applicator
@@ -715,7 +793,7 @@ def test_main_applicator_detects_already_in_sync(monkeypatch: pytest.MonkeyPatch
 
 def test_main_applicator_raises_on_cli_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     """A non-zero vrg-gitignore-sync exit raises so the driver records an error."""
-    captured: dict[str, Callable[[Path], AppResult]] = {}
+    captured: dict[str, Applicator] = {}
 
     def fake_run_sweep(spec, applicator, *, dry_run):  # noqa: ANN001, ANN003
         captured["applicator"] = applicator
@@ -762,15 +840,13 @@ def test_main_reports_ready_and_skipped(
     assert "skipped" in out
 
 
-def _capture_main(
-    monkeypatch: pytest.MonkeyPatch, argv: list[str]
-) -> tuple[SweepSpec, Callable[[Path], AppResult]]:
+def _capture_main(monkeypatch: pytest.MonkeyPatch, argv: list[str]) -> tuple[SweepSpec, Applicator]:
     """Run ``vrg_fleet_sync.main`` with ``run_sweep`` captured, not executed."""
     specs: list[SweepSpec] = []
-    applicators: list[Callable[[Path], AppResult]] = []
+    applicators: list[Applicator] = []
 
     def fake_run_sweep(
-        spec: SweepSpec, applicator: Callable[[Path], AppResult], *, dry_run: bool
+        spec: SweepSpec, applicator: Applicator, *, dry_run: bool
     ) -> list[RepoResult]:
         specs.append(spec)
         applicators.append(applicator)
@@ -835,6 +911,77 @@ def test_fleet_target_dependabot_failure_names_tool(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(vrg_fleet_sync.subprocess, "run", fake_proc_run)
     with pytest.raises(RuntimeError, match=r"vrg-dependabot-sync failed \(exit 2\): usage"):
         applicator(Path("/w"))
+
+
+def test_fleet_dependabot_check_previews_with_check_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    """check=True runs ``vrg-dependabot-sync --check`` and maps its exit code (#3549)."""
+    _spec_unused, applicator = _capture_main(
+        monkeypatch, ["--repos", "/clones/x", "--target", "dependabot"]
+    )
+    proc_calls: list[list[str]] = []
+    procs = iter(
+        [
+            _FakeProc(returncode=0),
+            _FakeProc(returncode=1, stderr="missing .github/dependabot.yml\n"),
+            _FakeProc(returncode=1),
+            _FakeProc(returncode=2, stderr="not valid TOML"),
+        ]
+    )
+
+    def fake_proc_run(args, **kwargs):  # noqa: ANN001, ANN003
+        proc_calls.append(list(args))
+        return next(procs)
+
+    monkeypatch.setattr(vrg_fleet_sync.subprocess, "run", fake_proc_run)
+
+    assert applicator(Path("/w"), check=True) == AppResult(changed=False, summary="already in sync")
+    assert proc_calls[-1] == ["vrg-dependabot-sync", "--check", "--repo", "/w"]
+    assert applicator(Path("/w"), check=True) == AppResult(
+        changed=True, summary="would sync (missing .github/dependabot.yml)"
+    )
+    assert applicator(Path("/w"), check=True) == AppResult(
+        changed=True, summary="would sync (drift)"
+    )
+    with pytest.raises(RuntimeError, match=r"vrg-dependabot-sync failed \(exit 2\): not valid"):
+        applicator(Path("/w"), check=True)
+    assert all("--write" not in call for call in proc_calls)
+
+
+def test_fleet_gitignore_check_previews_by_writing_in_the_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """gitignore's --check is stricter than --write, so the preview runs --write (#3549)."""
+    _spec_unused, applicator = _capture_main(monkeypatch, ["--repos", "/clones/x"])
+    proc_calls: list[list[str]] = []
+    outputs = iter(["synced managed block in /w/.gitignore\n", "already in sync\n"])
+
+    def fake_proc_run(args, **kwargs):  # noqa: ANN001, ANN003
+        proc_calls.append(list(args))
+        return _FakeProc(stdout=next(outputs))
+
+    monkeypatch.setattr(vrg_fleet_sync.subprocess, "run", fake_proc_run)
+
+    assert applicator(Path("/w"), check=True) == AppResult(
+        changed=True, summary="would apply: synced managed block in /w/.gitignore"
+    )
+    assert proc_calls[-1] == ["vrg-gitignore-sync", "--write", "--repo", "/w"]
+    assert applicator(Path("/w"), check=True) == AppResult(changed=False, summary="already in sync")
+
+
+def test_fleet_gitignore_check_is_stricter_than_write(tmp_path: Path) -> None:
+    """Pin the reason gitignore cannot preview with --check (#3549).
+
+    A correct fence plus one of its own patterns outside it fails ``--check``,
+    yet ``--write`` leaves it alone ("already in sync"), so ``--check`` would
+    report a change the live sweep never makes.
+    """
+    block = gitignore.render_block(None)
+    stray = gitignore.compose(None)[0]
+    (tmp_path / ".gitignore").write_text(f"{block}{stray}\n", encoding="utf-8")
+
+    assert vrg_gitignore_sync.main(["--check", "--repo", str(tmp_path)]) == 1
+    assert vrg_gitignore_sync.main(["--write", "--repo", str(tmp_path)]) == 0
+    assert (tmp_path / ".gitignore").read_text(encoding="utf-8") == f"{block}{stray}\n"
 
 
 @pytest.mark.parametrize(

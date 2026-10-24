@@ -18,8 +18,9 @@ This tool **never** submits or merges a PR — it stops at ``report-ready``, exa
 like any other agent-run task. The human runs the sweep and, later, ``vrg-submit-pr``.
 
 Each ``--repos`` entry is a path to a local clone, absolute or relative (the
-driver resolves it, #2979). ``--dry-run`` reports the intended action per repo
-without touching any git or GitHub state. A repo whose ``ci.yml`` shape cannot
+driver resolves it, #2979). ``--dry-run`` runs the applicator in check-only mode
+in a disposable probe worktree and reports the verdict a live run would reach per
+repo, without opening an issue, branch, commit, or PR (#3549). A repo whose ``ci.yml`` shape cannot
 be understood is left unchanged and listed **prominently** in a follow-up
 report — never silently skipped (this repo's "no silent failures" policy).
 
@@ -97,7 +98,10 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Report the intended action per repo without touching git/GitHub state.",
+        help=(
+            "Preview the verdict a live run would reach per repo (check-only, in a "
+            "disposable probe worktree) without opening an issue, branch, commit, or PR."
+        ),
     )
     return parser.parse_args(argv)
 
