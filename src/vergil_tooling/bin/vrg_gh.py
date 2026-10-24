@@ -15,7 +15,21 @@ from vergil_tooling.lib.cli import cli_main
 
 _ALLOWED: dict[str, set[str]] = {
     "issue": {"view", "close", "reopen", "edit", "list", "comment", "transfer"},
-    "pr": {"view", "checks", "list", "diff", "comment", "edit", "review", "merge"},
+    # `update-branch` (optionally `--rebase`) brings a PR branch up to date
+    # with its base server-side, with no checkout or force-push, and crosses
+    # no human gate. It writes, so it stays off the audit allowlist. See
+    # issue #3542.
+    "pr": {
+        "view",
+        "checks",
+        "list",
+        "diff",
+        "comment",
+        "edit",
+        "review",
+        "merge",
+        "update-branch",
+    },
     "run": {"list", "view", "watch"},
     "repo": {"view", "list"},
     # `release` is read-only here: only `list` and `view` are permitted so

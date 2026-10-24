@@ -60,6 +60,7 @@ _ALLOWED_PAIRS: list[tuple[str, str]] = [
     ("pr", "diff"),
     ("pr", "comment"),
     ("pr", "edit"),
+    ("pr", "update-branch"),
     ("run", "list"),
     ("run", "view"),
     ("run", "watch"),
@@ -655,6 +656,24 @@ class TestAgentDenials:
         args = mock_run.call_args[0][0]
         assert args[:3] == ["gh", "issue", "transfer"]
 
+    @pytest.mark.parametrize("extra", [[], ["--rebase"]])
+    def test_pr_update_branch_allowed_for_user_agent(self, extra: list[str]) -> None:
+        # Allowed for USER: a server-side update of a PR branch onto its base
+        # needs no checkout or force-push and crosses no human gate (issue
+        # #3542). AUDIT stays barred (see TestAuditAllowlist).
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+                return_value=None,
+            ),
+            patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = _completed()
+            rc = main(["pr", "update-branch", "42", *extra])
+        assert rc == 0
+        args = mock_run.call_args[0][0]
+        assert args == ["gh", "pr", "update-branch", "42", *extra]
+
     def test_pr_merge_denied_unconditionally_for_agent(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -794,6 +813,17 @@ class TestAuditAllowlist:
         self, top: str, sub: str, capsys: pytest.CaptureFixture[str]
     ) -> None:
         assert main([top, sub]) != 0
+
+    @pytest.mark.parametrize("extra", [[], ["--rebase"]])
+    def test_audit_pr_update_branch_denied(
+        self, extra: list[str], capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # update-branch writes to the PR branch, so the read/review-shaped
+        # audit identity stays barred (issue #3542).
+        with patch("vergil_tooling.lib.retry.subprocess.run") as mock_run:
+            assert main(["pr", "update-branch", "42", *extra]) != 0
+        mock_run.assert_not_called()
+        assert "pr update-branch is not recognized" in capsys.readouterr().err
 
 
 class TestApiAccess:
