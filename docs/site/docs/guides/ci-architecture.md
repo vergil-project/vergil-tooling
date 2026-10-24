@@ -149,12 +149,13 @@ The workflow file is `.github/workflows/ci.yml`. It runs on
     legitimately differ across CPython versions — a branch reachable on one
     version may be dead on another, or a version-guarded code path may only
     execute on some interpreters — code that measures 100% locally can still
-    fall below 100% on a 3.12, 3.13 or 3.14 leg and fail CI. The multi-version
-    coverage matrix is therefore a **PR-CI-only** gate: local validate covers
-    a single interpreter and cannot reproduce it. This is a known, accepted
-    limitation, not a bug — closing it would mean running the full version
-    matrix locally, which Tier 1's one-container model deliberately trades
-    away for speed.
+    fall below 100% on a 3.12, 3.13 or 3.14 leg and fail CI. The default
+    local validate covers a single interpreter, trading the matrix away for
+    speed. For Python, `vrg-container-run -- vrg-validate --all-versions`
+    closes the gap on demand: inside the same one container it runs the
+    gate on every resolved version, each on a uv-managed interpreter (see
+    [All versions](validation-matrix.md#all-versions-python)). For other
+    languages the multi-version matrix stays a **PR-CI-only** gate.
 
 ## Architecture
 
