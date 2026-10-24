@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vergil_tooling.bin.vrg_epic_audit import main
+from vergil_tooling.lib import github
 from vergil_tooling.lib.epic_audit import Orphan, RetiredLabels, StandingEpicFull
 from vergil_tooling.lib.epics import ChildState, IssueRef
 
@@ -81,6 +82,56 @@ def test_main_epic_enumerates_children_as_json(capsys: pytest.CaptureFixture[str
     assert states == {2500: "CLOSED", 2538: "OPEN"}
     # child_states is asked about the resolved epic ref.
     assert cs.call_args.args[0] == IssueRef("vergil-project", ".github", 201)
+
+
+@pytest.mark.parametrize(
+    ("cwd_repo", "public", "expected_epic"),
+    [
+        # Public code repo: its epics home in <org>/.github.
+        ("org/tooling", {"org/tooling", "org/.github"}, IssueRef("org", ".github", 407)),
+        # Private repo with a public .github: its epics home in the repo itself.
+        ("org/lab", {"org/.github"}, IssueRef("org", "lab", 407)),
+    ],
+)
+def test_main_bare_epic_resolves_against_cwd_epic_home(
+    cwd_repo: str, public: set[str], expected_epic: IssueRef
+) -> None:
+    """A bare '--epic #N' reads against the current repo's epic home (#3415).
+
+    Every visibility probe runs under the current repo owner's App token.
+    """
+    seen_orgs: list[str | None] = []
+
+    def is_public(nwo: str) -> bool:
+        seen_orgs.append(github._target_org.get())
+        return nwo in public
+
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value=cwd_repo),
+        patch("vergil_tooling.lib.github.is_public", side_effect=is_public),
+        patch(f"{_MOD}.epics.is_epic", return_value=True) as ie,
+        patch(f"{_MOD}.epics.child_states", return_value=[]) as cs,
+    ):
+        rc = main(["--epic", "#407"])
+    assert rc == 0
+    ie.assert_called_once_with(expected_epic)
+    assert cs.call_args.args[0] == expected_epic
+    assert seen_orgs
+    assert set(seen_orgs) == {"org"}
+
+
+def test_main_qualified_epic_ref_skips_visibility_lookup() -> None:
+    """A full 'owner/repo#N' is used as written, with no visibility probe."""
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/tooling"),
+        patch("vergil_tooling.lib.github.is_public") as probe,
+        patch(f"{_MOD}.epics.is_epic", return_value=True) as ie,
+        patch(f"{_MOD}.epics.child_states", return_value=[]),
+    ):
+        rc = main(["--epic", "other/repo#12"])
+    assert rc == 0
+    ie.assert_called_once_with(IssueRef("other", "repo", 12))
+    probe.assert_not_called()
 
 
 def test_main_epic_rejects_non_epic_ref(capsys: pytest.CaptureFixture[str]) -> None:
