@@ -2483,3 +2483,32 @@ def test_drain_standing_org_skips_home_that_raises(capsys: pytest.CaptureFixture
     assert plans == [good]
     mock_apply.assert_called_once_with(epics.PLANNING, "org/.github", "org", good)
     assert "skipped intake drain in org/.github: multiple intake epics" in capsys.readouterr().err
+
+
+# -- EPIC_SENTINELS (#3514) ---------------------------------------------------
+
+
+def test_epic_sentinels_are_the_standing_kinds_sentinels() -> None:
+    assert epics.EPIC_SENTINELS == ("adhoc", "intake", "planning")
+    assert tuple(k.sentinel for k in epics.STANDING_KINDS) == epics.EPIC_SENTINELS
+
+
+@pytest.mark.parametrize(
+    ("sentinel", "ensure"),
+    [
+        ("adhoc", "ensure_adhoc_epic"),
+        ("intake", "ensure_intake_epic"),
+        ("planning", "ensure_planning_epic"),
+    ],
+)
+def test_resolve_epic_ref_handles_every_sentinel(sentinel: str, ensure: str) -> None:
+    """Every EPIC_SENTINELS entry is resolved by its ensure_* helper, never parsed."""
+    epic = IssueRef("org", ".github", 9)
+    with (
+        patch(f"vergil_tooling.lib.epics.{ensure}", return_value=epic) as mock_ensure,
+        patch("vergil_tooling.lib.epics.qualify_epic_ref") as mock_qualify,
+    ):
+        assert epics.resolve_epic_ref(sentinel, repo="org/tool") == epic
+    mock_ensure.assert_called_once_with("org/tool")
+    mock_qualify.assert_not_called()
+    assert sentinel in epics.EPIC_SENTINELS
