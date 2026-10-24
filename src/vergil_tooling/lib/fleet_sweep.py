@@ -27,7 +27,8 @@ Per repo, :func:`run_sweep`:
    ``.worktrees/issue-<N>-<slug>`` convention, creates the
    ``feature/<issue>-<slug>`` branch carrying the working-tree change, **stages**
    it, commits via ``vrg-commit``, and hands off via ``vrg-pr-workflow
-   report-ready`` — recording ``"ready"``.
+   report-ready`` (which pushes the branch to origin itself, #3602) — recording
+   ``"ready"``.
 
 ``dry_run`` previews exactly that verdict without changing anything: it creates
 the same detached probe, runs the applicator in **check-only** mode

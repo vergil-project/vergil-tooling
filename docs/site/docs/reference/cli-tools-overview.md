@@ -83,12 +83,17 @@ ref is world-readable on a public repo, keep secrets out of
 `--title/--summary/--notes`. Reaching **ready** *freezes* the branch:
 `vrg-commit` and the `vrg-git` push path then refuse further
 commits/pushes, because a task is exactly one PR and more work is a new
-follow-up issue (epic #146). Push the branch to origin **before**
-`report-ready` (it pushes only the relay ref, never the branch); when the
-delta touches `.github/workflows/**` the human's `vrg-submit-pr` pushes it
-instead. If that push was missed, an explicit `vrg-git push [-u] origin
-<branch>` is still allowed while HEAD is exactly the reported commit — it
-publishes, not advances, the branch (issue #3071). `unfreeze` is the only sanctioned way to
+follow-up issue (epic #146). `report-ready` pushes the branch itself, to
+`origin/<branch>` with upstream set, **before** recording anything (#3602),
+so no separate push is needed; a branch already on origin at that commit is a
+no-op push. When the delta touches `.github/workflows/**` GitHub refuses the
+agent push: `report-ready` reports that as expected, records the state anyway,
+and the human's `vrg-submit-pr` pushes the branch. Any other push failure
+fails `report-ready` with no local state and no relay ref written. A re-run on
+a frozen branch whose HEAD has drifted past the reported commit is refused
+before any push. An explicit `vrg-git push [-u] origin <branch>` also stays
+allowed while HEAD is exactly the reported commit — it publishes, not
+advances, the branch (issue #3071). `unfreeze` is the only sanctioned way to
 reopen a still-unsubmitted branch — it drops the state back to
 `implementing` while keeping the metadata; an already-submitted branch
 cannot be unfrozen. `status` prints the current state. `report-ready` (like

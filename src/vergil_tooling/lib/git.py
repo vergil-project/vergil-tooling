@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 import subprocess
 import sys
 import time
@@ -27,6 +28,20 @@ _REMOTE_SUBCOMMANDS: set[str] = {"push", "pull", "fetch", "ls-remote", "remote"}
 # from GitHub, so a 502/SSH-backend blip should be ridden out rather than
 # becoming a manual-recovery showstopper.
 _RETRYABLE_SUBCOMMANDS: frozenset[str] = frozenset({"push", "pull", "fetch", "ls-remote", "clone"})
+
+# GitHub's refusal of a push that creates or updates a ``.github/workflows/**``
+# file with a token lacking the ``workflows`` permission — the agent identities'
+# App tokens. Expected and routine: the human's ``vrg-submit-pr`` pushes such a
+# branch at submit time (#2540, #3602).
+_WORKFLOW_PUSH_REFUSAL_RE = re.compile(
+    r"refusing to allow.*workflow.*without.*workflows.*permission",
+    re.IGNORECASE,
+)
+
+
+def is_workflow_push_refusal(stderr: str | None) -> bool:
+    """Return True when a failed push's *stderr* is GitHub's workflow-permission refusal."""
+    return bool(_WORKFLOW_PUSH_REFUSAL_RE.search(stderr or ""))
 
 
 def _retry_network[T](subcommand: str, run_once: Callable[[], T]) -> T:

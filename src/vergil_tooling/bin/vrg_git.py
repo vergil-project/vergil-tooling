@@ -14,7 +14,7 @@ from pathlib import Path
 
 from vergil_tooling.lib import branch_names, epics, github, retry
 from vergil_tooling.lib.cli import cli_main
-from vergil_tooling.lib.git import _git_auth_env, main_worktree_root
+from vergil_tooling.lib.git import _git_auth_env, is_workflow_push_refusal, main_worktree_root
 from vergil_tooling.lib.pr_workflow import freeze
 
 _ALLOWED_SIMPLE: set[str] = {
@@ -221,7 +221,7 @@ def main(argv: list[str] | None = None) -> int:
         if (
             subcmd == "push"
             and net_result.returncode != 0
-            and _WORKFLOW_PERMISSION_RE.search(net_result.stderr or "")
+            and is_workflow_push_refusal(net_result.stderr)
         ):
             # A workflow-file push refusal is expected and routine: the agent
             # never pushes a workflow branch — the human's vrg-submit-pr does,
@@ -619,12 +619,6 @@ def _issue_read_refusal(branch: str, number: str, reason: str) -> str:
         f"'vrg-gh issue view {number}' works here (auth, network, and that the "
         "issue exists in this repo), then retry."
     )
-
-
-_WORKFLOW_PERMISSION_RE = re.compile(
-    r"refusing to allow.*workflow.*without.*workflows.*permission",
-    re.IGNORECASE,
-)
 
 
 def _current_worktree_root() -> Path | None:
