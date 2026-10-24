@@ -64,6 +64,10 @@ _ALLOWED_PAIRS: list[tuple[str, str]] = [
     ("run", "list"),
     ("run", "view"),
     ("run", "watch"),
+    ("run", "rerun"),
+    ("workflow", "list"),
+    ("workflow", "view"),
+    ("cache", "list"),
     ("repo", "view"),
     ("repo", "list"),
     ("release", "list"),
@@ -200,6 +204,42 @@ def test_issue_create_denied_names_vrg_intake_create(
     assert "vrg-intake-create" in err
     assert "intake issue linked under the intake epic" in err
     assert "vrg-triage-create" not in err
+
+
+# -- workflow and cache (read-only; workflow run is a human action) ----------
+
+
+@pytest.mark.parametrize("mode", ["human", "user", "audit"])
+def test_workflow_run_denied_for_every_identity(
+    mode: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Dispatching a workflow can start CD or a release, which is a human
+    # action, so no identity may dispatch one through the wrapper (#3420).
+    monkeypatch.setenv("VRG_IDENTITY_MODE", mode)
+    with patch("vergil_tooling.lib.retry.subprocess.run") as mock_run:
+        assert main(["workflow", "run", "release.yml"]) != 0
+    mock_run.assert_not_called()
+    err = capsys.readouterr().err
+    assert "workflow run is denied" in err
+    assert "CD or a release" in err
+    assert "human action" in err
+
+
+@pytest.mark.parametrize(("top", "sub"), [("workflow", "enable"), ("workflow", "disable")])
+def test_workflow_write_actions_rejected(
+    top: str, sub: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with patch("vergil_tooling.lib.retry.subprocess.run") as mock_run:
+        assert main([top, sub]) != 0
+    mock_run.assert_not_called()
+    assert f"{top} {sub} is not recognized" in capsys.readouterr().err
+
+
+def test_cache_delete_rejected(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch("vergil_tooling.lib.retry.subprocess.run") as mock_run:
+        assert main(["cache", "delete", "--all"]) != 0
+    mock_run.assert_not_called()
+    assert "cache delete is not recognized" in capsys.readouterr().err
 
 
 # -- top-level denials -------------------------------------------------------
@@ -674,6 +714,24 @@ class TestAgentDenials:
         args = mock_run.call_args[0][0]
         assert args == ["gh", "pr", "update-branch", "42", *extra]
 
+    @pytest.mark.parametrize("extra", [[], ["--failed"]])
+    def test_run_rerun_allowed_for_user_agent(self, extra: list[str]) -> None:
+        # Allowed for USER: retrying a failed CI job repeats an existing run
+        # and crosses no human gate (issue #3420). AUDIT stays barred (see
+        # TestAuditAllowlist).
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+                return_value=None,
+            ),
+            patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = _completed()
+            rc = main(["run", "rerun", "123", *extra])
+        assert rc == 0
+        args = mock_run.call_args[0][0]
+        assert args == ["gh", "run", "rerun", "123", *extra]
+
     def test_pr_merge_denied_unconditionally_for_agent(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -824,6 +882,38 @@ class TestAuditAllowlist:
             assert main(["pr", "update-branch", "42", *extra]) != 0
         mock_run.assert_not_called()
         assert "pr update-branch is not recognized" in capsys.readouterr().err
+
+    @pytest.mark.parametrize(
+        ("top", "sub"),
+        [
+            ("workflow", "list"),
+            ("workflow", "view"),
+            ("cache", "list"),
+        ],
+    )
+    def test_audit_ci_read_allowed(self, top: str, sub: str) -> None:
+        # Read-only CI configuration and state, which a reviewer may need to
+        # judge a PR's checks (issue #3420).
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+                return_value=None,
+            ),
+            patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = _completed()
+            rc = main([top, sub])
+        assert rc == 0
+        args = mock_run.call_args[0][0]
+        assert args == ["gh", top, sub]
+
+    def test_audit_run_rerun_denied(self, capsys: pytest.CaptureFixture[str]) -> None:
+        # rerun starts CI work, so the read/review-shaped audit identity
+        # stays barred (issue #3420).
+        with patch("vergil_tooling.lib.retry.subprocess.run") as mock_run:
+            assert main(["run", "rerun", "123"]) != 0
+        mock_run.assert_not_called()
+        assert "run is not recognized" in capsys.readouterr().err
 
 
 class TestApiAccess:
