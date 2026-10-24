@@ -607,6 +607,52 @@ def test_main_bare_epic_resolves_against_target_epic_home(
     assert set(seen_orgs) == {"org"}
 
 
+def _personal_account_probe(dotgithub_error: str) -> object:
+    """A visibility probe for a private personal repo whose owner's .github fails."""
+
+    def is_public(nwo: str) -> bool:
+        if nwo == "owner/.github":
+            raise github.GitHubAPIError(1, ["gh", "repo", "view"], "", dotgithub_error)
+        return False
+
+    return is_public
+
+
+def test_main_personal_repo_without_dotgithub_self_homes() -> None:
+    """A private repo whose owner has no .github links under its own epic (#3603)."""
+    probe = _personal_account_probe("GraphQL: Could not resolve to a Repository")
+    with (
+        patch("vergil_tooling.lib.github.is_public", side_effect=probe),
+        patch("vergil_tooling.lib.epics.is_epic", return_value=True),
+        patch(
+            f"{_MOD}.github.create_issue", return_value="https://github.com/owner/notes/issues/9"
+        ),
+        patch(f"{_MOD}.epics.add_child") as mock_add,
+    ):
+        rc = main(["--repo", "owner/notes", "--epic", "#4", "--title", "T"])
+    assert rc == 0
+    mock_add.assert_called_once_with(
+        epics.IssueRef("owner", "notes", 4), epics.IssueRef("owner", "notes", 9)
+    )
+
+
+def test_main_epic_home_api_error_is_a_clean_failure(capsys: pytest.CaptureFixture[str]) -> None:
+    """Any other probe failure exits 1 with a one-line message, creating nothing."""
+    probe = _personal_account_probe("HTTP 502: Bad Gateway")
+    with (
+        patch("vergil_tooling.lib.github.is_public", side_effect=probe),
+        patch(f"{_MOD}.github.create_issue") as mock_create,
+        pytest.raises(SystemExit) as excinfo,
+    ):
+        main(["--repo", "owner/notes", "--epic", "#4", "--title", "T"])
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert err.startswith("vrg-issue-create: cannot resolve the epic home of owner/notes:")
+    assert "Bad Gateway" in err
+    assert "Traceback" not in err
+    mock_create.assert_not_called()
+
+
 def test_main_explicit_same_org_epic_proceeds() -> None:
     """An explicit epic ref in the issue's own org passes the guard and links."""
     with (

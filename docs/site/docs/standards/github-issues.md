@@ -359,6 +359,10 @@ An epic's home repo is derived from repository visibility:
 - A **private** repo (with a public `.github`) homes its epics **in itself**.
 - A **private** `.github` means the whole org is private, so everything homes in
   `.github`.
+- A **private** repo whose owner has **no** `.github` at all (typically a
+  personal account) homes its epics **in itself**: there is no central home.
+  Only GitHub's "repository does not exist" answer counts as no `.github`; any
+  other failure to read its visibility is an error.
 
 Ad-hoc epics follow the same rule — `Epic (ad hoc): <repo>` lives in the repo's
 resolved home. See

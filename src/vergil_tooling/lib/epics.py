@@ -425,20 +425,43 @@ def resolve_epic_ref(ref: str, *, repo: str) -> IssueRef:
     return epic
 
 
+class EpicHomeError(Exception):
+    """An epic home could not be resolved because a visibility probe failed.
+
+    Carries a one-line, user-facing message; :func:`cli.cli_main` prints it as
+    ``<prog>: <message>`` instead of a traceback.
+    """
+
+
 def resolve_epic_home(org: str, target_repo: str) -> str:
     """Map an explicit *target_repo* (bare name) to its epic home ``"owner/repo"``.
 
     A public target homes centrally in ``<org>/.github`` (today's behavior). A
     private target with a public ``.github`` homes its epics in itself
     (self-contained). A private ``.github`` means the whole org is private, so
-    everything routes to ``.github``. Fail-loud: visibility errors propagate
-    (see :func:`github.repo_visibility`).
+    everything routes to ``.github``. A private target whose owner has no
+    ``.github`` at all (a personal account, typically) self-homes too: there is
+    no central home to use (#3603). Fail-loud: any other probe failure raises
+    :class:`EpicHomeError` (a missing token keeps its own error for
+    :func:`cli.cli_main`).
     """
     if target_repo == ".github":
         return f"{org}/.github"
-    if github.is_public(f"{org}/{target_repo}"):
-        return f"{org}/.github"
-    if github.is_public(f"{org}/.github"):
+    try:
+        if github.is_public(f"{org}/{target_repo}"):
+            return f"{org}/.github"
+        try:
+            dotgithub_public = github.is_public(f"{org}/.github")
+        except github.GitHubAPIError as exc:
+            if not github.is_repo_not_found(exc):
+                raise
+            return f"{org}/{target_repo}"  # no <org>/.github: nowhere central to home
+    except github.MissingGitHubTokenError:
+        raise
+    except github.GitHubAPIError as exc:
+        msg = f"cannot resolve the epic home of {org}/{target_repo}: {exc}"
+        raise EpicHomeError(msg) from exc
+    if dotgithub_public:
         return f"{org}/{target_repo}"
     return f"{org}/.github"
 

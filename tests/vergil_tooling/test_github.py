@@ -2512,6 +2512,19 @@ def test_repo_exists_reraises_other_errors() -> None:
         github.repo_exists("org", "repo")
 
 
+@pytest.mark.parametrize(
+    ("detail", "expected"),
+    [
+        ("GraphQL: Could not resolve to a Repository with the name 'o/r'.", True),
+        ("HTTP 404: Not Found", True),
+        ("HTTP 401: Bad credentials", False),
+    ],
+)
+def test_is_repo_not_found(detail: str, *, expected: bool) -> None:
+    exc = github.GitHubAPIError(1, ["gh", "repo", "view"], "", detail)
+    assert github.is_repo_not_found(exc) is expected
+
+
 # --- #3170: stale check-runs and the bounded, visible check wait ---
 
 _STALE_LINK = "https://github.com/o/r/actions/runs/37969487090/job/113954201447"
