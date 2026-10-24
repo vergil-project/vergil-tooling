@@ -300,10 +300,13 @@ ignored. What it leaves behind depends on where it failed:
 
 - **An updater or the repo hook failed** (`update`), for example a
   lookup error, a non-zero hook exit, or a hook that committed: this
-  happens before validation, so nothing is pushed, no PR is opened, and
-  no fix task is filed. The worktree is removed and the failure is
-  reported on the tracking issue and in the run summary. With no
-  labelled PR, it does not gate the next release.
+  happens before validation, so nothing is pushed and no PR is opened.
+  A task titled "Fix failed dependency update for `<version>`" is still
+  filed under the repo's ad-hoc epic. It stands on its own: it names the
+  failing updater, carries the error and the command to reproduce it on
+  `develop`, and is linked from the failure on the tracking issue and in
+  the run summary. The worktree is removed. With no labelled PR, it does
+  not gate the next release.
 - **Validation failed** (`validation`), or **the PR's checks or merge
   failed** (`merge`): the PR stays open with its `dependency-update`
   label, and a task titled "Fix failed dependency update for
@@ -330,6 +333,11 @@ vrg-git worktree add -b chore/<fix-issue>-dep-update-<version> \
 Fix the cause, then hand off and merge as usual. When the fix PR merges
 and closes the fix task as completed, the next `vrg-release` closes the
 dependency-update PR for you.
+
+An `update` failure pushed no `deps/update-<version>` branch, so cut
+that fix task's branch from `origin/develop` instead. Once the fix
+merges, the next `vrg-update-deps` run, or the next `vrg-release`,
+applies the update.
 
 ### The dependency-update gate
 

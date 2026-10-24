@@ -142,6 +142,8 @@ def tail_output(text: str, *, lines: int = 200, max_chars: int = 20_000) -> str:
 def failure_markdown(failure: DepsFailure) -> str:
     """A Markdown section describing *failure* for a PR body or issue."""
     output = failure.output_tail if failure.output_tail.strip() else "(no output was captured)"
+    # An ``update`` failure pushes nothing: there is no branch to reproduce on.
+    where = "on `develop`" if failure.kind == "update" else "on the branch"
     return "\n".join(
         [
             f"## Failure: {failure.kind}",
@@ -154,7 +156,7 @@ def failure_markdown(failure: DepsFailure) -> str:
             output,
             "```",
             "",
-            f"Reproduce on the branch: `{failure.reproduce}`",
+            f"Reproduce {where}: `{failure.reproduce}`",
         ]
     )
 
@@ -166,10 +168,11 @@ def failure_summary(ctx: UpdateDepsContext) -> str:
         msg = "failure_summary called without a recorded failure"
         raise ValueError(msg)
     head = f"Dependency update for {ctx.version} failed ({f.kind}): {f.message}"
-    if f.kind == "update":
-        return f"{head} No PR was opened."
-    parts = [head, f"The PR stays open: {ctx.pr_url}."]
+    no_pr = f.kind == "update"
+    parts = [head, "No PR was opened." if no_pr else f"The PR stays open: {ctx.pr_url}."]
     if ctx.fix_issue_url:
         parts.append(f"Fix task: {ctx.fix_issue_url}.")
-    parts.append("The next vrg-release is gated until it lands.")
+    if not no_pr:
+        # The release gate keys on the open labelled PR, so only a PR gates.
+        parts.append("The next vrg-release is gated until it lands.")
     return " ".join(parts)

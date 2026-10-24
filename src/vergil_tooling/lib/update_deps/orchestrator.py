@@ -1,8 +1,9 @@
 """Declarative stage pipeline for vrg-update-deps.
 
 Validation, merge and updater failures are recorded on the context rather than
-raised (spec §5.2): the labelled PR stays open, a fix task is filed, cleanup
-runs, and the ``status`` stage then surfaces the failure as a non-zero exit.
+raised (spec §5.2): the labelled PR stays open (an updater failure has none),
+a fix task is filed, cleanup runs, and the ``status`` stage then surfaces the
+failure as a non-zero exit.
 """
 
 from __future__ import annotations
@@ -80,7 +81,8 @@ def run_updaters_stage(state: UpdateDepsState) -> None:
     """Run each applicable updater; record (don't raise) the first failure (spec §5.2).
 
     A failing updater stops the run: later updaters would build on a half-applied
-    tree. Nothing is pushed for an ``update`` failure, so no PR is opened.
+    tree. Nothing is pushed for an ``update`` failure, so no PR is opened; the
+    fix-task stage still files a fix task for it (#3550).
     """
     ctx = _require_ctx(state)
     if ctx.landed_pr_url is not None:
@@ -97,6 +99,7 @@ def run_updaters_stage(state: UpdateDepsState) -> None:
                 message=f"{updater.name}: {exc}",
                 output_tail=tail_output(exc.detail or ""),
                 reproduce=exc.command,
+                updater=updater.name,
             )
             return
         except subprocess.CalledProcessError as exc:
@@ -105,6 +108,7 @@ def run_updaters_stage(state: UpdateDepsState) -> None:
                 message=f"{updater.name}: {failure_message(exc)}",
                 output_tail=tail_output(combined_output(exc)),
                 reproduce=command_text(exc.cmd),
+                updater=updater.name,
             )
             return
         ctx.results.append(result)
@@ -147,9 +151,13 @@ def merge_stage(state: UpdateDepsState) -> None:
 
 
 def fix_task_stage(state: UpdateDepsState) -> None:
-    """File the fix task for a validation or merge failure (an open PR exists)."""
+    """File the fix task for any recorded failure.
+
+    A validation or merge failure's task is linked from its open PR; an
+    ``update`` failure has no PR, so its task stands on its own (#3550).
+    """
     ctx = _require_ctx(state)
-    if ctx.failure is not None and ctx.failure.kind != "update":
+    if ctx.failure is not None:
         pr.file_fix_task(ctx)
 
 
