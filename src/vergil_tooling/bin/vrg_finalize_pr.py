@@ -51,6 +51,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import (
+    branch_names,
     config,
     git,
     github,
@@ -946,6 +947,46 @@ def _resolve_strategy(branch: str, override: str | None) -> str:
     return "merge" if branch.startswith(_RELEASE_BRANCH_PREFIX) else "squash"
 
 
+def _conflict_resolution_msg(pr: str, head: str, base: str, root: Path) -> str:
+    """The exact commands for the human to resolve *pr*'s conflict with *base*.
+
+    A submitted branch is frozen to agents — ``unfreeze`` refuses it and
+    ``vrg-commit``/``vrg-git`` refuse the commit and push — so the human, who
+    is not bound by the wrappers, resolves it with raw git (issue #3555). It
+    is a merge, not a rebase: the PR is already public, so its history must
+    not be rewritten. The ``--ff-only`` step first picks up any commits GitHub
+    added to the branch (update-branch) so the push fast-forwards, and the
+    commands carry no inline ``#`` comments because interactive zsh does not
+    treat them as comments. ``--no-commit`` stops the merge for validation before
+    the human commits, and the push names the branch explicitly because a
+    worktree created with ``-b … origin/<base>`` tracks the base, not itself.
+    """
+    wt = worktrees.worktree_for_branch(head, root)
+    if wt is not None:
+        enter = f"  cd {wt}"
+    else:
+        dirname = branch_names.expected_worktree_dirname(head) or head.replace("/", "-")
+        wt = root / ".worktrees" / dirname
+        enter = (
+            f"  cd {root} && git fetch origin && git worktree add .worktrees/{dirname} {head}\n"
+            f"  cd {wt}"
+        )
+    return (
+        f"PR {pr} has merge conflicts with {base}. The branch is already submitted, "
+        f"so only you can resolve it (agents are frozen out of it). Merge {base} in — "
+        f"do not rebase a public PR — then validate, commit and push with raw git. "
+        f"After the --no-commit merge stops, resolve each conflicted file and git add it:\n"
+        f"{enter}\n"
+        f"  git fetch origin\n"
+        f"  git merge --ff-only origin/{head}\n"
+        f"  git merge --no-commit origin/{base}\n"
+        f"  vrg-container-run -- vrg-validate\n"
+        f"  git commit --no-edit\n"
+        f"  git push origin {head}\n"
+        f"  cd {root} && vrg-finalize-pr {pr}"
+    )
+
+
 def _stage_merge(ctx: FinalizeContext) -> None:
     """Merge the PR (or confirm it is already merged) and record its branch."""
     args = ctx.args
@@ -958,6 +999,9 @@ def _stage_merge(ctx: FinalizeContext) -> None:
     else:
         try:
             pr_merge.wait_and_merge(args.pr, strategy=strategy)
+        except pr_merge.MergeConflictError as exc:
+            msg = _conflict_resolution_msg(args.pr, branch, github.base_ref(args.pr), ctx.root)
+            raise FinalizeError(msg) from exc
         except pr_merge.MergeAbortError as exc:
             raise FinalizeError(str(exc)) from exc
     ctx.merged_branch = branch

@@ -16,6 +16,7 @@ from vergil_tooling.bin.vrg_finalize_pr import (
     CDRunProblem,
     FinalizeContext,
     FinalizeError,
+    _conflict_resolution_msg,
     _delete_branch_and_worktree,
     _dirt_is_untracked_only,
     _parse_pr_list,
@@ -36,7 +37,7 @@ from vergil_tooling.bin.vrg_finalize_pr import (
     main,
     parse_args,
 )
-from vergil_tooling.lib.pr_merge import MergeAbortError
+from vergil_tooling.lib.pr_merge import MergeAbortError, MergeConflictError
 from vergil_tooling.lib.pr_provenance import Action, ProvenanceResult, Role
 from vergil_tooling.lib.worktrees import Worktree, WorktreeState, WorktreeStatus
 
@@ -1586,6 +1587,66 @@ def test_stage_merge_abort_raises() -> None:
         pytest.raises(FinalizeError, match="is a draft"),
     ):
         _stage_merge(ctx)
+
+
+def _conflict_error(root: Path, worktree: Path | None) -> str:
+    """Run _stage_merge into a merge conflict; return the FinalizeError text."""
+    ctx = _stage_ctx(["123"], root=root)
+    with (
+        patch(_MOD + ".github.pr_state", return_value="OPEN"),
+        patch(_MOD + ".github.head_ref", return_value="feature/42-fix-thing"),
+        patch(_MOD + ".github.base_ref", return_value="develop"),
+        patch(_MOD + ".worktrees.worktree_for_branch", return_value=worktree),
+        patch(
+            _MOD + ".pr_merge.wait_and_merge",
+            side_effect=MergeConflictError("PR 123 has merge conflicts."),
+        ),
+        pytest.raises(FinalizeError) as excinfo,
+    ):
+        _stage_merge(ctx)
+    return str(excinfo.value)
+
+
+def test_stage_merge_conflict_gives_human_the_exact_commands() -> None:
+    """A conflict on a submitted PR names the worktree and every command the
+    human runs, in order: merge (not rebase), validate, raw-git commit and
+    push, re-finalize (issue #3555)."""
+    wt = Path("/repo/.worktrees/issue-42-fix-thing")
+    msg = _conflict_error(Path("/repo"), wt)
+    assert "PR 123 has merge conflicts with develop" in msg
+    steps = [
+        f"cd {wt}",
+        "git fetch origin",
+        "git merge --ff-only origin/feature/42-fix-thing",
+        "git merge --no-commit origin/develop",
+        "vrg-container-run -- vrg-validate",
+        "git commit --no-edit",
+        "git push origin feature/42-fix-thing",
+        "cd /repo && vrg-finalize-pr 123",
+    ]
+    positions = [msg.index(step) for step in steps]
+    assert positions == sorted(positions)
+    assert "git worktree add" not in msg
+    assert "rebase" not in msg.replace("do not rebase", "")
+    # Paste-safe in interactive zsh: no inline comments on command lines.
+    assert not [line for line in msg.splitlines() if line.startswith("  ") and "#" in line]
+
+
+def test_stage_merge_conflict_without_worktree_says_how_to_get_one() -> None:
+    msg = _conflict_error(Path("/repo"), None)
+    assert (
+        "cd /repo && git fetch origin && git worktree add "
+        ".worktrees/issue-42-fix-thing feature/42-fix-thing"
+    ) in msg
+    assert "cd /repo/.worktrees/issue-42-fix-thing" in msg
+    assert msg.index("git worktree add") < msg.index("git merge --no-commit")
+
+
+def test_conflict_msg_non_issue_branch_falls_back_to_flattened_dirname() -> None:
+    with patch(_MOD + ".worktrees.worktree_for_branch", return_value=None):
+        msg = _conflict_resolution_msg("7", "release/2.1.30", "main", Path("/repo"))
+    assert "git worktree add .worktrees/release-2.1.30 release/2.1.30" in msg
+    assert "git merge --no-commit origin/main" in msg
 
 
 def test_resolve_strategy_release_branch_merges() -> None:

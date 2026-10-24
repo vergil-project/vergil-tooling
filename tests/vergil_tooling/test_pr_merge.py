@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vergil_tooling.lib.github import ChecksTimeoutError, GitHubAPIError, OrphanedCheckError
-from vergil_tooling.lib.pr_merge import MergeAbortError, wait_and_merge
+from vergil_tooling.lib.pr_merge import MergeAbortError, MergeConflictError, wait_and_merge
 
 _MOD = "vergil_tooling.lib.pr_merge"
 
@@ -66,7 +66,9 @@ def test_draft_aborts_before_waiting() -> None:
 
 def test_conflicting_aborts_before_waiting() -> None:
     gh = _gh(mergeable="CONFLICTING")
-    with patch(_MOD + ".github", gh), pytest.raises(MergeAbortError, match="merge conflicts"):
+    # A MergeConflictError, so vrg-finalize-pr can swap in its exact commands
+    # (#3555); still a MergeAbortError for every other caller.
+    with patch(_MOD + ".github", gh), pytest.raises(MergeConflictError, match="merge conflicts"):
         wait_and_merge("99", strategy="squash")
     gh.wait_for_checks.assert_not_called()
 
