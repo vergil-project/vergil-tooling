@@ -3,10 +3,11 @@
 Every issue must be born linked to an epic (a native sub-issue), so this is the
 only sanctioned issue-creation path: ``vrg-gh`` denies raw ``gh issue create``
 and redirects here. ``--epic`` is required — pass ``--epic adhoc`` to target the
-target repo's ad-hoc epic, or an explicit ``owner/repo#N`` / ``#N`` epic ref.
+target repo's ad-hoc epic, ``--epic intake`` / ``--epic planning`` for its intake
+or planning queue epic, or an explicit ``owner/repo#N`` / ``#N`` epic ref.
 
-The target repo is ``--repo`` (default: the current repo). ``adhoc`` and a bare
-``#N`` are both read against it, never the cwd repo: ``#N`` is issue N in the
+The target repo is ``--repo`` (default: the current repo). The sentinels and a
+bare ``#N`` are all read against it, never the cwd repo: ``#N`` is issue N in the
 target repo's epic home (``<org>/.github`` for a public repo, the repo itself
 for a self-homed private one). A fully qualified ``owner/repo#N`` is taken as
 written (#3409, #3411).
@@ -34,10 +35,11 @@ def main(argv: list[str] | None = None) -> int:
     repo = args.repo or github.current_repo()
     owner, name = repo.split("/", 1)
     # Pre-network cross-org guard: the issue and its epic must share an owner so
-    # one App-installation token reaches both (#2070). The 'adhoc' sentinel and
-    # a bare '#N' both resolve within *repo*'s epic home (in *repo*'s org), so
-    # only a qualified epic ref can diverge.
-    if args.epic != "adhoc":
+    # one App-installation token reaches both (#2070). The standing sentinels
+    # (adhoc/intake/planning) and a bare '#N' all resolve within *repo*'s epic
+    # or queue home (in *repo*'s org), so only a qualified epic ref can diverge
+    # (#3514).
+    if args.epic not in epics.EPIC_SENTINELS:
         try:
             epic_owner = epics.parse_issue_ref(args.epic, default_repo=repo).owner
         except ValueError as exc:
@@ -157,7 +159,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--epic",
         required=True,
-        help="Epic ref: 'adhoc' (the target repo's ad-hoc epic), #N (issue N in the "
+        help="Epic ref: 'adhoc' (the target repo's ad-hoc epic), 'intake' or "
+        "'planning' (the target repo's intake or planning queue epic), #N (issue N in the "
         "target repo's epic home: <org>/.github for a public repo, the repo itself "
         "for a self-homed private one), or owner/repo#N (taken as written)",
     )
