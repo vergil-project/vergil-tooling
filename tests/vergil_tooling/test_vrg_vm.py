@@ -97,6 +97,7 @@ def _stub_guest_transport() -> Iterator[None]:
         patch(mod + "install_tooling"),
         patch(mod + "update_tooling"),
         patch(mod + "update_plugins"),
+        patch(mod + "prune_cache_images"),
         patch("vergil_tooling.lib.vm_packages.dev_ref", return_value=None),
     ):
         yield
@@ -1440,6 +1441,64 @@ class TestUpdate:
         assert "vergil-tooling: v2.0.63" in out
         assert "→" not in out
 
+    @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
+    def test_prunes_after_reinstall_before_plugins(
+        self, _status: MagicMock, _ver: MagicMock, config_file: Path
+    ) -> None:
+        # #3604: the box's freshly installed tooling prunes, rooted at the
+        # path-preserved projects mount (a Lima guest has no cwd-free default).
+        manager = MagicMock()
+        with (
+            patch("vergil_tooling.bin.vrg_vm.update_tooling", manager.update),
+            patch("vergil_tooling.bin.vrg_vm.prune_cache_images", manager.prune),
+            patch("vergil_tooling.bin.vrg_vm.update_plugins", manager.plugins),
+        ):
+            assert main(["update", "--config", str(config_file)]) == 0
+        assert [name for name, _, _ in manager.mock_calls] == ["update", "prune", "plugins"]
+        manager.prune.assert_called_once_with(ANY, ["/home/user/projects"])
+        _assert_transport(manager.prune, "vergil-agent")
+
+    @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
+    def test_failed_prune_does_not_fail_update(
+        self, _status: MagicMock, _ver: MagicMock, config_file: Path
+    ) -> None:
+        # prune_cache_images reports its own failure and returns False; the
+        # update still succeeds and still refreshes plugins.
+        with (
+            patch("vergil_tooling.bin.vrg_vm.prune_cache_images", return_value=False),
+            patch("vergil_tooling.bin.vrg_vm.update_plugins") as plugins,
+        ):
+            assert main(["update", "--config", str(config_file)]) == 0
+        plugins.assert_called_once()
+
+    @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
+    def test_no_prune_skips_the_prune(
+        self, _status: MagicMock, _ver: MagicMock, config_file: Path
+    ) -> None:
+        with patch("vergil_tooling.bin.vrg_vm.prune_cache_images") as prune:
+            assert main(["update", "--no-prune", "--config", str(config_file)]) == 0
+        prune.assert_not_called()
+
+    def test_lima_prune_without_projects_dir_keeps_box_default(self) -> None:
+        from vergil_tooling.bin import vrg_vm  # noqa: PLC0415
+
+        with (
+            patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None),
+            patch("vergil_tooling.bin.vrg_vm.prune_cache_images") as prune,
+        ):
+            vrg_vm._update_instance(
+                "vergil-agent",
+                "vergil",
+                Identity(vm_instance="vergil-agent"),
+                None,
+                "v2.0",
+                prune=True,
+            )
+        prune.assert_called_once_with(ANY, None)
+
 
 @pytest.fixture()
 def config_file_multi(tmp_path: Path) -> Path:
@@ -1500,6 +1559,27 @@ class TestUpdateAll:
         instances = [c.args[0].instance for c in mock_update.call_args_list]
         assert instances == ["vergil-agent", "vergil.acme.widgets"]
         assert all(isinstance(c.args[0], LimaTransport) for c in mock_update.call_args_list)
+
+    @pytest.mark.parametrize(("flags", "pruned"), [([], 2), (["--no-prune"], 0)])
+    @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
+    @patch("vergil_tooling.bin.vrg_vm.list_vms")
+    def test_prunes_every_updated_vm_unless_no_prune(
+        self,
+        mock_list: MagicMock,
+        _ver: MagicMock,
+        flags: list[str],
+        pruned: int,
+        config_file: Path,
+    ) -> None:
+        # #3604: each Lima box prunes against its identity's projects mount.
+        mock_list.return_value = [
+            {"name": "vergil-agent", "status": "Running"},
+            {"name": "vergil.acme.widgets", "status": "Running"},
+        ]
+        with patch("vergil_tooling.bin.vrg_vm.prune_cache_images") as prune:
+            assert main(["update", "--all", *flags, "--config", str(config_file)]) == 0
+        assert prune.call_count == pruned
+        assert all(c.args[1] == ["/home/user/projects"] for c in prune.call_args_list)
 
     @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
     @patch("vergil_tooling.bin.vrg_vm.update_tooling")
@@ -1716,8 +1796,11 @@ class TestUpdateAll:
                 status="RUNNING",
             )
         ]
-        result = main(["update", "--all", "--config", str(config_file)])
+        with patch("vergil_tooling.bin.vrg_vm.prune_cache_images") as prune:
+            result = main(["update", "--all", "--config", str(config_file)])
         assert result == 0
+        # #3604: the off-platform box prunes against its own default repo set.
+        assert call(fake_transport, None) in prune.call_args_list
         # Both boxes updated in place: Lima over limactl, off-platform over IAP.
         assert mock_update.call_count == 2
         # The IAP transport must address the box by its gcloud instance name
@@ -4416,6 +4499,7 @@ class TestCloudUpdate:
             _CloudPatches(tmp_path / "state", status="Running") as m,
             patch("vergil_tooling.bin.vrg_vm.update_tooling") as mock_update,
             patch("vergil_tooling.bin.vrg_vm.update_plugins") as mock_plugins,
+            patch("vergil_tooling.bin.vrg_vm.prune_cache_images") as mock_prune,
             patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None),
         ):
             m["transport"].return_value = transport
@@ -4424,6 +4508,8 @@ class TestCloudUpdate:
         mock_update.assert_called_once()
         assert mock_update.call_args.args[0] is transport
         mock_plugins.assert_called_once_with(transport)
+        # #3604: the box's own platform default repo set (/vergil/projects).
+        mock_prune.assert_called_once_with(transport, None)
         # No rebuild: the disposable VM is never destroyed or re-applied.
         m["destroy_vm"].assert_not_called()
         m["apply_vm"].assert_not_called()
