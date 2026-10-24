@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import subprocess
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
@@ -9,10 +11,12 @@ import pytest
 
 from tests.vergil_tooling.conftest import window_default_resolution
 from vergil_tooling.bin.vrg_container_cache import main
+from vergil_tooling.lib.cache_prune import CacheImage
+from vergil_tooling.lib.live_branches import RepoSetError
 from vergil_tooling.lib.versions.resolve import ResolutionError
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator, Iterator
     from pathlib import Path
 
 _VALID_TOML = """\
@@ -360,3 +364,137 @@ def test_clean_all_docker_error(capsys: pytest.CaptureFixture[str]) -> None:
         patch("vergil_tooling.bin.vrg_container_cache.subprocess.run", return_value=mock_result),
     ):
         assert main(["clean-all"]) == 1
+
+
+# -- prune subcommand (#3481) -------------------------------------------------
+
+_CLI = "vergil_tooling.bin.vrg_container_cache"
+_PY = "ghcr.io/vergil-project/prod-python"
+
+
+def _prune_images() -> list[CacheImage]:
+    return [
+        CacheImage(f"{_PY}:3.14--develop--0123abcd", "id-dev", "develop"),
+        CacheImage(f"{_PY}:3.14--feature-1-live--0123abcd", "id-live", "feature-1-live"),
+        CacheImage(f"{_PY}:3.14--feature-2-gone--0123abcd", "id-gone", "feature-2-gone"),
+        CacheImage(f"{_PY}:3.14--feature-3-used--0123abcd", "id-used", "feature-3-used"),
+    ]
+
+
+def _projects(tmp_path: Path) -> Path:
+    (tmp_path / "org" / "a" / ".git").mkdir(parents=True)
+    return tmp_path
+
+
+@contextlib.contextmanager
+def _prune_env(
+    tmp_path: Path, *, removed: list[tuple[str, str]] | None = None
+) -> Generator[MagicMock]:
+    repo = (tmp_path / "org" / "a").resolve()
+    with (
+        patch(_CLI + ".detect_runtime", return_value="nerdctl"),
+        patch(_CLI + ".default_repo_roots", return_value=[_projects(tmp_path)]),
+        patch(_CLI + ".list_cache_images", return_value=_prune_images()),
+        patch(_CLI + ".live_branches", return_value={repo: frozenset({"feature/1-live"})}),
+        patch(_CLI + ".images_in_use", return_value={"id-used"}),
+        patch(_CLI + ".remove_images", return_value=removed or []) as m_remove,
+    ):
+        yield m_remove
+
+
+def test_prune_is_a_dry_run_by_default(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    with _prune_env(tmp_path) as m_remove:
+        assert main(["prune"]) == 0
+    m_remove.assert_not_called()
+    out = capsys.readouterr().out
+    assert f"Repo set: 1 repo(s) under {tmp_path}" in out
+    assert "keep    ghcr.io/vergil-project/prod-python:3.14--develop--0123abcd" in out
+    assert "(protected branch 'develop')" in out
+    assert "(branch 'feature-1-live' live in org/a)" in out
+    assert "(in use by a container)" in out
+    assert "remove  ghcr.io/vergil-project/prod-python:3.14--feature-2-gone--0123abcd" in out
+    assert "Dry run: 1 of 4 cached image(s) would be removed." in out
+
+
+def test_prune_apply_removes_only_finished_images(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with _prune_env(tmp_path) as m_remove:
+        assert main(["prune", "--apply"]) == 0
+    m_remove.assert_called_once_with([f"{_PY}:3.14--feature-2-gone--0123abcd"], "nerdctl")
+    assert "Removed 1 of 1 cached image(s)." in capsys.readouterr().out
+
+
+def test_prune_apply_fails_loudly_on_rmi_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ref = f"{_PY}:3.14--feature-2-gone--0123abcd"
+    with _prune_env(tmp_path, removed=[(ref, "image is being used")]):
+        assert main(["prune", "--apply"]) == 1
+    captured = capsys.readouterr()
+    assert "Removed 0 of 1 cached image(s)." in captured.out
+    assert f"error: could not remove {ref}: image is being used" in captured.err
+
+
+def test_prune_root_replaces_the_default(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = _projects(tmp_path / "explicit")
+    with (
+        _prune_env(tmp_path),
+        patch(_CLI + ".default_repo_roots") as m_default,
+    ):
+        assert main(["prune", "--root", str(root)]) == 0
+    m_default.assert_not_called()
+    assert f"under {root}" in capsys.readouterr().out
+
+
+def test_prune_refuses_an_empty_repo_set(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with (
+        patch(_CLI + ".detect_runtime", return_value="docker"),
+        patch(_CLI + ".list_cache_images") as m_list,
+    ):
+        assert main(["prune", "--root", str(tmp_path)]) == 1
+    m_list.assert_not_called()
+    assert "no git repositories under" in capsys.readouterr().err
+
+
+def test_prune_reports_an_undeterminable_repo_set(capsys: pytest.CaptureFixture[str]) -> None:
+    with (
+        patch(_CLI + ".detect_runtime", return_value="docker"),
+        patch(_CLI + ".default_repo_roots", side_effect=RepoSetError("pass --root DIR")),
+    ):
+        assert main(["prune"]) == 1
+    assert "error: pass --root DIR" in capsys.readouterr().err
+
+
+def test_prune_with_no_cached_images(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    with (
+        _prune_env(tmp_path),
+        patch(_CLI + ".list_cache_images", return_value=[]),
+        patch(_CLI + ".live_branches") as m_live,
+    ):
+        assert main(["prune"]) == 0
+    m_live.assert_not_called()
+    assert "No cached per-branch images." in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        RuntimeError("'nerdctl ps' failed: boom"),
+        subprocess.CalledProcessError(128, ("git", "ls-remote"), stderr="fatal: boom"),
+    ],
+)
+def test_prune_stops_before_removing_when_a_lookup_fails(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], error: Exception
+) -> None:
+    with (
+        _prune_env(tmp_path) as m_remove,
+        patch(_CLI + ".live_branches", side_effect=error),
+    ):
+        assert main(["prune", "--apply"]) == 1
+    m_remove.assert_not_called()
+    assert "boom" in capsys.readouterr().err

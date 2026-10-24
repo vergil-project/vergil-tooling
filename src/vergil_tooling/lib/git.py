@@ -67,6 +67,23 @@ def _git_auth_env(token: str) -> dict[str, str]:
     }
 
 
+def _split_repo(args: tuple[str, ...]) -> tuple[str | None, str]:
+    """Return ``(repo, subcommand)`` for *args*, reading a leading ``-C <repo>``.
+
+    ``-C`` runs git against another repository (the multi-repo branch lookup,
+    #3481); the subcommand after it still decides auth and retry handling, and
+    the repo decides which org's token authenticates it.
+    """
+    if len(args) >= 2 and args[0] == "-C":
+        return args[1], (args[2] if len(args) > 2 else "")
+    return None, (args[0] if args else "")
+
+
+def _subcommand(args: tuple[str, ...]) -> str:
+    """Return the git subcommand in *args* (see :func:`_split_repo`)."""
+    return _split_repo(args)[1]
+
+
 def _git_env(args: tuple[str, ...]) -> dict[str, str]:
     """Build the env for a git invocation.
 
@@ -74,11 +91,17 @@ def _git_env(args: tuple[str, ...]) -> dict[str, str]:
     credentials we did not supply must fail fast, never hang forever on an
     unanswerable interactive prompt (the bug that wedged `git remote prune` in
     vrg-finalize-pr). For remote-capable subcommands the GitHub installation
-    token is layered on when available.
+    token is layered on when available — for a ``-C <repo>`` call, the token of
+    that repo's org rather than the CWD's.
     """
     env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
-    if args and args[0] in _REMOTE_SUBCOMMANDS:
-        token = github.get_installation_token()
+    repo, subcommand = _split_repo(args)
+    if subcommand in _REMOTE_SUBCOMMANDS:
+        token = (
+            github.get_installation_token(github.detect_org(cwd=repo))
+            if repo is not None
+            else github.get_installation_token()
+        )
         if token is not None:
             env = _git_auth_env(token)
     return env
@@ -95,8 +118,9 @@ def run(*args: str) -> None:
     def _once() -> int:
         return progress.run(("git", *args), env=env)
 
-    if args and args[0] in _RETRYABLE_SUBCOMMANDS:
-        _retry_network(args[0], _once)
+    subcommand = _subcommand(args)
+    if subcommand in _RETRYABLE_SUBCOMMANDS:
+        _retry_network(subcommand, _once)
     else:
         _once()
 
@@ -119,8 +143,9 @@ def read_output(*args: str) -> str:
         )
 
     try:
-        if args and args[0] in _RETRYABLE_SUBCOMMANDS:
-            result = _retry_network(args[0], _once)
+        subcommand = _subcommand(args)
+        if subcommand in _RETRYABLE_SUBCOMMANDS:
+            result = _retry_network(subcommand, _once)
         else:
             result = _once()
     except subprocess.CalledProcessError as exc:
@@ -263,6 +288,28 @@ def commit_sha(ref: str) -> str:
     return read_output("rev-parse", ref)
 
 
+def remote_tracking_branches(remote: str = "origin", repo: Path | None = None) -> set[str]:
+    """Return the branch names under ``refs/remotes/<remote>/`` (local, no network).
+
+    As of the last fetch, so possibly stale: a branch deleted on the remote stays
+    listed until a pruning fetch. ``<remote>/HEAD`` is a pointer, not a branch,
+    and is omitted.
+    """
+    output = read_output(
+        *_in_repo(repo),
+        "for-each-ref",
+        "--format=%(refname:lstrip=3)",
+        f"refs/remotes/{remote}",
+    )
+    return {name for name in output.splitlines() if name and name != "HEAD"}
+
+
+def remote_names(repo: Path | None = None) -> set[str]:
+    """Return the names of the remotes configured in *repo* (or the CWD's repo)."""
+    output = read_output(*_in_repo(repo), "remote")
+    return set(output.splitlines()) if output else set()
+
+
 def worktree_git_dir(path: str | Path) -> Path:
     """Return the absolute git-dir for the worktree at *path*.
 
@@ -296,29 +343,36 @@ def commits_ahead(base: str, branch: str) -> int:
     return int(read_output("rev-list", "--count", f"{base}..{branch}"))
 
 
-def local_branches() -> set[str]:
+def _in_repo(repo: Path | None) -> tuple[str, ...]:
+    """Return the ``-C <repo>`` prefix that runs git in *repo* (none for the CWD)."""
+    return ("-C", str(repo)) if repo is not None else ()
+
+
+def local_branches(repo: Path | None = None) -> set[str]:
     """Return the short names of all local branches.
 
     Used to tell whether a cached per-branch dev image is orphaned: an image is a
     local artifact of a local branch, so a branch absent here has no live work
-    referencing its image (#2600).
+    referencing its image (#2600). *repo* reads another repository instead of
+    the CWD's (#3481).
     """
-    output = read_output("branch", "--format=%(refname:short)")
+    output = read_output(*_in_repo(repo), "branch", "--format=%(refname:short)")
     if not output:
         return set()
     return set(output.splitlines())
 
 
-def remote_branches(remote: str = "origin") -> set[str]:
+def remote_branches(remote: str = "origin", repo: Path | None = None) -> set[str]:
     """Return the branch names present on *remote* (via ``ls-remote --heads``).
 
     Strips the ``refs/heads/`` prefix, so a nested name like ``feature/123-x``
     comes back whole. Used to tell whether a branch still exists on the remote
     when deciding if a reserved ref keyed to it has been orphaned (#2369).
+    *repo* reads another repository instead of the CWD's (#3481).
     """
     prefix = "refs/heads/"
     names: set[str] = set()
-    for line in read_output("ls-remote", "--heads", remote).splitlines():
+    for line in read_output(*_in_repo(repo), "ls-remote", "--heads", remote).splitlines():
         _sha, _tab, ref = line.partition("\t")
         if ref.startswith(prefix):
             names.add(ref[len(prefix) :])
