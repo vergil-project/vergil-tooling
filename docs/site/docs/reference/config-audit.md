@@ -304,6 +304,36 @@ version-agnostic CI model (epic
   push restrictions) is **reported, not touched**. The blast radius is minimal
   and intentional protections are preserved.
 
+## GitHub checks — undeclared ruleset parameters
+
+GitHub sometimes adds a new ruleset rule parameter and sets a default for
+it on its side, as it did with
+`require_extra_approval_for_unattributed_changes` on the `pull_request`
+rule (#2860). When a live rule carries a parameter key that the desired
+rule of the same `type` does not declare, the audit reports it as an
+**undeclared parameter**, separately from value mismatches. The message
+names the ruleset, the rule type, the key, and the live value:
+
+```text
+UNDECLARED PARAMETER: rulesets.Branch protection rule 'pull_request' has
+'require_extra_approval_for_unattributed_changes' = True live, ...
+```
+
+- **It is non-compliant.** The live ruleset enforces a setting the spec
+  never chose, so `audit` exits 1, the same as any other drift.
+- **`apply` cannot fix it.** The ruleset `PUT` leaves out the key, so
+  GitHub applies its default again. `apply` still fixes any value drift,
+  writes nothing when the only issues are undeclared parameters, and
+  exits 1 with a pointer to the decision.
+- **Resolve it in the spec.** Either declare the key with an explicit
+  value in the desired ruleset in `lib/github_config.py`, or add it to
+  `_STRIP_RULE_PARAMS` if it should be ignored. Keys on that list
+  (`do_not_enforce_on_create`, `dismissal_restriction`) are removed before
+  comparison and never reported.
+
+A whole live rule whose `type` the desired ruleset lacks is not an
+undeclared parameter. It is reported as `.rules` value drift.
+
 ## Related
 
 - [Consuming Repo Setup](../guides/consuming-repo-setup.md) — the

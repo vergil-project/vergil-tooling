@@ -10,7 +10,7 @@ from __future__ import annotations
 import copy
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
@@ -1241,15 +1241,34 @@ class DiffItem:
 
 
 @dataclass
+class UndeclaredParam:
+    """A live ruleset rule parameter the desired rule never declares (#3548).
+
+    The signature of a GitHub-introduced server-side default (the #2860 and
+    #2179 footprint): the desired spec is silent on the key, so the PUT that
+    ``apply`` sends omits it and GitHub re-applies its default. Only a spec
+    decision resolves it, so it is reported apart from value mismatches.
+    """
+
+    ruleset: str
+    rule_type: str
+    key: str
+    value: object
+
+
+@dataclass
 class ConfigDiff:
     items: list[DiffItem] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    undeclared: list[UndeclaredParam] = field(default_factory=list)
 
     def is_compliant(self) -> bool:
         # Warnings are advisory (e.g. a deprecated-but-tolerated marketplace
         # ref mid-migration, #1974) and deliberately do not affect compliance.
-        return len(self.items) == 0
+        # An undeclared parameter does: the live ruleset enforces a knob the
+        # spec never chose (#3548).
+        return len(self.items) == 0 and len(self.undeclared) == 0
 
 
 def _canonical_key(obj: object) -> str:
@@ -1313,11 +1332,57 @@ def _diff_dataclass(
         _diff_dataclass(f"{prefix}.{field_name}", d_val, a_val, items, skipped)
 
 
+def _split_undeclared_params(
+    desired: DesiredRuleset, actual: DesiredRuleset
+) -> tuple[DesiredRuleset, list[UndeclaredParam]]:
+    """Separate live rule parameters the desired rule never declares (#3548).
+
+    Rules are matched by ``type``. For each live rule whose type the desired
+    ruleset also carries, every parameter key absent from the desired rule is
+    an :class:`UndeclaredParam`, and is removed from the returned copy of
+    *actual* so the value comparison reports only genuine mismatches on
+    declared keys. Strip-listed GitHub defaults (``_STRIP_RULE_PARAMS``) were
+    already removed by ``_normalize_rules`` and so never surface here. A live
+    rule of a type the desired ruleset lacks is whole-rule drift, left for
+    the value comparison.
+    """
+    desired_params: dict[object, set[str]] = {}
+    for rule in desired.rules:
+        params = rule.get("parameters")
+        keys = cast("dict[str, object]", params).keys() if isinstance(params, dict) else ()
+        desired_params[rule.get("type")] = set(keys)
+
+    undeclared: list[UndeclaredParam] = []
+    rules: list[dict[str, object]] = []
+    for raw in actual.rules:
+        rule_type = raw.get("type") if isinstance(raw, dict) else None
+        params = raw.get("parameters") if isinstance(raw, dict) else None
+        if rule_type not in desired_params or not isinstance(params, dict):
+            rules.append(raw)
+            continue
+        live = cast("dict[str, object]", params)
+        declared = desired_params[rule_type]
+        undeclared.extend(
+            UndeclaredParam(ruleset=actual.name, rule_type=str(rule_type), key=key, value=value)
+            for key, value in sorted(live.items())
+            if key not in declared
+        )
+        kept = {k: v for k, v in live.items() if k in declared}
+        if kept or declared:
+            rules.append({**raw, "parameters": kept})
+        else:
+            # The desired rule is bare (e.g. ``{"type": "deletion"}``), so an
+            # emptied parameter block must vanish too or it reads as drift.
+            rules.append({k: v for k, v in raw.items() if k != "parameters"})
+    return replace(actual, rules=rules), undeclared
+
+
 def _diff_rulesets(
     desired: list[DesiredRuleset],
     actual: list[DesiredRuleset],
     items: list[DiffItem],
     skipped: list[str],
+    undeclared: list[UndeclaredParam],
 ) -> None:
     desired_by_name = {r.name: r for r in desired}
     actual_by_name = {r.name: r for r in actual}
@@ -1332,10 +1397,14 @@ def _diff_rulesets(
                 )
             )
         else:
+            declared_actual, found = _split_undeclared_params(
+                desired_by_name[name], actual_by_name[name]
+            )
+            undeclared.extend(found)
             _diff_dataclass(
                 f"rulesets.{name}",
                 desired_by_name[name],
-                actual_by_name[name],
+                declared_actual,
                 items,
                 skipped,
             )
@@ -1390,6 +1459,7 @@ def compute_diff(*, desired: DesiredState, actual: DesiredState) -> ConfigDiff:
     """Compare desired vs actual state and return structured diff."""
     items: list[DiffItem] = []
     skipped: list[str] = []
+    undeclared: list[UndeclaredParam] = []
     _diff_dataclass("repo_settings", desired.repo_settings, actual.repo_settings, items, skipped)
     _diff_dataclass("security", desired.security, actual.security, items, skipped)
     _diff_dataclass(
@@ -1399,9 +1469,9 @@ def compute_diff(*, desired: DesiredState, actual: DesiredState) -> ConfigDiff:
         items,
         skipped,
     )
-    _diff_rulesets(desired.rulesets, actual.rulesets, items, skipped)
+    _diff_rulesets(desired.rulesets, actual.rulesets, items, skipped, undeclared)
     _diff_producibility(desired.rulesets, actual.rulesets, items)
-    return ConfigDiff(items=items, skipped=skipped)
+    return ConfigDiff(items=items, skipped=skipped, undeclared=undeclared)
 
 
 # ---------------------------------------------------------------------------
