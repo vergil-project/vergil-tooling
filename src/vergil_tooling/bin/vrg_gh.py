@@ -30,7 +30,15 @@ _ALLOWED: dict[str, set[str]] = {
         "merge",
         "update-branch",
     },
-    "run": {"list", "view", "watch"},
+    # `rerun` lets an agent retry a failed CI job without a human round trip:
+    # it repeats an existing run and crosses no human gate. It starts CI
+    # work, so it stays off the audit allowlist. See issue #3420.
+    "run": {"list", "view", "watch", "rerun"},
+    # `workflow` and `cache` are read-only here. `workflow run` is denied
+    # outright (see _DENIED_ALWAYS); enable/disable and cache delete fall to
+    # the action-level allowlist's deny-by-default. See issue #3420.
+    "workflow": {"list", "view"},
+    "cache": {"list"},
     "repo": {"view", "list"},
     # `release` is read-only here: only `list` and `view` are permitted so
     # release facts can be queried directly. Write actions (create/edit/
@@ -46,6 +54,11 @@ _ALLOWED: dict[str, set[str]] = {
 
 _ALLOWED_AUDIT: dict[str, set[str]] = {
     "pr": {"view", "diff", "list", "checks", "comment", "review"},
+    # Listing and viewing workflows and caches only reads CI configuration
+    # and state, which a reviewer may need to judge a PR's checks, so the
+    # least-privilege audit identity gets them too. See issue #3420.
+    "workflow": {"list", "view"},
+    "cache": {"list"},
 }
 
 _DENIED_ALWAYS: dict[str, dict[str, str]] = {
@@ -68,6 +81,14 @@ _DENIED_ALWAYS: dict[str, dict[str, str]] = {
         "edit": "gh repo edit is denied by vrg-gh.",
         "create": "gh repo create is denied by vrg-gh.",
         "delete": "gh repo delete is denied by vrg-gh.",
+    },
+    # Dispatching a workflow can start CD or a release, which is a human
+    # action. Denied for every identity. See issue #3420.
+    "workflow": {
+        "run": (
+            "Dispatching a workflow can start CD or a release, which is a "
+            "human action; ask the human to run it."
+        ),
     },
 }
 
@@ -351,9 +372,10 @@ def _print_help() -> None:
         "\n"
         "What it enforces:\n"
         f"  - Allowed (human/user): {allowed}.\n"
-        "    The audit identity is narrower (read-only pr actions); agents are\n"
-        "    barred from pr create/edit/merge.\n"
-        "  - Denied outright: gh auth, pr close, repo edit/create/delete.\n"
+        "    The audit identity is narrower (pr read/review actions, workflow\n"
+        "    list/view, cache list); agents are barred from pr create/edit/merge.\n"
+        "  - Denied outright: gh auth, issue create, pr close, repo\n"
+        "    edit/create/delete, workflow run.\n"
         "  - gh api is gated by identity: human full, audit read-only GET, user\n"
         "    denied.\n"
         "\n"
