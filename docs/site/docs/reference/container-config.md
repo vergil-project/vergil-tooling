@@ -327,3 +327,31 @@ prints nothing. `--script` is the CI-consumption entry point — the CI test job
 call it to obtain the exact command to run per job (see
 [CI Architecture → Repo-specific build steps](../guides/ci-architecture.md#repo-specific-build-steps)),
 mirroring how `vrg-container-system-packages --install-script` feeds the apt step.
+
+## Low-disk auto-prune (`VRG_CACHE_PRUNE_FREE_GB`)
+
+Not a `[container]` key: the image store belongs to the machine, not the repo, so
+this is a host environment variable.
+
+Just before `vrg-container-run` (or `vrg-container-cache build`, or
+`vrg-finalize-pr`'s provisioning step) builds a cached dev image, it checks the
+free space on the filesystem that holds the runtime's image store. When that is
+below the threshold, it runs the same prune as
+`vrg-container-cache prune --apply` against the same repo set, and prints each
+image it removed.
+
+| Variable | Default | Semantics |
+|---|---|---|
+| `VRG_CACHE_PRUNE_FREE_GB` | `10` | Free space, in GB, below which a cache build first prunes finished branches' images. `0` turns the auto-prune off; a value that is not a non-negative number stops the build |
+
+- **The repo set is never guessed.** On the physical host, which has no default
+  repo set, the prune is skipped with a warning; run
+  `vrg-container-cache prune --apply --root DIR` by hand.
+- **Failures are loud.** A prune that cannot run, or an image it cannot remove,
+  is printed as a warning.
+- **The build goes ahead only with room for it.** After the prune, the build
+  continues if at least 3 GB (or the threshold, if lower) is free, with a warning
+  while still below the threshold. With less, it stops with the free-space
+  numbers and the manual command, rather than fail part way through.
+- **An unmeasurable store is skipped.** Docker Desktop keeps its image store
+  inside its own VM; there the check is skipped with a note.

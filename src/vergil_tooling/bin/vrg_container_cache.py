@@ -23,6 +23,7 @@ from vergil_tooling.lib.cache_prune import (
     plan_prune,
     remove_images,
 )
+from vergil_tooling.lib.cache_space import CacheSpaceError
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.container import (
     assert_runtime_available,
@@ -101,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
     }
     try:
         return dispatch[args.command](args, runtime=runtime)
-    except VersionsError as exc:
+    except (VersionsError, CacheSpaceError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

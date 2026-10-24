@@ -15,6 +15,7 @@ from vergil_tooling.lib.cache_prune import (
     images_in_use,
     list_cache_images,
     plan_prune,
+    prune_finished_images,
     prune_orphan_branch_images,
     remove_images,
 )
@@ -291,6 +292,26 @@ def test_prune_reports_rmi_failures() -> None:
     run, _removed = _runtime(f"{gone}\tid3\n", rmi={gone: _done(returncode=1, stderr="conflict")})
     with patch(_LIVE, return_value={_REPO_A: frozenset()}), patch(_RUN, side_effect=run):
         assert prune_orphan_branch_images([_REPO_A], runtime="docker") == (0, [(gone, "conflict")])
+
+
+def test_prune_finished_images_returns_the_removed_refs() -> None:
+    # The auto-prune prints what it removed, so the refs come back, not a count;
+    # a ref whose rmi was refused is a failure, not a removal (#3571).
+    gone = f"{_PY}:3.14--feature-3-gone--89abcdef"
+    stuck = f"{_PY}:3.14--feature-4-stuck--01234567"
+    run, _removed = _runtime(
+        f"{gone}\tid3\n{stuck}\tid4\n", rmi={stuck: _done(returncode=1, stderr="conflict")}
+    )
+    with patch(_LIVE, return_value={_REPO_A: frozenset()}), patch(_RUN, side_effect=run):
+        result = prune_finished_images([_REPO_A], runtime="docker")
+    assert result == ([gone], [(stuck, "conflict")])
+
+
+def test_prune_finished_images_with_no_cached_images() -> None:
+    run, _removed = _runtime(f"{_PY}:3.14\tid1\n")
+    with patch(_LIVE) as mock_live, patch(_RUN, side_effect=run):
+        assert prune_finished_images([_REPO_A], runtime="docker") == ([], [])
+    mock_live.assert_not_called()
 
 
 def test_prune_with_no_cached_images_reads_no_branches() -> None:
