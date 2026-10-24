@@ -6,8 +6,9 @@ from unittest.mock import patch
 
 import pytest
 
-from vergil_tooling.bin.vrg_ensure_label import main, parse_args
+from vergil_tooling.bin.vrg_ensure_label import labels_to_delete, main, parse_args
 from vergil_tooling.lib import github
+from vergil_tooling.lib.intake_route import RETIRED_LABELS
 
 _MOD = "vergil_tooling.bin.vrg_ensure_label"
 
@@ -121,8 +122,17 @@ def test_main_single_label_with_color_description() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _repo_with(*names: str):
+    """Patch ``gh label list`` to report a repo that has exactly *names*."""
+    return patch(f"{_MOD}.github.read_json", return_value=[{"name": n} for n in names])
+
+
+def _deleted(mock_run) -> list[str]:
+    return [c.args[2] for c in mock_run.call_args_list if c.args[1] == "delete"]
+
+
 def test_main_sync_provisions_all_labels() -> None:
-    with patch("vergil_tooling.bin.vrg_ensure_label.github.run") as mock_run:
+    with _repo_with(), patch("vergil_tooling.bin.vrg_ensure_label.github.run") as mock_run:
         result = main(["--repo", "o/r", "--sync"])
     assert result == 0
     # Should have called once per label + once for the delete
@@ -132,12 +142,13 @@ def test_main_sync_provisions_all_labels() -> None:
     # 19 after adding the 'archive' label (adhoc-archive-rename epic #281);
     # 21 after adding 'bug' and 'docs' to complete the kind axis (issue #1971);
     # 22 after adding 'dependency-update' (issue #3253);
-    # 25 after adding 'intake', 'planning', and 'in-progress' (issue #2481).
-    assert len(label_calls) == 25
+    # 25 after adding 'intake', 'planning', and 'in-progress' (issue #2481);
+    # 22 after removing the retired 'triage', 'idea', 'research' (issue #3546).
+    assert len(label_calls) == 22
 
 
 def test_main_sync_uses_force_with_color_description() -> None:
-    with patch("vergil_tooling.bin.vrg_ensure_label.github.run") as mock_run:
+    with _repo_with(), patch("vergil_tooling.bin.vrg_ensure_label.github.run") as mock_run:
         main(["--repo", "o/r", "--sync"])
     # Check one representative call has --force, --color, --description
     first_create = next(c for c in mock_run.call_args_list if c.args[1] == "create")
@@ -146,25 +157,75 @@ def test_main_sync_uses_force_with_color_description() -> None:
     assert "--description" in first_create.args
 
 
-def test_main_sync_deletes_deprecated_labels() -> None:
-    with patch("vergil_tooling.bin.vrg_ensure_label.github.run") as mock_run:
+def test_main_sync_lists_existing_labels_once() -> None:
+    with _repo_with() as mock_list, patch(f"{_MOD}.github.run"):
         main(["--repo", "o/r", "--sync"])
-    delete_calls = [c for c in mock_run.call_args_list if c.args[1] == "delete"]
-    assert len(delete_calls) == 2
-    deleted = {c.args[2] for c in delete_calls}
-    assert deleted == {"enhancement", "standing"}
+    mock_list.assert_called_once_with(
+        "label", "list", "--repo", "o/r", "--json", "name", "--limit", "1000"
+    )
 
 
-def test_main_sync_delete_ignores_missing_label() -> None:
-    """Deleting a non-existent label should not raise."""
+def test_main_sync_deletes_deprecated_labels() -> None:
+    with _repo_with("bug", "enhancement", "standing"), patch(f"{_MOD}.github.run") as mock_run:
+        main(["--repo", "o/r", "--sync"])
+    assert _deleted(mock_run) == ["enhancement", "standing"]
+    delete = next(c for c in mock_run.call_args_list if c.args[1] == "delete")
+    assert delete.args == ("label", "delete", "enhancement", "--repo", "o/r", "--yes")
+
+
+def test_main_sync_deletes_retired_intake_labels(capsys: pytest.CaptureFixture[str]) -> None:
+    # The retired intake kinds (epic .github#176) are de-provisioned, and each
+    # removal is reported.
+    with (
+        _repo_with("bug", "triage", "idea", "research"),
+        patch(f"{_MOD}.github.run") as mock_run,
+    ):
+        result = main(["--repo", "o/r", "--sync"])
+    assert result == 0
+    assert _deleted(mock_run) == ["idea", "research", "triage"]
+    out = capsys.readouterr().out
+    for name in ("idea", "research", "triage"):
+        assert f"  deleted {name}\n" in out
+
+
+def test_main_sync_clean_repo_deletes_nothing(capsys: pytest.CaptureFixture[str]) -> None:
+    # Idempotent: a repo without any deprecated or retired label is a no-op.
+    with _repo_with("bug", "epic"), patch(f"{_MOD}.github.run") as mock_run:
+        result = main(["--repo", "o/r", "--sync"])
+    assert result == 0
+    assert _deleted(mock_run) == []
+    assert "deleted" not in capsys.readouterr().out
+
+
+def test_main_sync_delete_failure_propagates() -> None:
+    # A real API error on delete is never swallowed.
+    error = github.GitHubAPIError(1, ["gh"], "", "HTTP 403: Resource not accessible")
 
     def side_effect(*args: str) -> None:
         if args[1] == "delete":
-            raise RuntimeError("label not found")
+            raise error
 
-    with patch("vergil_tooling.bin.vrg_ensure_label.github.run", side_effect=side_effect):
-        result = main(["--repo", "o/r", "--sync"])
-    assert result == 0
+    with (
+        _repo_with("triage"),
+        patch(f"{_MOD}.github.run", side_effect=side_effect),
+        pytest.raises(github.GitHubAPIError),
+    ):
+        main(["--repo", "o/r", "--sync"])
+
+
+def test_main_sync_rejects_non_list_label_listing() -> None:
+    with (
+        patch(f"{_MOD}.github.read_json", return_value={"message": "nope"}),
+        patch(f"{_MOD}.github.run"),
+        pytest.raises(TypeError, match="unexpected `gh label list` output for o/r"),
+    ):
+        main(["--repo", "o/r", "--sync"])
+
+
+def test_labels_to_delete_merges_registry_and_retired_labels() -> None:
+    registry = {"labels": [], "delete": ["enhancement", "triage"]}
+    assert labels_to_delete(registry) == ["enhancement", "triage", "idea", "research"]
+    assert labels_to_delete({"labels": []}) == sorted(RETIRED_LABELS)
 
 
 # ---------------------------------------------------------------------------
@@ -178,6 +239,7 @@ def test_main_project_mode_discovers_and_syncs() -> None:
             "vergil_tooling.bin.vrg_ensure_label.list_project_repos",
             return_value=["owner/a", "owner/b"],
         ) as mock_discover,
+        _repo_with(),
         patch("vergil_tooling.bin.vrg_ensure_label.github.run"),
     ):
         result = main(["--owner", "myorg", "--project", "3", "--sync"])

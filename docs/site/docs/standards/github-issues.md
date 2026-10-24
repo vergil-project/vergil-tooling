@@ -521,7 +521,6 @@ up to date (see
 | `chore` | Maintenance, tooling, configuration |
 | `ci` | CI/CD pipeline changes |
 | `build` | Build system or dependencies |
-| `research` | **Retired** (see below) |
 | `rtfm` | Resolved by reading existing docs |
 | `observability` | Monitoring, reporting, health checks |
 | `dependency-update` | Mechanized dependency update; an open one gates the next release (see [Dependency updates](../guides/releasing.md#dependency-updates)) |
@@ -531,8 +530,6 @@ up to date (see
 | `planning` | Marks the standing planning epic (with `epic`) and its archives (with `archive`); never auto-closes |
 | `in-progress` | Planning item whose `epic-create` session is underway |
 | `archive` | Terminal per-quarter archive of closed standing-epic work (ad-hoc, intake, planning); historical record |
-| `triage` | **Retired** (see below) |
-| `idea` | **Retired** (see below) |
 | `hotfix` | Emergency fix that skipped formal planning; flagged for retroactive review |
 | `validation` | Post-merge validation: run the checklist, record PASS/FAIL as a comment; never auto-closed |
 | `deployment` | Deployment task: install/sync merged changes so they are usable; never auto-closed |
@@ -543,8 +540,9 @@ The parent epic carries an issue's state, so no label restates it. `intake` and
 does, and `in-progress` is the single per-item label, used only on planning
 items. The former intake kind labels `triage`, `idea`, and `research` are
 **retired**: no tool or skill applies them, and the daily orphan pass strips
-them from every open issue. They remain in the registry (so a label sync still
-creates them) until the label-set review decides their fate.
+them from every open issue. They are no longer in the registry, and a label
+sync (`vrg-ensure-label --sync`) deletes them from any repo that still has
+them, which also strips them from any issue still carrying them.
 
 `dependency-update` goes on PRs, not issues: `vrg-update-deps` and the
 `vrg-release` `update-deps` stage put it on every dependency-update PR
