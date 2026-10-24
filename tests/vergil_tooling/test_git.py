@@ -239,6 +239,33 @@ def test_is_ancestor_raises_on_error() -> None:
     assert "Not a valid commit" in exc_info.value.stderr
 
 
+def test_is_ignored_true() -> None:
+    with patch("vergil_tooling.lib.git.subprocess.run") as mock_run:
+        mock_run.return_value = _completed(returncode=0)
+        assert git.is_ignored(Path("docs/site/docs/changelog.md")) is True
+    args, kwargs = mock_run.call_args
+    assert args[0] == ("git", "check-ignore", "-q", "docs/site/docs/changelog.md")
+    assert kwargs["env"]["GIT_TERMINAL_PROMPT"] == "0"
+
+
+def test_is_ignored_false() -> None:
+    with patch("vergil_tooling.lib.git.subprocess.run") as mock_run:
+        mock_run.return_value = _completed(returncode=1)
+        assert git.is_ignored("tracked.md") is False
+
+
+def test_is_ignored_raises_on_error() -> None:
+    """A check-ignore failure (exit 128) is an error, never a silent 'not ignored'."""
+    with patch("vergil_tooling.lib.git.subprocess.run") as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=128, stdout="", stderr="fatal: outside repository"
+        )
+        with pytest.raises(subprocess.CalledProcessError) as exc_info:
+            git.is_ignored("/elsewhere/x")
+    assert exc_info.value.returncode == 128
+    assert "outside repository" in exc_info.value.stderr
+
+
 def test_commit_sha_resolves_ref() -> None:
     with patch("vergil_tooling.lib.git.read_output", return_value="abc123") as mock:
         assert git.commit_sha("develop") == "abc123"
