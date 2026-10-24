@@ -1300,19 +1300,55 @@ def normalize_adhoc_archives(org: str, *, apply: bool) -> list[ArchiveConversion
     return conversions
 
 
-def is_epic_linkage(ref: str, *, default_repo: str) -> bool:
-    """True if *ref* points at an epic, so it must not be linked as a PR's task.
+# Labels marking an umbrella issue that is never itself a task: an ``epic`` (live
+# or standing) or a per-quarter standing-epic ``archive``. Checked in this order,
+# so an issue carrying both reads as the epic it still is.
+_NON_TASK_LABELS = ("epic", "archive")
 
-    Single source of truth for "is this linkage an epic?", shared by
-    ``vrg-submit-pr`` and ``vrg-pr-workflow report-ready``. Self-scoping: an
-    unparseable ref (e.g. a legacy issue with no resolvable repo) is never an
-    epic and returns False.
+
+def non_task_kind(ref: IssueRef) -> str | None:
+    """``"epic"`` or ``"archive"`` when *ref* is an umbrella, not a task; else None."""
+    labels = _labels(ref)
+    return next((label for label in _NON_TASK_LABELS if label in labels), None)
+
+
+def non_task_ref_kind(ref: str, *, default_repo: str) -> str | None:
+    """``"epic"`` / ``"archive"`` when the ref string *ref* names a non-task, else None.
+
+    Single source of truth for "is this an epic or archive where a task is
+    expected?" (#2842), shared by ``vrg-submit-pr``, ``vrg-pr-workflow
+    report-ready``, ``vrg-epic-link --task`` and ``vrg-issue-create
+    --blocked-by``. Self-scoping: an unparseable ref (e.g. a legacy issue with
+    no resolvable repo) is never a non-task and returns None. A failed label
+    lookup raises — it is never read as "a task".
     """
     try:
         issue = parse_issue_ref(ref, default_repo=default_repo)
     except ValueError:
-        return False
-    return is_epic(issue)
+        return None
+    return non_task_kind(issue)
+
+
+_NON_TASK_REFUSAL_TAILS = {
+    "epic": (
+        "an epic is closed by rollup when its tasks complete, never by a PR. "
+        "Create the task under the epic first and use the task's number."
+    ),
+    "archive": "an archive only holds a standing epic's closed tasks. Use a task's number.",
+}
+
+
+def non_task_refusal_message(flag: str, ref: str, kind: str) -> str:
+    """The one refusal text for an epic or archive given where a task is expected.
+
+    *flag* names the option the value came in on (``--issue``, ``--task``,
+    ``--blocked-by``); *kind* is a :func:`non_task_kind` result (``"epic"`` or
+    ``"archive"``). Anything else is a caller bug and raises ``ValueError``.
+    """
+    tail = _NON_TASK_REFUSAL_TAILS.get(kind)
+    if tail is None:
+        raise ValueError(f"not a non-task kind: {kind!r}")
+    return f"{flag} ({ref}) is an {kind}, not a task; {tail}"
 
 
 # Labels marking a not-PR-workable *operational task* — one that is run and whose

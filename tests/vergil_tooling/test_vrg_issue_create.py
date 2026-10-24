@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
@@ -25,6 +26,79 @@ def label_gh() -> Iterator[MagicMock]:
     """Stub the gh boundary under the real ensure_labels (#3373)."""
     with patch("vergil_tooling.lib.labels.github.run") as mock_run:
         yield mock_run
+
+
+@pytest.fixture(autouse=True)
+def dep_kind() -> Iterator[MagicMock]:
+    """Every --blocked-by dependency is a plain task unless a test says otherwise."""
+    with patch(f"{_MOD}.epics.non_task_kind", return_value=None) as mock_kind:
+        yield mock_kind
+
+
+@pytest.mark.parametrize("kind", ["epic", "archive"])
+@pytest.mark.parametrize("issue_kind", ["task", "validation"])
+def test_blocked_by_epic_or_archive_creates_nothing(
+    dep_kind: MagicMock, capsys: pytest.CaptureFixture[str], kind: str, issue_kind: str
+) -> None:
+    # #2842: a dependency names the task this one waits on, never an umbrella.
+    dep_kind.side_effect = lambda ref: kind if ref.number == 6 else None
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
+        patch(f"{_MOD}.github.create_issue") as mock_create,
+        patch(f"{_MOD}.epics.add_child") as mock_add,
+    ):
+        rc = main(
+            [
+                "--epic",
+                "adhoc",
+                "--title",
+                "T",
+                "--kind",
+                issue_kind,
+                "--blocked-by",
+                "org/repo#5",
+                "--blocked-by",
+                "#6",
+            ]
+        )
+    assert rc == 1
+    mock_create.assert_not_called()
+    mock_add.assert_not_called()
+    assert f"vrg-issue-create: --blocked-by (org/repo#6) is an {kind}, not a task" in (
+        capsys.readouterr().err
+    )
+    assert [c.args[0] for c in dep_kind.call_args_list] == [
+        epics.IssueRef("org", "repo", 5),
+        epics.IssueRef("org", "repo", 6),
+    ]
+
+
+def test_blocked_by_task_deps_are_checked_and_pass(dep_kind: MagicMock) -> None:
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
+        patch(f"{_MOD}.github.create_issue", return_value=_URL) as mock_create,
+        patch(f"{_MOD}.epics.add_child"),
+    ):
+        rc = main(["--epic", "adhoc", "--title", "T", "--blocked-by", "org/repo#5"])
+    assert rc == 0
+    dep_kind.assert_called_once_with(epics.IssueRef("org", "repo", 5))
+    mock_create.assert_called_once()
+
+
+def test_blocked_by_lookup_failure_creates_nothing(dep_kind: MagicMock) -> None:
+    # Fail closed: an unreadable dependency is never stamped as though a task.
+    dep_kind.side_effect = subprocess.CalledProcessError(1, ["gh"])
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
+        patch(f"{_MOD}.github.create_issue") as mock_create,
+        patch(f"{_MOD}.epics.add_child"),
+        pytest.raises(subprocess.CalledProcessError),
+    ):
+        main(["--epic", "adhoc", "--title", "T", "--blocked-by", "org/repo#5"])
+    mock_create.assert_not_called()
 
 
 def test_main_ensures_labels_in_target_repo_before_create(label_gh: MagicMock) -> None:

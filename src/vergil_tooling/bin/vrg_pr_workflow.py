@@ -127,25 +127,23 @@ def _reject_cross_repo_issue(issue_ref: str) -> None:
         )
 
 
-def _reject_epic_issue(issue_ref: str) -> None:
-    """Refuse an epic linkage at report time — a PR links a task, not an epic.
+def _reject_non_task_issue(issue_ref: str) -> None:
+    """Refuse an epic or archive linkage at report time — a PR links a task.
 
-    Mirrors vrg-submit-pr's guard so the error surfaces where the value is
-    entered (report time) rather than later at submit time. *issue_ref* is the
-    canonical ref (``#N`` or ``owner/repo#N``) so a bare number no longer slips
-    past ``parse_issue_ref`` (#2213). Best-effort: if epic-ness cannot be
-    determined (no remote, no gh auth — e.g. an offline run), it defers silently
-    to vrg-submit-pr's authoritative check rather than blocking report-ready.
+    Mirrors vrg-submit-pr's ``_reject_if_non_task`` so the error surfaces where
+    the value is entered (report time) rather than later at submit time (#2842).
+    *issue_ref* is the canonical ref (``#N`` or ``owner/repo#N``) so a bare
+    number no longer slips past ``parse_issue_ref`` (#2213). Best-effort: if the
+    labels cannot be read (no remote, no gh auth — e.g. an offline run), it
+    defers silently to vrg-submit-pr's authoritative check rather than blocking
+    report-ready.
     """
     try:
-        links_epic = epics.is_epic_linkage(issue_ref, default_repo=github.current_repo())
+        kind = epics.non_task_ref_kind(issue_ref, default_repo=github.current_repo())
     except (subprocess.CalledProcessError, OSError):
         return
-    if links_epic:
-        raise WorkflowError(
-            f"--issue links an epic ({issue_ref}); link a task, not an epic "
-            "(epics are closed by rollup when their tasks complete)."
-        )
+    if kind is not None:
+        raise WorkflowError(epics.non_task_refusal_message("--issue", issue_ref, kind))
 
 
 def _reject_operational_issue(issue_ref: str) -> None:
@@ -232,7 +230,7 @@ def cmd_report_ready(args: argparse.Namespace, transport: LocalFileTransport) ->
     except ValueError as exc:
         raise WorkflowError(f"report-ready: {exc}") from exc
     _reject_cross_repo_issue(issue_ref)
-    _reject_epic_issue(issue_ref)
+    _reject_non_task_issue(issue_ref)
     _reject_operational_issue(issue_ref)
     _reject_queue_issue(issue_ref)
     try:

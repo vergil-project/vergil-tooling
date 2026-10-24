@@ -55,6 +55,14 @@ def _link(epic_ref: str, task: epics.IssueRef, task_repo: str) -> int:
     probes never use a cwd-scoped token.
     """
     epic = epics.qualify_epic_ref(epic_ref, repo=task_repo)
+    # Task guard (#2842): --task must be a task, never an epic or a standing
+    # epic's archive — linking one would nest an umbrella under an epic as
+    # though it were work. A failed label read propagates (fail closed).
+    kind = epics.non_task_kind(task)
+    if kind is not None:
+        message = epics.non_task_refusal_message("--task", task.slug, kind)
+        print(f"vrg-epic-link: {message}", file=sys.stderr)
+        return 1
     # Visibility-boundary guard (epic #130): a task may hard-link to an epic only
     # if it is no more publicly visible than the epic's home. A public task under
     # a private epic would leak the private repo's name into a public issue and
