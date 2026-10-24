@@ -20,11 +20,9 @@ like any other agent-run task.
 
 Each repo in ``--repos`` is a path to a local clone (the worktree is created
 inside it). ``--dry-run`` reports the verdict a live run would reach per repo
-(change or skip) without opening an issue, branch, commit, or PR (#3549). The
-``dependabot`` target previews with ``vrg-dependabot-sync --check``; the
-``gitignore`` target has no exact check-only mode (``--check`` is stricter than
-``--write``), so it previews by running ``--write`` inside the sweep's
-disposable probe worktree, which is discarded.
+(change or skip) without opening an issue, branch, commit, or PR (#3549). Each
+target previews with its applicator's ``--check``, whose drift verdict is
+exactly the change ``--write`` would make (#3568 for ``vrg-gitignore-sync``).
 """
 
 from __future__ import annotations
@@ -52,10 +50,6 @@ class _Target:
     body: str
     commit_scope: str
     epic: str | None
-    # Whether the CLI's ``--check`` verdict is exactly the one ``--write`` would
-    # reach. Only then does the dry run preview via ``--check``; otherwise it
-    # runs ``--write`` inside the driver's disposable probe worktree (#3549).
-    check_predicts_write: bool
 
 
 _TARGETS: dict[str, _Target] = {
@@ -71,11 +65,6 @@ _TARGETS: dict[str, _Target] = {
         ),
         commit_scope="gitignore",
         epic=None,
-        # ``vrg-gitignore-sync --check`` is stricter than ``--write``: it flags
-        # managed patterns outside a correct fence, which ``--write`` leaves
-        # alone, and accepts a fence that is not first or a missing trailing
-        # newline, which ``--write`` rewrites.
-        check_predicts_write=False,
     ),
     "dependabot": _Target(
         applicator_cli="vrg-dependabot-sync",
@@ -89,8 +78,6 @@ _TARGETS: dict[str, _Target] = {
         ),
         commit_scope="dependabot",
         epic="vergil-project/.github#420",
-        # ``vrg-dependabot-sync --write`` writes exactly when ``--check`` drifts.
-        check_predicts_write=True,
     ),
 }
 
@@ -112,16 +99,11 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     def applicator(worktree: Path, *, check: bool = False) -> AppResult:
-        if not check:
-            return _run_sync_applicator([target.applicator_cli, "--write", "--repo"], worktree)
-        if target.check_predicts_write:
+        # Every applicator's ``--check`` drifts exactly when ``--write`` would
+        # change the file, so the dry run previews with it (#3549, #3568).
+        if check:
             return _run_check_applicator([target.applicator_cli, "--check", "--repo"], worktree)
-        # No exact check-only mode: preview by writing into the probe worktree,
-        # which the sweep driver discards after a dry run.
-        result = _run_sync_applicator([target.applicator_cli, "--write", "--repo"], worktree)
-        if not result.changed:
-            return result
-        return AppResult(changed=True, summary=f"would apply: {result.summary}")
+        return _run_sync_applicator([target.applicator_cli, "--write", "--repo"], worktree)
 
     results = run_sweep(spec, applicator, dry_run=args.dry_run)
     for result in results:
