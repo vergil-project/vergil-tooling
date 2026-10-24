@@ -18062,8 +18062,43 @@ See <a href="../container-config/#system-packages">Container Config Reference â†
 vergil-tooling, <code>system-packages</code>, and the <code>build-command</code> artifact) that
 <code>vrg-container-run</code> builds over. Subcommands: <code>build</code> (build/refresh the
 cached image for the current branch), <code>clean</code> (remove it), <code>status</code> (show
-cache state and the expected tag), and <code>clean-all</code> (remove every image it
-manages).</p>
+cache state and the expected tag), <code>clean-all</code> (remove every image it
+manages), and <code>prune</code> (remove the cached images of finished branches).</p>
+<p><code>prune</code> covers every cached per-branch image in the local image store,
+whichever repo built it. It is a <strong>dry run by default</strong>: it prints the repo
+set and a keep or remove verdict, with the reason, for each image, and
+removes nothing until re-run with <code>--apply</code> (issue #3481). The image tag
+records the branch (sanitized: <code>/</code> becomes <code>-</code>) but not the repository, so
+the rule leans toward keeping. An image is kept when:</p>
+<ul>
+<li>its branch is protected (<code>develop</code>, <code>main</code>, <code>release</code>);</li>
+<li>a container, running or stopped, uses it;</li>
+<li>its branch matches a live branch in <strong>any</strong> repo of the repo set. A
+  branch is live when it is a local branch (which covers every worktree)
+  or exists on the repo's <code>origin</code>.</li>
+</ul>
+<p>Only an image that matches none of these is removed. Origin is read with
+<code>git ls-remote</code>, so a branch deleted on GitHub counts as gone. When a
+repo's origin cannot be read (typically a private repo the agent's App
+cannot see), that repo's local <code>refs/remotes/origin/*</code> stand in, with a
+warning naming the repo; stale tracking refs can only keep extra images,
+never remove live ones. Any other failure to read the repo set, the images,
+the containers or a repo's branches stops the run before anything is
+removed. A failed image removal is reported with the runtime's error, the
+remaining removals still run, and the command exits 1.</p>
+<p>The repo set comes from <code>--root DIR</code> (repeatable; a projects directory, a
+directory of repos, or a single repo, searched down to <code>&lt;org&gt;/&lt;repo&gt;</code>),
+which replaces the platform default: <code>/vergil/projects</code> on a cloud VM, and
+on a Lima VM the projects mount, found two levels above the current repo's
+main worktree and accepted only if it is a mount point. The physical host
+has no default, so <code>--root</code> is required there. A root that does not exist,
+or roots that hold no repositories, are an error.</p>
+<p><code>vrg-finalize-pr</code> runs the same sweep (in effect <code>prune --apply</code> against
+the platform's default repo set) after removing the merged branch's own
+cached images. It runs on agent VMs and is skipped on the physical Mac
+host, which has no default repo set; there finalize prints the
+<code>vrg-container-cache prune --root DIR</code> command to run by hand. A failed
+sweep or removal is a finalize warning, never a failure (issue #3566).</p>
 <table>
 <thead>
 <tr>
@@ -18078,19 +18113,19 @@ manages).</p>
 </tr>
 <tr>
 <td>Args</td>
-<td><code>build</code> | <code>clean</code> | <code>status</code> | <code>clean-all</code></td>
+<td><code>build</code> | <code>clean</code> | <code>status</code> | <code>clean-all</code> | <code>prune [--apply] [--root DIR]...</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>Git repo; a container runtime (<code>docker</code>/<code>nerdctl</code>) available for <code>build</code>/<code>clean</code>/<code>clean-all</code></td>
+<td>A container runtime (<code>nerdctl</code> or <code>docker</code>) on PATH for every subcommand; a git repo for <code>build</code>/<code>clean</code>/<code>status</code>; for <code>prune</code>, a repo set (<code>--root DIR</code> on the physical host)</td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>Runtime-unavailable error; propagates the runtime's build/remove failures</td>
+<td>Runtime-unavailable error; propagates the runtime's build failures; every failed image removal is reported with the runtime's error while the rest still run. <code>prune</code> refuses, before removing anything, a missing or empty repo set, or images, containers or branches it cannot read</td>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 success, non-zero on runtime or build failure</td>
+<td>0 success (including a <code>prune</code> dry run); 1 no subcommand, no runtime, a failed removal, or a <code>prune</code> refusal; non-zero on build failure</td>
 </tr>
 <tr>
 <td>Status</td>
