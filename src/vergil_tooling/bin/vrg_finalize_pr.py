@@ -1297,16 +1297,40 @@ def _launch_failure_msg(branch: str, exc: subprocess.CalledProcessError) -> str:
     )
 
 
-def _reprovision_target_image(ctx: FinalizeContext) -> None:
+def _rebuild_failure_msg(branch: str, exc: BaseException, retry: tuple[str, ...]) -> str:
+    """The message for a dev-image rebuild that failed, so validation never ran.
+
+    Like a CD watch timeout (issue #3316), an unrun validation is an unknown
+    result, not a pass: it fails the stage. Carries the original error text in
+    full (a failed cache build folds its captured output into it) and the
+    command to retry once the cause is fixed (issue #3605).
+    """
+    return (
+        f"post-finalization validation did not run; result unknown: could not "
+        f"rebuild the {branch} dev image after the container failed to launch.\n"
+        f"{error_text(exc)}\n"
+        f"Free space or fix the cause, then retry with: {' '.join(retry)}"
+    )
+
+
+def _reprovision_target_image(ctx: FinalizeContext, retry: tuple[str, ...]) -> None:
     """Force a clean rebuild of the target-branch dev image (issue #3016).
 
     Drop any cached image for the target branch so the rebuild cannot reuse a
     corrupt one, then provision fresh. Used to recover from a container-launch
     failure discovered during validation.
+
+    A failed rebuild — the low-disk guard refusing it (#3571), a failed cache
+    build, or an unresolvable version window — raises :class:`FinalizeError`
+    naming the image, the cause and the *retry* command (issue #3605).
     """
-    _clean_branch_images(ctx.args.target_branch)
+    branch = ctx.args.target_branch
+    _clean_branch_images(branch)
     lang = resolve_language(ctx.root)
-    provision_dev_image(ctx.root, lang, quiet_warmup=True)
+    try:
+        provision_dev_image(ctx.root, lang, quiet_warmup=True)
+    except (RuntimeError, VersionsError, subprocess.CalledProcessError) as exc:
+        raise FinalizeError(_rebuild_failure_msg(branch, exc, retry)) from exc
 
 
 def _stage_validation(ctx: FinalizeContext) -> None:
@@ -1321,7 +1345,9 @@ def _stage_validation(ctx: FinalizeContext) -> None:
     (or a runtime snapshot error) means the container never started, so
     validation never ran. That is usually a stale image-cache snapshot whose
     parent layer was orphaned; rebuild the dev image and retry once before
-    concluding anything about the branch (issue #3016).
+    concluding anything about the branch (issue #3016). If that rebuild itself
+    fails, validation did not run and its result is unknown, so the stage fails
+    without a pointless retry (issues #3316, #3605).
     """
     args = ctx.args
     if args.dry_run:
@@ -1346,7 +1372,8 @@ def _stage_validation(ctx: FinalizeContext) -> None:
         "rebuilding the dev image and retrying once...",
         file=sys.stderr,
     )
-    _reprovision_target_image(ctx)
+    # A failed rebuild raises here: there is no new image to retry against.
+    _reprovision_target_image(ctx, cmd)
     try:
         progress.run(cmd)
     except subprocess.CalledProcessError as exc:
