@@ -466,6 +466,32 @@ def resolve_epic_home(org: str, target_repo: str) -> str:
     return f"{org}/.github"
 
 
+def require_org_home(org: str) -> str:
+    """Return ``<org>/.github``, the org-wide queue and epic home, checking it exists.
+
+    The org-wide paths of ``vrg-queue`` and ``vrg-epic-audit`` assume it does; an
+    owner with none (a personal account, typically) has no org-wide home at all,
+    only self-homed repos reached with ``--repo`` (#3613). Fail-loud: a missing
+    ``.github`` and any other probe failure both raise :class:`EpicHomeError` (a
+    missing token keeps its own error for :func:`cli.cli_main`).
+    """
+    try:
+        exists = github.repo_exists(org, ".github")
+    except github.MissingGitHubTokenError:
+        raise
+    except github.GitHubAPIError as exc:
+        msg = f"cannot check for {org}/.github, the org-wide queue and epic home: {exc}"
+        raise EpicHomeError(msg) from exc
+    if not exists:
+        msg = (
+            f"{org} has no .github repository, so there is no org-wide queue or "
+            f"epic home; pass --repo {org}/<repo> to reach a self-homed repo's own "
+            "queues and epics"
+        )
+        raise EpicHomeError(msg)
+    return f"{org}/.github"
+
+
 @dataclass(frozen=True)
 class StandingKind:
     """One kind of perpetual standing epic: ad-hoc, intake, or planning.

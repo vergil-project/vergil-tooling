@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import patch
+from typing import TYPE_CHECKING
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -12,7 +13,18 @@ from vergil_tooling.lib import github, queue_view
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.queue_view import QueueItem
 
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
 _MOD = "vergil_tooling.bin.vrg_queue"
+
+
+@pytest.fixture(autouse=True)
+def dotgithub_exists() -> Iterator[MagicMock]:
+    # The org-wide default probes <owner>/.github; it exists unless a test says not.
+    with patch(f"{_MOD}.epics.github.repo_exists", return_value=True) as exists:
+        yield exists
+
 
 _ITEM = QueueItem(
     ref=IssueRef("org", ".github", 5),
@@ -111,6 +123,48 @@ def test_vrg_queue_missing_queue_epic_fails_loud(capsys: pytest.CaptureFixture[s
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "vrg-queue: no open 'Epic (intake): org' intake epic" in captured.err
+
+
+def test_vrg_queue_org_wide_probes_dotgithub(dotgithub_exists: MagicMock) -> None:
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
+        patch(f"{_MOD}.epics.queue_home", return_value=("org/.github", "org")),
+        patch.dict(f"{_MOD}._VIEWS", {"intake": lambda _h, _n: []}),
+    ):
+        assert main(["intake"]) == 0
+    dotgithub_exists.assert_called_once_with("org", ".github")
+
+
+def test_vrg_queue_repo_flag_skips_dotgithub_probe(dotgithub_exists: MagicMock) -> None:
+    # --repo reaches a self-homed repo's own queues, .github or not.
+    with (
+        patch(f"{_MOD}.epics.queue_home", return_value=("owner/notes", "notes")),
+        patch.dict(f"{_MOD}._VIEWS", {"intake": lambda _h, _n: []}),
+    ):
+        assert main(["intake", "--repo", "owner/notes"]) == 0
+    dotgithub_exists.assert_not_called()
+
+
+def test_vrg_queue_org_wide_without_dotgithub_fails_clearly(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # An owner with no .github has no org-wide queue: one clear line, exit 1 (#3613).
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="owner/notes"),
+        patch(f"{_MOD}.epics.github.repo_exists", return_value=False),
+        patch(f"{_MOD}.epics.queue_home") as home,
+        pytest.raises(SystemExit) as excinfo,
+    ):
+        main(["intake"])
+    assert excinfo.value.code == 1
+    home.assert_not_called()
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == (
+        "vrg-queue: owner has no .github repository, so there is no org-wide "
+        "queue or epic home; pass --repo owner/<repo> to reach a self-homed "
+        "repo's own queues and epics\n"
+    )
 
 
 def test_views_wire_to_queue_view() -> None:
