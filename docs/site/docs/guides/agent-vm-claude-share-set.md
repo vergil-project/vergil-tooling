@@ -159,7 +159,7 @@ an agent from *attempting* a cloud memory write in the first place. Its
 substance: when `vrg-whoami --platform` reports `cloud-vm`, memory and
 copied config are a read-only cache; never write memory — the write
 would fail (`EACCES`) and would be futile anyway — and when memory needs
-to change, file it via `/vergil:triage-capture` for implementation on
+to change, file it via `/vergil:intake-capture` for implementation on
 the host. Because that file is the developer's personal, global config,
 the clause is authored once on the host and rides the copied file into
 every environment; its condition is simply almost never true outside
@@ -170,8 +170,8 @@ every environment; its condition is simply almost never true outside
 
 Canonical data never flows back automatically. When a cloud session
 determines that memory or config must change, it files an issue through
-the existing `/vergil:triage-capture` flow, producing an intake issue in
-the org `.github` repository. The change is later implemented on the
+the existing `/vergil:intake-capture` flow, producing an intake issue
+under the org's intake epic in `.github`. The change is later implemented on the
 physical host against the live store and re-projected on the next cloud
 session or rebuild. Given how infrequently this data changes, this
 issue-driven, human-executed writeback is sufficient — no automated
