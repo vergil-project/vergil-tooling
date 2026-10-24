@@ -20,7 +20,9 @@ _RUN = "vergil_tooling.lib.cache_prune.subprocess.run"
 _PY = "ghcr.io/vergil-project/prod-python"
 
 
-def _done(returncode: int = 0, stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess[str]:
+def _done(
+    returncode: int = 0, stdout: str = "", stderr: str = ""
+) -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr=stderr)
 
 
@@ -84,7 +86,9 @@ _REPO_A = Path("/projects/org/a")
 _REPO_B = Path("/projects/org/b")
 
 
-def _verdicts(images: list[CacheImage], in_use: tuple[str, ...] = ()) -> dict[str, tuple[bool, str]]:
+def _verdicts(
+    images: list[CacheImage], in_use: tuple[str, ...] = ()
+) -> dict[str, tuple[bool, str]]:
     live = {
         _REPO_A: frozenset({"develop", "feature/1-live"}),
         _REPO_B: frozenset({"main", "feature/2-other"}),

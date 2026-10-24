@@ -16,7 +16,7 @@ from vergil_tooling.lib.live_branches import RepoSetError
 from vergil_tooling.lib.versions.resolve import ResolutionError
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator, Iterator
     from pathlib import Path
 
 _VALID_TOML = """\
@@ -387,7 +387,9 @@ def _projects(tmp_path: Path) -> Path:
 
 
 @contextlib.contextmanager
-def _prune_env(tmp_path: Path, *, removed: list[tuple[str, str]] | None = None) -> Iterator[MagicMock]:
+def _prune_env(
+    tmp_path: Path, *, removed: list[tuple[str, str]] | None = None
+) -> Generator[MagicMock]:
     repo = (tmp_path / "org" / "a").resolve()
     with (
         patch(_CLI + ".detect_runtime", return_value="nerdctl"),
@@ -434,7 +436,9 @@ def test_prune_apply_fails_loudly_on_rmi_error(
     assert f"error: could not remove {ref}: image is being used" in captured.err
 
 
-def test_prune_root_replaces_the_default(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_prune_root_replaces_the_default(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     root = _projects(tmp_path / "explicit")
     with (
         _prune_env(tmp_path),
@@ -445,7 +449,9 @@ def test_prune_root_replaces_the_default(tmp_path: Path, capsys: pytest.CaptureF
     assert f"under {root}" in capsys.readouterr().out
 
 
-def test_prune_refuses_an_empty_repo_set(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_prune_refuses_an_empty_repo_set(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     with (
         patch(_CLI + ".detect_runtime", return_value="docker"),
         patch(_CLI + ".list_cache_images") as m_list,
