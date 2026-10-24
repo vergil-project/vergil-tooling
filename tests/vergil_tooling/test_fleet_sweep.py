@@ -947,41 +947,58 @@ def test_fleet_dependabot_check_previews_with_check_flag(monkeypatch: pytest.Mon
     assert all("--write" not in call for call in proc_calls)
 
 
-def test_fleet_gitignore_check_previews_by_writing_in_the_probe(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """gitignore's --check is stricter than --write, so the preview runs --write (#3549)."""
+def test_fleet_gitignore_check_previews_with_check_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    """check=True runs ``vrg-gitignore-sync --check``, never ``--write`` (#3568)."""
     _spec_unused, applicator = _capture_main(monkeypatch, ["--repos", "/clones/x"])
     proc_calls: list[list[str]] = []
-    outputs = iter(["synced managed block in /w/.gitignore\n", "already in sync\n"])
+    procs = iter(
+        [
+            _FakeProc(returncode=0),
+            _FakeProc(returncode=1, stderr="the vergil-managed fence is not first in the file\n"),
+        ]
+    )
 
     def fake_proc_run(args, **kwargs):  # noqa: ANN001, ANN003
         proc_calls.append(list(args))
-        return _FakeProc(stdout=next(outputs))
+        return next(procs)
 
     monkeypatch.setattr(vrg_fleet_sync.subprocess, "run", fake_proc_run)
 
-    assert applicator(Path("/w"), check=True) == AppResult(
-        changed=True, summary="would apply: synced managed block in /w/.gitignore"
-    )
-    assert proc_calls[-1] == ["vrg-gitignore-sync", "--write", "--repo", "/w"]
     assert applicator(Path("/w"), check=True) == AppResult(changed=False, summary="already in sync")
+    assert proc_calls[-1] == ["vrg-gitignore-sync", "--check", "--repo", "/w"]
+    assert applicator(Path("/w"), check=True) == AppResult(
+        changed=True, summary="would sync (the vergil-managed fence is not first in the file)"
+    )
+    assert all("--write" not in call for call in proc_calls)
 
 
-def test_fleet_gitignore_check_is_stricter_than_write(tmp_path: Path) -> None:
-    """Pin the reason gitignore cannot preview with --check (#3549).
+@pytest.mark.parametrize(
+    "case",
+    ["stray outside fence", "fence not first", "missing trailing newline", "canonical"],
+)
+def test_fleet_gitignore_check_predicts_write(tmp_path: Path, case: str) -> None:
+    """``--check`` drifts exactly when ``--write`` changes the file (#3568).
 
-    A correct fence plus one of its own patterns outside it fails ``--check``,
-    yet ``--write`` leaves it alone ("already in sync"), so ``--check`` would
-    report a change the live sweep never makes.
+    Each case the issue named: a correct fence with one of its own patterns
+    repeated outside it, a fence that is not first, and a missing trailing
+    newline — plus the canonical file. After ``--write``, ``--check`` passes.
     """
     block = gitignore.render_block(None)
-    stray = gitignore.compose(None)[0]
-    (tmp_path / ".gitignore").write_text(f"{block}{stray}\n", encoding="utf-8")
+    texts = {
+        "stray outside fence": f"{block}{gitignore.compose(None)[0]}\n",
+        "fence not first": f"keep-me/\n{block}",
+        "missing trailing newline": f"{block}keep-me/",
+        "canonical": f"{block}keep-me/\n",
+    }
+    path = tmp_path / ".gitignore"
+    path.write_text(texts[case], encoding="utf-8")
+    before = path.read_bytes()
 
-    assert vrg_gitignore_sync.main(["--check", "--repo", str(tmp_path)]) == 1
+    drift = vrg_gitignore_sync.main(["--check", "--repo", str(tmp_path)])
     assert vrg_gitignore_sync.main(["--write", "--repo", str(tmp_path)]) == 0
-    assert (tmp_path / ".gitignore").read_text(encoding="utf-8") == f"{block}{stray}\n"
+    assert drift == (1 if path.read_bytes() != before else 0)
+    assert drift == (0 if case == "canonical" else 1)
+    assert vrg_gitignore_sync.main(["--check", "--repo", str(tmp_path)]) == 0
 
 
 @pytest.mark.parametrize(

@@ -455,8 +455,12 @@ without a managed fragment), and either checks (default) or writes the
 composed `base + <language>` managed block through `lib/gitignore.py` —
 the same module the config audit renders through, so applicator and
 audit cannot diverge. It owns **only** the file change: it has no git or
-PR knowledge, and `--write` rewrites the fenced block in place while
-leaving genuinely repo-local lines outside the fence untouched. See the
+PR knowledge. `--write` rewrites the fenced block, moves it to the top of
+the file, and drops any exact repeat of one of the fence's own patterns
+outside it (the fence is the single source of truth), leaving genuinely
+repo-local lines untouched and in order. `--check` reports drift exactly
+when `--write` would change the file, so `--write` then `--check` always
+passes (#3568). See the
 [GitHub Config Audit reference](config-audit.md#the-composed-managed-fence).
 
 | Attribute | Value |
@@ -509,9 +513,9 @@ merges** — it stops at `report-ready`, leaving submission and merge to the
 human. `--dry-run` reports the verdict a live run would reach per repo
 (would change, naming the epic it would be filed under, or skip) from a
 disposable probe worktree, without opening an issue, branch, commit, or
-PR. The `dependabot` target previews with `vrg-dependabot-sync --check`;
-the `gitignore` target runs `--write` inside the discarded probe, since
-`vrg-gitignore-sync --check` is stricter than `--write`.
+PR. Each target previews with its applicator's `--check`
+(`vrg-gitignore-sync --check` or `vrg-dependabot-sync --check`), whose
+drift verdict is exactly the change `--write` would make.
 
 | Attribute | Value |
 |---|---|

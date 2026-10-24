@@ -92,7 +92,7 @@ class Applicator(Protocol):
     worktree (no lockfile refresh, no network). It should write nothing; the
     worktree is the driver's disposable probe, discarded after the preview, so
     an applicator with no exact check-only mode may instead write there to learn
-    its verdict, rather than guess (``vrg-fleet-sync``'s gitignore target).
+    its verdict, rather than guess.
     """
 
     def __call__(
