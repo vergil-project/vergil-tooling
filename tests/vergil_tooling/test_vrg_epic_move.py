@@ -199,3 +199,28 @@ def test_main_reports_missing_installation() -> None:
     ):
         rc = main(["--task", "#42", "--epic", "org/repo#200"])
     assert rc == 1
+
+
+@pytest.mark.parametrize("sentinel", ["adhoc", "intake", "planning"])
+def test_main_accepts_every_standing_sentinel(sentinel: str) -> None:
+    """Every standing sentinel passes the cross-org guard and resolves (#3514)."""
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.github.target_org"),
+        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=NEW) as mock_resolve,
+        patch(f"{_MOD}.epics.parent_of", return_value=None),
+        patch(f"{_MOD}.epics.add_child") as mock_add,
+    ):
+        rc = main(["--task", "#42", "--epic", sentinel])
+    assert rc == 0
+    mock_resolve.assert_called_once_with(sentinel, repo="org/repo")
+    mock_add.assert_called_once_with(NEW, TASK)
+
+
+def test_epic_help_names_every_standing_sentinel(capsys: pytest.CaptureFixture[str]) -> None:
+    """The --epic help lists adhoc, intake and planning (#3512)."""
+    with pytest.raises(SystemExit):
+        parse_args(["--help"])
+    out = " ".join(capsys.readouterr().out.split())
+    for sentinel in ("adhoc", "intake", "planning"):
+        assert f"'{sentinel}'" in out

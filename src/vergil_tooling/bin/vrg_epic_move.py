@@ -2,11 +2,12 @@
 
 GitHub sub-issues allow only one parent, so re-parenting is unlink-then-link.
 The target epic is resolved via :func:`epics.resolve_epic_ref` (accepting the
-``adhoc`` sentinel and validating epic-ness); moving a task already under the
-target epic is a no-op.
+``adhoc``, ``intake`` and ``planning`` sentinels and validating epic-ness);
+moving a task already under the target epic is a no-op.
 
-Both ``adhoc`` and a bare ``#N`` epic ref are read against the **task's**
-repo, never the cwd repo: ``adhoc`` is the task repo's ad-hoc epic, and ``#N``
+The sentinels and a bare ``#N`` epic ref are read against the **task's** repo,
+never the cwd repo: ``adhoc`` is the task repo's ad-hoc epic, ``intake`` and
+``planning`` its intake and planning queue epics, and ``#N``
 is issue N in the task repo's epic home (``<org>/.github`` for a public repo,
 the repo itself for a self-homed private one). A fully qualified
 ``owner/repo#N`` is taken as written (#3409, #3411).
@@ -29,11 +30,12 @@ def main(argv: list[str] | None = None) -> int:
         task = epics.parse_issue_ref(args.task, default_repo=default_repo)
         task_repo = f"{task.owner}/{task.repo}"
         # Scope the App token to the task's owner (#2070). The epic must live in
-        # the same org — 'adhoc' and a bare '#N' both resolve within the task
-        # repo's epic home (in the task's org), so only a qualified ref can
-        # diverge; guard that before any network call so a cross-org mistake
-        # is a clear message, not a cwd-scoped 403.
-        if args.epic != "adhoc":
+        # the same org — the standing sentinels (adhoc/intake/planning) and a
+        # bare '#N' all resolve within the task repo's epic or queue home (in
+        # the task's org), so only a qualified ref can diverge; guard that
+        # before any network call so a cross-org mistake is a clear message,
+        # not a cwd-scoped 403 (#3514).
+        if args.epic not in epics.EPIC_SENTINELS:
             epic_owner = epics.parse_issue_ref(args.epic, default_repo=task_repo).owner
             if epic_owner != task.owner:
                 raise ValueError(
@@ -77,7 +79,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--epic",
         required=True,
-        help="Target epic: 'adhoc' (the task repo's ad-hoc epic), #N (issue N in the "
+        help="Target epic: 'adhoc' (the task repo's ad-hoc epic), 'intake' or "
+        "'planning' (the task repo's intake or planning queue epic), #N (issue N in the "
         "task repo's epic home: <org>/.github for a public repo, the repo itself for "
         "a self-homed private one), or owner/repo#N (taken as written)",
     )

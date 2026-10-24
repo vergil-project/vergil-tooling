@@ -410,12 +410,15 @@ def resolve_epic_ref(ref: str, *, repo: str) -> IssueRef:
     :func:`qualify_epic_ref` (a bare ``#N`` reads against *repo*'s epic home)
     and validated to carry the ``epic`` label.
     """
-    if ref == "adhoc":
-        return ensure_adhoc_epic(repo)
-    if ref == "intake":
-        return ensure_intake_epic(repo)
-    if ref == "planning":
-        return ensure_planning_epic(repo)
+    # Keyed by each StandingKind's sentinel, so this cannot drift from
+    # EPIC_SENTINELS (the set the CLIs' cross-org guards exempt, #3514).
+    ensure = {
+        ADHOC.sentinel: ensure_adhoc_epic,
+        INTAKE.sentinel: ensure_intake_epic,
+        PLANNING.sentinel: ensure_planning_epic,
+    }.get(ref)
+    if ensure is not None:
+        return ensure(repo)
     epic = qualify_epic_ref(ref, repo=repo)
     if not is_epic(epic):
         raise ValueError(f"{epic.slug} is not an epic (missing the 'epic' label)")
@@ -450,10 +453,12 @@ class StandingKind:
     home's owner) and ``name`` (the ``<name>`` in the title); ``archive_body``
     takes the same plus ``quarter``. Standing epics are never rolled up: they
     stay open forever (see :func:`rollup`), and their closed children drain into
-    per-quarter archives (see :func:`drain_standing_child`).
+    per-quarter archives (see :func:`drain_standing_child`). ``sentinel`` is the
+    ``--epic`` value that names this kind's epic (see :func:`resolve_epic_ref`).
     """
 
     key: str
+    sentinel: str
     title_prefix: str
     labels: tuple[str, str]
     archive_prefix: str
@@ -464,6 +469,7 @@ class StandingKind:
 
 ADHOC = StandingKind(
     key="ad-hoc",
+    sentinel="adhoc",
     title_prefix="Epic (ad hoc): ",
     labels=("epic", "ad-hoc"),
     archive_prefix="Archive (ad hoc): ",
@@ -476,6 +482,7 @@ ADHOC = StandingKind(
 )
 INTAKE = StandingKind(
     key="intake",
+    sentinel="intake",
     title_prefix="Epic (intake): ",
     labels=("epic", "intake"),
     archive_prefix="Archive (intake): ",
@@ -488,6 +495,7 @@ INTAKE = StandingKind(
 )
 PLANNING = StandingKind(
     key="planning",
+    sentinel="planning",
     title_prefix="Epic (planning): ",
     labels=("epic", "planning"),
     archive_prefix="Archive (planning): ",
@@ -499,6 +507,10 @@ PLANNING = StandingKind(
     archive_body="Planning items for {name} closed in {quarter}. Managed automatically.\n",
 )
 STANDING_KINDS: tuple[StandingKind, ...] = (ADHOC, INTAKE, PLANNING)
+# The --epic sentinels resolve_epic_ref accepts: "adhoc", "intake", "planning".
+# Each resolves within the target repo's own org (its epic or queue home), so a
+# CLI's pre-network cross-org guard exempts exactly these (#3514).
+EPIC_SENTINELS: tuple[str, ...] = tuple(kind.sentinel for kind in STANDING_KINDS)
 # The single per-item label on a planning-queue item undergoing epic-create.
 PLANNING_IN_PROGRESS_LABEL = "in-progress"
 

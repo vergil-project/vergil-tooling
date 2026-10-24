@@ -386,6 +386,21 @@ CLI tools installed as `vrg-*` console scripts:
   unchanged. The safety net behind the delete-on-merge repo setting and the
   delete-on-close rule (#3332); never touches protected, reserved or no-PR
   branches
+- **`vrg-intake-create`** — Capture an uncurated item into the intake queue,
+  linked under its queue home's `Epic (intake): <name>` as it is created
+  (`<org>/.github` for a public repo; a private repo self-homes). No kind
+  label; `vrg-triage-create` is a one-release deprecated alias that ignores
+  `--kind`
+- **`vrg-intake-route`** — Route one intake item (`drop`, `defer`, `one-off`,
+  `planning`, `split`); owns transfer-or-recreate, reparent, re-link and
+  close-with-pointer for the `intake-review` skill
+- **`vrg-queue`** — Read-only view of the `intake` queue (oldest first) or the
+  `planning` queue (waiting / in-progress / ready-to-close)
+- **`vrg-epic-audit`** — Epic/task drift and invariant report (read-only);
+  `--close` (human, or the scheduled `ops-epic-sweep` with `VRG_EPIC_SWEEP=1`)
+  closes drift, drains standing-epic archives, then runs the orphan pass that
+  attaches every unparented issue to its home's intake epic (epic
+  vergil-project/.github#176)
 - **`vrg-validate`** — Unified validation driver (runs inside dev container)
 - **`vrg-ensure-label`** — Idempotent GitHub label creation
 - **`vrg-hook-guard`** — Claude Code PreToolUse hook guard (blocks raw git/gh)
@@ -420,6 +435,12 @@ Shared libraries under `src/vergil_tooling/lib/`:
 - **`git.py`** — Git subprocess wrappers
 - **`github.py`** — gh CLI subprocess wrappers
 - **`config.py`** — Parse `vergil.toml`
+- **`epics.py`** — Epic/task model: the `StandingKind` table (ad-hoc, intake,
+  planning standing epics and their per-quarter archives), epic and queue
+  homes, sub-issue linking, rollup, and the parent-based queue-item check
+  that `report-ready` / `vrg-submit-pr` use to refuse intake and planning
+  items; `epic_audit.py` (drift report and orphan pass), `intake_route.py`,
+  and `queue_view.py` build on it
 - **`release/`** — Mechanized release workflow (preflight, prepare, merge,
   bump, confirm, finalize, handoff, orchestrator, package-index wait, and
   the `update-deps` stage); preflight holds the dependency-update gate
