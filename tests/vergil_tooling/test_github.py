@@ -31,6 +31,7 @@ def _no_credential_injection(monkeypatch: pytest.MonkeyPatch) -> None:
     github._warned_stale_links.clear()
     github._warned_no_installation.clear()
     monkeypatch.delenv(github.CHECKS_TIMEOUT_ENV, raising=False)
+    monkeypatch.delenv(github.ORPHAN_GRACE_ENV, raising=False)
 
 
 def _completed(
@@ -2805,6 +2806,21 @@ def test_checks_timeout_secs_rejects_bad_override(
     monkeypatch.setenv(github.CHECKS_TIMEOUT_ENV, raw)
     with pytest.raises(ValueError, match="VRG_CHECKS_TIMEOUT must be a positive"):
         github.checks_timeout_secs()
+
+
+def test_orphan_grace_secs_default_and_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert github.orphan_grace_secs() == 300
+    monkeypatch.setenv(github.ORPHAN_GRACE_ENV, " 600 ")
+    assert github.orphan_grace_secs() == 600
+    monkeypatch.setenv(github.ORPHAN_GRACE_ENV, "")
+    assert github.orphan_grace_secs() == 300
+
+
+@pytest.mark.parametrize("raw", ["soon", "0", "-5", "1.5"])
+def test_orphan_grace_secs_rejects_bad_override(monkeypatch: pytest.MonkeyPatch, raw: str) -> None:
+    monkeypatch.setenv(github.ORPHAN_GRACE_ENV, raw)
+    with pytest.raises(ValueError, match="VRG_ORPHAN_GRACE must be a positive"):
+        github.orphan_grace_secs()
 
 
 # --- download_api_binary (#3171) ---
