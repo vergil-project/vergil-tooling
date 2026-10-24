@@ -2,7 +2,9 @@
 
 Supports ``serve`` and ``build`` subcommands.  For Python repos, wraps
 commands with ``uv sync --group docs && uv run ...`` so that
-mkdocstrings plugins resolve correctly.
+mkdocstrings plugins resolve correctly.  A Python repo with no ``docs``
+dependency group runs plain ``uv run mkdocs``, which falls through to the
+image's mkdocs-material, as CI's docs jobs do (vergil-tooling#3563).
 
 Before mkdocs runs, the docs sources are staged on the host exactly as CI's
 ``actions/shared/docs/stage`` does (vergil-tooling#3439): ``vrg-docs-stage``
@@ -18,6 +20,7 @@ from __future__ import annotations
 import os
 import shutil
 import sys
+import tomllib
 from pathlib import Path
 
 from vergil_tooling.bin import vrg_docs_patch_nav, vrg_docs_stage
@@ -105,8 +108,22 @@ def main(argv: list[str] | None = None) -> int:
 
     container_cmd = mkdocs_cmd
     docs_env = dict(_DOCS_ENV)
-    if (repo_root / "pyproject.toml").is_file():
-        container_cmd = f"uv sync --group docs && uv run {mkdocs_cmd}"
+    note = None
+    pyproject = repo_root / "pyproject.toml"
+    if pyproject.is_file():
+        has_docs_group = _has_docs_group(pyproject)
+        if has_docs_group is None:
+            return 1
+        if has_docs_group:
+            container_cmd = f"uv sync --group docs && uv run {mkdocs_cmd}"
+        else:
+            # CI's docs jobs sync no group: `uv run mkdocs` finds no mkdocs in
+            # the project venv and falls through to the image's
+            # mkdocs-material. A repo whose docs need nothing more (no
+            # mkdocstrings) declares no docs group, so do the same here
+            # (vergil-tooling#3563).
+            container_cmd = f"uv run {mkdocs_cmd}"
+            note = "no [dependency-groups].docs in pyproject.toml; using the image's mkdocs"
         # Pin uv to the docs image's own Python, as the CI docs jobs do
         # (vergil-actions#1002), so a repo's python-preference cannot make uv
         # fetch a managed interpreter. The docs build resolves no version, so
@@ -131,6 +148,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Image:   {image}")
     print(f"Config:  {staged_config} (staged from {config})")
     print(f"Command: {container_cmd}")
+    if note is not None:
+        print(f"Note:    {note}")
     if command == "serve":
         print(f"URL:     http://localhost:{port}")
     print("---")
@@ -159,6 +178,21 @@ def _usage(port: str) -> None:
     print("  DOCKER_DOCS_IMAGE  Container image (override; ignores --prefix)")
     print("  MKDOCS_CONFIG      Path to mkdocs.yml (default: docs/site/mkdocs.yml)")
     print("  DOCS_PORT          Host port for serve (default: 8000)")
+
+
+def _has_docs_group(pyproject: Path) -> bool | None:
+    """Return whether *pyproject* declares a ``docs`` dependency group.
+
+    Returns ``None`` after reporting the error when the file cannot be parsed,
+    so the command fails here rather than with an opaque ``uv`` error inside
+    the container.
+    """
+    try:
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError as exc:
+        emit_error(f"cannot parse pyproject.toml: {exc}")
+        return None
+    return "docs" in data.get("dependency-groups", {})
 
 
 def _stage_sources(repo_root: Path, config: str) -> str | None:

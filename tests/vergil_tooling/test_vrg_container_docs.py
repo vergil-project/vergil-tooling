@@ -203,8 +203,11 @@ def test_custom_env_vars(tmp_path: Path, stub_staging: MagicMock) -> None:
     assert "9000:8000" in args
 
 
+_DOCS_GROUP_PYPROJECT = '[project]\n\n[dependency-groups]\ndocs = ["mkdocs-material"]\n'
+
+
 def test_python_repo_uv_sync(tmp_path: Path) -> None:
-    (tmp_path / "pyproject.toml").write_text("[project]\n")
+    (tmp_path / "pyproject.toml").write_text(_DOCS_GROUP_PYPROJECT)
     image = "ghcr.io/vergil-project/prod-base:latest"
     with (
         patch("vergil_tooling.bin.vrg_container_docs.git.repo_root", return_value=tmp_path),
@@ -232,6 +235,70 @@ def test_non_python_repo_no_uv(tmp_path: Path) -> None:
         main(["build"])
     cmd = mock_build.call_args[0][2]
     assert "uv" not in cmd[2]
+
+
+# -- a Python repo without a docs dependency group (vergil-tooling#3563) --------
+
+
+def _container_command_for(tmp_path: Path, command: str = "build") -> str:
+    image = "ghcr.io/vergil-project/prod-base:latest"
+    with (
+        patch(f"{_MOD}.git.repo_root", return_value=tmp_path),
+        patch(f"{_MOD}.detect_runtime", return_value="docker"),
+        patch(f"{_MOD}.build_container_args") as mock_build,
+        patch(f"{_MOD}.os.execvp"),
+        patch.dict("os.environ", {}, clear=True),
+    ):
+        mock_build.return_value = ["docker", "run", "--rm", image, "bash", "-c", "placeholder"]
+        main([command])
+    cmd: str = mock_build.call_args[0][2][2]
+    return cmd
+
+
+def test_python_repo_without_docs_group_uses_the_image_mkdocs(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Regression for #3563: `uv sync --group docs` failed with "Group `docs` is
+    # not defined" in a repo with no docs group. CI's docs jobs sync no group:
+    # they run `uv run mkdocs`, which falls through to the image's
+    # mkdocs-material when the project venv has none. Do the same.
+    (tmp_path / "pyproject.toml").write_text('[project]\n\n[dependency-groups]\ndev = ["pytest"]\n')
+    for command in ("build", "serve"):
+        cmd = _container_command_for(tmp_path, command)
+        assert "--group docs" not in cmd
+        assert cmd.startswith(f"uv run mkdocs {command} ")
+    out = capsys.readouterr().out
+    assert "no [dependency-groups].docs in pyproject.toml" in out
+    assert "the image's mkdocs" in out
+
+
+def test_python_repo_without_any_dependency_groups(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text("[project]\n")
+    assert _container_command_for(tmp_path).startswith("uv run mkdocs build ")
+
+
+def test_python_repo_with_docs_group_prints_no_fallback_note(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(_DOCS_GROUP_PYPROJECT)
+    cmd = _container_command_for(tmp_path)
+    assert cmd.startswith("uv sync --group docs && uv run mkdocs build ")
+    assert "the image's mkdocs" not in capsys.readouterr().out
+
+
+def test_unparseable_pyproject_fails_clearly(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "pyproject.toml").write_text("[project\n")
+    with (
+        patch(f"{_MOD}.git.repo_root", return_value=tmp_path),
+        patch(f"{_MOD}.detect_runtime", return_value="docker"),
+        patch(f"{_MOD}.os.execvp") as mock_exec,
+        patch.dict("os.environ", {}, clear=True),
+    ):
+        assert main(["build"]) == 1
+    mock_exec.assert_not_called()
+    assert "cannot parse pyproject.toml" in capsys.readouterr().err
 
 
 def test_cli_prefix_used(tmp_path: Path) -> None:
@@ -358,7 +425,7 @@ def test_build_no_port_splice(tmp_path: Path) -> None:
 
 
 def test_python_repo_uv_sync_in_command(tmp_path: Path) -> None:
-    (tmp_path / "pyproject.toml").write_text("[project]\n")
+    (tmp_path / "pyproject.toml").write_text(_DOCS_GROUP_PYPROJECT)
     image = "ghcr.io/vergil-project/prod-base:latest"
     with (
         patch("vergil_tooling.bin.vrg_container_docs.git.repo_root", return_value=tmp_path),
