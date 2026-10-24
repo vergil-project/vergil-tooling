@@ -178,19 +178,22 @@ See the [vrg-submit-pr reference](../reference/dev/submit-pr.md).
 
 !!! note "Agent handoff and the post-report-ready freeze"
     In an agent session, submission is a **human** action. The agent
-    pushes the branch to origin (`vrg-git push -u origin <branch>`)
-    **first** — `report-ready` pushes only the relay ref, never the
-    branch; when the delta touches `.github/workflows/**` the agent push
-    is refused and the human's `vrg-submit-pr` pushes it instead. The
-    agent then runs `vrg-pr-workflow report-ready` to record the PR
-    metadata in `.vergil/pr-workflow.json`, and stops; the human runs
-    `vrg-submit-pr`. Recording ready **freezes the branch**: `vrg-commit`
+    runs `vrg-pr-workflow report-ready`, which pushes the branch to origin
+    (setting upstream) and then records the PR metadata in
+    `.vergil/pr-workflow.json`, and stops; the human runs `vrg-submit-pr`.
+    No separate push is needed. When the delta touches
+    `.github/workflows/**` GitHub refuses the agent push; `report-ready`
+    says so, records the state anyway, and the human's `vrg-submit-pr`
+    pushes the branch instead. Any other push failure fails `report-ready`
+    with nothing recorded. Recording ready **freezes the branch**: `vrg-commit`
     and the `vrg-git` push path refuse further commits/pushes on it,
     because a task is exactly one PR and more work is a new follow-up
     issue. One push stays allowed: an explicit push of the branch while
     HEAD is still exactly the reported commit, which publishes it without
     advancing it. Correcting the PR prose (re-running `report-ready`) is still
-    allowed; deliberately reopening the branch needs
+    allowed — its push is a no-op while the branch is on origin at the
+    reported commit, and it refuses a HEAD that has drifted past that
+    commit; deliberately reopening the branch needs
     `vrg-pr-workflow unfreeze`. See the tool's entry in the
     [CLI Tools Overview](../reference/cli-tools-overview.md#vrg-pr-workflow).
 
