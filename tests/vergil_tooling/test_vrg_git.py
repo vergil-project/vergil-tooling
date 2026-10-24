@@ -13,6 +13,7 @@ from vergil_tooling.bin.vrg_git import (
     _check_new_branch_name,
     _noninteractive_rebase_env,
     _org_from_clone_url,
+    _parse_branch_create,
     _parse_branch_target,
     _parse_new_branch,
     _parse_worktree_add_path,
@@ -1482,8 +1483,8 @@ class TestCheckNewBranchName:
         assert _check_new_branch_name("checkout", ["develop"]) is None
 
     def test_other_subcommand_ignored(self) -> None:
-        # `branch` is not a creation path this guard handles.
-        assert _check_new_branch_name("branch", ["-b", "feature/no-number"]) is None
+        # `merge` is not a creation path this guard handles.
+        assert _check_new_branch_name("merge", ["-b", "feature/no-number"]) is None
 
     def test_checkout_b_malformed_denied_via_main(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -1598,6 +1599,198 @@ class TestCheckIssueIsOpenTask:
         assert rc == 1
         mock_run.assert_not_called()
         assert "is an epic, not a task" in capsys.readouterr().err
+
+
+# -- `branch <name>` is a creation path too (#3606) ----------------------------
+
+
+class TestParseBranchCreate:
+    """Only the forms of `git branch` that name a new branch return it."""
+
+    @pytest.mark.parametrize(
+        ("args", "expected"),
+        [
+            (["feature/12-ok"], "feature/12-ok"),
+            (["feature/12-ok", "origin/develop"], "feature/12-ok"),
+            (["-f", "feature/12-ok", "HEAD~1"], "feature/12-ok"),
+            (["--no-track", "feature/12-ok", "origin/develop"], "feature/12-ok"),
+            (["-q", "--track=direct", "feature/12-ok", "origin/develop"], "feature/12-ok"),
+            (["-tdirect", "feature/12-ok"], "feature/12-ok"),
+            (["--sort", "refname", "feature/12-ok"], "feature/12-ok"),
+            (["--", "feature/12-ok"], "feature/12-ok"),
+            (["-m", "feature/12-ok"], "feature/12-ok"),
+            (["-M", "scratch", "feature/12-ok"], "feature/12-ok"),
+            (["--move", "scratch", "feature/12-ok"], "feature/12-ok"),
+            (["-c", "feature/12-ok"], "feature/12-ok"),
+            (["-C", "scratch", "feature/12-ok"], "feature/12-ok"),
+            (["--copy", "scratch", "feature/12-ok"], "feature/12-ok"),
+            (["-fm", "scratch", "feature/12-ok"], "feature/12-ok"),
+        ],
+    )
+    def test_creating_forms(self, args: list[str], expected: str) -> None:
+        assert _parse_branch_create(args) == expected
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            [],
+            ["-m"],
+            ["--list"],
+            ["-l", "feature/*"],
+            ["--list", "feature/12-ok"],
+            ["-a"],
+            ["-r", "feature/12-ok"],
+            ["--all"],
+            ["--remotes"],
+            ["-v"],
+            ["-vv"],
+            ["-av"],
+            ["--verbose"],
+            ["--show-current"],
+            ["--contains", "abc123"],
+            ["--contains=abc123"],
+            ["--no-contains", "abc123"],
+            ["--merged", "origin/develop"],
+            ["--no-merged", "origin/develop"],
+            ["--points-at", "HEAD"],
+            ["--format=%(refname:short)"],
+            ["-d", "feature/12-ok"],
+            ["-D", "feature/12-ok"],
+            ["--delete", "feature/12-ok"],
+            ["-dr", "origin/feature/12-ok"],
+            ["-u", "origin/feature/12-ok"],
+            ["-uorigin/feature/12-ok", "feature/12-ok"],
+            ["--set-upstream-to", "origin/develop", "feature/12-ok"],
+            ["--set-upstream-to=origin/develop"],
+            ["--unset-upstream", "feature/12-ok"],
+            ["--edit-description", "feature/12-ok"],
+        ],
+    )
+    def test_non_creating_forms(self, args: list[str]) -> None:
+        assert _parse_branch_create(args) is None
+
+
+class TestBranchCreateGuard:
+    """`vrg-git branch` applies the name-format rule and the open-task guard."""
+
+    def test_malformed_name_rejected(self) -> None:
+        msg = _check_new_branch_name("branch", ["feature/no-number"])
+        assert msg is not None
+        assert "repo issue number" in msg
+
+    def test_open_task_allowed(self) -> None:
+        with patch(
+            "vergil_tooling.bin.vrg_git.github.read_json", return_value=_OPEN_TASK
+        ) as mock_read:
+            assert _check_new_branch_name("branch", ["feature/12-ok", "origin/develop"]) is None
+        mock_read.assert_called_once_with("issue", "view", "12", "--json", "state,labels")
+
+    @pytest.mark.parametrize("kind", ["epic", "archive"])
+    def test_non_task_rejected(self, kind: str) -> None:
+        issue = {"state": "OPEN", "labels": [{"name": kind}]}
+        with patch("vergil_tooling.bin.vrg_git.github.read_json", return_value=issue):
+            msg = _check_new_branch_name("branch", ["feature/40-umbrella"])
+        assert msg == epics.non_task_refusal_message("feature/40-umbrella", "#40", kind)
+
+    def test_closed_issue_rejected(self) -> None:
+        closed = {"state": "CLOSED", "labels": []}
+        with patch("vergil_tooling.bin.vrg_git.github.read_json", return_value=closed):
+            msg = _check_new_branch_name("branch", ["feature/12-ok"])
+        assert msg is not None
+        assert "is not an open issue (state: CLOSED)" in msg
+
+    def test_failed_read_rejected(self) -> None:
+        with patch(
+            "vergil_tooling.bin.vrg_git.github.read_json",
+            side_effect=subprocess.CalledProcessError(1, ["gh"]),
+        ):
+            msg = _check_new_branch_name("branch", ["feature/12-ok"])
+        assert msg is not None
+        assert "could not read issue #12" in msg
+
+    def test_rename_to_malformed_issue_name_rejected(self) -> None:
+        assert _check_new_branch_name("branch", ["-m", "feature/no-number"]) is not None
+
+    def test_copy_to_epic_rejected(self) -> None:
+        epic = {"state": "OPEN", "labels": [{"name": "epic"}]}
+        with patch("vergil_tooling.bin.vrg_git.github.read_json", return_value=epic):
+            msg = _check_new_branch_name("branch", ["-c", "scratch", "feature/40-umbrella"])
+        assert msg is not None
+        assert "is an epic, not a task" in msg
+
+    def test_non_issue_names_skip_lookup(self) -> None:
+        with patch("vergil_tooling.bin.vrg_git.github.read_json") as mock_read:
+            assert _check_new_branch_name("branch", ["release/2.1.180"]) is None
+            assert _check_new_branch_name("branch", ["scratch"]) is None
+            assert _check_new_branch_name("branch", ["-m", "feature/12-ok", "scratch"]) is None
+        mock_read.assert_not_called()
+
+    def test_malformed_create_denied_via_main(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
+            rc = main(["branch", "feature/no-number"])
+        assert rc == 1
+        mock_run.assert_not_called()
+        assert "repo issue number" in capsys.readouterr().err
+
+    def test_epic_create_denied_via_main(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        epic = {"state": "OPEN", "labels": [{"name": "epic"}]}
+        with (
+            patch("vergil_tooling.bin.vrg_git.github.read_json", return_value=epic),
+            patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
+        ):
+            rc = main(["branch", "feature/40-umbrella", "origin/develop"])
+        assert rc == 1
+        mock_run.assert_not_called()
+        assert "is an epic, not a task" in capsys.readouterr().err
+
+    def test_open_task_create_runs_git(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        with (
+            patch("vergil_tooling.bin.vrg_git.github.read_json", return_value=_OPEN_TASK),
+            patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value.returncode = 0
+            rc = main(["branch", "feature/12-ok", "origin/develop"])
+        assert rc == 0
+        mock_run.assert_called_once()
+        assert mock_run.call_args.args[0] == ["git", "branch", "feature/12-ok", "origin/develop"]
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            ["--list"],
+            ["-a"],
+            ["-r"],
+            ["-vv"],
+            ["--show-current"],
+            ["--contains", "HEAD"],
+            ["--merged", "origin/develop"],
+            ["-d", "feature/no-number"],
+            ["--set-upstream-to=origin/develop"],
+            ["-u", "origin/feature/no-number"],
+        ],
+    )
+    def test_non_creating_forms_pass_through_via_main(
+        self, args: list[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        with (
+            patch("vergil_tooling.bin.vrg_git.github.read_json") as mock_read,
+            patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value.returncode = 0
+            rc = main(["branch", *args])
+        assert rc == 0
+        mock_read.assert_not_called()
+        assert mock_run.call_args.args[0] == ["git", "branch", *args]
 
 
 # -- non-interactive rebase (#1742) -------------------------------------------

@@ -58,8 +58,10 @@ chore/256-bump-dependency-versions
 
 Pattern: `^(feature|bugfix|hotfix|chore)/[0-9]+-[a-z0-9][a-z0-9.-]*$`.
 `vrg-git` applies it when the branch is created (`worktree add -b`,
-`checkout -b`, `switch -c`) and `vrg-commit` applies it again at commit
-time.
+`checkout -b`, `switch -c`, `branch <name>`, and a `branch -c`/`-m` copy
+or rename to an issue-branch name) and `vrg-commit` applies it again at
+commit time. Listing, deleting and upstream forms of `vrg-git branch` are
+not checked.
 
 At creation, `vrg-git` also reads issue `<N>` from the current repo. It
 refuses the branch when the issue is closed, or is an epic or archive
