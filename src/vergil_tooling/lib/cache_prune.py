@@ -182,25 +182,39 @@ def clean_branch_images(branch: str, *, runtime: str = "") -> tuple[int, list[tu
     return len(refs) - len(failures), failures
 
 
-def prune_orphan_branch_images(
+def prune_finished_images(
     repos: Iterable[Path], *, runtime: str = ""
-) -> tuple[int, list[tuple[str, str]]]:
+) -> tuple[list[str], list[tuple[str, str]]]:
     """Remove cached images whose branch is finished in every one of *repos*.
 
-    The unattended form of ``vrg-container-cache prune --apply``, for
-    ``vrg-finalize-pr``'s swept safety net (#2600): the same
-    :func:`plan_prune` verdicts against the live branches of the whole repo
-    set, not just the finalized repo's, because the tag does not record its
-    repo and every repo of a language shares the base image name (#3566).
-    Returns ``(removed, failures)`` as :func:`clean_branch_images`. A failure to
-    read the images, the containers or any repo's branches raises
-    (``RuntimeError`` or ``CalledProcessError``) before anything is removed.
+    The unattended form of ``vrg-container-cache prune --apply``, behind
+    ``vrg-finalize-pr``'s swept safety net (#2600) and the low-disk auto-prune
+    before a cache build (#3571): the same :func:`plan_prune` verdicts against
+    the live branches of the whole repo set, not just one repo's, because the
+    tag does not record its repo and every repo of a language shares the base
+    image name (#3566). Returns ``(removed, failures)``: the refs removed, and
+    the ``(ref, error)`` pairs from :func:`remove_images`. A failure to read
+    the images, the containers or any repo's branches raises (``RuntimeError``
+    or ``CalledProcessError``) before anything is removed.
     """
     rt = runtime or detect_runtime()
     images = list_cache_images(rt)
     if not images:
-        return 0, []
+        return [], []
     verdicts = plan_prune(images, live_branches(repos), images_in_use(rt))
     doomed = [verdict.image.ref for verdict in verdicts if verdict.remove]
     failures = remove_images(doomed, rt)
-    return len(doomed) - len(failures), failures
+    failed = {ref for ref, _error in failures}
+    return [ref for ref in doomed if ref not in failed], failures
+
+
+def prune_orphan_branch_images(
+    repos: Iterable[Path], *, runtime: str = ""
+) -> tuple[int, list[tuple[str, str]]]:
+    """Run :func:`prune_finished_images`; return ``(removed count, failures)``.
+
+    The count form ``vrg-finalize-pr`` reports, as :func:`clean_branch_images`
+    returns. Raises as :func:`prune_finished_images` does.
+    """
+    removed, failures = prune_finished_images(repos, runtime=runtime)
+    return len(removed), failures

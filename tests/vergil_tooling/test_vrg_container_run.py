@@ -119,6 +119,29 @@ def test_python_cache_build_gets_version_and_source(tmp_path: Path) -> None:
     }
 
 
+def test_cache_space_error_fails_cleanly(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Too little disk for the cache build stops the run with the message, not a
+    # traceback, and nothing is launched (#3571).
+    from vergil_tooling.lib.cache_space import CacheSpaceError
+
+    (tmp_path / "pyproject.toml").write_text("[project]\n")
+    with (
+        patch("vergil_tooling.bin.vrg_container_run.git.repo_root", return_value=tmp_path),
+        patch(
+            "vergil_tooling.bin.vrg_container_run.ensure_cached_image",
+            side_effect=CacheSpaceError("not enough disk space"),
+        ),
+        patch("vergil_tooling.bin.vrg_container_run.detect_runtime", return_value="docker"),
+        patch("vergil_tooling.bin.vrg_container_run.os.execvp") as mock_exec,
+        patch.dict("os.environ", {}, clear=True),
+    ):
+        assert main(["--", "true"]) == 1
+    assert "error: not enough disk space" in capsys.readouterr().err
+    mock_exec.assert_not_called()
+
+
 def test_help_alone_after_separator_not_intercepted(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[project]\n")
     env = {"GH_TOKEN": "tok"}

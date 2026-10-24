@@ -606,6 +606,11 @@ def ensure_cached_image(
     the same env the run path passes). It is required, so no caller can build a
     cache without deciding it: it is exported for the setup step and folded into
     the cache key, so a change of resolved version or source rebuilds (#3421).
+
+    Before a build it runs the low-disk auto-prune
+    (:func:`~vergil_tooling.lib.cache_space.ensure_build_space`), which raises
+    :class:`~vergil_tooling.lib.cache_space.CacheSpaceError` when the build
+    cannot have the room it needs.
     """
     rt = runtime or detect_runtime()
     files = cache_sensitive_files(repo_root, lang)
@@ -644,6 +649,12 @@ def ensure_cached_image(
                 file=sys.stderr,
             )
 
+    # Make room first: below the free-space threshold, prune finished branches'
+    # images, and stop here rather than fail part way through the build (#3571).
+    # Imported here because cache_space depends on this module.
+    from vergil_tooling.lib.cache_space import ensure_build_space
+
+    ensure_build_space(rt)
     target_tag = cache_image_tag(base_image, branch, current_hash)
     return _build_cached_image(
         repo_root,

@@ -47,6 +47,14 @@ def _marker_language_resolution() -> Iterator[None]:
         yield
 
 
+@pytest.fixture(autouse=True)
+def build_space() -> Iterator[MagicMock]:
+    # The low-disk auto-prune reads the real image store; stub it out. Its own
+    # behaviour is tested in test_cache_space.py (#3571).
+    with patch("vergil_tooling.lib.cache_space.ensure_build_space") as mock_space:
+        yield mock_space
+
+
 def _completed(returncode: int = 0, stdout: str = "", stderr: str = "") -> MagicMock:
     return MagicMock(returncode=returncode, stdout=stdout, stderr=stderr)
 
@@ -296,6 +304,47 @@ def test_ensure_rebuilds_when_cached_image_unlaunchable(tmp_path: Path) -> None:
     rmi_cmd = mock_run.call_args[0][0]
     assert rmi_cmd[:3] == ["docker", "rmi", "-f"]
     assert full_tag in rmi_cmd
+
+
+def _ensure_cold_build(tmp_path: Path, build: MagicMock) -> str:
+    """Run ensure_cached_image with no cached image, so it goes to build."""
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    with (
+        patch("vergil_tooling.lib.git.current_branch", return_value="feature/42"),
+        patch(
+            "vergil_tooling.lib.container_cache.resolve_base_digest",
+            return_value=("sha256:abc", True),
+        ),
+        patch("vergil_tooling.lib.container_cache.find_cached_image", return_value=None),
+        patch("vergil_tooling.lib.container_cache._build_cached_image", build),
+    ):
+        return ensure_cached_image(
+            tmp_path, "go", "ghcr.io/r/dev-go:1.26", runtime="docker", build_env={}
+        )
+
+
+def test_ensure_checksbuild_space_before_building(tmp_path: Path, build_space: MagicMock) -> None:
+    # The low-disk auto-prune runs just before a cache build (#3571).
+    build = MagicMock(return_value="built:tag")
+    build_space.side_effect = lambda _rt: build.assert_not_called()
+    assert _ensure_cold_build(tmp_path, build) == "built:tag"
+    build_space.assert_called_once_with("docker")
+    build.assert_called_once()
+
+
+def test_ensure_does_not_build_without_space(tmp_path: Path, build_space: MagicMock) -> None:
+    from vergil_tooling.lib.cache_space import CacheSpaceError
+
+    build = MagicMock()
+    build_space.side_effect = CacheSpaceError("not enough disk space")
+    with pytest.raises(CacheSpaceError, match="not enough disk space"):
+        _ensure_cold_build(tmp_path, build)
+    build.assert_not_called()
+
+
+def test_ensure_skips_space_check_on_cache_hit(tmp_path: Path, build_space: MagicMock) -> None:
+    test_ensure_reuses_cache_when_hash_matches_and_launchable(tmp_path)
+    build_space.assert_not_called()
 
 
 def test_image_is_launchable_true_when_create_succeeds() -> None:

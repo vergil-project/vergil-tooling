@@ -69,6 +69,24 @@ def test_build_calls_ensure(tmp_path: Path) -> None:
         assert main(["build"]) == 0
 
 
+def test_build_cache_space_error_fails_cleanly(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from vergil_tooling.lib.cache_space import CacheSpaceError
+
+    with (
+        patch("vergil_tooling.bin.vrg_container_cache.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_cache.assert_runtime_available"),
+        patch("vergil_tooling.bin.vrg_container_cache.detect_runtime", return_value="docker"),
+        patch(
+            "vergil_tooling.bin.vrg_container_cache.ensure_cached_image",
+            side_effect=CacheSpaceError("not enough disk space"),
+        ),
+    ):
+        assert main(["build"]) == 1
+    assert "error: not enough disk space" in capsys.readouterr().err
+
+
 _PY_ENV = {"UV_PYTHON": "3.14", "UV_PYTHON_PREFERENCE": "only-system"}
 
 
