@@ -66,4 +66,11 @@ def _auth_error_message(prog: str, exc: Exception) -> str | None:
         return f"{prog}: {github.no_installation_message(exc)}"
     if isinstance(exc, github.MissingGitHubTokenError):
         return github.missing_token_message(prog)
+    # An unresolvable epic home is not an auth error, but it carries a complete
+    # one-line message and is raised from many commands' resolution paths
+    # (#3603), so it gets the same clean exit.
+    from vergil_tooling.lib import epics
+
+    if isinstance(exc, epics.EpicHomeError):
+        return f"{prog}: {exc}"
     return None

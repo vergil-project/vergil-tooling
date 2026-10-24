@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from vergil_tooling.lib import github
+from vergil_tooling.lib import epics, github
 from vergil_tooling.lib.cli import cli_main
 
 if TYPE_CHECKING:
@@ -74,6 +74,11 @@ class TestCliMain:
         exc = github.MissingGitHubTokenError(4, ["gh", "api"], "", "set GH_TOKEN")
         err = _exit_message(exc, capsys)
         assert err == f"{github.missing_token_message(_PROG)}\n"
+
+    def test_epic_home_error_is_a_clean_message(self, capsys: pytest.CaptureFixture[str]) -> None:
+        exc = epics.EpicHomeError("cannot resolve the epic home of org/repo: HTTP 502")
+        err = _exit_message(exc, capsys)
+        assert err == f"{_PROG}: cannot resolve the epic home of org/repo: HTTP 502\n"
 
     def test_other_exceptions_propagate_unchanged(self, capsys: pytest.CaptureFixture[str]) -> None:
         exc = RuntimeError("boom")

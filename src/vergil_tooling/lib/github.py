@@ -220,11 +220,20 @@ def repo_exists(owner: str, name: str) -> bool:
     try:
         repo_visibility(f"{owner}/{name}")
     except GitHubAPIError as exc:
-        detail = ((exc.stderr or "") + (exc.stdout or "")).lower()
-        if "could not resolve to a repository" in detail or "not found" in detail:
+        if is_repo_not_found(exc):
             return False
         raise
     return True
+
+
+def is_repo_not_found(exc: GitHubAPIError) -> bool:
+    """True when *exc* is GitHub's genuine "repository does not exist" answer.
+
+    Matches ``gh repo view``'s GraphQL "Could not resolve to a Repository" and a
+    REST "Not Found"; every other failure (auth, network, rate limit) is False.
+    """
+    detail = ((exc.stderr or "") + (exc.stdout or "")).lower()
+    return "could not resolve to a repository" in detail or "not found" in detail
 
 
 def _jwt_api_request(endpoint: str, jwt_token: str, *, method: str = "GET") -> Any:

@@ -977,9 +977,10 @@ def test_qualify_epic_ref_visibility_error_propagates() -> None:
     err = github.GitHubAPIError(1, "gh repo view", "boom")
     with (
         patch("vergil_tooling.lib.github.is_public", side_effect=err),
-        pytest.raises(github.GitHubAPIError),
+        pytest.raises(epics.EpicHomeError) as excinfo,
     ):
         epics.qualify_epic_ref("#12", repo="org/lab")
+    assert excinfo.value.__cause__ is err
 
 
 def test_qualify_epic_ref_rejects_malformed_ref() -> None:
@@ -1335,14 +1336,55 @@ def test_resolve_epic_home_private_org_is_central() -> None:
 
 
 def test_resolve_epic_home_fails_loud() -> None:
+    # A failed probe of the target is a clear EpicHomeError, never a traceback.
     with (
         patch(
             "vergil_tooling.lib.epics.github.is_public",
-            side_effect=github.GitHubAPIError(1, "cmd", "boom"),
+            side_effect=github.GitHubAPIError(1, "cmd", "", "HTTP 502: boom"),
         ),
-        pytest.raises(github.GitHubAPIError),
+        pytest.raises(epics.EpicHomeError, match=r"(?s)org/missing:.*HTTP 502: boom"),
     ):
         epics.resolve_epic_home("org", "missing")
+
+
+_NO_REPO = "GraphQL: Could not resolve to a Repository with the name 'owner/.github'."
+
+
+def test_resolve_epic_home_missing_dotgithub_self_homes() -> None:
+    # A personal account with no <owner>/.github has no central home, so a
+    # private repo self-homes its epics (#3603).
+    def pub(nwo: str) -> bool:
+        if nwo == "owner/.github":
+            raise github.GitHubAPIError(1, "cmd", "", _NO_REPO)
+        return False
+
+    with patch("vergil_tooling.lib.epics.github.is_public", side_effect=pub):
+        assert epics.resolve_epic_home("owner", "notes") == "owner/notes"
+
+
+def test_resolve_epic_home_dotgithub_probe_error_fails_loud() -> None:
+    # Only "does not exist" self-homes; any other .github probe failure is a
+    # clear EpicHomeError naming the repo it could not resolve (#3603).
+    def pub(nwo: str) -> bool:
+        if nwo == "owner/.github":
+            raise github.GitHubAPIError(1, "cmd", "", "HTTP 401: Bad credentials")
+        return False
+
+    with (
+        patch("vergil_tooling.lib.epics.github.is_public", side_effect=pub),
+        pytest.raises(epics.EpicHomeError, match=r"(?s)owner/notes:.*Bad credentials"),
+    ):
+        epics.resolve_epic_home("owner", "notes")
+
+
+def test_resolve_epic_home_missing_token_is_not_rewrapped() -> None:
+    # A missing token keeps its own error so cli_main prints the token fix.
+    missing = github.MissingGitHubTokenError(4, "cmd", "", "set GH_TOKEN")
+    with (
+        patch("vergil_tooling.lib.epics.github.is_public", side_effect=missing),
+        pytest.raises(github.MissingGitHubTokenError),
+    ):
+        epics.resolve_epic_home("owner", "notes")
 
 
 # --- Task 4: per-repo drain (plan + apply) ---
