@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from vergil_tooling.lib import vm_packages
+from vergil_tooling.lib.vm_transport import TransportTimeoutError
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.identity import Identity
@@ -279,6 +280,84 @@ def update_tooling(transport: Transport, tag: str | None = None, *, fallback_tag
     _install(transport, tag)
     if not explicit:
         _write_tag_file(transport, tag)
+
+
+# Answers whether the box's installed vrg-container-cache can prune, with one token
+# on stdout and exit 0 in every case: a box on a release older than the prune
+# subcommand (#3481) is expected, not an error, so it must be told apart from a
+# prune that ran and failed. `prune --help` exits before the command needs a
+# container runtime or a repo set.
+_PRUNE_PROBE = (
+    'export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"; '
+    "if ! command -v vrg-container-cache >/dev/null 2>&1; then echo absent; "
+    "elif vrg-container-cache prune --help >/dev/null 2>&1; then echo ok; "
+    "else echo no-prune; fi"
+)
+
+
+def _print_indented(text: str, *, err: bool = False) -> None:
+    for line in text.splitlines():
+        print(f"    {line}" if line else "", file=sys.stderr if err else sys.stdout)
+
+
+def prune_cache_images(transport: Transport, roots: list[str] | None = None) -> bool:
+    """Remove the box's cached images of finished branches; report, never raise.
+
+    Runs the box's own installed ``vrg-container-cache prune --apply`` (#3604), so
+    it is the freshly updated version that decides. *roots* become ``--root``
+    arguments; ``None`` keeps the box's platform default repo set. A Lima box
+    needs them: its default is derived from the current checkout, and the
+    transport runs from ``/tmp``.
+
+    Best-effort by contract: the prune is housekeeping riding on an update, so
+    a failure is printed loudly (the command's own output and the exit) and
+    reported by returning ``False``, never raised into the update. A box whose
+    tooling has no ``prune`` yet is reported plainly and skipped.
+    """
+    print("  Pruning cached images of finished branches...")
+    try:
+        answer = transport.run("bash", "-c", _PRUNE_PROBE).stdout.strip()
+    except (subprocess.CalledProcessError, TransportTimeoutError) as exc:
+        print(
+            f"ERROR: cache prune skipped: could not check the box's vrg-container-cache "
+            f"({_failure_reason(exc)}). The update itself is unaffected.",
+            file=sys.stderr,
+        )
+        return False
+    if answer != "ok":
+        reasons = {
+            "absent": "vrg-container-cache is not installed in the box",
+            "no-prune": (
+                "the box's vrg-container-cache has no 'prune' subcommand "
+                "(its vergil-tooling predates it)"
+            ),
+        }
+        reason = reasons.get(answer, f"unexpected probe output {answer!r}")
+        print(f"WARNING: cache prune skipped: {reason}.", file=sys.stderr)
+        return False
+
+    root_args = "".join(f" --root {shlex.quote(r)}" for r in roots or [])
+    cmd = f"{_PLUGIN_PATH_EXPORT} && vrg-container-cache prune --apply{root_args}"
+    try:
+        result = transport.run("bash", "-c", cmd)
+    except (subprocess.CalledProcessError, TransportTimeoutError) as exc:
+        if isinstance(exc, subprocess.CalledProcessError) and exc.stdout:
+            _print_indented(exc.stdout, err=True)
+        print(
+            f"ERROR: cache prune failed in the box ({_failure_reason(exc)}). The update "
+            "itself is unaffected; run 'vrg-container-cache prune' in the box to "
+            "investigate.",
+            file=sys.stderr,
+        )
+        return False
+    _print_indented(result.stdout)
+    return True
+
+
+def _failure_reason(exc: subprocess.CalledProcessError | TransportTimeoutError) -> str:
+    if isinstance(exc, subprocess.CalledProcessError):
+        return f"exit status {exc.returncode}"
+    return f"timed out after {exc.timeout:.0f}s"
 
 
 # Prepended to every in-guest `claude` invocation. claude itself is on the base

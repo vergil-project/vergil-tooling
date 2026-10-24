@@ -70,6 +70,7 @@ from vergil_tooling.lib.vm_guest import (
     inject_credentials,
     install_tooling,
     link_claude_dirs,
+    prune_cache_images,
     update_plugins,
     update_tooling,
     vm_probe,
@@ -164,6 +165,16 @@ def main(argv: list[str] | None = None) -> int:
             "boxes are attempted even if one fails; non-running boxes are skipped and "
             "reported). Off-platform boxes are updated in place over IAP, exactly "
             "like Lima boxes — no rebuild."
+        ),
+    )
+    p_update.add_argument(
+        "--no-prune",
+        dest="prune",
+        action="store_false",
+        help=(
+            "Skip removing the box's cached images of finished branches "
+            "(by default the box's own 'vrg-container-cache prune --apply' runs "
+            "after the reinstall)"
         ),
     )
     progress.add_progress_args(p_update, ())
@@ -1504,13 +1515,23 @@ def _cmd_restart(args: argparse.Namespace) -> int:
 
 
 def _update_over_transport(
-    transport: Transport, label: str, tag: str | None, fallback: str
+    transport: Transport,
+    label: str,
+    tag: str | None,
+    fallback: str,
+    *,
+    prune: bool = True,
+    prune_roots: list[str] | None = None,
 ) -> None:
     """Update tooling and plugins in one running box, printing the version transition.
 
     Transport-generic core shared by the Lima and off-platform update paths
     (#1812): an off-platform box updates in place over its IAP transport exactly
     as a Lima box does over limactl — no rebuild.
+
+    With *prune*, the freshly installed tooling then removes the box's cached
+    images of finished branches against *prune_roots* (#3604). The prune is
+    best-effort: it reports its own failure and never fails the update.
     """
     print(f"Updating vergil-tooling in {label}...")
 
@@ -1527,13 +1548,29 @@ def _update_over_transport(
         print(f"  vergil-tooling: {after}")
     _report_dev_tooling(transport)
 
+    if prune:
+        prune_cache_images(transport, prune_roots)
+
     update_plugins(transport)
 
 
-def _update_instance(instance: str, name: str, tag: str | None, fallback: str) -> None:
-    """Update tooling and plugins in one running Lima VM over its limactl transport."""
+def _update_instance(
+    instance: str, name: str, identity: Identity, tag: str | None, fallback: str, *, prune: bool
+) -> None:
+    """Update tooling and plugins in one running Lima VM over its limactl transport.
+
+    The prune is given the projects mount as its root: a Lima guest's default
+    repo set is derived from the current checkout, and the transport runs from
+    /tmp, outside any. The mount is path-preserved, so the host path is the
+    guest path.
+    """
     _update_over_transport(
-        LimaTransport(instance), f"VM '{instance}' (identity: {name})", tag, fallback
+        LimaTransport(instance),
+        f"VM '{instance}' (identity: {name})",
+        tag,
+        fallback,
+        prune=prune,
+        prune_roots=[identity.projects_dir] if identity.projects_dir else None,
     )
 
 
@@ -1563,7 +1600,7 @@ def _cmd_update_off_platform(target: Target, args: argparse.Namespace) -> int:
     tag = args.tag if args.tag else None
     fallback = resolve_vergil_version(target.config, target.identity)
     label = f"off-platform box '{backend.name}' (identity: {target.identity_name})"
-    _update_over_transport(backend.transport(), label, tag, fallback)
+    _update_over_transport(backend.transport(), label, tag, fallback, prune=args.prune)
 
     print("Update complete.")
     return 0
@@ -1592,7 +1629,7 @@ def _cmd_update(args: argparse.Namespace) -> int:
 
     tag = args.tag if args.tag else None
     fallback = resolve_vergil_version(config, identity)
-    _update_instance(instance, name, tag, fallback)
+    _update_instance(instance, name, identity, tag, fallback, prune=args.prune)
 
     print("Update complete.")
     return 0
@@ -1679,7 +1716,7 @@ def _cmd_update_all(args: argparse.Namespace) -> int:
             continue
         try:
             fallback = resolve_vergil_version(config, identity)
-            _update_instance(instance, id_name, tag, fallback)
+            _update_instance(instance, id_name, identity, tag, fallback, prune=args.prune)
             updated.append(instance)
         except subprocess.CalledProcessError as exc:
             reason = f"exit status {exc.returncode}"
@@ -1701,7 +1738,7 @@ def _cmd_update_all(args: argparse.Namespace) -> int:
         try:
             fallback = _off_platform_fallback(config, vm)
             transport = vm_cloud.off_platform_transport(vm.cloud_name, vm.state_dir, vm.provider)
-            _update_over_transport(transport, box, tag, fallback)
+            _update_over_transport(transport, box, tag, fallback, prune=args.prune)
             updated.append(vm.label)
         except subprocess.CalledProcessError as exc:
             reason = f"exit status {exc.returncode}"

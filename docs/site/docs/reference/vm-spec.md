@@ -382,3 +382,21 @@ vrg-vm update --tag develop
   `DEV tooling (ref <ref>) — not the packaged install`.
 - A plain `vrg-vm update` (no `--tag`) returns the VM to the packaged
   install and removes the dev copy.
+
+### Cache image prune on update
+
+After the reinstall, `vrg-vm update` (and each box of `update --all`) runs
+the VM's own, freshly installed `vrg-container-cache prune --apply` inside
+the VM. It removes cached dev images whose branch is finished and prints what
+it removed. Pass `--no-prune` to skip it.
+
+- An off-platform box prunes against its default repo set,
+  `/vergil/projects`. A Lima box is given its identity's `projects_dir` as
+  `--root`. That path is mounted at the same location in the VM, and the
+  in-VM command does not run from a checkout, so it cannot work out the
+  default on its own.
+- A failed prune is printed as an `ERROR` with the command's output and exit
+  status, but it does not fail the update.
+- If the VM's vergil-tooling has no `prune` subcommand yet, or no
+  `vrg-container-cache` at all, the prune is skipped with a warning that says
+  so.

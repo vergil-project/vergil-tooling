@@ -11,6 +11,7 @@ import pytest
 from vergil_tooling.lib import vm_packages
 from vergil_tooling.lib.identity import Identity
 from vergil_tooling.lib.vm_guest import (
+    _PRUNE_PROBE,
     VmUnreachableError,
     _inject_host_git_identity,
     _read_host_git_config,
@@ -19,6 +20,7 @@ from vergil_tooling.lib.vm_guest import (
     inject_credentials,
     install_tooling,
     link_claude_dirs,
+    prune_cache_images,
     read_fingerprint,
     update_plugins,
     update_tooling,
@@ -26,6 +28,7 @@ from vergil_tooling.lib.vm_guest import (
     vm_probe,
     vm_spec_status,
 )
+from vergil_tooling.lib.vm_transport import TransportTimeoutError
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -1074,3 +1077,111 @@ class TestUpdatePlugins:
         update_plugins(transport)
         cmds = [c.args[-1] for c in transport.run.call_args_list]
         assert not any("marketplace add" in c for c in cmds)
+
+
+class TestPruneCacheImages:
+    """The box's own vrg-container-cache prunes; a failure is loud but never raised."""
+
+    _VERDICTS = "Repo set: 1 repo(s) under /p\n\n  remove  img--old--abc  (no live branch)\n"
+
+    @staticmethod
+    def _cmds(transport: MagicMock) -> list[str]:
+        return [c.args[-1] for c in transport.run.call_args_list]
+
+    def test_applies_with_roots_and_prints_output(self, capsys: pytest.CaptureFixture[str]) -> None:
+        transport = MagicMock()
+        transport.run.side_effect = [_ok("ok\n"), _ok(self._VERDICTS)]
+        assert prune_cache_images(transport, ["/home/u/my projects"]) is True
+        probe, prune = self._cmds(transport)
+        assert probe == _PRUNE_PROBE
+        assert prune.endswith(
+            "vrg-container-cache prune --apply --root " + shlex.quote("/home/u/my projects")
+        )
+        out = capsys.readouterr().out
+        assert "    remove  img--old--abc  (no live branch)" in out
+        assert "    Repo set: 1 repo(s) under /p" in out
+
+    def test_no_roots_keeps_the_box_default(self) -> None:
+        transport = MagicMock()
+        transport.run.side_effect = [_ok("ok\n"), _ok()]
+        assert prune_cache_images(transport) is True
+        assert "--root" not in self._cmds(transport)[1]
+        assert self._cmds(transport)[1].endswith("vrg-container-cache prune --apply")
+
+    @pytest.mark.parametrize(
+        ("token", "reason"),
+        [
+            ("absent", "vrg-container-cache is not installed in the box"),
+            ("no-prune", "has no 'prune' subcommand (its vergil-tooling predates it)"),
+            ("garbage", "unexpected probe output 'garbage'"),
+        ],
+    )
+    def test_unavailable_prune_is_skipped_with_a_reason(
+        self, token: str, reason: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        transport = _transport(f"{token}\n")
+        assert prune_cache_images(transport, ["/p"]) is False
+        transport.run.assert_called_once()
+        err = capsys.readouterr().err
+        assert "WARNING: cache prune skipped:" in err
+        assert reason in err
+
+    def test_probe_failure_is_reported(self, capsys: pytest.CaptureFixture[str]) -> None:
+        transport = MagicMock()
+        transport.run.side_effect = subprocess.CalledProcessError(255, ["ssh"])
+        assert prune_cache_images(transport) is False
+        err = capsys.readouterr().err
+        assert "ERROR: cache prune skipped: could not check" in err
+        assert "exit status 255" in err
+        assert "update itself is unaffected" in err
+
+    def test_failed_prune_prints_its_output_and_the_exit(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        transport = MagicMock()
+        transport.run.side_effect = [
+            _ok("ok\n"),
+            subprocess.CalledProcessError(1, ["bash"], output=self._VERDICTS),
+        ]
+        assert prune_cache_images(transport) is False
+        captured = capsys.readouterr()
+        assert "    remove  img--old--abc  (no live branch)" in captured.err
+        assert "ERROR: cache prune failed in the box (exit status 1)" in captured.err
+        assert "update itself is unaffected" in captured.err
+        assert "img--old--abc" not in captured.out
+
+    def test_failed_prune_without_output(self, capsys: pytest.CaptureFixture[str]) -> None:
+        transport = MagicMock()
+        transport.run.side_effect = [_ok("ok\n"), subprocess.CalledProcessError(2, ["bash"])]
+        assert prune_cache_images(transport) is False
+        assert "(exit status 2)" in capsys.readouterr().err
+
+    def test_timed_out_prune_is_reported(self, capsys: pytest.CaptureFixture[str]) -> None:
+        transport = MagicMock()
+        transport.run.side_effect = [_ok("ok\n"), TransportTimeoutError(["ssh"], 600)]
+        assert prune_cache_images(transport) is False
+        assert "(timed out after 600s)" in capsys.readouterr().err
+
+    @pytest.mark.parametrize(
+        ("help_exit", "token"),
+        [(0, "ok"), (2, "no-prune")],
+    )
+    def test_probe_script_tells_old_tooling_apart(
+        self, help_exit: int, token: str, tmp_path: Path
+    ) -> None:
+        # The real probe in bash, against a fake vrg-container-cache in
+        # ~/.local/bin (first on the probe's PATH): an old release's argparse
+        # rejects 'prune' with exit 2.
+        bin_dir = tmp_path / ".local" / "bin"
+        bin_dir.mkdir(parents=True)
+        fake = bin_dir / "vrg-container-cache"
+        fake.write_text(f"#!/bin/sh\nexit {help_exit}\n")
+        fake.chmod(0o755)
+        result = subprocess.run(  # noqa: S603
+            ["bash", "-c", _PRUNE_PROBE],  # noqa: S607
+            capture_output=True,
+            text=True,
+            check=True,
+            env={"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"},
+        )
+        assert result.stdout.strip() == token
