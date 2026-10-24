@@ -82,7 +82,8 @@ adding new public surface. Versions: `v1.3.0` → `v1.3.1`.
      that covers the release and prints a heartbeat line on each poll
      otherwise; the index poll alone decides success. A miss
      (timeout or polling error) does not undo the release. It is recorded
-     as a deferred publish failure: the consumer-refresh stage holds (it
+     as a deferred publish failure: the tracking issue stays open with a
+     deferral comment, the consumer-refresh stage holds (it
      prints a warning not to advertise the version instead of the refresh
      commands), the stage error tells you to re-run the `publish-index`
      workflow in `<org>/packages`, and `vrg-release` exits 1. See the
@@ -113,8 +114,8 @@ issue and ticks its box in the issue's stage checklist.
 | `teardown-worktree` | deferred | Removes the release worktree and returns to the root checkout |
 | `confirm-develop` | deferred | Watches the CD run on `develop` for the back-merge's merge commit; a failed docs publish is deferred |
 | `promote` | deferred | Moves the rolling `vX.Y` tag to the new release (skipped with `--no-promote`) |
+| `package-index` | deferred | For repos with `[package]`, waits for the new version in the package index. A miss is a deferred publish failure, not a halted stage |
 | `close-finalize` | deferred | Closes the tracking issue with a summary and runs `vrg-finalize-pr --cleanup-only --no-wait-cd` |
-| `package-index` | deferred | For repos with `[package]`, waits for the new version in the package index |
 | `consumer-refresh` | deferred | Prints the `[publish].consumer-refresh` commands |
 | `update-deps` | deferred | Runs the dependency update on the new `develop` version (skipped with `--without-deps`); see [Dependency updates](#dependency-updates) |
 | `publish-status` | deferred | Repeats any deferred publish failure, and any dependency-update failure, so neither is lost |
@@ -122,8 +123,10 @@ issue and ticks its box in the issue's stage checklist.
 `close-finalize` leaves the tracking issue open, and skips the cleanup,
 when an earlier stage has failed, so the release can be resumed with
 `vrg-release --resume`. A deferred publish failure also leaves the
-issue open, but the release itself is complete: re-run the CD publish
-rather than resuming.
+issue open, with a comment that says how to finish each deferred item,
+but the release itself is complete: re-run the CD publish (or the
+`publish-index` workflow, for a `package-index` miss) rather than
+resuming.
 
 `confirm-develop` checks the CD run for the back-merge's merge commit,
 not for the current tip of `develop`. On `vrg-release --resume`, other
