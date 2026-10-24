@@ -12569,6 +12569,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#github-checks-undeclared-ruleset-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GitHub checks — undeclared ruleset parameters
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#related" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -16220,6 +16231,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#github-checks-undeclared-ruleset-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GitHub checks — undeclared ruleset parameters
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#related" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -16592,6 +16614,32 @@ version-agnostic CI model (epic
   push restrictions) is <strong>reported, not touched</strong>. The blast radius is minimal
   and intentional protections are preserved.</li>
 </ul>
+<h2 id="github-checks-undeclared-ruleset-parameters">GitHub checks — undeclared ruleset parameters<a class="headerlink" href="#github-checks-undeclared-ruleset-parameters" title="Permanent link">&para;</a></h2>
+<p>GitHub sometimes adds a new ruleset rule parameter and sets a default for
+it on its side, as it did with
+<code>require_extra_approval_for_unattributed_changes</code> on the <code>pull_request</code>
+rule (#2860). When a live rule carries a parameter key that the desired
+rule of the same <code>type</code> does not declare, the audit reports it as an
+<strong>undeclared parameter</strong>, separately from value mismatches. The message
+names the ruleset, the rule type, the key, and the live value:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>UNDECLARED PARAMETER: rulesets.Branch protection rule 'pull_request' has
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>'require_extra_approval_for_unattributed_changes' = True live, ...
+</code></pre></div>
+<ul>
+<li><strong>It is non-compliant.</strong> The live ruleset enforces a setting the spec
+  never chose, so <code>audit</code> exits 1, the same as any other drift.</li>
+<li><strong><code>apply</code> cannot fix it.</strong> The ruleset <code>PUT</code> leaves out the key, so
+  GitHub applies its default again. <code>apply</code> still fixes any value drift,
+  writes nothing when the only issues are undeclared parameters, and
+  exits 1 with a pointer to the decision.</li>
+<li><strong>Resolve it in the spec.</strong> Either declare the key with an explicit
+  value in the desired ruleset in <code>lib/github_config.py</code>, or add it to
+  <code>_STRIP_RULE_PARAMS</code> if it should be ignored. Keys on that list
+  (<code>do_not_enforce_on_create</code>, <code>dismissal_restriction</code>) are removed before
+  comparison and never reported.</li>
+</ul>
+<p>A whole live rule whose <code>type</code> the desired ruleset lacks is not an
+undeclared parameter. It is reported as <code>.rules</code> value drift.</p>
 <h2 id="related">Related<a class="headerlink" href="#related" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../../guides/consuming-repo-setup/">Consuming Repo Setup</a> — the
