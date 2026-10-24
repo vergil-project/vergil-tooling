@@ -29,12 +29,16 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     # Epic-scoped enumeration is a distinct, read-only mode: resolve the epic ref
     # and emit its children (with states) as machine-readable JSON, bypassing the
-    # drift-audit path entirely (issue #2538). Parse + validate directly rather
+    # drift-audit path entirely (issue #2538). Qualify + validate directly rather
     # than via resolve_epic_ref so the read-only 'adhoc' sentinel (which *creates*
-    # an epic) is not reachable from an enumeration.
+    # an epic) is not reachable from an enumeration. With no task to anchor on, a
+    # bare '#N' reads against the current repo's epic home (#3415), and the
+    # visibility probe behind it runs under the current repo owner's App token.
     if args.epic is not None:
+        repo = github.current_repo()
         try:
-            epic = epics.parse_issue_ref(args.epic, default_repo=github.current_repo())
+            with github.target_org(repo.split("/", 1)[0]):
+                epic = epics.qualify_epic_ref(args.epic, repo=repo)
         except ValueError as exc:
             print(f"vrg-epic-audit: {exc}", file=sys.stderr)
             return 1
@@ -219,7 +223,9 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         help=(
             "Enumerate a single epic's child tasks as machine-readable JSON "
             "instead of running the drift audit. REF is an epic ref "
-            "('owner/repo#N', or a bare '#N' resolved against the current repo). "
+            "('owner/repo#N', used as written, or a bare '#N' resolved against "
+            "the current repo's epic home: '<org>/.github' for a public repo, "
+            "the repo itself for a private repo that homes its own epics). "
             'Emits {"epic": <slug>, "children": [{repo, number, title, '
             "state}, ...]} — a stable array of objects (native sub-issues, with "
             "the portable Parent: reflink fallback), so "
