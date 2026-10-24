@@ -375,3 +375,84 @@ def test_comment_publish_deferred_names_jobs_and_warns_resume() -> None:
     assert "docker-publish" in body and "docs" in body
     assert "--resume" in body  # explicitly steers away from it
     assert "https://run/55" in body
+    assert "gh workflow run cd.yml" in body
+    assert "publish-index" not in body  # no packages advice for CD jobs alone
+
+
+def _vendor_config(vendor: str | None = "vergil") -> Any:
+    from types import SimpleNamespace
+
+    pkg = None if vendor is None else SimpleNamespace(vendor=vendor)
+    return SimpleNamespace(package=pkg)
+
+
+def test_comment_publish_deferred_package_index_gives_packages_advice() -> None:
+    from vergil_tooling.lib.release.tracking import comment_publish_deferred
+
+    ctx = _ctx()
+    ctx.tag = "v2.1.0"
+    with (
+        patch(_MOD + "._comment") as comment,
+        patch(_MOD + ".config.read_config", return_value=_vendor_config()),
+    ):
+        comment_publish_deferred(ctx, ["package-index"])
+    body = comment.call_args[0][1]
+    assert "**package-index**" in body
+    assert "`publish-index` workflow in `vergil-project/packages`" in body
+    assert "`2.1.0` packages appear in the index" in body
+    assert "cd.yml" not in body  # CD re-run is the wrong fix for the index
+    assert "CD publish jobs" not in body
+    assert "vrg-release --resume" in body
+
+
+def test_comment_publish_deferred_mixed_gives_both_advices() -> None:
+    from vergil_tooling.lib.release.tracking import comment_publish_deferred
+
+    ctx = _ctx()
+    ctx.tag = "v2.1.0"
+    with (
+        patch(_MOD + "._comment") as comment,
+        patch(_MOD + ".config.read_config", return_value=_vendor_config()),
+    ):
+        comment_publish_deferred(ctx, ["docker-publish", "package-index"])
+    body = comment.call_args[0][1]
+    assert "CD publish jobs did not succeed: **docker-publish** (the CD run)" in body
+    assert "gh workflow run cd.yml" in body
+    assert "`publish-index` workflow in `vergil-project/packages`" in body
+    assert "vrg-release --resume" in body
+
+
+def test_comment_publish_deferred_package_index_without_package_block_raises() -> None:
+    from vergil_tooling.lib.release.tracking import comment_publish_deferred
+
+    with (
+        patch(_MOD + "._comment") as comment,
+        patch(_MOD + ".config.read_config", return_value=_vendor_config(None)),
+        pytest.raises(ReleaseError, match=r"no \[package\] block"),
+    ):
+        comment_publish_deferred(_ctx(), ["package-index"])
+    comment.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("jobs", "expected"),
+    [
+        (["docs"], "re-run the CD publish to deliver the artifacts"),
+        (
+            ["package-index"],
+            "re-run (or wait for) the publish-index workflow in vergil-project/packages "
+            "and confirm the release's packages appear in the index",
+        ),
+        (
+            ["docs", "package-index"],
+            "re-run the CD publish to deliver the artifacts; re-run (or wait for) the "
+            "publish-index workflow in vergil-project/packages and confirm the "
+            "release's packages appear in the index",
+        ),
+    ],
+)
+def test_publish_deferred_remedy_per_kind(jobs: list[str], expected: str) -> None:
+    from vergil_tooling.lib.release.tracking import publish_deferred_remedy
+
+    with patch(_MOD + ".config.read_config", return_value=_vendor_config()):
+        assert publish_deferred_remedy(_ctx(), jobs) == expected

@@ -7,13 +7,15 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from vergil_tooling.lib import github, retry
-from vergil_tooling.lib.release import checklist
+from vergil_tooling.lib import config, github, retry
+from vergil_tooling.lib.package import orgs
+from vergil_tooling.lib.release import checklist, package_index
+from vergil_tooling.lib.release.context import ReleaseError
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
-    from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
+    from vergil_tooling.lib.release.context import ReleaseContext
 
 # GitHub's addComment API rejects any comment body longer than this many
 # characters. Posting a larger body fails with
@@ -125,30 +127,81 @@ def comment_phase_failed(ctx: ReleaseContext, phase: str, exc: ReleaseError) -> 
     _comment(ctx, "\n".join(lines))
 
 
+def _packages_repo(ctx: ReleaseContext) -> str:
+    """The ``<org>/packages`` repo whose ``publish-index`` workflow indexes this release.
+
+    Resolved from ``[package].vendor`` exactly as the ``package-index`` stage
+    resolves the index it polls, so the advice names the repo that stage waited on.
+    """
+    pkg = config.read_config(ctx.repo_root).package
+    if pkg is None:
+        raise ReleaseError(
+            phase=package_index.PHASE,
+            command="resolve packages repo",
+            message="package-index was deferred but vergil.toml has no [package] block",
+        )
+    return f"{orgs.for_vendor(pkg.vendor).github_org}/packages"
+
+
+def publish_deferred_remedy(ctx: ReleaseContext, jobs: list[str]) -> str:
+    """One-line remediation for deferred publishes, per kind of deferred item.
+
+    CD publish jobs are re-run through CD; a deferred ``package-index`` is
+    finished in the org's packages repo instead (#3543).
+    """
+    remedies = []
+    if any(job != package_index.PHASE for job in jobs):
+        remedies.append("re-run the CD publish to deliver the artifacts")
+    if package_index.PHASE in jobs:
+        remedies.append(
+            f"re-run (or wait for) the publish-index workflow in {_packages_repo(ctx)} "
+            "and confirm the release's packages appear in the index"
+        )
+    return "; ".join(remedies)
+
+
 def comment_publish_deferred(ctx: ReleaseContext, jobs: list[str]) -> None:
     """Post a remediation comment for a deferred artifact publish.
 
-    The release is complete (tag + GitHub Release published); these CD publish
-    jobs must be re-run. ``vrg-release --resume`` does NOT apply — the version is
+    The release is complete (tag + GitHub Release published). Each kind of
+    deferred item gets its own advice: CD publish jobs must be re-run, and a
+    deferred ``package-index`` is finished by the org's ``publish-index``
+    workflow (#3543). ``vrg-release --resume`` does NOT apply — the version is
     already tagged — so the comment says so explicitly (#1853).
     """
-    job_list = ", ".join(jobs)
-    run = ctx.cd_run_url or "the CD run"
+    cd_jobs = [job for job in jobs if job != package_index.PHASE]
     lines = [
         "<!-- vrg-release:publish:deferred -->",
         "",
         f"**Artifact publish deferred** for `{ctx.version}`.",
         "",
-        f"The release tag `{ctx.tag}` and the GitHub Release are published, but "
-        f"these CD publish jobs did not succeed: **{job_list}** ({run}).",
-        "",
-        "**To finish delivery** once the blocker is cleared: re-run the CD publish "
-        "— `gh workflow run cd.yml` (Actions → CD → Run workflow), or the nightly "
-        "`no-cache` ops rebuild.",
-        "",
-        "**Do not** run `vrg-release --resume`: the version is already tagged; "
-        "`--resume` is for a *halted* release, not a *completed-with-deferral* one.",
     ]
+    if cd_jobs:
+        run = ctx.cd_run_url or "the CD run"
+        lines += [
+            f"The release tag `{ctx.tag}` and the GitHub Release are published, but "
+            f"these CD publish jobs did not succeed: **{', '.join(cd_jobs)}** ({run}).",
+            "",
+            "**To finish delivery** once the blocker is cleared: re-run the CD publish "
+            "— `gh workflow run cd.yml` (Actions → CD → Run workflow), or the nightly "
+            "`no-cache` ops rebuild.",
+            "",
+        ]
+    if package_index.PHASE in jobs:
+        lines += [
+            f"The release tag `{ctx.tag}` and the GitHub Release are published, but "
+            "the release's packages did not appear in the package index "
+            f"(**{package_index.PHASE}**).",
+            "",
+            "**To finish delivery** of the packages: re-run (or wait for) the "
+            f"`publish-index` workflow in `{_packages_repo(ctx)}`, then confirm the "
+            f"`{ctx.version}` packages appear in the index.",
+            "",
+        ]
+    lines.append(
+        "**Do not** run `vrg-release --resume`: the version is already tagged; "
+        "`--resume` is for a *halted* release, not a *completed-with-deferral* one."
+    )
     _comment(ctx, "\n".join(lines))
 
 

@@ -194,6 +194,28 @@ def test_close_and_finalize_publish_deferred_leaves_open() -> None:
     close.assert_not_called()  # issue stays open
 
 
+def test_close_and_finalize_publish_deferred_prints_per_kind_remedy(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from vergil_tooling.lib.release import finalize
+
+    ctx = _ctx()
+    ctx.deferred_publish_failures = ["package-index"]
+    with (
+        patch.object(finalize, "comment_publish_deferred"),
+        patch.object(finalize, "close_tracking_issue"),
+        patch.object(finalize, "progress"),
+        patch.object(
+            finalize, "publish_deferred_remedy", return_value="re-run publish-index"
+        ) as remedy,
+    ):
+        finalize.close_and_finalize(ctx)
+    remedy.assert_called_once_with(ctx, ["package-index"])
+    out = capsys.readouterr().out
+    assert "The release is complete; re-run publish-index (NOT --resume)." in out
+    assert "CD publish" not in out
+
+
 def test_close_and_finalize_clean_closes_issue() -> None:
     from unittest.mock import patch
 
