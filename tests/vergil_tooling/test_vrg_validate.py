@@ -19,10 +19,13 @@ from vergil_tooling.bin.vrg_validate import (
     _build_stages,
     _check_custom_validator,
     _command_stage,
+    _default_test_version,
     _find_custom_validator,
     _in_dev_container,
+    _interpreter_version,
     _probe_xdist,
     _python_test_stage,
+    _python_version_test_stage,
     _resolve_test_workers,
     _run_common_checks,
     _skip_conan_audit_scan,
@@ -994,3 +997,247 @@ def test_build_stages_defers_python_probe_to_stage_time() -> None:
         stages[1].fn(None)
     assert calls == ["probe"]
     assert m_run.call_args.args[0][-4:] == ["-n", "12", "--dist", "worksteal"]
+
+
+# -- --all-versions coverage matrix (issue #3547) -----------------------------
+
+
+def test_all_versions_rejects_non_python(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write_config(tmp_path, "go")
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + "._versions_resolve", return_value=("1.24",)),
+        patch(_MOD + ".progress.run_pipeline", return_value=0) as m_pipeline,
+    ):
+        assert main(["--all-versions"]) == 1
+    m_pipeline.assert_not_called()
+    err = capsys.readouterr().err
+    assert "--all-versions supports Python only (primary-language is go)" in err
+
+
+def test_all_versions_rejects_missing_language(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".progress.run_pipeline", return_value=0) as m_pipeline,
+    ):
+        assert main(["--all-versions"]) == 1
+    m_pipeline.assert_not_called()
+    assert "primary-language is <not set>" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("check", ["common", "lint", "typecheck", "audit"])
+def test_all_versions_rejects_non_test_check(check: str) -> None:
+    with pytest.raises(SystemExit) as exc:
+        main(["--all-versions", "--check", check])
+    assert exc.value.code == 2
+
+
+def test_all_versions_adds_a_stage_per_resolved_version(tmp_path: Path) -> None:
+    _write_pinned_config(tmp_path, repo_type="library", versions='["3.12", "3.14"]')
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + "._find_custom_validator", return_value=None),
+        patch(_MOD + ".progress.run_pipeline", return_value=0) as m_pipeline,
+    ):
+        assert main(["--all-versions", "--check", "test"]) == 0
+    stages = m_pipeline.call_args.args[1]
+    assert [s.name for s in stages] == [
+        "install",
+        "test",
+        "test (python 3.14)",
+        "test (python 3.12)",
+    ]
+
+
+def test_default_run_has_no_version_stages(tmp_path: Path) -> None:
+    _write_pinned_config(tmp_path, repo_type="library", versions='["3.12", "3.14"]')
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + "._find_custom_validator", return_value=None),
+        patch(_MOD + ".progress.run_pipeline", return_value=0) as m_pipeline,
+    ):
+        assert main(["--check", "test"]) == 0
+    assert [s.name for s in m_pipeline.call_args.args[1]] == ["install", "test"]
+
+
+def test_build_stages_version_stages_follow_test_before_audit() -> None:
+    with (
+        patch(_MOD + ".language_commands") as m_cmds,
+        patch(_MOD + "._find_custom_validator", return_value=None),
+    ):
+        m_cmds.side_effect = lambda lang, kind, **_kw: [["echo", kind.value]]
+        stages = _build_stages(None, "python", Path("/r"), all_versions=("3.14", "3.13"))
+    assert [s.name for s in stages] == [
+        "common",
+        "install",
+        "lint",
+        "typecheck",
+        "test",
+        "test (python 3.14)",
+        "test (python 3.13)",
+        "audit",
+    ]
+
+
+def test_build_stages_lint_only_ignores_all_versions() -> None:
+    with patch(_MOD + "._find_custom_validator", return_value=None):
+        stages = _build_stages("lint", "python", Path("/r"), all_versions=("3.14",))
+    assert [s.name for s in stages] == ["install", "lint"]
+
+
+_Ran = list[tuple[list[str], "dict[str, str] | None"]]
+
+
+def _version_stage(
+    tmp_path: Path, version: str, *, default_version: str = "3.15", parallel: bool = True
+) -> Callable[[object], None]:
+    return _python_version_test_stage(
+        version,
+        parallel=parallel,
+        workers=8,
+        workers_source="[test].workers",
+        default_version=lambda: default_version,
+        env_root=tmp_path,
+    ).fn
+
+
+def _run_version_stage(
+    tmp_path: Path,
+    *,
+    version: str = "3.12",
+    default_version: str = "3.15",
+    parallel: bool = True,
+    rcs: tuple[int, ...] = (0, 0, 0),
+    xdist: bool = True,
+) -> _Ran:
+    ran: _Ran = []
+    codes = iter(rcs)
+
+    def record(
+        cmd: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        check: bool = True,  # noqa: ARG001
+    ) -> int:
+        ran.append((list(cmd), env))
+        return next(codes)
+
+    fn = _version_stage(tmp_path, version, default_version=default_version, parallel=parallel)
+    with (
+        patch(_MOD + ".progress.run", side_effect=record),
+        patch(_MOD + "._probe_xdist", return_value=xdist) as m_probe,
+    ):
+        fn(None)
+    if parallel and ran:
+        m_probe.assert_called_once_with(tmp_path / f"python-{version}" / "bin")
+    return ran
+
+
+def test_version_stage_installs_syncs_and_runs_gate(tmp_path: Path) -> None:
+    ran = _run_version_stage(tmp_path)
+    env_dir = tmp_path / "python-3.12"
+    cmds = [cmd for cmd, _env in ran]
+    assert cmds[0] == ["uv", "python", "install", "3.12"]
+    assert cmds[1] == [
+        "uv",
+        "sync",
+        "--frozen",
+        "--group",
+        "dev",
+        "--python",
+        "3.12",
+        "--python-preference",
+        "only-managed",
+    ]
+    pytest_cmd = cmds[2]
+    assert pytest_cmd[0] == str(env_dir / "bin" / "pytest")
+    # The inviolate coverage gate is unchanged.
+    assert "--cov-branch" in pytest_cmd
+    assert "--cov-fail-under=100" in pytest_cmd
+    # Reports land beside the version environment, never over the workspace's.
+    assert f"--cov-report=xml:{env_dir / 'coverage.xml'}" in pytest_cmd
+    assert f"--junitxml={env_dir / 'junit.xml'}" in pytest_cmd
+    assert "--cov-report=xml:coverage.xml" not in pytest_cmd
+    assert pytest_cmd[-4:] == ["-n", "8", "--dist", "worksteal"]
+    for _cmd, env in ran:
+        assert env is not None
+        assert env["UV_PROJECT_ENVIRONMENT"] == str(env_dir)
+        assert env["VIRTUAL_ENV"] == str(env_dir)
+        assert env["PATH"].split(os.pathsep)[0] == str(env_dir / "bin")
+
+
+def test_version_stage_serial_when_xdist_absent(tmp_path: Path) -> None:
+    ran = _run_version_stage(tmp_path, xdist=False)
+    assert "-n" not in ran[2][0]
+
+
+def test_version_stage_opt_out_skips_probe(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ran = _run_version_stage(tmp_path, parallel=False)
+    assert "-n" not in ran[2][0]
+    assert "[test].parallel = false" in capsys.readouterr().out
+
+
+def test_version_stage_skips_the_container_interpreter(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ran = _run_version_stage(tmp_path, version="3.15", default_version="3.15")
+    assert ran == []
+    assert "Python 3.15: covered by the test stage" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("rcs", [(1,), (0, 1), (0, 0, 1)])
+def test_version_stage_failure_raises_and_stops(tmp_path: Path, rcs: tuple[int, ...]) -> None:
+    with pytest.raises(ValidationError, match=r"python 3\.12 test command failed"):
+        _run_version_stage(tmp_path, rcs=rcs, xdist=False)
+
+
+def test_version_stage_failure_stops_later_commands(tmp_path: Path) -> None:
+    with patch(_MOD + ".progress.run", return_value=1) as m_run, pytest.raises(ValidationError):
+        _version_stage(tmp_path, "3.12")(None)
+    assert m_run.call_count == 1
+    assert m_run.call_args.args[0] == ["uv", "python", "install", "3.12"]
+
+
+def test_probe_xdist_in_given_bin_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The bin dir is given, so PATH is not consulted at all.
+    bin_dir = _fake_env(tmp_path, interpreter="python", body="exit 0")
+    monkeypatch.setenv("PATH", "/nonexistent")
+    assert _probe_xdist(bin_dir) is True
+
+
+def test_interpreter_version_reads_major_minor(tmp_path: Path) -> None:
+    bin_dir = _fake_env(tmp_path, interpreter="python", body="echo 3.13")
+    assert _interpreter_version(bin_dir / "python") == "3.13"
+
+
+def test_interpreter_version_error_exit_is_loud(tmp_path: Path) -> None:
+    bin_dir = _fake_env(tmp_path, interpreter="python", body="echo bad >&2; exit 2")
+    with pytest.raises(ValidationError, match=r"exited 2: bad"):
+        _interpreter_version(bin_dir / "python")
+
+
+def test_interpreter_version_that_cannot_run_is_loud(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError, match="could not run"):
+        _interpreter_version(tmp_path / "missing-python")
+
+
+def test_default_test_version_asks_the_test_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bin_dir = _fake_env(tmp_path, interpreter="python", body="echo 3.15")
+    _only_on_path(monkeypatch, bin_dir)
+    assert _default_test_version() == "3.15"
+
+
+def test_default_test_version_without_pytest_is_loud() -> None:
+    with (
+        patch(_MOD + ".shutil.which", return_value=None),
+        pytest.raises(ValidationError, match="cannot read the test interpreter version"),
+    ):
+        _default_test_version()

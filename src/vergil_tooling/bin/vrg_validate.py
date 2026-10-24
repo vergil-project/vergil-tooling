@@ -6,6 +6,10 @@ specific check type (--check) or all checks in sequence:
 
 Checks run as progress-framework stages: install is fail_fast,
 everything else is fail_defer so all failures are reported in one run.
+
+``--all-versions`` (Python only) adds one test stage per resolved CI version
+after the test stage, so the coverage gate runs on every interpreter PR-CI
+tests, not only the dev container's (issue #3547).
 """
 
 from __future__ import annotations
@@ -15,12 +19,19 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import config, git, progress
 from vergil_tooling.lib.cli import cli_main
-from vergil_tooling.lib.languages import CheckKind, language_commands
+from vergil_tooling.lib.languages import (
+    COVERAGE_REPORT,
+    JUNIT_REPORT,
+    CheckKind,
+    build_python_test_argv,
+    language_commands,
+)
 from vergil_tooling.lib.progress import Stage, StageMode
 from vergil_tooling.lib.versions import VersionsError
 from vergil_tooling.lib.versions.floors import check_floors, check_toolchain_selection
@@ -58,8 +69,18 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Run only this check type. Omit to run all.",
     )
+    parser.add_argument(
+        "--all-versions",
+        action="store_true",
+        help=(
+            "Also run the test and coverage gate on every resolved CI version, "
+            "each on a uv-managed interpreter (Python only)."
+        ),
+    )
     progress.add_progress_args(parser, ())
     args = parser.parse_args(argv)
+    if args.all_versions and args.check not in (None, "test"):
+        parser.error("--all-versions runs the test stage; use it alone or with --check test")
 
     if not _in_dev_container():
         print(
@@ -96,8 +117,20 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
-    if vergil_config is not None and not _versions_resolve(vergil_config, repo_root):
+    if args.all_versions and language != "python":
+        print(
+            "ERROR: --all-versions supports Python only "
+            f"(primary-language is {language or '<not set>'})",
+            file=sys.stderr,
+        )
         return 1
+
+    ci_versions: tuple[str, ...] = ()
+    if vergil_config is not None:
+        resolved = _versions_resolve(vergil_config, repo_root)
+        if resolved is None:
+            return 1
+        ci_versions = resolved
 
     try:
         test_workers, test_workers_source = _resolve_test_workers(test_config)
@@ -114,6 +147,7 @@ def main(argv: list[str] | None = None) -> int:
         test_parallel=test_config.parallel,
         test_workers=test_workers,
         test_workers_source=test_workers_source,
+        all_versions=ci_versions if args.all_versions else (),
     )
     if not stages:
         print(f"No {args.check} commands for language '{language or '<not set>'}'")
@@ -129,7 +163,9 @@ def main(argv: list[str] | None = None) -> int:
     )
 
 
-def _versions_resolve(vergil_config: config.VergilConfig, repo_root: Path) -> bool:
+def _versions_resolve(
+    vergil_config: config.VergilConfig, repo_root: Path
+) -> tuple[str, ...] | None:
     """The config check: the repo's versions must resolve against the window.
 
     Runs the single resolver CI uses (epic vergil-project/.github#407), so a pin
@@ -137,10 +173,13 @@ def _versions_resolve(vergil_config: config.VergilConfig, repo_root: Path) -> bo
     validation here instead of first failing in CI. A setting that selects the
     toolchain behind Vergil's back fails too (spec §6.5). Floor warnings (spec
     §6.4) are printed and do not fail.
+
+    Returns the resolved CI versions (empty for a repo with no language), or
+    ``None`` when the check fails.
     """
     language = vergil_config.project.primary_language
     if not language:
-        return True
+        return ()
     try:
         window = load_window(vergil_config.dependencies["vergil"])
         resolution = resolve_language(vergil_config, window, language, repo_root=repo_root)
@@ -148,13 +187,13 @@ def _versions_resolve(vergil_config: config.VergilConfig, repo_root: Path) -> bo
         errors = check_toolchain_selection(repo_root, language)
     except VersionsError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
-        return False
+        return None
     print(f"CI versions: {', '.join(resolution.versions)} (primary {resolution.primary})")
     for warning in warnings:
         print(f"WARNING: {warning}", file=sys.stderr)
     for error in errors:
         print(f"ERROR: {error}", file=sys.stderr)
-    return not errors
+    return None if errors else resolution.versions
 
 
 def _test_context() -> str | None:
@@ -202,29 +241,41 @@ _XDIST_PROBE = (
 )
 
 
-def _probe_xdist() -> bool:
-    """Return whether pytest-xdist is importable where the tests actually run.
+def _test_interpreter(bin_dir: Path | None, purpose: str) -> Path:
+    """Return the interpreter of the environment the tests run in.
 
-    The probe must not look at this process's own interpreter: ``vrg-validate``
-    is usually a uv tool with its own venv, while the tests run under the
-    project's ``.venv`` (issue #3322). So it asks the interpreter of the
-    environment the ``pytest`` on ``PATH`` belongs to — the same ``pytest`` the
-    TEST command resolves, with ``.venv/bin`` prepended. It runs at test-stage
-    time, after the install stage has populated ``.venv``. A probe that cannot
-    run, or errors, raises :class:`ValidationError` instead of degrading to
-    serial.
+    With no *bin_dir*, that is the environment the ``pytest`` on ``PATH``
+    belongs to — the same ``pytest`` the TEST command resolves, with
+    ``.venv/bin`` prepended. *purpose* prefixes the error when it cannot be
+    found.
     """
-    pytest_path = shutil.which("pytest")
-    if pytest_path is None:
-        msg = "cannot probe pytest-xdist: pytest is not on PATH"
-        raise ValidationError(msg)
-    bin_dir = Path(pytest_path).parent
+    if bin_dir is None:
+        pytest_path = shutil.which("pytest")
+        if pytest_path is None:
+            msg = f"{purpose}: pytest is not on PATH"
+            raise ValidationError(msg)
+        bin_dir = Path(pytest_path).parent
     interpreter = next(
         (bin_dir / name for name in ("python", "python3") if (bin_dir / name).exists()), None
     )
     if interpreter is None:
-        msg = f"cannot probe pytest-xdist: no python interpreter next to {pytest_path}"
+        msg = f"{purpose}: no python interpreter next to {bin_dir / 'pytest'}"
         raise ValidationError(msg)
+    return interpreter
+
+
+def _probe_xdist(bin_dir: Path | None = None) -> bool:
+    """Return whether pytest-xdist is importable where the tests actually run.
+
+    The probe must not look at this process's own interpreter: ``vrg-validate``
+    is usually a uv tool with its own venv, while the tests run under the
+    project's ``.venv`` (issue #3322). So it asks the interpreter of the test
+    environment (see :func:`_test_interpreter`), or of the environment in
+    *bin_dir* for an ``--all-versions`` stage. It runs at test-stage time,
+    after the install stage has populated ``.venv``. A probe that cannot run,
+    or errors, raises :class:`ValidationError` instead of degrading to serial.
+    """
+    interpreter = _test_interpreter(bin_dir, "cannot probe pytest-xdist")
     try:
         result = subprocess.run(  # noqa: S603
             [str(interpreter), "-c", _XDIST_PROBE],
@@ -245,6 +296,36 @@ def _probe_xdist() -> bool:
     available = result.returncode == 0
     print(f"pytest-xdist probe: {interpreter} -> {'installed' if available else 'not installed'}")
     return available
+
+
+_VERSION_PROBE = "import sys; print(f'{sys.version_info[0]}.{sys.version_info[1]}')"
+
+
+def _interpreter_version(interpreter: Path) -> str:
+    """Return *interpreter*'s ``major.minor`` version; failure raises loudly."""
+    try:
+        result = subprocess.run(  # noqa: S603
+            [str(interpreter), "-c", _VERSION_PROBE],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        msg = f"version probe could not run {interpreter}: {exc}"
+        raise ValidationError(msg) from exc
+    if result.returncode != 0:
+        msg = (
+            f"version probe failed: {interpreter} exited {result.returncode}: "
+            f"{result.stderr.strip()}"
+        )
+        raise ValidationError(msg)
+    return result.stdout.strip()
+
+
+def _default_test_version() -> str:
+    """Return the Python version the plain test stage runs on (the container's)."""
+    return _interpreter_version(_test_interpreter(None, "cannot read the test interpreter version"))
 
 
 def _in_dev_container() -> bool:
@@ -391,6 +472,86 @@ def _python_test_stage(
     return _command_stage("test", cmds, mode="fail_defer")
 
 
+def _python_version_test_stage(
+    version: str,
+    *,
+    parallel: bool,
+    workers: int | str,
+    workers_source: str,
+    default_version: Callable[[], str],
+    env_root: Path,
+) -> Stage:
+    """Build an ``--all-versions`` stage: the Python TEST gate on *version*.
+
+    The dev container ships one interpreter, so the stage has uv install
+    *version* as a managed interpreter and sync the dev group into its own
+    environment under *env_root* — outside the workspace, so the project
+    ``.venv`` is untouched. The gate argv is the plain test stage's, with the
+    coverage and JUnit reports redirected beside that environment so they do
+    not overwrite the workspace's. The container interpreter's own version is
+    already covered by the plain test stage and is skipped. Commands run in
+    order and the first failure fails the stage (issue #3547).
+    """
+    label = f"python {version} test"
+
+    def fn(_ctx: object) -> None:
+        if version == default_version():
+            print(f"Python {version}: covered by the test stage (the dev container's interpreter)")
+            return
+        env_dir = env_root / f"python-{version}"
+        bin_dir = env_dir / "bin"
+        env = {
+            **os.environ,
+            "UV_PROJECT_ENVIRONMENT": str(env_dir),
+            "VIRTUAL_ENV": str(env_dir),
+            "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+        }
+        setup = [
+            ["uv", "python", "install", version],
+            [
+                "uv",
+                "sync",
+                "--frozen",
+                "--group",
+                "dev",
+                "--python",
+                version,
+                "--python-preference",
+                "only-managed",
+            ],
+        ]
+        for cmd in setup:
+            print(f"Running ({label}): {' '.join(cmd)}")
+            if progress.run(cmd, env=env, check=False) != 0:
+                msg = f"{label} command failed: {' '.join(cmd)}"
+                raise ValidationError(msg)
+
+        xdist_available = False
+        if not parallel:
+            print("Test parallelism: serial ([test].parallel = false)")
+        elif _probe_xdist(bin_dir):
+            xdist_available = True
+            print(f"Test parallelism: -n {workers} (from {workers_source})")
+        else:
+            print(
+                "Test parallelism: serial (pytest-xdist is not installed in the test environment)"
+            )
+        reports = {
+            f"--cov-report=xml:{COVERAGE_REPORT}": f"--cov-report=xml:{env_dir / COVERAGE_REPORT}",
+            f"--junitxml={JUNIT_REPORT}": f"--junitxml={env_dir / JUNIT_REPORT}",
+        }
+        argv = build_python_test_argv(
+            xdist_available=xdist_available, parallel=parallel, workers=workers
+        )
+        argv = [str(bin_dir / "pytest"), *(reports.get(arg, arg) for arg in argv[1:])]
+        print(f"Running ({label}): {' '.join(argv)}")
+        if progress.run(argv, env=env, check=False) != 0:
+            msg = f"{label} command failed: pytest (coverage gate on Python {version})"
+            raise ValidationError(msg)
+
+    return Stage(f"test (python {version})", fn, mode="fail_defer")
+
+
 def _build_stages(
     check: str | None,
     language: str | None,
@@ -402,6 +563,8 @@ def _build_stages(
     test_workers: int | str = config.DEFAULT_TEST_WORKERS,
     test_workers_source: str = "[test].workers",
     xdist_probe: Callable[[], bool] | None = None,
+    all_versions: tuple[str, ...] = (),
+    default_version: Callable[[], str] | None = None,
 ) -> list[Stage]:
     stages: list[Stage] = []
 
@@ -442,17 +605,30 @@ def _build_stages(
             )
             if install_cmds:
                 stages.append(_command_stage("install", install_cmds, mode="fail_fast"))
-            stages.extend(
-                _python_test_stage(
-                    parallel=test_parallel,
-                    workers=test_workers,
-                    workers_source=test_workers_source,
-                    xdist_probe=xdist_probe or _probe_xdist,
+            for kind, cmds in kind_cmds:
+                if language != "python" or kind is not CheckKind.TEST:
+                    stages.append(_command_stage(kind.value, cmds, mode="fail_defer"))
+                    continue
+                stages.append(
+                    _python_test_stage(
+                        parallel=test_parallel,
+                        workers=test_workers,
+                        workers_source=test_workers_source,
+                        xdist_probe=xdist_probe or _probe_xdist,
+                    )
                 )
-                if language == "python" and kind is CheckKind.TEST
-                else _command_stage(kind.value, cmds, mode="fail_defer")
-                for kind, cmds in kind_cmds
-            )
+                env_root = Path(tempfile.gettempdir()) / "vrg-validate"
+                stages.extend(
+                    _python_version_test_stage(
+                        version,
+                        parallel=test_parallel,
+                        workers=test_workers,
+                        workers_source=test_workers_source,
+                        default_version=default_version or _default_test_version,
+                        env_root=env_root,
+                    )
+                    for version in all_versions
+                )
 
     if check is None:
         custom = _find_custom_validator(repo_root)

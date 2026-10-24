@@ -319,8 +319,10 @@ test-and-coverage gate independently in a separate container per
 resolved matrix version (currently 3.12, 3.13, 3.14, 3.15). Because branch
 coverage (`--cov-branch`) can legitimately differ across CPython versions, code
 at 100% locally can still fall below 100% on a 3.12, 3.13 or 3.14 leg and fail
-CI —
-the multi-version coverage matrix is a PR-CI-only gate. See
+CI. Run `vrg-container-run -- vrg-validate --all-versions` (Python only) to
+catch that before pushing: it re-runs the gate on every resolved version, each
+on a uv-managed interpreter in the same container (about 1.5 minutes here,
+against about 20 seconds). See
 `docs/site/docs/guides/ci-architecture.md` for the full rationale and
 vergil-project/vergil-actions#176 for the parity audit.
 
