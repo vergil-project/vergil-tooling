@@ -149,6 +149,7 @@ nav:
       - Identity Architecture: guides/identity-architecture.md
       - Credential Management: guides/credential-management.md
       - Permission Model: guides/permission-model.md
+      - Security Boundaries: guides/security-boundaries.md
       - Account Setup: guides/account-setup.md
       - Agent VM Claude Share Set: guides/agent-vm-claude-share-set.md
   - Guides:
