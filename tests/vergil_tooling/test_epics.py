@@ -435,6 +435,8 @@ def test_non_task_kind(labels: list[str], expected: str | None) -> None:
     raw = {"labels": [{"name": name} for name in labels]}
     with patch("vergil_tooling.lib.github.read_json", return_value=raw):
         assert epics.non_task_kind(TASK) == expected
+    # The lookup-free form gives the same answer from the labels alone (#3592).
+    assert epics.non_task_kind_of_labels(set(labels)) == expected
 
 
 def test_non_task_ref_kind_resolves_ref() -> None:

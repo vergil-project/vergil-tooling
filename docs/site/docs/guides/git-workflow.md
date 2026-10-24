@@ -61,6 +61,11 @@ Pattern: `^(feature|bugfix|hotfix|chore)/[0-9]+-[a-z0-9][a-z0-9.-]*$`.
 `checkout -b`, `switch -c`) and `vrg-commit` applies it again at commit
 time.
 
+At creation, `vrg-git` also reads issue `<N>` from the current repo. It
+refuses the branch when the issue is closed, or is an epic or archive
+(an umbrella is never closed by a PR). It also refuses when the issue
+cannot be read, so check `vrg-gh issue view <N>` works and retry.
+
 The `release/*` and `promotion/*` prefixes are created by automated
 workflows and are exempt from the issue-number rule.
 

@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import subprocess
-from typing import TYPE_CHECKING
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from vergil_tooling.bin.vrg_git import (
+    _check_issue_is_open_task,
     _check_new_branch_name,
     _noninteractive_rebase_env,
     _org_from_clone_url,
@@ -18,10 +19,11 @@ from vergil_tooling.bin.vrg_git import (
     _worktree_convention_active,
     main,
 )
-from vergil_tooling.lib import retry
+from vergil_tooling.lib import epics, github, retry
 
-if TYPE_CHECKING:
-    from pathlib import Path
+# `gh issue view --json state,labels` for an open, ordinary task: what the
+# branch-creation guard (#3592) must see before it lets an issue branch through.
+_OPEN_TASK = {"state": "OPEN", "labels": [{"name": "enhancement"}]}
 
 # -- no arguments -------------------------------------------------------------
 
@@ -1271,6 +1273,7 @@ class TestWorktreeAddAnchoring:
         monkeypatch.chdir(root)
         with (
             patch("vergil_tooling.bin.vrg_git.main_worktree_root", return_value=root),
+            patch("vergil_tooling.bin.vrg_git.github.read_json", return_value=_OPEN_TASK),
             patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
         ):
             mock_run.return_value.returncode = 0
@@ -1357,17 +1360,51 @@ class TestWorktreeAddBranchDirLockstep:
         return root
 
     def _run(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, argv: list[str]
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        argv: list[str],
+        issue: object = None,
     ) -> tuple[int, MagicMock]:
         root = self._make_root(tmp_path)
         monkeypatch.chdir(root)
         with (
             patch("vergil_tooling.bin.vrg_git.main_worktree_root", return_value=root),
+            patch(
+                "vergil_tooling.bin.vrg_git.github.read_json",
+                return_value=_OPEN_TASK if issue is None else issue,
+            ),
             patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
         ):
             mock_run.return_value.returncode = 0
             rc = main(argv)
         return rc, mock_run
+
+    @pytest.mark.parametrize(
+        ("issue", "expected"),
+        [
+            ({"state": "OPEN", "labels": [{"name": "epic"}]}, "is an epic, not a task"),
+            ({"state": "CLOSED", "labels": [{"name": "archive"}]}, "is an archive, not a task"),
+            ({"state": "CLOSED", "labels": []}, "is not an open issue"),
+        ],
+    )
+    def test_non_task_issue_denied(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        issue: dict[str, object],
+        expected: str,
+    ) -> None:
+        # The branch/dir lockstep holds, but <N> is not an open task (#3592):
+        # git is never run, so no worktree or branch is created.
+        argv = ["worktree", "add", "-b", "feature/9-authz", ".worktrees/issue-9-authz"]
+        rc, mock_run = self._run(tmp_path, monkeypatch, argv, issue)
+        assert rc == 1
+        mock_run.assert_not_called()
+        err = capsys.readouterr().err
+        assert err.startswith("vrg-git: feature/9-authz (#9) ")
+        assert expected in err
 
     def test_matching_branch_and_dir_allowed(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1428,7 +1465,15 @@ class TestCheckNewBranchName:
         assert _check_new_branch_name("switch", ["-c", "bugfix/nope"]) is not None
 
     def test_checkout_b_valid_allowed(self) -> None:
-        assert _check_new_branch_name("checkout", ["-b", "feature/12-ok"]) is None
+        with patch("vergil_tooling.bin.vrg_git.github.read_json", return_value=_OPEN_TASK):
+            assert _check_new_branch_name("checkout", ["-b", "feature/12-ok"]) is None
+
+    def test_switch_c_epic_rejected(self) -> None:
+        epic = {"state": "OPEN", "labels": [{"name": "epic"}]}
+        with patch("vergil_tooling.bin.vrg_git.github.read_json", return_value=epic):
+            msg = _check_new_branch_name("switch", ["-c", "feature/12-ok"])
+        assert msg is not None
+        assert "is an epic, not a task" in msg
 
     def test_release_branch_allowed(self) -> None:
         assert _check_new_branch_name("checkout", ["-b", "release/2.1.180"]) is None
@@ -1451,6 +1496,108 @@ class TestCheckNewBranchName:
         assert rc == 1
         mock_run.assert_not_called()
         assert "repo issue number" in capsys.readouterr().err
+
+
+# -- issue branch names an open task (#3592) -----------------------------------
+
+
+class TestCheckIssueIsOpenTask:
+    """An issue branch's <N> must be an open issue that is not an epic/archive."""
+
+    @staticmethod
+    def _check(
+        branch: str, return_value: object = None, side_effect: object = None
+    ) -> tuple[str | None, MagicMock]:
+        with patch(
+            "vergil_tooling.bin.vrg_git.github.read_json",
+            return_value=return_value,
+            side_effect=side_effect,
+        ) as mock_read:
+            return _check_issue_is_open_task(branch), mock_read
+
+    def test_open_task_allowed_with_one_read(self) -> None:
+        msg, mock_read = self._check("feature/12-ok", return_value=_OPEN_TASK)
+        assert msg is None
+        mock_read.assert_called_once_with("issue", "view", "12", "--json", "state,labels")
+
+    @pytest.mark.parametrize("kind", ["epic", "archive"])
+    def test_non_task_refused_with_shared_message(self, kind: str) -> None:
+        issue = {"state": "OPEN", "labels": [{"name": kind}, {"name": "adhoc"}]}
+        msg, _ = self._check("bugfix/40-umbrella", return_value=issue)
+        assert msg == epics.non_task_refusal_message("bugfix/40-umbrella", "#40", kind)
+
+    def test_closed_issue_refused(self) -> None:
+        msg, _ = self._check("feature/12-ok", return_value={"state": "CLOSED", "labels": []})
+        assert msg is not None
+        assert "feature/12-ok (#12) is not an open issue (state: CLOSED)" in msg
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            subprocess.CalledProcessError(1, ["gh"]),
+            OSError("gh: not found"),
+            ValueError("Expecting value"),
+            github.NoInstallationError("org", []),
+            github.AppAuthError("org", "1", Path("app.pem"), "bad key"),
+        ],
+    )
+    def test_failed_read_refuses(self, error: Exception) -> None:
+        # Fail closed: an unreadable issue is never taken as "a task".
+        msg, _ = self._check("feature/12-ok", side_effect=error)
+        assert msg is not None
+        assert msg.startswith("cannot create feature/12-ok: could not read issue #12")
+        assert "vrg-gh issue view 12" in msg
+
+    def test_malformed_response_refuses(self) -> None:
+        msg, _ = self._check("feature/12-ok", return_value=[])
+        assert msg is not None
+        assert "could not read issue #12" in msg
+        assert "unexpected response []" in msg
+
+    def test_malformed_labels_read_as_none(self) -> None:
+        # A labels field that is not a list of objects carries no epic/archive mark.
+        issue = {"state": "OPEN", "labels": ["epic", None]}
+        assert self._check("feature/12-ok", return_value=issue)[0] is None
+        assert self._check("feature/12-ok", return_value={"state": "OPEN"})[0] is None
+
+    def test_non_issue_branch_skips_lookup(self) -> None:
+        msg, mock_read = self._check("release/2.1.180")
+        assert msg is None
+        mock_read.assert_not_called()
+
+    def test_failed_read_denies_worktree_add_via_main(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        root = tmp_path / "repo"
+        (root / ".worktrees").mkdir(parents=True)
+        monkeypatch.chdir(root)
+        with (
+            patch("vergil_tooling.bin.vrg_git.main_worktree_root", return_value=root),
+            patch(
+                "vergil_tooling.bin.vrg_git.github.read_json",
+                side_effect=subprocess.CalledProcessError(1, ["gh"]),
+            ),
+            patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
+        ):
+            rc = main(["worktree", "add", "-b", "feature/9-x", ".worktrees/issue-9-x"])
+        assert rc == 1
+        mock_run.assert_not_called()
+        assert "could not read issue #9" in capsys.readouterr().err
+
+    def test_epic_denies_checkout_b_via_main(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # Outside a main worktree, so the convention guard is inert.
+        monkeypatch.chdir(tmp_path)
+        epic = {"state": "OPEN", "labels": [{"name": "epic"}]}
+        with (
+            patch("vergil_tooling.bin.vrg_git.github.read_json", return_value=epic),
+            patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
+        ):
+            rc = main(["checkout", "-b", "feature/40-umbrella"])
+        assert rc == 1
+        mock_run.assert_not_called()
+        assert "is an epic, not a task" in capsys.readouterr().err
 
 
 # -- non-interactive rebase (#1742) -------------------------------------------
