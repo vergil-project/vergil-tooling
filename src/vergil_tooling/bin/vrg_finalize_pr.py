@@ -1297,16 +1297,32 @@ def _launch_failure_msg(branch: str, exc: subprocess.CalledProcessError) -> str:
     )
 
 
-def _reprovision_target_image(ctx: FinalizeContext) -> None:
+def _reprovision_target_image(ctx: FinalizeContext, retry: tuple[str, ...]) -> bool:
     """Force a clean rebuild of the target-branch dev image (issue #3016).
 
     Drop any cached image for the target branch so the rebuild cannot reuse a
     corrupt one, then provision fresh. Used to recover from a container-launch
     failure discovered during validation.
+
+    Returns False when the rebuild fails — the low-disk guard refusing it
+    (#3571), a failed cache build, or an unresolvable version window. The merge
+    has already landed, so that is a loud warning carrying the full error text
+    and the *retry* command, not a stage failure (#3605).
     """
-    _clean_branch_images(ctx.args.target_branch)
+    branch = ctx.args.target_branch
+    _clean_branch_images(branch)
     lang = resolve_language(ctx.root)
-    provision_dev_image(ctx.root, lang, quiet_warmup=True)
+    try:
+        provision_dev_image(ctx.root, lang, quiet_warmup=True)
+    except (RuntimeError, VersionsError, subprocess.CalledProcessError) as exc:
+        print(
+            f"  WARNING: could not rebuild the {branch} dev image, so validation "
+            f"did not run: {error_text(exc)}\n"
+            f"  Free space or fix the cause, then retry with: {' '.join(retry)}",
+            file=sys.stderr,
+        )
+        return False
+    return True
 
 
 def _stage_validation(ctx: FinalizeContext) -> None:
@@ -1321,7 +1337,8 @@ def _stage_validation(ctx: FinalizeContext) -> None:
     (or a runtime snapshot error) means the container never started, so
     validation never ran. That is usually a stale image-cache snapshot whose
     parent layer was orphaned; rebuild the dev image and retry once before
-    concluding anything about the branch (issue #3016).
+    concluding anything about the branch (issue #3016). If that rebuild itself
+    fails, the stage warns (⚠) and returns without retrying (issue #3605).
     """
     args = ctx.args
     if args.dry_run:
@@ -1346,7 +1363,10 @@ def _stage_validation(ctx: FinalizeContext) -> None:
         "rebuilding the dev image and retrying once...",
         file=sys.stderr,
     )
-    _reprovision_target_image(ctx)
+    if not _reprovision_target_image(ctx, cmd):
+        # No rebuilt image to retry against; flag the stage rather than pass it.
+        progress.mark_warn(f"validation did not run: {args.target_branch} dev image rebuild failed")
+        return
     try:
         progress.run(cmd)
     except subprocess.CalledProcessError as exc:

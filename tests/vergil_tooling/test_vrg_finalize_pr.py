@@ -38,9 +38,11 @@ from vergil_tooling.bin.vrg_finalize_pr import (
     main,
     parse_args,
 )
+from vergil_tooling.lib.cache_space import CacheSpaceError
 from vergil_tooling.lib.live_branches import RepoSetError
 from vergil_tooling.lib.pr_merge import MergeAbortError, MergeConflictError
 from vergil_tooling.lib.pr_provenance import Action, ProvenanceResult, Role
+from vergil_tooling.lib.versions import VersionsError
 from vergil_tooling.lib.worktrees import Worktree, WorktreeState, WorktreeStatus
 
 _MOD = "vergil_tooling.bin.vrg_finalize_pr"
@@ -1898,6 +1900,89 @@ def test_stage_validation_reprovision_then_real_failure_raises_fix_branch(tmp_pa
         pytest.raises(FinalizeError, match="fix develop"),
     ):
         _stage_validation(ctx)
+
+
+def test_stage_validation_refused_rebuild_warns_without_failing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The low-disk guard refusing the rebuild (#3571) must not fail a finalize
+    # whose merge has landed: it is a loud warning naming the image, the cause and
+    # the retry command, the stage is marked warn, and validation is not retried
+    # against an image that was never rebuilt (#3605).
+    ctx = _stage_ctx([], root=tmp_path)
+    refused = CacheSpaceError("only 1.2G free after pruning; the build needs 4.0G")
+    with (
+        patch(_MOD + ".progress.run", side_effect=[_launch_err()]) as run,
+        patch(_MOD + ".progress.mark_warn") as warn,
+        patch(_MOD + ".resolve_language", return_value="python"),
+        patch(_MOD + ".clean_branch_images", return_value=(0, [])),
+        patch(_MOD + ".provision_dev_image", side_effect=refused),
+    ):
+        _stage_validation(ctx)  # must not raise
+    assert run.call_count == 1
+    err = capsys.readouterr().err
+    assert "WARNING: could not rebuild the develop dev image" in err
+    assert "only 1.2G free after pruning; the build needs 4.0G" in err
+    assert "vrg-container-run -- vrg-validate" in err
+    (reason,) = warn.call_args.args
+    assert "validation did not run" in reason
+
+
+def test_stage_validation_failed_rebuild_keeps_full_error_text(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A generic cache-build failure carries the captured build output on later
+    # lines; none of it may be dropped from the warning.
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+    ctx = _stage_ctx([], root=tmp_path)
+    failed = RuntimeError("Cache build failed\nE: Unable to locate package nope")
+    with (
+        patch(_MOD + ".progress.run", side_effect=[_launch_err()]) as run,
+        patch(_MOD + ".progress.mark_warn") as warn,
+        patch(_MOD + ".resolve_language", return_value="python"),
+        patch(_MOD + ".clean_branch_images", return_value=(0, [])),
+        patch(_MOD + ".provision_dev_image", side_effect=failed),
+    ):
+        _stage_validation(ctx)  # must not raise
+    assert run.call_count == 1
+    err = capsys.readouterr().err
+    assert "Cache build failed" in err
+    assert "E: Unable to locate package nope" in err
+    assert "vrg-container-run -- uv run vrg-validate" in err
+    warn.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("exc", "cause"),
+    [
+        (
+            subprocess.CalledProcessError(
+                1, ("docker", "commit"), stderr="no space left on device"
+            ),
+            "no space left on device",
+        ),
+        (VersionsError("no published version window"), "no published version window"),
+    ],
+)
+def test_stage_validation_other_rebuild_failures_warn(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    exc: Exception,
+    cause: str,
+) -> None:
+    # The cache build commits the image with check=True, and the version
+    # resolver raises VersionsError: both are rebuild failures, reported the same.
+    ctx = _stage_ctx([], root=tmp_path)
+    with (
+        patch(_MOD + ".progress.run", side_effect=[_launch_err()]),
+        patch(_MOD + ".progress.mark_warn") as warn,
+        patch(_MOD + ".resolve_language", return_value="python"),
+        patch(_MOD + ".clean_branch_images", return_value=(0, [])),
+        patch(_MOD + ".provision_dev_image", side_effect=exc),
+    ):
+        _stage_validation(ctx)  # must not raise
+    warn.assert_called_once()
+    assert cause in capsys.readouterr().err
 
 
 def test_stage_validation_dry_run_skips(tmp_path: Path) -> None:
