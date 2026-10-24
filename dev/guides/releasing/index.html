@@ -16521,7 +16521,7 @@ issue and ticks its box in the issue's stage checklist.</p>
 <tr>
 <td><code>merge-release</code></td>
 <td>fail-fast</td>
-<td>Waits for the release PR's checks and merges it</td>
+<td>Waits for the release PR's checks and merges it. If the PR conflicts with <code>main</code>, it merges <code>main</code> into the release branch and pushes it. A conflict in <code>CHANGELOG.md</code> alone is resolved by keeping the release branch's generated changelog; any other conflict aborts the merge and stops with the commands to resolve it by hand</td>
 </tr>
 <tr>
 <td><code>confirm-main</code></td>
