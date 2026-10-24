@@ -394,12 +394,14 @@ get counts by severity and the Security-tab link only. See the
 Interactive (or `--non-interactive`) wizard that bootstraps a new
 managed repository: creates and clones the repo, generates
 `vergil.toml`, scaffolds config files (`CLAUDE.md`, hook-guard shim,
-the managed `.gitignore` fence), scaffolds the language skeleton
+the managed `.gitignore` fence, the canonical report-only
+`.github/dependabot.yml`), scaffolds the language skeleton
 (born-green — see below), generates
 CI/CD/epic-rollup/`ops.yml` workflows, the docs site, branch structure,
 GitHub config, and Pages. The scaffolded `base + <language>`
-`.gitignore` fence and staggered-cron `ops.yml` make a new repo pass the
-config audit's two local checks from day one.
+`.gitignore` fence, canonical `dependabot.yml` and staggered-cron
+`ops.yml` make a new repo pass the config audit's checks for those
+files from day one.
 
 The vergil series a new repo uses comes from the installed
 vergil-tooling: `[dependencies].vergil` defaults to its `vX.Y`, and the

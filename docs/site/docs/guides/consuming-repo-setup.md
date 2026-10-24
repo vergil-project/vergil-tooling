@@ -417,6 +417,13 @@ writes it, and `vrg-dependabot-sync --write` writes or refreshes it.
 not `0`, and the nightly audit flags a missing or non-canonical file
 until you run `vrg-dependabot-sync --write`.
 
+The same nightly run also fails while the repo has **any** open
+Dependabot alert: its `dependabot-audit` job runs
+`vrg-dependabot-audit`, which exits 1 on an open alert and 2 when it
+cannot read the alerts. Fix the dependency or dismiss the alert on
+GitHub to clear it. See the
+[Dependabot Alert Audit reference](../reference/dependabot-audit.md).
+
 The audit also checks `vergil.toml`, `CLAUDE.md`,
 `.claude/settings.json`, `.claude/hooks/guard.sh`, the reusable-workflow
 pins and the GitHub settings. Check your repo locally before relying on
