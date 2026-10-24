@@ -16460,8 +16460,10 @@ through PRs against the appropriate integration branch (typically
 </code></pre></div>
 <p>Pattern: <code>^(feature|bugfix|hotfix|chore)/[0-9]+-[a-z0-9][a-z0-9.-]*$</code>.
 <code>vrg-git</code> applies it when the branch is created (<code>worktree add -b</code>,
-<code>checkout -b</code>, <code>switch -c</code>) and <code>vrg-commit</code> applies it again at commit
-time.</p>
+<code>checkout -b</code>, <code>switch -c</code>, <code>branch &lt;name&gt;</code>, and a <code>branch -c</code>/<code>-m</code> copy
+or rename to an issue-branch name) and <code>vrg-commit</code> applies it again at
+commit time. Listing, deleting and upstream forms of <code>vrg-git branch</code> are
+not checked.</p>
 <p>At creation, <code>vrg-git</code> also reads issue <code>&lt;N&gt;</code> from the current repo. It
 refuses the branch when the issue is closed, or is an epic or archive
 (an umbrella is never closed by a PR). It also refuses when the issue
