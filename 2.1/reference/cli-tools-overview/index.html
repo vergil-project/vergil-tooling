@@ -1324,6 +1324,8 @@
       
         
       
+        
+      
     
     
     
@@ -1376,6 +1378,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.264/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.264
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -12461,6 +12491,39 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-intake-create" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-intake-create
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vrg-intake-route" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-intake-route
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vrg-queue" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-queue
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-worktree-status" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -16391,6 +16454,39 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-intake-create" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-intake-create
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vrg-intake-route" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-intake-route
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vrg-queue" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-queue
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-worktree-status" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -16804,7 +16900,9 @@ branch mode</strong> (positional <code>&lt;branch&gt; [&lt;branch&gt; …]</code
 cloud→Mac handoff: each branch's ready-state comes from a local
 worktree's <code>pr-workflow.json</code> when present, else the relay ref
 <code>refs/vergil/pr-workflow/&lt;branch&gt;</code>; origin's tip is checked against the
-recorded <code>head_sha</code> and the PR opens with <code>--head</code> <strong>without pushing</strong>.</p>
+recorded <code>head_sha</code> and the PR opens with <code>--head</code> <strong>without pushing</strong>.
+It refuses an issue whose native parent is an intake or planning epic (see
+<a href="#vrg-pr-workflow"><code>vrg-pr-workflow</code></a>).</p>
 <table>
 <thead>
 <tr>
@@ -16904,7 +17002,10 @@ instead. If that push was missed, an explicit <code>vrg-git push [-u] origin
 publishes, not advances, the branch (issue #3071). <code>unfreeze</code> is the only sanctioned way to
 reopen a still-unsubmitted branch — it drops the state back to
 <code>implementing</code> while keeping the metadata; an already-submitted branch
-cannot be unfrozen. <code>status</code> prints the current state.</p>
+cannot be unfrozen. <code>status</code> prints the current state. <code>report-ready</code> (like
+<code>vrg-submit-pr</code>) refuses an issue whose native parent is an intake or planning
+epic: a queue item is not buildable until intake review routes it, or
+<code>epic-create</code> expands it (epic vergil-project/.github#176).</p>
 <table>
 <thead>
 <tr>
@@ -17110,6 +17211,146 @@ ruleset rule), a branch with no PR, or a branch whose name was reused
 <tr>
 <td>Exit codes</td>
 <td>0 success, 1 any branch error, listing failure or auth failure, 2 bad arguments</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-intake-create">vrg-intake-create<a class="headerlink" href="#vrg-intake-create" title="Permanent link">&para;</a></h3>
+<p>Capture an uncurated item — a bug, an idea, an investigation, a one-line
+"don't forget X" — into the intake queue (epic vergil-project/.github#176).
+The issue is filed in the current repo's queue home (<code>&lt;org&gt;/.github</code> for a
+public repo, the repo itself for a self-homed private one) and linked under
+that home's <code>Epic (intake): &lt;name&gt;</code> as it is created, so there is no unlinked
+path. It carries no kind label. The intake epic is resolved (created if
+absent) <em>before</em> the issue is created; if linking the created issue fails, the
+tool exits 1 naming its URL and the <code>vrg-epic-move</code> command that links it. Used
+by the <code>intake-capture</code> skill. See
+<a href="../../standards/github-issues/#intake-and-planning-queues">Intake and planning queues</a>.</p>
+<p><code>vrg-triage-create</code> is a <strong>deprecated alias</strong> kept for one release: it warns
+on stderr, ignores <code>--kind</code> (intake has no kind label), and forwards every
+other argument to <code>vrg-intake-create</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_intake_create</code> (alias: <code>vergil_tooling.bin.vrg_triage_create</code>)</td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>--title</code> (required), <code>--body</code> / <code>--body-file</code>, <code>--label</code> (repeatable), <code>--assignee</code> (repeatable), <code>--repo OWNER/NAME</code> (default: the current repo's queue home)</td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>Run inside a repo in the target org, or pass <code>--repo</code>; GitHub App credentials for that org</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td>An extra <code>--label</code> missing from the registry is refused before anything is created; a failed link after creation exits 1 naming the created issue</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 created and linked, 1 error</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-intake-route">vrg-intake-route<a class="headerlink" href="#vrg-intake-route" title="Permanent link">&para;</a></h3>
+<p>Apply one intake-review decision to one intake item. Owns the routing
+mechanics — transfer-or-recreate, reparent, re-link, close with a pointer — so
+the <code>intake-review</code> skill never hand-rolls them. Routes:</p>
+<ul>
+<li><code>drop --reason TEXT</code> — comment the reason and close (not planned).</li>
+<li><code>defer --reason TEXT</code> — add a dated comment; the item keeps its age.</li>
+<li><code>one-off --repo OWNER/REPO [--epic REF]</code> — move the item into the target
+  repo (transfer, or recreate with a link back when GitHub refuses the
+  transfer) and link it under that repo's ad-hoc epic (default <code>adhoc</code>) or the
+  named epic.</li>
+<li><code>planning</code> — reparent the item from the intake epic to the planning epic of
+  the same queue home.</li>
+<li><code>split --into REF [--into REF …] --reason TEXT</code> — comment links to the
+  replacement tasks (already created with <code>vrg-issue-create</code>) and close.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_intake_route</code> (mechanics: <code>lib/intake_route.py</code>)</td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>&lt;issue-ref&gt;</code> (<code>owner/repo#N</code>, or <code>#N</code> in the current repo), then a route: <code>drop</code>, <code>defer</code>, <code>one-off</code>, <code>planning</code>, <code>split</code></td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>The item is a child of an intake epic (<code>planning</code> also accepts an unparented issue); GitHub App credentials for the item's org</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td>A refused route — not an intake item, a cross-org target, or a private item headed to a public repo or epic — exits 1 with the reason on stderr</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 routed, 1 refused or error, 2 bad arguments</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-queue">vrg-queue<a class="headerlink" href="#vrg-queue" title="Permanent link">&para;</a></h3>
+<p>Read-only view of a standing queue. <code>vrg-queue intake</code> lists the open items
+under the intake epic, oldest first. <code>vrg-queue planning</code> lists the open items
+under the planning epic with their state: <strong>waiting</strong> (no <code>in-progress</code>
+label), <strong>in-progress</strong> (labelled, with its latest progress note), or
+<strong>ready-to-close</strong> (labelled, the <code>Epic:</code> / <code>Docs task:</code> / <code>Tasks filed: yes</code>
+markers present, and the docs task closed). Used by <code>intake-review</code>'s collect
+step and <code>epic-create</code>'s no-argument summary.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_queue</code> (views: <code>lib/queue_view.py</code>)</td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>{intake,planning}</code> (required); <code>--repo OWNER/NAME</code> (that repo's queue home; default: the current org's <code>.github</code> queues); <code>--json</code></td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>GitHub App credentials for the target org</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td>A queue home with no live queue epic exits 1 naming the missing epic; nothing is created</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 success, 1 error, 2 bad arguments</td>
 </tr>
 <tr>
 <td>Status</td>

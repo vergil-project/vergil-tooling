@@ -1324,6 +1324,8 @@
       
         
       
+        
+      
     
     
     
@@ -1376,6 +1378,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.264/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.264
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15680,10 +15710,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#cross-visibility-caveat" class="md-nav__link">
+  <a href="#public-to-private-is-unsupported" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Cross-visibility caveat
+        Public to private is unsupported
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cross-visibility-linkage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cross-visibility linkage
       
     </span>
   </a>
@@ -15895,10 +15936,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#cross-visibility-caveat" class="md-nav__link">
+  <a href="#public-to-private-is-unsupported" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Cross-visibility caveat
+        Public to private is unsupported
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cross-visibility-linkage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cross-visibility linkage
       
     </span>
   </a>
@@ -15952,21 +16004,32 @@
 </tbody>
 </table>
 <p>So a repo's epic home is stable only while its visibility is stable.
-When you <strong>flip a repo between public and private</strong> (with a public
-<code>.github</code>), its resolved home changes, and its existing epics must be
-relocated to match. This is a rare, corner-case operation; this guide is
-the runbook for when it happens.</p>
+Visibility changes are supported in <strong>one direction only</strong>:</p>
+<ul>
+<li><strong>Private → public is supported.</strong> Making a repo public discloses nothing
+  new. Its resolved home moves to <code>&lt;org&gt;/.github</code>, and its existing epics
+  must be relocated to match. This is a rare, corner-case operation; this
+  guide is the runbook for when it happens.</li>
+<li><strong>Public → private is not supported.</strong> See
+  <a href="#public-to-private-is-unsupported">Public to private is unsupported</a>.</li>
+</ul>
 <h2 id="what-moves-and-what-does-not">What moves, and what does not<a class="headerlink" href="#what-moves-and-what-does-not" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Epics move.</strong> A public→private flip moves the repo's epics from
-  <code>&lt;org&gt;/.github</code> into the repo itself; a private→public flip moves them
-  the other way. The epic issue is <strong>transferred</strong> (not re-created), so
-  its history and comments follow it. It gets a new number in the
-  destination repo.</li>
+<li><strong>Epics move.</strong> A private→public flip moves the repo's self-homed epics
+  from the repo into <code>&lt;org&gt;/.github</code>. The epic issue is <strong>transferred</strong> (not
+  re-created), so its history and comments follow it. It gets a new number
+  in the destination repo.</li>
 <li><strong>Tasks do not move.</strong> A task always lives in its member repo (1:1 with
   its PR), independent of visibility. Only the epic issue relocates.</li>
+<li><strong>Intake and planning queues move themselves.</strong> A private repo self-homes
+  its own <code>Epic (intake): &lt;repo&gt;</code> and <code>Epic (planning): &lt;repo&gt;</code>. Once the
+  repo is public, the daily <code>vrg-epic-audit --close</code> sweep re-links every
+  open item under the org's <code>.github</code> intake and planning epics (the items
+  stay in their repo) and closes the emptied self-homed queue epics. No
+  manual step is needed; a read-only <code>vrg-epic-audit</code> lists the queue epics
+  it will move.</li>
 </ul>
-<p>There is <strong>no dedicated relocation wrapper</strong> — the procedure composes
+<p>There is <strong>no dedicated relocation wrapper</strong> for epics — the procedure composes
 <code>vrg-gh issue transfer</code> (an intra-org issue move) with <code>vrg-epic-link</code>.</p>
 <h2 id="procedure">Procedure<a class="headerlink" href="#procedure" title="Permanent link">&para;</a></h2>
 <p>Do the following once per epic that the flipped repo owns.</p>
@@ -15987,8 +16050,7 @@ the runbook for when it happens.</p>
 <p><strong>Always pin the source with <code>-R</code>.</strong> The <code>-R</code>/<code>--repo</code> owner selects
    the GitHub App installation and names the source repo unambiguously;
    <code>&lt;n&gt;</code> is the epic's number <em>in that source repo</em> and the trailing
-   <code>&lt;org&gt;/.github</code> is the destination. (For a public→private flip the
-   destination is the member repo instead.) The transfer is intra-org —
+   <code>&lt;org&gt;/.github</code> is the destination. The transfer is intra-org —
    one installation token cannot reach two owners. GitHub assigns the
    epic a new number in the destination.</p>
 <ol>
@@ -16004,18 +16066,29 @@ the runbook for when it happens.</p>
    remains — no epic outside <code>.github</code> for a public repo, no stray
    <code>.github</code> issue, no closed epic with an open child.</li>
 </ol>
-<h2 id="cross-visibility-caveat">Cross-visibility caveat<a class="headerlink" href="#cross-visibility-caveat" title="Permanent link">&para;</a></h2>
-<p>After a <strong>public→private</strong> flip, the epic is now private. Any child task
-that lives in a repo that is <strong>still public</strong> can no longer hard-link
-under it — <code>vrg-epic-link</code> refuses a public task under a private epic
-(it would leak the private repo's name into a public issue and break
-cross-boundary roll-up). Re-express those dependencies as a soft
-<code>Blocked-by:</code> reference from the private epic's body instead:</p>
+<h2 id="public-to-private-is-unsupported">Public to private is unsupported<a class="headerlink" href="#public-to-private-is-unsupported" title="Permanent link">&para;</a></h2>
+<p>Once a repo has been public, its contents — and anything about it in the
+public <code>.github</code>, including epic bodies, specs, and plans — may already
+have been cloned and redistributed. Making it private cannot undo that, and
+relocating its epics would only give false assurance. So decide at repo
+creation whether something is private; if it is public, it stays public.</p>
+<p><strong>To take public work private, create a new repository that starts life
+private and migrate the code into it.</strong> The new repo self-homes its epics
+and its intake and planning queues from day one; the public original is
+left as it was (archived if appropriate).</p>
+<p>If a repo is flipped to private anyway, <code>vrg-epic-audit</code> reports every
+issue in a private repo that is parented under a public <code>.github</code> epic as a
+likely unsupported flip, for a human to resolve. Tooling never migrates or
+retracts anything in that direction.</p>
+<h2 id="cross-visibility-linkage">Cross-visibility linkage<a class="headerlink" href="#cross-visibility-linkage" title="Permanent link">&para;</a></h2>
+<p>A task may hard-link to an epic only if it is no more publicly visible than
+the epic's home, so <code>vrg-epic-link</code> refuses a public task under a private
+epic (it would leak the private repo's name into a public issue and break
+cross-boundary roll-up). Express such a dependency as a soft <code>Blocked-by:</code>
+reference from the private epic's body instead:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>Blocked-by: &lt;owner&gt;/&lt;public-repo&gt;#&lt;TASK&gt;
 </code></pre></div>
-<p>See the <a href="https://github.com/vergil-project/.github/issues/40">epic/task convention</a> for the asymmetric linkage
-rule (a task may hard-link to an epic only if it is no more publicly
-visible than the epic's home).</p>
+<p>See the <a href="https://github.com/vergil-project/.github/issues/40">epic/task convention</a> for the asymmetric linkage rule.</p>
 
 
 

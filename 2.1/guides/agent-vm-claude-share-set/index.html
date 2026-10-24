@@ -1324,6 +1324,8 @@
       
         
       
+        
+      
     
     
     
@@ -1376,6 +1378,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.264/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.264
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -16279,7 +16309,7 @@ an agent from <em>attempting</em> a cloud memory write in the first place. Its
 substance: when <code>vrg-whoami --platform</code> reports <code>cloud-vm</code>, memory and
 copied config are a read-only cache; never write memory — the write
 would fail (<code>EACCES</code>) and would be futile anyway — and when memory needs
-to change, file it via <code>/vergil:triage-capture</code> for implementation on
+to change, file it via <code>/vergil:intake-capture</code> for implementation on
 the host. Because that file is the developer's personal, global config,
 the clause is authored once on the host and rides the copied file into
 every environment; its condition is simply almost never true outside
@@ -16288,8 +16318,8 @@ every environment; its condition is simply almost never true outside
 <h3 id="issue-driven-writeback">Issue-driven writeback<a class="headerlink" href="#issue-driven-writeback" title="Permanent link">&para;</a></h3>
 <p>Canonical data never flows back automatically. When a cloud session
 determines that memory or config must change, it files an issue through
-the existing <code>/vergil:triage-capture</code> flow, producing an intake issue in
-the org <code>.github</code> repository. The change is later implemented on the
+the existing <code>/vergil:intake-capture</code> flow, producing an intake issue
+under the org's intake epic in <code>.github</code>. The change is later implemented on the
 physical host against the live store and re-projected on the next cloud
 session or rebuild. Given how infrequently this data changes, this
 issue-driven, human-executed writeback is sufficient — no automated
