@@ -17902,6 +17902,33 @@ repos, wraps with <code>uv sync --group docs</code> and sets
 that Python does not satisfy <code>requires-python</code>. Always sets
 <code>NO_MKDOCS_2_WARNING=1</code> in the container, so local builds suppress the
 mkdocs-material MkDocs 2.0 warning banner the same way CI does.</p>
+<p>Before mkdocs runs, it stages the docs sources on the host the same way
+CI's docs job does (<code>actions/shared/docs/stage</code> in vergil-actions), so a
+local strict build passes or fails where CI's does:</p>
+<ol>
+<li><code>vrg-docs-stage</code> copies <code>CHANGELOG.md</code> to <code>&lt;config dir&gt;/docs/changelog.md</code>
+   and <code>releases/*.md</code> to <code>&lt;config dir&gt;/docs/releases/</code>, and writes the
+   release index.</li>
+<li><code>vrg-docs-patch-nav</code> patches the release versions into the nav of a
+   copy of the config, <code>mkdocs.staged.yml</code>, written next to <code>mkdocs.yml</code>.
+   The tracked <code>mkdocs.yml</code> is never modified. mkdocs runs with
+   <code>-f &lt;config dir&gt;/mkdocs.staged.yml</code>.</li>
+</ol>
+<p>Staging needs authenticated <code>gh</code> (or an App token in agent sessions)
+whenever the repo has release notes, because each release page links to
+its CI-evidence bundle. Without auth the command fails; it never skips
+staging.</p>
+<p>Staging must not dirty the working tree, so every generated path has to
+be gitignored. The managed base gitignore covers the default layout
+(<code>docs/site/docs/changelog.md</code>, <code>docs/site/docs/releases/</code>,
+<code>mkdocs.staged.yml</code>). If a generated path is not ignored, including a
+staged copy that the repo has committed, the command refuses before
+writing anything and lists the paths. To fix it, stop tracking any
+committed copies (<code>vrg-git rm --cached &lt;path&gt;</code>), then run
+<code>vrg-gitignore-sync</code>.</p>
+<p><code>serve</code> stages once, at startup. Edits to the docs pages reload as usual,
+but edits to <code>mkdocs.yml</code>, <code>CHANGELOG.md</code> or <code>releases/</code> take effect only
+after a restart.</p>
 <table>
 <thead>
 <tr>
@@ -17920,11 +17947,11 @@ mkdocs-material MkDocs 2.0 warning banner the same way CI does.</p>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>Git repo, Docker daemon</td>
+<td>Git repo, Docker daemon, mkdocs config at <code>MKDOCS_CONFIG</code> (default <code>docs/site/mkdocs.yml</code>), generated docs paths gitignored, <code>gh</code> auth when the repo has release notes</td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>Usage message on missing/unknown subcommand</td>
+<td>Usage message on missing/unknown subcommand; explicit error for a missing config, un-ignored generated paths, or a staging failure (including missing <code>gh</code> auth)</td>
 </tr>
 <tr>
 <td>Exit codes</td>
