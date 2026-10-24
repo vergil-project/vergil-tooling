@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from vergil_tooling.lib.process_errors import command_text, error_text
 from vergil_tooling.lib.progress import Stage, mark_warn
 from vergil_tooling.lib.promote import promote
+from vergil_tooling.lib.release import package_index
 from vergil_tooling.lib.release.bump import back_merge_and_bump
 from vergil_tooling.lib.release.confirm import confirm_develop, confirm_main
 from vergil_tooling.lib.release.conflict import merge_main_into_release
@@ -313,6 +314,34 @@ def _publish_status_stage(state: ReleaseState) -> None:
     )
 
 
+def _close_finalize_outcome(ctx: ReleaseContext) -> str:
+    """What close-finalize actually did, mirroring ``close_and_finalize``'s branches.
+
+    The issue is closed only when nothing deferred. A deferred publish leaves it
+    open (the repo is still finalized) and names each deferred kind; a halted
+    earlier stage leaves it open and skips cleanup entirely (#3593).
+    """
+    if ctx.deferred_failures:
+        return (
+            "Tracking issue left open and cleanup skipped — earlier stages failed "
+            f"({', '.join(ctx.deferred_failures)}). Fix the cause and resume with "
+            "`vrg-release --resume`."
+        )
+    jobs = ctx.deferred_publish_failures
+    if not jobs:
+        return "Tracking issue closed. Repository finalized."
+    kinds = []
+    cd_jobs = [job for job in jobs if job != package_index.PHASE]
+    if cd_jobs:
+        kinds.append(f"CD publish ({', '.join(cd_jobs)})")
+    if package_index.PHASE in jobs:
+        kinds.append(f"package index ({package_index.PHASE})")
+    return (
+        "Tracking issue left open until the deferred publish completes: "
+        f"{'; '.join(kinds)}. Repository finalized."
+    )
+
+
 def _phase_details(ctx: ReleaseContext, phase: str) -> str:
     """Build human-readable details from ctx for a completed phase."""
     lines: list[str] = []
@@ -365,7 +394,7 @@ def _phase_details(ctx: ReleaseContext, phase: str) -> str:
         else:
             lines.append("Promote skipped (--no-promote).")
     elif phase == "close-finalize":
-        lines.append("Tracking issue closed. Repository finalized.")
+        lines.append(_close_finalize_outcome(ctx))
     elif phase == "package-index":
         if ctx.package_index_url:
             lines.append(f"Package visible in index: {ctx.package_index_url}")

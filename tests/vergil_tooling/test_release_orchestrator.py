@@ -389,7 +389,52 @@ def test_phase_details_close_finalize() -> None:
 
     ctx = _ctx()
     details = _phase_details(ctx, "close-finalize")
-    assert "finalized" in details.lower()
+    assert details == "Tracking issue closed. Repository finalized."
+
+
+def test_phase_details_close_finalize_cd_deferral_leaves_issue_open() -> None:
+    """A CD publish deferral leaves the issue open; the comment says so (#3593)."""
+    ctx = _ctx()
+    ctx.deferred_publish_failures = ["publish-pypi", "publish-docs"]
+    details = _phase_details(ctx, "close-finalize")
+    assert "closed" not in details.lower()
+    assert "left open" in details
+    assert "CD publish (publish-pypi, publish-docs)" in details
+    assert "package index" not in details
+    assert "Repository finalized." in details
+
+
+def test_phase_details_close_finalize_package_index_deferral_leaves_issue_open() -> None:
+    """A package-index deferral leaves the issue open; the comment names it (#3593)."""
+    ctx = _ctx()
+    ctx.deferred_publish_failures = ["package-index"]
+    details = _phase_details(ctx, "close-finalize")
+    assert "closed" not in details.lower()
+    assert "left open" in details
+    assert "package index (package-index)" in details
+    assert "CD publish" not in details
+    assert "Repository finalized." in details
+
+
+def test_phase_details_close_finalize_both_deferral_kinds() -> None:
+    ctx = _ctx()
+    ctx.deferred_publish_failures = ["publish-pypi", "package-index"]
+    details = _phase_details(ctx, "close-finalize")
+    assert "CD publish (publish-pypi)" in details
+    assert "package index (package-index)" in details
+
+
+def test_phase_details_close_finalize_halted_stages_skip_close_and_cleanup() -> None:
+    """Earlier failed stages leave the issue open and skip cleanup entirely."""
+    ctx = _ctx()
+    ctx.deferred_failures = ["promote"]
+    ctx.deferred_publish_failures = ["package-index"]
+    details = _phase_details(ctx, "close-finalize")
+    assert "closed" not in details.lower()
+    assert "finalized" not in details.lower()
+    assert "left open" in details
+    assert "promote" in details
+    assert "--resume" in details
 
 
 def test_phase_details_consumer_refresh() -> None:
