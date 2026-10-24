@@ -417,6 +417,53 @@ class TestIdentityGate:
         result = main(["--issue", "42", "--summary", "Fix", "--title", "fix: bug"])
         assert result != 0
 
+    def test_refusal_points_to_report_ready(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
+        result = main([])
+        assert result == 1
+        assert "vrg-pr-workflow report-ready" in capsys.readouterr().err
+
+    @pytest.mark.parametrize("flag", ["--help", "-h"])
+    @pytest.mark.parametrize("mode", ["user", "audit"])
+    def test_agent_help_redirects_instead_of_usage(
+        self,
+        flag: str,
+        mode: str,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """An agent's --help gets the human-only redirect, never the usage (issue #3545)."""
+        monkeypatch.setenv("VRG_IDENTITY_MODE", mode)
+        result = main(["--issue", "42", flag])
+        assert result == 0
+        out = capsys.readouterr().out
+        assert "human-only" in out
+        assert "vrg-pr-workflow report-ready" in out
+        assert "usage:" not in out
+        assert "--finalize" not in out
+
+    def test_agent_help_from_sys_argv(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The console-script entry point (argv=None) reads sys.argv."""
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
+        monkeypatch.setattr("sys.argv", ["vrg-submit-pr", "--help"])
+        assert main() == 0
+        assert "vrg-pr-workflow report-ready" in capsys.readouterr().out
+
+    def test_human_help_shows_usage(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.delenv("VRG_IDENTITY_MODE", raising=False)
+        monkeypatch.delenv("VRG_APP_ID", raising=False)
+        with patch(_MOD + ".identity_mode.is_agent", return_value=False), pytest.raises(SystemExit):
+            main(["--help"])
+        out = capsys.readouterr().out
+        assert "usage:" in out
+        assert "human-only" not in out
+
     def test_human_mode_allowed(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("VRG_IDENTITY_MODE", raising=False)
         monkeypatch.delenv("VRG_APP_ID", raising=False)
