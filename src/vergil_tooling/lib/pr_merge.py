@@ -80,6 +80,16 @@ class MergeAbortError(Exception):
     """The PR cannot be merged; the message explains why and what to do."""
 
 
+class MergeConflictError(MergeAbortError):
+    """The PR conflicts with its base branch.
+
+    A distinct subclass so a caller that knows where the PR's branch lives
+    (``vrg-finalize-pr``) can replace the generic message with the exact
+    commands to resolve it (issue #3555); every other caller still catches
+    it as a plain ``MergeAbortError``.
+    """
+
+
 # Substring of the merge endpoint's rejection when the repo requires branches to
 # be up to date and the head is behind base. This is the authoritative signal the
 # lazily-computed mergeStateStatus precheck can miss in a merge train (issue #2856).
@@ -237,7 +247,7 @@ def wait_and_merge(
                 f"PR {pr} has merge conflicts. Resolve them in the PR's worktree "
                 "(merge the target branch in, push), then re-run."
             )
-            raise MergeAbortError(msg)
+            raise MergeConflictError(msg)
         if github.merge_state_status(pr) == "BEHIND":
             _update_or_abort()
             continue

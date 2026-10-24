@@ -1843,6 +1843,11 @@ def head_ref(pr: str) -> str:
     return read_output("pr", "view", pr, "--json", "headRefName", "--jq", ".headRefName")
 
 
+def base_ref(pr: str) -> str:
+    """Return the PR's base (target) branch name."""
+    return read_output("pr", "view", pr, "--json", "baseRefName", "--jq", ".baseRefName")
+
+
 def merge_commit_sha(pr: str) -> str:
     """Return the SHA of the commit *pr*'s merge produced on the base branch.
 

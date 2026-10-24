@@ -2389,6 +2389,12 @@ def test_head_ref() -> None:
         assert github.head_ref("1423") == "feature/1423-x"
 
 
+def test_base_ref() -> None:
+    with patch("vergil_tooling.lib.github.read_output", return_value="develop") as mock_read:
+        assert github.base_ref("3555") == "develop"
+    assert "baseRefName" in mock_read.call_args.args
+
+
 def test_merge_commit_sha_reads_merge_commit_oid() -> None:
     with patch("vergil_tooling.lib.github.read_output", return_value="cafef00dbabe") as mock_read:
         assert github.merge_commit_sha("1423") == "cafef00dbabe"
