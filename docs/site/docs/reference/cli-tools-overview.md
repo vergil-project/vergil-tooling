@@ -156,7 +156,12 @@ the target branch, fast-forward pulls, deletes merged local branches
 each merged branch's PR-workflow relay ref
 (`refs/vergil/pr-workflow/<branch>`) and sweeps any orphaned relay ref
 whose branch is gone (issue #2369), prunes remotes, runs validation, and
-checks the CD workflow status. A
+checks the CD workflow status. It also removes each merged branch's
+cached dev images and sweeps cached images whose branch is live in no
+repo of the platform repo set, as `vrg-container-cache prune` decides it
+(skipped on the physical host, which has no default repo set); a failed
+image removal is reported as a warning, never a failed finalize
+(issue #3566). A
 merged/closed worktree the sweep cannot remove — a dirty tree, or a
 reused branch name with unmerged commits (issue #1719) — is surfaced
 **prominently after the pipeline** rather than buried in the stage log;

@@ -129,10 +129,10 @@ def _cmd_clean(_args: argparse.Namespace, *, runtime: str) -> int:
     if existing is None:
         print("No cached image for this branch.")
         return 0
-    subprocess.run(  # noqa: S603
-        [runtime, "rmi", existing[0]],  # noqa: S607
-        capture_output=True,
-    )
+    failures = remove_images([existing[0]], runtime)
+    if failures:
+        _report_failures(failures)
+        return 1
     print(f"Removed: {existing[0]}")
     return 0
 
@@ -183,17 +183,11 @@ def _cmd_clean_all(_args: argparse.Namespace, *, runtime: str) -> int:
         print("Failed to list container images.", file=sys.stderr)
         return 1
 
-    removed = 0
-    for line in result.stdout.splitlines():
-        if "--" in line.split(":")[-1]:
-            subprocess.run(  # noqa: S603
-                [runtime, "rmi", line],  # noqa: S607
-                capture_output=True,
-            )
-            removed += 1
-
-    print(f"Removed {removed} cached image(s).")
-    return 0
+    doomed = [line for line in result.stdout.splitlines() if "--" in line.split(":")[-1]]
+    failures = remove_images(doomed, runtime)
+    print(f"Removed {len(doomed) - len(failures)} of {len(doomed)} cached image(s).")
+    _report_failures(failures)
+    return 1 if failures else 0
 
 
 def _cmd_prune(args: argparse.Namespace, *, runtime: str) -> int:
@@ -249,9 +243,14 @@ def _cmd_prune(args: argparse.Namespace, *, runtime: str) -> int:
         return 0
     failures = remove_images(doomed, runtime)
     print(f"Removed {len(doomed) - len(failures)} of {len(doomed)} cached image(s).")
+    _report_failures(failures)
+    return 1 if failures else 0
+
+
+def _report_failures(failures: list[tuple[str, str]]) -> None:
+    """Print each failed ``rmi`` with the runtime's error (#3566)."""
     for ref, error in failures:
         print(f"error: could not remove {ref}: {error}", file=sys.stderr)
-    return 1 if failures else 0
 
 
 if __name__ == "__main__":
