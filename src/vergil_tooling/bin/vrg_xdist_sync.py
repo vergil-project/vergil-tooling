@@ -18,9 +18,15 @@ In a uv-managed repo (one with a ``uv.lock``) the applicator also runs
 must therefore be on the sweeping host's ``PATH``. A missing ``uv`` or a failed
 ``uv lock`` is recorded as that repo's ``error`` (#2980).
 
-Each repo in ``--repos`` is a path to a local clone. ``--dry-run`` reports the
-intended action per repo without touching any git or GitHub state (no worktree,
-no issue, no commit, no PR, and no follow-up issues).
+A repo that is not a Python repo (its ``primary-language`` is something else,
+or it declares none and has no Python project) is out of scope and skipped,
+with no follow-up issue (#3549).
+
+Each repo in ``--repos`` is a path to a local clone. ``--dry-run`` runs the
+applicator in check-only mode in a disposable probe worktree and reports the
+verdict a live run would reach per repo — ``ready`` (would add), ``skipped``,
+or a follow-up — without opening an issue, branch, commit, or PR, and without
+filing follow-up issues (#3549).
 
 This tool never submits or merges a PR — it stops at ``report-ready``, exactly
 like any other agent-run task. **Running the sweep across the fleet is a
@@ -109,7 +115,10 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Report the intended action per repo without touching git/GitHub state.",
+        help=(
+            "Preview the verdict a live run would reach per repo (check-only, in a "
+            "disposable probe worktree) without opening an issue, branch, commit, or PR."
+        ),
     )
     return parser.parse_args(argv)
 

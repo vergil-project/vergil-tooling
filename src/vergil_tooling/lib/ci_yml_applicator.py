@@ -50,8 +50,12 @@ _CI_RELPATH = Path(".github") / "workflows" / "ci.yml"
 _MATRIX_INPUT_RE = re.compile(r"^[ \t]+(?:versions|container-tag):")
 
 
-def strip_matrix_inputs(worktree: Path) -> AppResult:
+def strip_matrix_inputs(worktree: Path, *, check: bool = False) -> AppResult:
     """Strip ``versions:``/``container-tag:`` from *worktree*'s ``ci.yml``.
+
+    With ``check=True`` (the sweep's dry-run preview) the file is left untouched
+    and the same verdict is returned, the summary saying what *would* be
+    stripped.
 
     Returns an :class:`~vergil_tooling.lib.fleet_sweep.AppResult`:
 
@@ -97,8 +101,13 @@ def strip_matrix_inputs(worktree: Path) -> AppResult:
             summary=f"{_CI_RELPATH} already thin; no matrix inputs to strip",
         )
 
-    ci_path.write_text(new_text, encoding="utf-8")
     removed = len(original.splitlines()) - len(new_text.splitlines())
+    if check:
+        return AppResult(
+            changed=True,
+            summary=f"would strip {removed} hardcoded matrix input line(s) from {_CI_RELPATH}",
+        )
+    ci_path.write_text(new_text, encoding="utf-8")
     return AppResult(
         changed=True,
         summary=f"stripped {removed} hardcoded matrix input line(s) from {_CI_RELPATH}",

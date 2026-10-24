@@ -19,8 +19,12 @@ This tool never submits or merges a PR — it stops at ``report-ready``, exactly
 like any other agent-run task.
 
 Each repo in ``--repos`` is a path to a local clone (the worktree is created
-inside it). ``--dry-run`` reports the intended action per repo without touching
-any git or GitHub state.
+inside it). ``--dry-run`` reports the verdict a live run would reach per repo
+(change or skip) without opening an issue, branch, commit, or PR (#3549). The
+``dependabot`` target previews with ``vrg-dependabot-sync --check``; the
+``gitignore`` target has no exact check-only mode (``--check`` is stricter than
+``--write``), so it previews by running ``--write`` inside the sweep's
+disposable probe worktree, which is discarded.
 """
 
 from __future__ import annotations
@@ -48,6 +52,10 @@ class _Target:
     body: str
     commit_scope: str
     epic: str | None
+    # Whether the CLI's ``--check`` verdict is exactly the one ``--write`` would
+    # reach. Only then does the dry run preview via ``--check``; otherwise it
+    # runs ``--write`` inside the driver's disposable probe worktree (#3549).
+    check_predicts_write: bool
 
 
 _TARGETS: dict[str, _Target] = {
@@ -63,6 +71,11 @@ _TARGETS: dict[str, _Target] = {
         ),
         commit_scope="gitignore",
         epic=None,
+        # ``vrg-gitignore-sync --check`` is stricter than ``--write``: it flags
+        # managed patterns outside a correct fence, which ``--write`` leaves
+        # alone, and accepts a fence that is not first or a missing trailing
+        # newline, which ``--write`` rewrites.
+        check_predicts_write=False,
     ),
     "dependabot": _Target(
         applicator_cli="vrg-dependabot-sync",
@@ -76,6 +89,8 @@ _TARGETS: dict[str, _Target] = {
         ),
         commit_scope="dependabot",
         epic="vergil-project/.github#420",
+        # ``vrg-dependabot-sync --write`` writes exactly when ``--check`` drifts.
+        check_predicts_write=True,
     ),
 }
 
@@ -96,8 +111,17 @@ def main(argv: list[str] | None = None) -> int:
         epic=target.epic,
     )
 
-    def applicator(worktree: Path) -> AppResult:
-        return _run_sync_applicator([target.applicator_cli, "--write", "--repo"], worktree)
+    def applicator(worktree: Path, *, check: bool = False) -> AppResult:
+        if not check:
+            return _run_sync_applicator([target.applicator_cli, "--write", "--repo"], worktree)
+        if target.check_predicts_write:
+            return _run_check_applicator([target.applicator_cli, "--check", "--repo"], worktree)
+        # No exact check-only mode: preview by writing into the probe worktree,
+        # which the sweep driver discards after a dry run.
+        result = _run_sync_applicator([target.applicator_cli, "--write", "--repo"], worktree)
+        if not result.changed:
+            return result
+        return AppResult(changed=True, summary=f"would apply: {result.summary}")
 
     results = run_sweep(spec, applicator, dry_run=args.dry_run)
     for result in results:
@@ -131,7 +155,10 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Report the intended action per repo without touching git/GitHub state.",
+        help=(
+            "Preview the verdict a live run would reach per repo (check-only, in a "
+            "disposable probe worktree) without opening an issue, branch, commit, or PR."
+        ),
     )
     return parser.parse_args(argv)
 
@@ -155,6 +182,29 @@ def _run_sync_applicator(argv: list[str], worktree: Path) -> AppResult:
     output = result.stdout.strip()
     changed = "already in sync" not in output
     return AppResult(changed=changed, summary=output)
+
+
+def _run_check_applicator(argv: list[str], worktree: Path) -> AppResult:
+    """Run one single-repo applicator CLI in ``--check`` mode (the dry-run preview).
+
+    ``--check`` writes nothing and exits ``0`` when the file is already current
+    and ``1`` on drift, printing each drift reason to stderr; those map to
+    :attr:`AppResult.changed` so the dry run reports the verdict ``--write``
+    would reach (#3549). Any other exit (a usage error or a ``vergil.toml`` that
+    fails to load) raises so the driver records the repo as an error.
+    """
+    result = subprocess.run(  # noqa: S603 - fixed argv, no shell, no interpolation
+        [*argv, str(worktree)],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        return AppResult(changed=False, summary="already in sync")
+    detail = (result.stderr or result.stdout).strip()
+    if result.returncode == 1:
+        reasons = "; ".join(line.strip() for line in detail.splitlines() if line.strip())
+        return AppResult(changed=True, summary=f"would sync ({reasons or 'drift'})")
+    raise RuntimeError(f"{argv[0]} failed (exit {result.returncode}): {detail}")
 
 
 if __name__ == "__main__":

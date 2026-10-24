@@ -121,6 +121,21 @@ def test_strips_both_inputs_from_a_multi_call_ci(tmp_path: Path) -> None:
     assert new_text == _THIN_CI
 
 
+def test_check_reports_the_strip_without_writing(tmp_path: Path) -> None:
+    """check=True (the dry-run preview) returns the verdict and leaves ci.yml alone (#3549)."""
+    ci_path = _write_ci(tmp_path, _FAT_CI)
+
+    result = strip_matrix_inputs(tmp_path, check=True)
+
+    assert result.changed is True
+    assert result.needs_followup is False
+    assert result.summary.startswith("would strip ")
+    assert ci_path.read_text(encoding="utf-8") == _FAT_CI
+    # The preview names the same line count the write then removes.
+    written = strip_matrix_inputs(tmp_path)
+    assert written.summary == result.summary.replace("would strip", "stripped")
+
+
 def test_idempotent_when_already_stripped(tmp_path: Path) -> None:
     """A ci.yml already thin is a no-op: changed=False, no error, file untouched."""
     ci_path = _write_ci(tmp_path, _THIN_CI)
