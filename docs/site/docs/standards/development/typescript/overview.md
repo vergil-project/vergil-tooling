@@ -157,8 +157,11 @@ TypeScript hard gates:
 - **TEST** (per Node version) — Vitest with the V8 coverage provider, held to
   100% line coverage per Node major (see
   [Testing and Coverage](testing-and-coverage.md)).
-- **AUDIT** (once) — `npm audit --audit-level=high --omit=dev`, plus a
-  best-effort license summary.
+- **AUDIT** (once) — `npm audit --audit-level=high`, plus a best-effort
+  license summary. The vulnerability audit covers every package in
+  `package-lock.json`, devDependencies included, so a vulnerable docs or test
+  tool fails the audit just as a runtime dependency does. The license summary
+  still covers production dependencies only.
 
 ## Document Map
 
