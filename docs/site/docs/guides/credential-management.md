@@ -242,11 +242,11 @@ when it was generated.
 
 Repeat the steps for the other App.
 
-The org automation App (`vergil-release[bot]`) is not covered by these
-steps. Its key is consumed by the `APP_PRIVATE_KEY` Actions secret,
+The org automation Apps (`<org>-automation`) are not covered by these
+steps. Their keys are consumed by the `APP_PRIVATE_KEY` Actions secret,
 not by an agent VM. The CI publishing secrets are not covered either.
 For both, see
-[Org automation App](#org-automation-app-vergil-releasebot) and
+[Org automation Apps](#org-automation-apps) and
 [CI publishing secrets](#ci-publishing-secrets) under the compromise
 procedure below.
 
@@ -339,29 +339,35 @@ Apps.
 procedure above for each one. Review the account's recent merge and
 administrative activity in addition to the agent activity.
 
-### Org automation App (`vergil-release[bot]`)
+### Org automation Apps
 
-The org-level App does mechanized release work. It creates release
-PRs, and a human approves and merges them (see
-[Identity Architecture](identity-architecture.md#the-release-app)).
-CI also reaches the org's App through the `APP_CLIENT_ID` and
-`APP_PRIVATE_KEY` Actions secrets. The `cd-release` workflow uses
-them to dispatch to the org's `packages` repository (see
-[Package config](../reference/package-config.md)). The `ops` and
-`epic-rollup` workflows also receive them.
+Each org has its own automation App, owned by the org:
+`vergil-project-automation`, `logical-minds-foundry-automation` and
+`mnemosys-project-automation` (see
+[Identity Architecture](identity-architecture.md#the-org-automation-apps)).
+CI reaches an org's App through the `APP_CLIENT_ID` and
+`APP_PRIVATE_KEY` Actions secrets. The nightly `ops` workflow uses them
+for the config audit, the branch sweep and the `dependabot-audit` job.
+The `epic-rollup` and epic-sweep workflows use them to close epics and
+tasks. The `cd-release` workflow uses them to dispatch to the org's
+`packages` repository (see
+[Package config](../reference/package-config.md)).
 
-**Blast radius.** The App is installed at the org level, not per
-contributor, so a leaked key reaches every repo that installation
-covers. Its permission set is not listed in the Account Setup tables.
-Read the exact permissions from the App's settings page before you
-assess the impact. Release PRs it creates still need human approval to
-merge.
+**Blast radius.** Each App is installed on its org with access to all
+repositories, not per contributor, so a leaked key reaches every repo
+in that org. It does not reach the other orgs, which have their own
+Apps and keys. Its permission set is not listed in the Account Setup
+tables. Read the exact permissions from the App's settings page before
+you assess the impact. Its Administration permission is read-only, so
+the key cannot change repo settings or rulesets. With Dependabot
+alerts: Read, the key can read a repo's open alerts, including on a
+private repo.
 
 **Contain and restore.** Follow the same steps as for an agent App key:
 delete the key, suspend the installation if access must stop at once,
 and generate a new key. Then update the `APP_PRIVATE_KEY` secret
 wherever it is stored. Until you do, the workflows that depend on it
-(release dispatch, ops, epic roll-up) will fail.
+(ops, epic roll-up and sweep, package-index dispatch) will fail.
 
 ### CI publishing secrets
 

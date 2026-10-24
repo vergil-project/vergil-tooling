@@ -216,8 +216,9 @@ fence.
 
 ## New repos are born conforming
 
-`repo_init` (`vrg-github-repo-init`) scaffolds both halves of the
-contract, so a freshly created repo passes both new checks from day one:
+`repo_init` (`vrg-github-repo-init`) scaffolds these checked-in files
+through the same modules the audit uses, so a freshly created repo
+passes their checks from day one:
 
 - **`.gitignore`** — `render_gitignore()` renders through
   `lib/gitignore.py` (the same module the audit uses), so a new repo is
@@ -229,6 +230,43 @@ contract, so a freshly created repo passes both new checks from day one:
   deterministic hash of `<org>/<repo>` maps to a minute in `[0,59]` — so
   the fleet does not stampede a single minute as it grows. The hour stays
   in the early-UTC window; only the minute varies.
+- **`.github/dependabot.yml`** — the config-files step writes
+  `lib/dependabot.py::render(<language>)`, the same render
+  `_check_dependabot_yml` compares against, so a new repo passes that
+  check from day one.
+
+## GitHub checks — security settings
+
+The GitHub half also compares the repo's security settings
+(`desired_security_settings()` in `lib/github_config.py`) and reports
+each difference as a `security.<field>` `DiffItem`:
+
+| Field | Desired | Notes |
+|---|---|---|
+| `security.vulnerability_alerts` | `true` | Dependabot alerts on, for **every** repo, public or private |
+| `security.dependabot_security_updates` | `disabled` | Dependabot never opens a security-update PR |
+| `security.secret_scanning` | `enabled` | Only when GHAS is available; otherwise unmanaged |
+| `security.secret_scanning_push_protection` | `enabled` | Only when GHAS is available; otherwise unmanaged |
+
+GHAS is available when `[project].ghas` in `vergil.toml` says so, and
+otherwise exactly when the repo is not private.
+
+The first two rows are the **report-only Dependabot posture** (epic
+[vergil-project/.github#420](https://github.com/vergil-project/.github/issues/420)):
+alerts are on so the nightly
+[`vrg-dependabot-audit`](dependabot-audit.md) has something to read,
+and security-update PRs stay off. Version-update PRs are suppressed
+separately, by `open-pull-requests-limit: 0` in the canonical
+`.github/dependabot.yml`, which `_check_dependabot_yml` enforces (see
+[Local checks](#local-checks)).
+
+Alerts are read from `GET /repos/{repo}/vulnerability-alerts` (204 means
+on, 404 means off). Any other status is an error, never a silent "off".
+`apply` turns alerts on with `PUT` on that endpoint (or off with
+`DELETE`), and sets `dependabot_security_updates` through the repo's
+`security_and_analysis` settings. `apply` is a human action: it needs
+Administration write access, which the org automation Apps do not
+have.
 
 ## GitHub checks — the required-status-check set
 

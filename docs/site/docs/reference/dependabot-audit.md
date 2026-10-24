@@ -26,7 +26,32 @@ Two halves keep Dependabot to reporting:
   vulnerability alerts on every repo, public or private, and the
   nightly config audit flags any repo where they are off.
 - **Dependabot never opens a PR.** The repo setting for Dependabot
-  security updates stays disabled.
+  security updates stays disabled, which the config audit also
+  enforces. Version-update PRs are suppressed by the canonical
+  `.github/dependabot.yml`, where every `updates` entry carries
+  `open-pull-requests-limit: 0`. `vrg-validate` rejects any entry
+  without it, and the nightly config audit's `local.dependabot` check
+  flags a missing or non-canonical file. `vrg-dependabot-sync` writes
+  the file for one repo, and `vrg-fleet-sync --target dependabot`
+  sweeps it across the fleet. See the
+  [GitHub Config Audit reference](config-audit.md) and the
+  [CLI Tools Overview](cli-tools-overview.md#vrg-dependabot-sync).
+
+## Where it runs
+
+Every managed repo's nightly `ops.yml` calls the reusable
+`vergil-project/vergil-actions/.github/workflows/ops-github-config.yml`
+workflow. Its `dependabot-audit` job runs
+`vrg-dependabot-audit --repo "${{ github.repository }}"`, so exit 1 or
+exit 2 turns the scheduled run red, and GitHub's failed-workflow
+notification is the alert.
+
+The job cannot use `GITHUB_TOKEN`: a called workflow gets only what
+the caller's `ops.yml` grants, which is `contents: read`. It mints a
+token from the org's automation App (the `APP_CLIENT_ID` and
+`APP_PRIVATE_KEY` secrets), scoped to the calling repo and carrying
+only `vulnerability-alerts: read`. See
+[Identity Architecture](../guides/identity-architecture.md#the-org-automation-apps).
 
 The audit reads only alerts in the `open` state, across every page of
 the API result, so a repo with hundreds of alerts is counted in full.
