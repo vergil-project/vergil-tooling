@@ -207,6 +207,134 @@ def test_select_ci_run_none_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(NoQualifyingRunError) as exc:
         select_ci_run("o/r", "deadbeef")
     assert exc.value.head_sha == "deadbeef"
+    assert exc.value.visible is True
+
+
+def test_select_ci_run_empty_lookup_is_not_visible(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No CI run at all (only another workflow) marks the miss as not-visible (#3434)."""
+    monkeypatch.setattr(
+        github,
+        "read_json_paginated",
+        lambda *a, **k: [
+            {"name": "Docs", "status": "completed", "conclusion": "success", "run_started_at": "t"},
+        ],
+    )
+    with pytest.raises(NoQualifyingRunError) as exc:
+        select_ci_run("o/r", "deadbeef")
+    assert exc.value.visible is False
+    assert str(exc.value) == "no completed+success CI run for head SHA deadbeef"
+
+
+# --- wait_for_ci_run (issue #3434) --------------------------------------
+
+_SUCCESS_RUN = {
+    "id": 9,
+    "name": "CI",
+    "status": "completed",
+    "conclusion": "success",
+    "run_started_at": "t",
+}
+
+
+class _FakeClock:
+    """A monotonic clock that advances only when the fake sleep is called."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+        self.sleeps: list[float] = []
+
+    def clock(self) -> float:
+        return self.now
+
+    def sleep(self, secs: float) -> None:
+        self.sleeps.append(secs)
+        self.now += secs
+
+
+def _pages(monkeypatch: pytest.MonkeyPatch, *pages: list[dict[str, Any]]) -> list[int]:
+    """Serve each lookup the next page (the last repeats); return the call counter."""
+    calls = [0]
+
+    def _read(*_a: Any, **_k: Any) -> list[dict[str, Any]]:
+        page = pages[min(calls[0], len(pages) - 1)]
+        calls[0] += 1
+        return page
+
+    monkeypatch.setattr(github, "read_json_paginated", _read)
+    return calls
+
+
+def test_wait_for_ci_run_returns_at_once_when_visible(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _pages(monkeypatch, [_SUCCESS_RUN])
+    fake = _FakeClock()
+    run = ci_evidence.wait_for_ci_run("o/r", "abc", sleep=fake.sleep, clock=fake.clock)
+    assert run["id"] == 9
+    assert calls[0] == 1
+    assert fake.sleeps == []
+
+
+def test_wait_for_ci_run_passes_once_lagging_run_appears(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A run the head-SHA index shows only on a later query passes the gate."""
+    calls = _pages(monkeypatch, [], [], [_SUCCESS_RUN])
+    fake = _FakeClock()
+    run = ci_evidence.wait_for_ci_run("o/r", "abc", grace=300, sleep=fake.sleep, clock=fake.clock)
+    assert run["id"] == 9
+    assert calls[0] == 3
+    assert len(fake.sleeps) == 2
+    retries = [r.getMessage() for r in caplog.records if "not visible yet" in r.getMessage()]
+    assert len(retries) == 2
+    assert "CI run for abc not visible yet — GitHub index may lag" in retries[0]
+    assert "up to 300s total" in retries[0]
+
+
+def test_wait_for_ci_run_fails_loudly_after_grace(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A run that never appears fails after the bounded grace, naming the wait."""
+    calls = _pages(monkeypatch, [])
+    fake = _FakeClock()
+    with pytest.raises(NoQualifyingRunError) as exc:
+        ci_evidence.wait_for_ci_run("o/r", "abc", grace=30, sleep=fake.sleep, clock=fake.clock)
+    assert exc.value.head_sha == "abc"
+    assert exc.value.visible is False
+    assert str(exc.value) == (
+        "no completed+success CI run for head SHA abc"
+        " (no run became visible within 30s; GitHub's run index may lag)"
+    )
+    # Bounded: the last sleep is clamped to land exactly on the deadline.
+    assert fake.now == pytest.approx(30)
+    assert calls[0] == len(fake.sleeps) + 1
+
+
+def test_wait_for_ci_run_zero_grace_fails_on_first_miss(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _pages(monkeypatch, [])
+    fake = _FakeClock()
+    with pytest.raises(NoQualifyingRunError):
+        ci_evidence.wait_for_ci_run("o/r", "abc", grace=0, sleep=fake.sleep, clock=fake.clock)
+    assert calls[0] == 1
+    assert fake.sleeps == []
+
+
+def test_wait_for_ci_run_visible_failed_run_fails_at_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A visible but failed run is a real verdict, not index lag: no retry."""
+    failed = {**_SUCCESS_RUN, "conclusion": "failure"}
+    calls = _pages(monkeypatch, [failed])
+    fake = _FakeClock()
+    with pytest.raises(NoQualifyingRunError) as exc:
+        ci_evidence.wait_for_ci_run("o/r", "abc", sleep=fake.sleep, clock=fake.clock)
+    assert exc.value.visible is True
+    assert "may lag" not in str(exc.value)
+    assert calls[0] == 1
+    assert fake.sleeps == []
+
+
+def test_wait_for_ci_run_defaults_to_real_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without injection it uses ``time.sleep``/``time.monotonic``."""
+    _pages(monkeypatch, [], [_SUCCESS_RUN])
+    slept: list[float] = []
+    monkeypatch.setattr(ci_evidence.time, "sleep", slept.append)
+    assert ci_evidence.wait_for_ci_run("o/r", "abc")["id"] == 9
+    assert len(slept) == 1
 
 
 def test_select_ci_run_issues_a_get_not_a_post(monkeypatch: pytest.MonkeyPatch) -> None:

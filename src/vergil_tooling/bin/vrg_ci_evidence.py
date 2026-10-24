@@ -77,6 +77,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p_harvest.add_argument(
         "--out-dir", required=True, help="staging directory for the harvested tree + state"
     )
+    p_harvest.add_argument(
+        "--run-grace-secs",
+        type=float,
+        default=ci_evidence.RUN_VISIBILITY_GRACE_SECS,
+        help=(
+            "seconds to keep re-querying when GitHub's head-SHA run index shows no CI"
+            " run yet (default: %(default)g)"
+        ),
+    )
     p_harvest.set_defaults(func=cmd_harvest)
 
     p_assemble = sub.add_parser(
@@ -125,10 +134,14 @@ def cmd_harvest(args: argparse.Namespace) -> int:
     Delegates to :func:`~vergil_tooling.lib.ci_evidence.run_harvest`, which
     resolves the release PR, selects the qualifying CI run, downloads the
     evidence artifacts, enforces completeness, and persists the harvested tree
-    plus a state file into ``--out-dir`` for a later network-free assemble.
+    plus a state file into ``--out-dir`` for a later network-free assemble. An
+    empty head-SHA run lookup is re-queried for ``--run-grace-secs`` before the
+    gate fails, since GitHub's run index can lag a completed run (#3434).
     """
     with github.target_org(repo_owner(args.repo)):
-        ci_evidence.run_harvest(args.repo, args.merge_sha, Path(args.out_dir))
+        ci_evidence.run_harvest(
+            args.repo, args.merge_sha, Path(args.out_dir), run_grace=args.run_grace_secs
+        )
     return 0
 
 
