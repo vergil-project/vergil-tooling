@@ -552,6 +552,33 @@ CHECKS_TIMEOUT_ENV = "VRG_CHECKS_TIMEOUT"
 # and must not hold the merge to the deadline (#3358).
 _RUN_PROBE_INTERVAL_SECS = 30
 _STALE_GRACE_SECS = _PROGRESS_INTERVAL_SECS
+# How long a check-run may sit pending over a *completed* run before it is
+# declared orphaned. Until then it is only a *suspected* orphan and is
+# re-polled: during a GitHub Actions incident job results are written back
+# late, which looks identical to a real orphan at the moment of checking. An
+# early verdict advised a close/reopen that threw away results already on their
+# way (#3431). Override with $VRG_ORPHAN_GRACE.
+_ORPHAN_GRACE_SECS = 300
+ORPHAN_GRACE_ENV = "VRG_ORPHAN_GRACE"
+
+
+def _positive_secs_env(name: str, default: int) -> int:
+    """``$name`` as a positive whole number of seconds, or *default* when unset.
+
+    A malformed or non-positive value is a configuration error and raises
+    rather than silently falling back.
+    """
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        secs = int(raw)
+    except ValueError:
+        secs = 0
+    if secs <= 0:
+        msg = f"{name} must be a positive whole number of seconds, got {raw!r}"
+        raise ValueError(msg)
+    return secs
 
 
 def checks_timeout_secs() -> int:
@@ -561,17 +588,17 @@ def checks_timeout_secs() -> int:
     rather than silently falling back — the deadline is what keeps a stale check
     from hanging a merge forever, so it cannot be disabled (#3170).
     """
-    raw = os.environ.get(CHECKS_TIMEOUT_ENV, "").strip()
-    if not raw:
-        return _POLL_TIMEOUT_SECS
-    try:
-        secs = int(raw)
-    except ValueError:
-        secs = 0
-    if secs <= 0:
-        msg = f"{CHECKS_TIMEOUT_ENV} must be a positive whole number of seconds, got {raw!r}"
-        raise ValueError(msg)
-    return secs
+    return _positive_secs_env(CHECKS_TIMEOUT_ENV, _POLL_TIMEOUT_SECS)
+
+
+def orphan_grace_secs() -> int:
+    """The suspected-orphan grace period in seconds: ``$VRG_ORPHAN_GRACE`` or 300.
+
+    A check-run pending over a completed run is re-polled for this long before
+    it is declared orphaned (#3431). A malformed or non-positive override is a
+    configuration error and raises, like :func:`checks_timeout_secs`.
+    """
+    return _positive_secs_env(ORPHAN_GRACE_ENV, _ORPHAN_GRACE_SECS)
 
 
 def _run_with_retry(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
@@ -1024,7 +1051,17 @@ class _StaleCheckProbe:
     after its run was first seen completed is stale, and its job's own
     conclusion decides it: ``success`` re-buckets the check ``pass`` (warned by
     name, once); anything else — another conclusion, none, or an unreadable job
-    — raises :class:`OrphanedCheckError` naming every such check at once.
+    — makes it a *suspected* orphan.
+
+    A suspected orphan is not declared at once (#3431): during a GitHub Actions
+    incident results are written back late, and a late result looks exactly
+    like an orphan at the moment of checking. It is re-polled — its job re-read
+    at most once per :data:`_RUN_PROBE_INTERVAL_SECS` — until *grace* seconds
+    after its run was first seen completed, with a warning naming the suspects
+    whenever that set changes. A result that arrives in time takes the check out
+    of ``pending`` (or its job's success passes it) as normal; only once the
+    grace runs out does :class:`OrphanedCheckError` name every such check, and
+    how long each waited, at once.
 
     A stale check is only passed when it is *not* a required status check of
     the base branch (#3379): GitHub keeps a required check that it reports
@@ -1034,11 +1071,14 @@ class _StaleCheckProbe:
     block on the stale check is unknown, and it is an orphan too.
     """
 
-    def __init__(self, required: Collection[str] | None) -> None:
+    def __init__(self, required: Collection[str] | None, grace: float) -> None:
         self._required = required
+        self._grace = grace
         self._probed_at: dict[str, float] = {}
         self._completed_at: dict[str, float] = {}
         self._passed: set[tuple[str, str]] = set()
+        self._job_reads: dict[tuple[str, str], tuple[float, str | None, Exception | None]] = {}
+        self._suspected: tuple[str, ...] = ()
 
     def _run_done_since(self, run_id: str, now: float) -> float | None:
         """When *run_id* was first seen completed, probing it if due; None while running."""
@@ -1052,13 +1092,37 @@ class _StaleCheckProbe:
             self._completed_at[run_id] = now
         return self._completed_at[run_id]
 
+    def _job_problem(
+        self, key: tuple[str, str], link: str, now: float, *, final: bool
+    ) -> tuple[str | None, Exception | None]:
+        """:func:`_stale_job_problem` for *link*, re-read when due or for the *final* verdict."""
+        cached = self._job_reads.get(key)
+        if final or cached is None or now - cached[0] >= _RUN_PROBE_INTERVAL_SECS:
+            cached = (now, *_stale_job_problem(link))
+            self._job_reads[key] = cached
+        return cached[1], cached[2]
+
+    def _announce(self, suspected: list[str]) -> None:
+        """Say (once per change of the set) which check-runs are suspected orphans."""
+        current = tuple(suspected)
+        if current and current != self._suspected:
+            print(
+                f"Warning: {len(current)} check-run(s) have a completed run but no "
+                f"result yet ({', '.join(current)}) — GitHub may be delayed; "
+                f"re-checking for up to {format_wait(self._grace)} after each run "
+                "completed before treating them as orphaned (#3431).",
+                file=sys.stderr,
+            )
+        self._suspected = current
+
     def apply(self, checks: list[dict[str, str]], now: float) -> bool:
-        """Re-bucket (in place) stale checks whose job succeeded; raise on any other.
+        """Re-bucket (in place) stale checks whose job succeeded; raise on expired suspects.
 
         Returns True when any check was re-bucketed, so the caller knows to
         re-evaluate whether the checks are now terminal.
         """
         orphans: list[str] = []
+        suspected: list[str] = []
         cause: Exception | None = None
         changed = False
         for check in checks:
@@ -1073,16 +1137,24 @@ class _StaleCheckProbe:
                 done = self._run_done_since(run.group(1), now)
                 if done is None or now - done < _STALE_GRACE_SECS:
                     continue
-                problem, error = _stale_job_problem(link)
-                cause = cause or error
+                waited = now - done
+                final = waited >= self._grace
+                problem, error = self._job_problem(key, link, now, final=final)
                 problem = problem or self._required_problem(name)
+                if problem and not final:
+                    suspected.append(name)  # GitHub may yet write the result back
+                    continue
                 if problem:
-                    orphans.append(f"{name} ({problem}; {link})")
+                    cause = cause or error
+                    orphans.append(
+                        f"{name} ({problem}; still pending {format_wait(waited)} "
+                        f"after its run completed; {link})"
+                    )
                     continue
                 self._passed.add(key)
                 print(
                     f"Warning: {name!r} check-run stale; backing job succeeded. GitHub "
-                    f"still reports it pending {_format_wait(now - done)} after its "
+                    f"still reports it pending {format_wait(now - done)} after its "
                     f"workflow run completed, so it is treated as passed (#3358). Job: {link}",
                     file=sys.stderr,
                 )
@@ -1091,9 +1163,12 @@ class _StaleCheckProbe:
         if orphans:
             msg = (
                 "GitHub left check-runs pending after their backing workflow run "
-                f"completed (orphaned check-run): {'; '.join(orphans)}. {_ORPHAN_RECOVERY}"
+                "completed, and no result arrived within the "
+                f"{format_wait(self._grace)} grace period for delayed results "
+                f"(orphaned check-run): {'; '.join(orphans)}. {_ORPHAN_RECOVERY}"
             )
             raise OrphanedCheckError(msg) from cause
+        self._announce(suspected)
         return changed
 
     def _required_problem(self, name: str) -> str | None:
@@ -1303,7 +1378,7 @@ def orphaned_check_names(pr: str) -> list[str]:
     return orphans
 
 
-def _format_wait(secs: float) -> str:
+def format_wait(secs: float) -> str:
     """Render a wait duration as ``1h02m`` / ``3m05s`` / ``42s``."""
     whole = int(secs)
     hours, rest = divmod(whole, 3600)
@@ -1365,9 +1440,14 @@ def wait_for_checks(
     conclusion (:class:`_StaleCheckProbe`). A job that succeeded passes the check
     with a warning naming it — unless the check is a required status check, or
     the required set is unknown, since GitHub would then still block the merge
-    on it (#3379). Those, and any other or unreadable conclusion, raise
-    :class:`OrphanedCheckError` at once. A genuinely failing check is untouched
-    and still caught by ``pr_merge.failed_check_names``.
+    on it (#3379). Those, and any other or unreadable conclusion, are suspected
+    orphans: re-polled, with a warning naming them, for the
+    :func:`orphan_grace_secs` grace period (``$VRG_ORPHAN_GRACE``, else 300s)
+    after their run completed, since GitHub may be writing results back late
+    (#3431). A result arriving in that window lets the wait finish normally;
+    only once it runs out is :class:`OrphanedCheckError` raised, naming how long
+    each check waited. A genuinely failing check is untouched and still caught
+    by ``pr_merge.failed_check_names``.
 
     *poll_timeout* defaults to :func:`checks_timeout_secs`
     (``$VRG_CHECKS_TIMEOUT``, else 1800s) and remains the backstop for
@@ -1381,6 +1461,7 @@ def wait_for_checks(
     automatically via the library-level retry wrapper.
     """
     timeout = checks_timeout_secs() if poll_timeout is None else poll_timeout
+    grace = orphan_grace_secs()
     known = required_check_names(pr) if isinstance(required, _Resolve) else required
     # An unreadable required set gates on registered checks only (#3061); the
     # stale probe still sees it as unknown and refuses to pass a stale check.
@@ -1390,7 +1471,7 @@ def wait_for_checks(
     first_seen: dict[tuple[str, str], float] = {}
     reported: tuple[tuple[str, str], ...] = ()
     last_report = 0.0
-    stale = _StaleCheckProbe(known)
+    stale = _StaleCheckProbe(known, grace)
     while True:
         checks = pr_checks(pr)
         if _checks_terminal(checks, required):
@@ -1409,7 +1490,7 @@ def wait_for_checks(
         current = tuple(pending)
         if pending and (current != reported or now - last_report >= _PROGRESS_INTERVAL_SECS):
             waits = ", ".join(
-                f"{name} ({_format_wait(now - first_seen[(name, link)])})" for name, link in pending
+                f"{name} ({format_wait(now - first_seen[(name, link)])})" for name, link in pending
             )
             print(f"Pending checks: {waits}")
             reported, last_report = current, now

@@ -6,7 +6,9 @@ the GitHub API and returns when the PR settles: all checks reach a terminal
 conclusion, **or** the head SHA moves (a new commit), **or** a new review
 appears, **or** the PR is wedged by an orphaned check-run (``reason`` is
 ``orphaned_check``: it is ``BLOCKED`` with every pending check stuck
-non-terminal after its backing run completed). The baselines let the caller
+non-terminal after its backing run completed, for longer than the
+``$VRG_ORPHAN_GRACE`` grace period — 300s by default — since GitHub can write
+results back late). The baselines let the caller
 thread "what I last saw" so a settle on a fresh commit/review is detected even
 when checks are already terminal.
 

@@ -6,8 +6,10 @@ had finished held a merge for the full timeout (release v2.1.252, PR #3356).
 The waiter now probes while waiting: once a pending check's backing run is
 ``completed`` and the check has had a grace period to turn terminal, the
 backing job's own conclusion decides — ``success`` passes the check (named
-loudly); anything else, or an unreadable conclusion, raises
-``OrphanedCheckError`` at once.
+loudly); anything else, or an unreadable conclusion, makes it a suspected
+orphan. A suspect is re-polled for the orphan grace period, because GitHub can
+write results back late during an Actions incident (#3431). Only a suspect
+still pending when the grace runs out raises ``OrphanedCheckError``.
 """
 
 from __future__ import annotations
@@ -33,6 +35,7 @@ def _isolate(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(github, "_gh_env", lambda: None)
     github._warned_stale_links.clear()
     monkeypatch.delenv(github.CHECKS_TIMEOUT_ENV, raising=False)
+    monkeypatch.delenv(github.ORPHAN_GRACE_ENV, raising=False)
 
 
 class _Clock:
@@ -188,21 +191,23 @@ def test_check_that_settles_within_grace_never_reads_the_job(
 
 
 @pytest.mark.parametrize("conclusion", ["failure", "cancelled", None])
-def test_stale_check_without_successful_job_fails_fast(
+def test_stale_check_without_successful_job_fails_after_grace(
     monkeypatch: pytest.MonkeyPatch, clock: _Clock, conclusion: str | None
 ) -> None:
     _stub(monkeypatch, run_completed=lambda rid: True, job_conclusion=lambda r, j: conclusion)
     with pytest.raises(github.OrphanedCheckError) as excinfo:
         github.wait_for_checks("1", poll_interval=5, poll_timeout=1800, required=())
-    assert clock.now <= github._STALE_GRACE_SECS + 5
+    assert clock.now == github._ORPHAN_GRACE_SECS
     msg = str(excinfo.value)
     assert _MATRIX in msg
     assert (conclusion or "no conclusion") in msg
+    assert "no result arrived within the 5m00s grace period" in msg
+    assert "still pending 5m00s after its run completed" in msg
     assert "Close and reopen the PR" in msg
     assert _MATRIX_LINK in msg
 
 
-def test_stale_check_with_unreadable_job_fails_fast(
+def test_stale_check_with_unreadable_job_fails_after_grace(
     monkeypatch: pytest.MonkeyPatch, clock: _Clock
 ) -> None:
     cause = github.GitHubAPIError(1, ("gh", "api"), stderr="HTTP 404: Not Found")
@@ -215,7 +220,123 @@ def test_stale_check_with_unreadable_job_fails_fast(
         github.wait_for_checks("1", poll_interval=5, poll_timeout=1800, required=())
     assert excinfo.value.__cause__ is cause
     assert _MATRIX in str(excinfo.value)
-    assert clock.now <= github._STALE_GRACE_SECS + 5
+    assert clock.now == github._ORPHAN_GRACE_SECS
+
+
+# --- wait_for_checks: suspected orphans and the grace period (#3431) ----------
+
+
+def _late_result(clock: _Clock, at: float) -> Callable[[str], list[dict[str, str]]]:
+    """``pr_checks`` stub whose matrix check stays pending until *at*, then passes."""
+
+    def fake(pr: str) -> list[dict[str, str]]:
+        if clock.now < at:
+            return _checks((_MATRIX, _MATRIX_LINK))(pr)
+        passed = {"name": _MATRIX, "bucket": "pass", "state": "SUCCESS", "link": _MATRIX_LINK}
+        return [*_checks()(pr), passed]
+
+    return fake
+
+
+@pytest.mark.parametrize("conclusion", ["failure", None])
+def test_late_result_within_grace_is_not_an_orphan(
+    monkeypatch: pytest.MonkeyPatch,
+    clock: _Clock,
+    capsys: pytest.CaptureFixture[str],
+    conclusion: str | None,
+) -> None:
+    # Replay of the 2026-10-22 Actions incident (vrg-finalize-pr 651): the run
+    # completed, the job had no result yet, and GitHub wrote the result back
+    # minutes later. The waiter must wait it out rather than declare an orphan.
+    _stub(monkeypatch, run_completed=lambda rid: True, job_conclusion=lambda r, j: conclusion)
+    monkeypatch.setattr(github, "pr_checks", _late_result(clock, 200))
+    github.wait_for_checks("651", poll_interval=5, poll_timeout=1800, required=())
+    assert clock.now == 200
+    err = capsys.readouterr().err
+    assert err.count("GitHub may be delayed") == 1  # announced once, not per poll
+    assert f"1 check-run(s) have a completed run but no result yet ({_MATRIX})" in err
+    assert "re-checking for up to 5m00s" in err
+
+
+def test_late_required_check_with_successful_job_is_not_an_orphan(
+    monkeypatch: pytest.MonkeyPatch, clock: _Clock
+) -> None:
+    # Replay of release PR #3425: `test / evidence` (required) stayed pending over
+    # a successful job until GitHub caught up; it must not fail the release.
+    _stub(monkeypatch, run_completed=lambda rid: True, job_conclusion=lambda r, j: "success")
+    monkeypatch.setattr(github, "pr_checks", _late_result(clock, 240))
+    github.wait_for_checks("3425", poll_interval=5, poll_timeout=1800, required={_MATRIX})
+    assert clock.now == 240
+
+
+def test_suspect_job_is_reread_throttled_then_once_more_for_the_verdict(
+    monkeypatch: pytest.MonkeyPatch, clock: _Clock
+) -> None:
+    reads: list[float] = []
+
+    def job(repo: str, job_id: str) -> str | None:
+        reads.append(clock.now)
+        return None
+
+    _stub(monkeypatch, run_completed=lambda rid: True, job_conclusion=job)
+    with pytest.raises(github.OrphanedCheckError):
+        github.wait_for_checks("1", poll_interval=5, poll_timeout=1800, required=())
+    grace, stale = github._ORPHAN_GRACE_SECS, github._STALE_GRACE_SECS
+    step = github._RUN_PROBE_INTERVAL_SECS
+    assert reads == [float(t) for t in range(stale, grace, step)] + [float(grace)]
+
+
+def test_suspect_whose_job_succeeds_during_grace_passes(
+    monkeypatch: pytest.MonkeyPatch, clock: _Clock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A non-required check whose job result is itself written back late passes
+    # as soon as the job reads success, without waiting out the grace.
+    _stub(
+        monkeypatch,
+        run_completed=lambda rid: True,
+        job_conclusion=lambda r, j: "success" if clock.now >= 120 else None,
+    )
+    github.wait_for_checks("1", poll_interval=5, poll_timeout=1800, required=())
+    assert clock.now == 120
+    assert f"{_MATRIX!r} check-run stale; backing job succeeded" in capsys.readouterr().err
+
+
+def test_suspects_are_reannounced_when_the_set_changes(
+    monkeypatch: pytest.MonkeyPatch, clock: _Clock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    other = ("docs / docs", "https://github.com/o/r/actions/runs/7/job/5")
+    _stub(
+        monkeypatch,
+        run_completed=lambda rid: rid == "39619708036" or clock.now >= 100,
+        job_conclusion=lambda r, j: None,
+        pending=((_MATRIX, _MATRIX_LINK), other),
+    )
+    with pytest.raises(github.OrphanedCheckError) as excinfo:
+        github.wait_for_checks("1", poll_interval=5, poll_timeout=1800, required=())
+    err = capsys.readouterr().err
+    assert f"1 check-run(s) have a completed run but no result yet ({_MATRIX})" in err
+    assert f"2 check-run(s) have a completed run but no result yet ({_MATRIX}, docs / docs)" in err
+    # The first suspect's grace expires first; the later one is still waiting.
+    assert clock.now == github._ORPHAN_GRACE_SECS
+    assert _MATRIX in str(excinfo.value)
+    assert "docs / docs" not in str(excinfo.value)
+
+
+def test_orphan_grace_env_override_shortens_the_wait(
+    monkeypatch: pytest.MonkeyPatch, clock: _Clock
+) -> None:
+    monkeypatch.setenv(github.ORPHAN_GRACE_ENV, "120")
+    _stub(monkeypatch, run_completed=lambda rid: True, job_conclusion=lambda r, j: None)
+    with pytest.raises(github.OrphanedCheckError, match="within the 2m00s grace period"):
+        github.wait_for_checks("1", poll_interval=5, poll_timeout=1800, required=())
+    assert clock.now == 120
+
+
+def test_bad_orphan_grace_override_fails_before_any_poll(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(github.ORPHAN_GRACE_ENV, "soon")
+    monkeypatch.setattr(github, "pr_checks", lambda pr: pytest.fail("no poll on a config error"))
+    with pytest.raises(ValueError, match="VRG_ORPHAN_GRACE must be a positive whole number"):
+        github.wait_for_checks("1", poll_interval=5, poll_timeout=1800, required=())
 
 
 def test_stale_checks_are_all_named_in_one_error(
@@ -234,10 +355,10 @@ def test_stale_checks_are_all_named_in_one_error(
     assert "docs / docs" in str(excinfo.value)
 
 
-def test_stale_check_with_unparseable_job_link_fails_fast(
+def test_stale_check_with_unparseable_job_link_fails_after_grace(
     monkeypatch: pytest.MonkeyPatch, clock: _Clock
 ) -> None:
-    # A job link whose repo cannot be parsed has no readable job: fail fast.
+    # A job link whose repo cannot be parsed has no readable job: an orphan.
     link = "https://ghe.example/o/r/actions/runs/7/job/8"
     _stub(
         monkeypatch,
@@ -344,7 +465,7 @@ def test_unreadable_job_error_types_include_called_process_error(
 # --- stale required checks (#3379) --------------------------------------------
 
 
-def test_stale_required_check_with_successful_job_fails_fast(
+def test_stale_required_check_with_successful_job_fails_after_grace(
     monkeypatch: pytest.MonkeyPatch, clock: _Clock, capsys: pytest.CaptureFixture[str]
 ) -> None:
     # GitHub keeps blocking the merge on a required check it reports pending, so
@@ -354,7 +475,7 @@ def test_stale_required_check_with_successful_job_fails_fast(
         github.wait_for_checks(
             "1", poll_interval=5, poll_timeout=1800, required=frozenset({_MATRIX})
         )
-    assert clock.now <= github._STALE_GRACE_SECS + 5
+    assert clock.now == github._ORPHAN_GRACE_SECS
     msg = str(excinfo.value)
     assert _MATRIX in msg
     assert "required status check" in msg

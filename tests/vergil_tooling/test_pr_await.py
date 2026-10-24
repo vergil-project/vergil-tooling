@@ -2,14 +2,23 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
 
-from vergil_tooling.lib import pr_await
+from vergil_tooling.lib import github, pr_await
 from vergil_tooling.lib.pr_await import PrMergedError, PrState, settle_reason, to_output
 
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
 _MOD = "vergil_tooling.lib.pr_await"
+
+
+@pytest.fixture(autouse=True)
+def _no_grace_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(github.ORPHAN_GRACE_ENV, raising=False)
 
 
 def _checks(*buckets: str) -> list[dict[str, str]]:
@@ -220,17 +229,108 @@ def test_is_orphaned_block_false_when_a_pending_check_is_not_orphaned() -> None:
         assert pr_await.is_orphaned_block(state, "PR") is False
 
 
-def test_wait_for_settle_returns_orphaned_check_reason() -> None:
+class _Clock:
+    """A fake monotonic clock that ``time.sleep`` advances."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def sleep(self, secs: float) -> None:
+        self.now += secs
+
+
+@pytest.fixture
+def clock() -> Iterator[_Clock]:
+    fake = _Clock()
+    with (
+        patch(f"{_MOD}.time.monotonic", side_effect=fake.monotonic),
+        patch(f"{_MOD}.time.sleep", side_effect=fake.sleep),
+    ):
+        yield fake
+
+
+def test_wait_for_settle_returns_orphaned_check_reason_after_grace(
+    clock: _Clock, capsys: pytest.CaptureFixture[str]
+) -> None:
     blocked = PrState("sha", _checks("pass", "pending"), [], merge_state_status="BLOCKED")
     with (
         patch(f"{_MOD}.gather_state", return_value=blocked),
         patch(f"{_MOD}.github.orphaned_check_names", return_value=["check-1"]),
-        patch(f"{_MOD}.time.sleep") as slept,
     ):
-        state, reason = pr_await.wait_for_settle("PR", since_sha="sha", since_reviews=0)
+        state, reason = pr_await.wait_for_settle(
+            "PR", since_sha="sha", since_reviews=0, poll_interval=15, orphan_grace=300
+        )
     assert reason == "orphaned_check"
     assert state is blocked
-    slept.assert_not_called()
+    assert clock.now == 300
+    err = capsys.readouterr().err
+    assert err.count("GitHub may be delayed") == 1  # announced once, not per poll
+    assert "1 check-run(s) have a completed run but no result yet (check-1)" in err
+    assert "re-checking for up to 5m00s" in err
+    assert "Still no result for check-1 after 5m00s; reporting orphaned" in err
+
+
+def test_wait_for_settle_late_result_within_grace_settles_normally(clock: _Clock) -> None:
+    # Replay of the 2026-10-22 Actions incident: the check looked orphaned, then
+    # GitHub wrote its result back a few minutes later. No orphan verdict.
+    blocked = PrState("sha", _checks("pass", "pending"), [], merge_state_status="BLOCKED")
+    clean = PrState("sha", _checks("pass", "pass"), [], merge_state_status="CLEAN")
+
+    def gather(pr: str) -> PrState:
+        return clean if clock.now >= 120 else blocked
+
+    with (
+        patch(f"{_MOD}.gather_state", side_effect=gather),
+        patch(f"{_MOD}.github.orphaned_check_names", return_value=["check-1"]),
+    ):
+        state, reason = pr_await.wait_for_settle(
+            "PR", since_sha="sha", since_reviews=0, poll_interval=15, orphan_grace=300
+        )
+    assert reason == "checks_terminal"
+    assert state is clean
+    assert clock.now == 120
+
+
+def test_wait_for_settle_grace_restarts_when_the_orphan_set_changes(clock: _Clock) -> None:
+    # A suspect cleared (not orphaned) and a different pending set both restart
+    # the grace, so every check reported orphaned has waited the full period.
+    one = PrState("sha", _checks("pass", "pending"), [], merge_state_status="BLOCKED")
+    two = PrState("sha", _checks("pending", "pending"), [], merge_state_status="BLOCKED")
+    timeline = [(0, one, ["check-1"]), (100, one, []), (150, one, ["check-1"]), (250, two, None)]
+
+    def current() -> tuple[PrState, list[str] | None]:
+        return next((s, o) for t, s, o in reversed(timeline) if clock.now >= t)
+
+    def orphans(pr: str) -> list[str]:
+        names = current()[1]
+        return ["check-0", "check-1"] if names is None else names
+
+    with (
+        patch(f"{_MOD}.gather_state", side_effect=lambda pr: current()[0]),
+        patch(f"{_MOD}.github.orphaned_check_names", side_effect=orphans),
+    ):
+        state, reason = pr_await.wait_for_settle(
+            "PR", since_sha="sha", since_reviews=0, poll_interval=10, orphan_grace=200
+        )
+    assert reason == "orphaned_check"
+    assert state is two
+    assert clock.now == 450
+
+
+def test_wait_for_settle_default_grace_comes_from_github(clock: _Clock) -> None:
+    blocked = PrState("sha", _checks("pass", "pending"), [], merge_state_status="BLOCKED")
+    with (
+        patch(f"{_MOD}.gather_state", return_value=blocked),
+        patch(f"{_MOD}.github.orphaned_check_names", return_value=["check-1"]),
+        patch(f"{_MOD}.github.orphan_grace_secs", return_value=60) as grace,
+    ):
+        _, reason = pr_await.wait_for_settle("PR", since_sha="sha", since_reviews=0)
+    assert reason == "orphaned_check"
+    assert clock.now == 60
+    grace.assert_called_once_with()
 
 
 def test_wait_for_settle_keeps_waiting_when_pending_but_not_orphaned() -> None:
