@@ -685,11 +685,30 @@ _REGISTRY: dict[str, Language] = {
             # vergil-project/.github#209 (#2579). License checking stays
             # best-effort surfacing in v1 (no turnkey Conan allowlist gate);
             # hardened gating against ``_CPP_LICENSES_ALLOWLIST`` is ledger #7.
+            #
+            # Scope (verified against Conan 2.33, #3553): ``audit scan`` submits
+            # every non-root graph node in *both* contexts, so ``test_requires``
+            # (host) and ``tool_requires`` (build) are covered. But the graph is
+            # the one resolved for the active profile: bare, it resolved the
+            # default profile (Release) and silently skipped locked packages a
+            # recipe only requires in Debug — the build_type ``conan lock
+            # create`` and INSTALL use. So both steps pin ``build_type=Debug``
+            # and name the lock explicitly: the implicit ``conan.lock`` lookup
+            # falls back to a fresh re-resolution when the lock is missing.
             CheckKind.AUDIT: [
-                ["conan", "audit", "scan", "."],
+                ["conan", "audit", "scan", ".", "-s", "build_type=Debug", "--lockfile=conan.lock"],
                 # Resolve the graph against the COMMITTED conan.lock so the audit
                 # reflects the pinned graph, not a fresh re-resolution. (#3021)
-                ["conan", "graph", "info", ".", "--format=json", "--lockfile=conan.lock"],
+                [
+                    "conan",
+                    "graph",
+                    "info",
+                    ".",
+                    "-s",
+                    "build_type=Debug",
+                    "--format=json",
+                    "--lockfile=conan.lock",
+                ],
             ],
         },
         ecosystem=EcosystemInfo(

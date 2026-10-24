@@ -614,13 +614,32 @@ def test_cpp_audit_commands() -> None:
     # CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER env token. OSV-Scanner was reverted
     # because OSV.dev carries no ConanCenter data, so it produced a false
     # all-clear (T11 #2558; decision reversal #209). (#2579)
-    assert "conan audit scan ." in joined
+    # The scan resolves the graph in the lock's own configuration (Debug, as
+    # ``conan lock create`` and INSTALL use) against the COMMITTED conan.lock,
+    # so a Debug-conditional locked package is scanned and a missing lock is an
+    # error, not a silent fresh re-resolution. (#3553)
+    assert "conan audit scan . -s build_type=Debug --lockfile=conan.lock" in joined
     # OSV-Scanner is retired here.
     assert not any("osv-scanner" in c for c in joined)
     # Best-effort license-metadata surfacing (hardened gating deferred, §9 #7).
     # The graph is resolved against the COMMITTED conan.lock via --lockfile so
     # the audit reflects the pinned graph, not a fresh re-resolution. (#3021)
-    assert "conan graph info . --format=json --lockfile=conan.lock" in joined
+    assert "conan graph info . -s build_type=Debug --format=json --lockfile=conan.lock" in joined
+
+
+def test_cpp_audit_resolves_in_the_lock_build_type() -> None:
+    """Every AUDIT conan step resolves in the same build_type as the lock."""
+    lock = languages.language_lock_command("cpp")
+    assert lock is not None
+    lock_build_type = lock[lock.index("-s") + 1]
+    conan_cmds = [c for c in language_commands("cpp", CheckKind.AUDIT) if c[0] == "conan"]
+    assert len(conan_cmds) == 2
+    for cmd in conan_cmds:
+        # Without -s Conan resolves the default profile (Release) and silently
+        # skips Debug-conditional locked packages; without an explicit
+        # --lockfile a missing conan.lock falls back to a fresh resolution.
+        assert cmd[cmd.index("-s") + 1] == lock_build_type, cmd
+        assert "--lockfile=conan.lock" in cmd, cmd
 
 
 def test_cpp_ecosystem_metadata() -> None:
