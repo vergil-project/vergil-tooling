@@ -17070,6 +17070,10 @@ and any follow-on are inherently agentic judgment.</p>
 <li>A <strong>private</strong> repo (with a public <code>.github</code>) homes its epics <strong>in itself</strong>.</li>
 <li>A <strong>private</strong> <code>.github</code> means the whole org is private, so everything homes in
   <code>.github</code>.</li>
+<li>A <strong>private</strong> repo whose owner has <strong>no</strong> <code>.github</code> at all (typically a
+  personal account) homes its epics <strong>in itself</strong>: there is no central home.
+  Only GitHub's "repository does not exist" answer counts as no <code>.github</code>; any
+  other failure to read its visibility is an error.</li>
 </ul>
 <p>Ad-hoc epics follow the same rule — <code>Epic (ad hoc): &lt;repo&gt;</code> lives in the repo's
 resolved home. See
