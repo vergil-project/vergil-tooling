@@ -16786,6 +16786,10 @@ ignored. What it leaves behind depends on where it failed:</p>
   stage, or, when that stage cannot be isolated, a labelled tail of the
   raw output. It ends with the command to reproduce the failure.</li>
 </ul>
+<p>If a fix task for the same version and failure kind is already open,
+for example after <code>vrg-release --resume</code> re-runs an update that failed
+on a transient error, no second task is filed: the new failure is added
+as a comment on the open task, which is linked as above.</p>
 <p>Either way <code>vrg-release</code> exits 1, and the failure counts once in its
 summary: the <code>update-deps</code> stage fails, and <code>publish-status</code> repeats it
 as a warning. If a publish job also failed, <code>publish-status</code> fails with

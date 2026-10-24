@@ -16247,6 +16247,11 @@ opened.</p>
   PR is open, the next <code>vrg-release</code> refuses to start; see
   <a href="../../../guides/releasing/#the-dependency-update-gate">The dependency-update gate</a>.</li>
 </ul>
+<p>A re-run at the same <code>develop</code> version that fails the same way (the
+same failure kind) does not file a second task. The new failure is
+added as a comment on the open task, and that task is the one linked
+from the PR body and the run summary. If the lookup for an open task
+fails, the run fails rather than risk filing a duplicate.</p>
 <p>The fix flow is in
 <a href="../../../guides/releasing/#when-the-dependency-update-fails">When the dependency update fails</a>.</p>
 <h2 id="exit-codes">Exit codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>
