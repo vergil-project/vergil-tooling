@@ -76,6 +76,11 @@ def preflight(
     existing release branch is adopted rather than refused, and the adopted
     issue (*resume_issue_number*) is pre-set on the context.
 
+    A fresh start refuses when ``origin/main`` has commits ``origin/develop``
+    lacks (#3527), before any other fresh-start check. A resume skips it: the
+    release it adopts may sit between merge-release and back-merge-bump, where
+    main is ahead of develop by design.
+
     A fresh start also refuses while any open PR carries the
     ``dependency-update`` label (spec §5.3, epic vergil-project/.github#381);
     *allow_pending_deps* bypasses that gate, and the bypassed PR URLs are
@@ -109,6 +114,7 @@ def preflight(
 
     deps_gate = _DepsGateOutcome(cleared=[], bypassed=[], undeleted=[])
     if not resume:
+        _check_main_not_ahead_of_develop()
         _check_version_not_tagged(release_version)
         _check_no_existing_tracking_issue(repo, release_version)
         _check_packages_unpublished(repo, repo_root, release_version)
@@ -509,6 +515,49 @@ def audit_repo_config(repo: str) -> None:
         command=f"vrg-github-repo-config audit --repo {repo}",
         message=message,
         detail=result.stdout + result.stderr,
+    )
+
+
+def _check_main_not_ahead_of_develop() -> None:
+    """Refuse a fresh release while ``origin/main`` has commits develop lacks (#3527).
+
+    A completed release leaves main contained in develop: back-merge-bump
+    branches ``release/post-<version>`` from main and merges it to develop with
+    a merge commit. Main is ahead only when a release stalled between
+    merge-release and back-merge-bump (as 2.1.6 did at confirm-main), or when
+    something landed on main directly. A fresh release on top of that fails
+    late, at merge-release; here nothing is cut yet. Develop being ahead of
+    main is normal and never refuses. A failed fetch or compare refuses too —
+    an unknown answer never reads as "not diverged".
+    """
+    command = "git log origin/develop..origin/main"
+    try:
+        git.run("fetch", "origin", "main")
+        ahead = git.read_output("log", "--format=%h %s", "origin/develop..origin/main")
+    except subprocess.CalledProcessError as exc:
+        raise ReleaseError(
+            phase="preflight",
+            command=command,
+            message="Could not compare origin/main with origin/develop; refusing to release blind.",
+            detail=error_text(exc),
+        ) from exc
+    if not ahead:
+        return
+    count = len(ahead.splitlines())
+    raise ReleaseError(
+        phase="preflight",
+        command=command,
+        message=(
+            f"origin/main has {count} commit(s) not on origin/develop, so main and "
+            "develop have diverged. If an earlier release stopped before its "
+            "back-merge (its tracking issue is still open), finish it with "
+            "`vrg-release --resume`. Otherwise back-merge main into develop: "
+            "`git fetch origin && git switch -c release/back-merge-main origin/main "
+            "&& git push -u origin release/back-merge-main`, open a PR from it to "
+            "develop, merge it with a merge commit (a squash leaves main's commits "
+            "off develop), then re-run vrg-release."
+        ),
+        detail=ahead,
     )
 
 

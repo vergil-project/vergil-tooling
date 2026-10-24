@@ -102,7 +102,7 @@ issue and ticks its box in the issue's stage checklist.
 | Stage | Mode | What it does |
 |---|---|---|
 | `audit` | fail-fast | Runs `vrg-github-repo-config audit` on the repo. `--skip-audit` skips it |
-| `preflight` | fail-fast | Checks the host prerequisites, `gh` auth, `vergil.toml`, and that the root checkout is a clean `develop` matching `origin/develop`. On a fresh start it also checks the version is not tagged, that no tracking issue exists for it, runs the [package re-publish check](#the-package-re-publish-check), and runs the [dependency-update gate](#the-dependency-update-gate). Creates the `release/<version>` managed worktree |
+| `preflight` | fail-fast | Checks the host prerequisites, `gh` auth, `vergil.toml`, and that the root checkout is a clean `develop` matching `origin/develop`. On a fresh start it also runs the [main/develop divergence check](#the-maindevelop-divergence-check), checks the version is not tagged, that no tracking issue exists for it, runs the [package re-publish check](#the-package-re-publish-check), and runs the [dependency-update gate](#the-dependency-update-gate). Creates the `release/<version>` managed worktree |
 | `prepare` | fail-fast | Creates the `release: <version>` tracking issue, generates the changelog and release notes, and opens the release PR to `main` |
 | `merge-release` | fail-fast | Waits for the release PR's checks and merges it |
 | `confirm-main` | fail-fast | Watches CD on `main`. The release job must succeed; other failed publish jobs are recorded as deferred publish failures (see [Stale job records](#stale-job-records)) |
@@ -387,6 +387,39 @@ new `+<date>` build suffix. If the check cannot read the repo's
 releases, it refuses rather than skipping. CD runs the same check as a
 backstop; see the
 [package reference](../reference/package-config.md#the-re-publish-check).
+
+### The main/develop divergence check
+
+A completed release leaves `main` contained in `develop`:
+`back-merge-bump` branches `release/post-<version>` from `main` and
+merges it to `develop` with a merge commit. `develop` being ahead of
+`main` is normal. `main` having commits that `develop` lacks is not. It
+means an earlier release stopped between `merge-release` and
+`back-merge-bump`, or something landed on `main` directly. A new
+release on top of that would fail late, at `merge-release`.
+
+So a fresh start (not `--resume`) fetches `main` and refuses, before
+any other fresh-start check, when `origin/main` has commits not on
+`origin/develop`. The refusal lists those commits. To recover:
+
+- If an earlier release stopped before its back-merge (its tracking
+  issue is still open), finish it with `vrg-release --resume`. A resume
+  skips this check, because a release between `merge-release` and
+  `back-merge-bump` has `main` ahead of `develop` by design.
+- Otherwise, back-merge `main` into `develop` by hand:
+
+  ```bash
+  git fetch origin
+  git switch -c release/back-merge-main origin/main
+  git push -u origin release/back-merge-main
+  ```
+
+  Open a PR from `release/back-merge-main` to `develop` and merge it
+  with a merge commit. A squash merge leaves `main`'s commits off
+  `develop`, and the check keeps refusing. Then re-run `vrg-release`.
+
+If preflight cannot fetch `main` or compare the branches, it refuses
+rather than skipping.
 
 ## Documentation publication
 
