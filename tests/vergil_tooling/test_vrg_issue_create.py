@@ -595,6 +595,24 @@ def test_main_accepts_every_standing_sentinel(sentinel: str) -> None:
     mock_add.assert_called_once_with(EPIC, epics.IssueRef("org", "repo", 123))
 
 
+def test_main_planning_ensures_in_progress_label_in_target_repo(label_gh: MagicMock) -> None:
+    """Creating an issue into planning ensures 'in-progress' in its repo (#3520)."""
+    planning = epics.IssueRef("org", ".github", 439)
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
+        patch("vergil_tooling.lib.epics._find_epic_by_title", return_value=planning),
+        patch(f"{_MOD}.github.create_issue", return_value=_URL),
+        patch(f"{_MOD}.epics.add_child") as mock_add,
+    ):
+        rc = main(["--epic", "planning", "--title", "T"])
+    assert rc == 0
+    ensured = [(c.args[2], c.args[4]) for c in label_gh.call_args_list]
+    assert ("in-progress", "org/.github") in ensured
+    assert ("in-progress", "org/repo") in ensured
+    mock_add.assert_called_once_with(planning, epics.IssueRef("org", "repo", 123))
+
+
 def test_epic_help_names_every_standing_sentinel(capsys: pytest.CaptureFixture[str]) -> None:
     """The --epic help lists adhoc, intake and planning (#3512)."""
     with pytest.raises(SystemExit):
