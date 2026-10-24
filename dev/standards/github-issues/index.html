@@ -13885,6 +13885,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#epics-and-archives-are-not-tasks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Epics and archives are not tasks
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -16622,6 +16633,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#epics-and-archives-are-not-tasks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Epics and archives are not tasks
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -17211,6 +17233,14 @@ the docs task is closed (its spec + plan PR merged).</p>
 with intake review, or expand it with <code>epic-create</code>. Routing it out of the queue
 is the only way to lift the refusal. The check reads the issue's native parent,
 not a label.</p>
+<h3 id="epics-and-archives-are-not-tasks">Epics and archives are not tasks<a class="headerlink" href="#epics-and-archives-are-not-tasks" title="Permanent link">&para;</a></h3>
+<p>An <code>epic</code>- or <code>archive</code>-labelled issue is an umbrella, never a task, so the
+tooling refuses one wherever a task is expected: <code>vrg-pr-workflow report-ready
+--issue</code> and <code>vrg-submit-pr</code> (a PR closes exactly one task, and an epic is
+closed only by rollup), <code>vrg-epic-link --task</code>, and <code>vrg-issue-create
+--blocked-by</code>. Create the task under the epic first and use its number. This
+check reads the issue's labels; a failed read refuses rather than passing,
+except at <code>report-ready</code>, which defers to <code>vrg-submit-pr</code>'s check.</p>
 <h2 id="labels">Labels<a class="headerlink" href="#labels" title="Permanent link">&para;</a></h2>
 <p>Every managed repo carries the same label set. The canonical registry is
 <code>src/vergil_tooling/data/labels.json</code> in vergil-tooling.
