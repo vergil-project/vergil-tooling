@@ -336,8 +336,10 @@ Development: 0 active, 0 needs-attention, 1 stalled (no-pr), 0 cruft (removable)
 ### vrg-ensure-label
 
 Ensure GitHub labels exist. Three modes: single-label (create/update
-one label), sync (provision all labels from the canonical registry),
-and project (discover repos via a GitHub Project and sync each). The
+one label), sync (provision all labels from the canonical registry,
+and delete the registry's `delete` list and the retired `triage`,
+`idea` and `research` labels where present), and project
+(discover repos via a GitHub Project and sync each). The
 registry is `src/vergil_tooling/data/labels.json`; the labels it
 defines are listed in
 [GitHub Issue Standards](../standards/github-issues.md#labels).
