@@ -358,6 +358,10 @@ and branch protection rulesets.
 This and the VM sandbox are the real security model. Everything else
 is convenience.
 
+Where these boundaries meet other systems, their guarantees do not
+always line up. Known gaps of that kind are recorded in
+[Security Boundaries](security-boundaries.md).
+
 ### Why Client-Side Layers Still Matter
 
 If server-side enforcement is the only real boundary, why bother
@@ -462,6 +466,8 @@ historical context; it does not describe the model in use.
   `vrg-gh` selects credentials per-operation
 - [Account Setup](account-setup.md) — creating and configuring
   accounts
+- [Security Boundaries](security-boundaries.md) — register of
+  known cross-system seams and their mitigations
 - [Permission model design spec][perm-spec] — full decision
   rationale and alternatives considered
 

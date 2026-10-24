@@ -119,7 +119,9 @@ These restrictions are enforced primarily by the App permission
 shapes (a server-side hard gate) and branch protection, with the
 `vrg-gh`/`vrg-git` wrappers as a soft ergonomic layer on top. See
 [Permission Model](permission-model.md) for the full
-defense-in-depth architecture.
+defense-in-depth architecture. Where GitHub's permission shapes are
+coarser than the role model wants, the gap is recorded in
+[Security Boundaries](security-boundaries.md).
 
 > **Note (2026-06-25, #1872):** The local interactive USER/AUDIT loop
 > (where a running AUDIT agent reviewed code in a shared worktree before
@@ -234,5 +236,7 @@ human's host under the human's own `gh` login.
   installation tokens are minted and selected at runtime
 - [Permission Model](permission-model.md) — enforcement layers
   that constrain agent operations
+- [Security Boundaries](security-boundaries.md) — register of
+  known cross-system seams and their mitigations
 - [Git Workflow](git-workflow.md) — the per-change development
   cycle
