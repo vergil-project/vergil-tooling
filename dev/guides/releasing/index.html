@@ -16050,6 +16050,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#the-maindevelop-divergence-check" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The main/develop divergence check
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -16314,6 +16325,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#the-maindevelop-divergence-check" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The main/develop divergence check
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -16485,7 +16507,7 @@ issue and ticks its box in the issue's stage checklist.</p>
 <tr>
 <td><code>preflight</code></td>
 <td>fail-fast</td>
-<td>Checks the host prerequisites, <code>gh</code> auth, <code>vergil.toml</code>, and that the root checkout is a clean <code>develop</code> matching <code>origin/develop</code>. On a fresh start it also checks the version is not tagged, that no tracking issue exists for it, runs the <a href="#the-package-re-publish-check">package re-publish check</a>, and runs the <a href="#the-dependency-update-gate">dependency-update gate</a>. Creates the <code>release/&lt;version&gt;</code> managed worktree</td>
+<td>Checks the host prerequisites, <code>gh</code> auth, <code>vergil.toml</code>, and that the root checkout is a clean <code>develop</code> matching <code>origin/develop</code>. On a fresh start it also runs the <a href="#the-maindevelop-divergence-check">main/develop divergence check</a>, checks the version is not tagged, that no tracking issue exists for it, runs the <a href="#the-package-re-publish-check">package re-publish check</a>, and runs the <a href="#the-dependency-update-gate">dependency-update gate</a>. Creates the <code>release/&lt;version&gt;</code> managed worktree</td>
 </tr>
 <tr>
 <td><code>prepare</code></td>
@@ -16819,6 +16841,33 @@ new <code>+&lt;date&gt;</code> build suffix. If the check cannot read the repo's
 releases, it refuses rather than skipping. CD runs the same check as a
 backstop; see the
 <a href="../../reference/package-config/#the-re-publish-check">package reference</a>.</p>
+<h3 id="the-maindevelop-divergence-check">The main/develop divergence check<a class="headerlink" href="#the-maindevelop-divergence-check" title="Permanent link">&para;</a></h3>
+<p>A completed release leaves <code>main</code> contained in <code>develop</code>:
+<code>back-merge-bump</code> branches <code>release/post-&lt;version&gt;</code> from <code>main</code> and
+merges it to <code>develop</code> with a merge commit. <code>develop</code> being ahead of
+<code>main</code> is normal. <code>main</code> having commits that <code>develop</code> lacks is not. It
+means an earlier release stopped between <code>merge-release</code> and
+<code>back-merge-bump</code>, or something landed on <code>main</code> directly. A new
+release on top of that would fail late, at <code>merge-release</code>.</p>
+<p>So a fresh start (not <code>--resume</code>) fetches <code>main</code> and refuses, before
+any other fresh-start check, when <code>origin/main</code> has commits not on
+<code>origin/develop</code>. The refusal lists those commits. To recover:</p>
+<ul>
+<li>If an earlier release stopped before its back-merge (its tracking
+  issue is still open), finish it with <code>vrg-release --resume</code>. A resume
+  skips this check, because a release between <code>merge-release</code> and
+  <code>back-merge-bump</code> has <code>main</code> ahead of <code>develop</code> by design.</li>
+<li>Otherwise, back-merge <code>main</code> into <code>develop</code> by hand:</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>git<span class="w"> </span>fetch<span class="w"> </span>origin
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>git<span class="w"> </span>switch<span class="w"> </span>-c<span class="w"> </span>release/back-merge-main<span class="w"> </span>origin/main
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>git<span class="w"> </span>push<span class="w"> </span>-u<span class="w"> </span>origin<span class="w"> </span>release/back-merge-main
+</code></pre></div>
+<p>Open a PR from <code>release/back-merge-main</code> to <code>develop</code> and merge it
+  with a merge commit. A squash merge leaves <code>main</code>'s commits off
+  <code>develop</code>, and the check keeps refusing. Then re-run <code>vrg-release</code>.</p>
+<p>If preflight cannot fetch <code>main</code> or compare the branches, it refuses
+rather than skipping.</p>
 <h2 id="documentation-publication">Documentation publication<a class="headerlink" href="#documentation-publication" title="Permanent link">&para;</a></h2>
 <p>The Documentation workflow (<code>.github/workflows/docs.yml</code>) deploys
 the MkDocs site to GitHub Pages on every push to <code>develop</code> and
@@ -16839,8 +16888,8 @@ deadline defaults to 90 minutes and can be changed with <code>VRG_CD_TIMEOUT</co
 progress; result unknown", with the run URL and how to re-check it, not
 as a failed run. It still fails finalize (issue #3316).</p>
 <p>For deeper investigation, view recent runs directly:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>gh<span class="w"> </span>run<span class="w"> </span>list<span class="w"> </span>--repo<span class="w"> </span>vergil-project/vergil-tooling<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span>--workflow<span class="o">=</span><span class="s2">"Documentation"</span><span class="w"> </span>--limit<span class="w"> </span><span class="m">5</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>gh<span class="w"> </span>run<span class="w"> </span>list<span class="w"> </span>--repo<span class="w"> </span>vergil-project/vergil-tooling<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span>--workflow<span class="o">=</span><span class="s2">"Documentation"</span><span class="w"> </span>--limit<span class="w"> </span><span class="m">5</span>
 </code></pre></div>
 <h2 id="release-tracking-artifacts">Release tracking artifacts<a class="headerlink" href="#release-tracking-artifacts" title="Permanent link">&para;</a></h2>
 <p>Each release has a tracking issue, <code>release: &lt;version&gt;</code>, which
