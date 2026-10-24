@@ -140,6 +140,7 @@ second-level subcommands as a pair.
 | `pr diff` | Read-only |
 | `pr comment` | Review context |
 | `pr edit` | Updating metadata |
+| `pr update-branch` | Server-side update onto the base (`--rebase` allowed); not for the audit identity |
 | `run list` | CI status |
 | `run view` | CI status |
 | `run watch` | Blocking wait for CI |
