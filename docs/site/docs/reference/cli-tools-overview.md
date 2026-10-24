@@ -646,16 +646,54 @@ Manage the per-branch cached container image (base image plus
 vergil-tooling, `system-packages`, and the `build-command` artifact) that
 `vrg-container-run` builds over. Subcommands: `build` (build/refresh the
 cached image for the current branch), `clean` (remove it), `status` (show
-cache state and the expected tag), and `clean-all` (remove every image it
-manages).
+cache state and the expected tag), `clean-all` (remove every image it
+manages), and `prune` (remove the cached images of finished branches).
+
+`prune` covers every cached per-branch image in the local image store,
+whichever repo built it. It is a **dry run by default**: it prints the repo
+set and a keep or remove verdict, with the reason, for each image, and
+removes nothing until re-run with `--apply` (issue #3481). The image tag
+records the branch (sanitized: `/` becomes `-`) but not the repository, so
+the rule leans toward keeping. An image is kept when:
+
+- its branch is protected (`develop`, `main`, `release`);
+- a container, running or stopped, uses it;
+- its branch matches a live branch in **any** repo of the repo set. A
+  branch is live when it is a local branch (which covers every worktree)
+  or exists on the repo's `origin`.
+
+Only an image that matches none of these is removed. Origin is read with
+`git ls-remote`, so a branch deleted on GitHub counts as gone. When a
+repo's origin cannot be read (typically a private repo the agent's App
+cannot see), that repo's local `refs/remotes/origin/*` stand in, with a
+warning naming the repo; stale tracking refs can only keep extra images,
+never remove live ones. Any other failure to read the repo set, the images,
+the containers or a repo's branches stops the run before anything is
+removed. A failed image removal is reported with the runtime's error, the
+remaining removals still run, and the command exits 1.
+
+The repo set comes from `--root DIR` (repeatable; a projects directory, a
+directory of repos, or a single repo, searched down to `<org>/<repo>`),
+which replaces the platform default: `/vergil/projects` on a cloud VM, and
+on a Lima VM the projects mount, found two levels above the current repo's
+main worktree and accepted only if it is a mount point. The physical host
+has no default, so `--root` is required there. A root that does not exist,
+or roots that hold no repositories, are an error.
+
+`vrg-finalize-pr` runs the same sweep (in effect `prune --apply` against
+the platform's default repo set) after removing the merged branch's own
+cached images. It runs on agent VMs and is skipped on the physical Mac
+host, which has no default repo set; there finalize prints the
+`vrg-container-cache prune --root DIR` command to run by hand. A failed
+sweep or removal is a finalize warning, never a failure (issue #3566).
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_container_cache` |
-| Args | `build` \| `clean` \| `status` \| `clean-all` |
-| Preconditions | Git repo; a container runtime (`docker`/`nerdctl`) available for `build`/`clean`/`clean-all` |
-| Failure mode | Runtime-unavailable error; propagates the runtime's build/remove failures |
-| Exit codes | 0 success, non-zero on runtime or build failure |
+| Args | `build` \| `clean` \| `status` \| `clean-all` \| `prune [--apply] [--root DIR]...` |
+| Preconditions | A container runtime (`nerdctl` or `docker`) on PATH for every subcommand; a git repo for `build`/`clean`/`status`; for `prune`, a repo set (`--root DIR` on the physical host) |
+| Failure mode | Runtime-unavailable error; propagates the runtime's build failures; every failed image removal is reported with the runtime's error while the rest still run. `prune` refuses, before removing anything, a missing or empty repo set, or images, containers or branches it cannot read |
+| Exit codes | 0 success (including a `prune` dry run); 1 no subcommand, no runtime, a failed removal, or a `prune` refusal; non-zero on build failure |
 | Status | Active |
 
 ### vrg-host
