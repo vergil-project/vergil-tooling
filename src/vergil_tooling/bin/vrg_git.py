@@ -535,19 +535,98 @@ def _check_worktree_add(args: list[str]) -> str | None:
     return _check_issue_is_open_task(new_branch)
 
 
+# `git branch` options that select a mode naming no new branch: listing (and the
+# filters that imply it; -a/-r refuse a name), deleting, and upstream or
+# description edits. Any one of them means the command creates nothing.
+_BRANCH_NO_CREATE_LONG: set[str] = {
+    "--list",
+    "--all",
+    "--remotes",
+    "--verbose",
+    "--show-current",
+    "--contains",
+    "--no-contains",
+    "--merged",
+    "--no-merged",
+    "--points-at",
+    "--delete",
+    "--set-upstream-to",
+    "--unset-upstream",
+    "--edit-description",
+}
+_BRANCH_NO_CREATE_SHORT: set[str] = set("lavrdDu")
+# Rename (-m/-M/--move) and copy (-c/-C/--copy) take ``[<old>] <new>``.
+_BRANCH_RENAME_LONG: set[str] = {"--move", "--copy"}
+_BRANCH_RENAME_SHORT: set[str] = set("mMcC")
+# Short flags whose remaining cluster characters are their value, not flags.
+_BRANCH_SHORT_WITH_VALUE: set[str] = set("tu")
+# Long options that consume the following token as their value.
+_BRANCH_VALUE_OPTS: set[str] = {"--sort", "--format"}
+
+
+def _parse_branch_create(args: list[str]) -> str | None:
+    """Return the branch name ``git branch *args*`` brings into being, or None.
+
+    Three forms name a new branch: ``branch [-f] <name> [<start>]``, a copy
+    (``-c``/``-C``/``--copy``) and a rename (``-m``/``-M``/``--move``), whose
+    new name is the last of ``[<old>] <new>``. A rename is covered because
+    renaming a branch *to* an issue-branch name makes that branch as surely as
+    creating it; a rename to a non-issue name is unaffected. Every other form
+    (listing, deleting, upstream and description edits, ``--show-current``)
+    names no new branch and returns None.
+    """
+    positionals: list[str] = []
+    rename = False
+    skip_next = False
+    after_separator = False
+    for arg in args:
+        if skip_next:
+            skip_next = False
+            continue
+        if after_separator or not arg.startswith("-"):
+            positionals.append(arg)
+            continue
+        if arg == "--":
+            after_separator = True
+            continue
+        if arg.startswith("--"):
+            name = arg.split("=", 1)[0]
+            if name in _BRANCH_NO_CREATE_LONG:
+                return None
+            if name in _BRANCH_RENAME_LONG:
+                rename = True
+            elif arg in _BRANCH_VALUE_OPTS:
+                skip_next = True
+            continue
+        for char in arg[1:]:
+            if char in _BRANCH_NO_CREATE_SHORT:
+                return None
+            if char in _BRANCH_RENAME_SHORT:
+                rename = True
+            if char in _BRANCH_SHORT_WITH_VALUE:
+                break
+    if not positionals:
+        return None
+    return positionals[-1] if rename else positionals[0]
+
+
 def _check_new_branch_name(subcmd: str, args: list[str]) -> str | None:
-    """Reject ``checkout -b``/``switch -c`` creating a malformed issue branch.
+    """Reject ``checkout -b``/``switch -c``/``branch`` making a bad issue branch.
 
     Extends the issue-number rule to the other creation paths the worktree
     convention allows inside a secondary worktree, so a non-conforming branch is
-    caught at creation rather than only later at commit (issue #2550). A
-    non-issue branch (e.g. ``release/*``) and a plain checkout/switch of an
-    existing branch are left untouched.
+    caught at creation rather than only later at commit (issue #2550); ``branch
+    <name>`` and its copy/rename forms no longer bypass it (issue #3606). A
+    non-issue branch (e.g. ``release/*``), a plain checkout/switch of an
+    existing branch, and the non-creating ``branch`` forms are left untouched.
     """
-    create_flags = {"checkout": ("-b", "-B"), "switch": ("-c", "-C")}.get(subcmd)
-    if create_flags is None:
-        return None
-    new_branch = _parse_new_branch(create_flags, args)
+    if subcmd == "branch":
+        new_branch = _parse_branch_create(args)
+    else:
+        create_flags = {"checkout": ("-b", "-B"), "switch": ("-c", "-C")}.get(subcmd)
+        if create_flags is None:
+            return None
+        new_branch = _parse_new_branch(create_flags, args)
     if new_branch is None or not branch_names.requires_issue_number(new_branch):
         return None
     if not branch_names.is_valid_issue_branch(new_branch):
