@@ -17690,8 +17690,12 @@ without a managed fragment), and either checks (default) or writes the
 composed <code>base + &lt;language&gt;</code> managed block through <code>lib/gitignore.py</code> —
 the same module the config audit renders through, so applicator and
 audit cannot diverge. It owns <strong>only</strong> the file change: it has no git or
-PR knowledge, and <code>--write</code> rewrites the fenced block in place while
-leaving genuinely repo-local lines outside the fence untouched. See the
+PR knowledge. <code>--write</code> rewrites the fenced block, moves it to the top of
+the file, and drops any exact repeat of one of the fence's own patterns
+outside it (the fence is the single source of truth), leaving genuinely
+repo-local lines untouched and in order. <code>--check</code> reports drift exactly
+when <code>--write</code> would change the file, so <code>--write</code> then <code>--check</code> always
+passes (#3568). See the
 <a href="../config-audit/#the-composed-managed-fence">GitHub Config Audit reference</a>.</p>
 <table>
 <thead>
@@ -17790,9 +17794,9 @@ merges</strong> — it stops at <code>report-ready</code>, leaving submission an
 human. <code>--dry-run</code> reports the verdict a live run would reach per repo
 (would change, naming the epic it would be filed under, or skip) from a
 disposable probe worktree, without opening an issue, branch, commit, or
-PR. The <code>dependabot</code> target previews with <code>vrg-dependabot-sync --check</code>;
-the <code>gitignore</code> target runs <code>--write</code> inside the discarded probe, since
-<code>vrg-gitignore-sync --check</code> is stricter than <code>--write</code>.</p>
+PR. Each target previews with its applicator's <code>--check</code>
+(<code>vrg-gitignore-sync --check</code> or <code>vrg-dependabot-sync --check</code>), whose
+drift verdict is exactly the change <code>--write</code> would make.</p>
 <table>
 <thead>
 <tr>
