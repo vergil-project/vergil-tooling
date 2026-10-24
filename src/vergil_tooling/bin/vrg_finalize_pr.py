@@ -1297,17 +1297,32 @@ def _launch_failure_msg(branch: str, exc: subprocess.CalledProcessError) -> str:
     )
 
 
-def _reprovision_target_image(ctx: FinalizeContext, retry: tuple[str, ...]) -> bool:
+def _rebuild_failure_msg(branch: str, exc: BaseException, retry: tuple[str, ...]) -> str:
+    """The message for a dev-image rebuild that failed, so validation never ran.
+
+    Like a CD watch timeout (issue #3316), an unrun validation is an unknown
+    result, not a pass: it fails the stage. Carries the original error text in
+    full (a failed cache build folds its captured output into it) and the
+    command to retry once the cause is fixed (issue #3605).
+    """
+    return (
+        f"post-finalization validation did not run; result unknown: could not "
+        f"rebuild the {branch} dev image after the container failed to launch.\n"
+        f"{error_text(exc)}\n"
+        f"Free space or fix the cause, then retry with: {' '.join(retry)}"
+    )
+
+
+def _reprovision_target_image(ctx: FinalizeContext, retry: tuple[str, ...]) -> None:
     """Force a clean rebuild of the target-branch dev image (issue #3016).
 
     Drop any cached image for the target branch so the rebuild cannot reuse a
     corrupt one, then provision fresh. Used to recover from a container-launch
     failure discovered during validation.
 
-    Returns False when the rebuild fails — the low-disk guard refusing it
-    (#3571), a failed cache build, or an unresolvable version window. The merge
-    has already landed, so that is a loud warning carrying the full error text
-    and the *retry* command, not a stage failure (#3605).
+    A failed rebuild — the low-disk guard refusing it (#3571), a failed cache
+    build, or an unresolvable version window — raises :class:`FinalizeError`
+    naming the image, the cause and the *retry* command (issue #3605).
     """
     branch = ctx.args.target_branch
     _clean_branch_images(branch)
@@ -1315,14 +1330,7 @@ def _reprovision_target_image(ctx: FinalizeContext, retry: tuple[str, ...]) -> b
     try:
         provision_dev_image(ctx.root, lang, quiet_warmup=True)
     except (RuntimeError, VersionsError, subprocess.CalledProcessError) as exc:
-        print(
-            f"  WARNING: could not rebuild the {branch} dev image, so validation "
-            f"did not run: {error_text(exc)}\n"
-            f"  Free space or fix the cause, then retry with: {' '.join(retry)}",
-            file=sys.stderr,
-        )
-        return False
-    return True
+        raise FinalizeError(_rebuild_failure_msg(branch, exc, retry)) from exc
 
 
 def _stage_validation(ctx: FinalizeContext) -> None:
@@ -1338,7 +1346,8 @@ def _stage_validation(ctx: FinalizeContext) -> None:
     validation never ran. That is usually a stale image-cache snapshot whose
     parent layer was orphaned; rebuild the dev image and retry once before
     concluding anything about the branch (issue #3016). If that rebuild itself
-    fails, the stage warns (⚠) and returns without retrying (issue #3605).
+    fails, validation did not run and its result is unknown, so the stage fails
+    without a pointless retry (issues #3316, #3605).
     """
     args = ctx.args
     if args.dry_run:
@@ -1363,10 +1372,8 @@ def _stage_validation(ctx: FinalizeContext) -> None:
         "rebuilding the dev image and retrying once...",
         file=sys.stderr,
     )
-    if not _reprovision_target_image(ctx, cmd):
-        # No rebuilt image to retry against; flag the stage rather than pass it.
-        progress.mark_warn(f"validation did not run: {args.target_branch} dev image rebuild failed")
-        return
+    # A failed rebuild raises here: there is no new image to retry against.
+    _reprovision_target_image(ctx, cmd)
     try:
         progress.run(cmd)
     except subprocess.CalledProcessError as exc:
