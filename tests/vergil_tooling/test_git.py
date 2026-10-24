@@ -266,6 +266,41 @@ def test_is_ignored_raises_on_error() -> None:
     assert "outside repository" in exc_info.value.stderr
 
 
+def test_ignored_paths_returns_ignored_subset() -> None:
+    with patch("vergil_tooling.lib.git.subprocess.run") as mock_run:
+        mock_run.return_value = _completed(returncode=0, stdout="b.md\0")
+        assert git.ignored_paths(["a.md", "b.md"], repo=Path("/repo")) == {"b.md"}
+    args, kwargs = mock_run.call_args
+    assert args[0] == ("git", "-C", "/repo", "check-ignore", "--stdin", "-z")
+    assert kwargs["input"] == "a.md\0b.md\0"
+    assert kwargs["env"]["GIT_TERMINAL_PROMPT"] == "0"
+
+
+def test_ignored_paths_none_ignored() -> None:
+    with patch("vergil_tooling.lib.git.subprocess.run") as mock_run:
+        mock_run.return_value = _completed(returncode=1)
+        assert git.ignored_paths(["a.md"]) == set()
+    assert mock_run.call_args[0][0] == ("git", "check-ignore", "--stdin", "-z")
+
+
+def test_ignored_paths_empty_skips_git() -> None:
+    with patch("vergil_tooling.lib.git.subprocess.run") as mock_run:
+        assert git.ignored_paths([]) == set()
+    mock_run.assert_not_called()
+
+
+def test_ignored_paths_raises_on_error() -> None:
+    """A check-ignore failure (exit 128) is an error, never a silent 'none ignored'."""
+    with patch("vergil_tooling.lib.git.subprocess.run") as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=128, stdout="", stderr="fatal: not a git repository"
+        )
+        with pytest.raises(subprocess.CalledProcessError) as exc_info:
+            git.ignored_paths(["x.md"], repo=Path("/elsewhere"))
+    assert exc_info.value.returncode == 128
+    assert "not a git repository" in exc_info.value.stderr
+
+
 def test_commit_sha_resolves_ref() -> None:
     with patch("vergil_tooling.lib.git.read_output", return_value="abc123") as mock:
         assert git.commit_sha("develop") == "abc123"

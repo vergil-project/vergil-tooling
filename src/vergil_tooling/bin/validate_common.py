@@ -15,6 +15,9 @@ Runs inside the dev container via ``vrg-container-run``:
   8. ansible-lint when the repo carries Ansible content, using the
      bundled canonical config as the rule baseline while honoring the
      repo's local ``skip_list`` / ``exclude_paths`` (issues #1667, #1952)
+
+Every discovered file list drops the paths the repo's ``.gitignore`` excludes,
+so local build output inside a linted scope is never linted (issue #3594).
 """
 
 from __future__ import annotations
@@ -43,8 +46,12 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
         return rc
 
     cfg = read_config(repo_root)
-    strict_md = _find_strict_markdown_files(repo_root, ignore=cfg.markdownlint.ignore)
-    prose_md = _find_prose_markdown_files(repo_root, ignore=cfg.markdownlint.ignore)
+    strict_md = _drop_gitignored(
+        repo_root, _find_strict_markdown_files(repo_root, ignore=cfg.markdownlint.ignore)
+    )
+    prose_md = _drop_gitignored(
+        repo_root, _find_prose_markdown_files(repo_root, ignore=cfg.markdownlint.ignore)
+    )
     # The "(N files ...)" counts below name their fixed discovery scope on
     # purpose: each check lints a scoped slice of the working tree (published
     # docs, scripts/, etc.), NOT the branch diff. Agents kept reading a bare
@@ -75,7 +82,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
     if markdownlint_rc != 0:
         return markdownlint_rc
 
-    shell_files = _find_shell_files(repo_root)
+    shell_files = _drop_gitignored(repo_root, _find_shell_files(repo_root))
     if shell_files:
         print(f"Running: shellcheck ({len(shell_files)} files in scripts/)")
         result = subprocess.run(  # noqa: S603
@@ -85,7 +92,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
         if result.returncode != 0:
             return result.returncode
 
-    yaml_files = _find_yaml_files(repo_root)
+    yaml_files = _drop_gitignored(repo_root, _find_yaml_files(repo_root))
     if yaml_files:
         print(
             f"Running: yamllint ({len(yaml_files)} files in "
@@ -103,7 +110,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
     if rc != 0:
         return rc
 
-    dockerfile_files = _find_dockerfiles(repo_root)
+    dockerfile_files = _drop_gitignored(repo_root, _find_dockerfiles(repo_root))
     if dockerfile_files:
         print(f"Running: hadolint ({len(dockerfile_files)} Dockerfile* in repo root)")
         result = subprocess.run(  # noqa: S603
@@ -145,6 +152,21 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
             return result.returncode
 
     return 0
+
+
+def _drop_gitignored(repo_root: Path, paths: list[str]) -> list[str]:
+    """Drop the paths the repository's gitignore rules exclude (issue #3594).
+
+    The file-list checks walk the working tree, so build output that lands
+    inside a linted scope (e.g. the release notes and changelog that
+    ``vrg-container-docs build`` copies into ``docs/site/docs/``) would
+    otherwise be linted although it is never committed. Filtering against the
+    repo's own ``.gitignore`` keeps each scope to source without every repo
+    repeating its ignore list in ``vergil.toml``. Tracked files are always
+    kept, and a ``git check-ignore`` failure raises rather than linting less.
+    """
+    ignored = git.ignored_paths(paths, repo=repo_root)
+    return [path for path in paths if path not in ignored]
 
 
 def _check_dependabot_limit(repo_root: Path) -> int:
