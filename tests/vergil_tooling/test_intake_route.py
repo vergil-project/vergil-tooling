@@ -503,7 +503,3 @@ def test_route_one_off_refuses_queue_epic(env: Env) -> None:
     with pytest.raises(RouteRefusedError, match="queue epic"):
         route(ITEM, OneOff(repo="org/tool", epic="intake"), today=TODAY)
     assert _transfer_calls(env) == []
-
-
-def test_retired_labels_are_the_old_intake_kinds() -> None:
-    assert frozenset({"triage", "idea", "research"}) == intake_route.RETIRED_LABELS

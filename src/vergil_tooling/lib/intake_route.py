@@ -40,7 +40,7 @@ from typing import Any, Literal
 
 from vergil_tooling.lib import epics, github
 from vergil_tooling.lib.epics import IssueRef
-from vergil_tooling.lib.labels import ensure_labels, load_labels
+from vergil_tooling.lib.labels import RETIRED_LABELS, ensure_labels, load_labels
 from vergil_tooling.lib.process_errors import error_text
 
 DROP_COMMENT = "Dropped in intake review: {reason}"
@@ -48,10 +48,6 @@ DEFER_COMMENT = "Deferred {day}: {reason}"
 SPLIT_COMMENT = "Split into: {refs}. {reason}"
 MOVED_TO_COMMENT = "Moved to {url}"
 MOVED_FROM_LINE = "Moved from {url}"
-
-# The pre-epic-#176 intake kinds. No route applies them; a recreated item does
-# not carry them over.
-RETIRED_LABELS = frozenset({"triage", "idea", "research"})
 
 # A transfer carries the intake parent over eventually, not atomically: a link
 # made right after it can be overwritten seconds later (#3556). Each settle
