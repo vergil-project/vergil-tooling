@@ -175,7 +175,9 @@ so they cannot diverge.
 language-agnostic `base` (editors, OS, secrets, logs, Vergil internals
 like `.venv/` / `.worktrees/` / `.vergil/` / `.superpowers/`, and all
 build/validation/CI-evidence output including the mkdocs build path
-`docs/site/site/`) plus the fragment for its `[project].primary-language`
+`docs/site/site/` and the paths `vrg-container-docs` stages:
+`docs/site/docs/changelog.md`, `docs/site/docs/releases/` and
+`mkdocs.staged.yml`) plus the fragment for its `[project].primary-language`
 (Python, TypeScript/Node, Go, C++; Rust and Java are managed with
 an empty fragment). A repo that declares no fragment language gets the
 base-only block.

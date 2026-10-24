@@ -235,6 +235,29 @@ def is_ancestor(ancestor: str, descendant: str) -> bool:
     )
 
 
+def is_ignored(path: str | Path) -> bool:
+    """Return True if *path* is ignored by the repository's gitignore rules.
+
+    ``git check-ignore -q`` exits 0 for ignored and 1 for not ignored. A
+    tracked file is never reported as ignored, so a tracked path reads as
+    "no". Any other exit (128, e.g. a path outside the repository) is an error
+    and raises ``CalledProcessError`` rather than reading as a silent "no".
+    """
+    args = ("check-ignore", "-q", str(path))
+    result = subprocess.run(  # noqa: S603
+        ("git", *args),  # noqa: S607
+        check=False,
+        text=True,
+        capture_output=True,
+        env=_git_env(args),
+    )
+    if result.returncode in (0, 1):
+        return result.returncode == 0
+    raise subprocess.CalledProcessError(
+        result.returncode, ("git", *args), output=result.stdout, stderr=result.stderr
+    )
+
+
 def commit_sha(ref: str) -> str:
     """Return the commit SHA that *ref* resolves to."""
     return read_output("rev-parse", ref)

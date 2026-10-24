@@ -553,12 +553,42 @@ that Python does not satisfy `requires-python`. Always sets
 `NO_MKDOCS_2_WARNING=1` in the container, so local builds suppress the
 mkdocs-material MkDocs 2.0 warning banner the same way CI does.
 
+Before mkdocs runs, it stages the docs sources on the host the same way
+CI's docs job does (`actions/shared/docs/stage` in vergil-actions), so a
+local strict build passes or fails where CI's does:
+
+1. `vrg-docs-stage` copies `CHANGELOG.md` to `<config dir>/docs/changelog.md`
+   and `releases/*.md` to `<config dir>/docs/releases/`, and writes the
+   release index.
+2. `vrg-docs-patch-nav` patches the release versions into the nav of a
+   copy of the config, `mkdocs.staged.yml`, written next to `mkdocs.yml`.
+   The tracked `mkdocs.yml` is never modified. mkdocs runs with
+   `-f <config dir>/mkdocs.staged.yml`.
+
+Staging needs authenticated `gh` (or an App token in agent sessions)
+whenever the repo has release notes, because each release page links to
+its CI-evidence bundle. Without auth the command fails; it never skips
+staging.
+
+Staging must not dirty the working tree, so every generated path has to
+be gitignored. The managed base gitignore covers the default layout
+(`docs/site/docs/changelog.md`, `docs/site/docs/releases/`,
+`mkdocs.staged.yml`). If a generated path is not ignored, including a
+staged copy that the repo has committed, the command refuses before
+writing anything and lists the paths. To fix it, stop tracking any
+committed copies (`vrg-git rm --cached <path>`), then run
+`vrg-gitignore-sync`.
+
+`serve` stages once, at startup. Edits to the docs pages reload as usual,
+but edits to `mkdocs.yml`, `CHANGELOG.md` or `releases/` take effect only
+after a restart.
+
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_container_docs` |
 | Args | `<serve\|build> [mkdocs args...]` (manual parsing) |
-| Preconditions | Git repo, Docker daemon |
-| Failure mode | Usage message on missing/unknown subcommand |
+| Preconditions | Git repo, Docker daemon, mkdocs config at `MKDOCS_CONFIG` (default `docs/site/mkdocs.yml`), generated docs paths gitignored, `gh` auth when the repo has release notes |
+| Failure mode | Usage message on missing/unknown subcommand; explicit error for a missing config, un-ignored generated paths, or a staging failure (including missing `gh` auth) |
 | Exit codes | 0 (help), 1 error; command exit code after `execvp` |
 | Status | Active |
 
