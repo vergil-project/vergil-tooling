@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from vergil_tooling.lib import github, progress, retry
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
 # Subcommands that may contact the remote and therefore need the installation
 # token. "remote" is included because `git remote prune`/`update` ls-remote the
@@ -278,6 +278,36 @@ def is_ignored(path: str | Path) -> bool:
     )
     if result.returncode in (0, 1):
         return result.returncode == 0
+    raise subprocess.CalledProcessError(
+        result.returncode, ("git", *args), output=result.stdout, stderr=result.stderr
+    )
+
+
+def ignored_paths(paths: Sequence[str], repo: Path | None = None) -> set[str]:
+    """Return the subset of *paths* ignored by the repository's gitignore rules.
+
+    The batch form of :func:`is_ignored`: one ``git check-ignore --stdin -z``
+    call for the whole list, so walking a large tree costs one process, not one
+    per file. Each ignored path is returned exactly as it was passed. A tracked
+    file is never reported as ignored. Exit 0 means some paths are ignored, 1
+    means none are; any other exit (128, e.g. *repo* is not a repository) is an
+    error and raises ``CalledProcessError`` rather than reading as "none".
+    """
+    if not paths:
+        return set()
+    args = (*_in_repo(repo), "check-ignore", "--stdin", "-z")
+    result = subprocess.run(  # noqa: S603
+        ("git", *args),  # noqa: S607
+        check=False,
+        text=True,
+        capture_output=True,
+        input="".join(f"{path}\0" for path in paths),
+        env=_git_env(args),
+    )
+    if result.returncode == 1:
+        return set()
+    if result.returncode == 0:
+        return {path for path in result.stdout.split("\0") if path}
     raise subprocess.CalledProcessError(
         result.returncode, ("git", *args), output=result.stdout, stderr=result.stderr
     )
