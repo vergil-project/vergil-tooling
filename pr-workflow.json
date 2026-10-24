@@ -1,0 +1,20 @@
+{
+  "schema_version": 2,
+  "issue": "3613",
+  "branch": "feature/3613-orgwide-no-github",
+  "base": "origin/develop",
+  "status": "ready",
+  "created_at": "2026-10-24T20:23:53Z",
+  "updated_at": "2026-10-24T20:23:53Z",
+  "git": {
+    "base_sha": "b977da53bc2f8a8f54d829b267d9b59071487086",
+    "head_sha": "8d68c57d1a27b93076a6b14c534f15b27f6a4a4a"
+  },
+  "pr_metadata": {
+    "title": "fix(epics): fail org-wide vrg-queue and vrg-epic-audit clearly when <owner>/.github is missing",
+    "summary": "The org-wide paths of vrg-queue and vrg-epic-audit now check that <owner>/.github exists first and, when it does not, stop with a one-line message pointing at --repo instead of a raw GitHub API error.",
+    "notes": "New helper epics.require_org_home reuses github.repo_exists (and so is_repo_not_found) and the EpicHomeError / cli_main one-line handler from #3603. Other probe failures surface as EpicHomeError with the API error; a missing token keeps its own message. The --repo paths are unchanged and do not probe. Where a public repo with no owner .github should home its epics is left to vergil-project/.github#463. Tests cover existing, missing, other-error and missing-token cases in the helper and both CLIs.",
+    "linkage": "Ref"
+  },
+  "submitted": null
+}
