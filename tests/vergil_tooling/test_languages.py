@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,7 @@ from vergil_tooling.lib import languages
 from vergil_tooling.lib.languages import (
     _TYPESCRIPT_LICENSES_ALLOWLIST,
     COVERAGE_REPORT,
+    JAVA_SBOM,
     JUNIT_REPORT,
     LICENSES_REPORT,
     MYPY_REPORT,
@@ -400,6 +402,102 @@ def test_java_audit_maven_licenses_allowlist_intact() -> None:
     assert "MIT License" in licenses
     assert "Apache-2.0" in licenses
     assert len(licenses) == 9
+
+
+def _java_audit_cmd(marker: str) -> list[str]:
+    cmds = language_commands("java", CheckKind.AUDIT)
+    matches = [c for c in cmds if any(marker in arg for arg in c)]
+    assert len(matches) == 1
+    return matches[0]
+
+
+def test_java_audit_sbom_covers_full_resolved_graph() -> None:
+    """The SBOM is Maven's own resolved graph: every module, every scope."""
+    sbom_cmd = _java_audit_cmd("cyclonedx-maven-plugin")
+    assert sbom_cmd[0] == "./mvnw"
+    assert "org.cyclonedx:cyclonedx-maven-plugin:makeAggregateBom" in sbom_cmd
+    assert "-DincludeTestScope=true" in sbom_cmd
+    assert "-Dcyclonedx.skipNotDeployed=false" in sbom_cmd
+    assert "-DoutputFormat=json" in sbom_cmd
+    assert "-DoutputName=bom" in sbom_cmd
+
+
+def test_java_audit_vulnerability_scan_reads_the_sbom() -> None:
+    cmds = language_commands("java", CheckKind.AUDIT)
+    sbom_cmd = _java_audit_cmd("cyclonedx-maven-plugin")
+    scan_cmd = _java_audit_cmd("osv-scanner")
+    assert cmds.index(sbom_cmd) < cmds.index(scan_cmd)
+    assert scan_cmd[:2] == ["sh", "-c"]
+    script = scan_cmd[2]
+    assert f"--lockfile={JAVA_SBOM}" in script
+    assert "--allow-no-lockfiles" in script
+    assert JAVA_SBOM == "target/bom.json"
+
+
+def _write_fake_osv_scanner(bin_dir: Path, rc: int) -> Path:
+    """Install a stub ``osv-scanner`` that records its argv and exits *rc*."""
+    bin_dir.mkdir()
+    argv_log = bin_dir / "argv.txt"
+    stub = bin_dir / "osv-scanner"
+    stub.write_text(f'#!/bin/sh\nprintf "%s\\n" "$@" > "{argv_log}"\nexit {rc}\n')
+    stub.chmod(0o755)
+    return argv_log
+
+
+def _run_java_scan(cwd: Path, path: str) -> subprocess.CompletedProcess[str]:
+    script = _java_audit_cmd("osv-scanner")
+    return subprocess.run(  # noqa: S603
+        script,
+        cwd=cwd,
+        env={"PATH": path},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_java_audit_scan_runs_osv_scanner_on_the_sbom(tmp_path: Path) -> None:
+    argv_log = _write_fake_osv_scanner(tmp_path / "bin", rc=0)
+    result = _run_java_scan(tmp_path, f"{tmp_path / 'bin'}:/usr/bin:/bin")
+    assert result.returncode == 0, result.stderr
+    assert argv_log.read_text().splitlines() == [
+        "scan",
+        "source",
+        "--allow-no-lockfiles",
+        f"--lockfile={JAVA_SBOM}",
+    ]
+
+
+def test_java_audit_scan_fails_on_a_vulnerable_dependency(tmp_path: Path) -> None:
+    """osv-scanner exits 1 when it finds a vulnerability; the step must too."""
+    _write_fake_osv_scanner(tmp_path / "bin", rc=1)
+    result = _run_java_scan(tmp_path, f"{tmp_path / 'bin'}:/usr/bin:/bin")
+    assert result.returncode == 1
+
+
+def test_java_audit_scan_applies_a_committed_osv_config(tmp_path: Path) -> None:
+    """osv-scanner only finds a config beside the scanned file (``target/``),
+    so a repo-root ``osv-scanner.toml`` is passed explicitly when present."""
+    argv_log = _write_fake_osv_scanner(tmp_path / "bin", rc=0)
+    (tmp_path / "osv-scanner.toml").write_text("")
+    result = _run_java_scan(tmp_path, f"{tmp_path / 'bin'}:/usr/bin:/bin")
+    assert result.returncode == 0, result.stderr
+    assert argv_log.read_text().splitlines() == [
+        "scan",
+        "source",
+        "--config=osv-scanner.toml",
+        "--allow-no-lockfiles",
+        f"--lockfile={JAVA_SBOM}",
+    ]
+
+
+def test_java_audit_scan_fails_loudly_without_osv_scanner(tmp_path: Path) -> None:
+    empty_bin = tmp_path / "bin"
+    empty_bin.mkdir()
+    result = _run_java_scan(tmp_path, f"{empty_bin}:/usr/bin:/bin")
+    assert result.returncode == 127
+    assert "osv-scanner is not installed" in result.stderr
+    assert "vergil-containers" in result.stderr
 
 
 # -- Rust ---------------------------------------------------------------------
