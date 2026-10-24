@@ -36,6 +36,8 @@ cloud→Mac handoff: each branch's ready-state comes from a local
 worktree's `pr-workflow.json` when present, else the relay ref
 `refs/vergil/pr-workflow/<branch>`; origin's tip is checked against the
 recorded `head_sha` and the PR opens with `--head` **without pushing**.
+It refuses an issue whose native parent is an intake or planning epic (see
+[`vrg-pr-workflow`](#vrg-pr-workflow)).
 
 | Attribute | Value |
 |---|---|
@@ -89,7 +91,10 @@ instead. If that push was missed, an explicit `vrg-git push [-u] origin
 publishes, not advances, the branch (issue #3071). `unfreeze` is the only sanctioned way to
 reopen a still-unsubmitted branch — it drops the state back to
 `implementing` while keeping the metadata; an already-submitted branch
-cannot be unfrozen. `status` prints the current state.
+cannot be unfrozen. `status` prints the current state. `report-ready` (like
+`vrg-submit-pr`) refuses an issue whose native parent is an intake or planning
+epic: a queue item is not buildable until intake review routes it, or
+`epic-create` expands it (epic vergil-project/.github#176).
 
 | Attribute | Value |
 |---|---|
@@ -184,6 +189,77 @@ ruleset rule), a branch with no PR, or a branch whose name was reused
 | Preconditions | `gh` authenticated with read access (delete access for `--apply`) to the target repo |
 | Failure mode | A per-branch `gh` error is reported on that branch's line, the rest are processed, then exit 1 |
 | Exit codes | 0 success, 1 any branch error, listing failure or auth failure, 2 bad arguments |
+| Status | Active |
+
+### vrg-intake-create
+
+Capture an uncurated item — a bug, an idea, an investigation, a one-line
+"don't forget X" — into the intake queue (epic vergil-project/.github#176).
+The issue is filed in the current repo's queue home (`<org>/.github` for a
+public repo, the repo itself for a self-homed private one) and linked under
+that home's `Epic (intake): <name>` as it is created, so there is no unlinked
+path. It carries no kind label. The intake epic is resolved (created if
+absent) *before* the issue is created; if linking the created issue fails, the
+tool exits 1 naming its URL and the `vrg-epic-move` command that links it. Used
+by the `intake-capture` skill. See
+[Intake and planning queues](../standards/github-issues.md#intake-and-planning-queues).
+
+`vrg-triage-create` is a **deprecated alias** kept for one release: it warns
+on stderr, ignores `--kind` (intake has no kind label), and forwards every
+other argument to `vrg-intake-create`.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_intake_create` (alias: `vergil_tooling.bin.vrg_triage_create`) |
+| Args | `--title` (required), `--body` / `--body-file`, `--label` (repeatable), `--assignee` (repeatable), `--repo OWNER/NAME` (default: the current repo's queue home) |
+| Preconditions | Run inside a repo in the target org, or pass `--repo`; GitHub App credentials for that org |
+| Failure mode | An extra `--label` missing from the registry is refused before anything is created; a failed link after creation exits 1 naming the created issue |
+| Exit codes | 0 created and linked, 1 error |
+| Status | Active |
+
+### vrg-intake-route
+
+Apply one intake-review decision to one intake item. Owns the routing
+mechanics — transfer-or-recreate, reparent, re-link, close with a pointer — so
+the `intake-review` skill never hand-rolls them. Routes:
+
+- `drop --reason TEXT` — comment the reason and close (not planned).
+- `defer --reason TEXT` — add a dated comment; the item keeps its age.
+- `one-off --repo OWNER/REPO [--epic REF]` — move the item into the target
+  repo (transfer, or recreate with a link back when GitHub refuses the
+  transfer) and link it under that repo's ad-hoc epic (default `adhoc`) or the
+  named epic.
+- `planning` — reparent the item from the intake epic to the planning epic of
+  the same queue home.
+- `split --into REF [--into REF …] --reason TEXT` — comment links to the
+  replacement tasks (already created with `vrg-issue-create`) and close.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_intake_route` (mechanics: `lib/intake_route.py`) |
+| Args | `<issue-ref>` (`owner/repo#N`, or `#N` in the current repo), then a route: `drop`, `defer`, `one-off`, `planning`, `split` |
+| Preconditions | The item is a child of an intake epic (`planning` also accepts an unparented issue); GitHub App credentials for the item's org |
+| Failure mode | A refused route — not an intake item, a cross-org target, or a private item headed to a public repo or epic — exits 1 with the reason on stderr |
+| Exit codes | 0 routed, 1 refused or error, 2 bad arguments |
+| Status | Active |
+
+### vrg-queue
+
+Read-only view of a standing queue. `vrg-queue intake` lists the open items
+under the intake epic, oldest first. `vrg-queue planning` lists the open items
+under the planning epic with their state: **waiting** (no `in-progress`
+label), **in-progress** (labelled, with its latest progress note), or
+**ready-to-close** (labelled, the `Epic:` / `Docs task:` / `Tasks filed: yes`
+markers present, and the docs task closed). Used by `intake-review`'s collect
+step and `epic-create`'s no-argument summary.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_queue` (views: `lib/queue_view.py`) |
+| Args | `{intake,planning}` (required); `--repo OWNER/NAME` (that repo's queue home; default: the current org's `.github` queues); `--json` |
+| Preconditions | GitHub App credentials for the target org |
+| Failure mode | A queue home with no live queue epic exits 1 naming the missing epic; nothing is created |
+| Exit codes | 0 success, 1 error, 2 bad arguments |
 | Status | Active |
 
 ### vrg-worktree-status
