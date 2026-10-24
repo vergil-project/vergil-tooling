@@ -264,6 +264,66 @@ def test_fix_task_body_says_release_closes_the_pr_not_github() -> None:
     assert "the next `vrg-release` closes the dependency-update PR and the gate clears" in body
 
 
+def _update_failed(updater: str | None = "hook") -> DepsFailure:
+    return DepsFailure(
+        kind="update",
+        message="hook: exit 3",
+        output_tail="hook trace",
+        reproduce="./scripts/deps-hook.sh",
+        updater=updater,
+    )
+
+
+def test_update_fix_task_body_stands_alone() -> None:
+    # No PR exists for an update failure (#3550): the task names the updater,
+    # the error and how to reproduce it, and points at develop, not a deps branch.
+    ctx = _ctx()
+    ctx.failure = _update_failed()
+    body = " ".join(pr.build_fix_task_body(ctx).split())
+    assert "failed in the `hook` updater, before validation" in body
+    assert "no PR was opened" in body
+    assert "None" not in body
+    assert "origin/deps/update" not in body
+    assert "`chore/<this issue number>-dep-update-2.1.243` from `origin/develop`" in body
+    assert "re-run `vrg-update-deps --only hook`" in body
+    assert "hook: exit 3" in body
+    assert "hook trace" in body
+    assert "Reproduce on `develop`: `./scripts/deps-hook.sh`" in body
+
+
+def test_update_fix_task_body_without_updater_name() -> None:
+    ctx = _ctx()
+    ctx.failure = _update_failed(updater=None)
+    body = " ".join(pr.build_fix_task_body(ctx).split())
+    assert "failed in an updater, before validation" in body
+    assert "re-run `vrg-update-deps` from a clean `develop`" in body
+
+
+def test_file_fix_task_for_update_failure_needs_no_pr(monkeypatch) -> None:
+    bodies: list[str] = []
+
+    def fake_run(cmd, **_kw):
+        bodies.append(Path(cmd[cmd.index("--body-file") + 1]).read_text(encoding="utf-8"))
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout="Created https://github.com/o/r/issues/11, linked under epic o/.github#5.\n",
+            stderr="",
+        )
+
+    def no_edit(url, *, body):  # noqa: ARG001
+        msg = "an update failure has no PR body to edit"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(_MOD + ".subprocess.run", fake_run)
+    monkeypatch.setattr(_MOD + ".github.edit_pr_body", no_edit)
+    ctx = _ctx()
+    ctx.failure = _update_failed()
+    pr.file_fix_task(ctx)
+    assert ctx.fix_issue_url == "https://github.com/o/r/issues/11"
+    assert "`hook` updater" in bodies[0]
+
+
 def test_fix_task_body_requires_failure() -> None:
     with pytest.raises(ValueError, match="without a recorded failure"):
         pr.build_fix_task_body(_ctx())
@@ -301,12 +361,21 @@ def test_file_fix_task_creates_adhoc_issue_and_links_pr(monkeypatch) -> None:
     assert "Fix task: https://github.com/o/r/issues/10" in edits[0]
 
 
-@pytest.mark.parametrize(("version", "url"), [(None, "u"), ("2.1.243", None)])
-def test_file_fix_task_requires_version_and_pr(version, url) -> None:
+@pytest.mark.parametrize(
+    ("version", "url", "kind"),
+    [(None, "u", "validation"), ("2.1.243", None, "validation"), (None, None, "update")],
+)
+def test_file_fix_task_requires_version_and_pr(version, url, kind) -> None:
     ctx = _ctx()
     ctx.version = version
     ctx.pr_url = url
-    ctx.failure = _failed()
+    ctx.failure = _failed(kind)
+    with pytest.raises(UpdateDepsError, match="No version or PR"):
+        pr.file_fix_task(ctx)
+
+
+def test_file_fix_task_without_failure_requires_pr() -> None:
+    ctx = _ctx()
     with pytest.raises(UpdateDepsError, match="No version or PR"):
         pr.file_fix_task(ctx)
 

@@ -80,7 +80,7 @@ merged.
 | `validate` | Runs `vrg-container-run -- vrg-validate` once, if anything changed |
 | `prepare-pr` | Pushes the branch and opens a PR to `develop` labelled `dependency-update`, creating the label if the repo lacks it |
 | `merge` | Waits for the PR's checks and merges it, if validation passed, then deletes its branch on origin |
-| `fix-task` | After a validation or merge failure, files the fix task and links it from the PR body |
+| `fix-task` | After any failure, files the fix task; after a validation or merge failure, also links it from the PR body |
 | `finalize` | Prints the held-back report and removes the worktree and local branch |
 | `status` | Exits non-zero if a failure was recorded |
 
@@ -89,8 +89,12 @@ opened.
 
 ## Failures
 
-- **`update`**: an updater or the hook failed. Nothing is pushed, no PR
-  is opened and no fix task is filed.
+- **`update`**: an updater or the hook failed. Nothing is pushed and no
+  PR is opened, but a "Fix failed dependency update for `<version>`"
+  task is filed under the repo's ad-hoc epic. It names the failing
+  updater and carries the error and the command to reproduce it on
+  `develop`. With no labelled PR, it does not gate the next
+  `vrg-release`.
 - **`validation`** or **`merge`**: the PR stays open with its
   `dependency-update` label, a "Fix failed dependency update for
   `<version>`" task is filed under the repo's ad-hoc epic, and the PR

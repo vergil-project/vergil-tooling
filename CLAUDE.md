@@ -379,7 +379,8 @@ CLI tools installed as `vrg-*` console scripts:
 - **`vrg-update-deps`** — Mechanized dependency update within declared bounds:
   built-in updaters (`python`, `vergil`, `images`) plus the
   `[dependency-update].hook`, one validation, a `dependency-update`-labelled
-  PR merged when green, a fix task when validation or merge fails, and the
+  PR merged when green, a fix task on any failure (validation, merge, or
+  an updater/hook failing before any PR exists), and the
   held-back report (`--only`/`--skip`/`--vergil X.Y`). Human-only
 - **`vrg-resolve-tracking-issue`** — Extract tracking issue number from a merge commit's PR linkage
 - **`vrg-finalize-pr`** — Merge a PR and run post-merge cleanup (branch/worktree deletion, remote pruning)

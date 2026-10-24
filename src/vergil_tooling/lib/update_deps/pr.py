@@ -149,12 +149,43 @@ def record_merge_failure(ctx: UpdateDepsContext, message: str) -> None:
     github.edit_pr_body(pr_url, body=build_pr_body(ctx))
 
 
+def _update_fix_task_body(ctx: UpdateDepsContext, failure: DepsFailure) -> str:
+    """The fix task's body for an ``update`` failure: no PR, so it stands alone (#3550)."""
+    which = f"the `{failure.updater}` updater" if failure.updater else "an updater"
+    rerun = "vrg-update-deps"
+    if failure.updater:
+        rerun += f" --only {failure.updater}"
+    return (
+        "\n".join(
+            [
+                f"The mechanized dependency update for `{ctx.version}` failed in {which}, "
+                "before validation. Nothing was pushed and no PR was opened, so this "
+                "task is the only open record of the failure.",
+                "",
+                "## How to fix",
+                "",
+                f"Cut the fix branch from develop: `chore/<this issue number>-dep-update-"
+                f"{ctx.version}` from `origin/develop`. Reproduce with the command in the "
+                f"failure section below, or re-run `{rerun}` from a clean `develop` "
+                "(human-only). Fix the cause, then hand off as usual. Once the fix "
+                "merges, the next `vrg-update-deps` run, or the next `vrg-release`, "
+                "applies the update.",
+                "",
+                failure_markdown(failure),
+            ]
+        )
+        + "\n"
+    )
+
+
 def build_fix_task_body(ctx: UpdateDepsContext) -> str:
     """The fix task's body: the open PR, how to cut the fix branch, and the failure."""
     failure = ctx.failure
     if failure is None:
         msg = "build_fix_task_body called without a recorded failure"
         raise ValueError(msg)
+    if failure.kind == "update":
+        return _update_fix_task_body(ctx, failure)
     return (
         "\n".join(
             [
@@ -178,8 +209,12 @@ def build_fix_task_body(ctx: UpdateDepsContext) -> str:
 
 
 def file_fix_task(ctx: UpdateDepsContext) -> None:
-    """File the fix task under the repo's ad-hoc epic and link it from the PR body."""
-    if ctx.version is None or ctx.pr_url is None:
+    """File the fix task under the repo's ad-hoc epic and link it from the PR body.
+
+    An ``update`` failure opened no PR, so its task is filed with no PR to link.
+    """
+    no_pr = ctx.failure is not None and ctx.failure.kind == "update"
+    if ctx.version is None or (ctx.pr_url is None and not no_pr):
         raise UpdateDepsError(
             phase="fix-task",
             command="file_fix_task",
@@ -221,7 +256,8 @@ def file_fix_task(ctx: UpdateDepsContext) -> None:
             detail=result.stdout,
         )
     ctx.fix_issue_url = match.group(1)
-    github.edit_pr_body(ctx.pr_url, body=build_pr_body(ctx))
+    if ctx.pr_url is not None:
+        github.edit_pr_body(ctx.pr_url, body=build_pr_body(ctx))
     print(f"Filed fix task: {ctx.fix_issue_url}")
 
 

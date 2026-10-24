@@ -151,7 +151,7 @@ them in a script and point `hook` at the script.
   `$VRG_DEPS_REPORT` (see below). The file starts empty on each run.
 
 A hook failure is an `update` failure: nothing is pushed and no PR is
-opened.
+opened, but a fix task naming the hook is filed.
 
 ## The held-back report
 
