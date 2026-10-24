@@ -82,10 +82,18 @@ manager.
   regardless of `--output-folder` is `CMakeUserPresets.json`, which the managed
   cpp `.gitignore` fragment therefore keeps
   ([#2912](https://github.com/vergil-project/vergil-tooling/issues/2912)).
-- The AUDIT stage runs **`conan audit scan .`**, which scans the resolved
-  dependency graph against ConanCenter's advisory database for known CVEs, then
-  `conan graph info . --format=json` to surface dependency licenses (best-effort
-  in v1 — there is no turnkey Conan allowlist gate yet). `conan audit` reads a
+- The AUDIT stage runs **`conan audit scan . -s build_type=Debug
+  --lockfile=conan.lock`**, which scans the resolved dependency graph against
+  ConanCenter's advisory database for known CVEs, then
+  `conan graph info . -s build_type=Debug --format=json --lockfile=conan.lock`
+  to surface dependency licenses (best-effort in v1 — there is no turnkey Conan
+  allowlist gate yet). The scan covers every package in the graph in both
+  contexts, so `test_requires` and `tool_requires` are included. Both steps
+  resolve in the lock's own `build_type=Debug` configuration against the
+  committed `conan.lock`, so a Debug-only locked dependency is not skipped and a
+  missing lock fails rather than re-resolving
+  ([#3553](https://github.com/vergil-project/vergil-tooling/issues/3553)).
+  `conan audit` reads a
   ConanCenter provider token from the environment; a consuming repo must supply
   it once (see [ConanCenter Audit Token](#conancenter-audit-token) below).
 
