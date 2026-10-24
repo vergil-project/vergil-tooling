@@ -16317,7 +16317,7 @@ them in a script and point <code>hook</code> at the script.</p>
   <code>$VRG_DEPS_REPORT</code> (see below). The file starts empty on each run.</li>
 </ul>
 <p>A hook failure is an <code>update</code> failure: nothing is pushed and no PR is
-opened.</p>
+opened, but a fix task naming the hook is filed.</p>
 <h2 id="the-held-back-report">The held-back report<a class="headerlink" href="#the-held-back-report" title="Permanent link">&para;</a></h2>
 <p>The held-back report lists the dependencies whose newest release is
 outside the bounds the repo declares. It appears in the dependency-update

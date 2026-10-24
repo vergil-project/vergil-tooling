@@ -16767,10 +16767,13 @@ ignored. What it leaves behind depends on where it failed:</p>
 <ul>
 <li><strong>An updater or the repo hook failed</strong> (<code>update</code>), for example a
   lookup error, a non-zero hook exit, or a hook that committed: this
-  happens before validation, so nothing is pushed, no PR is opened, and
-  no fix task is filed. The worktree is removed and the failure is
-  reported on the tracking issue and in the run summary. With no
-  labelled PR, it does not gate the next release.</li>
+  happens before validation, so nothing is pushed and no PR is opened.
+  A task titled "Fix failed dependency update for <code>&lt;version&gt;</code>" is still
+  filed under the repo's ad-hoc epic. It stands on its own: it names the
+  failing updater, carries the error and the command to reproduce it on
+  <code>develop</code>, and is linked from the failure on the tracking issue and in
+  the run summary. The worktree is removed. With no labelled PR, it does
+  not gate the next release.</li>
 <li><strong>Validation failed</strong> (<code>validation</code>), or <strong>the PR's checks or merge
   failed</strong> (<code>merge</code>): the PR stays open with its <code>dependency-update</code>
   label, and a task titled "Fix failed dependency update for
@@ -16793,6 +16796,10 @@ its branch from the failed update so it starts from those commits:</p>
 <p>Fix the cause, then hand off and merge as usual. When the fix PR merges
 and closes the fix task as completed, the next <code>vrg-release</code> closes the
 dependency-update PR for you.</p>
+<p>An <code>update</code> failure pushed no <code>deps/update-&lt;version&gt;</code> branch, so cut
+that fix task's branch from <code>origin/develop</code> instead. Once the fix
+merges, the next <code>vrg-update-deps</code> run, or the next <code>vrg-release</code>,
+applies the update.</p>
 <h3 id="the-dependency-update-gate">The dependency-update gate<a class="headerlink" href="#the-dependency-update-gate" title="Permanent link">&para;</a></h3>
 <p>On a fresh start (not <code>--resume</code>), <code>preflight</code> lists the open PRs
 labelled <code>dependency-update</code>. For each one:</p>

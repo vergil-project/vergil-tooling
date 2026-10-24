@@ -17119,7 +17119,8 @@ bounds allow, in a <code>deps/update-&lt;version&gt;</code> managed worktree: ru
 applicable updaters (<code>python</code>, <code>vergil</code>, <code>images</code>, then the repo
 <code>hook</code>), validate once, open a <code>dependency-update</code>-labelled PR, and
 merge it. A no-op run opens no PR. A validation or merge failure leaves
-the PR open and files a fix task. Every run prints the held-back report.
+the PR open and files a fix task; an updater or hook failure opens no PR
+but still files a fix task. Every run prints the held-back report.
 <code>vrg-release</code> runs the same pipeline as its <code>update-deps</code> stage.
 Human-only. See the <a href="../dev/update-deps/">vrg-update-deps reference</a> and
 the <a href="../dependency-update-config/">dependency-update reference</a>.</p>

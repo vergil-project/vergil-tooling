@@ -16218,7 +16218,7 @@ merged.</p>
 </tr>
 <tr>
 <td><code>fix-task</code></td>
-<td>After a validation or merge failure, files the fix task and links it from the PR body</td>
+<td>After any failure, files the fix task; after a validation or merge failure, also links it from the PR body</td>
 </tr>
 <tr>
 <td><code>finalize</code></td>
@@ -16234,8 +16234,12 @@ merged.</p>
 opened.</p>
 <h2 id="failures">Failures<a class="headerlink" href="#failures" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong><code>update</code></strong>: an updater or the hook failed. Nothing is pushed, no PR
-  is opened and no fix task is filed.</li>
+<li><strong><code>update</code></strong>: an updater or the hook failed. Nothing is pushed and no
+  PR is opened, but a "Fix failed dependency update for <code>&lt;version&gt;</code>"
+  task is filed under the repo's ad-hoc epic. It names the failing
+  updater and carries the error and the command to reproduce it on
+  <code>develop</code>. With no labelled PR, it does not gate the next
+  <code>vrg-release</code>.</li>
 <li><strong><code>validation</code></strong> or <strong><code>merge</code></strong>: the PR stays open with its
   <code>dependency-update</code> label, a "Fix failed dependency update for
   <code>&lt;version&gt;</code>" task is filed under the repo's ad-hoc epic, and the PR
