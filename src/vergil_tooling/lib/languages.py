@@ -802,9 +802,11 @@ _REGISTRY: dict[str, Language] = {
                     "--coverage.thresholds.lines=100",
                 ],
             ],
-            # AUDIT runs *once* (§3.6). ``npm audit`` is the CVE scan, scoped to
-            # production dependencies (``--omit=dev`` — dev-only advisories must
-            # not gate, spec §4 caveat 1) with an explicit severity threshold
+            # AUDIT runs *once* (§3.6). ``npm audit`` is the CVE scan over the
+            # whole locked dependency set, devDependencies included — no
+            # ``--omit=dev``, so a vulnerable docs or test tool fails the gate
+            # just as a runtime dependency does (#3552, superseding spec §4
+            # caveat 1's prod-only scope) — with an explicit severity threshold
             # (``--audit-level=high``). Contingency (spec §4 caveat 1): if
             # ``npm audit``'s signal/noise is unworkable, fall back to
             # OSV-Scanner over ``package-lock.json`` — the switch is proven or
@@ -814,7 +816,7 @@ _REGISTRY: dict[str, Language] = {
             # hardened gating against ``_TYPESCRIPT_LICENSES_ALLOWLIST`` is
             # deferred (spec §9 ledger #7).
             CheckKind.AUDIT: [
-                ["npm", "audit", "--audit-level=high", "--omit=dev"],
+                ["npm", "audit", "--audit-level=high"],
                 ["license-checker", "--production", "--summary"],
             ],
         },

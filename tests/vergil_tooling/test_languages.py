@@ -822,16 +822,28 @@ def test_typescript_test_enforces_100_line_coverage() -> None:
 def test_typescript_audit_commands() -> None:
     cmds = language_commands("typescript", CheckKind.AUDIT)
     joined = _joined(cmds)
-    # npm audit is the CVE scan, scoped to prod deps with an explicit severity
-    # threshold (spec §4 caveat 1).
+    # npm audit is the CVE scan, over the whole locked dependency set with an
+    # explicit severity threshold.
     npm_audit = [c for c in cmds if c[:2] == ["npm", "audit"]]
     assert len(npm_audit) == 1
-    assert "--omit=dev" in npm_audit[0]
     assert any(arg.startswith("--audit-level=") for arg in npm_audit[0])
     # OSV-Scanner is the documented contingency, not the v1 default.
     assert not any("osv-scanner" in c for c in joined)
     # Best-effort license-metadata surfacing (hardened gating deferred, §9 #7).
     assert any("license-checker" in c for c in joined)
+
+
+def test_typescript_audit_covers_dev_dependencies() -> None:
+    """The CVE scan audits devDependencies too, not just production (#3552).
+
+    A vulnerable devDependency (docs tooling, test runners) must fail the
+    gate, so ``npm audit`` must not narrow its scope to production.
+    """
+    cmds = language_commands("typescript", CheckKind.AUDIT)
+    npm_audit = [c for c in cmds if c[:2] == ["npm", "audit"]]
+    assert len(npm_audit) == 1
+    assert not any(arg.startswith(("--omit", "--only")) for arg in npm_audit[0])
+    assert "--production" not in npm_audit[0]
 
 
 def test_typescript_audit_license_allowlist_reviewed_set() -> None:
