@@ -13,7 +13,7 @@ from vergil_tooling.lib.update_deps.context import (
     UpdateDepsContext,
     UpdateDepsError,
 )
-from vergil_tooling.lib.update_deps.failure import tail_output
+from vergil_tooling.lib.update_deps.failure import failure_summary, tail_output
 from vergil_tooling.lib.update_deps.report import HeldBack
 from vergil_tooling.lib.update_deps.updater import UpdateResult
 
@@ -299,7 +299,12 @@ def test_update_fix_task_body_without_updater_name() -> None:
     assert "re-run `vrg-update-deps` from a clean `develop`" in body
 
 
+def _no_open_tasks(monkeypatch) -> None:
+    monkeypatch.setattr(_MOD + ".github.read_json", lambda *a: [])
+
+
 def test_file_fix_task_for_update_failure_needs_no_pr(monkeypatch) -> None:
+    _no_open_tasks(monkeypatch)
     bodies: list[str] = []
 
     def fake_run(cmd, **_kw):
@@ -330,6 +335,7 @@ def test_fix_task_body_requires_failure() -> None:
 
 
 def test_file_fix_task_creates_adhoc_issue_and_links_pr(monkeypatch) -> None:
+    _no_open_tasks(monkeypatch)
     seen: dict[str, object] = {}
     cmds: list[list[str]] = []
 
@@ -380,7 +386,15 @@ def test_file_fix_task_without_failure_requires_pr() -> None:
         pr.file_fix_task(ctx)
 
 
+def test_file_fix_task_requires_failure() -> None:
+    ctx = _ctx()
+    ctx.pr_url = "u"
+    with pytest.raises(ValueError, match="without a recorded failure"):
+        pr.file_fix_task(ctx)
+
+
 def test_file_fix_task_fails_loud_on_error(monkeypatch) -> None:
+    _no_open_tasks(monkeypatch)
     monkeypatch.setattr(
         _MOD + ".subprocess.run",
         lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, stdout="", stderr="no installation"),
@@ -394,6 +408,7 @@ def test_file_fix_task_fails_loud_on_error(monkeypatch) -> None:
 
 
 def test_file_fix_task_fails_loud_on_unparseable_output(monkeypatch) -> None:
+    _no_open_tasks(monkeypatch)
     monkeypatch.setattr(
         _MOD + ".subprocess.run",
         lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, stdout="ok\n", stderr=""),
@@ -436,3 +451,139 @@ def test_cleanup_worktree_skips_branch_delete_when_none(monkeypatch) -> None:
     pr.cleanup_worktree(ctx)
     assert removed == [ctx.worktree_path]
     assert runs == []
+
+
+def _task(number: int, title: str, kind: str) -> dict[str, object]:
+    return {
+        "number": number,
+        "url": f"https://github.com/o/r/issues/{number}",
+        "title": title,
+        "body": f"Intro.\n\n## Failure: {kind}\n\nm\n",
+    }
+
+
+def test_find_open_fix_task_matches_title_and_failure_kind(monkeypatch) -> None:
+    # GitHub search is a broad net: filter for the exact title and the same
+    # failure kind, and reuse the oldest match (#3560).
+    title = "Fix failed dependency update for 2.1.243"
+    calls: list[tuple[str, ...]] = []
+
+    def fake_read_json(*args):
+        calls.append(args)
+        return [
+            _task(30, title, "update"),
+            _task(29, "Fix failed dependency update for 2.1.24", "update"),
+            _task(28, title, "validation"),
+            _task(27, title, "update"),
+            "not an issue",
+        ]
+
+    monkeypatch.setattr(_MOD + ".github.read_json", fake_read_json)
+    found = pr.find_open_fix_task("o/r", "2.1.243", "update")
+    assert found == "https://github.com/o/r/issues/27"
+    [args] = calls
+    assert args[:4] == ("issue", "list", "--repo", "o/r")
+    assert args[args.index("--search") + 1] == f'"{title}" in:title'
+    assert args[args.index("--state") + 1] == "open"
+    assert set(args[args.index("--json") + 1].split(",")) == {"number", "url", "title", "body"}
+
+
+def test_find_open_fix_task_none_for_other_version_or_kind(monkeypatch) -> None:
+    monkeypatch.setattr(
+        _MOD + ".github.read_json",
+        lambda *a: [
+            _task(29, "Fix failed dependency update for 2.1.242", "update"),
+            _task(28, "Fix failed dependency update for 2.1.243", "merge"),
+        ],
+    )
+    assert pr.find_open_fix_task("o/r", "2.1.243", "update") is None
+
+
+def test_find_open_fix_task_fails_loud_when_lookup_fails(monkeypatch) -> None:
+    # Never guess: a failed lookup must not silently file a possible duplicate.
+    def _fail(*args):
+        raise subprocess.CalledProcessError(1, ["gh", *args], stderr="HTTP 502")
+
+    monkeypatch.setattr(_MOD + ".github.read_json", _fail)
+    with pytest.raises(UpdateDepsError, match="Could not look for an open fix task") as info:
+        pr.find_open_fix_task("o/r", "2.1.243", "update")
+    assert "HTTP 502" in (info.value.detail or "")
+
+
+def test_find_open_fix_task_fails_loud_on_unexpected_json(monkeypatch) -> None:
+    monkeypatch.setattr(_MOD + ".github.read_json", lambda *a: {"message": "odd"})
+    with pytest.raises(UpdateDepsError, match="unexpected JSON"):
+        pr.find_open_fix_task("o/r", "2.1.243", "update")
+
+
+def _no_issue_create(cmd, **_kw):
+    msg = f"a repeat failure must not file a new fix task: {cmd}"
+    raise AssertionError(msg)
+
+
+def test_file_fix_task_repeat_update_failure_comments_on_open_task(monkeypatch, capsys) -> None:
+    # Re-running at the same version after a transient failure (#3560): the
+    # open task gets the new failure as a comment, and the summary links it.
+    monkeypatch.setattr(
+        _MOD + ".github.read_json",
+        lambda *a: [_task(11, "Fix failed dependency update for 2.1.243", "update")],
+    )
+    comments: list[tuple[str, ...]] = []
+    monkeypatch.setattr(_MOD + ".github.run", lambda *a: comments.append(a))
+    monkeypatch.setattr(_MOD + ".subprocess.run", _no_issue_create)
+    ctx = _ctx()
+    ctx.failure = _update_failed()
+    pr.file_fix_task(ctx)
+    assert ctx.fix_issue_url == "https://github.com/o/r/issues/11"
+    [args] = comments
+    assert args[:3] == ("issue", "comment", "https://github.com/o/r/issues/11")
+    body = args[args.index("--body") + 1]
+    assert "failed again" in body
+    assert "No PR was opened" in body
+    assert "## Failure: update" in body
+    assert "hook trace" in body
+    assert "Fix task already open" in capsys.readouterr().out
+    assert "Fix task: https://github.com/o/r/issues/11." in failure_summary(ctx)
+
+
+def test_file_fix_task_repeat_validation_failure_links_pr(monkeypatch) -> None:
+    # A validation failure after the earlier PR was closed unmerged: the new
+    # PR links the existing task, and the comment names the new PR.
+    monkeypatch.setattr(
+        _MOD + ".github.read_json",
+        lambda *a: [_task(12, "Fix failed dependency update for 2.1.243", "validation")],
+    )
+    comments: list[tuple[str, ...]] = []
+    monkeypatch.setattr(_MOD + ".github.run", lambda *a: comments.append(a))
+    monkeypatch.setattr(_MOD + ".subprocess.run", _no_issue_create)
+    edits: list[str] = []
+    monkeypatch.setattr(_MOD + ".github.edit_pr_body", lambda url, *, body: edits.append(body))
+    ctx = _ctx()
+    ctx.pr_url = "https://github.com/o/r/pull/40"
+    ctx.failure = _failed()
+    pr.file_fix_task(ctx)
+    assert ctx.fix_issue_url == "https://github.com/o/r/issues/12"
+    body = comments[0][comments[0].index("--body") + 1]
+    assert "Its PR stays open: https://github.com/o/r/pull/40" in body
+    assert "Fix task: https://github.com/o/r/issues/12" in edits[0]
+
+
+def test_file_fix_task_files_new_task_for_a_different_version(monkeypatch) -> None:
+    monkeypatch.setattr(
+        _MOD + ".github.read_json",
+        lambda *a: [_task(11, "Fix failed dependency update for 2.1.242", "update")],
+    )
+
+    def fake_run(cmd, **_kw):
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout="Created https://github.com/o/r/issues/13, linked under epic o/.github#5.\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(_MOD + ".subprocess.run", fake_run)
+    ctx = _ctx()
+    ctx.failure = _update_failed()
+    pr.file_fix_task(ctx)
+    assert ctx.fix_issue_url == "https://github.com/o/r/issues/13"

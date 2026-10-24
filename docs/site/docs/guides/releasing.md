@@ -319,6 +319,11 @@ ignored. What it leaves behind depends on where it failed:
   stage, or, when that stage cannot be isolated, a labelled tail of the
   raw output. It ends with the command to reproduce the failure.
 
+If a fix task for the same version and failure kind is already open,
+for example after `vrg-release --resume` re-runs an update that failed
+on a transient error, no second task is filed: the new failure is added
+as a comment on the open task, which is linked as above.
+
 Either way `vrg-release` exits 1, and the failure counts once in its
 summary: the `update-deps` stage fails, and `publish-status` repeats it
 as a warning. If a publish job also failed, `publish-status` fails with
