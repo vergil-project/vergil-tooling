@@ -11,6 +11,7 @@ import pytest
 from vergil_tooling.lib import progress
 from vergil_tooling.lib.progress import Stage
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
+from vergil_tooling.lib.release.merge import ReleaseConflictError
 from vergil_tooling.lib.release.orchestrator import (
     ReleaseState,
     _phase_details,
@@ -551,6 +552,92 @@ def test_merge_release_update_without_worktree_raises() -> None:
     ):
         merge_release(ctx)
     m_sync.assert_not_called()
+
+
+def _conflict() -> ReleaseConflictError:
+    return ReleaseConflictError(
+        phase="merge-release", command="pr_merge.wait_and_merge", message="has merge conflicts."
+    )
+
+
+def _release_ctx() -> ReleaseContext:
+    ctx = _ctx()
+    ctx.release_pr_url = "https://github.com/o/r/pull/100"
+    ctx.release_branch = "release/2.1.0"
+    ctx.worktree_path = Path("/tmp/wt")  # noqa: S108
+    return ctx
+
+
+def test_merge_release_heals_a_conflicting_pr_then_merges() -> None:
+    """A CONFLICTING release PR merges main in and waits again (#3526)."""
+    from vergil_tooling.lib.release.orchestrator import merge_release
+
+    ctx = _release_ctx()
+    with (
+        patch(_PR_STATE, return_value="OPEN"),
+        patch(_MOD + ".wait_and_merge", side_effect=[_conflict(), None]) as m_wm,
+        patch(_MOD + ".merge_main_into_release") as m_heal,
+        patch(_MOD + ".time.sleep") as m_sleep,
+    ):
+        merge_release(ctx)
+    assert m_wm.call_count == 2
+    m_heal.assert_called_once_with(
+        "https://github.com/o/r/pull/100",
+        branch="release/2.1.0",
+        worktree=Path("/tmp/wt"),  # noqa: S108
+        phase="merge-release",
+    )
+    m_sleep.assert_called_once()
+    assert ctx.release_merge_sha == "merged"
+
+
+def test_merge_release_heals_are_bounded() -> None:
+    from vergil_tooling.lib.release.orchestrator import _MAX_CONFLICT_HEALS, merge_release
+
+    ctx = _release_ctx()
+    with (
+        patch(_PR_STATE, return_value="OPEN"),
+        patch(_MOD + ".wait_and_merge", side_effect=_conflict()),
+        patch(_MOD + ".merge_main_into_release") as m_heal,
+        patch(_MOD + ".time.sleep"),
+        pytest.raises(ReleaseError, match="still conflicts after merging main") as excinfo,
+    ):
+        merge_release(ctx)
+    assert m_heal.call_count == _MAX_CONFLICT_HEALS
+    assert not isinstance(excinfo.value, ReleaseConflictError)
+    assert "vrg-release --resume" in str(excinfo.value)
+    assert ctx.release_merge_sha is None
+
+
+def test_merge_release_heal_refusal_propagates() -> None:
+    from vergil_tooling.lib.release.orchestrator import merge_release
+
+    ctx = _release_ctx()
+    refusal = ReleaseError(phase="merge-release", command="git merge", message="beyond CHANGELOG")
+    with (
+        patch(_PR_STATE, return_value="OPEN"),
+        patch(_MOD + ".wait_and_merge", side_effect=_conflict()) as m_wm,
+        patch(_MOD + ".merge_main_into_release", side_effect=refusal),
+        pytest.raises(ReleaseError, match="beyond CHANGELOG"),
+    ):
+        merge_release(ctx)
+    m_wm.assert_called_once()
+    assert ctx.release_merge_sha is None
+
+
+def test_merge_release_conflict_without_worktree_raises() -> None:
+    from vergil_tooling.lib.release.orchestrator import merge_release
+
+    ctx = _ctx()
+    ctx.release_pr_url = "https://github.com/o/r/pull/100"
+    with (
+        patch(_PR_STATE, return_value="OPEN"),
+        patch(_MOD + ".wait_and_merge", side_effect=_conflict()),
+        patch(_MOD + ".merge_main_into_release") as m_heal,
+        pytest.raises(ReleaseError, match="main cannot be merged into it"),
+    ):
+        merge_release(ctx)
+    m_heal.assert_not_called()
 
 
 def test_merge_release_pr_state_retries_404() -> None:

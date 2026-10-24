@@ -35,6 +35,15 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+class ReleaseConflictError(ReleaseError):
+    """The PR conflicts with its base branch (the engine's ``MergeConflictError``).
+
+    A distinct subclass so ``merge-release`` can self-heal a conflicting
+    release PR by merging main into it (#3526); every other caller still
+    catches it as a plain ``ReleaseError``.
+    """
+
+
 def known_pr_state(pr_url: str) -> str:
     """``github.pr_state`` for a PR URL GitHub just returned, retrying a brief 404."""
     return retry.retry_known_resource(lambda: github.pr_state(pr_url), resource=f"PR {pr_url}")
@@ -56,6 +65,12 @@ def wait_and_merge(
     known_pr_state(pr_url)
     try:
         pr_merge.wait_and_merge(pr_url, strategy="merge", on_branch_updated=on_branch_updated)
+    except pr_merge.MergeConflictError as exc:
+        raise ReleaseConflictError(
+            phase=phase,
+            command="pr_merge.wait_and_merge",
+            message=str(exc),
+        ) from exc
     except pr_merge.MergeAbortError as exc:
         raise ReleaseError(
             phase=phase,

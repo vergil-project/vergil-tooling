@@ -9,9 +9,10 @@ from unittest.mock import patch
 
 import pytest
 
-from vergil_tooling.lib.pr_merge import MergeAbortError
+from vergil_tooling.lib.pr_merge import MergeAbortError, MergeConflictError
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.merge import (
+    ReleaseConflictError,
     _is_ancestor,
     known_pr_state,
     sync_local_branch,
@@ -57,6 +58,21 @@ def test_wraps_merge_abort_in_release_error() -> None:
     ):
         wait_and_merge(_PR, phase="phase-3")
     assert excinfo.value.phase == "phase-3"
+    assert not isinstance(excinfo.value, ReleaseConflictError)
+
+
+def test_wraps_merge_conflict_in_release_conflict_error() -> None:
+    """A conflict gets its own ReleaseError subclass so merge-release can self-heal (#3526)."""
+    with (
+        patch(_MOD + ".github.pr_state", return_value="OPEN"),
+        patch(
+            _MOD + ".pr_merge.wait_and_merge",
+            side_effect=MergeConflictError("has merge conflicts"),
+        ),
+        pytest.raises(ReleaseConflictError, match="has merge conflicts") as excinfo,
+    ):
+        wait_and_merge(_PR, phase="merge-release")
+    assert excinfo.value.phase == "merge-release"
 
 
 # --- #3137: a PR URL GitHub just returned may 404 briefly ---
