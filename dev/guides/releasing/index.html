@@ -16476,7 +16476,8 @@ adding new public surface. Versions: <code>v1.3.0</code> → <code>v1.3.1</code>
      that covers the release and prints a heartbeat line on each poll
      otherwise; the index poll alone decides success. A miss
      (timeout or polling error) does not undo the release. It is recorded
-     as a deferred publish failure: the consumer-refresh stage holds (it
+     as a deferred publish failure: the tracking issue stays open with a
+     deferral comment, the consumer-refresh stage holds (it
      prints a warning not to advertise the version instead of the refresh
      commands), the stage error tells you to re-run the <code>publish-index</code>
      workflow in <code>&lt;org&gt;/packages</code>, and <code>vrg-release</code> exits 1. See the
@@ -16548,14 +16549,14 @@ issue and ticks its box in the issue's stage checklist.</p>
 <td>Moves the rolling <code>vX.Y</code> tag to the new release (skipped with <code>--no-promote</code>)</td>
 </tr>
 <tr>
+<td><code>package-index</code></td>
+<td>deferred</td>
+<td>For repos with <code>[package]</code>, waits for the new version in the package index. A miss is a deferred publish failure, not a halted stage</td>
+</tr>
+<tr>
 <td><code>close-finalize</code></td>
 <td>deferred</td>
 <td>Closes the tracking issue with a summary and runs <code>vrg-finalize-pr --cleanup-only --no-wait-cd</code></td>
-</tr>
-<tr>
-<td><code>package-index</code></td>
-<td>deferred</td>
-<td>For repos with <code>[package]</code>, waits for the new version in the package index</td>
 </tr>
 <tr>
 <td><code>consumer-refresh</code></td>
@@ -16577,8 +16578,10 @@ issue and ticks its box in the issue's stage checklist.</p>
 <p><code>close-finalize</code> leaves the tracking issue open, and skips the cleanup,
 when an earlier stage has failed, so the release can be resumed with
 <code>vrg-release --resume</code>. A deferred publish failure also leaves the
-issue open, but the release itself is complete: re-run the CD publish
-rather than resuming.</p>
+issue open, with a comment that says how to finish each deferred item,
+but the release itself is complete: re-run the CD publish (or the
+<code>publish-index</code> workflow, for a <code>package-index</code> miss) rather than
+resuming.</p>
 <p><code>confirm-develop</code> checks the CD run for the back-merge's merge commit,
 not for the current tip of <code>develop</code>. On <code>vrg-release --resume</code>, other
 PRs (a dependency update or a feature) may have merged to <code>develop</code>
