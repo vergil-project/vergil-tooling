@@ -17233,10 +17233,6 @@ up to date (see
 <td>Build system or dependencies</td>
 </tr>
 <tr>
-<td><code>research</code></td>
-<td><strong>Retired</strong> (see below)</td>
-</tr>
-<tr>
 <td><code>rtfm</code></td>
 <td>Resolved by reading existing docs</td>
 </tr>
@@ -17273,14 +17269,6 @@ up to date (see
 <td>Terminal per-quarter archive of closed standing-epic work (ad-hoc, intake, planning); historical record</td>
 </tr>
 <tr>
-<td><code>triage</code></td>
-<td><strong>Retired</strong> (see below)</td>
-</tr>
-<tr>
-<td><code>idea</code></td>
-<td><strong>Retired</strong> (see below)</td>
-</tr>
-<tr>
 <td><code>hotfix</code></td>
 <td>Emergency fix that skipped formal planning; flagged for retroactive review</td>
 </tr>
@@ -17303,8 +17291,9 @@ up to date (see
 does, and <code>in-progress</code> is the single per-item label, used only on planning
 items. The former intake kind labels <code>triage</code>, <code>idea</code>, and <code>research</code> are
 <strong>retired</strong>: no tool or skill applies them, and the daily orphan pass strips
-them from every open issue. They remain in the registry (so a label sync still
-creates them) until the label-set review decides their fate.</p>
+them from every open issue. They are no longer in the registry, and a label
+sync (<code>vrg-ensure-label --sync</code>) deletes them from any repo that still has
+them, which also strips them from any issue still carrying them.</p>
 <p><code>dependency-update</code> goes on PRs, not issues: <code>vrg-update-deps</code> and the
 <code>vrg-release</code> <code>update-deps</code> stage put it on every dependency-update PR
 they open, and create the label first if the repo does not have it.</p>

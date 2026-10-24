@@ -17451,8 +17451,10 @@ worktree shows as <code>merged</code> in its own section but is not counted as
 </table>
 <h3 id="vrg-ensure-label">vrg-ensure-label<a class="headerlink" href="#vrg-ensure-label" title="Permanent link">&para;</a></h3>
 <p>Ensure GitHub labels exist. Three modes: single-label (create/update
-one label), sync (provision all labels from the canonical registry),
-and project (discover repos via a GitHub Project and sync each). The
+one label), sync (provision all labels from the canonical registry,
+and delete the registry's <code>delete</code> list and the retired <code>triage</code>,
+<code>idea</code> and <code>research</code> labels where present), and project
+(discover repos via a GitHub Project and sync each). The
 registry is <code>src/vergil_tooling/data/labels.json</code>; the labels it
 defines are listed in
 <a href="../../standards/github-issues/#labels">GitHub Issue Standards</a>.</p>
