@@ -15330,6 +15330,8 @@
       
         
       
+        
+      
     
     
     
@@ -15668,6 +15670,34 @@
     
   
     Permission Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../security-boundaries/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security Boundaries
   
 
     
@@ -16394,7 +16424,9 @@ Workflows access, so neither can push changes under
 shapes (a server-side hard gate) and branch protection, with the
 <code>vrg-gh</code>/<code>vrg-git</code> wrappers as a soft ergonomic layer on top. See
 <a href="../permission-model/">Permission Model</a> for the full
-defense-in-depth architecture.</p>
+defense-in-depth architecture. Where GitHub's permission shapes are
+coarser than the role model wants, the gap is recorded in
+<a href="../security-boundaries/">Security Boundaries</a>.</p>
 <blockquote>
 <p><strong>Note (2026-06-25, #1872):</strong> The local interactive USER/AUDIT loop
 (where a running AUDIT agent reviewed code in a shared worktree before
@@ -16513,6 +16545,8 @@ human's host under the human's own <code>gh</code> login.</p>
   installation tokens are minted and selected at runtime</li>
 <li><a href="../permission-model/">Permission Model</a> — enforcement layers
   that constrain agent operations</li>
+<li><a href="../security-boundaries/">Security Boundaries</a> — register of
+  known cross-system seams and their mitigations</li>
 <li><a href="../git-workflow/">Git Workflow</a> — the per-change development
   cycle</li>
 </ul>
