@@ -15640,10 +15640,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#org-automation-app-vergil-releasebot" class="md-nav__link">
+  <a href="#org-automation-apps" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Org automation App (vergil-release[bot])
+        Org automation Apps
       
     </span>
   </a>
@@ -16253,10 +16253,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#org-automation-app-vergil-releasebot" class="md-nav__link">
+  <a href="#org-automation-apps" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Org automation App (vergil-release[bot])
+        Org automation Apps
       
     </span>
   </a>
@@ -16541,11 +16541,11 @@ when it was generated.</p>
    <code>~/.config/vergil/keys/</code>.</li>
 </ol>
 <p>Repeat the steps for the other App.</p>
-<p>The org automation App (<code>vergil-release[bot]</code>) is not covered by these
-steps. Its key is consumed by the <code>APP_PRIVATE_KEY</code> Actions secret,
+<p>The org automation Apps (<code>&lt;org&gt;-automation</code>) are not covered by these
+steps. Their keys are consumed by the <code>APP_PRIVATE_KEY</code> Actions secret,
 not by an agent VM. The CI publishing secrets are not covered either.
 For both, see
-<a href="#org-automation-app-vergil-releasebot">Org automation App</a> and
+<a href="#org-automation-apps">Org automation Apps</a> and
 <a href="#ci-publishing-secrets">CI publishing secrets</a> under the compromise
 procedure below.</p>
 <h2 id="responding-to-a-compromised-credential">Responding to a compromised credential<a class="headerlink" href="#responding-to-a-compromised-credential" title="Permanent link">&para;</a></h2>
@@ -16655,26 +16655,32 @@ Apps.</p>
 <strong>both</strong> agent App keys as compromised and work through the App-key
 procedure above for each one. Review the account's recent merge and
 administrative activity in addition to the agent activity.</p>
-<h3 id="org-automation-app-vergil-releasebot">Org automation App (<code>vergil-release[bot]</code>)<a class="headerlink" href="#org-automation-app-vergil-releasebot" title="Permanent link">&para;</a></h3>
-<p>The org-level App does mechanized release work. It creates release
-PRs, and a human approves and merges them (see
-<a href="../identity-architecture/#the-release-app">Identity Architecture</a>).
-CI also reaches the org's App through the <code>APP_CLIENT_ID</code> and
-<code>APP_PRIVATE_KEY</code> Actions secrets. The <code>cd-release</code> workflow uses
-them to dispatch to the org's <code>packages</code> repository (see
-<a href="../../reference/package-config/">Package config</a>). The <code>ops</code> and
-<code>epic-rollup</code> workflows also receive them.</p>
-<p><strong>Blast radius.</strong> The App is installed at the org level, not per
-contributor, so a leaked key reaches every repo that installation
-covers. Its permission set is not listed in the Account Setup tables.
-Read the exact permissions from the App's settings page before you
-assess the impact. Release PRs it creates still need human approval to
-merge.</p>
+<h3 id="org-automation-apps">Org automation Apps<a class="headerlink" href="#org-automation-apps" title="Permanent link">&para;</a></h3>
+<p>Each org has its own automation App, owned by the org:
+<code>vergil-project-automation</code>, <code>logical-minds-foundry-automation</code> and
+<code>mnemosys-project-automation</code> (see
+<a href="../identity-architecture/#the-org-automation-apps">Identity Architecture</a>).
+CI reaches an org's App through the <code>APP_CLIENT_ID</code> and
+<code>APP_PRIVATE_KEY</code> Actions secrets. The nightly <code>ops</code> workflow uses them
+for the config audit, the branch sweep and the <code>dependabot-audit</code> job.
+The <code>epic-rollup</code> and epic-sweep workflows use them to close epics and
+tasks. The <code>cd-release</code> workflow uses them to dispatch to the org's
+<code>packages</code> repository (see
+<a href="../../reference/package-config/">Package config</a>).</p>
+<p><strong>Blast radius.</strong> Each App is installed on its org with access to all
+repositories, not per contributor, so a leaked key reaches every repo
+in that org. It does not reach the other orgs, which have their own
+Apps and keys. Its permission set is not listed in the Account Setup
+tables. Read the exact permissions from the App's settings page before
+you assess the impact. Its Administration permission is read-only, so
+the key cannot change repo settings or rulesets. With Dependabot
+alerts: Read, the key can read a repo's open alerts, including on a
+private repo.</p>
 <p><strong>Contain and restore.</strong> Follow the same steps as for an agent App key:
 delete the key, suspend the installation if access must stop at once,
 and generate a new key. Then update the <code>APP_PRIVATE_KEY</code> secret
 wherever it is stored. Until you do, the workflows that depend on it
-(release dispatch, ops, epic roll-up) will fail.</p>
+(ops, epic roll-up and sweep, package-index dispatch) will fail.</p>
 <h3 id="ci-publishing-secrets">CI publishing secrets<a class="headerlink" href="#ci-publishing-secrets" title="Permanent link">&para;</a></h3>
 <p>The release workflow forwards per-ecosystem secrets to <code>cd-release</code>
 (see <a href="../ci-architecture/#cd-release-publishing-secrets">CI Architecture</a>):</p>

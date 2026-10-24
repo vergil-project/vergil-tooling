@@ -17578,12 +17578,14 @@ get counts by severity and the Security-tab link only. See the
 <p>Interactive (or <code>--non-interactive</code>) wizard that bootstraps a new
 managed repository: creates and clones the repo, generates
 <code>vergil.toml</code>, scaffolds config files (<code>CLAUDE.md</code>, hook-guard shim,
-the managed <code>.gitignore</code> fence), scaffolds the language skeleton
+the managed <code>.gitignore</code> fence, the canonical report-only
+<code>.github/dependabot.yml</code>), scaffolds the language skeleton
 (born-green — see below), generates
 CI/CD/epic-rollup/<code>ops.yml</code> workflows, the docs site, branch structure,
 GitHub config, and Pages. The scaffolded <code>base + &lt;language&gt;</code>
-<code>.gitignore</code> fence and staggered-cron <code>ops.yml</code> make a new repo pass the
-config audit's two local checks from day one.</p>
+<code>.gitignore</code> fence, canonical <code>dependabot.yml</code> and staggered-cron
+<code>ops.yml</code> make a new repo pass the config audit's checks for those
+files from day one.</p>
 <p>The vergil series a new repo uses comes from the installed
 vergil-tooling: <code>[dependencies].vergil</code> defaults to its <code>vX.Y</code>, and the
 generated workflows pin the vergil-actions reusable workflows to that

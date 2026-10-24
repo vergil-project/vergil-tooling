@@ -12547,6 +12547,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#github-checks-security-settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GitHub checks — security settings
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#github-checks-the-required-status-check-set" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -16157,6 +16168,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#github-checks-security-settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GitHub checks — security settings
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#github-checks-the-required-status-check-set" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -16434,8 +16456,9 @@ that applicator across every repo as reviewed per-repo PRs; the rolling
 pin delivers the new fragments to the tool, and the applicator writes the
 fence.</p>
 <h2 id="new-repos-are-born-conforming">New repos are born conforming<a class="headerlink" href="#new-repos-are-born-conforming" title="Permanent link">&para;</a></h2>
-<p><code>repo_init</code> (<code>vrg-github-repo-init</code>) scaffolds both halves of the
-contract, so a freshly created repo passes both new checks from day one:</p>
+<p><code>repo_init</code> (<code>vrg-github-repo-init</code>) scaffolds these checked-in files
+through the same modules the audit uses, so a freshly created repo
+passes their checks from day one:</p>
 <ul>
 <li><strong><code>.gitignore</code></strong> — <code>render_gitignore()</code> renders through
   <code>lib/gitignore.py</code> (the same module the audit uses), so a new repo is
@@ -16447,7 +16470,63 @@ contract, so a freshly created repo passes both new checks from day one:</p>
   deterministic hash of <code>&lt;org&gt;/&lt;repo&gt;</code> maps to a minute in <code>[0,59]</code> — so
   the fleet does not stampede a single minute as it grows. The hour stays
   in the early-UTC window; only the minute varies.</li>
+<li><strong><code>.github/dependabot.yml</code></strong> — the config-files step writes
+  <code>lib/dependabot.py::render(&lt;language&gt;)</code>, the same render
+  <code>_check_dependabot_yml</code> compares against, so a new repo passes that
+  check from day one.</li>
 </ul>
+<h2 id="github-checks-security-settings">GitHub checks — security settings<a class="headerlink" href="#github-checks-security-settings" title="Permanent link">&para;</a></h2>
+<p>The GitHub half also compares the repo's security settings
+(<code>desired_security_settings()</code> in <code>lib/github_config.py</code>) and reports
+each difference as a <code>security.&lt;field&gt;</code> <code>DiffItem</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Desired</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>security.vulnerability_alerts</code></td>
+<td><code>true</code></td>
+<td>Dependabot alerts on, for <strong>every</strong> repo, public or private</td>
+</tr>
+<tr>
+<td><code>security.dependabot_security_updates</code></td>
+<td><code>disabled</code></td>
+<td>Dependabot never opens a security-update PR</td>
+</tr>
+<tr>
+<td><code>security.secret_scanning</code></td>
+<td><code>enabled</code></td>
+<td>Only when GHAS is available; otherwise unmanaged</td>
+</tr>
+<tr>
+<td><code>security.secret_scanning_push_protection</code></td>
+<td><code>enabled</code></td>
+<td>Only when GHAS is available; otherwise unmanaged</td>
+</tr>
+</tbody>
+</table>
+<p>GHAS is available when <code>[project].ghas</code> in <code>vergil.toml</code> says so, and
+otherwise exactly when the repo is not private.</p>
+<p>The first two rows are the <strong>report-only Dependabot posture</strong> (epic
+<a href="https://github.com/vergil-project/.github/issues/420">vergil-project/.github#420</a>):
+alerts are on so the nightly
+<a href="../dependabot-audit/"><code>vrg-dependabot-audit</code></a> has something to read,
+and security-update PRs stay off. Version-update PRs are suppressed
+separately, by <code>open-pull-requests-limit: 0</code> in the canonical
+<code>.github/dependabot.yml</code>, which <code>_check_dependabot_yml</code> enforces (see
+<a href="#local-checks">Local checks</a>).</p>
+<p>Alerts are read from <code>GET /repos/{repo}/vulnerability-alerts</code> (204 means
+on, 404 means off). Any other status is an error, never a silent "off".
+<code>apply</code> turns alerts on with <code>PUT</code> on that endpoint (or off with
+<code>DELETE</code>), and sets <code>dependabot_security_updates</code> through the repo's
+<code>security_and_analysis</code> settings. <code>apply</code> is a human action: it needs
+Administration write access, which the org automation Apps do not
+have.</p>
 <h2 id="github-checks-the-required-status-check-set">GitHub checks — the required-status-check set<a class="headerlink" href="#github-checks-the-required-status-check-set" title="Permanent link">&para;</a></h2>
 <p>The GitHub half compares the repo's live branch-protection configuration
 against the canonical CI-gates ruleset that
