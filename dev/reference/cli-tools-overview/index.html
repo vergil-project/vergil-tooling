@@ -17024,12 +17024,17 @@ ref is world-readable on a public repo, keep secrets out of
 <code>--title/--summary/--notes</code>. Reaching <strong>ready</strong> <em>freezes</em> the branch:
 <code>vrg-commit</code> and the <code>vrg-git</code> push path then refuse further
 commits/pushes, because a task is exactly one PR and more work is a new
-follow-up issue (epic #146). Push the branch to origin <strong>before</strong>
-<code>report-ready</code> (it pushes only the relay ref, never the branch); when the
-delta touches <code>.github/workflows/**</code> the human's <code>vrg-submit-pr</code> pushes it
-instead. If that push was missed, an explicit <code>vrg-git push [-u] origin
-&lt;branch&gt;</code> is still allowed while HEAD is exactly the reported commit — it
-publishes, not advances, the branch (issue #3071). <code>unfreeze</code> is the only sanctioned way to
+follow-up issue (epic #146). <code>report-ready</code> pushes the branch itself, to
+<code>origin/&lt;branch&gt;</code> with upstream set, <strong>before</strong> recording anything (#3602),
+so no separate push is needed; a branch already on origin at that commit is a
+no-op push. When the delta touches <code>.github/workflows/**</code> GitHub refuses the
+agent push: <code>report-ready</code> reports that as expected, records the state anyway,
+and the human's <code>vrg-submit-pr</code> pushes the branch. Any other push failure
+fails <code>report-ready</code> with no local state and no relay ref written. A re-run on
+a frozen branch whose HEAD has drifted past the reported commit is refused
+before any push. An explicit <code>vrg-git push [-u] origin &lt;branch&gt;</code> also stays
+allowed while HEAD is exactly the reported commit — it publishes, not
+advances, the branch (issue #3071). <code>unfreeze</code> is the only sanctioned way to
 reopen a still-unsubmitted branch — it drops the state back to
 <code>implementing</code> while keeping the metadata; an already-submitted branch
 cannot be unfrozen. <code>status</code> prints the current state. <code>report-ready</code> (like

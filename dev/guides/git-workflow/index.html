@@ -16570,19 +16570,22 @@ full flag list.</p>
 <div class="admonition note">
 <p class="admonition-title">Agent handoff and the post-report-ready freeze</p>
 <p>In an agent session, submission is a <strong>human</strong> action. The agent
-pushes the branch to origin (<code>vrg-git push -u origin &lt;branch&gt;</code>)
-<strong>first</strong> — <code>report-ready</code> pushes only the relay ref, never the
-branch; when the delta touches <code>.github/workflows/**</code> the agent push
-is refused and the human's <code>vrg-submit-pr</code> pushes it instead. The
-agent then runs <code>vrg-pr-workflow report-ready</code> to record the PR
-metadata in <code>.vergil/pr-workflow.json</code>, and stops; the human runs
-<code>vrg-submit-pr</code>. Recording ready <strong>freezes the branch</strong>: <code>vrg-commit</code>
+runs <code>vrg-pr-workflow report-ready</code>, which pushes the branch to origin
+(setting upstream) and then records the PR metadata in
+<code>.vergil/pr-workflow.json</code>, and stops; the human runs <code>vrg-submit-pr</code>.
+No separate push is needed. When the delta touches
+<code>.github/workflows/**</code> GitHub refuses the agent push; <code>report-ready</code>
+says so, records the state anyway, and the human's <code>vrg-submit-pr</code>
+pushes the branch instead. Any other push failure fails <code>report-ready</code>
+with nothing recorded. Recording ready <strong>freezes the branch</strong>: <code>vrg-commit</code>
 and the <code>vrg-git</code> push path refuse further commits/pushes on it,
 because a task is exactly one PR and more work is a new follow-up
 issue. One push stays allowed: an explicit push of the branch while
 HEAD is still exactly the reported commit, which publishes it without
 advancing it. Correcting the PR prose (re-running <code>report-ready</code>) is still
-allowed; deliberately reopening the branch needs
+allowed — its push is a no-op while the branch is on origin at the
+reported commit, and it refuses a HEAD that has drifted past that
+commit; deliberately reopening the branch needs
 <code>vrg-pr-workflow unfreeze</code>. See the tool's entry in the
 <a href="../../reference/cli-tools-overview/#vrg-pr-workflow">CLI Tools Overview</a>.</p>
 </div>
