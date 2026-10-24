@@ -3,7 +3,9 @@
 ``vrg-container-run`` builds one cached image per branch, and on an agent VM
 nothing removed them: ``vrg-finalize-pr`` cleans the image store of the machine
 it runs on, which is the human's Mac, not the VM (#3481). This is the sweep
-behind ``vrg-container-cache prune``.
+behind ``vrg-container-cache prune`` and ``vrg-finalize-pr``'s orphan sweep
+(#3566), and the home of every cached-image removal, so each one reports a
+failed ``rmi`` rather than ignoring it.
 
 The tag does not record the repository, and the branch in it is sanitized
 (``/`` becomes ``-``), so an image cannot be mapped back to exactly one branch.
@@ -21,7 +23,9 @@ import subprocess
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from vergil_tooling.lib.container import detect_runtime
 from vergil_tooling.lib.container_cache import parse_cache_image_ref, sanitize_branch
+from vergil_tooling.lib.live_branches import live_branches
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
@@ -162,3 +166,41 @@ def remove_images(refs: Iterable[str], runtime: str) -> list[tuple[str, str]]:
         if result.returncode != 0:
             failures.append((ref, result.stderr.strip() or f"exit status {result.returncode}"))
     return failures
+
+
+def clean_branch_images(branch: str, *, runtime: str = "") -> tuple[int, list[tuple[str, str]]]:
+    """Remove every cached image of *branch*; return ``(removed, failures)``.
+
+    *failures* are ``(ref, error)`` pairs from :func:`remove_images`, for the
+    caller to report: a failed ``rmi`` is never ignored (#3566). Raises
+    ``RuntimeError`` when the runtime cannot list images.
+    """
+    rt = runtime or detect_runtime()
+    sanitized = sanitize_branch(branch)
+    refs = [image.ref for image in list_cache_images(rt) if image.branch == sanitized]
+    failures = remove_images(refs, rt)
+    return len(refs) - len(failures), failures
+
+
+def prune_orphan_branch_images(
+    repos: Iterable[Path], *, runtime: str = ""
+) -> tuple[int, list[tuple[str, str]]]:
+    """Remove cached images whose branch is finished in every one of *repos*.
+
+    The unattended form of ``vrg-container-cache prune --apply``, for
+    ``vrg-finalize-pr``'s swept safety net (#2600): the same
+    :func:`plan_prune` verdicts against the live branches of the whole repo
+    set, not just the finalized repo's, because the tag does not record its
+    repo and every repo of a language shares the base image name (#3566).
+    Returns ``(removed, failures)`` as :func:`clean_branch_images`. A failure to
+    read the images, the containers or any repo's branches raises
+    (``RuntimeError`` or ``CalledProcessError``) before anything is removed.
+    """
+    rt = runtime or detect_runtime()
+    images = list_cache_images(rt)
+    if not images:
+        return 0, []
+    verdicts = plan_prune(images, live_branches(repos), images_in_use(rt))
+    doomed = [verdict.image.ref for verdict in verdicts if verdict.remove]
+    failures = remove_images(doomed, rt)
+    return len(doomed) - len(failures), failures

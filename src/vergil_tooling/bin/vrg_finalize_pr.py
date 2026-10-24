@@ -60,15 +60,14 @@ from vergil_tooling.lib import (
     progress,
     worktrees,
 )
+from vergil_tooling.lib.cache_prune import clean_branch_images, prune_orphan_branch_images
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.confirm import add_yes_argument, confirm
 from vergil_tooling.lib.container import resolve_language
-from vergil_tooling.lib.container_cache import (
-    clean_branch_images,
-    provision_dev_image,
-    prune_orphan_branch_images,
-)
+from vergil_tooling.lib.container_cache import provision_dev_image
+from vergil_tooling.lib.live_branches import RepoSetError, default_repo_roots, discover_repos
 from vergil_tooling.lib.pr_workflow import batch, github_transport
+from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.progress import Stage
 from vergil_tooling.lib.repo_init import prompt_choice
 from vergil_tooling.lib.versions import VersionsError
@@ -439,22 +438,82 @@ def _prune_orphan_relay_refs(*, dry_run: bool) -> None:
         github_transport.GitHubTransport(branch).delete()
 
 
+_IMAGE_FAILURE_HINT = "remove it by hand, or with vrg-container-cache"
+
+
+def _warn_image_failures(failures: list[tuple[str, str]]) -> None:
+    """Report each failed cached-image ``rmi`` loudly, without failing finalize.
+
+    Image cleanup runs after the merge has already succeeded, so a refused
+    ``rmi`` must not fail the command — but it must not vanish either (#3566).
+    """
+    for ref, error in failures:
+        print(
+            f"  WARNING: could not remove cached image {ref}: {error} ({_IMAGE_FAILURE_HINT})",
+            file=sys.stderr,
+        )
+
+
+def _clean_branch_images(branch: str) -> None:
+    """Remove *branch*'s cached dev images, warning on any failure (#3566)."""
+    try:
+        removed, failures = clean_branch_images(branch)
+    except RuntimeError as exc:
+        print(
+            f"  WARNING: could not clean cached images for {branch}: {exc}",
+            file=sys.stderr,
+        )
+        return
+    if removed:
+        print(f"  Cleaned {removed} cached container image(s) for {branch}")
+    _warn_image_failures(failures)
+
+
 def _prune_orphan_branch_images(*, dry_run: bool) -> None:
-    """Prune cached dev images whose branch no longer exists locally (issue #2600).
+    """Prune cached dev images whose branch is finished everywhere (#2600, #3566).
 
     The per-branch cleanup already prunes the finalized branch's cached image
     (``clean_branch_images``). This is the swept safety net for the branch that
     was never finalized — abandoned, or its PR closed out of band — whose
-    ~1.3–2G cached image would otherwise linger and fill the VM disk. Mirrors
-    ``_prune_orphan_relay_refs``: keep images for still-live local branches,
-    remove the rest.
+    ~1.3–2G cached image would otherwise linger and fill the VM disk.
+
+    The tag records no repository and every repo of a language shares the image
+    name, so "live" is asked of the whole platform repo set, exactly as
+    ``vrg-container-cache prune`` asks it — never of the finalized repo alone,
+    which would delete every other repo's in-progress images. Where no repo set
+    can be confirmed (the physical host has no default) the sweep is skipped
+    and says so; a failed lookup skips it with a warning. Neither fails
+    finalize: the merge has already landed.
     """
     if dry_run:
         print("  [dry-run] prune orphaned cached dev images")
         return
-    removed = prune_orphan_branch_images(git.local_branches())
+    try:
+        roots = default_repo_roots()
+        repos = discover_repos(roots)
+    except RepoSetError as exc:
+        print(f"  Skipping the orphaned-image sweep: {exc}")
+        print("  Sweep by hand with: vrg-container-cache prune --root DIR")
+        return
+    if not repos:
+        where = ", ".join(str(r) for r in roots)
+        print(
+            f"  WARNING: no git repositories under {where}; skipping the orphaned-image "
+            "sweep rather than pruning against an empty repo set.",
+            file=sys.stderr,
+        )
+        return
+    try:
+        removed, failures = prune_orphan_branch_images(repos)
+    except (RuntimeError, subprocess.CalledProcessError) as exc:
+        print(
+            f"  WARNING: skipped the orphaned-image sweep: {' '.join(error_text(exc).split())}",
+            file=sys.stderr,
+        )
+        return
     if removed:
         print(f"  Pruned {removed} orphaned cached container image(s)")
+    _warn_image_failures(failures)
 
 
 def _delete_branch_and_worktree(
@@ -498,9 +557,7 @@ def _delete_branch_and_worktree(
     print(f"  Deleting merged branch: {branch}")
     _run(["branch", "-D", branch], dry_run=dry_run)
     if not dry_run:
-        removed = clean_branch_images(branch)
-        if removed:
-            print(f"  Cleaned {removed} cached container image(s) for {branch}")
+        _clean_branch_images(branch)
     # Drop the branch's relay ref too, so a cloud-handoff ref never outlives the
     # branch it belonged to (issue #2369). Shared by both cleanup paths.
     _delete_relay_ref(branch, dry_run=dry_run)
@@ -1247,7 +1304,7 @@ def _reprovision_target_image(ctx: FinalizeContext) -> None:
     corrupt one, then provision fresh. Used to recover from a container-launch
     failure discovered during validation.
     """
-    clean_branch_images(ctx.args.target_branch)
+    _clean_branch_images(ctx.args.target_branch)
     lang = resolve_language(ctx.root)
     provision_dev_image(ctx.root, lang, quiet_warmup=True)
 

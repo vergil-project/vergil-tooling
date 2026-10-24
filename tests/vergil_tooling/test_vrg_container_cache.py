@@ -199,10 +199,32 @@ def test_clean_removes_existing(tmp_path: Path, capsys: pytest.CaptureFixture[st
         ),
         patch("vergil_tooling.bin.vrg_container_cache.detect_runtime", return_value="docker"),
         patch("vergil_tooling.bin.vrg_container_cache.find_cached_image", return_value=cached),
-        patch("vergil_tooling.bin.vrg_container_cache.subprocess.run"),
+        patch(_CLI + ".remove_images", return_value=[]) as m_remove,
     ):
         assert main(["clean"]) == 0
+    m_remove.assert_called_once_with([cached[0]], "docker")
     assert "Removed:" in capsys.readouterr().out
+
+
+def test_clean_fails_loudly_on_rmi_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A failed rmi names the image and the runtime's error and exits 1 (#3566)."""
+    cached = ("img:1.26--feature-42--abcd1234", "abcd1234")
+    with (
+        patch("vergil_tooling.bin.vrg_container_cache.git.repo_root", return_value=tmp_path),
+        patch(
+            "vergil_tooling.bin.vrg_container_cache.git.current_branch",
+            return_value="feature/42",
+        ),
+        patch("vergil_tooling.bin.vrg_container_cache.detect_runtime", return_value="docker"),
+        patch("vergil_tooling.bin.vrg_container_cache.find_cached_image", return_value=cached),
+        patch(_CLI + ".remove_images", return_value=[(cached[0], "image is in use")]),
+    ):
+        assert main(["clean"]) == 1
+    out = capsys.readouterr()
+    assert "Removed:" not in out.out
+    assert f"error: could not remove {cached[0]}: image is in use" in out.err
 
 
 def test_build_no_caching(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -352,9 +374,29 @@ def test_clean_all(capsys: pytest.CaptureFixture[str]) -> None:
     with (
         patch("vergil_tooling.bin.vrg_container_cache.detect_runtime", return_value="docker"),
         patch("vergil_tooling.bin.vrg_container_cache.subprocess.run", return_value=mock_result),
+        patch(_CLI + ".remove_images", return_value=[]) as m_remove,
     ):
         assert main(["clean-all"]) == 0
-    assert "1 cached image" in capsys.readouterr().out
+    m_remove.assert_called_once_with(["ghcr.io/r/dev-go:1.26--feat-42--abc"], "docker")
+    assert "Removed 1 of 1 cached image(s)." in capsys.readouterr().out
+
+
+def test_clean_all_fails_loudly_on_rmi_error(capsys: pytest.CaptureFixture[str]) -> None:
+    """Every image is attempted; each failure is named and the run exits 1 (#3566)."""
+    mock_result = MagicMock(
+        returncode=0,
+        stdout="ghcr.io/r/dev-go:1.26--feat-1--abc\nghcr.io/r/dev-go:1.26--feat-2--def\n",
+    )
+    failure = ("ghcr.io/r/dev-go:1.26--feat-2--def", "conflict: image is in use")
+    with (
+        patch("vergil_tooling.bin.vrg_container_cache.detect_runtime", return_value="docker"),
+        patch("vergil_tooling.bin.vrg_container_cache.subprocess.run", return_value=mock_result),
+        patch(_CLI + ".remove_images", return_value=[failure]),
+    ):
+        assert main(["clean-all"]) == 1
+    out = capsys.readouterr()
+    assert "Removed 1 of 2 cached image(s)." in out.out
+    assert f"error: could not remove {failure[0]}: {failure[1]}" in out.err
 
 
 def test_clean_all_docker_error(capsys: pytest.CaptureFixture[str]) -> None:
