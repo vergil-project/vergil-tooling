@@ -30,6 +30,7 @@ from vergil_tooling.lib.github_config import (
     DesiredRuleset,
     EvidenceGate,
     FetchResult,
+    UndeclaredParam,
     _apply_actions_permissions,
     _apply_repo_settings,
     _apply_rulesets,
@@ -1935,6 +1936,102 @@ def test_diff_ignores_rule_ordering() -> None:
     diff = compute_diff(desired=desired, actual=actual)
 
     assert diff.is_compliant()
+
+
+def _pull_request_params(state: Any) -> dict[str, object]:
+    bp = next(r for r in state.rulesets if r.name == "Branch protection")
+    rule = next(r for r in bp.rules if r.get("type") == "pull_request")
+    return cast("dict[str, object]", rule["parameters"])
+
+
+def test_diff_reports_undeclared_rule_parameter_distinctly() -> None:
+    """A live parameter the desired rule never declares is its own category.
+
+    This is the #2860 footprint: GitHub introduces a new ``pull_request``
+    parameter and defaults it server-side. It must surface as an undeclared
+    parameter naming the rule, key and live value, not as an opaque
+    ``.rules`` value mismatch (issue #3548).
+    """
+    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    actual = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    _pull_request_params(actual)["require_brand_new_knob"] = True
+
+    diff = compute_diff(desired=desired, actual=actual)
+
+    assert not diff.is_compliant()
+    assert diff.items == []
+    assert diff.undeclared == [
+        UndeclaredParam(
+            ruleset="Branch protection",
+            rule_type="pull_request",
+            key="require_brand_new_knob",
+            value=True,
+        )
+    ]
+
+
+def test_diff_undeclared_parameter_does_not_mask_value_mismatch() -> None:
+    """A declared value drifting alongside an undeclared key reports both."""
+    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    actual = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    params = _pull_request_params(actual)
+    params["require_brand_new_knob"] = True
+    params["required_approving_review_count"] = 2
+
+    diff = compute_diff(desired=desired, actual=actual)
+
+    assert [d.field for d in diff.items] == ["rulesets.Branch protection.rules"]
+    assert [u.key for u in diff.undeclared] == ["require_brand_new_knob"]
+    # The value-mismatch item no longer carries the undeclared key.
+    actual_rules = cast("list[dict[str, object]]", diff.items[0].actual)
+    pr_rule = next(r for r in actual_rules if r.get("type") == "pull_request")
+    assert "require_brand_new_knob" not in cast("dict[str, object]", pr_rule["parameters"])
+
+
+def test_diff_undeclared_parameters_on_parameterless_desired_rule() -> None:
+    """Parameters on a rule the desired spec declares bare are all undeclared."""
+    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    actual = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    bp = next(r for r in actual.rulesets if r.name == "Branch protection")
+    deletion = next(r for r in bp.rules if r.get("type") == "deletion")
+    deletion["parameters"] = {"new_knob": "x"}
+
+    diff = compute_diff(desired=desired, actual=actual)
+
+    assert diff.items == []
+    assert diff.undeclared == [
+        UndeclaredParam(
+            ruleset="Branch protection", rule_type="deletion", key="new_knob", value="x"
+        )
+    ]
+
+
+def test_diff_strip_listed_parameter_is_not_undeclared() -> None:
+    """A strip-listed GitHub default is ignored, never reported as undeclared."""
+    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    actual = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    bp = next(r for r in actual.rulesets if r.name == "Branch protection")
+    _pull_request_params(actual)["dismissal_restriction"] = {"enabled": False}
+    bp.rules = _normalize_rules(bp.rules)
+
+    diff = compute_diff(desired=desired, actual=actual)
+
+    assert diff.is_compliant()
+    assert diff.undeclared == []
+
+
+def test_diff_extra_rule_type_is_value_drift_not_undeclared() -> None:
+    """A whole live rule absent from desired is rule drift, not a parameter."""
+    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    actual = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    bp = next(r for r in actual.rulesets if r.name == "Branch protection")
+    bp.rules.append({"type": "required_linear_history", "parameters": {"k": 1}})
+    bp.rules.append(cast("dict[str, object]", "not-a-dict"))
+
+    diff = compute_diff(desired=desired, actual=actual)
+
+    assert [d.field for d in diff.items] == ["rulesets.Branch protection.rules"]
+    assert diff.undeclared == []
 
 
 def test_canonicalize_rules_preserves_non_dict_entries() -> None:
