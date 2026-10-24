@@ -7,6 +7,7 @@ import sys
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import config
+from vergil_tooling.lib.release.tracking import publish_deferred_remedy
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.release.context import ReleaseContext
@@ -23,11 +24,11 @@ def consumer_refresh(ctx: ReleaseContext) -> None:
     execute exactly what the message shows (issue #1643).
     """
     if ctx.deferred_publish_failures:
+        remedy = publish_deferred_remedy(ctx, ctx.deferred_publish_failures)
         message = (
             "⚠ Consumer refresh held: artifact publish was deferred "
             f"({', '.join(ctx.deferred_publish_failures)}). Do NOT advertise "
-            f"v{ctx.version} to consumers until the CD publish is re-run and the "
-            "artifacts are delivered."
+            f"v{ctx.version} to consumers until the artifacts are delivered: {remedy}."
         )
         ctx.consumer_refresh_message = message
         ctx.consumer_refresh_commands = None

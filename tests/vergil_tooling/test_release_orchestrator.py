@@ -26,6 +26,8 @@ if TYPE_CHECKING:
 _MOD = "vergil_tooling.lib.release.orchestrator"
 # merge_release reads PR state via release.merge.known_pr_state (#3137).
 _PR_STATE = "vergil_tooling.lib.release.merge.github.pr_state"
+_TRACKING = "vergil_tooling.lib.release.tracking"
+_FINALIZE = "vergil_tooling.lib.release.finalize"
 
 
 def _ctx(*, promote: bool = True) -> ReleaseContext:
@@ -52,8 +54,8 @@ def test_build_stages_order_and_modes() -> None:
         "teardown-worktree",
         "confirm-develop",
         "promote",
-        "close-finalize",
         "package-index",
+        "close-finalize",
         "consumer-refresh",
         "update-deps",
         "publish-status",
@@ -224,6 +226,41 @@ def test_tracked_stage_requires_ctx() -> None:
         _tracked("prepare", MagicMock())(state)
 
 
+def test_tracked_stage_publish_deferral_is_not_a_halted_stage() -> None:
+    """A stage that records its own failure as a publish deferral (package-index)
+    stays out of deferred_failures, so close-finalize still runs (#3557)."""
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
+    ctx = state.ctx = _ctx()
+
+    def _defer(_ctx: ReleaseContext) -> None:
+        ctx.deferred_publish_failures.append("package-index")
+        raise ReleaseError(phase="package-index", command="poll", message="timed out")
+
+    with (
+        patch(_MOD + ".comment_phase_failed") as m_failed,
+        pytest.raises(ReleaseError, match="timed out"),
+    ):
+        _tracked("package-index", _defer)(state)
+    m_failed.assert_called_once()
+    assert ctx.deferred_failures == []
+
+
+def test_tracked_stage_wrapped_publish_deferral_is_not_a_halted_stage() -> None:
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
+    ctx = state.ctx = _ctx()
+
+    def _defer(_ctx: ReleaseContext) -> None:
+        ctx.deferred_publish_failures.append("package-index")
+        raise RuntimeError("boom")
+
+    with (
+        patch(_MOD + ".comment_phase_failed"),
+        pytest.raises(ReleaseError, match="boom"),
+    ):
+        _tracked("package-index", _defer)(state)
+    assert ctx.deferred_failures == []
+
+
 def test_promote_phase_calls_promote_when_enabled() -> None:
     from vergil_tooling.lib.release.orchestrator import _promote_phase
 
@@ -362,13 +399,15 @@ def test_phase_details_consumer_refresh() -> None:
     assert "Consumer refresh" in details
 
 
-def test_package_index_stage_directly_before_consumer_refresh() -> None:
-    """package-index is a fail_defer stage immediately before consumer-refresh,
-    so the refresh holds on a deferred index miss (epic .github#356, §8.3)."""
+def test_package_index_stage_directly_before_close_finalize() -> None:
+    """package-index is a fail_defer stage immediately before close-finalize, so
+    an index miss leaves the tracking issue open with the deferral comment
+    (#3557), and the later consumer refresh holds on it (epic .github#356, §8.3)."""
     from vergil_tooling.lib.release.orchestrator import _stage_names
 
     names = _stage_names()
-    assert names[names.index("package-index") + 1] == "consumer-refresh"
+    assert names[names.index("package-index") + 1] == "close-finalize"
+    assert names.index("package-index") < names.index("consumer-refresh")
     stage = build_stages()[names.index("package-index")]
     assert stage.mode == "fail_defer"
 
@@ -564,6 +603,22 @@ def test_publish_status_raises_when_deferred() -> None:
         _publish_status_stage(state)
 
 
+def test_publish_status_gives_per_kind_advice_for_an_index_deferral() -> None:
+    state = _state()
+    assert state.ctx is not None
+    state.ctx.deferred_publish_failures = ["package-index"]
+    with (
+        patch(_TRACKING + "._packages_repo", return_value="o/packages"),
+        pytest.raises(ReleaseError) as info,
+    ):
+        _publish_status_stage(state)
+    msg = str(info.value)
+    assert "artifact publish was deferred (package-index)" in msg
+    assert "publish-index workflow in o/packages" in msg
+    assert "CD publish" not in msg
+    assert "do NOT use vrg-release --resume" in msg
+
+
 def test_publish_status_noop_when_clean() -> None:
     state = _state()
     _publish_status_stage(state)  # no raise
@@ -691,7 +746,8 @@ def test_publish_status_reports_both_failures() -> None:
     with pytest.raises(ReleaseError) as info:
         _publish_status_stage(state)
     msg = str(info.value)
-    assert "CD publish jobs did not succeed: docs" in msg
+    assert "artifact publish was deferred (docs)" in msg
+    assert "re-run the CD publish to deliver the artifacts" in msg
     assert "2.1.243 failed" in msg
 
 
@@ -711,3 +767,85 @@ def test_preflight_stage_copies_without_deps() -> None:
     with patch(_MOD + ".preflight", return_value=ctx):
         _preflight_stage(state)
     assert ctx.without_deps is True
+
+
+# --- deferred publishes through the real stage tail (#3557) -----------------
+
+_TAIL = ("package-index", "close-finalize", "consumer-refresh", "publish-status")
+
+
+def _run_tail(
+    tmp_path: Path, *, cd_deferred: list[str], index_times_out: bool
+) -> tuple[int, ReleaseContext, MagicMock, MagicMock, MagicMock]:
+    """Run the real tail stages, from package-index on, through the pipeline.
+
+    Returns the exit code, the context, and the deferral-comment, issue-close
+    and vrg-finalize-pr mocks.
+    """
+    state = _state()
+    ctx = state.ctx
+    assert ctx is not None
+    ctx.issue_number = 42
+    ctx.tag = "v2.1.2"
+    ctx.deferred_publish_failures = list(cd_deferred)
+    timeout = ReleaseError(phase="package-index", command="poll package index", message="slow")
+    args = argparse.Namespace(output_format="plain", output_window=None)
+    with (
+        patch(
+            "vergil_tooling.lib.release.package_index._wait",
+            side_effect=timeout if index_times_out else None,
+        ),
+        patch(_MOD + ".comment_phase_complete"),
+        patch(_MOD + ".comment_phase_failed"),
+        patch(_MOD + ".ensure_checklist"),
+        patch(_MOD + ".tick_stage"),
+        patch(_TRACKING + "._packages_repo", return_value="o/packages"),
+        patch(_FINALIZE + ".comment_publish_deferred") as m_comment,
+        patch(_FINALIZE + ".close_tracking_issue") as m_close,
+        patch(_FINALIZE + ".progress") as m_progress,
+    ):
+        stages = [s for s in build_stages() if s.name in _TAIL]
+        rc = progress.run_pipeline(
+            state, stages, command="vrg-release", label="vrg-release", args=args, repo_root=tmp_path
+        )
+    return rc, ctx, m_comment, m_close, m_progress.run
+
+
+def test_index_only_timeout_leaves_issue_open_with_deferral_comment(tmp_path: Path) -> None:
+    rc, ctx, m_comment, m_close, m_finalize = _run_tail(
+        tmp_path, cd_deferred=[], index_times_out=True
+    )
+    assert rc == 1
+    m_comment.assert_called_once_with(ctx, ["package-index"])
+    m_close.assert_not_called()  # the tracking issue stays open
+    m_finalize.assert_called_once()  # cleanup still runs: the release is complete
+    assert ctx.deferred_failures == []  # not a halted, resumable stage
+    message = ctx.consumer_refresh_message or ""
+    assert "held" in message
+    assert "publish-index workflow in o/packages" in message
+    assert "CD publish" not in message
+
+
+def test_cd_only_deferral_leaves_issue_open_with_cd_advice(tmp_path: Path) -> None:
+    rc, ctx, m_comment, m_close, m_finalize = _run_tail(
+        tmp_path, cd_deferred=["docker-publish"], index_times_out=False
+    )
+    assert rc == 1
+    m_comment.assert_called_once_with(ctx, ["docker-publish"])
+    m_close.assert_not_called()
+    m_finalize.assert_called_once()
+    message = ctx.consumer_refresh_message or ""
+    assert "re-run the CD publish" in message
+    assert "publish-index" not in message
+
+
+def test_cd_and_index_deferral_together_give_both_remedies(tmp_path: Path) -> None:
+    rc, ctx, m_comment, m_close, _ = _run_tail(
+        tmp_path, cd_deferred=["docker-publish"], index_times_out=True
+    )
+    assert rc == 1
+    m_comment.assert_called_once_with(ctx, ["docker-publish", "package-index"])
+    m_close.assert_not_called()
+    message = ctx.consumer_refresh_message or ""
+    assert "re-run the CD publish" in message
+    assert "publish-index workflow in o/packages" in message

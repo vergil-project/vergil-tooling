@@ -21,6 +21,7 @@ from vergil_tooling.lib.release.tracking import (
     comment_phase_complete,
     comment_phase_failed,
     ensure_checklist,
+    publish_deferred_remedy,
     tick_stage,
 )
 from vergil_tooling.lib.release.update_deps_stage import update_deps
@@ -91,7 +92,7 @@ def _tracked(name: str, fn: Callable[[ReleaseContext], None]) -> Callable[[Relea
             fn(ctx)
         except ReleaseError as exc:
             comment_phase_failed(ctx, name, exc)
-            ctx.deferred_failures.append(name)
+            _record_failure(ctx, name)
             raise
         except Exception as exc:
             wrapped = ReleaseError(
@@ -101,7 +102,7 @@ def _tracked(name: str, fn: Callable[[ReleaseContext], None]) -> Callable[[Relea
                 detail=(getattr(exc, "stderr", None) or getattr(exc, "stdout", None)),
             )
             comment_phase_failed(ctx, name, wrapped)
-            ctx.deferred_failures.append(name)
+            _record_failure(ctx, name)
             raise wrapped from exc
         comment_phase_complete(ctx, name, _phase_details(ctx, name))
         names = _stage_names()
@@ -109,6 +110,18 @@ def _tracked(name: str, fn: Callable[[ReleaseContext], None]) -> Callable[[Relea
         tick_stage(ctx, name)
 
     return stage
+
+
+def _record_failure(ctx: ReleaseContext, name: str) -> None:
+    """Record a failed stage as halted, unless it deferred itself as a publish.
+
+    A stage that recorded its own failure in ``deferred_publish_failures``
+    (package-index) left the release complete, not halted: close-finalize must
+    still post the deferral comment and leave the issue open, not treat it as
+    a stage to fix and ``--resume`` (#3557).
+    """
+    if name not in ctx.deferred_publish_failures:
+        ctx.deferred_failures.append(name)
 
 
 def _stage_names() -> list[str]:
@@ -136,14 +149,15 @@ def build_stages() -> list[Stage]:
             mode="fail_defer",
         ),
         Stage("promote", _tracked("promote", _promote_phase), mode="fail_defer"),
+        # Waits for the published package index before close-finalize, so a
+        # miss (a deferred publish) leaves the tracking issue open with the
+        # deferral comment (#3557); the consumer refresh then holds on it.
+        Stage("package-index", _tracked("package-index", wait_for_index), mode="fail_defer"),
         Stage(
             "close-finalize",
             _tracked("close-finalize", close_and_finalize),
             mode="fail_defer",
         ),
-        # Waits for the published package index before the consumer refresh,
-        # which holds on the deferred publish failure a miss records.
-        Stage("package-index", _tracked("package-index", wait_for_index), mode="fail_defer"),
         Stage(
             "consumer-refresh",
             _tracked("consumer-refresh", consumer_refresh),
@@ -232,11 +246,11 @@ def _publish_status_stage(state: ReleaseState) -> None:
             mark_warn(f"repeats the update-deps failure: {ctx.deps_failure}")
         return
     jobs = ", ".join(ctx.deferred_publish_failures)
+    remedy = publish_deferred_remedy(ctx, ctx.deferred_publish_failures)
     problems = [
-        f"Release v{ctx.version} is published (tag + GitHub Release), but these "
-        f"CD publish jobs did not succeed: {jobs}. Re-run the CD publish to "
-        "deliver the artifacts — do NOT use vrg-release --resume (the version "
-        "is already tagged)."
+        f"Release v{ctx.version} is published (tag + GitHub Release), but "
+        f"artifact publish was deferred ({jobs}). To finish delivery, {remedy} — "
+        "do NOT use vrg-release --resume (the version is already tagged)."
     ]
     if ctx.deps_failure:
         problems.append(ctx.deps_failure)
