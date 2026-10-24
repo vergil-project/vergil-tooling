@@ -36,6 +36,7 @@ def test_preflight_success() -> None:
         patch(_MOD + ".audit_repo_config"),
         patch(_MOD + ".version.show", return_value="2.1.0"),
         patch(_MOD + "._check_version_not_tagged"),
+        patch(_MOD + "._check_main_not_ahead_of_develop"),
         patch(_MOD + "._check_no_existing_tracking_issue"),
         patch(_MOD + "._check_packages_unpublished"),
         patch(_MOD + ".pending_deps_prs", return_value=[]),
@@ -63,6 +64,7 @@ def test_preflight_resume_skips_fresh_checks_and_adopts() -> None:
         patch(_MOD + ".audit_repo_config"),
         patch(_MOD + ".version.show", return_value="2.1.0"),
         patch(_MOD + "._check_version_not_tagged") as m_tagged,
+        patch(_MOD + "._check_main_not_ahead_of_develop") as m_diverged,
         patch(_MOD + "._check_no_existing_tracking_issue") as m_issue,
         patch(_MOD + "._check_packages_unpublished"),
         patch(_MOD + "._acquire_release_worktree", return_value=wt) as m_wt,
@@ -71,6 +73,7 @@ def test_preflight_resume_skips_fresh_checks_and_adopts() -> None:
         preflight(version_override=None, repo_root=root, resume=True)
     m_tagged.assert_not_called()
     m_issue.assert_not_called()
+    m_diverged.assert_not_called()
     m_wt.assert_called_once_with(root, "release/2.1.0", resume=True)
 
 
@@ -110,6 +113,7 @@ def test_preflight_with_minor_override() -> None:
         patch(_MOD + ".audit_repo_config"),
         patch(_MOD + ".version.show", return_value="2.0.34"),
         patch(_MOD + "._check_version_not_tagged"),
+        patch(_MOD + "._check_main_not_ahead_of_develop"),
         patch(_MOD + "._check_no_existing_tracking_issue"),
         patch(_MOD + "._check_packages_unpublished"),
         patch(_MOD + ".pending_deps_prs", return_value=[]),
@@ -133,6 +137,7 @@ def test_preflight_with_major_override() -> None:
         patch(_MOD + ".audit_repo_config"),
         patch(_MOD + ".version.show", return_value="2.0.34"),
         patch(_MOD + "._check_version_not_tagged"),
+        patch(_MOD + "._check_main_not_ahead_of_develop"),
         patch(_MOD + "._check_no_existing_tracking_issue"),
         patch(_MOD + "._check_packages_unpublished"),
         patch(_MOD + ".pending_deps_prs", return_value=[]),
@@ -386,6 +391,7 @@ def test_preflight_never_audits() -> None:
         patch(_MOD + ".audit_repo_config") as mock_audit,
         patch(_MOD + ".version.show", return_value="2.1.0"),
         patch(_MOD + "._check_version_not_tagged"),
+        patch(_MOD + "._check_main_not_ahead_of_develop"),
         patch(_MOD + "._check_no_existing_tracking_issue"),
         patch(_MOD + "._check_packages_unpublished"),
         patch(_MOD + ".pending_deps_prs", return_value=[]),
@@ -594,6 +600,7 @@ def _fresh_patches(pending: list[PendingDepsPr]) -> list[contextlib.AbstractCont
         patch(_MOD + "._check_branch_and_tree"),
         patch(_MOD + ".version.show", return_value="2.1.0"),
         patch(_MOD + "._check_version_not_tagged"),
+        patch(_MOD + "._check_main_not_ahead_of_develop"),
         patch(_MOD + "._check_no_existing_tracking_issue"),
         patch(_MOD + "._check_packages_unpublished"),
         patch(_MOD + "._acquire_release_worktree", return_value=wt),
@@ -1169,3 +1176,146 @@ def test_preflight_runs_package_check_with_release_version() -> None:
         m_check = stack.enter_context(patch(_MOD + "._check_packages_unpublished"))
         preflight(version_override="minor", repo_root=root)
     m_check.assert_called_once_with("o/r", root, "2.2.0")
+
+
+# --- main/develop divergence (#3527) ---
+
+
+def test_check_main_not_ahead_of_develop_passes_when_main_is_merged() -> None:
+    with (
+        patch(_MOD + ".git.run") as m_run,
+        patch(_MOD + ".git.read_output", return_value="") as m_read,
+    ):
+        preflight_module._check_main_not_ahead_of_develop()
+    m_run.assert_called_once_with("fetch", "origin", "main")
+    assert m_read.call_args.args[-1] == "origin/develop..origin/main"
+
+
+def test_check_main_not_ahead_of_develop_refuses_with_recovery_path() -> None:
+    ahead = "abc1234 Merge pull request #7 from o/release/2.1.6\ndef5678 fix: on main"
+    with (
+        patch(_MOD + ".git.run"),
+        patch(_MOD + ".git.read_output", return_value=ahead),
+        pytest.raises(ReleaseError, match="2 commit") as info,
+    ):
+        preflight_module._check_main_not_ahead_of_develop()
+    msg = str(info.value)
+    assert info.value.phase == "preflight"
+    assert "vrg-release --resume" in msg
+    assert "git switch -c release/back-merge-main origin/main" in msg
+    assert "merge commit" in msg
+    assert info.value.detail == ahead
+
+
+def test_check_main_not_ahead_of_develop_refuses_when_compare_fails() -> None:
+    with (
+        patch(
+            _MOD + ".git.run",
+            side_effect=subprocess.CalledProcessError(
+                128, "git fetch", stderr="fatal: couldn't find remote ref main"
+            ),
+        ),
+        pytest.raises(ReleaseError, match="refusing to release blind") as info,
+    ):
+        preflight_module._check_main_not_ahead_of_develop()
+    assert "couldn't find remote ref main" in (info.value.detail or "")
+
+
+def test_preflight_divergence_refusal_precedes_every_other_fresh_check() -> None:
+    refusal = ReleaseError(phase="preflight", command="c", message="main is ahead")
+    with contextlib.ExitStack() as stack:
+        for p in _fresh_patches([]):
+            stack.enter_context(p)
+        stack.enter_context(patch(_MOD + "._check_main_not_ahead_of_develop", side_effect=refusal))
+        m_tagged = stack.enter_context(patch(_MOD + "._check_version_not_tagged"))
+        m_pkgs = stack.enter_context(patch(_MOD + "._check_packages_unpublished"))
+        m_deps = stack.enter_context(patch(_MOD + ".pending_deps_prs"))
+        m_wt = stack.enter_context(patch(_MOD + "._acquire_release_worktree"))
+        with pytest.raises(ReleaseError, match="main is ahead"):
+            preflight(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
+    m_tagged.assert_not_called()
+    m_pkgs.assert_not_called()
+    m_deps.assert_not_called()
+    m_wt.assert_not_called()
+
+
+def _git(cwd: Path, *args: str) -> str:
+    return subprocess.run(
+        ("git", *args), cwd=cwd, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+def _commit(clone: Path, name: str) -> None:
+    (clone / name).write_text(f"{name}\n")
+    _git(clone, "add", name)
+    _git(clone, "commit", "-qm", name)
+
+
+def _merge_into(clone: Path, target: str, source: str) -> None:
+    """Merge *source* into *target* on origin with a merge commit, as a PR merge does."""
+    _git(clone, "checkout", "-q", target)
+    _git(clone, "merge", "-q", "--no-ff", "--no-edit", source)
+    _git(clone, "push", "-q", "origin", target)
+
+
+@pytest.fixture
+def released(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[Path, Path]:
+    """An origin one release in: the release merged to main, not yet back-merged.
+
+    Returns ``(root, other)``: the release's root checkout on develop, which
+    has not fetched the release yet, and a second clone that plays GitHub.
+    """
+    for var in ("AUTHOR", "COMMITTER"):
+        monkeypatch.setenv(f"GIT_{var}_NAME", "Test")
+        monkeypatch.setenv(f"GIT_{var}_EMAIL", "test@example.com")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "gitconfig"))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    origin = tmp_path / "origin.git"
+    _git(tmp_path, "init", "-q", "--bare", "-b", "main", str(origin))
+    other = tmp_path / "other"
+    _git(tmp_path, "clone", "-q", str(origin), str(other))
+    _git(other, "checkout", "-q", "-b", "main")
+    _commit(other, "base")
+    _git(other, "push", "-q", "origin", "main")
+    _git(other, "checkout", "-q", "-b", "develop")
+    _commit(other, "feature")
+    _git(other, "push", "-q", "-u", "origin", "develop")
+    root = tmp_path / "root"
+    _git(tmp_path, "clone", "-q", "-b", "develop", str(origin), str(root))
+    _git(other, "checkout", "-q", "-b", "release/1.0.0")
+    _commit(other, "changelog")
+    _git(other, "push", "-q", "origin", "release/1.0.0")
+    _merge_into(other, "main", "release/1.0.0")
+    monkeypatch.chdir(root)
+    return root, other
+
+
+def _check(root: Path) -> None:
+    # The real fetch and log run against the local origin; no GitHub token.
+    with patch("vergil_tooling.lib.git.github.get_installation_token", return_value=None):
+        _git(root, "fetch", "-q", "origin", "develop")
+        preflight_module._check_main_not_ahead_of_develop()
+
+
+def test_divergence_check_real_git_refuses_a_release_never_back_merged(
+    released: tuple[Path, Path],
+) -> None:
+    root, _other = released
+    with pytest.raises(ReleaseError, match="not on origin/develop") as info:
+        _check(root)
+    assert "Merge branch 'release/1.0.0'" in (info.value.detail or "")
+
+
+def test_divergence_check_real_git_passes_after_the_back_merge(
+    released: tuple[Path, Path],
+) -> None:
+    """The normal post-release state: main's release merge reached develop."""
+    root, other = released
+    _git(other, "checkout", "-q", "-b", "release/post-1.0.0", "origin/main")
+    _commit(other, "bump")
+    _git(other, "push", "-q", "origin", "release/post-1.0.0")
+    _merge_into(other, "develop", "release/post-1.0.0")
+    # Develop moving on past the release is normal too.
+    _commit(other, "next-feature")
+    _git(other, "push", "-q", "origin", "develop")
+    _check(root)
