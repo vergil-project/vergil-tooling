@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -10,10 +11,16 @@ from vergil_tooling.lib.progress import Stage, mark_warn
 from vergil_tooling.lib.promote import promote
 from vergil_tooling.lib.release.bump import back_merge_and_bump
 from vergil_tooling.lib.release.confirm import confirm_develop, confirm_main
+from vergil_tooling.lib.release.conflict import merge_main_into_release
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.finalize import close_and_finalize, teardown_worktree
 from vergil_tooling.lib.release.handoff import consumer_refresh
-from vergil_tooling.lib.release.merge import known_pr_state, sync_local_branch, wait_and_merge
+from vergil_tooling.lib.release.merge import (
+    ReleaseConflictError,
+    known_pr_state,
+    sync_local_branch,
+    wait_and_merge,
+)
 from vergil_tooling.lib.release.package_index import wait_for_index
 from vergil_tooling.lib.release.preflight import preflight, run_audit
 from vergil_tooling.lib.release.prepare import prepare
@@ -31,6 +38,12 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from vergil_tooling.lib.release.context import ReleaseContext
+
+
+# merge-release merges main into a conflicting release PR at most this many
+# times per run, pausing after each push so GitHub recomputes mergeable (#3526).
+_MAX_CONFLICT_HEALS = 3
+_CONFLICT_SETTLE_SECS = 10
 
 
 @dataclass
@@ -175,6 +188,10 @@ def merge_release(ctx: ReleaseContext) -> None:
 
     Resume-safe: if the PR is already merged (a prior run got this far), skip
     the merge and hydrate ``release_merge_sha`` rather than re-attempting it.
+
+    A CONFLICTING release PR self-heals: main is merged into the release
+    branch and pushed, a CHANGELOG-only conflict resolved automatically, and
+    any other conflict refused with recovery steps (#3526, ``conflict``).
     """
     if ctx.release_pr_url is None:
         raise ReleaseError(
@@ -188,16 +205,51 @@ def merge_release(ctx: ReleaseContext) -> None:
         ctx.release_merge_sha = "merged"
         return
     updates: list[None] = []
-    wait_and_merge(
-        ctx.release_pr_url,
-        phase="merge-release",
-        on_branch_updated=lambda: updates.append(None),
-    )
+    heals = 0
+    while True:
+        try:
+            wait_and_merge(
+                ctx.release_pr_url,
+                phase="merge-release",
+                on_branch_updated=lambda: updates.append(None),
+            )
+            break
+        except ReleaseConflictError as exc:
+            # main moved since the branch was cut: merge it in, resolving a
+            # CHANGELOG-only conflict, and wait again (#3526). Bounded, since
+            # main can keep moving and GitHub's mergeable can read stale.
+            heals += 1
+            if heals > _MAX_CONFLICT_HEALS:
+                raise ReleaseError(
+                    phase="merge-release",
+                    command="merge_main_into_release",
+                    message=(
+                        f"{exc} The release PR still conflicts after merging main into "
+                        f"it {_MAX_CONFLICT_HEALS} times; re-run: vrg-release --resume"
+                    ),
+                ) from exc
+            _heal_conflict(ctx, ctx.release_pr_url)
+            time.sleep(_CONFLICT_SETTLE_SECS)
     if updates:
         # GitHub added a merge commit the local release branch never saw;
         # bring the managed worktree up to what actually merged (#3175).
         _sync_release_branch(ctx, ctx.release_pr_url)
     ctx.release_merge_sha = "merged"
+
+
+def _heal_conflict(ctx: ReleaseContext, pr_url: str) -> None:
+    if ctx.release_branch is None or ctx.worktree_path is None:
+        raise ReleaseError(
+            phase="merge-release",
+            command="merge_main_into_release",
+            message=(
+                "The release PR conflicts with main, but release_branch or "
+                "worktree_path is not set, so main cannot be merged into it."
+            ),
+        )
+    merge_main_into_release(
+        pr_url, branch=ctx.release_branch, worktree=ctx.worktree_path, phase="merge-release"
+    )
 
 
 def _sync_release_branch(ctx: ReleaseContext, pr_url: str) -> None:
