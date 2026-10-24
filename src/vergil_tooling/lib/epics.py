@@ -663,12 +663,16 @@ def ensure_intake_epic(target_repo: str) -> IssueRef:
 def ensure_planning_epic(target_repo: str) -> IssueRef:
     """Return the planning queue epic for *target_repo*'s queue home, creating it if absent.
 
-    Also ensures the per-item ``in-progress`` label exists in that home, every
-    time, so ``epic-create`` can apply it in any planning home.
+    Also ensures the per-item ``in-progress`` label exists, every time, in that
+    home and in *target_repo* — the item's own repo, which differs from the home
+    for a member-repo item — so ``epic-create`` can apply it to the item (#3520).
+    Every entry into planning (the ``planning`` sentinel and
+    ``vrg-intake-route … planning``) comes through here with the item's repo.
     """
     home, name = queue_home(target_repo)
     epic = ensure_standing_epic(PLANNING, home, name)
-    ensure_labels(home, (PLANNING_IN_PROGRESS_LABEL,))
+    for repo in dict.fromkeys((home, target_repo)):
+        ensure_labels(repo, (PLANNING_IN_PROGRESS_LABEL,))
     return epic
 
 

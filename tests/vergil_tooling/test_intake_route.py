@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from vergil_tooling.lib import github, intake_route
+from vergil_tooling.lib import epics, github, intake_route
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.intake_route import (
     Defer,
@@ -25,6 +25,8 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
 _MOD = "vergil_tooling.lib.intake_route"
+# Captured before any patching, to run the real planning ensure under Env.
+_REAL_ENSURE_PLANNING_EPIC = epics.ensure_planning_epic
 
 ITEM = IssueRef("org", ".github", 352)
 INTAKE = IssueRef("org", ".github", 7)
@@ -236,6 +238,26 @@ def test_route_planning_uses_items_repo_queue_home(env: Env) -> None:
     route(secret_item, ToPlanning(), today=TODAY)
     env.ensure_planning_epic.assert_called_once_with("org/secret")
     env.reparent_child.assert_called_once_with(secret_planning, secret_item)
+
+
+def test_route_planning_ensures_in_progress_label_in_items_repo(env: Env) -> None:
+    # Routing a member-repo item to planning goes through the real
+    # ensure_planning_epic, which ensures 'in-progress' in the item's repo as
+    # well as the home, so epic-create can label it (#3520).
+    tool_item = IssueRef("org", "tool", 36)
+    env.native_parent[tool_item] = INTAKE
+    with (
+        patch(f"{_MOD}.epics.ensure_planning_epic", _REAL_ENSURE_PLANNING_EPIC),
+        patch(f"{_MOD}.epics.resolve_epic_home", return_value="org/.github"),
+        patch(f"{_MOD}.epics._find_epic_by_title", return_value=PLANNING),
+        patch(f"{_MOD}.epics.ensure_labels") as mock_ensure,
+    ):
+        route(tool_item, ToPlanning(), today=TODAY)
+    assert [c.args for c in mock_ensure.call_args_list] == [
+        ("org/.github", ("in-progress",)),
+        ("org/tool", ("in-progress",)),
+    ]
+    env.reparent_child.assert_called_once_with(PLANNING, tool_item)
 
 
 def test_route_planning_refuses_private_item_to_public_planning_epic(env: Env) -> None:

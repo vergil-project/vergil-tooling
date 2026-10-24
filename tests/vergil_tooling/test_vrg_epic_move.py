@@ -217,6 +217,25 @@ def test_main_accepts_every_standing_sentinel(sentinel: str) -> None:
     mock_add.assert_called_once_with(NEW, TASK)
 
 
+def test_main_planning_ensures_in_progress_label_in_task_repo() -> None:
+    """Moving a member-repo task into planning ensures 'in-progress' there (#3520)."""
+    tool_task = epics.IssueRef("org", "tool", 36)
+    planning = epics.IssueRef("org", ".github", 439)
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.github.target_org"),
+        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
+        patch("vergil_tooling.lib.epics._find_epic_by_title", return_value=planning),
+        patch("vergil_tooling.lib.epics.ensure_labels") as mock_ensure,
+        patch(f"{_MOD}.epics.parent_of", return_value=None),
+        patch(f"{_MOD}.epics.add_child") as mock_add,
+    ):
+        rc = main(["--task", "org/tool#36", "--epic", "planning"])
+    assert rc == 0
+    mock_ensure.assert_any_call("org/tool", ("in-progress",))
+    mock_add.assert_called_once_with(planning, tool_task)
+
+
 def test_epic_help_names_every_standing_sentinel(capsys: pytest.CaptureFixture[str]) -> None:
     """The --epic help lists adhoc, intake and planning (#3512)."""
     with pytest.raises(SystemExit):

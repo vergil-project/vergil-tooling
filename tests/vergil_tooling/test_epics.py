@@ -1914,7 +1914,38 @@ def test_ensure_planning_epic_ensures_in_progress_label() -> None:
     ):
         assert epics.ensure_planning_epic("org/tool") == IssueRef("org", ".github", 90)
     mock_create.assert_not_called()
-    mock_ensure.assert_called_once_with("org/.github", ("in-progress",))
+    assert [c.args for c in mock_ensure.call_args_list] == [
+        ("org/.github", ("in-progress",)),
+        ("org/tool", ("in-progress",)),
+    ]
+
+
+def test_ensure_planning_epic_ensures_in_progress_label_in_item_repo() -> None:
+    # A planning item can live in a member repo while the queue homes in
+    # <org>/.github; epic-create labels the item itself, so the member repo
+    # needs the label too, not just the home (#3520).
+    created = "https://github.com/org/.github/issues/90"
+    with (
+        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
+        patch("vergil_tooling.lib.github.read_json", return_value=[]),
+        patch("vergil_tooling.lib.epics.ensure_labels") as mock_ensure,
+        patch("vergil_tooling.lib.github.create_issue", return_value=created),
+    ):
+        epics.ensure_planning_epic("org/tool")
+    ensured = [c.args for c in mock_ensure.call_args_list]
+    assert ("org/tool", ("in-progress",)) in ensured
+
+
+def test_ensure_planning_epic_self_homed_ensures_label_once() -> None:
+    # A self-homed repo is both the home and the item's repo: one ensure, not two.
+    rows = [{"number": 3, "title": "Epic (planning): secret"}]
+    with (
+        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/secret"),
+        patch("vergil_tooling.lib.github.read_json", return_value=rows),
+        patch("vergil_tooling.lib.epics.ensure_labels") as mock_ensure,
+    ):
+        assert epics.ensure_planning_epic("org/secret") == IssueRef("org", "secret", 3)
+    mock_ensure.assert_called_once_with("org/secret", ("in-progress",))
 
 
 def test_ensure_standing_epic_duplicate_title_raises_naming_kind() -> None:
