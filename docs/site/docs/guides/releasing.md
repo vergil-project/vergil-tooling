@@ -77,7 +77,10 @@ adding new public surface. Versions: `v1.3.0` → `v1.3.1`.
      the release; the index's weekly reconcile picks the release up.
    - `vrg-release`'s `package-index` stage then polls the published
      index (up to 20 minutes, every 30 seconds) until the new version is
-     visible, so the consumer refresh never races the index. A miss
+     visible, so the consumer refresh never races the index. While it
+     waits, it streams the `Publish package index` run in `<org>/packages`
+     that covers the release and prints a heartbeat line on each poll
+     otherwise; the index poll alone decides success. A miss
      (timeout or polling error) does not undo the release. It is recorded
      as a deferred publish failure: the consumer-refresh stage holds (it
      prints a warning not to advertise the version instead of the refresh
