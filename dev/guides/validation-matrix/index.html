@@ -15935,6 +15935,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#all-versions-python" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        All versions (Python)
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -16127,6 +16138,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#all-versions-python" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        All versions (Python)
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -16244,7 +16266,7 @@ where it runs. No git hooks are installed: every check runs inside a
 <tr>
 <td>Tests</td>
 <td><code>vrg-validate</code></td>
-<td>Yes (primary version)</td>
+<td>Yes (primary version; every version with <code>--all-versions</code>, Python only)</td>
 <td><code>test / unit / &lt;version&gt;</code></td>
 </tr>
 <tr>
@@ -16382,6 +16404,24 @@ as <code>quality / common</code>.</p>
 <p><code>vrg-validate</code> then runs the lint, typecheck, test and audit commands
 for <code>[project].primary-language</code>. Pass <code>--check lint</code>, <code>typecheck</code>,
 <code>test</code> or <code>audit</code> to run one stage.</p>
+<h3 id="all-versions-python">All versions (Python)<a class="headerlink" href="#all-versions-python" title="Permanent link">&para;</a></h3>
+<p><code>vrg-validate --all-versions</code> adds one <code>test (python X.Y)</code> stage per
+resolved CI version after the test stage, so the
+<code>--cov-branch --cov-fail-under=100</code> gate runs on every interpreter PR-CI
+tests, not only the dev container's. Combine it with <code>--check test</code> to
+run only the tests. Each stage has <code>uv</code> install the version as a managed
+interpreter and sync the <code>dev</code> group into its own environment under the
+container's temp directory, so the project <code>.venv</code> is untouched. The
+container interpreter's own version is skipped: the plain test stage
+already covers it. Its coverage and JUnit reports go beside that
+environment, so the workspace's <code>coverage.xml</code> and <code>junit.xml</code> stay the
+container interpreter's.</p>
+<p>It needs network access to download the interpreters, and it costs one
+extra suite run per extra version: on a Lima VM a full
+<code>vrg-container-run -- vrg-validate --all-versions</code> for this repo's four
+versions takes about 1.5 minutes, against about 20 seconds without it.
+The default <code>vrg-validate</code> is unchanged. Other languages are refused: their
+toolchains are not uv-managed, and their PR-CI matrix stays CI-only.</p>
 <h2 id="exit-codes">Exit Codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>
 <p>Every tool above exits 0 on success and non-zero when a check fails.
 <code>vrg-repo-profile</code> distinguishes the two failure cases:</p>
