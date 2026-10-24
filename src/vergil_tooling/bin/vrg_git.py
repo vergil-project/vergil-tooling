@@ -12,7 +12,7 @@ import sys
 import time
 from pathlib import Path
 
-from vergil_tooling.lib import branch_names, github, retry
+from vergil_tooling.lib import branch_names, epics, github, retry
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.git import _git_auth_env, main_worktree_root
 from vergil_tooling.lib.pr_workflow import freeze
@@ -532,7 +532,7 @@ def _check_worktree_add(args: list[str]) -> str | None:
             f"'{new_branch}'. Use '.worktrees/{expected}' so the directory, "
             f"branch, and issue number stay in lockstep (issue #2550)."
         )
-    return None
+    return _check_issue_is_open_task(new_branch)
 
 
 def _check_new_branch_name(subcmd: str, args: list[str]) -> str | None:
@@ -552,7 +552,73 @@ def _check_new_branch_name(subcmd: str, args: list[str]) -> str | None:
         return None
     if not branch_names.is_valid_issue_branch(new_branch):
         return _branch_format_error(new_branch)
+    return _check_issue_is_open_task(new_branch)
+
+
+# A failed issue read, in any of the shapes the gh boundary raises: gh exiting
+# non-zero (incl. GitHubAPIError), gh not runnable, unparseable JSON
+# (JSONDecodeError is a ValueError), or no App token for the repo's owner.
+_ISSUE_READ_ERRORS = (
+    subprocess.CalledProcessError,
+    OSError,
+    ValueError,
+    github.NoInstallationError,
+    github.AppAuthError,
+)
+
+
+def _check_issue_is_open_task(branch: str) -> str | None:
+    """Refuse an issue branch whose ``<N>`` is not an open task (#3592).
+
+    For a well-formed ``<type>/<N>-<slug>`` *branch*, the issue ``<N>``, read
+    from the current repo, must be open and carry neither the ``epic`` nor the
+    ``archive`` label: a branch is one task's single PR, and an epic or archive
+    is never closed by a PR (#2842). Refusing here stops the work at its source
+    rather than at report-ready or submit, after it is built. Any other branch
+    name is not this convention's and is left alone (no lookup).
+
+    One ``gh issue view`` reads state and labels together, so the guard costs a
+    single call per creation. Fail closed: a failed or malformed read refuses
+    with the reason and never passes as "a task".
+    """
+    parsed = branch_names.parse_issue_branch(branch)
+    if parsed is None:
+        return None
+    number = parsed.number
+    try:
+        raw = github.read_json("issue", "view", number, "--json", "state,labels")
+    except _ISSUE_READ_ERRORS as exc:
+        return _issue_read_refusal(branch, number, str(exc).strip() or type(exc).__name__)
+    if not isinstance(raw, dict):
+        return _issue_read_refusal(branch, number, f"unexpected response {raw!r}")
+    labels = {str(label.get("name", "")) for label in _as_label_list(raw.get("labels"))}
+    kind = epics.non_task_kind_of_labels(labels)
+    if kind is not None:
+        return epics.non_task_refusal_message(branch, f"#{number}", kind)
+    if raw.get("state") != "OPEN":
+        return (
+            f"{branch} (#{number}) is not an open issue (state: {raw.get('state')}); "
+            "a branch carries an open task's work. Reopen the issue, or create a "
+            "new task and use its number."
+        )
     return None
+
+
+def _as_label_list(value: object) -> list[dict[str, object]]:
+    """The label objects of a ``gh issue view --json labels`` payload."""
+    if not isinstance(value, list):
+        return []
+    return [label for label in value if isinstance(label, dict)]
+
+
+def _issue_read_refusal(branch: str, number: str, reason: str) -> str:
+    """The refusal when issue #*number* cannot be read to vet *branch*."""
+    return (
+        f"cannot create {branch}: could not read issue #{number} to confirm it is "
+        f"an open task, not an epic or archive ({reason}). Check that "
+        f"'vrg-gh issue view {number}' works here (auth, network, and that the "
+        "issue exists in this repo), then retry."
+    )
 
 
 _WORKFLOW_PERMISSION_RE = re.compile(
@@ -738,6 +804,8 @@ def _print_help() -> None:
         "    'worktree add -b', 'checkout -b', 'switch -c') requires the\n"
         "    <type>/<N>-<slug> form, and 'worktree add' requires the directory\n"
         "    to be the matching issue-<N>-<slug> (dir/branch stay in lockstep).\n"
+        "    Issue <N> must be open and not an epic or archive; a failed issue\n"
+        "    read refuses the branch.\n"
         "  - Freeze: a push is refused once the branch was reported ready\n"
         "    (vrg-pr-workflow report-ready); unfreeze deliberately to reopen it.\n"
         "  - Identity: remote ops run with the GitHub App installation token for\n"

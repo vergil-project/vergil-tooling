@@ -25,7 +25,7 @@ from vergil_tooling.lib.config import CONFIG_FILE
 from vergil_tooling.lib.labels import ensure_labels
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Collection, Sequence
 
 
 @dataclass(frozen=True)
@@ -1306,10 +1306,19 @@ def normalize_adhoc_archives(org: str, *, apply: bool) -> list[ArchiveConversion
 _NON_TASK_LABELS = ("epic", "archive")
 
 
+def non_task_kind_of_labels(labels: Collection[str]) -> str | None:
+    """``"epic"`` or ``"archive"`` when *labels* mark an umbrella, not a task; else None.
+
+    The lookup-free form of :func:`non_task_kind`, for a caller that already
+    read the labels alongside other fields in one call (``vrg-git``'s
+    branch-creation guard reads state and labels together, #3592).
+    """
+    return next((label for label in _NON_TASK_LABELS if label in labels), None)
+
+
 def non_task_kind(ref: IssueRef) -> str | None:
     """``"epic"`` or ``"archive"`` when *ref* is an umbrella, not a task; else None."""
-    labels = _labels(ref)
-    return next((label for label in _NON_TASK_LABELS if label in labels), None)
+    return non_task_kind_of_labels(_labels(ref))
 
 
 def non_task_ref_kind(ref: str, *, default_repo: str) -> str | None:

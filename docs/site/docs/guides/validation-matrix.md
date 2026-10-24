@@ -64,6 +64,8 @@ repository that has a `vergil.toml`.
   `<type>/<N>-<slug>` and the directory must be `issue-<N>-<slug>`.
 - `vrg-git checkout -b` and `vrg-git switch -c` apply the same branch
   name format.
+- On all three creation paths, issue `<N>` must be open and must not be
+  labelled `epic` or `archive`. A failed issue read refuses the branch.
 - When `.worktrees/` exists, switching branches in the main worktree is
   blocked, except to a protected branch.
 
