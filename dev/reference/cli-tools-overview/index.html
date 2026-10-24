@@ -17781,9 +17781,12 @@ drives the generic fleet-sweep driver (<code>lib/fleet_sweep.py</code>): per rep
 creates a worktree, shells out to the target's applicator, commits,
 and runs <code>report-ready</code>. Like every agent-run task it <strong>never submits or
 merges</strong> — it stops at <code>report-ready</code>, leaving submission and merge to the
-human. <code>--dry-run</code> reports the intended per-repo action, including the
-epic each repo would be filed under, without changing any git or GitHub
-state.</p>
+human. <code>--dry-run</code> reports the verdict a live run would reach per repo
+(would change, naming the epic it would be filed under, or skip) from a
+disposable probe worktree, without opening an issue, branch, commit, or
+PR. The <code>dependabot</code> target previews with <code>vrg-dependabot-sync --check</code>;
+the <code>gitignore</code> target runs <code>--write</code> inside the discarded probe, since
+<code>vrg-gitignore-sync --check</code> is stricter than <code>--write</code>.</p>
 <table>
 <thead>
 <tr>
