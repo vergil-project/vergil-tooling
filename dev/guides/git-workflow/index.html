@@ -16462,6 +16462,10 @@ through PRs against the appropriate integration branch (typically
 <code>vrg-git</code> applies it when the branch is created (<code>worktree add -b</code>,
 <code>checkout -b</code>, <code>switch -c</code>) and <code>vrg-commit</code> applies it again at commit
 time.</p>
+<p>At creation, <code>vrg-git</code> also reads issue <code>&lt;N&gt;</code> from the current repo. It
+refuses the branch when the issue is closed, or is an epic or archive
+(an umbrella is never closed by a PR). It also refuses when the issue
+cannot be read, so check <code>vrg-gh issue view &lt;N&gt;</code> works and retry.</p>
 <p>The <code>release/*</code> and <code>promotion/*</code> prefixes are created by automated
 workflows and are exempt from the issue-number rule.</p>
 <p><code>deps/update-&lt;version&gt;</code> is the branch <code>vrg-update-deps</code> (and the
