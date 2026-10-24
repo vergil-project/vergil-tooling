@@ -1813,3 +1813,46 @@ def test_provision_passes_no_env_for_a_language_without_one(tmp_path: Path) -> N
     ):
         provision_dev_image(tmp_path, "go", runtime="docker")
     assert ensure.call_args.kwargs["build_env"] == {}
+
+
+# -- parse_cache_image_ref (#3481) --------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("ref", "expected"),
+    [
+        (
+            "ghcr.io/vergil-project/prod-python:3.14--feature-1-x--0123abcd",
+            ("3.14", "feature-1-x"),
+        ),
+        (
+            "ghcr.io/vergil-project/prod-cpp-clang:20--develop--deadbeef",
+            ("20", "develop"),
+        ),
+        # A sanitized branch that itself contains "--" parses whole.
+        (
+            "ghcr.io/vergil-project/prod-base:latest--feature--odd--0123abcd",
+            ("latest", "feature--odd"),
+        ),
+        ("ghcr.io/vergil-project/prod-python:3.14", None),  # base image
+        ("ghcr.io/vergil-project/prod-python:<none>", None),
+        ("ghcr.io/vergil-project/prod-python:3.14--x--NOTAHASH", None),
+        ("docker.io/library/redis:7--x--0123abcd", None),  # not ours
+    ],
+)
+def test_parse_cache_image_ref(ref: str, expected: tuple[str, str] | None) -> None:
+    from vergil_tooling.lib.container_cache import parse_cache_image_ref
+
+    assert parse_cache_image_ref(ref) == expected
+
+
+def test_parse_inverts_cache_image_tag() -> None:
+    from vergil_tooling.lib.container_cache import (
+        cache_image_tag,
+        parse_cache_image_ref,
+        sanitize_branch,
+    )
+
+    ref = cache_image_tag("ghcr.io/vergil-project/prod-go:1.24", "feature/12-x", "a1b2c3d4")
+    assert parse_cache_image_ref(ref) == ("1.24", sanitize_branch("feature/12-x"))
+    assert sanitize_branch("feature/12-x") == "feature-12-x"

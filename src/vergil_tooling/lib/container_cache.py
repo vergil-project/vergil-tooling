@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from vergil_tooling.lib.config import vrg_install_tag
 from vergil_tooling.lib.container import (
+    _GHCR,
     container_platform,
     default_image,
     detect_runtime,
@@ -297,6 +298,37 @@ def cache_image_tag(base_image: str, branch: str, cache_hash: str) -> str:
     base_repo = base_image.split(":")[0]
     sanitized = _sanitize_branch(branch)
     return f"{base_repo}:{base_tag}--{sanitized}--{cache_hash}"
+
+
+# A cached image's reference, as cache_image_tag builds it:
+# ``<base_repo>:<base_tag>--<sanitized_branch>--<cache_hash>``. Base images are
+# only ever ours (default_image), the base tag never contains ``--``, and the hash
+# is compute_cache_hash's 8 hex chars. The branch is the greedy middle, so a
+# sanitized name that itself contains ``--`` still parses whole.
+_CACHE_REF_RE = re.compile(
+    rf"^{re.escape(_GHCR)}/[^:]+:(?P<base_tag>.+?)--(?P<branch>.+)--(?P<hash>[0-9a-f]{{8}})$"
+)
+
+
+def parse_cache_image_ref(ref: str) -> tuple[str, str] | None:
+    """Return ``(base_tag, sanitized_branch)`` for a cached image *ref*, else None.
+
+    The inverse of :func:`cache_image_tag`, as far as it goes: the branch comes
+    back sanitized (``feature/1-x`` and ``feature-1-x`` both read
+    ``feature-1-x``), and the tag carries no repository at all, so the caller
+    must match the branch against every repository that could have built it.
+    Anything not shaped exactly like a cached image (a base image, a foreign
+    image, ``<none>``) returns None so it is never treated as ours.
+    """
+    match = _CACHE_REF_RE.match(ref)
+    if match is None:
+        return None
+    return match["base_tag"], match["branch"]
+
+
+def sanitize_branch(branch: str) -> str:
+    """Return *branch* as it appears in a cached image tag."""
+    return _sanitize_branch(branch)
 
 
 def find_cached_image(base_image: str, branch: str, *, runtime: str = "") -> tuple[str, str] | None:

@@ -572,3 +572,84 @@ def test_branch_upstreams_maps_remote_tracking_branches() -> None:
 def test_branch_upstreams_empty() -> None:
     with patch("vergil_tooling.lib.git.read_output", return_value=""):
         assert git.branch_upstreams() == {}
+
+
+# -- another repository via -C (#3481) ----------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        (("-C", "/r", "ls-remote", "--heads"), ("/r", "ls-remote")),
+        (("ls-remote", "--heads"), (None, "ls-remote")),
+        (("-C", "/r"), ("/r", "")),
+        ((), (None, "")),
+    ],
+)
+def test_split_repo(args: tuple[str, ...], expected: tuple[str | None, str]) -> None:
+    assert git._split_repo(args) == expected
+
+
+def test_dash_c_remote_command_uses_the_target_repos_org_token() -> None:
+    with (
+        patch("vergil_tooling.lib.git.github.detect_org", return_value="other-org") as m_org,
+        patch(
+            "vergil_tooling.lib.git.github.get_installation_token",
+            return_value="ghs_other",
+        ) as m_token,
+        patch("vergil_tooling.lib.git.subprocess.run") as mock_run,
+    ):
+        mock_run.return_value = _completed(stdout="")
+        git.read_output("-C", "/projects/other-org/repo", "ls-remote", "--heads", "origin")
+    m_org.assert_called_once_with(cwd="/projects/other-org/repo")
+    m_token.assert_called_once_with("other-org")
+    assert "Authorization: Basic" in mock_run.call_args.kwargs["env"]["GIT_CONFIG_VALUE_0"]
+
+
+def test_dash_c_local_command_mints_no_token() -> None:
+    with (
+        patch("vergil_tooling.lib.git.github.get_installation_token") as m_token,
+        patch("vergil_tooling.lib.git.subprocess.run") as mock_run,
+    ):
+        mock_run.return_value = _completed(stdout="")
+        git.read_output("-C", "/r", "branch")
+    m_token.assert_not_called()
+
+
+def test_dash_c_network_command_is_retried() -> None:
+    err = subprocess.CalledProcessError(
+        128, ("git", "ls-remote"), stderr="fatal: Could not read from remote repository."
+    )
+    with (
+        patch("vergil_tooling.lib.git.github.detect_org", return_value=None),
+        patch("vergil_tooling.lib.git.github.get_installation_token", return_value=None),
+        patch("vergil_tooling.lib.git.subprocess.run") as mock_run,
+        patch("vergil_tooling.lib.git.time.sleep"),
+    ):
+        mock_run.side_effect = [err, _completed(stdout="ok")]
+        assert git.read_output("-C", "/r", "ls-remote", "origin") == "ok"
+    assert mock_run.call_count == 2
+
+
+def test_local_branches_in_another_repo(tmp_path: Path) -> None:
+    with patch("vergil_tooling.lib.git.read_output", return_value="develop") as mock:
+        assert git.local_branches(tmp_path) == {"develop"}
+    mock.assert_called_once_with("-C", str(tmp_path), "branch", "--format=%(refname:short)")
+
+
+def test_remote_branches_in_another_repo(tmp_path: Path) -> None:
+    with patch("vergil_tooling.lib.git.read_output", return_value="s\trefs/heads/x") as mock:
+        assert git.remote_branches("origin", tmp_path) == {"x"}
+    mock.assert_called_once_with("-C", str(tmp_path), "ls-remote", "--heads", "origin")
+
+
+def test_remote_names(tmp_path: Path) -> None:
+    with patch("vergil_tooling.lib.git.read_output", return_value="origin\nupstream") as mock:
+        assert git.remote_names(tmp_path) == {"origin", "upstream"}
+    mock.assert_called_once_with("-C", str(tmp_path), "remote")
+
+
+def test_remote_names_none_configured() -> None:
+    with patch("vergil_tooling.lib.git.read_output", return_value="") as mock:
+        assert git.remote_names() == set()
+    mock.assert_called_once_with("remote")

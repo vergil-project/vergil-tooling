@@ -602,7 +602,9 @@ def link_cloud_claude_dirs(transport: Transport) -> None:
     transport.run("bash", "-c", " ; ".join(parts))
 
 
-_CLOUD_PROJECTS_VOLUME = "/vergil/projects"
+# Where a cloud VM keeps its checkouts: ``<volume>/<org>/<repo>``. Public because
+# the multi-repo branch lookup scans it as the cloud VM's repo set (#3481).
+CLOUD_PROJECTS_VOLUME = "/vergil/projects"
 
 
 def ensure_host_path(transport: Transport, host_projects_dir: str, org: str, repo: str) -> str:
@@ -629,7 +631,7 @@ def ensure_host_path(transport: Transport, host_projects_dir: str, org: str, rep
     ``sudo ln -sfn`` re-points an existing link rather than nesting a new one
     inside it. Follows the ``link_cloud_claude_dirs`` bash-over-transport idiom.
     """
-    checkout = f"{_CLOUD_PROJECTS_VOLUME}/{org}/{repo}"
+    checkout = f"{CLOUD_PROJECTS_VOLUME}/{org}/{repo}"
     host_path = f"{host_projects_dir}/{org}/{repo}"
     host_parent = f"{host_projects_dir}/{org}"
     transport.run(
