@@ -23,7 +23,6 @@ from vergil_tooling.lib.repo_init import (
     _remote_branch_exists,
     _resolve,
     _resolve_versions,
-    _sync_labels,
     cwd_repo_slug,
     derive_clone_parent,
     detect_completed_steps,
@@ -1916,7 +1915,7 @@ class TestStepGithubConfig:
             patch("vergil_tooling.lib.github_config.fetch_actual_state") as mock_fetch,
             patch("vergil_tooling.lib.github_config.compute_desired_state"),
             patch("vergil_tooling.lib.github_config.apply_desired_state", side_effect=mock_apply),
-            patch("vergil_tooling.lib.repo_init._sync_labels", side_effect=mock_sync),
+            patch("vergil_tooling.lib.repo_init.sync_labels", side_effect=mock_sync),
             patch("vergil_tooling.lib.config.read_config"),
             patch("vergil_tooling.lib.repo_init._assert_ci_gates_producible"),
         ):
@@ -1989,31 +1988,6 @@ class TestRemoteBranchExists:
             side_effect=subprocess.CalledProcessError(1, "gh"),
         ):
             assert _remote_branch_exists("org/repo", "develop") is False
-
-
-class TestSyncLabels:
-    def test_provisions_labels(self) -> None:
-        mock_registry = {
-            "labels": [
-                {"name": "bug", "color": "d73a4a", "description": "Something is broken"},
-                {"name": "docs"},
-            ]
-        }
-
-        calls: list[tuple[str, ...]] = []
-
-        def mock_gh_run(*args: str) -> None:
-            calls.append(args)
-
-        with (
-            patch("vergil_tooling.lib.repo_init.github.run", side_effect=mock_gh_run),
-            patch("vergil_tooling.lib.labels.load_labels", return_value=mock_registry),
-        ):
-            _sync_labels("org/repo")
-
-        assert len(calls) == 2
-        assert any("bug" in c for c in calls)
-        assert any("--color" in c for c in calls)
 
 
 class TestCheckRemoteSteps:
@@ -2104,7 +2078,7 @@ class TestStepGithubConfigExtended:
             patch("vergil_tooling.lib.github_config.fetch_actual_state") as mock_fetch,
             patch("vergil_tooling.lib.github_config.compute_desired_state"),
             patch("vergil_tooling.lib.github_config.apply_desired_state", side_effect=mock_apply),
-            patch("vergil_tooling.lib.repo_init._sync_labels"),
+            patch("vergil_tooling.lib.repo_init.sync_labels"),
             patch("vergil_tooling.lib.config.read_config"),
             patch("vergil_tooling.lib.repo_init._assert_ci_gates_producible"),
         ):

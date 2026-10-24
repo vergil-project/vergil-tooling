@@ -8,12 +8,14 @@ from unittest.mock import patch
 import pytest
 
 from vergil_tooling.lib import github
-from vergil_tooling.lib.intake_route import RETIRED_LABELS
 from vergil_tooling.lib.labels import (
+    RETIRED_LABELS,
     UnknownLabelError,
     ensure_labels,
     ensure_labels_or_report,
+    labels_to_delete,
     load_labels,
+    sync_labels,
 )
 
 # GitHub default labels that must not collide with the registry.
@@ -260,3 +262,64 @@ def test_ensure_labels_or_report_lets_missing_token_reach_cli_boundary() -> None
     error = github.MissingGitHubTokenError(1, ["gh"], "", "set the GH_TOKEN environment variable")
     with patch(_RUN, side_effect=error), pytest.raises(github.MissingGitHubTokenError):
         ensure_labels_or_report("vrg-x", "org/repo", ["intake"])
+
+
+# ---------------------------------------------------------------------------
+# RETIRED_LABELS / labels_to_delete / sync_labels (#3558)
+# ---------------------------------------------------------------------------
+
+
+def test_retired_labels_are_the_old_intake_kinds() -> None:
+    assert frozenset({"triage", "idea", "research"}) == RETIRED_LABELS
+
+
+def test_labels_to_delete_merges_registry_and_retired_labels() -> None:
+    registry = {"labels": [], "delete": ["enhancement", "triage"]}
+    assert labels_to_delete(registry) == ["enhancement", "triage", "idea", "research"]
+    assert labels_to_delete({"labels": []}) == sorted(RETIRED_LABELS)
+
+
+def test_sync_labels_creates_registry_and_deletes_present_retired_ones(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    registry = {
+        "labels": [{"name": "bug", "color": "d73a4a", "description": "Something is broken"}],
+        "delete": ["enhancement"],
+    }
+    with (
+        patch("vergil_tooling.lib.labels.load_labels", return_value=registry),
+        patch(
+            "vergil_tooling.lib.labels.github.read_json",
+            return_value=[{"name": "bug"}, {"name": "enhancement"}, {"name": "idea"}],
+        ),
+        patch("vergil_tooling.lib.labels.github.run") as mock_run,
+    ):
+        sync_labels("o/r")
+    assert [c.args for c in mock_run.call_args_list] == [
+        (
+            "label",
+            "create",
+            "bug",
+            "--repo",
+            "o/r",
+            "--force",
+            "--color",
+            "d73a4a",
+            "--description",
+            "Something is broken",
+        ),
+        ("label", "delete", "enhancement", "--repo", "o/r", "--yes"),
+        ("label", "delete", "idea", "--repo", "o/r", "--yes"),
+    ]
+    assert capsys.readouterr().out == (
+        "Syncing labels for o/r:\n  bug\n  deleted enhancement\n  deleted idea\n"
+    )
+
+
+def test_sync_labels_rejects_non_list_label_listing() -> None:
+    with (
+        patch("vergil_tooling.lib.labels.github.read_json", return_value={"message": "nope"}),
+        patch("vergil_tooling.lib.labels.github.run"),
+        pytest.raises(TypeError, match="unexpected `gh label list` output for o/r"),
+    ):
+        sync_labels("o/r")

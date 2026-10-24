@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 
 from vergil_tooling.lib import dependabot, git, github, gitignore, lang_scaffold, repo_config
 from vergil_tooling.lib.config import _ENUMS
+from vergil_tooling.lib.labels import sync_labels
 from vergil_tooling.lib.vergil_refs import EXPECTED_MARKETPLACE_REF
 
 _CHECKPOINT_RE = re.compile(r"chore\(init\): step (\d+) -")
@@ -1437,27 +1438,6 @@ def step_branch_structure(ctx: RepoInitContext) -> None:
     print("  Default branch set to develop.")
 
 
-def _sync_labels(repo: str) -> None:
-    """Provision all canonical labels into a repo."""
-    from vergil_tooling.lib.labels import load_labels
-
-    registry = load_labels()
-    for label in registry["labels"]:
-        cmd: list[str] = [
-            "label",
-            "create",
-            label["name"],
-            "--repo",
-            repo,
-            "--force",
-        ]
-        if label.get("color"):
-            cmd.extend(["--color", label["color"]])
-        if label.get("description"):
-            cmd.extend(["--description", label["description"]])
-        github.run(*cmd)
-
-
 def _assert_ci_gates_producible(ctx: RepoInitContext, desired: DesiredState, *, ghas: bool) -> None:
     """Fail loudly when the CI-gates ruleset requires a check ci.yml never emits.
 
@@ -1513,8 +1493,9 @@ def step_github_config(ctx: RepoInitContext) -> None:
         )
     print("  GitHub config applied.")
 
-    print("  Syncing labels...")
-    _sync_labels(ctx.repo)
+    # The same sync as ``vrg-ensure-label --sync``: create the registry labels
+    # and delete the deprecated and retired ones (#3558).
+    sync_labels(ctx.repo)
     print("  Labels synced.")
 
 

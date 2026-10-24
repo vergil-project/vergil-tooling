@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from vergil_tooling.lib import epics, github, linkage, release, roadmap
+from vergil_tooling.lib.labels import RETIRED_LABELS
 
 # A closed-epic-with-open-child violation (issue #2259): the closed epic paired
 # with the tuple of its still-open children.
@@ -400,9 +401,6 @@ def closed_epic_open_child(org: str, *, home: str | None = None) -> list[EpicOpe
 # applies them in the order nativize -> strip labels -> move public queues ->
 # attach orphans.
 
-# The retired intake kind labels: parent, not label, is now the state.
-_RETIRED_LABELS = frozenset({"triage", "idea", "research"})
-
 _OPEN_ISSUES_QUERY = """
 query($owner: String!, $name: String!, $after: String) {
   repository(owner: $owner, name: $name) {
@@ -625,9 +623,9 @@ def retired_label_drift(org: str, *, issues: list[OpenIssue] | None = None) -> l
     if issues is None:
         issues = open_issues(org)
     return [
-        RetiredLabels(ref=issue.ref, labels=tuple(sorted(issue.labels & _RETIRED_LABELS)))
+        RetiredLabels(ref=issue.ref, labels=tuple(sorted(issue.labels & RETIRED_LABELS)))
         for issue in issues
-        if issue.labels & _RETIRED_LABELS
+        if issue.labels & RETIRED_LABELS
     ]
 
 

@@ -6,9 +6,8 @@ from unittest.mock import patch
 
 import pytest
 
-from vergil_tooling.bin.vrg_ensure_label import labels_to_delete, main, parse_args
+from vergil_tooling.bin.vrg_ensure_label import main, parse_args
 from vergil_tooling.lib import github
-from vergil_tooling.lib.intake_route import RETIRED_LABELS
 
 _MOD = "vergil_tooling.bin.vrg_ensure_label"
 
@@ -220,12 +219,6 @@ def test_main_sync_rejects_non_list_label_listing() -> None:
         pytest.raises(TypeError, match="unexpected `gh label list` output for o/r"),
     ):
         main(["--repo", "o/r", "--sync"])
-
-
-def test_labels_to_delete_merges_registry_and_retired_labels() -> None:
-    registry = {"labels": [], "delete": ["enhancement", "triage"]}
-    assert labels_to_delete(registry) == ["enhancement", "triage", "idea", "research"]
-    assert labels_to_delete({"labels": []}) == sorted(RETIRED_LABELS)
 
 
 # ---------------------------------------------------------------------------
