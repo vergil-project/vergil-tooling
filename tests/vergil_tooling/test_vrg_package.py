@@ -417,6 +417,87 @@ def test_index_requires_config_keys_and_out(capsys: pytest.CaptureFixture[str]) 
     assert "--config" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["index", "--config", "c", "--out", "o"],
+        ["index", "--config", "c", "--keys", "k"],
+    ],
+)
+def test_index_build_requires_keys_and_out(
+    argv: list[str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit) as exc:
+        vrg_package.main(argv)
+    assert exc.value.code == 2
+    assert "--keys and --out are required unless --check-config" in capsys.readouterr().err
+
+
+_VALID_PACKAGES_TOML = """\
+vendor = "vergil"
+products = ["vergil-project/packages"]
+
+[retention]
+keep = 2
+retire = ["old-pkg"]
+"""
+
+
+def test_index_check_config_accepts_a_valid_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls = _record_build_site(monkeypatch)
+    # No base URL, keys or output: none of them is needed to check the config.
+    monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
+    cfg = tmp_path / "packages.toml"
+    cfg.write_text(_VALID_PACKAGES_TOML, encoding="utf-8")
+    assert vrg_package.main(["index", "--check-config", "--config", str(cfg)]) == 0
+    assert calls == []
+    assert f"vrg-package: {cfg}: ok" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("body", "error"),
+    [
+        (
+            'vendor = "v"\nproducts = ["o/r"]\n[retention]\nkeep = 0\n',
+            "retention.keep must be an integer >= 1, got 0",
+        ),
+        (
+            'vendor = "v"\nproducts = ["o/r"]\n[retention]\nretire = ["x", "x"]\n',
+            "retention.retire lists 'x' more than once",
+        ),
+        (
+            'vendor = "v"\nproducts = ["o/r"]\n[retention]\nkeeep = 2\n',
+            "unknown key(s) in [retention]: keeep",
+        ),
+    ],
+)
+def test_index_check_config_rejects_an_invalid_config(
+    body: str,
+    error: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    calls = _record_build_site(monkeypatch)
+    cfg = tmp_path / "packages.toml"
+    cfg.write_text(body, encoding="utf-8")
+    assert vrg_package.main(["index", "--check-config", "--config", str(cfg)]) == 1
+    assert calls == []
+    captured = capsys.readouterr()
+    assert f"ERROR: packages.toml: {error}" in captured.err
+    assert captured.out == ""
+
+
+def test_index_check_config_missing_file_fails(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    missing = tmp_path / "packages.toml"
+    assert vrg_package.main(["index", "--check-config", "--config", str(missing)]) == 1
+    assert f"ERROR: packages.toml not found at {missing}" in capsys.readouterr().err
+
+
 def test_install_test_subcommand_wires_run_install_test(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
