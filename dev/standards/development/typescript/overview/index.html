@@ -16290,8 +16290,11 @@ version a repo resolves from the version window is a hard CI leg (see the
 <li><strong>TEST</strong> (per Node version) — Vitest with the V8 coverage provider, held to
   100% line coverage per Node major (see
   <a href="../testing-and-coverage/">Testing and Coverage</a>).</li>
-<li><strong>AUDIT</strong> (once) — <code>npm audit --audit-level=high --omit=dev</code>, plus a
-  best-effort license summary.</li>
+<li><strong>AUDIT</strong> (once) — <code>npm audit --audit-level=high</code>, plus a best-effort
+  license summary. The vulnerability audit covers every package in
+  <code>package-lock.json</code>, devDependencies included, so a vulnerable docs or test
+  tool fails the audit just as a runtime dependency does. The license summary
+  still covers production dependencies only.</li>
 </ul>
 <h2 id="document-map">Document Map<a class="headerlink" href="#document-map" title="Permanent link">&para;</a></h2>
 <ul>
