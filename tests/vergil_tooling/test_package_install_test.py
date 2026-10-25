@@ -153,6 +153,7 @@ def test_selects_shared_deb_for_its_arch(tmp_path: Path) -> None:
         "deb",
         "noble",
         False,
+        package="x",
     )
     assert (
         install_test.select_artifact(tmp_path, "t", cell, noarch=False).name
@@ -164,7 +165,15 @@ def test_selects_native_suffix(tmp_path: Path) -> None:
     for f in ("t_2.1.240-1_amd64.deb", "t_2.1.240-1~resolute_amd64.deb"):
         (tmp_path / f).write_bytes(b"x")
     cell = TestCell(
-        "x", "ubuntu/26.04/amd64", "amd64", "r", "ubuntu:26.04", "deb", "resolute", True
+        "x",
+        "ubuntu/26.04/amd64",
+        "amd64",
+        "r",
+        "ubuntu:26.04",
+        "deb",
+        "resolute",
+        True,
+        package="x",
     )
     assert (
         install_test.select_artifact(tmp_path, "t", cell, noarch=False).name
@@ -176,7 +185,15 @@ def test_shared_deb_ignores_native_suffix(tmp_path: Path) -> None:
     for f in ("t_2.1.240-1_amd64.deb", "t_2.1.240-1~resolute_amd64.deb"):
         (tmp_path / f).write_bytes(b"x")
     cell = TestCell(
-        "x", "ubuntu/26.04/amd64", "amd64", "r", "ubuntu:26.04", "deb", "resolute", False
+        "x",
+        "ubuntu/26.04/amd64",
+        "amd64",
+        "r",
+        "ubuntu:26.04",
+        "deb",
+        "resolute",
+        False,
+        package="x",
     )
     assert (
         install_test.select_artifact(tmp_path, "t", cell, noarch=False).name
@@ -187,14 +204,16 @@ def test_shared_deb_ignores_native_suffix(tmp_path: Path) -> None:
 def test_deb_noarch(tmp_path: Path) -> None:
     for f in ("k_1.0.0-1_all.deb", "k-1.0.0-1.noarch.rpm"):
         (tmp_path / f).write_bytes(b"x")
-    cell = TestCell("x", "ubuntu/24.04/arm64", "arm64", "r", "ubuntu:24.04", "deb", "noble", False)
+    cell = TestCell(
+        "x", "ubuntu/24.04/arm64", "arm64", "r", "ubuntu:24.04", "deb", "noble", False, package="x"
+    )
     got = install_test.select_artifact(tmp_path, "k", cell, noarch=True)
     assert got.name == "k_1.0.0-1_all.deb"
 
 
 def test_rpm_noarch(tmp_path: Path) -> None:
     (tmp_path / "k-1.0.0-1.noarch.rpm").write_bytes(b"x")
-    cell = TestCell("x", "rhel/9/arm64", "arm64", "r", "ubi9", "rpm", "el9", False)
+    cell = TestCell("x", "rhel/9/arm64", "arm64", "r", "ubi9", "rpm", "el9", False, package="x")
     assert (
         install_test.select_artifact(tmp_path, "k", cell, noarch=True).name
         == "k-1.0.0-1.noarch.rpm"
@@ -204,7 +223,7 @@ def test_rpm_noarch(tmp_path: Path) -> None:
 def test_rpm_shared_uses_rpm_arch(tmp_path: Path) -> None:
     for f in ("t-2.1.240-1.x86_64.rpm", "t-2.1.240-1.aarch64.rpm", "t-2.1.240-1.el9.x86_64.rpm"):
         (tmp_path / f).write_bytes(b"x")
-    cell = TestCell("x", "rhel/9/arm64", "arm64", "r", "ubi9", "rpm", "el9", False)
+    cell = TestCell("x", "rhel/9/arm64", "arm64", "r", "ubi9", "rpm", "el9", False, package="x")
     assert (
         install_test.select_artifact(tmp_path, "t", cell, noarch=False).name
         == "t-2.1.240-1.aarch64.rpm"
@@ -214,7 +233,7 @@ def test_rpm_shared_uses_rpm_arch(tmp_path: Path) -> None:
 def test_rpm_native_suffix(tmp_path: Path) -> None:
     for f in ("t-2.1.240-1.x86_64.rpm", "t-2.1.240-1.el10.x86_64.rpm"):
         (tmp_path / f).write_bytes(b"x")
-    cell = TestCell("x", "rhel/10/amd64", "amd64", "r", "ubi10", "rpm", "el10", True)
+    cell = TestCell("x", "rhel/10/amd64", "amd64", "r", "ubi10", "rpm", "el10", True, package="x")
     assert (
         install_test.select_artifact(tmp_path, "t", cell, noarch=False).name
         == "t-2.1.240-1.el10.x86_64.rpm"
@@ -222,7 +241,7 @@ def test_rpm_native_suffix(tmp_path: Path) -> None:
 
 
 def test_zero_or_many_matches_is_fatal(tmp_path: Path) -> None:
-    cell = TestCell("x", "rhel/9/amd64", "amd64", "r", "ubi9", "rpm", "el9", False)
+    cell = TestCell("x", "rhel/9/amd64", "amd64", "r", "ubi9", "rpm", "el9", False, package="x")
     with pytest.raises(
         PackageError, match=r"expected exactly one artifact for t on rhel/9/amd64, found 0"
     ):
@@ -521,3 +540,85 @@ def test_unknown_cell_is_fatal(tmp_path: Path) -> None:
     repo = _repo_with_staged_package(tmp_path)
     with pytest.raises(PackageError, match=r"unknown test cell 'nope' \(known: test-"):
         install_test.run_install_test(repo, "nope", tmp_path, tmp_path / "r.json")
+
+
+# --- several [[package]] entries (epic vergil-project/.github#472, spec §5.2) ---
+
+_PREFIX_FILES = (
+    "foo_1.0.0-1_amd64.deb",
+    "foo-1.0.0-1.x86_64.rpm",
+    "foo-bar_1.0.0-1_amd64.deb",
+    "foo-bar-1.0.0-1.x86_64.rpm",
+)
+
+
+def test_select_artifact_exact_name(tmp_path: Path) -> None:
+    """``foo`` is a dash-prefix of ``foo-bar``: each selects exactly its own files."""
+    for f in _PREFIX_FILES:
+        (tmp_path / f).write_bytes(b"x")
+    rpm = TestCell("x", "rhel/9/amd64", "amd64", "r", "ubi9", "rpm", "el9", False, package="foo")
+    ub = ("ubuntu/24.04/amd64", "amd64", "r", "ubuntu:24.04", "deb", "noble")
+    deb = TestCell("x", *ub, False, package="foo")
+    pick = install_test.select_artifact
+    assert pick(tmp_path, "foo", rpm, noarch=False).name == "foo-1.0.0-1.x86_64.rpm"
+    assert pick(tmp_path, "foo", deb, noarch=False).name == "foo_1.0.0-1_amd64.deb"
+    assert pick(tmp_path, "foo-bar", rpm, noarch=False).name == "foo-bar-1.0.0-1.x86_64.rpm"
+    assert pick(tmp_path, "foo-bar", deb, noarch=False).name == "foo-bar_1.0.0-1_amd64.deb"
+
+
+def test_select_artifact_exact_name_still_refuses_two_of_its_own(tmp_path: Path) -> None:
+    for f in (*_PREFIX_FILES, "foo-1.0.1-1.x86_64.rpm"):
+        (tmp_path / f).write_bytes(b"x")
+    rpm = TestCell("x", "rhel/9/amd64", "amd64", "r", "ubi9", "rpm", "el9", False, package="foo")
+    with pytest.raises(PackageError, match=r"for foo on rhel/9/amd64, found 2 .*foo-1\.0\.1"):
+        install_test.select_artifact(tmp_path, "foo", rpm, noarch=False)
+
+
+_MULTI_PKG = """
+[[package]]
+builder = "staged"
+vendor = "vergil"
+name = "foo"
+summary = "Foo"
+smoke = "foo --version"
+targets = ["rhel/9/amd64", "ubuntu/24.04/amd64"]
+
+[package.staged]
+build-command = "true"
+
+[[package]]
+builder = "staged"
+vendor = "vergil"
+name = "foo-bar"
+summary = "Foo bar"
+smoke = "foo-bar --check"
+targets = ["rhel/9/amd64", "ubuntu/24.04/amd64"]
+
+[package.staged]
+build-command = "true"
+"""
+
+
+def test_install_test_uses_entry_smoke(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "vergil.toml").write_text(_BASE_TOML + _MULTI_PKG)
+    arts = _arts(tmp_path, *_PREFIX_FILES)
+    boot = _no_bootstrap(monkeypatch)
+    calls: list[str] = []
+    run = _fake_run(calls, listing="/.\n/opt/vergil/foo/bin/foo\n")
+    rep = tmp_path / "r.json"
+    install_test.run_install_test(repo, "foo--test-rhel-9-amd64", arts, rep, run=run)
+    assert boot == []
+    assert calls == [
+        f"dnf install -y {(arts / 'foo-1.0.0-1.x86_64.rpm').resolve()}",
+        "rpm -ql foo",
+        f"{install_test.CLEAN_ENV} bash -c foo --version",
+        "dnf remove -y foo",
+        "test -e /opt/vergil/foo",
+    ]
+    calls.clear()
+    install_test.run_install_test(repo, "foo-bar--test-rhel-9-amd64", arts, rep, run=run)
+    assert f"{install_test.CLEAN_ENV} bash -c foo-bar --check" in calls
+    assert calls[0] == f"dnf install -y {(arts / 'foo-bar-1.0.0-1.x86_64.rpm').resolve()}"
+    assert json.loads(rep.read_text())["cell"] == "foo-bar--test-rhel-9-amd64"

@@ -300,7 +300,7 @@ def test_manifest_from_real_matrix_shape(tmp_path: Path) -> None:
         smoke="true",
         python=PackagePythonConfig(runtime="3.14.4"),
     )
-    manifest = matrix.manifest(matrix.resolve(pkg))
+    manifest = matrix.manifest(matrix.resolve(pkg, "t"))
     files = [
         "t_2.1.0-1_amd64.deb",
         "t-2.1.0-1.x86_64.rpm",

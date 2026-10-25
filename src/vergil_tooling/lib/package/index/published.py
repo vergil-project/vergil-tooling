@@ -72,7 +72,7 @@ def planned(repo_root: Path, cfg: VergilConfig, version: str) -> list[Identity]:
     for pkg in cfg.packages:
         name = naming.package_name(repo_root, pkg)
         pkg_version = naming.package_version(pkg, version)
-        for raw in matrix.manifest(matrix.resolve(pkg))["artifacts"]:
+        for raw in matrix.manifest(matrix.resolve(pkg, name))["artifacts"]:
             entry = ManifestEntry(raw["fmt"], raw["arch"], raw["suite"])
             out.append(Identity(entry.fmt, name, f"{pkg_version}-{entry.revision}", entry.arch))
     return out
