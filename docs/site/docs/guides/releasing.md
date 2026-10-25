@@ -77,7 +77,9 @@ adding new public surface. Versions: `v1.3.0` → `v1.3.1`.
      the release; the index's weekly reconcile picks the release up.
    - `vrg-release`'s `package-index` stage then polls the published
      index (up to 20 minutes, every 30 seconds) until the new version is
-     visible, so the consumer refresh never races the index. While it
+     visible, so the consumer refresh never races the index. With several
+     `[[package]]` entries it waits for every package, each at its own full
+     version, and succeeds only once all of them are listed. While it
      waits, it streams the `Publish package index` run in `<org>/packages`
      that covers the release and prints a heartbeat line on each poll
      otherwise; the index poll alone decides success. A miss

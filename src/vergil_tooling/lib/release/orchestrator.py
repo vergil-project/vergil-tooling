@@ -396,8 +396,11 @@ def _phase_details(ctx: ReleaseContext, phase: str) -> str:
     elif phase == "close-finalize":
         lines.append(_close_finalize_outcome(ctx))
     elif phase == "package-index":
-        if ctx.package_index_url:
-            lines.append(f"Package visible in index: {ctx.package_index_url}")
+        if ctx.package_index_urls:
+            # Packages sharing one index file (same suite and arch) list it once.
+            lines.extend(
+                f"Package visible in index: {url}" for url in dict.fromkeys(ctx.package_index_urls)
+            )
         else:
             lines.append("No [package] block; no package index to wait for.")
     elif phase == "consumer-refresh":
