@@ -12327,6 +12327,8 @@
       
         
       
+        
+      
     
     
     
@@ -12522,6 +12524,17 @@
     <span class="md-ellipsis">
       
         vrg-update-deps
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vrg-upstream-refresh" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-upstream-refresh
       
     </span>
   </a>
@@ -13136,6 +13149,34 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="../upstream-refresh-config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Upstream Refresh ([upstream-refresh])
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
     
     
       
@@ -13157,10 +13198,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_10" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_11" >
         
           
-          <label class="md-nav__link" for="__nav_4_10" id="__nav_4_10_label" tabindex="">
+          <label class="md-nav__link" for="__nav_4_11" id="__nav_4_11_label" tabindex="">
             
   
   
@@ -13178,8 +13219,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_10_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_10">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_11">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -13254,10 +13295,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_11" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_12" >
         
           
-          <label class="md-nav__link" for="__nav_4_11" id="__nav_4_11_label" tabindex="">
+          <label class="md-nav__link" for="__nav_4_12" id="__nav_4_12_label" tabindex="">
             
   
   
@@ -13275,8 +13316,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_11_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_11">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_12_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_12">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -13391,10 +13432,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_12" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_13" >
         
           
-          <label class="md-nav__link" for="__nav_4_12" id="__nav_4_12_label" tabindex="">
+          <label class="md-nav__link" for="__nav_4_13" id="__nav_4_13_label" tabindex="">
             
   
   
@@ -13412,8 +13453,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_12_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_12">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_13_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_13">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -16522,6 +16563,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-upstream-refresh" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-upstream-refresh
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-finalize-pr" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17216,6 +17268,48 @@ the <a href="../dependency-update-config/">dependency-update reference</a>.</p>
 <tr>
 <td>Exit codes</td>
 <td>0 success or no-op, 1 failure or refusal, 130 interrupted</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-upstream-refresh">vrg-upstream-refresh<a class="headerlink" href="#vrg-upstream-refresh" title="Permanent link">&para;</a></h3>
+<p>Run the repo's <code>[upstream-refresh].hook</code> on a clean checkout of the
+base branch, then open, refresh or close the single <code>upstream-refresh</code>
+PR. A no-change run closes any stale refresh PR, or exits quietly when
+there is none. It never merges, and never runs dependency updaters,
+validation or a release. It runs from the scheduled
+<code>ops-upstream-refresh</code> workflow, or by hand as a human. See the
+<a href="../upstream-refresh-config/">upstream-refresh reference</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_upstream_refresh</code></td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>--repo OWNER/NAME</code> (default: <code>$GITHUB_REPOSITORY</code>, then origin), <code>--base BRANCH</code> (default: the repo's default branch), <code>--dry-run</code></td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>Not an agent identity; <code>[upstream-refresh]</code> in <code>vergil.toml</code>; clean working tree with <code>HEAD</code> at <code>origin/&lt;base&gt;</code>; <code>gh</code> authenticated with contents and pull-requests write</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td>A hook failure or untracked files left by the hook stop the run before any push; errors on stderr</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 any outcome (<code>nothing</code>, <code>closed</code>, <code>opened</code>, <code>refreshed</code>, <code>unchanged</code>), 1 error or refusal</td>
 </tr>
 <tr>
 <td>Status</td>
