@@ -144,21 +144,22 @@ def run_build(
 ) -> list[Path]:
     """Build every package format of build cell ``cell_id``; return the artifact paths.
 
-    ``version`` is the repo version; ``[package].version`` overrides it when set.
+    ``version`` is the repo version; :func:`naming.package_version` derives the
+    package version from it.
     ``staging_root`` is wiped and recreated; artifacts land in ``out_dir``.
     ``runtime`` is the runtime ``vrg-package matrix`` recorded for the release;
     only the ``python`` builder has one, so it is an error for any other.
     """
     cfg = read_config(repo_root)
-    if cfg.package is None:
+    if not cfg.packages:
         msg = "vergil.toml has no [package] section"
         raise PackageError(msg)
-    pkg = cfg.package
-    cells = {c.id: c for c in matrix.resolve(pkg).build}
+    cells = {c.id: c for c in matrix.resolve_all(repo_root, cfg.packages).build}
     if cell_id not in cells:
         msg = f"unknown build cell {cell_id!r} (known: {', '.join(cells)})"
         raise PackageError(msg)
     cell = cells[cell_id]
+    pkg = matrix.named(repo_root, cfg.packages)[cell.package]
     builder = BUILDERS.get(pkg.builder)
     if builder is None:
         msg = f"no builder registered for [package].builder = {pkg.builder!r}"
@@ -174,8 +175,8 @@ def run_build(
         repo_root=repo_root,
         pkg=pkg,
         cell=cell,
-        name=naming.package_name(repo_root, pkg),
-        version=pkg.version or version,
+        name=cell.package,
+        version=naming.package_version(pkg, version),
         staging_root=staging_root,
         out_dir=out_dir,
         runtime=runtime,

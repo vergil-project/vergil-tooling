@@ -90,14 +90,21 @@ class Artifact:
 
 @dataclass(frozen=True)
 class ManifestEntry:
-    """One ``packages-manifest.json`` artifact: the shape ``matrix.manifest`` emits."""
+    """One ``packages-manifest.json`` artifact: the shape ``matrix.manifest`` emits.
+
+    ``name`` is the package the artifact belongs to. A multi-package manifest
+    names every artifact; a single-package one (and every manifest published
+    before multi-package repos) names none, so ``name`` is ``None``.
+    """
 
     fmt: str
     arch: str
     suite: str | None
+    name: str | None = None
 
     def __str__(self) -> str:
-        return f"{self.fmt}/{self.arch}" + (f"/{self.suite}" if self.suite else "")
+        where = f"{self.fmt}/{self.arch}" + (f"/{self.suite}" if self.suite else "")
+        return f"{self.name} {where}" if self.name else where
 
     @property
     def revision(self) -> str:
@@ -107,10 +114,24 @@ class ManifestEntry:
         return f"1~{self.suite}" if self.fmt == "deb" else f"1.{self.suite}"
 
     def pattern(self) -> re.Pattern[str]:
+        """The nFPM file name of this artifact.
+
+        Without a ``name`` any package matches, as before multi-package repos.
+        With one, the name is matched exactly: a deb name is followed by ``_``,
+        and an rpm name by a version (which cannot contain ``-``) and then the
+        revision, so with packages ``foo`` and ``foo-bar`` neither pattern
+        matches the other's files.
+        """
         rev = re.escape(self.revision)
+        rpm_arch = _ARCH_TO_RPM_ARCH[self.arch]
+        if self.name is None:
+            if self.fmt == "deb":
+                return re.compile(rf".+_.+-{rev}_{self.arch}\.deb")
+            return re.compile(rf".+-.+-{rev}\.{rpm_arch}\.rpm")
+        name = re.escape(self.name)
         if self.fmt == "deb":
-            return re.compile(rf".+_.+-{rev}_{self.arch}\.deb")
-        return re.compile(rf".+-.+-{rev}\.{_ARCH_TO_RPM_ARCH[self.arch]}\.rpm")
+            return re.compile(rf"{name}_[^_]+-{rev}_{self.arch}\.deb")
+        return re.compile(rf"{name}-[^-]+-{rev}\.{rpm_arch}\.rpm")
 
 
 def _detail(exc: subprocess.CalledProcessError) -> str:
@@ -237,10 +258,14 @@ def _manifest_entries(path: Path, where: str) -> list[ManifestEntry]:
             or raw.get("fmt") not in _FMTS
             or raw.get("arch") not in _MANIFEST_ARCHES
             or not (raw.get("suite") is None or isinstance(raw.get("suite"), str))
+            or not ("name" not in raw or (isinstance(raw["name"], str) and raw["name"]))
         ):
             msg = f"{bad}: bad artifact entry {raw!r}"
             raise PackageError(msg)
-        entries.append(ManifestEntry(raw["fmt"], raw["arch"], raw.get("suite")))
+        entries.append(ManifestEntry(raw["fmt"], raw["arch"], raw.get("suite"), raw.get("name")))
+    if len({e.name is None for e in entries}) > 1:
+        msg = f"{bad}: some artifacts name their package and some do not"
+        raise PackageError(msg)
     return entries
 
 
@@ -358,6 +383,9 @@ def _release_artifacts(product: str, tag: str, workdir: Path, gh: Run) -> list[A
         path = _download(gh, where, product, tag, file, dest)
         meta = deb_metadata if entry.fmt == "deb" else rpm_metadata
         name, version, release, arch, depends = meta(path, gh)
+        if entry.name is not None and name != entry.name:
+            msg = f"{where}: {file} declares package {name!r}, but its {MANIFEST} entry is {entry}"
+            raise PackageError(msg)
         if (arch, release) != (entry.arch, entry.revision):
             msg = (
                 f"{where}: {file} declares arch {arch!r} release {release!r}, but its "

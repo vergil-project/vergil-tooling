@@ -130,17 +130,18 @@ def comment_phase_failed(ctx: ReleaseContext, phase: str, exc: ReleaseError) -> 
 def _packages_repo(ctx: ReleaseContext) -> str:
     """The ``<org>/packages`` repo whose ``publish-index`` workflow indexes this release.
 
-    Resolved from ``[package].vendor`` exactly as the ``package-index`` stage
-    resolves the index it polls, so the advice names the repo that stage waited on.
+    Resolved from the vendor every ``[package]`` entry shares, exactly as the
+    ``package-index`` stage resolves the index it polls, so the advice names the
+    repo that stage waited on.
     """
-    pkg = config.read_config(ctx.repo_root).package
-    if pkg is None:
+    vendor = config.single_vendor(config.read_config(ctx.repo_root))
+    if vendor is None:
         raise ReleaseError(
             phase=package_index.PHASE,
             command="resolve packages repo",
             message="package-index was deferred but vergil.toml has no [package] block",
         )
-    return f"{orgs.for_vendor(pkg.vendor).github_org}/packages"
+    return f"{orgs.for_vendor(vendor).github_org}/packages"
 
 
 def publish_deferred_remedy(ctx: ReleaseContext, jobs: list[str]) -> str:

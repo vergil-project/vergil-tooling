@@ -2,7 +2,7 @@
 
 Every Python-specific version rule lives here, and nowhere in the shared code:
 
-* **Packaged runtime.** A repo with ``[package].builder = "python"`` deploys on
+* **Packaged runtime.** A repo with a ``builder = "python"`` package entry deploys on
   a ``vergil-python`` runtime, which ships separately from (and can lag) the
   container that builds the version. An app resolves to the newest candidate
   whose window entry has ``runtime_published``; with none, resolution fails
@@ -80,8 +80,19 @@ def _runtime_published(window: Window, language: str) -> dict[str, bool | None]:
 
 
 def _check_explicit_runtime(ctx: ExtensionContext, window_tokens: list[str]) -> None:
-    """An explicit ``[package.python].runtime`` must be an ``x.y`` in the window."""
-    pkg = ctx.cfg.package
+    """An explicit ``[package.python].runtime`` must be an ``x.y`` in the window.
+
+    The pin is read from the packages list; more than one pinned
+    ``python``-builder entry is a ``VersionsError`` (spec §5.2).
+    """
+    # Imported here: lib.package.runtime imports this module at load time.
+    from vergil_tooling.lib.package import PackageError
+    from vergil_tooling.lib.package.runtime import pinned_python_package
+
+    try:
+        pkg = pinned_python_package(ctx.cfg)
+    except PackageError as exc:
+        raise VersionsError(str(exc)) from exc
     runtime = pkg.python.runtime if pkg is not None and pkg.python is not None else None
     if runtime is None:
         return
@@ -106,8 +117,10 @@ def python_extension(ctx: ExtensionContext, candidates: tuple[str, ...]) -> tupl
     """
     published = _runtime_published(ctx.window, ctx.language)
     _check_explicit_runtime(ctx, list(published))
-    pkg = ctx.cfg.package
-    if pkg is None or pkg.builder != "python":
+    # Imported here: lib.package.runtime imports this module at load time.
+    from vergil_tooling.lib.package.runtime import python_packages
+
+    if not python_packages(ctx.cfg):
         return candidates
     with_runtime = tuple(token for token in candidates if published[token] is True)
     if not with_runtime:

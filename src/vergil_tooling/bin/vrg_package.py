@@ -11,9 +11,11 @@ Subcommands:
           ``tier`` to $GITHUB_OUTPUT instead of printing. With --manifest
           PATH, also write the release artifact manifest to PATH (always the
           full build output). A repo without [package] reports
-          ``enabled: false`` and empty lists. A python-builder release
+          ``enabled: false`` and empty lists. Each python-builder package
           resolves its vergil-python runtime here, once: every build cell
-          and the manifest carry it as ``runtime`` (#3478).
+          of that package carries it as ``runtime``, and the manifest
+          records it in ``runtimes`` (#3478). With several [[package]]
+          entries every cell id is qualified as ``<name>--<id>``.
 
   build   Build every package format of one build cell (--cell, from the
           matrix) at --version (overridden by [package].version when set).
@@ -22,10 +24,11 @@ Subcommands:
           --runtime takes the cell's recorded runtime; without it the build
           resolves the runtime itself and prints which it chose.
 
-  check-runtime  Refuse (exit 1) when any .deb/.rpm in --artifacts does not
-          depend on exactly the vergil-python runtime --manifest records
-          (#3478). Run where every build cell's packages are together, before
-          publishing. A manifest with no runtime passes.
+  check-runtime  Refuse (exit 1) when any .deb/.rpm of a python-builder
+          package in --artifacts does not depend on exactly the vergil-python
+          runtime --manifest records for that package (#3478). Run where
+          every build cell's packages are together, before publishing. A
+          manifest with no runtime passes.
 
   check-unpublished  Refuse (exit 1) when a release at --version of --repo
           (default: $GITHUB_REPOSITORY) would publish a package — same name,
@@ -217,14 +220,20 @@ def _cmd_matrix(args: argparse.Namespace) -> int:
     cwd = Path.cwd()
     cfg = config.read_config(cwd)
     tier = matrix.Tier(args.tier)
-    m = matrix.resolve(cfg.package, tier=tier) if cfg.package is not None else None
-    # Resolved once here, for the whole release: every build cell receives it
-    # and builds against it instead of re-reading the window (#3478).
-    runtime = python_builder.release_runtime(cwd, cfg.package) if cfg.package is not None else None
-    if runtime is not None:
-        print(f"vrg-package: release runtime vergil-python {runtime}", file=sys.stderr)
+    m = matrix.resolve_all(cwd, cfg.packages, tier=tier) if cfg.packages else None
+    # Resolved once here, per package, for the whole release: every build cell
+    # receives its package's runtime and builds against it instead of
+    # re-reading the window (#3478).
+    runtimes = {
+        name: python_builder.release_runtime(cwd, pkg)
+        for name, pkg in matrix.named(cwd, cfg.packages).items()
+    }
+    for name, runtime in runtimes.items():
+        if runtime is not None:
+            who = f"{name}: " if len(runtimes) > 1 else ""
+            print(f"vrg-package: {who}release runtime vergil-python {runtime}", file=sys.stderr)
     payload: dict[str, object] = (
-        {"enabled": True, "tier": tier.value, **matrix.to_json(m, runtime=runtime)}
+        {"enabled": True, "tier": tier.value, **matrix.to_json(m, runtimes=runtimes)}
         if m is not None
         else {"enabled": False, "tier": tier.value, "build": [], "test": []}
     )
@@ -240,7 +249,7 @@ def _cmd_matrix(args: argparse.Namespace) -> int:
             )
         else:
             Path(args.manifest).write_text(
-                json.dumps(matrix.manifest(m, runtime=runtime), indent=2) + "\n",
+                json.dumps(matrix.manifest(m, runtimes=runtimes), indent=2) + "\n",
                 encoding="utf-8",
             )
     if args.github_output:
@@ -281,6 +290,22 @@ def _cmd_check_runtime(args: argparse.Namespace) -> int:
     if not isinstance(data, dict):
         msg = f"{path}: expected a JSON object"
         raise PackageError(msg)
+    artifacts = Path(args.artifacts)
+    if "runtimes" in data:
+        runtimes = _manifest_runtimes(path, data["runtimes"])
+        if all(rt is None for rt in runtimes.values()):
+            print(f"vrg-package: {path} records no runtime (no python-builder package); passed")
+            return 0
+        packages = [(f.name, meta[0], meta[4]) for f, meta in _artifact_metadata(artifacts)]
+        pkg_runtime.check_consistent_by_name(runtimes, packages, str(artifacts))
+        for name, rt in runtimes.items():
+            if rt is not None:
+                print(
+                    f"vrg-package: every {name} package in {artifacts} depends on "
+                    f"{pkg_runtime.runtime_package(pkg_runtime.series_of(rt))}"
+                )
+        return 0
+    # A manifest from before per-package runtimes: one top-level value.
     recorded = data.get("runtime")
     if recorded is None:
         print(f"vrg-package: {path} records no runtime (not a python-builder release); passed")
@@ -288,18 +313,32 @@ def _cmd_check_runtime(args: argparse.Namespace) -> int:
     if not isinstance(recorded, str):
         msg = f"{path}: 'runtime' must be a string, got {recorded!r}"
         raise PackageError(msg)
-    artifacts = Path(args.artifacts)
-    files = sorted(p for p in artifacts.iterdir() if p.suffix in {".deb", ".rpm"})
-    packages = [
-        (f.name, (collect.deb_metadata if f.suffix == ".deb" else collect.rpm_metadata)(f)[4])
-        for f in files
-    ]
-    pkg_runtime.check_consistent(recorded, packages, str(artifacts))
+    pairs = [(f.name, meta[4]) for f, meta in _artifact_metadata(artifacts)]
+    pkg_runtime.check_consistent(recorded, pairs, str(artifacts))
     print(
-        f"vrg-package: all {len(packages)} package(s) in {artifacts} depend on "
+        f"vrg-package: all {len(pairs)} package(s) in {artifacts} depend on "
         f"{pkg_runtime.runtime_package(pkg_runtime.series_of(recorded))}"
     )
     return 0
+
+
+def _manifest_runtimes(path: Path, raw: object) -> dict[str, str | None]:
+    """The manifest's ``runtimes`` map, checked: package name to runtime string or null."""
+    if not isinstance(raw, dict) or not all(
+        isinstance(k, str) and (v is None or isinstance(v, str)) for k, v in raw.items()
+    ):
+        msg = f"{path}: 'runtimes' must map package names to a runtime or null, got {raw!r}"
+        raise PackageError(msg)
+    return raw
+
+
+def _artifact_metadata(artifacts: Path) -> list[tuple[Path, collect.Metadata]]:
+    """Every ``.deb``/``.rpm`` in ``artifacts`` with its package metadata, by file name."""
+    files = sorted(p for p in artifacts.iterdir() if p.suffix in {".deb", ".rpm"})
+    return [
+        (f, (collect.deb_metadata if f.suffix == ".deb" else collect.rpm_metadata)(f))
+        for f in files
+    ]
 
 
 def _cmd_check_unpublished(args: argparse.Namespace) -> int:
@@ -309,7 +348,7 @@ def _cmd_check_unpublished(args: argparse.Namespace) -> int:
         raise PackageError(msg)
     cwd = Path.cwd()
     cfg = config.read_config(cwd)
-    identities = published.check_release(cwd, cfg.package, repo, args.version)
+    identities = published.check_release(cwd, cfg, repo, args.version)
     if not identities:
         print(f"vrg-package: no [package] section; {repo} v{args.version} publishes no packages")
         return 0

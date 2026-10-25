@@ -2,13 +2,22 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from vergil_tooling.lib.config import ConfigError, PackageConfig, PackagePythonConfig
+from vergil_tooling.lib.config import (
+    ConfigError,
+    PackageConfig,
+    PackagePythonConfig,
+    PackageStagedConfig,
+)
 from vergil_tooling.lib.package import matrix
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _pkg(**kw: Any) -> PackageConfig:
@@ -24,7 +33,7 @@ def _pkg(**kw: Any) -> PackageConfig:
 
 
 def test_default_is_two_shared_cells_and_eight_tests() -> None:
-    m = matrix.resolve(_pkg())
+    m = matrix.resolve(_pkg(), "t")
     assert [(c.id, c.runner, c.image, c.fmts, c.native, c.suite) for c in m.build] == [
         ("shared-amd64", "ubuntu-24.04", "ubuntu:24.04", ("deb", "rpm"), False, None),
         ("shared-arm64", "ubuntu-24.04-arm", "ubuntu:24.04", ("deb", "rpm"), False, None),
@@ -42,7 +51,7 @@ def test_default_is_two_shared_cells_and_eight_tests() -> None:
 
 
 def test_test_cells_carry_the_target_image_and_suite() -> None:
-    m = matrix.resolve(_pkg())
+    m = matrix.resolve(_pkg(), "t")
     cell = next(t for t in m.test if t.target == "rhel/9/arm64")
     assert (cell.id, cell.image, cell.fmt, cell.suite) == (
         "test-rhel-9-arm64",
@@ -53,7 +62,7 @@ def test_test_cells_carry_the_target_image_and_suite() -> None:
 
 
 def test_exclude_drops_rhel_arm() -> None:
-    m = matrix.resolve(_pkg(exclude=["rhel/*/arm64"]))
+    m = matrix.resolve(_pkg(exclude=["rhel/*/arm64"]), "t")
     assert [(c.id, c.fmts) for c in m.build] == [
         ("shared-amd64", ("deb", "rpm")),
         ("shared-arm64", ("deb",)),
@@ -62,13 +71,13 @@ def test_exclude_drops_rhel_arm() -> None:
 
 
 def test_targets_subset_on_one_arch_gives_one_cell() -> None:
-    m = matrix.resolve(_pkg(targets=["ubuntu/*/amd64"]))
+    m = matrix.resolve(_pkg(targets=["ubuntu/*/amd64"]), "t")
     assert [(c.id, c.fmts) for c in m.build] == [("shared-amd64", ("deb",))]
     assert [t.target for t in m.test] == ["ubuntu/24.04/amd64", "ubuntu/26.04/amd64"]
 
 
 def test_native_gets_its_own_cell_in_its_os() -> None:
-    m = matrix.resolve(_pkg(native=["ubuntu/26.04/*"]))
+    m = matrix.resolve(_pkg(native=["ubuntu/26.04/*"]), "t")
     native = [c for c in m.build if c.native]
     assert [(c.id, c.image, c.fmts, c.suite) for c in native] == [
         ("native-ubuntu-26.04-amd64", "ubuntu:26.04", ("deb",), "resolute"),
@@ -83,12 +92,12 @@ def test_native_gets_its_own_cell_in_its_os() -> None:
 
 
 def test_all_native_has_no_shared_cells() -> None:
-    m = matrix.resolve(_pkg(targets=["rhel/9/*"], native=["*/*/*"]))
+    m = matrix.resolve(_pkg(targets=["rhel/9/*"], native=["*/*/*"]), "t")
     assert [c.id for c in m.build] == ["native-rhel-9-amd64", "native-rhel-9-arm64"]
 
 
 def test_noarch_builds_once_on_amd64() -> None:
-    m = matrix.resolve(_pkg(noarch=True))
+    m = matrix.resolve(_pkg(noarch=True), "t")
     assert [(c.id, c.arch, c.runner, c.fmts) for c in m.build] == [
         ("shared-noarch", "amd64", "ubuntu-24.04", ("deb", "rpm")),
     ]
@@ -97,7 +106,7 @@ def test_noarch_builds_once_on_amd64() -> None:
 
 
 def test_json_and_manifest_shapes() -> None:
-    m = matrix.resolve(_pkg(exclude=["rhel/*/arm64"]))
+    m = matrix.resolve(_pkg(exclude=["rhel/*/arm64"]), "t")
     j = matrix.to_json(m)
     assert set(j) == {"build", "test"}
     assert j["build"][0]["id"] == "shared-amd64"
@@ -112,25 +121,32 @@ def test_json_and_manifest_shapes() -> None:
 
 
 def test_runtime_rides_every_build_cell_and_the_manifest() -> None:
-    m = matrix.resolve(_pkg())
-    j = matrix.to_json(m, runtime="3.14")
+    m = matrix.resolve(_pkg(), "t")
+    j = matrix.to_json(m, runtimes={"t": "3.14"})
     assert [c["runtime"] for c in j["build"]] == ["3.14", "3.14"]
     assert all("runtime" not in c for c in j["test"])
     without = matrix.to_json(m)
     assert all("runtime" not in c for c in without["build"])
     assert [{k: v for k, v in c.items() if k != "runtime"} for c in j["build"]] == without["build"]
-    assert matrix.manifest(m, runtime="3.14") == {**matrix.manifest(m), "runtime": "3.14"}
+    assert matrix.manifest(m, runtimes={"t": "3.14"}) == {
+        **matrix.manifest(m),
+        "runtimes": {"t": "3.14"},
+        "runtime": "3.14",
+    }
     assert "runtime" not in matrix.manifest(m)
+    staged = matrix.manifest(m, runtimes={"t": None})
+    assert staged == {**matrix.manifest(m), "runtimes": {"t": None}}
+    assert all("runtime" not in c for c in matrix.to_json(m, runtimes={"t": None})["build"])
 
 
 def test_manifest_noarch_and_native() -> None:
-    assert matrix.manifest(matrix.resolve(_pkg(noarch=True))) == {
+    assert matrix.manifest(matrix.resolve(_pkg(noarch=True), "t")) == {
         "artifacts": [
             {"fmt": "deb", "arch": "all", "suite": None},
             {"fmt": "rpm", "arch": "all", "suite": None},
         ]
     }
-    m = matrix.resolve(_pkg(targets=["ubuntu/26.04/arm64"], native=["ubuntu/*/*"]))
+    m = matrix.resolve(_pkg(targets=["ubuntu/26.04/arm64"], native=["ubuntu/*/*"]), "t")
     assert matrix.manifest(m) == {
         "artifacts": [{"fmt": "deb", "arch": "arm64", "suite": "resolute"}],
     }
@@ -150,7 +166,7 @@ def test_select_targets_dedupes_overlapping_patterns() -> None:
 
 
 def _reduced(**kw: Any) -> matrix.Matrix:
-    return matrix.resolve(_pkg(**kw), tier=matrix.Tier.REDUCED)
+    return matrix.resolve(_pkg(**kw), "t", tier=matrix.Tier.REDUCED)
 
 
 _TIER_CASES: list[dict[str, Any]] = [
@@ -167,12 +183,12 @@ def test_tier_values_are_the_cli_choices() -> None:
 
 @pytest.mark.parametrize("kw", _TIER_CASES)
 def test_full_tier_is_the_default(kw: dict[str, Any]) -> None:
-    assert matrix.resolve(_pkg(**kw), tier=matrix.Tier.FULL) == matrix.resolve(_pkg(**kw))
+    assert matrix.resolve(_pkg(**kw), "t", tier=matrix.Tier.FULL) == matrix.resolve(_pkg(**kw), "t")
 
 
 @pytest.mark.parametrize("kw", _TIER_CASES)
 def test_reduced_keeps_every_build_cell_and_a_subset_of_test_cells(kw: dict[str, Any]) -> None:
-    full = matrix.resolve(_pkg(**kw))
+    full = matrix.resolve(_pkg(**kw), "t")
     m = _reduced(**kw)
     assert m.build == full.build
     assert all(t in full.test for t in m.test)
@@ -267,3 +283,137 @@ def test_reduced_noarch() -> None:
 
 def test_to_json_is_tier_agnostic() -> None:
     assert set(matrix.to_json(_reduced())) == {"build", "test"}
+
+
+# --- the package dimension (epic vergil-project/.github#472, spec §5.2) -----
+
+
+def _tooling_repo(tmp_path: Path) -> Path:
+    """A repo shaped like vergil-tooling: the package name comes from pyproject.toml."""
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "vergil-tooling"\n')
+    return tmp_path
+
+
+def _tooling_pkg() -> PackageConfig:
+    """vergil-tooling's own ``[package]``: python builder, no name, every default target."""
+    return PackageConfig(
+        builder="python",
+        vendor="vergil",
+        summary="s",
+        smoke="vrg-whoami --mode",
+        python=PackagePythonConfig(),
+    )
+
+
+def _series(name: str) -> PackageConfig:
+    return PackageConfig(
+        builder="staged",
+        vendor="vergil",
+        summary="s",
+        smoke="true",
+        name=name,
+        upstream_version="3.15.1+20261021",
+        staged=PackageStagedConfig(build_command="true"),
+    )
+
+
+def test_single_package_cells_unchanged(tmp_path: Path) -> None:
+    """A single-package repo keeps its cell ids and manifest artifacts byte for byte."""
+    m = matrix.resolve_all(_tooling_repo(tmp_path), [_tooling_pkg()])
+    assert [c.id for c in m.build] == ["shared-amd64", "shared-arm64"]
+    assert [t.id for t in m.test] == [
+        "test-rhel-10-amd64",
+        "test-rhel-10-arm64",
+        "test-rhel-9-amd64",
+        "test-rhel-9-arm64",
+        "test-ubuntu-24.04-amd64",
+        "test-ubuntu-24.04-arm64",
+        "test-ubuntu-26.04-amd64",
+        "test-ubuntu-26.04-arm64",
+    ]
+    assert {c.package for c in (*m.build, *m.test)} == {"vergil-tooling"}
+    assert json.dumps(matrix.manifest(m)["artifacts"]) == json.dumps(
+        [
+            {"fmt": "deb", "arch": "amd64", "suite": None},
+            {"fmt": "rpm", "arch": "amd64", "suite": None},
+            {"fmt": "deb", "arch": "arm64", "suite": None},
+            {"fmt": "rpm", "arch": "arm64", "suite": None},
+        ]
+    )
+    # The single package keeps the top-level runtime older readers check.
+    assert matrix.manifest(m, runtimes={"vergil-tooling": "3.15"})["runtime"] == "3.15"
+    reduced = matrix.resolve_all(tmp_path, [_tooling_pkg()], tier=matrix.Tier.REDUCED)
+    assert [t.id for t in reduced.test] == ["test-rhel-9-amd64", "test-ubuntu-24.04-amd64"]
+
+
+def test_multi_package_cells_qualified(tmp_path: Path) -> None:
+    m = matrix.resolve_all(tmp_path, [_series("vergil-python3.14"), _series("vergil-python3.15")])
+    ids = [c.id for c in m.build]
+    assert ids == [
+        "vergil-python3.14--shared-amd64",
+        "vergil-python3.14--shared-arm64",
+        "vergil-python3.15--shared-amd64",
+        "vergil-python3.15--shared-arm64",
+    ]
+    test_ids = [t.id for t in m.test]
+    assert len(set(test_ids)) == len(test_ids) == 16
+    assert "vergil-python3.15--test-rhel-9-arm64" in test_ids
+    assert all(c.id.startswith(f"{c.package}--") for c in (*m.build, *m.test))
+
+
+def test_multi_reduced_tier_tests_every_package(tmp_path: Path) -> None:
+    m = matrix.resolve_all(
+        tmp_path,
+        [_series("vergil-python3.14"), _series("vergil-python3.15")],
+        tier=matrix.Tier.REDUCED,
+    )
+    assert [t.id for t in m.test] == [
+        "vergil-python3.14--test-rhel-9-amd64",
+        "vergil-python3.14--test-ubuntu-24.04-amd64",
+        "vergil-python3.15--test-rhel-9-amd64",
+        "vergil-python3.15--test-ubuntu-24.04-amd64",
+    ]
+
+
+def test_manifest_names_artifacts(tmp_path: Path) -> None:
+    m = matrix.resolve_all(tmp_path, [_series("vergil-python3.14"), _series("vergil-python3.15")])
+    runtimes = {"vergil-python3.14": None, "vergil-python3.15": None}
+    got = matrix.manifest(m, runtimes=runtimes)
+    assert got["runtimes"] == runtimes
+    assert "runtime" not in got
+    assert len(got["artifacts"]) == 8
+    assert all("name" in a for a in got["artifacts"])
+    assert [a["name"] for a in got["artifacts"]].count("vergil-python3.15") == 4
+    assert all("runtime" not in c for c in matrix.to_json(m, runtimes=runtimes)["build"])
+
+
+def test_multi_noarch_and_per_package_runtime(tmp_path: Path) -> None:
+    noarch = dataclasses.replace(_series("data"), noarch=True)
+    py = PackageConfig(
+        builder="python",
+        vendor="vergil",
+        summary="s",
+        smoke="true",
+        name="tool",
+        python=PackagePythonConfig(),
+        targets=["ubuntu/24.04/amd64"],
+    )
+    m = matrix.resolve_all(tmp_path, [noarch, py])
+    assert [c.id for c in m.build] == ["data--shared-noarch", "tool--shared-amd64"]
+    runtimes = {"data": None, "tool": "3.15"}
+    man = matrix.manifest(m, runtimes=runtimes)
+    assert man["artifacts"] == [
+        {"fmt": "deb", "arch": "all", "suite": None, "name": "data"},
+        {"fmt": "rpm", "arch": "all", "suite": None, "name": "data"},
+        {"fmt": "deb", "arch": "amd64", "suite": None, "name": "tool"},
+    ]
+    assert man["runtimes"] == runtimes
+    assert "runtime" not in man
+    build = matrix.to_json(m, runtimes=runtimes)["build"]
+    assert [c.get("runtime") for c in build] == [None, "3.15"]
+    assert [c["package"] for c in build] == ["data", "tool"]
+
+
+def test_named_refuses_two_entries_with_one_name(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match=r"two \[\[package\]\] entries resolve to .*'a'"):
+        matrix.named(tmp_path, [_series("a"), _series("a")])

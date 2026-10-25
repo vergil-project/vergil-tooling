@@ -129,8 +129,10 @@ def _fake_gh(releases: dict[str, list[tuple[str, list[str]]]], **kw: Any) -> _Fa
     return _FakeGh(releases, **kw)
 
 
-def _entry(fmt: str, arch: str, suite: str | None = None) -> dict[str, Any]:
-    return {"fmt": fmt, "arch": arch, "suite": suite}
+def _entry(
+    fmt: str, arch: str, suite: str | None = None, *, name: str | None = None
+) -> dict[str, Any]:
+    return {"fmt": fmt, "arch": arch, "suite": suite, **({} if name is None else {"name": name})}
 
 
 def _a(product: str, tag: str, name: str, version: str, fmt: str = "deb") -> Artifact:
@@ -300,7 +302,7 @@ def test_manifest_from_real_matrix_shape(tmp_path: Path) -> None:
         smoke="true",
         python=PackagePythonConfig(runtime="3.14.4"),
     )
-    manifest = matrix.manifest(matrix.resolve(pkg))
+    manifest = matrix.manifest(matrix.resolve(pkg, "t"))
     files = [
         "t_2.1.0-1_amd64.deb",
         "t-2.1.0-1.x86_64.rpm",
@@ -369,6 +371,13 @@ def test_repeated_manifest_entry_is_fatal(tmp_path: Path) -> None:
         ({"artifacts": [_entry("apk", "amd64")]}, r"bad artifact entry"),
         ({"artifacts": [_entry("deb", "riscv64")]}, r"bad artifact entry"),
         ({"artifacts": [{"fmt": "deb", "arch": "amd64", "suite": 3}]}, r"bad artifact entry"),
+        ({"artifacts": [_entry("deb", "amd64", name="")]}, r"bad artifact entry"),
+        ({"artifacts": [{**_entry("deb", "amd64"), "name": None}]}, r"bad artifact entry"),
+        ({"artifacts": [{**_entry("deb", "amd64"), "name": 3}]}, r"bad artifact entry"),
+        (
+            {"artifacts": [_entry("deb", "amd64", name="foo"), _entry("deb", "arm64")]},
+            r"some artifacts name their package and some do not",
+        ),
     ],
 )
 def test_malformed_manifest_is_fatal(tmp_path: Path, manifest: Any, match: str) -> None:
@@ -383,6 +392,113 @@ def test_manifest_suite_may_be_omitted(tmp_path: Path) -> None:
         releases={"o/t": [("v2.1.0", [collect.MANIFEST, "t_1-1_amd64.deb"])]}, manifest=manifest
     )
     assert [a.release for a in collect.collect(_cfg(), tmp_path, gh=gh)] == ["1"]
+
+
+# --- several packages per release (epic vergil-project/.github#472, T4) ------
+
+
+def _four(name: str, version: str) -> list[str]:
+    """The four shared-build files of ``name``: deb and rpm, amd64 and arm64."""
+    return [
+        f"{name}_{version}-1_amd64.deb",
+        f"{name}_{version}-1_arm64.deb",
+        f"{name}-{version}-1.x86_64.rpm",
+        f"{name}-{version}-1.aarch64.rpm",
+    ]
+
+
+def _named_entries(*names: str) -> list[dict[str, Any]]:
+    return [
+        _entry(fmt, arch, name=name)
+        for name in names
+        for arch in ("amd64", "arm64")
+        for fmt in ("deb", "rpm")
+    ]
+
+
+def test_match_two_packages_same_arch(tmp_path: Path) -> None:
+    """Two packages for one (fmt, arch, suite) each pair with exactly their own file."""
+    names = ("vergil-python3.14", "vergil-python3.15")
+    files = [*_four(names[0], "3.14.4+20261021.1.0.5"), *_four(names[1], "3.15.1+20261021.1.0.5")]
+    gh = _fake_gh(
+        releases={"o/t": [("v1.0.5", [collect.MANIFEST, *files])]},
+        manifest={"artifacts": _named_entries(*names)},
+    )
+    own = {names[0]: files[:4], names[1]: files[4:]}
+    arts = collect.collect(_cfg(), tmp_path, gh=gh)
+    assert sorted(a.path.name for a in arts) == sorted(files)
+    assert all(a.path.name in own[a.name] for a in arts)
+
+
+def test_match_exact_name_prefix(tmp_path: Path) -> None:  # Review Focus 2
+    """``foo`` is a dash-prefix of ``foo-bar``; neither entry matches the other's files."""
+    foo, foo_bar = _four("foo", "1.0"), _four("foo-bar", "1.0")
+    for raw in _named_entries("foo", "foo-bar"):
+        entry = collect.ManifestEntry(raw["fmt"], raw["arch"], raw["suite"], raw["name"])
+        own = foo if raw["name"] == "foo" else foo_bar
+        hits = [f for f in [*foo, *foo_bar] if entry.pattern().fullmatch(f)]
+        assert len(hits) == 1
+        assert hits[0] in own
+    gh = _fake_gh(
+        releases={"o/t": [("v1.0.0", [collect.MANIFEST, *foo_bar, *foo])]},
+        manifest={"artifacts": _named_entries("foo-bar", "foo")},
+    )
+    by_name = {
+        n: sorted(a.path.name for a in collect.collect(_cfg(), tmp_path, gh=gh) if a.name == n)
+        for n in ("foo", "foo-bar")
+    }
+    assert by_name == {"foo": sorted(foo), "foo-bar": sorted(foo_bar)}
+
+
+def test_named_native_entry_matches_its_suite(tmp_path: Path) -> None:
+    files = ["foo_1.0-1~noble_amd64.deb", "foo-1.0-1.el10.x86_64.rpm"]
+    gh = _fake_gh(
+        releases={"o/t": [("v1.0.0", [collect.MANIFEST, *files])]},
+        manifest={
+            "artifacts": [
+                _entry("deb", "amd64", "noble", name="foo"),
+                _entry("rpm", "amd64", "el10", name="foo"),
+            ]
+        },
+    )
+    assert sorted(a.path.name for a in collect.collect(_cfg(), tmp_path, gh=gh)) == sorted(files)
+
+
+def test_old_manifest_still_matches(tmp_path: Path) -> None:
+    """A manifest without ``name`` keys (one package) matches exactly as before."""
+    files = _four("t", "2.1.0")
+    entries = [_entry(fmt, arch) for arch in ("amd64", "arm64") for fmt in ("deb", "rpm")]
+    gh = _fake_gh(
+        releases={"o/t": [("v2.1.0", [collect.MANIFEST, *files])]},
+        manifest={"artifacts": entries},
+    )
+    arts = collect.collect(_cfg(), tmp_path, gh=gh)
+    assert sorted(a.path.name for a in arts) == sorted(files)
+    assert {a.name for a in arts} == {"t"}
+
+
+def test_named_entry_missing_its_file_is_fatal(tmp_path: Path) -> None:
+    gh = _fake_gh(
+        releases={"o/t": [("v1.0.0", [collect.MANIFEST, "foo-bar_1.0-1_amd64.deb"])]},
+        manifest={"artifacts": [_entry("deb", "amd64", name="foo")]},
+    )
+    with pytest.raises(PackageError, match=r"o/t@v1\.0\.0 is missing foo deb/amd64"):
+        collect.collect(_cfg(), tmp_path, gh=gh)
+
+
+def test_metadata_name_disagreeing_with_named_entry_is_fatal(tmp_path: Path) -> None:
+    deb = "foo_1.0-1_amd64.deb"
+    gh = _fake_gh(
+        releases={"o/t": [("v1.0.0", [collect.MANIFEST, deb])]},
+        manifest={"artifacts": [_entry("deb", "amd64", name="foo")]},
+        control={deb: "Package: bar\nVersion: 1.0-1\nArchitecture: amd64\n"},
+    )
+    with pytest.raises(
+        PackageError,
+        match=r"foo_1\.0-1_amd64\.deb declares package 'bar', but its "
+        r"packages-manifest\.json entry is foo deb/amd64",
+    ):
+        collect.collect(_cfg(), tmp_path, gh=gh)
 
 
 @pytest.mark.parametrize(

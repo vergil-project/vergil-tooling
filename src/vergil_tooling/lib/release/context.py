@@ -47,10 +47,11 @@ class ReleaseContext:
     develop_cd_run_id: str | None = None
     develop_cd_run_url: str | None = None
 
-    # The index file the package-index stage saw the released package in
-    # (deb Packages or rpm repomd.xml URL). None when the repo has no
-    # [package] block or the stage has not succeeded.
-    package_index_url: str | None = None
+    # The index file the package-index stage saw each released package in
+    # (deb Packages or rpm repomd.xml URL), one per [[package]] entry in
+    # vergil.toml order. Empty when the repo has no [package] block or the
+    # stage has not succeeded.
+    package_index_urls: tuple[str, ...] = ()
 
     consumer_refresh_message: str | None = None
 

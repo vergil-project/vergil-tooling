@@ -152,6 +152,25 @@ the [dependency-update reference](dependency-update-config.md).
 | Exit codes | 0 success or no-op, 1 failure or refusal, 130 interrupted |
 | Status | Active |
 
+### vrg-upstream-refresh
+
+Run the repo's `[upstream-refresh].hook` on a clean checkout of the
+base branch, then open, refresh or close the single `upstream-refresh`
+PR. A no-change run closes any stale refresh PR, or exits quietly when
+there is none. It never merges, and never runs dependency updaters,
+validation or a release. It runs from the scheduled
+`ops-upstream-refresh` workflow, or by hand as a human. See the
+[upstream-refresh reference](upstream-refresh-config.md).
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_upstream_refresh` |
+| Args | `--repo OWNER/NAME` (default: `$GITHUB_REPOSITORY`, then origin), `--base BRANCH` (default: the repo's default branch), `--dry-run` |
+| Preconditions | Not an agent identity; `[upstream-refresh]` in `vergil.toml`; clean working tree with `HEAD` at `origin/<base>`; `gh` authenticated with contents and pull-requests write |
+| Failure mode | A hook failure or untracked files left by the hook stop the run before any push; errors on stderr |
+| Exit codes | 0 any outcome (`nothing`, `closed`, `opened`, `refreshed`, `unchanged`), 1 error or refusal |
+| Status | Active |
+
 ### vrg-finalize-pr
 
 Finalize a pull request. Given a PR, runs the provenance check, merges
@@ -826,19 +845,21 @@ workflows; `matrix` is also useful locally. See the
   them as JSON (read-only). `--tier {full,reduced}` (default `full`),
   `--github-output` (append `enabled`/`build`/`test`/`tier` to
   `$GITHUB_OUTPUT`), `--manifest PATH` (also write the release artifact
-  manifest). A repo without `[package]` reports `enabled: false`. A
-  `python` release resolves its runtime here, once, and records it as
-  `runtime` on every build cell and in the manifest.
+  manifest). A repo without `[package]` reports `enabled: false`. Each
+  `python` package resolves its runtime here, once, and records it as
+  `runtime` on every build cell of that package and in the manifest's
+  `runtimes` map. With several `[[package]]` entries, every cell id is
+  qualified as `<name>--<id>`.
 - `build` — build every format of one build cell: `--cell` (required),
   `--version` (required), `--out` (default `dist/packages`),
   `--staging` (default `.vergil/package-staging`, wiped first),
   `--runtime` (the cell's recorded runtime; when empty or absent, the
   build resolves the runtime itself). Prints the runtime it chose.
   Needs `nfpm` on `PATH`.
-- `check-runtime` — refuse (exit 1) when any `.deb`/`.rpm` in
-  `--artifacts DIR` does not depend on exactly the runtime that
-  `--manifest PATH` records. Read-only. See
-  [one runtime per release](package-config.md#one-runtime-per-release).
+- `check-runtime` — refuse (exit 1) when any `.deb`/`.rpm` of a
+  `python` package in `--artifacts DIR` does not depend on exactly the
+  runtime that `--manifest PATH` records for that package. Read-only.
+  See [one runtime per package](package-config.md#one-runtime-per-package).
 - `check-unpublished` — refuse (exit 1) when a release at `--version`
   (required) would publish a package with the same name, full version,
   architecture and format as one an earlier stable release of `--repo`

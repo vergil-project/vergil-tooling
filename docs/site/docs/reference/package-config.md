@@ -34,6 +34,7 @@ smoke   = "vrg-whoami --mode" # the install test runs this after install
 # native  = ["ubuntu/26.04/*"]  # own build cell, inside that OS
 # name    = "..."               # required for staged; python defaults to pyproject [project].name
 # version = "3.14.4+20261001"   # explicit package version; default: the repo version
+# upstream-version = "3.15.1+20261021"  # upstream inputs; package version is <this>.<repo version>
 # noarch  = true                # architecture-independent: built once, deb `all` / rpm `noarch`
 
 [package.python]               # optional for builder = "python"
@@ -45,6 +46,71 @@ smoke   = "vrg-whoami --mode" # the install test runs this after install
 # build-command = "packaging/build.sh"  # populates $VRG_STAGING_ROOT for $VRG_TARGET_ARCH
 ```
 
+### Several packages: `[[package]]`
+
+A repo that publishes more than one package declares each one as an entry in
+an array of tables, `[[package]]`. Each entry takes the same keys and
+subtables as a single `[package]`. A subtable such as `[package.python]` or
+`[package.staged]` belongs to the `[[package]]` entry directly above it.
+
+```toml
+[[package]]
+name    = "example-server"
+builder = "staged"
+vendor  = "vergil"
+summary = "Example server"
+smoke   = "example-server --version"
+
+[package.staged]
+build-command = "packaging/build-server.sh"
+
+[[package]]
+name    = "example-client"
+builder = "staged"
+vendor  = "vergil"
+summary = "Example client"
+smoke   = "example-client --version"
+
+[package.staged]
+build-command = "packaging/build-client.sh"
+```
+
+A single `[package]` table is one entry and behaves exactly as before. A
+single `[[package]]` entry behaves the same as a `[package]` table. With more
+than one entry, `vrg-validate` (and every tool that reads `vergil.toml`)
+refuses the config unless:
+
+- every entry sets an explicit `name`, and no two entries share one. The
+  `pyproject.toml` name fallback for `builder = "python"` applies only to a
+  single package.
+- every entry has the same `vendor`. The release wait and the tracking issue
+  resolve one `<org>/packages` repository from it.
+- the repo has no `packaging/nfpm.overlay.yaml`. That overlay has one fixed
+  path, so it would apply to every package. It is allowed only with a single
+  package.
+
+The other repo-level checks run once per entry. For example, a `python`
+entry still requires `uv.lock` (see [Validation](#validation)).
+
+Every stage handles each entry as its own package. The matrix qualifies
+every cell id with the package name (see [Matrix
+resolution](#matrix-resolution-and-the-22-default)), `vrg-package build
+--cell` and `install-test --cell` pick the entry from the cell, so each
+package builds with its own builder and is install-tested with its own
+`smoke`, and `check-runtime` checks each `python` package against its own
+runtime (see [One runtime per package](#one-runtime-per-package)).
+
+At most one `python` entry may pin `[package.python].runtime`. Version
+resolution and `vrg-update-deps` read the pin from the packages list, and
+refuse a config where more than one entry pins a runtime, with
+`several [[package]] entries pin a runtime; pin it on one entry`. Any
+`python` entry, pinned or not, makes version resolution require a
+published `vergil-python` runtime (see [`[package.python]`](#packagepython)).
+
+The design is epic
+[vergil-project/.github#472](https://github.com/vergil-project/.github/issues/472)
+(spec `epics/472-multi-series-runtime/spec.md`, §5.1).
+
 ## Keys
 
 | Key | Type | Default | Semantics |
@@ -54,7 +120,8 @@ smoke   = "vrg-whoami --mode" # the install test runs this after install
 | `summary` | string | *(required)* | One-line package description |
 | `smoke` | string | *(required)* | Shell command the install test runs after installing the package |
 | `name` | string | see semantics | Package name. Required for `staged`; `python` defaults to `pyproject.toml` `[project].name` |
-| `version` | string | repo version | Explicit package version (`[0-9][0-9A-Za-z.+~]*`), for when it is not the repo's semver (e.g. `vergil-python`). A release refuses a version an earlier release already published; see [the re-publish check](#the-re-publish-check) |
+| `version` | string | repo version | Explicit package version (`[0-9][0-9A-Za-z.+~]*`), for when it is not the repo's semver (e.g. `vergil-python`). A release refuses a version an earlier release already published; see [the re-publish check](#the-re-publish-check). Not with `upstream-version` |
+| `upstream-version` | string | *(unset)* | The upstream inputs a package is built from (`[0-9][0-9A-Za-z.+~]*`), for example `3.15.1+20261021`. The package version is `<upstream-version>.<repo version>` (`3.15.1+20261021.1.0.5` at repo `1.0.5`), so every repo release publishes a new version and the inputs show first in `apt policy`. That version sorts above the same inputs without the suffix and above an earlier repo release, under both dpkg and rpm. Not with `version` |
 | `noarch` | boolean | `false` | Architecture-independent: one build cell on amd64, emitting deb `all` / rpm `noarch` |
 | `exclude` | list of globs | `[]` | Targets to drop from the default set |
 | `targets` | list of globs | *(unset)* | Explicit subset replacing the default set |
@@ -103,6 +170,16 @@ Valid only with `builder = "staged"`.
 A `staged` package needs a `build-command`, overlay `contents`, or both. A
 staging root that ends up empty is a build-time error.
 
+The `build-command` runs from the repo root via `bash -c`, with these
+variables set:
+
+| Variable | Value |
+|---|---|
+| `VRG_STAGING_ROOT` | The empty staging directory, standing in for `/` |
+| `VRG_TARGET_ARCH` | The build cell's architecture (`amd64` or `arm64`) |
+| `VRG_PACKAGE_NAME` | The package being built (its `name`), so one script can serve several `[[package]]` entries |
+| `VRG_PACKAGE_VERSION` | The package's full version: `<upstream-version>.<repo version>`, the `version` override, or the repo version |
+
 ## Targets
 
 Supported targets live in a registry in vergil-tooling
@@ -132,6 +209,13 @@ and test cells. The workflows consume only that JSON.
 - A `noarch` package has exactly one build cell, `shared-noarch`, on amd64.
 - Every selected target gets its own **test cell**
   (`test-<distro>-<version>-<arch>`).
+- With several `[[package]]` entries, each entry resolves its own cells, and
+  every id is qualified with its package name as `<name>--<id>`, for example
+  `vergil-python3.15--shared-amd64` or `vergil-python3.15--test-rhel-9-arm64`.
+  The double dash never occurs in an unqualified id, so per-cell artifact
+  names never collide. A single package keeps the unqualified ids above.
+
+Every cell in the JSON carries its `package` name.
 
 With the defaults (2 distros × 2 versions × 2 architectures, no `native`) this
 gives **2 build cells, 4 artifacts (a `.deb` and an `.rpm` per architecture)
@@ -145,7 +229,8 @@ The default is `full`: every build cell and every test cell, as above.
 
 `reduced` is the cheaper gate for feature PRs (the full matrix runs on release
 PRs). It keeps **every build cell**, because build breaks are cheap to catch
-and common, and **one test cell per format present**:
+and common, and **one test cell per format present** (per package, with
+several `[[package]]` entries):
 
 - the **oldest** selected release of that format (compared numerically, so
   RHEL 9 before RHEL 10), on amd64, else on arm64. The oldest release is the
@@ -162,6 +247,36 @@ With the defaults, `reduced` gives the same 2 build cells and 2 test cells:
 The printed JSON carries `"tier"`, and `--github-output` writes a `tier=` line
 after `enabled`, `build` and `test`. `--manifest` is unaffected: the build
 cells, and so the release artifact manifest, are the same in both tiers.
+
+### The release manifest
+
+`vrg-package matrix --manifest PATH` writes `packages-manifest.json`, which
+the release attaches and the index reads:
+
+```json
+{
+  "artifacts": [
+    {"fmt": "deb", "arch": "amd64", "suite": null, "name": "vergil-python3.14"},
+    {"fmt": "deb", "arch": "amd64", "suite": null, "name": "vergil-python3.15"}
+  ],
+  "runtimes": {"vergil-python3.14": null, "vergil-python3.15": null}
+}
+```
+
+- `artifacts` lists one `(fmt, arch, suite)` per artifact built. With several
+  packages, each one also names its package as `name`. A single package's
+  artifact list has no `name` key and is exactly what it always was.
+- `runtimes` maps each package name to the `vergil-python` runtime its
+  release resolved, or `null` for a non-`python` package.
+- A single package with a runtime also keeps the top-level `runtime`, the
+  shape that older readers check.
+
+The index pairs each manifest entry with exactly one attached file. A named
+entry matches only files of that exact package name, so two packages built
+for the same `(fmt, arch, suite)` each claim their own file, and a package
+named `foo` never claims `foo-bar`'s files. An entry without `name` (a single
+package, or any release from before multi-package repos) matches as it always
+did. A manifest that names some artifacts but not others is rejected.
 
 Because a shared cell builds on Ubuntu 24.04 for every target, the python
 builder applies a **glibc floor guard**: any ELF object in the venv that needs
@@ -261,7 +376,10 @@ Install tests run in plain containers without systemd as PID 1, so:
 - `[package.python]` with `builder = "staged"`, or `[package.staged]` with
   `builder = "python"`;
 - an overlay that is not a YAML mapping or that sets a key outside the list
-  above.
+  above;
+- with several `[[package]]` entries, a missing or duplicate `name`, entries
+  with different vendors, or a `packaging/nfpm.overlay.yaml` (see
+  [Several packages](#several-packages-package)).
 
 Unrecognized keys are the exception: an unknown key in `[package]`,
 `[package.python]` or `[package.staged]` only prints an
@@ -345,7 +463,7 @@ earlier checks stop such a release before it publishes:
 
 1. **`vrg-release` preflight**, on a fresh start, before anything is
    tagged. This is the earliest point that knows the full versions: the
-   package name, `version` (or the release version) and the revision of
+   package name, the package version (see `version` and `upstream-version`) and the revision of
    every artifact in the release manifest are all known without
    building. See
    [Releasing](../guides/releasing.md#the-package-re-publish-check).
@@ -369,14 +487,16 @@ never counted as an earlier release. Any failure to read the releases
 refuses the release; the check never skips. A repo without `[package]`
 passes.
 
-To fix a refusal, bump `[package].version`. For example, use a new
-`+<date>` build suffix, or add a rebuild counter
-(`3.14.8+20261003` → `3.14.8+20261003.1`). The revision (`-1`) is set by
-the tooling and cannot be configured.
+To fix a refusal, bump the package version. For an `upstream-version`
+package, set a new `upstream-version`, or cut a new repo release: the
+package version ends in the repo version, so a new release is a new
+version. For a `version` override, set a new `version`. The revision
+(`-1`) is set by the tooling and cannot be configured.
 
-### One runtime per release
+### One runtime per package
 
-A `python` release must depend on one runtime on every architecture.
+Each `python` package of a release must depend on one runtime on every
+architecture.
 Build cells run in parallel and at slightly different times, so if each
 cell read the version window itself, a window change mid-release could
 give each architecture a different runtime. This happened to
@@ -385,10 +505,11 @@ vergil-tooling 2.1.258: amd64 got `vergil-python3.15` and arm64 got
 
 To prevent it, the runtime is resolved once:
 
-1. **`vrg-package matrix`** resolves the runtime: the `runtime` pin, or
-   the derived series. It records the result as `runtime` on every build
-   cell and in `packages-manifest.json`, and prints it on stderr.
-   Other builders record no runtime.
+1. **`vrg-package matrix`** resolves the runtime of each `python`
+   package: the `runtime` pin, or the derived series. It records the
+   result as `runtime` on every build cell of that package and in the
+   manifest's `runtimes` map, and prints it on stderr. Other builders
+   record no runtime (`null`).
 2. **`vrg-package build --runtime <runtime>`** builds against the
    recorded value and never re-reads the window. Pass the cell's
    `runtime` unchanged. An empty value counts as none recorded, so the
@@ -404,10 +525,14 @@ To prevent it, the runtime is resolved once:
    vrg-package check-runtime --manifest packages-manifest.json --artifacts dist/packages
    ```
 
-   Every `.deb` and `.rpm` must depend on exactly the recorded
-   `vergil-python<X.Y>` and on no other runtime series. Each mismatch is
-   listed. A directory with no packages fails. A manifest with no
-   `runtime` (a non-`python` release) passes.
+   Every `.deb` and `.rpm` of a `python` package must depend on exactly
+   the `vergil-python<X.Y>` recorded for that package, and on no other
+   runtime series. Each mismatch is listed. A `python` package with no
+   files fails, and so does a file whose package the manifest does not
+   list. Packages recorded with a `null` runtime are not checked, so a
+   release of only non-`python` packages passes. A manifest from before
+   the `runtimes` map is checked against its top-level `runtime`, as one
+   package.
 
 ## The package index (`packages.toml`)
 

@@ -1026,7 +1026,7 @@ def _vergil_config(
         publish=PublishConfig(release=False, docs=docs, consumer_refresh=None),
         container=ContainerConfig(env_prefixes=[], system_packages=[]),
         validation=ValidationConfig(container_command=DEFAULT_VALIDATION_COMMAND),
-        package=package,
+        packages=(package,) if package is not None else (),
     )
 
 
@@ -1105,6 +1105,16 @@ def test_compute_desired_state_requires_package_gate_with_package_section() -> N
     """`[package]` in `vergil.toml` must flow through to the CI-gates ruleset so
     branch protection requires `package / evidence` (epic #356, spec 8.1)."""
     cfg = _vergil_config(package=_package_config())
+    state = compute_desired_state(cfg, visibility="public", is_org=True)
+    gates = next(r for r in state.rulesets if r.name == "CI gates")
+    assert "package / evidence" in _check_names(gates)
+
+
+def test_compute_desired_state_requires_package_gate_with_several_packages() -> None:
+    """Several `[[package]]` entries are still one `package / evidence` gate
+    (epic vergil-project/.github#472); presence reads `packages`, never `package`."""
+    cfg = _vergil_config()
+    cfg.packages = (_package_config(), _package_config())
     state = compute_desired_state(cfg, visibility="public", is_org=True)
     gates = next(r for r in state.rulesets if r.name == "CI gates")
     assert "package / evidence" in _check_names(gates)

@@ -477,9 +477,22 @@ def test_phase_details_package_index() -> None:
 
     ctx = _ctx()
     assert "No [package]" in _phase_details(ctx, "package-index")
-    ctx.package_index_url = "https://b/deb/dists/noble/main/binary-amd64/Packages"
-    details = _phase_details(ctx, "package-index")
-    assert "https://b/deb/dists/noble/main/binary-amd64/Packages" in details
+    ctx.package_index_urls = ("https://b/deb/dists/noble/main/binary-amd64/Packages",)
+    noble = "https://b/deb/dists/noble/main/binary-amd64/Packages"
+    assert _phase_details(ctx, "package-index") == f"Package visible in index: {noble}"
+
+
+def test_phase_details_package_index_several_packages() -> None:
+    """Each index file is listed once, even when two packages share it."""
+    from vergil_tooling.lib.release.orchestrator import _phase_details
+
+    ctx = _ctx()
+    noble = "https://b/deb/dists/noble/main/binary-amd64/Packages"
+    el10 = "https://b/rpm/el10/x86_64/repodata/repomd.xml"
+    ctx.package_index_urls = (noble, el10, noble)
+    assert _phase_details(ctx, "package-index") == (
+        f"Package visible in index: {noble}\nPackage visible in index: {el10}"
+    )
 
 
 def test_phase_details_unknown_phase() -> None:

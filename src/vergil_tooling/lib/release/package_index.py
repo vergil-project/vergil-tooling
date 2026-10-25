@@ -2,10 +2,11 @@
 
 A repo with a ``[package]`` block publishes OS packages; the org's
 ``publish-index`` workflow then adds them to the apt/dnf index asynchronously.
-This stage polls the published index until the released version is visible, so
-the consumer refresh that follows never races it. A miss (timeout, or any
-error while polling) is recorded as a deferred publish failure — the release
-itself stands, and ``consumer_refresh`` holds while any publish is deferred.
+This stage polls the published index until the released version of every
+``[[package]]`` entry is visible, so the consumer refresh that follows never
+races it. A miss (timeout, or any error while polling) is recorded as a
+deferred publish failure — the release itself stands, and ``consumer_refresh``
+holds while any publish is deferred.
 
 While it waits, the stage streams the ``Publish package index`` run in
 ``<org>/packages`` that covers this release, and prints a heartbeat on every
@@ -23,6 +24,7 @@ import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET  # noqa: N817
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 from fnmatch import fnmatchcase
 from typing import TYPE_CHECKING, Any
@@ -208,6 +210,37 @@ def _revision(pkg: PackageConfig, target: Target) -> str:
     return f"1~{target.suite}" if target.fmt == "deb" else f"1.{target.suite}"
 
 
+@dataclass(frozen=True)
+class _Awaited:
+    """One package the stage waits for: its identity, and the index file that lists it."""
+
+    label: str
+    where: str
+    visible: Callable[[], bool]
+
+    @classmethod
+    def of(cls, ctx: ReleaseContext, pkg: PackageConfig, base: str, fetch: Fetch) -> _Awaited:
+        name = naming.package_name(ctx.repo_root, pkg)
+        version = naming.package_version(pkg, ctx.version)
+        target = _pick_target(pkg)
+        release = _revision(pkg, target)
+        full = f"{version}-{release}"
+        label = f"{name} {full}"
+        # A noarch package (deb ``all`` / rpm ``noarch``) is listed in every
+        # per-arch index, so the concrete target arch directory is always polled.
+        if target.fmt == "deb":
+            return cls(
+                label,
+                _deb_url(base, target.suite, target.arch),
+                lambda: deb_has(base, target.suite, target.arch, name, full, fetch),
+            )
+        return cls(
+            label,
+            f"{_rpm_dir(base, target.suite, target.rpm_arch)}/repodata/repomd.xml",
+            lambda: rpm_has(base, target.suite, target.rpm_arch, name, version, release, fetch),
+        )
+
+
 def _timestamp(value: str) -> datetime:
     """A GitHub API timestamp (``2026-10-24T09:33:22Z``) as an aware datetime."""
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -321,43 +354,30 @@ def _wait(
     timeout: int,
     interval: int,
 ) -> None:
-    pkg = config.read_config(ctx.repo_root).package
-    if pkg is None:
+    cfg = config.read_config(ctx.repo_root)
+    vendor = config.single_vendor(cfg)
+    if vendor is None:
         print("No [package] section — nothing to wait for in a package index.")
         return
-    name = naming.package_name(ctx.repo_root, pkg)
-    version = pkg.version or ctx.version
-    target = _pick_target(pkg)
-    release = _revision(pkg, target)
-    full = f"{version}-{release}"
-    org = orgs.for_vendor(pkg.vendor)
-    base = org.base_url
-    # A noarch package (deb ``all`` / rpm ``noarch``) is listed in every
-    # per-arch index, so the concrete target arch directory is always polled.
-    is_deb = target.fmt == "deb"
-    if is_deb:
-        where = _deb_url(base, target.suite, target.arch)
-    else:
-        where = f"{_rpm_dir(base, target.suite, target.rpm_arch)}/repodata/repomd.xml"
-
-    def visible() -> bool:
-        if is_deb:
-            return deb_has(base, target.suite, target.arch, name, full, fetch)
-        return rpm_has(base, target.suite, target.rpm_arch, name, version, release, fetch)
-
-    print(f"Waiting for {name} {full} in {where} (timeout {timeout}s)...")
+    org = orgs.for_vendor(vendor)
+    waits = [_Awaited.of(ctx, pkg, org.base_url, fetch) for pkg in cfg.packages]
+    for w in waits:
+        print(f"Waiting for {w.label} in {w.where} (timeout {timeout}s)...")
     start = now()
     deadline = start + timeout
     packages_repo = f"{org.github_org}/packages"
     since = _following(ctx, packages_repo)
     seen: set[str] = set()
-    while not visible():
+    # A package once seen stays seen: only the ones still missing are polled.
+    missing = waits
+    while missing := [w for w in missing if not w.visible()]:
         current = now()
         if current >= deadline:
             raise ReleaseError(
                 phase=PHASE,
                 command="poll package index",
-                message=f"{name} {full} not visible in {where} after {timeout}s",
+                message="; ".join(f"{w.label} not visible in {w.where}" for w in missing)
+                + f" after {timeout}s",
                 detail=(
                     f"re-run the publish-index workflow in {org.github_org}/packages; "
                     "the release itself stands"
@@ -374,12 +394,13 @@ def _wait(
                 since = None
                 print(f"  Could not follow the publish-index run ({exc}); polling the index only.")
         print(
-            f"  {name} {full} not in the index yet ({int(current - start)}s elapsed); "
-            f"polling again in {interval}s"
+            f"  {', '.join(w.label for w in missing)} not in the index yet "
+            f"({int(current - start)}s elapsed); polling again in {interval}s"
         )
         sleep(interval)
-    ctx.package_index_url = where
-    print(f"{name} {full} is visible in {where}.")
+    ctx.package_index_urls = tuple(w.where for w in waits)
+    for w in waits:
+        print(f"{w.label} is visible in {w.where}.")
 
 
 def wait_for_index(
@@ -391,7 +412,12 @@ def wait_for_index(
     timeout: int = 1200,
     interval: int = 30,
 ) -> None:
-    """Poll the org package index until this release's package is visible.
+    """Poll the org package index until every package of this release is visible.
+
+    Each ``[[package]]`` entry is polled at its own full version
+    (``naming.package_version``) in its first deb target's index, else its
+    first rpm target's. The stage succeeds only once all of them are listed,
+    and records each one's index file in ``ctx.package_index_urls``.
 
     No-op without ``[package]``. Any failure (a timeout, or an error while
     polling) records ``package-index`` in ``ctx.deferred_publish_failures``

@@ -55,3 +55,16 @@ def test_invalid_pyproject_is_fatal(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[project\n")
     with pytest.raises(PackageError, match=r"pyproject.toml is not valid TOML"):
         naming.package_name(tmp_path, _pkg())
+
+
+# --- package_version (epic vergil-project/.github#472, spec §5.5) ------------
+
+
+def test_package_version_upstream_join() -> None:
+    pkg = _pkg(upstream_version="3.15.1+20261021")
+    assert naming.package_version(pkg, "1.0.5") == "3.15.1+20261021.1.0.5"
+
+
+def test_package_version_override_and_default() -> None:
+    assert naming.package_version(_pkg(version="2.0"), "1.0.5") == "2.0"
+    assert naming.package_version(_pkg(), "1.0.5") == "1.0.5"

@@ -45,12 +45,16 @@ runtime = "3.14.4"
 """
 )
 
+# The python builder's package name comes from pyproject.toml when unset.
+_PYPROJECT = '[project]\nname = "vergil-tooling"\n'
+
 
 def test_matrix_prints_json(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     (tmp_path / "vergil.toml").write_text(_PKG_PY_TOML)
     (tmp_path / "uv.lock").write_text("version = 1\n")
+    (tmp_path / "pyproject.toml").write_text(_PYPROJECT)
     monkeypatch.chdir(tmp_path)
     assert vrg_package.main(["matrix"]) == 0
     out = json.loads(capsys.readouterr().out)
@@ -66,6 +70,7 @@ def test_matrix_records_the_pinned_runtime_in_every_cell_and_the_manifest(
 ) -> None:
     (tmp_path / "vergil.toml").write_text(_PKG_PY_TOML)
     (tmp_path / "uv.lock").write_text("version = 1\n")
+    (tmp_path / "pyproject.toml").write_text(_PYPROJECT)
     monkeypatch.chdir(tmp_path)
     assert vrg_package.main(["matrix", "--manifest", "m.json"]) == 0
     captured = capsys.readouterr()
@@ -83,6 +88,7 @@ def test_matrix_derives_an_unpinned_runtime_once(
     toml = _PKG_PY_TOML.replace('[package.python]\nruntime = "3.14.4"\n', "[package.python]\n")
     (tmp_path / "vergil.toml").write_text(toml)
     (tmp_path / "uv.lock").write_text("version = 1\n")
+    (tmp_path / "pyproject.toml").write_text(_PYPROJECT)
     monkeypatch.chdir(tmp_path)
     calls: list[Path] = []
     real = vrg_package.python_builder.package_runtime
@@ -122,6 +128,7 @@ def test_matrix_explicit_full_tier_matches_default(
 ) -> None:
     (tmp_path / "vergil.toml").write_text(_PKG_PY_TOML)
     (tmp_path / "uv.lock").write_text("version = 1\n")
+    (tmp_path / "pyproject.toml").write_text(_PYPROJECT)
     monkeypatch.chdir(tmp_path)
     assert vrg_package.main(["matrix"]) == 0
     default = capsys.readouterr().out
@@ -134,6 +141,7 @@ def test_matrix_reduced_tier_prints_json(
 ) -> None:
     (tmp_path / "vergil.toml").write_text(_PKG_PY_TOML)
     (tmp_path / "uv.lock").write_text("version = 1\n")
+    (tmp_path / "pyproject.toml").write_text(_PYPROJECT)
     monkeypatch.chdir(tmp_path)
     assert vrg_package.main(["matrix", "--tier", "reduced"]) == 0
     out = json.loads(capsys.readouterr().out)
@@ -148,6 +156,7 @@ def test_matrix_reduced_github_output_keeps_full_manifest(
 ) -> None:
     (tmp_path / "vergil.toml").write_text(_PKG_PY_TOML)
     (tmp_path / "uv.lock").write_text("version = 1\n")
+    (tmp_path / "pyproject.toml").write_text(_PYPROJECT)
     gho = tmp_path / "gho"
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("GITHUB_OUTPUT", str(gho))
@@ -178,6 +187,7 @@ def test_matrix_github_output_and_manifest(
 ) -> None:
     (tmp_path / "vergil.toml").write_text(_PKG_PY_TOML)
     (tmp_path / "uv.lock").write_text("version = 1\n")
+    (tmp_path / "pyproject.toml").write_text(_PYPROJECT)
     gho = tmp_path / "gho"
     gho.write_text("prior=1\n")
     monkeypatch.chdir(tmp_path)
@@ -230,6 +240,7 @@ def test_github_output_requires_env(
 ) -> None:
     (tmp_path / "vergil.toml").write_text(_PKG_PY_TOML)
     (tmp_path / "uv.lock").write_text("version = 1\n")
+    (tmp_path / "pyproject.toml").write_text(_PYPROJECT)
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
     assert vrg_package.main(["matrix", "--github-output"]) == 1
@@ -562,8 +573,8 @@ def _record_check_release(
 ) -> list[tuple[Any, ...]]:
     calls: list[tuple[Any, ...]] = []
 
-    def fake(repo_root: Path, pkg: Any, product: str, version: str) -> list[Identity]:
-        calls.append((repo_root, pkg is not None, product, version))
+    def fake(repo_root: Path, cfg: Any, product: str, version: str) -> list[Identity]:
+        calls.append((repo_root, bool(cfg.packages), product, version))
         if isinstance(result, Exception):
             raise result
         return result
@@ -575,6 +586,7 @@ def _record_check_release(
 def _packaged_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (tmp_path / "vergil.toml").write_text(_PKG_PY_TOML)
     (tmp_path / "uv.lock").write_text("version = 1\n")
+    (tmp_path / "pyproject.toml").write_text(_PYPROJECT)
     monkeypatch.chdir(tmp_path)
 
 
@@ -645,7 +657,8 @@ def _release_dir(
 
     def meta(path: Path, *_a: object) -> tuple[str, str, str, str, tuple[str, ...]]:
         read.append(path.name)
-        return ("t", "1.0.0", "1", "amd64", tuple(depends[path.name]))
+        name = published.parse_filename(path.name).name
+        return (name, "1.0.0", "1", "amd64", tuple(depends[path.name]))
 
     monkeypatch.setattr(vrg_package.collect, "deb_metadata", meta)
     monkeypatch.setattr(vrg_package.collect, "rpm_metadata", meta)
@@ -721,3 +734,124 @@ def test_check_runtime_missing_artifacts_dir_is_fatal(
     monkeypatch.chdir(tmp_path)
     assert vrg_package.main(["check-runtime", "--manifest", "m.json", "--artifacts", "nope"]) == 1
     assert "ERROR:" in capsys.readouterr().err
+
+
+def test_check_runtime_by_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A staged-only multi-package manifest passes without reading any package."""
+    depends = {"a_1-1_amd64.deb": [], "a-b_1-1_amd64.deb": []}
+    read = _release_dir(
+        tmp_path, monkeypatch, depends, {"artifacts": [], "runtimes": {"a": None, "a-b": None}}
+    )
+    assert vrg_package.main(_CHECK) == 0
+    assert read == []
+    assert "records no runtime (no python-builder package); passed" in capsys.readouterr().out
+
+
+def test_check_runtime_by_name_fails_another_series(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    depends = {
+        "tool_1-1_amd64.deb": ["vergil-python3.14"],
+        "tool-1-1.x86_64.rpm": ["vergil-python3.15"],
+        "data_1-1_all.deb": [],
+    }
+    manifest = {"artifacts": [], "runtimes": {"tool": "3.15", "data": None}}
+    _release_dir(tmp_path, monkeypatch, depends, manifest)
+    assert vrg_package.main(_CHECK) == 1
+    err = capsys.readouterr().err
+    assert "ERROR: dist (tool): packages disagree with the recorded runtime" in err
+    assert "recorded runtime vergil-python3.15 (runtime 3.15" in err
+    assert "tool_1-1_amd64.deb depends on vergil-python3.14" in err
+
+
+def test_check_runtime_by_name_passes_each_package_on_its_own_runtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    depends = {
+        "one_1-1_amd64.deb": ["vergil-python3.14"],
+        "one-two_1-1_amd64.deb": ["vergil-python3.15"],
+        "data_1-1_all.deb": [],
+    }
+    manifest = {
+        "artifacts": [],
+        "runtimes": {"one": "3.14", "one-two": "3.15", "data": None},
+        "runtime": "3.99",
+    }
+    _release_dir(tmp_path, monkeypatch, depends, manifest)
+    assert vrg_package.main(_CHECK) == 0
+    out = capsys.readouterr().out
+    assert "every one package in dist depends on vergil-python3.14" in out
+    assert "every one-two package in dist depends on vergil-python3.15" in out
+    assert "data" not in out
+
+
+def test_check_runtime_by_name_refuses_a_stray_package(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    depends = {"tool_1-1_amd64.deb": ["vergil-python3.15"], "other_1-1_amd64.deb": []}
+    _release_dir(tmp_path, monkeypatch, depends, {"artifacts": [], "runtimes": {"tool": "3.15"}})
+    assert vrg_package.main(_CHECK) == 1
+    err = capsys.readouterr().err
+    assert "files for packages the release does not build (it builds tool)" in err
+    assert "other_1-1_amd64.deb (package other)" in err
+
+
+def test_check_runtime_by_name_needs_a_file_per_python_package(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    depends = {"data_1-1_all.deb": []}
+    manifest = {"artifacts": [], "runtimes": {"tool": "3.15", "data": None}}
+    _release_dir(tmp_path, monkeypatch, depends, manifest)
+    assert vrg_package.main(_CHECK) == 1
+    assert "dist (tool): no packages to check" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("runtimes", [["3.15"], {"tool": 3.15}, {"tool": ["3.15"]}])
+def test_check_runtime_malformed_runtimes_is_fatal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    runtimes: Any,
+) -> None:
+    _release_dir(tmp_path, monkeypatch, {}, {"artifacts": [], "runtimes": runtimes})
+    assert vrg_package.main(_CHECK) == 1
+    assert "'runtimes' must map package names to a runtime or null" in capsys.readouterr().err
+
+
+def test_matrix_two_packages_end_to_end(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    entry = """
+[[package]]
+builder = "staged"
+name = "{name}"
+vendor = "vergil"
+upstream-version = "3.15.1+20261021"
+summary = "s"
+smoke = "true"
+targets = ["ubuntu/24.04/amd64"]
+
+[package.staged]
+build-command = "true"
+"""
+    toml = _VALID_TOML_TEXT + entry.format(name="foo") + entry.format(name="foo-bar")
+    (tmp_path / "vergil.toml").write_text(toml)
+    monkeypatch.chdir(tmp_path)
+    assert vrg_package.main(["matrix", "--manifest", "m.json"]) == 0
+    captured = capsys.readouterr()
+    out = json.loads(captured.out)
+    assert [c["id"] for c in out["build"]] == ["foo--shared-amd64", "foo-bar--shared-amd64"]
+    assert [c["id"] for c in out["test"]] == [
+        "foo--test-ubuntu-24.04-amd64",
+        "foo-bar--test-ubuntu-24.04-amd64",
+    ]
+    assert json.loads((tmp_path / "m.json").read_text()) == {
+        "artifacts": [
+            {"fmt": "deb", "arch": "amd64", "suite": None, "name": "foo"},
+            {"fmt": "deb", "arch": "amd64", "suite": None, "name": "foo-bar"},
+        ],
+        "runtimes": {"foo": None, "foo-bar": None},
+    }
+    assert "release runtime" not in captured.err

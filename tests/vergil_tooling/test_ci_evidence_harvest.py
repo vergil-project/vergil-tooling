@@ -783,7 +783,7 @@ def test_resolve_required_gates_wires_config_ghas_and_derivation(
     from vergil_tooling.lib.github_config import EvidenceGate
 
     cfg = SimpleNamespace(
-        project="PROJECT", ci="CI", publish=SimpleNamespace(docs=False), package=None
+        project="PROJECT", ci="CI", publish=SimpleNamespace(docs=False), packages=()
     )
     captured: dict[str, Any] = {}
 
@@ -861,7 +861,7 @@ def test_package_section_makes_harvest_download_ci_evidence_package(
         project=project,
         ci=CiConfig(versions=["3.14"], integration_tests=False),
         publish=SimpleNamespace(docs=True),
-        package=SimpleNamespace(builder="python"),
+        packages=(SimpleNamespace(builder="python"),),
     )
     monkeypatch.setattr(ci_evidence, "require_config_at_ref", lambda _repo, _ref: cfg)
     monkeypatch.setattr(github, "repo_visibility", lambda _repo: "public")

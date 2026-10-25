@@ -27,8 +27,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import config
-from vergil_tooling.lib.package import matrix, orgs, python_builder
-from vergil_tooling.lib.package.runtime import runtime_package
+from vergil_tooling.lib.package import PackageError, matrix, orgs, python_builder
+from vergil_tooling.lib.package.runtime import pinned_python_package, runtime_package
 from vergil_tooling.lib.package.targets import ARCHES
 from vergil_tooling.lib.release import package_index
 from vergil_tooling.lib.release.context import ReleaseError
@@ -43,8 +43,10 @@ if TYPE_CHECKING:
 # The runtime package always comes from the vergil org (spec D7).
 _RUNTIME_VENDOR = "vergil"
 _SERIES_PKG_RE = re.compile(r"^vergil-python(\d+\.\d+)$")
-# A series package's upstream version: ``<cpython x.y.z>+<pbs_tag>``.
-_SERVED_RE = re.compile(r"^(\d+\.\d+\.\d+)\+(\d+)$")
+# A series package's version: ``<cpython x.y.z>+<pbs_tag>``, optionally followed
+# by the ``.<X.Y.Z>`` repo-release suffix ``naming.package_version`` appends to an
+# ``upstream-version`` (epic vergil-project/.github#472, spec §5.5).
+_SERVED_RE = re.compile(r"^(\d+\.\d+\.\d+)\+(\d+)(?:\.(\d+\.\d+\.\d+))?$")
 
 
 @dataclass(frozen=True)
@@ -115,19 +117,27 @@ def _versions(
         ) from exc
 
 
-def _served_key(version: str, rt_pkg: str, where: str) -> tuple[tuple[int, ...], int]:
-    """The ordering key of a series package version; a malformed one fails loud."""
+def _served_key(
+    version: str, rt_pkg: str, where: str
+) -> tuple[tuple[int, ...], int, tuple[int, ...]]:
+    """The ordering key ``(patch, pbs, release)`` of a series package version.
+
+    A version without the release suffix (the older ``<cpython>+<pbs_tag>``
+    format) has the empty release ``()``, so it sorts below the same inputs with
+    one, as dpkg and rpm order them. A malformed version fails loud.
+    """
     match = _SERVED_RE.fullmatch(version)
     if match is None:
         raise UpdateDepsError(
             phase="update",
             command=f"read {rt_pkg} versions ({where})",
             message=(
-                f"{rt_pkg} {version!r} in {where} is not a <cpython>+<pbs_tag> version, "
-                "so the CPython patch it serves cannot be read."
+                f"{rt_pkg} {version!r} in {where} is not a <cpython>+<pbs_tag>[.<X.Y.Z>] "
+                "version, so the CPython patch it serves cannot be read."
             ),
         )
-    return _key(match.group(1)), int(match.group(2))
+    release = match.group(3)
+    return _key(match.group(1)), int(match.group(2)), _key(release) if release else ()
 
 
 def served_runtime(
@@ -183,12 +193,28 @@ def served_runtime(
 
 
 def served_runtime_for(base: Path) -> ServedRuntime:
-    """``served_runtime`` for the ``[package]`` block in ``base/vergil.toml``."""
-    pkg = config.read_config(base).package
-    if pkg is None:
+    """``served_runtime`` for the pinned ``python``-builder entry in ``base/vergil.toml``.
+
+    The pin is read from the packages list (spec §5.2): at most one entry may
+    pin a runtime, and more than one is refused rather than guessed.
+    """
+    cfg = config.read_config(base)
+    if not cfg.packages:
         raise UpdateDepsError(
             phase="update",
             command="served_runtime_for",
             message="[package] is missing, so there is no runtime to resolve.",
+        )
+    try:
+        pkg = pinned_python_package(cfg)
+    except PackageError as exc:
+        raise UpdateDepsError(
+            phase="update", command="served_runtime_for", message=str(exc)
+        ) from exc
+    if pkg is None:
+        raise UpdateDepsError(
+            phase="update",
+            command="served_runtime_for",
+            message="[package] has no [package.python].runtime pin, so there is nothing to bump.",
         )
     return served_runtime(pkg)

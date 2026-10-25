@@ -269,7 +269,7 @@ def test_rpm_package_versions_repomd_without_primary_is_an_error() -> None:
 
 def test_no_package_section_is_a_noop(release_ctx: ReleaseContext) -> None:
     package_index.wait_for_index(release_ctx, fetch=_boom, sleep=_boom, now=_boom)
-    assert release_ctx.package_index_url is None
+    assert release_ctx.package_index_urls == ()
     assert release_ctx.deferred_publish_failures == []
 
 
@@ -318,7 +318,7 @@ def test_appears_after_polling(release_ctx_with_package: ReleaseContext) -> None
 
     package_index.wait_for_index(release_ctx_with_package, fetch=fetch, sleep=lambda _s: None)
     assert urls == [_NOBLE_AMD64, _NOBLE_AMD64]
-    assert release_ctx_with_package.package_index_url == _NOBLE_AMD64
+    assert release_ctx_with_package.package_index_urls == (_NOBLE_AMD64,)
     assert release_ctx_with_package.deferred_publish_failures == []
 
 
@@ -337,7 +337,7 @@ def test_package_version_overrides_release_version(tmp_path: Path) -> None:
     ctx = _ctx(tmp_path, _with_pkg_lines('version = "3.14.4"'))
     text = b"Package: vergil-tooling\nVersion: 3.14.4-1\n"
     package_index.wait_for_index(ctx, fetch=lambda _u: text, sleep=_boom)
-    assert ctx.package_index_url == _NOBLE_AMD64
+    assert ctx.package_index_urls == (_NOBLE_AMD64,)
 
 
 def test_first_deb_target_is_used(tmp_path: Path) -> None:
@@ -346,14 +346,14 @@ def test_first_deb_target_is_used(tmp_path: Path) -> None:
     package_index.wait_for_index(
         ctx, fetch=lambda u: _PACKAGES.encode() if u == url else b"", sleep=_boom
     )
-    assert ctx.package_index_url == url
+    assert ctx.package_index_urls == (url,)
 
 
 def test_native_deb_target_uses_suite_revision(tmp_path: Path) -> None:
     ctx = _ctx(tmp_path, _with_pkg_lines('native = ["ubuntu/24.04/*"]'))
     text = b"Package: vergil-tooling\nVersion: 2.1.240-1~noble\n"
     package_index.wait_for_index(ctx, fetch=lambda _u: text, sleep=_boom)
-    assert ctx.package_index_url == _NOBLE_AMD64
+    assert ctx.package_index_urls == (_NOBLE_AMD64,)
 
 
 def test_rpm_only_uses_first_rpm_target(tmp_path: Path) -> None:
@@ -368,7 +368,7 @@ def test_rpm_only_uses_first_rpm_target(tmp_path: Path) -> None:
         return b""
 
     package_index.wait_for_index(ctx, fetch=fetch, sleep=_boom)
-    assert ctx.package_index_url == repomd_url
+    assert ctx.package_index_urls == (repomd_url,)
 
 
 def test_native_rpm_target_uses_suite_release(tmp_path: Path) -> None:
@@ -380,7 +380,7 @@ def test_native_rpm_target_uses_suite_release(tmp_path: Path) -> None:
         return _primary("vergil-tooling", "2.1.240", "1.el10")
 
     package_index.wait_for_index(ctx, fetch=fetch, sleep=_boom)
-    assert ctx.package_index_url == f"{_BASE}/rpm/el10/x86_64/repodata/repomd.xml"
+    assert ctx.package_index_urls == (f"{_BASE}/rpm/el10/x86_64/repodata/repomd.xml",)
 
 
 def test_rpm_timeout_message_names_version_release(tmp_path: Path) -> None:
@@ -407,7 +407,101 @@ def test_noarch_polls_a_concrete_arch_directory(tmp_path: Path) -> None:
     )
     text = b"Package: vergil-archive-keyring\nVersion: 2.1.240-1\nArchitecture: all\n"
     package_index.wait_for_index(ctx, fetch=lambda _u: text, sleep=_boom)
-    assert ctx.package_index_url == _NOBLE_AMD64
+    assert ctx.package_index_urls == (_NOBLE_AMD64,)
+
+
+# -- several [[package]] entries (epic vergil-project/.github#472, T4) --------
+
+_SERIES_ENTRY = """
+[[package]]
+builder = "staged"
+vendor = "vergil"
+name = "vergil-python{series}"
+upstream-version = "{series}.1+20261021"
+summary = "Python {series}"
+smoke = "true"
+targets = [{targets}]
+
+[package.staged]
+build-command = "true"
+"""
+
+
+def _series(**targets: str) -> str:
+    """One staged ``[[package]]`` entry per series, each with its ``targets`` list."""
+    return "".join(_SERIES_ENTRY.format(series=s, targets=t) for s, t in targets.items())
+
+
+def _stanza(series: str) -> str:
+    return f"Package: vergil-python{series}\nVersion: {series}.1+20261021.2.1.240-1\n\n"
+
+
+def test_wait_all_packages_visible(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Two packages, the index serving one: keep polling; succeed once both are served."""
+    ctx = _ctx(tmp_path, _series(**{"3.14": '"ubuntu/24.04/*"', "3.15": '"ubuntu/24.04/*"'}))
+    answers = iter(
+        [
+            _stanza("3.14"),  # 3.14 seen, 3.15 not yet
+            "",
+            "",  # 3.15 still missing (3.14 is not re-polled)
+            _stanza("3.14") + _stanza("3.15"),
+        ]
+    )
+    urls: list[str] = []
+
+    def fetch(url: str) -> bytes:
+        urls.append(url)
+        return next(answers).encode()
+
+    sleeps: list[float] = []
+    package_index.wait_for_index(ctx, fetch=fetch, sleep=sleeps.append, now=_clock())
+    assert urls == [_NOBLE_AMD64] * 4
+    assert sleeps == [30, 30]
+    assert ctx.package_index_urls == (_NOBLE_AMD64, _NOBLE_AMD64)
+    assert ctx.deferred_publish_failures == []
+    out = capsys.readouterr().out
+    assert f"Waiting for vergil-python3.14 3.14.1+20261021.2.1.240-1 in {_NOBLE_AMD64}" in out
+    assert f"Waiting for vergil-python3.15 3.15.1+20261021.2.1.240-1 in {_NOBLE_AMD64}" in out
+    assert "  vergil-python3.15 3.15.1+20261021.2.1.240-1 not in the index yet" in out
+    assert "vergil-python3.14 3.14.1+20261021.2.1.240-1 not in the index yet" not in out
+    assert f"vergil-python3.15 3.15.1+20261021.2.1.240-1 is visible in {_NOBLE_AMD64}." in out
+
+
+def test_wait_one_package_never_served_times_out(tmp_path: Path) -> None:
+    """The index never lists one of two packages: the stage times out naming only that one."""
+    ctx = _ctx(tmp_path, _series(**{"3.14": '"ubuntu/24.04/*"', "3.15": '"rhel/10/*"'}))
+    text = _stanza("3.14").encode()
+    with pytest.raises(ReleaseError) as exc_info:
+        package_index.wait_for_index(
+            ctx,
+            fetch=lambda u: text if u == _NOBLE_AMD64 else b"",
+            sleep=lambda _s: None,
+            now=_clock(),
+            timeout=60,
+        )
+    msg = str(exc_info.value)
+    repomd = f"{_BASE}/rpm/el10/x86_64/repodata/repomd.xml"
+    assert f"vergil-python3.15 3.15.1+20261021.2.1.240-1 not visible in {repomd} after 60s" in msg
+    assert "vergil-python3.14" not in msg
+    assert ctx.package_index_urls == ()
+    assert ctx.deferred_publish_failures == ["package-index"]
+
+
+def test_wait_records_each_package_index_in_order(tmp_path: Path) -> None:
+    """Each package is polled in its own first target's index, recorded in config order."""
+    ctx = _ctx(tmp_path, _series(**{"3.15": '"ubuntu/26.04/arm64"', "3.14": '"rhel/10/*"'}))
+    resolute = f"{_BASE}/deb/dists/resolute/main/binary-arm64/Packages"
+    repomd = f"{_BASE}/rpm/el10/x86_64/repodata/repomd.xml"
+
+    def fetch(url: str) -> bytes:
+        if url == resolute:
+            return _stanza("3.15").encode()
+        if url == repomd:
+            return _REPOMD
+        return _primary("vergil-python3.14", "3.14.1+20261021.2.1.240", "1")
+
+    package_index.wait_for_index(ctx, fetch=fetch, sleep=_boom)
+    assert ctx.package_index_urls == (resolute, repomd)
 
 
 # -- streaming the publish-index run (#3528) ---------------------------------
@@ -502,7 +596,7 @@ def test_streams_earliest_covering_run(
     assert "publish-index runs created since 2026-10-24T09:30:00+00:00" in out
     assert f"Publish-index run: https://github.com/{_PACKAGES_REPO}/actions/runs/2" in out
     assert "Publish-index run finished (success); checking the index." in out
-    assert release_ctx_with_package.package_index_url == _NOBLE_AMD64
+    assert release_ctx_with_package.package_index_urls == (_NOBLE_AMD64,)
 
 
 def test_cancelled_run_follows_the_next(
