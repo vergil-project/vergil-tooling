@@ -3,9 +3,18 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
+from typing import Any
 
 import pytest
 
+from vergil_tooling.lib.config import (
+    PackageConfig,
+    PackagePythonConfig,
+    PackageStagedConfig,
+    VergilConfig,
+    _parse_raw_config,
+)
 from vergil_tooling.lib.package import PackageError
 from vergil_tooling.lib.package import runtime as rt
 
@@ -76,3 +85,71 @@ def test_missing_legacy_or_extra_runtime_dependency_fails(depends: list[str], sh
 def test_no_packages_fails() -> None:
     with pytest.raises(PackageError, match=r"^dist: no packages to check .* vergil-python3\.14$"):
         rt.check_consistent("3.14", [], "dist")
+
+
+# -- runtime pins over the packages list (epic vergil-project/.github#472, T5) --
+
+
+def _python(name: str, runtime: str | None = None) -> PackageConfig:
+    return PackageConfig(
+        builder="python",
+        vendor="vergil",
+        summary="s",
+        smoke="x",
+        name=name,
+        python=PackagePythonConfig(runtime=runtime),
+    )
+
+
+def _staged(name: str) -> PackageConfig:
+    return PackageConfig(
+        builder="staged",
+        vendor="vergil",
+        summary="s",
+        smoke="x",
+        name=name,
+        staged=PackageStagedConfig(build_command="true"),
+    )
+
+
+def _cfg(*packages: PackageConfig) -> VergilConfig:
+    return replace(_parse_raw_config(_RAW), packages=packages)
+
+
+_RAW: dict[str, Any] = {
+    "project": {
+        "repository-type": "application",
+        "versioning-scheme": "semver",
+        "branching-model": "library-release",
+        "release-model": "tagged-release",
+        "primary-language": "python",
+    },
+    "dependencies": {"vergil": "v2.1"},
+    "ci": {},
+}
+
+
+def test_python_packages_lists_python_builder_entries_in_order() -> None:
+    a, b, c = _python("a"), _staged("b"), _python("c")
+    assert rt.python_packages(_cfg(a, b, c)) == (a, c)
+    assert rt.python_packages(_cfg(_staged("s"))) == ()
+    assert rt.python_packages(_cfg()) == ()
+
+
+def test_pinned_python_package_finds_the_single_pin() -> None:
+    pinned = _python("b", "3.14.8")
+    assert rt.pinned_python_package(_cfg(_python("a"), pinned, _staged("s"))) is pinned
+    assert rt.pinned_python_package(_cfg(_python("a"), _staged("s"))) is None
+    assert rt.pinned_python_package(_cfg()) is None
+
+
+def test_pinned_python_package_without_python_table_is_unpinned() -> None:
+    bare = PackageConfig(builder="python", vendor="vergil", summary="s", smoke="x")
+    assert rt.pinned_python_package(_cfg(bare)) is None
+
+
+def test_two_pins_refused() -> None:
+    cfg = _cfg(_python("a", "3.14.8"), _python("b", "3.15.1"))
+    with pytest.raises(PackageError, match=re.escape(rt.SEVERAL_PINS)):
+        rt.pinned_python_package(cfg)
+    assert rt.SEVERAL_PINS == "several [[package]] entries pin a runtime; pin it on one entry"

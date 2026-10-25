@@ -250,7 +250,7 @@ def test_served_runtime_lookup_error_fails_loud(monkeypatch: pytest.MonkeyPatch)
 
 def test_served_runtime_for_reads_package(monkeypatch: pytest.MonkeyPatch) -> None:
     class _Cfg:
-        package = _PKG
+        packages = (_PKG,)
 
     expected = ServedRuntime(
         package="vergil-python3.14", patches={"deb noble/amd64": "3.14.9"}, newer_series=None
@@ -262,8 +262,60 @@ def test_served_runtime_for_reads_package(monkeypatch: pytest.MonkeyPatch) -> No
 
 def test_served_runtime_for_without_package_fails_loud(monkeypatch: pytest.MonkeyPatch) -> None:
     class _Cfg:
-        package = None
+        packages = ()
 
     monkeypatch.setattr(_MOD + ".config.read_config", lambda base: _Cfg())
-    with pytest.raises(UpdateDepsError, match=r"\[package\]"):
+    with pytest.raises(UpdateDepsError, match=r"\[package\] is missing"):
         vergil_index.served_runtime_for(Path("/r"))
+
+
+def _entry(name: str, builder: str = "python", runtime: str | None = None) -> PackageConfig:
+    return PackageConfig(
+        builder=builder,
+        vendor="vergil",
+        summary="s",
+        smoke="x",
+        name=name,
+        python=PackagePythonConfig(runtime=runtime) if builder == "python" else None,
+    )
+
+
+def test_served_runtime_for_reads_the_pinned_entry_of_a_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pinned = _entry("b", runtime="3.14.8")
+
+    class _Cfg:
+        packages = (_entry("a", builder="staged"), pinned, _entry("c"))
+
+    seen: list[PackageConfig] = []
+    expected = ServedRuntime(package="vergil-python3.14", patches={}, newer_series=None)
+    monkeypatch.setattr(_MOD + ".config.read_config", lambda base: _Cfg())
+
+    def served(pkg: PackageConfig) -> ServedRuntime:
+        seen.append(pkg)
+        return expected
+
+    monkeypatch.setattr(_MOD + ".served_runtime", served)
+    assert vergil_index.served_runtime_for(Path("/r")) == expected
+    assert seen == [pinned]
+
+
+def test_served_runtime_for_unpinned_list_fails_loud(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Cfg:
+        packages = (_entry("a", builder="staged"), _entry("b"))
+
+    monkeypatch.setattr(_MOD + ".config.read_config", lambda base: _Cfg())
+    with pytest.raises(UpdateDepsError, match=r"no \[package\.python\]\.runtime pin"):
+        vergil_index.served_runtime_for(Path("/r"))
+
+
+def test_served_runtime_for_two_pins_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Cfg:
+        packages = (_entry("a", runtime="3.14.8"), _entry("b", runtime="3.15.1"))
+
+    monkeypatch.setattr(_MOD + ".config.read_config", lambda base: _Cfg())
+    with pytest.raises(UpdateDepsError) as info:
+        vergil_index.served_runtime_for(Path("/r"))
+    assert str(info.value) == "several [[package]] entries pin a runtime; pin it on one entry"
+    assert info.value.command == "served_runtime_for"

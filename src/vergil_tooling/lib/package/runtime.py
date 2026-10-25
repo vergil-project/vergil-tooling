@@ -10,6 +10,12 @@ different runtimes per architecture.
 is together (``vrg-package check-runtime`` before publishing, and the index
 collecting a release): every package must depend on exactly the recorded
 ``vergil-python<x.y>`` and on no other runtime series.
+
+Every reader of a ``[package.python].runtime`` pin goes through
+:func:`python_packages` and :func:`pinned_python_package` (epic
+vergil-project/.github#472, spec §5.2). A repo may list several
+``[[package]]`` entries, and **at most one** ``python``-builder entry may pin a
+runtime; more than one is refused, never guessed.
 """
 
 from __future__ import annotations
@@ -23,6 +29,11 @@ from vergil_tooling.lib.versions.extensions.python import runtime_series
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+
+    from vergil_tooling.lib.config import PackageConfig, VergilConfig
+
+# The refusal when more than one ``[[package]]`` entry pins a runtime.
+SEVERAL_PINS = "several [[package]] entries pin a runtime; pin it on one entry"
 
 # A per-series runtime package name: ``vergil-python3.14``.
 _RUNTIME_PACKAGE = re.compile(r"vergil-python\d+\.\d+")
@@ -71,3 +82,23 @@ def check_consistent(
             "Every package of one release must depend on the same runtime"
         )
         raise PackageError(msg)
+
+
+def python_packages(cfg: VergilConfig) -> tuple[PackageConfig, ...]:
+    """The ``python``-builder entries of ``cfg.packages``, in file order.
+
+    Empty when the repo has no ``[package]`` or only ``staged`` entries.
+    """
+    return tuple(p for p in cfg.packages if p.builder == "python")
+
+
+def pinned_python_package(cfg: VergilConfig) -> PackageConfig | None:
+    """The one ``python``-builder entry that pins ``[package.python].runtime``, if any.
+
+    More than one pin is a ``PackageError`` (:data:`SEVERAL_PINS`): which pin
+    the runtime follows would be a guess.
+    """
+    pinned = [p for p in python_packages(cfg) if p.python is not None and p.python.runtime]
+    if len(pinned) > 1:
+        raise PackageError(SEVERAL_PINS)
+    return pinned[0] if pinned else None

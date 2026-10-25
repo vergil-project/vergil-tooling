@@ -92,6 +92,13 @@ refuses the config unless:
 The other repo-level checks run once per entry. For example, a `python`
 entry still requires `uv.lock` (see [Validation](#validation)).
 
+At most one `python` entry may pin `[package.python].runtime`. Version
+resolution and `vrg-update-deps` read the pin from the packages list, and
+refuse a config where more than one entry pins a runtime, with
+`several [[package]] entries pin a runtime; pin it on one entry`. Any
+`python` entry, pinned or not, makes version resolution require a
+published `vergil-python` runtime (see [`[package.python]`](#packagepython)).
+
 The design is epic
 [vergil-project/.github#472](https://github.com/vergil-project/.github/issues/472)
 (spec `epics/472-multi-series-runtime/spec.md`, §5.1).

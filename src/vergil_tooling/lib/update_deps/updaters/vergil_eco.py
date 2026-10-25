@@ -23,6 +23,7 @@ import re
 import tomllib
 from typing import TYPE_CHECKING, Any
 
+from vergil_tooling.lib.package.runtime import SEVERAL_PINS
 from vergil_tooling.lib.update_deps import vergil_index
 from vergil_tooling.lib.update_deps.context import UpdateDepsError
 from vergil_tooling.lib.update_deps.report import HeldBack
@@ -100,10 +101,26 @@ def normalize_refs(base: Path, target: str) -> list[Path]:
 
 
 def _declared_runtime(text: str) -> str | None:
-    """The ``[package.python] runtime`` pin in vergil.toml *text*, if declared."""
+    """The ``[package.python] runtime`` pin in vergil.toml *text*, if declared.
+
+    ``package`` is a single ``[package]`` table or a ``[[package]]`` list
+    (spec §5.2). At most one ``python``-builder entry may pin a runtime; more
+    than one is an ``UpdateDepsError`` rather than a guess. ``[package.python]``
+    is valid only with ``builder = "python"`` (``lib.config`` refuses it
+    otherwise), so every entry carrying a pin is a ``python``-builder entry.
+    """
     data: dict[str, Any] = tomllib.loads(text)
-    runtime = data.get("package", {}).get("python", {}).get("runtime")
-    return runtime if isinstance(runtime, str) else None
+    raw = data.get("package", {})
+    entries = raw if isinstance(raw, list) else [raw]
+    pins = [
+        runtime
+        for entry in entries
+        if isinstance(entry, dict)
+        and isinstance(runtime := entry.get("python", {}).get("runtime"), str)
+    ]
+    if len(pins) > 1:
+        raise UpdateDepsError(phase="update", command="read runtime pin", message=SEVERAL_PINS)
+    return pins[0] if pins else None
 
 
 def _patch_key(v: str) -> tuple[int, ...]:
