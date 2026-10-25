@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.267] - 2026-10-25
+
+### Features
+
+- accept [[package]] entries for several packages per repo (#3636)
+- add vrg-upstream-refresh: run a repo's refresh hook and open one PR (#3637)
+- compute every package version through one helper, with upstream-version (#3638)
+- read runtime pins from the packages list (#3639)
+- thread the package name through matrix, build, install-test and runtime checks (#3640)
+- match index artifacts and wait on every package by name (#3642)
+
 ## [2.1.266] - 2026-10-25
 
 ### Bug fixes
