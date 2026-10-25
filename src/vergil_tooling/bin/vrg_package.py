@@ -309,7 +309,7 @@ def _cmd_check_unpublished(args: argparse.Namespace) -> int:
         raise PackageError(msg)
     cwd = Path.cwd()
     cfg = config.read_config(cwd)
-    identities = published.check_release(cwd, cfg.package, repo, args.version)
+    identities = published.check_release(cwd, cfg, repo, args.version)
     if not identities:
         print(f"vrg-package: no [package] section; {repo} v{args.version} publishes no packages")
         return 0

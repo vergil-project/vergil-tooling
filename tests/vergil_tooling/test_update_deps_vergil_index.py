@@ -192,8 +192,35 @@ def test_served_runtime_same_patch_different_builds_agree() -> None:
     assert vergil_index.served_runtime(_PKG, fetch=_fetch(deb, rpm)).patch == "3.14.9"
 
 
+def test_served_parser_accepts_release_suffix() -> None:
+    """``<cpython>+<pbs_tag>.<X.Y.Z>`` (epic .github#472, spec §5.5) orders like dpkg/rpm."""
+
+    def key(v: str) -> tuple[tuple[int, ...], int, tuple[int, ...]]:
+        return vergil_index._served_key(v, "vergil-python3.15", "deb noble/amd64")  # noqa: SLF001
+
+    assert key("3.15.1+20261021.1.0.5") == ((3, 15, 1), 20261021, (1, 0, 5))
+    assert key("3.15.1+20261021.1.0.5") > key("3.15.1+20261021")
+    assert key("3.15.1+20261021.1.0.10") > key("3.15.1+20261021.1.0.9")
+    assert key("3.15.2+20261101.1.0.5") > key("3.15.1+20261021.1.0.6")
+    with pytest.raises(UpdateDepsError, match="<cpython>\\+<pbs_tag>"):
+        key("3.15.1")
+
+
 @pytest.mark.usefixtures("two_indexes")
-@pytest.mark.parametrize("version", ["3.14.9", "3.14+20261020", "3.14.9+abc", "x+1"])
+def test_served_runtime_reads_the_patch_of_a_release_suffixed_version() -> None:
+    pkgs = (
+        ("vergil-python3.14", "3.14.9+20261021"),
+        ("vergil-python3.14", "3.14.9+20261021.1.0.5"),
+        ("vergil-python3.14", "3.14.8+20261003.1.0.9"),
+    )
+    assert vergil_index.served_runtime(_PKG, fetch=_fetch(pkgs, pkgs)).patch == "3.14.9"
+
+
+@pytest.mark.usefixtures("two_indexes")
+@pytest.mark.parametrize(
+    "version",
+    ["3.14.9", "3.14+20261020", "3.14.9+abc", "x+1", "3.14.9+20261020.1", "3.14.9+20261020.1.0"],
+)
 def test_served_runtime_malformed_version_fails_loud(version: str) -> None:
     pkgs = (("vergil-python3.14", version),)
     with pytest.raises(UpdateDepsError, match="<cpython>\\+<pbs_tag>"):

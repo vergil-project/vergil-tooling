@@ -11,8 +11,8 @@ duplicate assets are removed by hand (the vergil-python v1.0.1 incident).
 This module applies the same rule to a release *before* it publishes:
 
 - **What would be published** is fully known without building: the package
-  name (:func:`naming.package_name`), the package version (``[package].version``,
-  else the release version — exactly what ``vrg-package build`` uses), and one
+  name (:func:`naming.package_name`), the package version
+  (:func:`naming.package_version` — exactly what ``vrg-package build`` uses), and one
   ``(fmt, arch, suite)`` per artifact from :func:`matrix.manifest` (the
   release's own ``packages-manifest.json``), whose revision comes from
   :class:`collect.ManifestEntry` — the same rule the index checks a release's
@@ -54,7 +54,7 @@ from vergil_tooling.lib.package.repo_setup import Run, local_run
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from vergil_tooling.lib.config import PackageConfig
+    from vergil_tooling.lib.config import VergilConfig
 
 # nFPM file names. A Debian name or version never contains ``_``; an rpm
 # version or release never contains ``-`` (``[package].version`` allows neither).
@@ -62,14 +62,19 @@ _DEB_FILE = re.compile(r"(?P<name>[^_]+)_(?P<ver>[^_]+)_(?P<arch>[^_]+)\.deb")
 _RPM_FILE = re.compile(r"(?P<name>.+)-(?P<ver>[^-]+-[^-]+)\.(?P<arch>[^.]+)\.rpm")
 
 
-def planned(repo_root: Path, pkg: PackageConfig, version: str) -> list[Identity]:
-    """The identities a release at repo ``version`` would publish, in manifest order."""
-    name = naming.package_name(repo_root, pkg)
-    pkg_version = pkg.version or version
+def planned(repo_root: Path, cfg: VergilConfig, version: str) -> list[Identity]:
+    """The identities a release at repo ``version`` would publish.
+
+    Every ``[[package]]`` entry, in entry order; each entry's identities in
+    manifest order.
+    """
     out: list[Identity] = []
-    for raw in matrix.manifest(matrix.resolve(pkg))["artifacts"]:
-        entry = ManifestEntry(raw["fmt"], raw["arch"], raw["suite"])
-        out.append(Identity(entry.fmt, name, f"{pkg_version}-{entry.revision}", entry.arch))
+    for pkg in cfg.packages:
+        name = naming.package_name(repo_root, pkg)
+        pkg_version = naming.package_version(pkg, version)
+        for raw in matrix.manifest(matrix.resolve(pkg))["artifacts"]:
+            entry = ManifestEntry(raw["fmt"], raw["arch"], raw["suite"])
+            out.append(Identity(entry.fmt, name, f"{pkg_version}-{entry.revision}", entry.arch))
     return out
 
 
@@ -117,22 +122,23 @@ def check_unpublished(
         f"earlier release already published:\n{lines}\n"
         "Package builds are not byte-reproducible, so the rebuilt files would differ "
         "and the shared package index would refuse them, failing every repo's index "
-        "publish. Bump the package version before releasing: set a new "
-        "[package].version in vergil.toml (for example a new +<date> build suffix, or "
-        "a rebuild counter: 3.14.8+20261003 -> 3.14.8+20261003.1)."
+        "publish. Bump the package version before releasing: a new "
+        "[package].upstream-version in vergil.toml, or a new repo release for an "
+        "upstream-version package (its version ends in the repo version); for a "
+        "[package].version override, set a new version."
     )
     raise PackageError(msg)
 
 
 def check_release(
-    repo_root: Path, pkg: PackageConfig | None, product: str, version: str, gh: Run = local_run
+    repo_root: Path, cfg: VergilConfig, product: str, version: str, gh: Run = local_run
 ) -> list[Identity]:
     """Check a release at repo ``version`` of ``product``; return what it would publish.
 
     A repo without ``[package]`` publishes no packages: nothing to check.
     """
-    if pkg is None:
+    if not cfg.packages:
         return []
-    identities = planned(repo_root, pkg, version)
+    identities = planned(repo_root, cfg, version)
     check_unpublished(product, f"v{version}", identities, gh)
     return identities

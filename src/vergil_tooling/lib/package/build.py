@@ -144,7 +144,8 @@ def run_build(
 ) -> list[Path]:
     """Build every package format of build cell ``cell_id``; return the artifact paths.
 
-    ``version`` is the repo version; ``[package].version`` overrides it when set.
+    ``version`` is the repo version; :func:`naming.package_version` derives the
+    package version from it.
     ``staging_root`` is wiped and recreated; artifacts land in ``out_dir``.
     ``runtime`` is the runtime ``vrg-package matrix`` recorded for the release;
     only the ``python`` builder has one, so it is an error for any other.
@@ -175,7 +176,7 @@ def run_build(
         pkg=pkg,
         cell=cell,
         name=naming.package_name(repo_root, pkg),
-        version=pkg.version or version,
+        version=naming.package_version(pkg, version),
         staging_root=staging_root,
         out_dir=out_dir,
         runtime=runtime,

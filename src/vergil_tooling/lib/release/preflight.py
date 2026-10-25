@@ -600,7 +600,7 @@ def _check_packages_unpublished(repo: str, repo_root: Path, ver: str) -> None:
     """
     try:
         cfg = config.read_config(repo_root)
-        identities = published.check_release(repo_root, cfg.package, repo, ver)
+        identities = published.check_release(repo_root, cfg, repo, ver)
     except (PackageError, config.ConfigError) as exc:
         raise ReleaseError(
             phase="preflight",

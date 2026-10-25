@@ -43,8 +43,10 @@ if TYPE_CHECKING:
 # The runtime package always comes from the vergil org (spec D7).
 _RUNTIME_VENDOR = "vergil"
 _SERIES_PKG_RE = re.compile(r"^vergil-python(\d+\.\d+)$")
-# A series package's upstream version: ``<cpython x.y.z>+<pbs_tag>``.
-_SERVED_RE = re.compile(r"^(\d+\.\d+\.\d+)\+(\d+)$")
+# A series package's version: ``<cpython x.y.z>+<pbs_tag>``, optionally followed
+# by the ``.<X.Y.Z>`` repo-release suffix ``naming.package_version`` appends to an
+# ``upstream-version`` (epic vergil-project/.github#472, spec §5.5).
+_SERVED_RE = re.compile(r"^(\d+\.\d+\.\d+)\+(\d+)(?:\.(\d+\.\d+\.\d+))?$")
 
 
 @dataclass(frozen=True)
@@ -115,19 +117,27 @@ def _versions(
         ) from exc
 
 
-def _served_key(version: str, rt_pkg: str, where: str) -> tuple[tuple[int, ...], int]:
-    """The ordering key of a series package version; a malformed one fails loud."""
+def _served_key(
+    version: str, rt_pkg: str, where: str
+) -> tuple[tuple[int, ...], int, tuple[int, ...]]:
+    """The ordering key ``(patch, pbs, release)`` of a series package version.
+
+    A version without the release suffix (the older ``<cpython>+<pbs_tag>``
+    format) has the empty release ``()``, so it sorts below the same inputs with
+    one, as dpkg and rpm order them. A malformed version fails loud.
+    """
     match = _SERVED_RE.fullmatch(version)
     if match is None:
         raise UpdateDepsError(
             phase="update",
             command=f"read {rt_pkg} versions ({where})",
             message=(
-                f"{rt_pkg} {version!r} in {where} is not a <cpython>+<pbs_tag> version, "
-                "so the CPython patch it serves cannot be read."
+                f"{rt_pkg} {version!r} in {where} is not a <cpython>+<pbs_tag>[.<X.Y.Z>] "
+                "version, so the CPython patch it serves cannot be read."
             ),
         )
-    return _key(match.group(1)), int(match.group(2))
+    release = match.group(3)
+    return _key(match.group(1)), int(match.group(2)), _key(release) if release else ()
 
 
 def served_runtime(

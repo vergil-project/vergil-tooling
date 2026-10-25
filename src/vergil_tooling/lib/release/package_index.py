@@ -326,7 +326,7 @@ def _wait(
         print("No [package] section — nothing to wait for in a package index.")
         return
     name = naming.package_name(ctx.repo_root, pkg)
-    version = pkg.version or ctx.version
+    version = naming.package_version(pkg, ctx.version)
     target = _pick_target(pkg)
     release = _revision(pkg, target)
     full = f"{version}-{release}"

@@ -389,8 +389,10 @@ repo's index publish until the duplicate assets were removed by hand.
 
 The check runs in `preflight`, before anything is branched, tagged or
 published. That is the earliest point that knows the full package
-versions: they follow from `[package]` (its `version`, or the release
-version when unset) and the build matrix, without building anything.
+versions: they follow from `[package]` (its `version`, its
+`upstream-version` joined with the release version, or the release
+version when neither is set) and the build matrix, without building
+anything.
 It runs before the dependency-update gate, so a refusal changes
 nothing. The refusal names each conflicting package and the release
 that first published it:
@@ -401,8 +403,10 @@ vergil-project/vergil-python@v1.0.4 would re-publish 4 package(s) at a version a
   ...
 ```
 
-To fix it, bump `[package].version` in `vergil.toml`, for example to a
-new `+<date>` build suffix. If the check cannot read the repo's
+To fix it, bump the package version in `vergil.toml`: a new
+`upstream-version`, or for a `version` override a new `version`. An
+`upstream-version` package's version ends in the repo version, so each
+new release is already a new package version. If the check cannot read the repo's
 releases, it refuses rather than skipping. CD runs the same check as a
 backstop; see the
 [package reference](../reference/package-config.md#the-re-publish-check).
