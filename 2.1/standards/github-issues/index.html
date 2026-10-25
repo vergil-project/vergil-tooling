@@ -1328,6 +1328,8 @@
       
         
       
+        
+      
     
     
     
@@ -1380,6 +1382,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.265/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.265
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13885,6 +13915,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#epics-and-archives-are-not-tasks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Epics and archives are not tasks
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -15770,6 +15811,8 @@
       
         
       
+        
+      
     
     
     
@@ -15886,6 +15929,34 @@
     
   
     Permission Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/security-boundaries/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security Boundaries
   
 
     
@@ -16592,6 +16663,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#epics-and-archives-are-not-tasks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Epics and archives are not tasks
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -17018,6 +17100,10 @@ and any follow-on are inherently agentic judgment.</p>
 <li>A <strong>private</strong> repo (with a public <code>.github</code>) homes its epics <strong>in itself</strong>.</li>
 <li>A <strong>private</strong> <code>.github</code> means the whole org is private, so everything homes in
   <code>.github</code>.</li>
+<li>A <strong>private</strong> repo whose owner has <strong>no</strong> <code>.github</code> at all (typically a
+  personal account) homes its epics <strong>in itself</strong>: there is no central home.
+  Only GitHub's "repository does not exist" answer counts as no <code>.github</code>; any
+  other failure to read its visibility is an error.</li>
 </ul>
 <p>Ad-hoc epics follow the same rule — <code>Epic (ad hoc): &lt;repo&gt;</code> lives in the repo's
 resolved home. See
@@ -17181,6 +17267,14 @@ the docs task is closed (its spec + plan PR merged).</p>
 with intake review, or expand it with <code>epic-create</code>. Routing it out of the queue
 is the only way to lift the refusal. The check reads the issue's native parent,
 not a label.</p>
+<h3 id="epics-and-archives-are-not-tasks">Epics and archives are not tasks<a class="headerlink" href="#epics-and-archives-are-not-tasks" title="Permanent link">&para;</a></h3>
+<p>An <code>epic</code>- or <code>archive</code>-labelled issue is an umbrella, never a task, so the
+tooling refuses one wherever a task is expected: <code>vrg-pr-workflow report-ready
+--issue</code> and <code>vrg-submit-pr</code> (a PR closes exactly one task, and an epic is
+closed only by rollup), <code>vrg-epic-link --task</code>, and <code>vrg-issue-create
+--blocked-by</code>. Create the task under the epic first and use its number. This
+check reads the issue's labels; a failed read refuses rather than passing,
+except at <code>report-ready</code>, which defers to <code>vrg-submit-pr</code>'s check.</p>
 <h2 id="labels">Labels<a class="headerlink" href="#labels" title="Permanent link">&para;</a></h2>
 <p>Every managed repo carries the same label set. The canonical registry is
 <code>src/vergil_tooling/data/labels.json</code> in vergil-tooling.
@@ -17233,10 +17327,6 @@ up to date (see
 <td>Build system or dependencies</td>
 </tr>
 <tr>
-<td><code>research</code></td>
-<td><strong>Retired</strong> (see below)</td>
-</tr>
-<tr>
 <td><code>rtfm</code></td>
 <td>Resolved by reading existing docs</td>
 </tr>
@@ -17273,14 +17363,6 @@ up to date (see
 <td>Terminal per-quarter archive of closed standing-epic work (ad-hoc, intake, planning); historical record</td>
 </tr>
 <tr>
-<td><code>triage</code></td>
-<td><strong>Retired</strong> (see below)</td>
-</tr>
-<tr>
-<td><code>idea</code></td>
-<td><strong>Retired</strong> (see below)</td>
-</tr>
-<tr>
 <td><code>hotfix</code></td>
 <td>Emergency fix that skipped formal planning; flagged for retroactive review</td>
 </tr>
@@ -17303,8 +17385,9 @@ up to date (see
 does, and <code>in-progress</code> is the single per-item label, used only on planning
 items. The former intake kind labels <code>triage</code>, <code>idea</code>, and <code>research</code> are
 <strong>retired</strong>: no tool or skill applies them, and the daily orphan pass strips
-them from every open issue. They remain in the registry (so a label sync still
-creates them) until the label-set review decides their fate.</p>
+them from every open issue. They are no longer in the registry, and a label
+sync (<code>vrg-ensure-label --sync</code>) deletes them from any repo that still has
+them, which also strips them from any issue still carrying them.</p>
 <p><code>dependency-update</code> goes on PRs, not issues: <code>vrg-update-deps</code> and the
 <code>vrg-release</code> <code>update-deps</code> stage put it on every dependency-update PR
 they open, and create the label first if the repo does not have it.</p>

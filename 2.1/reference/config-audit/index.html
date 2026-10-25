@@ -1326,6 +1326,8 @@
       
         
       
+        
+      
     
     
     
@@ -1378,6 +1380,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.265/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.265
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -12547,10 +12577,32 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#github-checks-security-settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GitHub checks — security settings
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#github-checks-the-required-status-check-set" class="md-nav__link">
     <span class="md-ellipsis">
       
         GitHub checks — the required-status-check set
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#github-checks-undeclared-ruleset-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GitHub checks — undeclared ruleset parameters
       
     </span>
   </a>
@@ -15539,6 +15591,8 @@
       
         
       
+        
+      
     
     
     
@@ -15655,6 +15709,34 @@
     
   
     Permission Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/security-boundaries/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security Boundaries
   
 
     
@@ -16157,10 +16239,32 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#github-checks-security-settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GitHub checks — security settings
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#github-checks-the-required-status-check-set" class="md-nav__link">
     <span class="md-ellipsis">
       
         GitHub checks — the required-status-check set
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#github-checks-undeclared-ruleset-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GitHub checks — undeclared ruleset parameters
       
     </span>
   </a>
@@ -16399,7 +16503,9 @@ so they cannot diverge.</p>
 language-agnostic <code>base</code> (editors, OS, secrets, logs, Vergil internals
 like <code>.venv/</code> / <code>.worktrees/</code> / <code>.vergil/</code> / <code>.superpowers/</code>, and all
 build/validation/CI-evidence output including the mkdocs build path
-<code>docs/site/site/</code>) plus the fragment for its <code>[project].primary-language</code>
+<code>docs/site/site/</code> and the paths <code>vrg-container-docs</code> stages:
+<code>docs/site/docs/changelog.md</code>, <code>docs/site/docs/releases/</code> and
+<code>mkdocs.staged.yml</code>) plus the fragment for its <code>[project].primary-language</code>
 (Python, TypeScript/Node, Go, C++; Rust and Java are managed with
 an empty fragment). A repo that declares no fragment language gets the
 base-only block.</p>
@@ -16408,14 +16514,18 @@ between a <code># &gt;&gt;&gt; vergil-managed: base + &lt;language&gt; …</code
 <code># &lt;&lt;&lt; vergil-managed &lt;&lt;&lt;</code> end marker. The audit
 (<code>lib/gitignore.py::check</code>) is <strong>fenced-only</strong>: it requires a well-formed
 fence whose body equals the composed block for the repo's language
-<strong>exactly</strong>, with no managed pattern left loose outside the fence. (The
+<strong>exactly</strong>, with no managed pattern left loose outside the fence, in the
+exact layout <code>vrg-gitignore-sync --write</code> produces: the fence first and a
+trailing newline, so the audit drifts exactly when <code>--write</code> would change
+the file (#3568). (The
 transitional legacy monolith-superset acceptance and the monolithic
 <code>gitignore.baseline</code> asset were removed in epic
 <a href="https://github.com/vergil-project/.github/issues/325">#325</a>, Task 10,
 once the whole fleet was fenced.)</p>
 <p><strong>Local additions are expected.</strong> Genuinely repo-local lines live
-<em>outside</em> the fence and are never asserted against or touched; a repo
-freely adds its own entries above or below the managed block.</p>
+<em>outside</em> the fence and are never asserted against; a repo freely adds
+its own entries below the managed block (<code>--write</code> moves any above it to
+below it, in order).</p>
 <h3 id="propagation-the-rolling-vxy-pin">Propagation — the rolling <code>vX.Y</code> pin<a class="headerlink" href="#propagation-the-rolling-vxy-pin" title="Permanent link">&para;</a></h3>
 <p>Every managed repo pins <code>vergil-tooling</code> to the <strong>rolling major-minor
 tag</strong> <code>vX.Y</code>, never a specific patch. The nightly <code>ops.yml</code> job installs
@@ -16429,13 +16539,14 @@ managed block is re-rendered.</p>
 <p>Because the fence must match the composed block <em>exactly</em> (not merely be
 a superset), a fragment change is applied — not auto-satisfied — by
 re-running <code>vrg-gitignore-sync</code>, which rewrites the managed block in
-place and leaves the repo-local section untouched. The fleet driver runs
+place and leaves the genuinely repo-local section untouched. The fleet driver runs
 that applicator across every repo as reviewed per-repo PRs; the rolling
 pin delivers the new fragments to the tool, and the applicator writes the
 fence.</p>
 <h2 id="new-repos-are-born-conforming">New repos are born conforming<a class="headerlink" href="#new-repos-are-born-conforming" title="Permanent link">&para;</a></h2>
-<p><code>repo_init</code> (<code>vrg-github-repo-init</code>) scaffolds both halves of the
-contract, so a freshly created repo passes both new checks from day one:</p>
+<p><code>repo_init</code> (<code>vrg-github-repo-init</code>) scaffolds these checked-in files
+through the same modules the audit uses, so a freshly created repo
+passes their checks from day one:</p>
 <ul>
 <li><strong><code>.gitignore</code></strong> — <code>render_gitignore()</code> renders through
   <code>lib/gitignore.py</code> (the same module the audit uses), so a new repo is
@@ -16447,7 +16558,63 @@ contract, so a freshly created repo passes both new checks from day one:</p>
   deterministic hash of <code>&lt;org&gt;/&lt;repo&gt;</code> maps to a minute in <code>[0,59]</code> — so
   the fleet does not stampede a single minute as it grows. The hour stays
   in the early-UTC window; only the minute varies.</li>
+<li><strong><code>.github/dependabot.yml</code></strong> — the config-files step writes
+  <code>lib/dependabot.py::render(&lt;language&gt;)</code>, the same render
+  <code>_check_dependabot_yml</code> compares against, so a new repo passes that
+  check from day one.</li>
 </ul>
+<h2 id="github-checks-security-settings">GitHub checks — security settings<a class="headerlink" href="#github-checks-security-settings" title="Permanent link">&para;</a></h2>
+<p>The GitHub half also compares the repo's security settings
+(<code>desired_security_settings()</code> in <code>lib/github_config.py</code>) and reports
+each difference as a <code>security.&lt;field&gt;</code> <code>DiffItem</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Desired</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>security.vulnerability_alerts</code></td>
+<td><code>true</code></td>
+<td>Dependabot alerts on, for <strong>every</strong> repo, public or private</td>
+</tr>
+<tr>
+<td><code>security.dependabot_security_updates</code></td>
+<td><code>disabled</code></td>
+<td>Dependabot never opens a security-update PR</td>
+</tr>
+<tr>
+<td><code>security.secret_scanning</code></td>
+<td><code>enabled</code></td>
+<td>Only when GHAS is available; otherwise unmanaged</td>
+</tr>
+<tr>
+<td><code>security.secret_scanning_push_protection</code></td>
+<td><code>enabled</code></td>
+<td>Only when GHAS is available; otherwise unmanaged</td>
+</tr>
+</tbody>
+</table>
+<p>GHAS is available when <code>[project].ghas</code> in <code>vergil.toml</code> says so, and
+otherwise exactly when the repo is not private.</p>
+<p>The first two rows are the <strong>report-only Dependabot posture</strong> (epic
+<a href="https://github.com/vergil-project/.github/issues/420">vergil-project/.github#420</a>):
+alerts are on so the nightly
+<a href="../dependabot-audit/"><code>vrg-dependabot-audit</code></a> has something to read,
+and security-update PRs stay off. Version-update PRs are suppressed
+separately, by <code>open-pull-requests-limit: 0</code> in the canonical
+<code>.github/dependabot.yml</code>, which <code>_check_dependabot_yml</code> enforces (see
+<a href="#local-checks">Local checks</a>).</p>
+<p>Alerts are read from <code>GET /repos/{repo}/vulnerability-alerts</code> (204 means
+on, 404 means off). Any other status is an error, never a silent "off".
+<code>apply</code> turns alerts on with <code>PUT</code> on that endpoint (or off with
+<code>DELETE</code>), and sets <code>dependabot_security_updates</code> through the repo's
+<code>security_and_analysis</code> settings. <code>apply</code> is a human action: it needs
+Administration write access, which the org automation Apps do not
+have.</p>
 <h2 id="github-checks-the-required-status-check-set">GitHub checks — the required-status-check set<a class="headerlink" href="#github-checks-the-required-status-check-set" title="Permanent link">&para;</a></h2>
 <p>The GitHub half compares the repo's live branch-protection configuration
 against the canonical CI-gates ruleset that
@@ -16481,6 +16648,32 @@ version-agnostic CI model (epic
   push restrictions) is <strong>reported, not touched</strong>. The blast radius is minimal
   and intentional protections are preserved.</li>
 </ul>
+<h2 id="github-checks-undeclared-ruleset-parameters">GitHub checks — undeclared ruleset parameters<a class="headerlink" href="#github-checks-undeclared-ruleset-parameters" title="Permanent link">&para;</a></h2>
+<p>GitHub sometimes adds a new ruleset rule parameter and sets a default for
+it on its side, as it did with
+<code>require_extra_approval_for_unattributed_changes</code> on the <code>pull_request</code>
+rule (#2860). When a live rule carries a parameter key that the desired
+rule of the same <code>type</code> does not declare, the audit reports it as an
+<strong>undeclared parameter</strong>, separately from value mismatches. The message
+names the ruleset, the rule type, the key, and the live value:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>UNDECLARED PARAMETER: rulesets.Branch protection rule 'pull_request' has
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>'require_extra_approval_for_unattributed_changes' = True live, ...
+</code></pre></div>
+<ul>
+<li><strong>It is non-compliant.</strong> The live ruleset enforces a setting the spec
+  never chose, so <code>audit</code> exits 1, the same as any other drift.</li>
+<li><strong><code>apply</code> cannot fix it.</strong> The ruleset <code>PUT</code> leaves out the key, so
+  GitHub applies its default again. <code>apply</code> still fixes any value drift,
+  writes nothing when the only issues are undeclared parameters, and
+  exits 1 with a pointer to the decision.</li>
+<li><strong>Resolve it in the spec.</strong> Either declare the key with an explicit
+  value in the desired ruleset in <code>lib/github_config.py</code>, or add it to
+  <code>_STRIP_RULE_PARAMS</code> if it should be ignored. Keys on that list
+  (<code>do_not_enforce_on_create</code>, <code>dismissal_restriction</code>) are removed before
+  comparison and never reported.</li>
+</ul>
+<p>A whole live rule whose <code>type</code> the desired ruleset lacks is not an
+undeclared parameter. It is reported as <code>.rules</code> value drift.</p>
 <h2 id="related">Related<a class="headerlink" href="#related" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../../guides/consuming-repo-setup/">Consuming Repo Setup</a> — the

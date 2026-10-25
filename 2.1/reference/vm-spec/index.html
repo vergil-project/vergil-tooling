@@ -1326,6 +1326,8 @@
       
         
       
+        
+      
     
     
     
@@ -1378,6 +1380,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.265/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.265
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -12588,6 +12618,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="vergil-tooling inside the VM">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#cache-image-prune-on-update" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cache image prune on update
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -15505,6 +15552,8 @@
       
         
       
+        
+      
     
     
     
@@ -15621,6 +15670,34 @@
     
   
     Permission Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/security-boundaries/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security Boundaries
   
 
     
@@ -16108,6 +16185,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="vergil-tooling inside the VM">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#cache-image-prune-on-update" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cache image prune on update
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -16586,6 +16680,23 @@ such as <code>develop</code> or a feature branch):</p>
   <code>DEV tooling (ref &lt;ref&gt;) — not the packaged install</code>.</li>
 <li>A plain <code>vrg-vm update</code> (no <code>--tag</code>) returns the VM to the packaged
   install and removes the dev copy.</li>
+</ul>
+<h3 id="cache-image-prune-on-update">Cache image prune on update<a class="headerlink" href="#cache-image-prune-on-update" title="Permanent link">&para;</a></h3>
+<p>After the reinstall, <code>vrg-vm update</code> (and each box of <code>update --all</code>) runs
+the VM's own, freshly installed <code>vrg-container-cache prune --apply</code> inside
+the VM. It removes cached dev images whose branch is finished and prints what
+it removed. Pass <code>--no-prune</code> to skip it.</p>
+<ul>
+<li>An off-platform box prunes against its default repo set,
+  <code>/vergil/projects</code>. A Lima box is given its identity's <code>projects_dir</code> as
+  <code>--root</code>. That path is mounted at the same location in the VM, and the
+  in-VM command does not run from a checkout, so it cannot work out the
+  default on its own.</li>
+<li>A failed prune is printed as an <code>ERROR</code> with the command's output and exit
+  status, but it does not fail the update.</li>
+<li>If the VM's vergil-tooling has no <code>prune</code> subcommand yet, or no
+  <code>vrg-container-cache</code> at all, the prune is skipped with a warning that says
+  so.</li>
 </ul>
 
 

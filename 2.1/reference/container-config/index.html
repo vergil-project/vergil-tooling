@@ -1326,6 +1326,8 @@
       
         
       
+        
+      
     
     
     
@@ -1378,6 +1380,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.265/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.265
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -12707,6 +12737,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#low-disk-auto-prune-vrg_cache_prune_free_gb" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Low-disk auto-prune (VRG_CACHE_PRUNE_FREE_GB)
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -15594,6 +15635,8 @@
       
         
       
+        
+      
     
     
     
@@ -15710,6 +15753,34 @@
     
   
     Permission Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/security-boundaries/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security Boundaries
   
 
     
@@ -16288,6 +16359,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#low-disk-auto-prune-vrg_cache_prune_free_gb" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Low-disk auto-prune (VRG_CACHE_PRUNE_FREE_GB)
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -16631,6 +16713,44 @@ prints nothing. <code>--script</code> is the CI-consumption entry point — the 
 call it to obtain the exact command to run per job (see
 <a href="../../guides/ci-architecture/#repo-specific-build-steps">CI Architecture → Repo-specific build steps</a>),
 mirroring how <code>vrg-container-system-packages --install-script</code> feeds the apt step.</p>
+<h2 id="low-disk-auto-prune-vrg_cache_prune_free_gb">Low-disk auto-prune (<code>VRG_CACHE_PRUNE_FREE_GB</code>)<a class="headerlink" href="#low-disk-auto-prune-vrg_cache_prune_free_gb" title="Permanent link">&para;</a></h2>
+<p>Not a <code>[container]</code> key: the image store belongs to the machine, not the repo, so
+this is a host environment variable.</p>
+<p>Just before <code>vrg-container-run</code> (or <code>vrg-container-cache build</code>, or
+<code>vrg-finalize-pr</code>'s provisioning step) builds a cached dev image, it checks the
+free space on the filesystem that holds the runtime's image store. When that is
+below the threshold, it runs the same prune as
+<code>vrg-container-cache prune --apply</code> against the same repo set, and prints each
+image it removed.</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>Semantics</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>VRG_CACHE_PRUNE_FREE_GB</code></td>
+<td><code>10</code></td>
+<td>Free space, in GB, below which a cache build first prunes finished branches' images. <code>0</code> turns the auto-prune off; a value that is not a non-negative number stops the build</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><strong>The repo set is never guessed.</strong> On the physical host, which has no default
+  repo set, the prune is skipped with a warning; run
+  <code>vrg-container-cache prune --apply --root DIR</code> by hand.</li>
+<li><strong>Failures are loud.</strong> A prune that cannot run, or an image it cannot remove,
+  is printed as a warning.</li>
+<li><strong>The build goes ahead only with room for it.</strong> After the prune, the build
+  continues if at least 3 GB (or the threshold, if lower) is free, with a warning
+  while still below the threshold. With less, it stops with the free-space
+  numbers and the manual command, rather than fail part way through.</li>
+<li><strong>An unmeasurable store is skipped.</strong> Docker Desktop keeps its image store
+  inside its own VM; there the check is skipped with a note.</li>
+</ul>
 
 
 

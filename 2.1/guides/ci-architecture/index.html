@@ -1326,6 +1326,8 @@
       
         
       
+        
+      
     
     
     
@@ -1378,6 +1380,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.265/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.265
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15328,6 +15358,8 @@
       
         
       
+        
+      
     
     
     
@@ -15444,6 +15476,34 @@
     
   
     Permission Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../security-boundaries/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security Boundaries
   
 
     
@@ -16554,12 +16614,13 @@ branch coverage (<code>--cov-branch</code>) can
 legitimately differ across CPython versions — a branch reachable on one
 version may be dead on another, or a version-guarded code path may only
 execute on some interpreters — code that measures 100% locally can still
-fall below 100% on a 3.12, 3.13 or 3.14 leg and fail CI. The multi-version
-coverage matrix is therefore a <strong>PR-CI-only</strong> gate: local validate covers
-a single interpreter and cannot reproduce it. This is a known, accepted
-limitation, not a bug — closing it would mean running the full version
-matrix locally, which Tier 1's one-container model deliberately trades
-away for speed.</p>
+fall below 100% on a 3.12, 3.13 or 3.14 leg and fail CI. The default
+local validate covers a single interpreter, trading the matrix away for
+speed. For Python, <code>vrg-container-run -- vrg-validate --all-versions</code>
+closes the gap on demand: inside the same one container it runs the
+gate on every resolved version, each on a uv-managed interpreter (see
+<a href="../validation-matrix/#all-versions-python">All versions</a>). For other
+languages the multi-version matrix stays a <strong>PR-CI-only</strong> gate.</p>
 </div>
 <h2 id="architecture">Architecture<a class="headerlink" href="#architecture" title="Permanent link">&para;</a></h2>
 <h3 id="thin-caller-pattern">Thin-caller pattern<a class="headerlink" href="#thin-caller-pattern" title="Permanent link">&para;</a></h3>

@@ -1326,6 +1326,8 @@
       
         
       
+        
+      
     
     
     
@@ -1378,6 +1380,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.265/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.265
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -12806,6 +12836,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="The package index (packages.toml)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#checking-packagestoml-without-building" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Checking packages.toml without building
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -15650,6 +15697,8 @@
       
         
       
+        
+      
     
     
     
@@ -15766,6 +15815,34 @@
     
   
     Permission Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/security-boundaries/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security Boundaries
   
 
     
@@ -16387,6 +16464,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="The package index (packages.toml)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#checking-packagestoml-without-building" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Checking packages.toml without building
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -16939,8 +17033,21 @@ retention would evict still counts. An entry that matches nothing fails the
 index build. It is either a typo, which would otherwise leave the package
 published, or a package whose releases are gone; either way, remove it from
 <code>packages.toml</code>.</p>
+<h3 id="checking-packagestoml-without-building">Checking <code>packages.toml</code> without building<a class="headerlink" href="#checking-packagestoml-without-building" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>vrg-package<span class="w"> </span>index<span class="w"> </span>--check-config<span class="w"> </span>--config<span class="w"> </span>packages.toml
+</code></pre></div>
+<p>validates <code>packages.toml</code> and exits without building anything. It applies
+every check the index build makes on the file itself: known keys only, a
+non-empty <code>vendor</code>, well-formed and unique <code>products</code>, positive integer
+<code>keep</code> and <code>lines</code>, and well-formed and unique <code>retire</code> entries. It uses no
+network, signing keys or output directory, so <code>--keys</code> and <code>--out</code> are not
+needed. On success it prints <code>vrg-package: packages.toml: ok</code>. On any
+invalid value it prints the error and exits non-zero, so a repo's
+validation can catch a typo before publish time. Checks that need the
+collected releases, such as a <code>retire</code> entry that matches no package, still
+run only in the full index build.</p>
 <h2 id="inspecting-the-matrix">Inspecting the matrix<a class="headerlink" href="#inspecting-the-matrix" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>vrg-container-run<span class="w"> </span>--<span class="w"> </span>vrg-package<span class="w"> </span>matrix
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>vrg-container-run<span class="w"> </span>--<span class="w"> </span>vrg-package<span class="w"> </span>matrix
 </code></pre></div>
 <p>prints the resolved build and test cells as JSON without building anything.
 Add <code>--tier reduced</code> to see the reduced feature-PR matrix.</p>

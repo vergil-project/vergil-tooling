@@ -1328,6 +1328,8 @@
       
         
       
+        
+      
     
     
     
@@ -1380,6 +1382,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../releases/v2.1.265/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.265
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15500,6 +15530,8 @@
       
         
       
+        
+      
     
     
     
@@ -15616,6 +15648,34 @@
     
   
     Permission Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../guides/security-boundaries/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security Boundaries
   
 
     
@@ -16177,10 +16237,18 @@ manager.</p>
   regardless of <code>--output-folder</code> is <code>CMakeUserPresets.json</code>, which the managed
   cpp <code>.gitignore</code> fragment therefore keeps
   (<a href="https://github.com/vergil-project/vergil-tooling/issues/2912">#2912</a>).</li>
-<li>The AUDIT stage runs <strong><code>conan audit scan .</code></strong>, which scans the resolved
-  dependency graph against ConanCenter's advisory database for known CVEs, then
-  <code>conan graph info . --format=json</code> to surface dependency licenses (best-effort
-  in v1 — there is no turnkey Conan allowlist gate yet). <code>conan audit</code> reads a
+<li>The AUDIT stage runs <strong><code>conan audit scan . -s build_type=Debug
+  --lockfile=conan.lock</code></strong>, which scans the resolved dependency graph against
+  ConanCenter's advisory database for known CVEs, then
+  <code>conan graph info . -s build_type=Debug --format=json --lockfile=conan.lock</code>
+  to surface dependency licenses (best-effort in v1 — there is no turnkey Conan
+  allowlist gate yet). The scan covers every package in the graph in both
+  contexts, so <code>test_requires</code> and <code>tool_requires</code> are included. Both steps
+  resolve in the lock's own <code>build_type=Debug</code> configuration against the
+  committed <code>conan.lock</code>, so a Debug-only locked dependency is not skipped and a
+  missing lock fails rather than re-resolving
+  (<a href="https://github.com/vergil-project/vergil-tooling/issues/3553">#3553</a>).
+  <code>conan audit</code> reads a
   ConanCenter provider token from the environment; a consuming repo must supply
   it once (see <a href="#conancenter-audit-token">ConanCenter Audit Token</a> below).</li>
 </ul>

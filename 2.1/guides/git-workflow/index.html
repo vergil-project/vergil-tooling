@@ -1326,6 +1326,8 @@
       
         
       
+        
+      
     
     
     
@@ -1378,6 +1380,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.265/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.265
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15328,6 +15358,8 @@
       
         
       
+        
+      
     
     
     
@@ -15444,6 +15476,34 @@
     
   
     Permission Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../security-boundaries/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security Boundaries
   
 
     
@@ -16430,8 +16490,14 @@ through PRs against the appropriate integration branch (typically
 </code></pre></div>
 <p>Pattern: <code>^(feature|bugfix|hotfix|chore)/[0-9]+-[a-z0-9][a-z0-9.-]*$</code>.
 <code>vrg-git</code> applies it when the branch is created (<code>worktree add -b</code>,
-<code>checkout -b</code>, <code>switch -c</code>) and <code>vrg-commit</code> applies it again at commit
-time.</p>
+<code>checkout -b</code>, <code>switch -c</code>, <code>branch &lt;name&gt;</code>, and a <code>branch -c</code>/<code>-m</code> copy
+or rename to an issue-branch name) and <code>vrg-commit</code> applies it again at
+commit time. Listing, deleting and upstream forms of <code>vrg-git branch</code> are
+not checked.</p>
+<p>At creation, <code>vrg-git</code> also reads issue <code>&lt;N&gt;</code> from the current repo. It
+refuses the branch when the issue is closed, or is an epic or archive
+(an umbrella is never closed by a PR). It also refuses when the issue
+cannot be read, so check <code>vrg-gh issue view &lt;N&gt;</code> works and retry.</p>
 <p>The <code>release/*</code> and <code>promotion/*</code> prefixes are created by automated
 workflows and are exempt from the issue-number rule.</p>
 <p><code>deps/update-&lt;version&gt;</code> is the branch <code>vrg-update-deps</code> (and the
@@ -16536,19 +16602,22 @@ full flag list.</p>
 <div class="admonition note">
 <p class="admonition-title">Agent handoff and the post-report-ready freeze</p>
 <p>In an agent session, submission is a <strong>human</strong> action. The agent
-pushes the branch to origin (<code>vrg-git push -u origin &lt;branch&gt;</code>)
-<strong>first</strong> — <code>report-ready</code> pushes only the relay ref, never the
-branch; when the delta touches <code>.github/workflows/**</code> the agent push
-is refused and the human's <code>vrg-submit-pr</code> pushes it instead. The
-agent then runs <code>vrg-pr-workflow report-ready</code> to record the PR
-metadata in <code>.vergil/pr-workflow.json</code>, and stops; the human runs
-<code>vrg-submit-pr</code>. Recording ready <strong>freezes the branch</strong>: <code>vrg-commit</code>
+runs <code>vrg-pr-workflow report-ready</code>, which pushes the branch to origin
+(setting upstream) and then records the PR metadata in
+<code>.vergil/pr-workflow.json</code>, and stops; the human runs <code>vrg-submit-pr</code>.
+No separate push is needed. When the delta touches
+<code>.github/workflows/**</code> GitHub refuses the agent push; <code>report-ready</code>
+says so, records the state anyway, and the human's <code>vrg-submit-pr</code>
+pushes the branch instead. Any other push failure fails <code>report-ready</code>
+with nothing recorded. Recording ready <strong>freezes the branch</strong>: <code>vrg-commit</code>
 and the <code>vrg-git</code> push path refuse further commits/pushes on it,
 because a task is exactly one PR and more work is a new follow-up
 issue. One push stays allowed: an explicit push of the branch while
 HEAD is still exactly the reported commit, which publishes it without
 advancing it. Correcting the PR prose (re-running <code>report-ready</code>) is still
-allowed; deliberately reopening the branch needs
+allowed — its push is a no-op while the branch is on origin at the
+reported commit, and it refuses a HEAD that has drifted past that
+commit; deliberately reopening the branch needs
 <code>vrg-pr-workflow unfreeze</code>. See the tool's entry in the
 <a href="../../reference/cli-tools-overview/#vrg-pr-workflow">CLI Tools Overview</a>.</p>
 </div>

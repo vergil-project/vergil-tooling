@@ -1324,6 +1324,8 @@
       
         
       
+        
+      
     
     
     
@@ -1376,6 +1378,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.265/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.265
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15326,6 +15356,8 @@
       
         
       
+        
+      
     
     
     
@@ -15442,6 +15474,34 @@
     
   
     Permission Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../security-boundaries/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security Boundaries
   
 
     
@@ -16020,6 +16080,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#the-maindevelop-divergence-check" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The main/develop divergence check
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -16284,6 +16355,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#the-maindevelop-divergence-check" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The main/develop divergence check
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -16419,9 +16501,13 @@ adding new public surface. Versions: <code>v1.3.0</code> → <code>v1.3.1</code>
      the release; the index's weekly reconcile picks the release up.
    - <code>vrg-release</code>'s <code>package-index</code> stage then polls the published
      index (up to 20 minutes, every 30 seconds) until the new version is
-     visible, so the consumer refresh never races the index. A miss
+     visible, so the consumer refresh never races the index. While it
+     waits, it streams the <code>Publish package index</code> run in <code>&lt;org&gt;/packages</code>
+     that covers the release and prints a heartbeat line on each poll
+     otherwise; the index poll alone decides success. A miss
      (timeout or polling error) does not undo the release. It is recorded
-     as a deferred publish failure: the consumer-refresh stage holds (it
+     as a deferred publish failure: the tracking issue stays open with a
+     deferral comment, the consumer-refresh stage holds (it
      prints a warning not to advertise the version instead of the refresh
      commands), the stage error tells you to re-run the <code>publish-index</code>
      workflow in <code>&lt;org&gt;/packages</code>, and <code>vrg-release</code> exits 1. See the
@@ -16455,7 +16541,7 @@ issue and ticks its box in the issue's stage checklist.</p>
 <tr>
 <td><code>preflight</code></td>
 <td>fail-fast</td>
-<td>Checks the host prerequisites, <code>gh</code> auth, <code>vergil.toml</code>, and that the root checkout is a clean <code>develop</code> matching <code>origin/develop</code>. On a fresh start it also checks the version is not tagged, that no tracking issue exists for it, runs the <a href="#the-package-re-publish-check">package re-publish check</a>, and runs the <a href="#the-dependency-update-gate">dependency-update gate</a>. Creates the <code>release/&lt;version&gt;</code> managed worktree</td>
+<td>Checks the host prerequisites, <code>gh</code> auth, <code>vergil.toml</code>, and that the root checkout is a clean <code>develop</code> matching <code>origin/develop</code>. On a fresh start it also runs the <a href="#the-maindevelop-divergence-check">main/develop divergence check</a>, checks the version is not tagged, that no tracking issue exists for it, runs the <a href="#the-package-re-publish-check">package re-publish check</a>, and runs the <a href="#the-dependency-update-gate">dependency-update gate</a>. Creates the <code>release/&lt;version&gt;</code> managed worktree</td>
 </tr>
 <tr>
 <td><code>prepare</code></td>
@@ -16465,7 +16551,7 @@ issue and ticks its box in the issue's stage checklist.</p>
 <tr>
 <td><code>merge-release</code></td>
 <td>fail-fast</td>
-<td>Waits for the release PR's checks and merges it</td>
+<td>Waits for the release PR's checks and merges it. If the PR conflicts with <code>main</code>, it merges <code>main</code> into the release branch and pushes it. A conflict in <code>CHANGELOG.md</code> alone is resolved by keeping the release branch's generated changelog; any other conflict aborts the merge and stops with the commands to resolve it by hand</td>
 </tr>
 <tr>
 <td><code>confirm-main</code></td>
@@ -16493,14 +16579,14 @@ issue and ticks its box in the issue's stage checklist.</p>
 <td>Moves the rolling <code>vX.Y</code> tag to the new release (skipped with <code>--no-promote</code>)</td>
 </tr>
 <tr>
+<td><code>package-index</code></td>
+<td>deferred</td>
+<td>For repos with <code>[package]</code>, waits for the new version in the package index. A miss is a deferred publish failure, not a halted stage</td>
+</tr>
+<tr>
 <td><code>close-finalize</code></td>
 <td>deferred</td>
 <td>Closes the tracking issue with a summary and runs <code>vrg-finalize-pr --cleanup-only --no-wait-cd</code></td>
-</tr>
-<tr>
-<td><code>package-index</code></td>
-<td>deferred</td>
-<td>For repos with <code>[package]</code>, waits for the new version in the package index</td>
 </tr>
 <tr>
 <td><code>consumer-refresh</code></td>
@@ -16522,8 +16608,10 @@ issue and ticks its box in the issue's stage checklist.</p>
 <p><code>close-finalize</code> leaves the tracking issue open, and skips the cleanup,
 when an earlier stage has failed, so the release can be resumed with
 <code>vrg-release --resume</code>. A deferred publish failure also leaves the
-issue open, but the release itself is complete: re-run the CD publish
-rather than resuming.</p>
+issue open, with a comment that says how to finish each deferred item,
+but the release itself is complete: re-run the CD publish (or the
+<code>publish-index</code> workflow, for a <code>package-index</code> miss) rather than
+resuming.</p>
 <p><code>confirm-develop</code> checks the CD run for the back-merge's merge commit,
 not for the current tip of <code>develop</code>. On <code>vrg-release --resume</code>, other
 PRs (a dependency update or a feature) may have merged to <code>develop</code>
@@ -16712,10 +16800,13 @@ ignored. What it leaves behind depends on where it failed:</p>
 <ul>
 <li><strong>An updater or the repo hook failed</strong> (<code>update</code>), for example a
   lookup error, a non-zero hook exit, or a hook that committed: this
-  happens before validation, so nothing is pushed, no PR is opened, and
-  no fix task is filed. The worktree is removed and the failure is
-  reported on the tracking issue and in the run summary. With no
-  labelled PR, it does not gate the next release.</li>
+  happens before validation, so nothing is pushed and no PR is opened.
+  A task titled "Fix failed dependency update for <code>&lt;version&gt;</code>" is still
+  filed under the repo's ad-hoc epic. It stands on its own: it names the
+  failing updater, carries the error and the command to reproduce it on
+  <code>develop</code>, and is linked from the failure on the tracking issue and in
+  the run summary. The worktree is removed. With no labelled PR, it does
+  not gate the next release.</li>
 <li><strong>Validation failed</strong> (<code>validation</code>), or <strong>the PR's checks or merge
   failed</strong> (<code>merge</code>): the PR stays open with its <code>dependency-update</code>
   label, and a task titled "Fix failed dependency update for
@@ -16725,6 +16816,10 @@ ignored. What it leaves behind depends on where it failed:</p>
   stage, or, when that stage cannot be isolated, a labelled tail of the
   raw output. It ends with the command to reproduce the failure.</li>
 </ul>
+<p>If a fix task for the same version and failure kind is already open,
+for example after <code>vrg-release --resume</code> re-runs an update that failed
+on a transient error, no second task is filed: the new failure is added
+as a comment on the open task, which is linked as above.</p>
 <p>Either way <code>vrg-release</code> exits 1, and the failure counts once in its
 summary: the <code>update-deps</code> stage fails, and <code>publish-status</code> repeats it
 as a warning. If a publish job also failed, <code>publish-status</code> fails with
@@ -16738,6 +16833,10 @@ its branch from the failed update so it starts from those commits:</p>
 <p>Fix the cause, then hand off and merge as usual. When the fix PR merges
 and closes the fix task as completed, the next <code>vrg-release</code> closes the
 dependency-update PR for you.</p>
+<p>An <code>update</code> failure pushed no <code>deps/update-&lt;version&gt;</code> branch, so cut
+that fix task's branch from <code>origin/develop</code> instead. Once the fix
+merges, the next <code>vrg-update-deps</code> run, or the next <code>vrg-release</code>,
+applies the update.</p>
 <h3 id="the-dependency-update-gate">The dependency-update gate<a class="headerlink" href="#the-dependency-update-gate" title="Permanent link">&para;</a></h3>
 <p>On a fresh start (not <code>--resume</code>), <code>preflight</code> lists the open PRs
 labelled <code>dependency-update</code>. For each one:</p>
@@ -16789,6 +16888,33 @@ new <code>+&lt;date&gt;</code> build suffix. If the check cannot read the repo's
 releases, it refuses rather than skipping. CD runs the same check as a
 backstop; see the
 <a href="../../reference/package-config/#the-re-publish-check">package reference</a>.</p>
+<h3 id="the-maindevelop-divergence-check">The main/develop divergence check<a class="headerlink" href="#the-maindevelop-divergence-check" title="Permanent link">&para;</a></h3>
+<p>A completed release leaves <code>main</code> contained in <code>develop</code>:
+<code>back-merge-bump</code> branches <code>release/post-&lt;version&gt;</code> from <code>main</code> and
+merges it to <code>develop</code> with a merge commit. <code>develop</code> being ahead of
+<code>main</code> is normal. <code>main</code> having commits that <code>develop</code> lacks is not. It
+means an earlier release stopped between <code>merge-release</code> and
+<code>back-merge-bump</code>, or something landed on <code>main</code> directly. A new
+release on top of that would fail late, at <code>merge-release</code>.</p>
+<p>So a fresh start (not <code>--resume</code>) fetches <code>main</code> and refuses, before
+any other fresh-start check, when <code>origin/main</code> has commits not on
+<code>origin/develop</code>. The refusal lists those commits. To recover:</p>
+<ul>
+<li>If an earlier release stopped before its back-merge (its tracking
+  issue is still open), finish it with <code>vrg-release --resume</code>. A resume
+  skips this check, because a release between <code>merge-release</code> and
+  <code>back-merge-bump</code> has <code>main</code> ahead of <code>develop</code> by design.</li>
+<li>Otherwise, back-merge <code>main</code> into <code>develop</code> by hand:</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>git<span class="w"> </span>fetch<span class="w"> </span>origin
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>git<span class="w"> </span>switch<span class="w"> </span>-c<span class="w"> </span>release/back-merge-main<span class="w"> </span>origin/main
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>git<span class="w"> </span>push<span class="w"> </span>-u<span class="w"> </span>origin<span class="w"> </span>release/back-merge-main
+</code></pre></div>
+<p>Open a PR from <code>release/back-merge-main</code> to <code>develop</code> and merge it
+  with a merge commit. A squash merge leaves <code>main</code>'s commits off
+  <code>develop</code>, and the check keeps refusing. Then re-run <code>vrg-release</code>.</p>
+<p>If preflight cannot fetch <code>main</code> or compare the branches, it refuses
+rather than skipping.</p>
 <h2 id="documentation-publication">Documentation publication<a class="headerlink" href="#documentation-publication" title="Permanent link">&para;</a></h2>
 <p>The Documentation workflow (<code>.github/workflows/docs.yml</code>) deploys
 the MkDocs site to GitHub Pages on every push to <code>develop</code> and
@@ -16809,8 +16935,8 @@ deadline defaults to 90 minutes and can be changed with <code>VRG_CD_TIMEOUT</co
 progress; result unknown", with the run URL and how to re-check it, not
 as a failed run. It still fails finalize (issue #3316).</p>
 <p>For deeper investigation, view recent runs directly:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>gh<span class="w"> </span>run<span class="w"> </span>list<span class="w"> </span>--repo<span class="w"> </span>vergil-project/vergil-tooling<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span>--workflow<span class="o">=</span><span class="s2">"Documentation"</span><span class="w"> </span>--limit<span class="w"> </span><span class="m">5</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>gh<span class="w"> </span>run<span class="w"> </span>list<span class="w"> </span>--repo<span class="w"> </span>vergil-project/vergil-tooling<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span>--workflow<span class="o">=</span><span class="s2">"Documentation"</span><span class="w"> </span>--limit<span class="w"> </span><span class="m">5</span>
 </code></pre></div>
 <h2 id="release-tracking-artifacts">Release tracking artifacts<a class="headerlink" href="#release-tracking-artifacts" title="Permanent link">&para;</a></h2>
 <p>Each release has a tracking issue, <code>release: &lt;version&gt;</code>, which

@@ -1328,6 +1328,8 @@
       
         
       
+        
+      
     
     
     
@@ -1380,6 +1382,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../releases/v2.1.265/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.265
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -14634,6 +14664,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#vulnerability-audit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Vulnerability audit
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#document-map" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -15456,6 +15497,8 @@
       
         
       
+        
+      
     
     
     
@@ -15572,6 +15615,34 @@
     
   
     Permission Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../guides/security-boundaries/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security Boundaries
   
 
     
@@ -15990,6 +16061,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#vulnerability-audit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Vulnerability audit
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#document-map" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -16046,6 +16128,30 @@ version a repo resolves from the version window is a hard CI leg (see the
 <a href="../../runtime-version-support-policy/">Runtime Version Support Policy</a>).</p>
 <p>Required checks for Java repositories are maintained in the
 <a href="https://vergil-project.github.io/standard-actions/ci-gates/required-checks/">standard-actions CI gates documentation</a>.</p>
+<h2 id="vulnerability-audit">Vulnerability audit<a class="headerlink" href="#vulnerability-audit" title="Permanent link">&para;</a></h2>
+<p>The <code>vrg-validate</code> audit stage, which is also the CI <code>audit</code> gate, fails on
+any dependency with a known vulnerability. It checks the full resolved
+graph: every module in the reactor and every scope, test scope included.</p>
+<p>The stage runs <code>./mvnw org.cyclonedx:cyclonedx-maven-plugin:makeAggregateBom</code>
+to write a CycloneDX SBOM of the reactor to <code>target/bom.json</code>. Maven
+resolves that graph the same way it resolves the build. The stage then runs
+<code>osv-scanner scan source --lockfile=target/bom.json</code>, which checks every
+package against the <a href="https://osv.dev">OSV</a> advisory database. The scan needs
+network access to <code>api.osv.dev</code> but no API key. A project with no
+dependencies passes. A missing SBOM fails the audit.</p>
+<p>The <code>osv-scanner</code> binary comes from the Java dev image. If the image does
+not provide it, the audit fails with a message that names the missing tool.
+It never skips the scan.</p>
+<p>To suppress a reviewed false positive, commit an <code>osv-scanner.toml</code> at the
+repository root. The audit passes it to the scanner whenever it exists. Give
+every entry a reason and an expiry date:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">[[IgnoredVulns]]</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"GHSA-xxxx-xxxx-xxxx"</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">ignoreUntil</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="ld">2027-01-01</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">reason</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"Vulnerable code path is unreachable: &lt;evidence&gt;"</span>
+</code></pre></div>
+<p>If the scan fails, upgrade the dependency, or pin a fixed transitive
+version in <code>&lt;dependencyManagement&gt;</code>, before committing.</p>
 <h2 id="document-map">Document Map<a class="headerlink" href="#document-map" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Naming conventions: <a href="../naming-conventions/">naming-conventions.md</a></li>

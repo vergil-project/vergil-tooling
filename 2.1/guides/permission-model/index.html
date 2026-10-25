@@ -14,7 +14,7 @@
         <link rel="prev" href="../credential-management/">
       
       
-        <link rel="next" href="../account-setup/">
+        <link rel="next" href="../security-boundaries/">
       
       
         
@@ -1326,6 +1326,8 @@
       
         
       
+        
+      
     
     
     
@@ -1378,6 +1380,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.265/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.265
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15330,6 +15360,8 @@
       
         
       
+        
+      
     
     
     
@@ -15624,10 +15656,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#the-gh-api-denial" class="md-nav__link">
+  <a href="#gh-api-by-identity" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The gh api Denial
+        gh api by Identity
       
     </span>
   </a>
@@ -15831,6 +15863,34 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../security-boundaries/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security Boundaries
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -16320,10 +16380,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#the-gh-api-denial" class="md-nav__link">
+  <a href="#gh-api-by-identity" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The gh api Denial
+        gh api by Identity
       
     </span>
   </a>
@@ -16832,150 +16892,348 @@ raw command via <code>! git &lt;command&gt;</code> in the Claude Code prompt.</p
 <p>Same architecture as <code>vrg-git</code>. Validates the top-level and
 second-level subcommands as a pair.</p>
 <h3 id="subcommand-allowlist_1">Subcommand Allowlist<a class="headerlink" href="#subcommand-allowlist_1" title="Permanent link">&para;</a></h3>
+<p>The allowlist depends on the identity mode (resolved by
+<code>vrg-whoami</code>). The <code>human</code> and <code>user</code> identities share one
+allowlist (<code>_ALLOWED</code>), from which the <code>user</code> agent loses the
+agent-denied pairs below. The <code>audit</code> identity has its own, much
+narrower allowlist (<code>_ALLOWED_AUDIT</code>). Any pair not listed is
+rejected as not recognized.</p>
 <table>
 <thead>
 <tr>
 <th>Subcommand</th>
+<th><code>human</code></th>
+<th><code>user</code></th>
+<th><code>audit</code></th>
 <th>Notes</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>issue view</code></td>
+<td>yes</td>
+<td>yes</td>
+<td>—</td>
 <td>Read-only</td>
-</tr>
-<tr>
-<td><code>issue create</code></td>
-<td>Issue tracking</td>
-</tr>
-<tr>
-<td><code>issue close</code></td>
-<td>Post-finalization closure (escalates to human credentials)</td>
-</tr>
-<tr>
-<td><code>issue edit</code></td>
-<td>Updating metadata</td>
 </tr>
 <tr>
 <td><code>issue list</code></td>
+<td>yes</td>
+<td>yes</td>
+<td>—</td>
 <td>Read-only</td>
 </tr>
 <tr>
+<td><code>issue edit</code></td>
+<td>yes</td>
+<td>yes</td>
+<td>—</td>
+<td>Updating metadata</td>
+</tr>
+<tr>
 <td><code>issue comment</code></td>
+<td>yes</td>
+<td>yes</td>
+<td>—</td>
 <td>Adding comments</td>
 </tr>
 <tr>
+<td><code>issue close</code></td>
+<td>yes</td>
+<td>yes</td>
+<td>—</td>
+<td>Closing is mechanical and reversible</td>
+</tr>
+<tr>
+<td><code>issue reopen</code></td>
+<td>yes</td>
+<td>yes</td>
+<td>—</td>
+<td>Non-destructive; an errant reopen is re-closed</td>
+</tr>
+<tr>
 <td><code>issue transfer</code></td>
+<td>yes</td>
+<td>yes</td>
+<td>—</td>
 <td>Intra-org issue move (finite-epic relocation)</td>
 </tr>
 <tr>
 <td><code>pr view</code></td>
+<td>yes</td>
+<td>yes</td>
+<td>yes</td>
 <td>Read-only</td>
 </tr>
 <tr>
 <td><code>pr checks</code></td>
+<td>yes</td>
+<td>yes</td>
+<td>yes</td>
 <td>CI status</td>
 </tr>
 <tr>
 <td><code>pr list</code></td>
+<td>yes</td>
+<td>yes</td>
+<td>yes</td>
 <td>Read-only</td>
 </tr>
 <tr>
 <td><code>pr diff</code></td>
+<td>yes</td>
+<td>yes</td>
+<td>yes</td>
 <td>Read-only</td>
 </tr>
 <tr>
 <td><code>pr comment</code></td>
+<td>yes</td>
+<td>yes</td>
+<td>yes</td>
 <td>Review context</td>
 </tr>
 <tr>
+<td><code>pr review</code></td>
+<td>yes</td>
+<td>yes</td>
+<td>yes</td>
+<td><code>--approve</code> is refused for <code>user</code></td>
+</tr>
+<tr>
+<td><code>pr update-branch</code></td>
+<td>yes</td>
+<td>yes</td>
+<td>—</td>
+<td>Server-side update onto the base (<code>--rebase</code> allowed)</td>
+</tr>
+<tr>
 <td><code>pr edit</code></td>
-<td>Updating metadata</td>
+<td>yes</td>
+<td>—</td>
+<td>—</td>
+<td>Agents do not edit PRs</td>
+</tr>
+<tr>
+<td><code>pr merge</code></td>
+<td>yes</td>
+<td>—</td>
+<td>—</td>
+<td>Human only, and a PR number or URL is required</td>
 </tr>
 <tr>
 <td><code>run list</code></td>
+<td>yes</td>
+<td>yes</td>
+<td>—</td>
 <td>CI status</td>
 </tr>
 <tr>
 <td><code>run view</code></td>
+<td>yes</td>
+<td>yes</td>
+<td>—</td>
 <td>CI status</td>
 </tr>
 <tr>
 <td><code>run watch</code></td>
+<td>yes</td>
+<td>yes</td>
+<td>—</td>
 <td>Blocking wait for CI</td>
 </tr>
 <tr>
+<td><code>run rerun</code></td>
+<td>yes</td>
+<td>yes</td>
+<td>—</td>
+<td>Retry a failed CI job (<code>--failed</code> allowed)</td>
+</tr>
+<tr>
+<td><code>workflow list</code></td>
+<td>yes</td>
+<td>yes</td>
+<td>yes</td>
+<td>Read-only CI configuration</td>
+</tr>
+<tr>
+<td><code>workflow view</code></td>
+<td>yes</td>
+<td>yes</td>
+<td>yes</td>
+<td>Read-only CI configuration</td>
+</tr>
+<tr>
+<td><code>cache list</code></td>
+<td>yes</td>
+<td>yes</td>
+<td>yes</td>
+<td>Read-only CI state</td>
+</tr>
+<tr>
 <td><code>repo view</code></td>
+<td>yes</td>
+<td>yes</td>
+<td>—</td>
 <td>Read-only</td>
 </tr>
 <tr>
+<td><code>repo list</code></td>
+<td>yes</td>
+<td>yes</td>
+<td>—</td>
+<td>Read-only</td>
+</tr>
+<tr>
+<td><code>release list</code></td>
+<td>yes</td>
+<td>yes</td>
+<td>—</td>
+<td>Read-only release facts</td>
+</tr>
+<tr>
+<td><code>release view</code></td>
+<td>yes</td>
+<td>yes</td>
+<td>—</td>
+<td>Read-only release facts</td>
+</tr>
+<tr>
 <td><code>label list</code></td>
+<td>yes</td>
+<td>yes</td>
+<td>—</td>
 <td>Read-only</td>
 </tr>
 <tr>
 <td><code>label create</code></td>
+<td>yes</td>
+<td>yes</td>
+<td>—</td>
 <td>Used by <code>vrg-ensure-label</code></td>
+</tr>
+<tr>
+<td><code>search code</code> / <code>commits</code> / <code>issues</code> / <code>prs</code> / <code>repos</code></td>
+<td>yes</td>
+<td>yes</td>
+<td>—</td>
+<td>Read-only, cross-org search</td>
+</tr>
+<tr>
+<td><code>api</code></td>
+<td>full</td>
+<td>—</td>
+<td>GET only</td>
+<td>See <a href="#gh-api-by-identity"><code>gh api</code></a></td>
 </tr>
 </tbody>
 </table>
+<p>The <code>audit</code> identity is a read/review reviewer, so it gets the
+PR read and review actions plus the read-only <code>workflow list</code>,
+<code>workflow view</code> and <code>cache list</code>, which only read CI
+configuration and state a reviewer may need to judge a PR's
+checks. Every write (<code>run rerun</code>, <code>pr update-branch</code>, the
+<code>issue</code> actions) stays off its allowlist.</p>
 <h3 id="denied-subcommands_1">Denied Subcommands<a class="headerlink" href="#denied-subcommands_1" title="Permanent link">&para;</a></h3>
+<p>These pairs are refused with an explanatory message rather than
+a bare "not recognized":</p>
 <table>
 <thead>
 <tr>
 <th>Subcommand</th>
+<th>Denied for</th>
 <th>Reason</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>pr merge</code></td>
-<td>Agents do not merge (conditionally allowed for release workflows via credential escalation)</td>
-</tr>
-<tr>
-<td><code>pr review --approve</code></td>
-<td>Agents do not approve (conditionally allowed for release workflows)</td>
+<td><code>issue create</code></td>
+<td>every identity</td>
+<td>Use <code>vrg-issue-create</code>, <code>vrg-epic-create</code> or <code>vrg-intake-create</code>, which force the issue's linkage</td>
 </tr>
 <tr>
 <td><code>pr close</code></td>
+<td>every identity</td>
 <td>Agents do not close PRs</td>
 </tr>
 <tr>
-<td><code>pr create</code></td>
-<td>Use <code>vrg-submit-pr</code> instead</td>
-</tr>
-<tr>
 <td><code>repo edit</code></td>
+<td>every identity</td>
 <td>Admin operation</td>
 </tr>
 <tr>
 <td><code>repo create</code></td>
+<td>every identity</td>
 <td>Admin operation</td>
 </tr>
 <tr>
 <td><code>repo delete</code></td>
+<td>every identity</td>
 <td>Destructive</td>
 </tr>
 <tr>
-<td><code>api</code></td>
-<td>Raw API access — can perform any operation</td>
+<td><code>workflow run</code></td>
+<td>every identity</td>
+<td>Dispatching a workflow can start CD or a release, which is a human action</td>
 </tr>
 <tr>
 <td><code>auth</code></td>
+<td>every identity</td>
 <td>Credential management</td>
+</tr>
+<tr>
+<td><code>pr create</code></td>
+<td>every identity</td>
+<td>Agents are told PR creation needs a human; a human is pointed to <code>vrg-submit-pr</code></td>
+</tr>
+<tr>
+<td><code>pr edit</code></td>
+<td><code>user</code>, <code>audit</code></td>
+<td>PR edit requires a human maintainer</td>
+</tr>
+<tr>
+<td><code>pr merge</code></td>
+<td><code>user</code>, <code>audit</code></td>
+<td>PR merge requires a human maintainer</td>
+</tr>
+<tr>
+<td><code>pr review --approve</code></td>
+<td><code>user</code></td>
+<td>Approval is restricted to the <code>audit</code> identity or a human</td>
+</tr>
+<tr>
+<td><code>api</code></td>
+<td><code>user</code></td>
+<td>Broad, write-capable escape hatch</td>
+</tr>
+<tr>
+<td><code>api</code> (non-GET)</td>
+<td><code>audit</code></td>
+<td>Restricted to read-only GET calls</td>
 </tr>
 </tbody>
 </table>
-<h3 id="the-gh-api-denial">The <code>gh api</code> Denial<a class="headerlink" href="#the-gh-api-denial" title="Permanent link">&para;</a></h3>
+<p>Other write actions of allowed top-level commands (<code>release
+create</code>, <code>workflow enable</code>/<code>disable</code>, <code>cache delete</code> and so on)
+are rejected by the allowlist's deny-by-default.</p>
+<h3 id="gh-api-by-identity"><code>gh api</code> by Identity<a class="headerlink" href="#gh-api-by-identity" title="Permanent link">&para;</a></h3>
 <p><code>gh api</code> can perform any GitHub API operation — create repos,
 delete branches, modify settings, push code via the Contents API.
-Denying it entirely in the wrapper closes the escape hatch that
-individual hook-based blocks cannot fully cover.</p>
+It has no fixed sub-actions, so the wrapper gates it by identity
+instead of by pair:</p>
+<ul>
+<li><strong><code>human</code></strong> — full access.</li>
+<li><strong><code>audit</code></strong> — read-only <code>GET</code> calls only. A call is treated as a
+  write when it passes <code>-X</code>/<code>--method</code> with anything but <code>GET</code>, or
+  passes a field flag (<code>-f</code>, <code>-F</code>, <code>--field</code>, <code>--raw-field</code>,
+  <code>--input</code>) without an explicit <code>GET</code>.</li>
+<li><strong><code>user</code></strong> — denied entirely, which closes the escape hatch that
+  individual hook-based blocks cannot fully cover.</li>
+</ul>
 <h3 id="credential-selection">Credential Selection<a class="headerlink" href="#credential-selection" title="Permanent link">&para;</a></h3>
 <p><code>vrg-gh</code> is responsible for choosing which account's token to use
 per-command. See <a href="../credential-management/">Credential Management</a>
-for the selection logic. The <code>pr merge</code> and <code>pr review --approve</code>
-entries above are conditionally allowed for release workflow
-operations under the human account.</p>
+for the selection logic.</p>
 <h3 id="vrg-tools-that-bypass-the-wrapper">VRG Tools That Bypass the Wrapper<a class="headerlink" href="#vrg-tools-that-bypass-the-wrapper" title="Permanent link">&para;</a></h3>
 <p>Mechanized VRG tools (<code>vrg-submit-pr</code>, <code>vrg-release</code>,
 <code>vrg-update-deps</code>, <code>vrg-ensure-label</code>, <code>vrg-github-repo-config</code>, <code>vrg-finalize-pr</code>)
@@ -17158,6 +17416,9 @@ and branch protection rulesets.</p>
 </ul>
 <p>This and the VM sandbox are the real security model. Everything else
 is convenience.</p>
+<p>Where these boundaries meet other systems, their guarantees do not
+always line up. Known gaps of that kind are recorded in
+<a href="../security-boundaries/">Security Boundaries</a>.</p>
 <h3 id="why-client-side-layers-still-matter">Why Client-Side Layers Still Matter<a class="headerlink" href="#why-client-side-layers-still-matter" title="Permanent link">&para;</a></h3>
 <p>If server-side enforcement is the only real boundary, why bother
 with four client-side layers?</p>
@@ -17314,6 +17575,8 @@ historical context; it does not describe the model in use.</p>
   <code>vrg-gh</code> selects credentials per-operation</li>
 <li><a href="../account-setup/">Account Setup</a> — creating and configuring
   accounts</li>
+<li><a href="../security-boundaries/">Security Boundaries</a> — register of
+  known cross-system seams and their mitigations</li>
 <li><a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/2026-05-14-permission-model-design.md">Permission model design spec</a> — full decision
   rationale and alternatives considered</li>
 </ul>

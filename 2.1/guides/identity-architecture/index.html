@@ -1326,6 +1326,8 @@
       
         
       
+        
+      
     
     
     
@@ -1378,6 +1380,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.265/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.265
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15330,6 +15360,8 @@
       
         
       
+        
+      
     
     
     
@@ -15595,10 +15627,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-release-app" class="md-nav__link">
+  <a href="#the-org-automation-apps" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The release App
+        The org automation Apps
       
     </span>
   </a>
@@ -15668,6 +15700,34 @@
     
   
     Permission Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../security-boundaries/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security Boundaries
   
 
     
@@ -16192,10 +16252,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-release-app" class="md-nav__link">
+  <a href="#the-org-automation-apps" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The release App
+        The org automation Apps
       
     </span>
   </a>
@@ -16273,17 +16333,19 @@ user account:</p>
 <td>—</td>
 </tr>
 <tr>
-<td><code>vergil-release[bot]</code></td>
-<td>Mechanized release automation</td>
-<td>Org-level GitHub App</td>
+<td><code>&lt;org&gt;-automation</code></td>
+<td>CI automation: nightly ops, epic roll-up, package-index dispatch</td>
+<td>GitHub App owned by the org, one per org</td>
 </tr>
 </tbody>
 </table>
 <p>The human account owns the decision-making authority: code review,
 PR approval, merge, and administrative operations. The two agent
 Apps do the bounded work — the user App writes code, the audit App
-reviews PRs. The release App handles automation that requires
-neither human judgment nor a per-contributor identity.</p>
+reviews PRs. Each org's automation App runs scheduled and
+event-driven CI work that needs neither human judgment nor a
+per-contributor identity (see
+<a href="#the-org-automation-apps">The org automation Apps</a>).</p>
 <p>A third agent role — <code>&lt;username&gt;-vergil-admin</code> — is a reserved slot
 and is <strong>not</strong> created. Do not provision it.</p>
 <h2 id="every-agent-is-a-github-app">Every agent is a GitHub App<a class="headerlink" href="#every-agent-is-a-github-app" title="Permanent link">&para;</a></h2>
@@ -16392,7 +16454,9 @@ Workflows access, so neither can push changes under
 shapes (a server-side hard gate) and branch protection, with the
 <code>vrg-gh</code>/<code>vrg-git</code> wrappers as a soft ergonomic layer on top. See
 <a href="../permission-model/">Permission Model</a> for the full
-defense-in-depth architecture.</p>
+defense-in-depth architecture. Where GitHub's permission shapes are
+coarser than the role model wants, the gap is recorded in
+<a href="../security-boundaries/">Security Boundaries</a>.</p>
 <blockquote>
 <p><strong>Note (2026-06-25, #1872):</strong> The local interactive USER/AUDIT loop
 (where a running AUDIT agent reviewed code in a shared worktree before
@@ -16443,14 +16507,66 @@ repositories:</p>
 <p>The main output is attack reports documenting the success and
 failure of each breach attempt — demonstrating whether Vergil's
 guardrails hold under adversarial pressure.</p>
-<h2 id="the-release-app">The release App<a class="headerlink" href="#the-release-app" title="Permanent link">&para;</a></h2>
-<p><code>vergil-release[bot]</code> is an org-level GitHub App that handles
-mechanized release automation. It is not a per-contributor identity —
-it is an automation identity with its own auth flow (JWT exchange
-for short-lived installation tokens).</p>
-<p>The App creates release PRs, and the human account approves and
-merges them. This separation ensures that no single identity can
-both create and approve a release.</p>
+<h2 id="the-org-automation-apps">The org automation Apps<a class="headerlink" href="#the-org-automation-apps" title="Permanent link">&para;</a></h2>
+<p>Each org has its own automation GitHub App, named
+<code>&lt;org&gt;-automation</code>. The App is <strong>owned by the org</strong> (registered under
+the org's Developer settings), and its installation covers <strong>all
+repositories</strong> in that org:</p>
+<table>
+<thead>
+<tr>
+<th>Org</th>
+<th>App</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>vergil-project</code></td>
+<td><code>vergil-project-automation</code></td>
+</tr>
+<tr>
+<td><code>logical-minds-foundry</code></td>
+<td><code>logical-minds-foundry-automation</code></td>
+</tr>
+<tr>
+<td><code>mnemosys-project</code></td>
+<td><code>mnemosys-project-automation</code></td>
+</tr>
+</tbody>
+</table>
+<p>These Apps are an automation identity, not a per-contributor one, and
+they are separate from the agent Apps above. Workflows reach an org's
+App through the <code>APP_CLIENT_ID</code> and <code>APP_PRIVATE_KEY</code> Actions secrets
+and mint a short-lived installation token with
+<code>actions/create-github-app-token</code>. The <code>vergil-actions</code> reusable
+workflows use it for:</p>
+<ul>
+<li><strong>Nightly ops</strong> (<code>ops-github-config.yml</code>): the
+  <code>vrg-github-repo-config audit</code>, the branch sweep, and the
+  <code>vrg-dependabot-audit</code> open-alert gate. Each of these jobs mints a
+  token scoped to the calling repo.</li>
+<li><strong>Epic roll-up and sweep</strong> (<code>ops-epic-rollup.yml</code>,
+  <code>ops-epic-sweep.yml</code>): closing epics and tasks across the org.</li>
+<li><strong>Package-index dispatch</strong> (<code>cd-release.yml</code>): sending
+  <code>package-released</code> to the org's <code>packages</code> repo after a packaged
+  release.</li>
+</ul>
+<p>Two of the App's permissions matter to the tooling in this repo:</p>
+<ul>
+<li><strong>Dependabot alerts: Read.</strong> <code>vrg-dependabot-audit</code> needs it to list
+  a repo's open alerts (epic
+  <a href="https://github.com/vergil-project/.github/issues/420">vergil-project/.github#420</a>).
+  Without it, or until an installation accepts it, the nightly
+  <code>dependabot-audit</code> job exits 2 ("could not check").</li>
+<li><strong>Administration: Read-only.</strong> The Apps run only the read-only
+  <code>vrg-github-repo-config audit</code>. <code>vrg-github-repo-config apply</code> is a
+  human action that runs as the human's own <code>gh</code> login, because the
+  tooling uses App credentials only when it finds an App key
+  (<code>VRG_APP_ID</code> or <code>~/.config/vergil/app.pem</code>). Read-only is the
+  correct least privilege.</li>
+</ul>
+<p>Release PRs are not opened by an App. <code>vrg-release</code> runs on the
+human's host under the human's own <code>gh</code> login.</p>
 <h2 id="related">Related<a class="headerlink" href="#related" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../account-setup/">Account Setup</a> — registering and configuring
@@ -16459,6 +16575,8 @@ both create and approve a release.</p>
   installation tokens are minted and selected at runtime</li>
 <li><a href="../permission-model/">Permission Model</a> — enforcement layers
   that constrain agent operations</li>
+<li><a href="../security-boundaries/">Security Boundaries</a> — register of
+  known cross-system seams and their mitigations</li>
 <li><a href="../git-workflow/">Git Workflow</a> — the per-change development
   cycle</li>
 </ul>

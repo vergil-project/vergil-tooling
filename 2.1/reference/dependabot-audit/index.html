@@ -1326,6 +1326,8 @@
       
         
       
+        
+      
     
     
     
@@ -1378,6 +1380,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.265/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.265
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -12458,6 +12488,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#where-it-runs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where it runs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#exit-codes" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -15444,6 +15485,8 @@
       
         
       
+        
+      
     
     
     
@@ -15560,6 +15603,34 @@
     
   
     Permission Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/security-boundaries/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security Boundaries
   
 
     
@@ -15945,6 +16016,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#where-it-runs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where it runs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#exit-codes" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -16050,8 +16132,30 @@ turns an open alert into a failing run.</p>
   vulnerability alerts on every repo, public or private, and the
   nightly config audit flags any repo where they are off.</li>
 <li><strong>Dependabot never opens a PR.</strong> The repo setting for Dependabot
-  security updates stays disabled.</li>
+  security updates stays disabled, which the config audit also
+  enforces. Version-update PRs are suppressed by the canonical
+  <code>.github/dependabot.yml</code>, where every <code>updates</code> entry carries
+  <code>open-pull-requests-limit: 0</code>. <code>vrg-validate</code> rejects any entry
+  without it, and the nightly config audit's <code>local.dependabot</code> check
+  flags a missing or non-canonical file. <code>vrg-dependabot-sync</code> writes
+  the file for one repo, and <code>vrg-fleet-sync --target dependabot</code>
+  sweeps it across the fleet. See the
+  <a href="../config-audit/">GitHub Config Audit reference</a> and the
+  <a href="../cli-tools-overview/#vrg-dependabot-sync">CLI Tools Overview</a>.</li>
 </ul>
+<h2 id="where-it-runs">Where it runs<a class="headerlink" href="#where-it-runs" title="Permanent link">&para;</a></h2>
+<p>Every managed repo's nightly <code>ops.yml</code> calls the reusable
+<code>vergil-project/vergil-actions/.github/workflows/ops-github-config.yml</code>
+workflow. Its <code>dependabot-audit</code> job runs
+<code>vrg-dependabot-audit --repo "${{ github.repository }}"</code>, so exit 1 or
+exit 2 turns the scheduled run red, and GitHub's failed-workflow
+notification is the alert.</p>
+<p>The job cannot use <code>GITHUB_TOKEN</code>: a called workflow gets only what
+the caller's <code>ops.yml</code> grants, which is <code>contents: read</code>. It mints a
+token from the org's automation App (the <code>APP_CLIENT_ID</code> and
+<code>APP_PRIVATE_KEY</code> secrets), scoped to the calling repo and carrying
+only <code>vulnerability-alerts: read</code>. See
+<a href="../../guides/identity-architecture/#the-org-automation-apps">Identity Architecture</a>.</p>
 <p>The audit reads only alerts in the <code>open</code> state, across every page of
 the API result, so a repo with hundreds of alerts is counted in full.</p>
 <h2 id="exit-codes">Exit codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>

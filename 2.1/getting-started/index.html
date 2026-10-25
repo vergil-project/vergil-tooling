@@ -1326,6 +1326,8 @@
       
         
       
+        
+      
     
     
     
@@ -1378,6 +1380,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../releases/v2.1.265/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.265
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15430,6 +15460,8 @@
       
         
       
+        
+      
     
     
     
@@ -15546,6 +15578,34 @@
     
   
     Permission Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/security-boundaries/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security Boundaries
   
 
     
@@ -16062,8 +16122,8 @@ branch:</p>
 </code></pre></div>
 <p>Adopt overwrites every Vergil-managed file to its canonical state —
 <code>vergil.toml</code>, <code>CLAUDE.md</code>, <code>.claude/settings.json</code>,
-<code>.claude/hooks/guard.sh</code>, <code>LICENSE</code>, <code>README.md</code>, <code>.gitignore</code>, the
-CI/CD workflows and the docs site config — and applies the GitHub
+<code>.claude/hooks/guard.sh</code>, <code>LICENSE</code>, <code>README.md</code>, <code>.gitignore</code>,
+<code>.github/dependabot.yml</code>, the CI/CD workflows and the docs site config — and applies the GitHub
 settings, rulesets and labels. It asks for confirmation first. Values
 already in <code>vergil.toml</code> become the prompt defaults, and hand-written
 tables such as <code>[package]</code> or <code>[container]</code> are kept. Review the
@@ -16098,8 +16158,12 @@ resulting commits and land them through a PR.</p>
 <td>The vergil-managed ignore block for your language, including <code>.worktrees/</code></td>
 </tr>
 <tr>
+<td><code>.github/dependabot.yml</code></td>
+<td>The canonical report-only Dependabot config: every entry has <code>open-pull-requests-limit: 0</code>, so Dependabot never opens a PR</td>
+</tr>
+<tr>
 <td><code>.github/workflows/</code></td>
-<td><code>ci.yml</code>, <code>ops.yml</code> (nightly config audit), <code>epic-rollup.yml</code>, and <code>cd.yml</code> when the repo publishes releases or docs</td>
+<td><code>ci.yml</code>, <code>ops.yml</code> (nightly config audit, branch sweep and Dependabot alert audit), <code>epic-rollup.yml</code>, and <code>cd.yml</code> when the repo publishes releases or docs</td>
 </tr>
 </tbody>
 </table>

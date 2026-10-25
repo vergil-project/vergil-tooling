@@ -1326,6 +1326,8 @@
       
         
       
+        
+      
     
     
     
@@ -1378,6 +1380,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.265/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.265
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15328,6 +15358,8 @@
       
         
       
+        
+      
     
     
     
@@ -15444,6 +15476,34 @@
     
   
     Permission Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../security-boundaries/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security Boundaries
   
 
     
@@ -16768,6 +16828,12 @@ writes it, and <code>vrg-dependabot-sync --write</code> writes or refreshes it.
 <code>open-pull-requests-limit</code> is missing (Dependabot then defaults to 5) or
 not <code>0</code>, and the nightly audit flags a missing or non-canonical file
 until you run <code>vrg-dependabot-sync --write</code>.</p>
+<p>The same nightly run also fails while the repo has <strong>any</strong> open
+Dependabot alert: its <code>dependabot-audit</code> job runs
+<code>vrg-dependabot-audit</code>, which exits 1 on an open alert and 2 when it
+cannot read the alerts. Fix the dependency or dismiss the alert on
+GitHub to clear it. See the
+<a href="../../reference/dependabot-audit/">Dependabot Alert Audit reference</a>.</p>
 <p>The audit also checks <code>vergil.toml</code>, <code>CLAUDE.md</code>,
 <code>.claude/settings.json</code>, <code>.claude/hooks/guard.sh</code>, the reusable-workflow
 pins and the GitHub settings. Check your repo locally before relying on
