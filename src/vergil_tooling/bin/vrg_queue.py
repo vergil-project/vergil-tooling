@@ -34,6 +34,9 @@ def main(argv: list[str] | None = None) -> int:
     owner = target.split("/", 1)[0]
     # Scope the App token to the target's owner, not the cwd org (#3409).
     with github.target_org(owner):
+        if args.repo is None:
+            # The org-wide default needs <owner>/.github to exist (#3613).
+            epics.require_org_home(owner)
         home, name = epics.queue_home(target)
         try:
             items = _VIEWS[args.queue](home, name)

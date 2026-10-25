@@ -27,12 +27,54 @@ def standing_drain() -> Iterator[MagicMock]:
     # by default so tests that do not exercise it make no GitHub calls. Tests
     # that do exercise it patch drain_standing_org themselves (innermost wins).
     # Likewise the org-wide open-issue enumeration behind the orphan pass: an
-    # empty org makes every pass a no-op with no GitHub calls.
+    # empty org makes every pass a no-op with no GitHub calls. The org-wide
+    # path's <org>/.github existence probe answers "exists" by default.
     with (
         patch(f"{_MOD}.epics.drain_standing_org", return_value=[]) as mock_drain,
         patch(f"{_MOD}.epic_audit.open_issues", return_value=[]),
+        patch(f"{_MOD}.epics.github.repo_exists", return_value=True),
     ):
         yield mock_drain
+
+
+def test_main_org_wide_without_dotgithub_fails_clearly(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # An owner with no .github has no org-wide home: one clear line and exit 1,
+    # before any audit query runs (#3613).
+    with (
+        patch(f"{_MOD}.github.detect_org", return_value="owner"),
+        patch(f"{_MOD}.epics.github.repo_exists", return_value=False),
+        patch(f"{_MOD}.epic_audit.task_drift") as drift,
+        pytest.raises(SystemExit) as excinfo,
+    ):
+        main([])
+    assert excinfo.value.code == 1
+    drift.assert_not_called()
+    err = capsys.readouterr().err
+    assert err == (
+        "vrg-epic-audit: owner has no .github repository, so there is no org-wide "
+        "queue or epic home; pass --repo owner/<repo> to reach a self-homed repo's "
+        "own queues and epics\n"
+    )
+
+
+def test_main_org_wide_dotgithub_probe_error_fails_loud(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with (
+        patch(f"{_MOD}.github.detect_org", return_value="org"),
+        patch(
+            f"{_MOD}.epics.github.repo_exists",
+            side_effect=github.GitHubAPIError(1, "cmd", "", "HTTP 502: boom"),
+        ),
+        pytest.raises(SystemExit) as excinfo,
+    ):
+        main([])
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert err.startswith("vrg-epic-audit: cannot check for org/.github")
+    assert "HTTP 502: boom" in err
 
 
 def test_main_repo_scopes_to_resolved_home() -> None:

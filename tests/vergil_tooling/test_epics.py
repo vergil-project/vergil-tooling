@@ -1387,6 +1387,52 @@ def test_resolve_epic_home_missing_token_is_not_rewrapped() -> None:
         epics.resolve_epic_home("owner", "notes")
 
 
+def test_require_org_home_returns_existing_dotgithub() -> None:
+    with patch("vergil_tooling.lib.epics.github.repo_exists", return_value=True) as exists:
+        assert epics.require_org_home("org") == "org/.github"
+    exists.assert_called_once_with("org", ".github")
+
+
+def test_require_org_home_missing_dotgithub_is_clear() -> None:
+    # An owner with no .github has no org-wide home; the message says so and
+    # points at --repo for a self-homed repo (#3613).
+    with (
+        patch(
+            "vergil_tooling.lib.epics.github.repo_visibility",
+            side_effect=github.GitHubAPIError(1, "cmd", "", _NO_REPO),
+        ),
+        pytest.raises(epics.EpicHomeError) as excinfo,
+    ):
+        epics.require_org_home("owner")
+    assert str(excinfo.value) == (
+        "owner has no .github repository, so there is no org-wide queue or epic "
+        "home; pass --repo owner/<repo> to reach a self-homed repo's own queues "
+        "and epics"
+    )
+
+
+def test_require_org_home_other_probe_error_fails_loud() -> None:
+    # Only "does not exist" is the no-.github message; any other failure is a
+    # clear EpicHomeError carrying the API error.
+    with (
+        patch(
+            "vergil_tooling.lib.epics.github.repo_visibility",
+            side_effect=github.GitHubAPIError(1, "cmd", "", "HTTP 502: boom"),
+        ),
+        pytest.raises(epics.EpicHomeError, match=r"(?s)cannot check for org/\.github,.*HTTP 502"),
+    ):
+        epics.require_org_home("org")
+
+
+def test_require_org_home_missing_token_is_not_rewrapped() -> None:
+    missing = github.MissingGitHubTokenError(4, "cmd", "", "set GH_TOKEN")
+    with (
+        patch("vergil_tooling.lib.epics.github.repo_visibility", side_effect=missing),
+        pytest.raises(github.MissingGitHubTokenError),
+    ):
+        epics.require_org_home("org")
+
+
 # --- Task 4: per-repo drain (plan + apply) ---
 
 NOW = datetime(2026, 8, 8, tzinfo=UTC)  # 2026-Q3

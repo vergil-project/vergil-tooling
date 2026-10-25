@@ -81,7 +81,8 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 1
-        home = f"{org}/.github"
+        # An owner with no .github has no org-wide home to audit (#3613).
+        home = epics.require_org_home(org)
     since = (datetime.now(UTC) - timedelta(days=args.window_days)).date().isoformat()
     tasks = epic_audit.task_drift(since, org=org)
     epics_drift = epic_audit.epic_drift(org, home=home)
