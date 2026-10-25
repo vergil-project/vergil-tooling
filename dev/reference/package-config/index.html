@@ -16688,6 +16688,12 @@ refuses the config unless:</p>
 </ul>
 <p>The other repo-level checks run once per entry. For example, a <code>python</code>
 entry still requires <code>uv.lock</code> (see <a href="#validation">Validation</a>).</p>
+<p>At most one <code>python</code> entry may pin <code>[package.python].runtime</code>. Version
+resolution and <code>vrg-update-deps</code> read the pin from the packages list, and
+refuse a config where more than one entry pins a runtime, with
+<code>several [[package]] entries pin a runtime; pin it on one entry</code>. Any
+<code>python</code> entry, pinned or not, makes version resolution require a
+published <code>vergil-python</code> runtime (see <a href="#packagepython"><code>[package.python]</code></a>).</p>
 <p>The design is epic
 <a href="https://github.com/vergil-project/.github/issues/472">vergil-project/.github#472</a>
 (spec <code>epics/472-multi-series-runtime/spec.md</code>, §5.1).</p>
