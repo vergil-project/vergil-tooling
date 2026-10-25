@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -29,10 +29,10 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
       
       
 
@@ -16636,15 +16636,16 @@ sees no change in CI or CD.</p>
 <a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="c1"># native  = ["ubuntu/26.04/*"]  # own build cell, inside that OS</span>
 <a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="c1"># name    = "..."               # required for staged; python defaults to pyproject [project].name</span>
 <a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="c1"># version = "3.14.4+20261001"   # explicit package version; default: the repo version</span>
-<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="c1"># noarch  = true                # architecture-independent: built once, deb `all` / rpm `noarch`</span>
-<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>
-<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="k">[package.python]</span><span class="w">               </span><span class="c1"># optional for builder = "python"</span>
-<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="c1"># runtime = "3.14.8"          # exact-patch pin; default: derived from the resolved version</span>
-<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a><span class="c1"># commands = ["vrg-git"]      # subset of [project.scripts] to shim; default: all</span>
-<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>
-<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="c1"># For builder = "staged" instead of [package.python]:</span>
-<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a><span class="c1"># [package.staged]</span>
-<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a><span class="c1"># build-command = "packaging/build.sh"  # populates $VRG_STAGING_ROOT for $VRG_TARGET_ARCH</span>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="c1"># upstream-version = "3.15.1+20261021"  # upstream inputs; package version is &lt;this&gt;.&lt;repo version&gt;</span>
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="c1"># noarch  = true                # architecture-independent: built once, deb `all` / rpm `noarch`</span>
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="k">[package.python]</span><span class="w">               </span><span class="c1"># optional for builder = "python"</span>
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a><span class="c1"># runtime = "3.14.8"          # exact-patch pin; default: derived from the resolved version</span>
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a><span class="c1"># commands = ["vrg-git"]      # subset of [project.scripts] to shim; default: all</span>
+<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>
+<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a><span class="c1"># For builder = "staged" instead of [package.python]:</span>
+<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a><span class="c1"># [package.staged]</span>
+<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a><span class="c1"># build-command = "packaging/build.sh"  # populates $VRG_STAGING_ROOT for $VRG_TARGET_ARCH</span>
 </code></pre></div>
 <h3 id="several-packages-package">Several packages: <code>[[package]]</code><a class="headerlink" href="#several-packages-package" title="Permanent link">&para;</a></h3>
 <p>A repo that publishes more than one package declares each one as an entry in
@@ -16735,7 +16736,13 @@ entry still requires <code>uv.lock</code> (see <a href="#validation">Validation<
 <td><code>version</code></td>
 <td>string</td>
 <td>repo version</td>
-<td>Explicit package version (<code>[0-9][0-9A-Za-z.+~]*</code>), for when it is not the repo's semver (e.g. <code>vergil-python</code>). A release refuses a version an earlier release already published; see <a href="#the-re-publish-check">the re-publish check</a></td>
+<td>Explicit package version (<code>[0-9][0-9A-Za-z.+~]*</code>), for when it is not the repo's semver (e.g. <code>vergil-python</code>). A release refuses a version an earlier release already published; see <a href="#the-re-publish-check">the re-publish check</a>. Not with <code>upstream-version</code></td>
+</tr>
+<tr>
+<td><code>upstream-version</code></td>
+<td>string</td>
+<td><em>(unset)</em></td>
+<td>The upstream inputs a package is built from (<code>[0-9][0-9A-Za-z.+~]*</code>), for example <code>3.15.1+20261021</code>. The package version is <code>&lt;upstream-version&gt;.&lt;repo version&gt;</code> (<code>3.15.1+20261021.1.0.5</code> at repo <code>1.0.5</code>), so every repo release publishes a new version and the inputs show first in <code>apt policy</code>. That version sorts above the same inputs without the suffix and above an earlier repo release, under both dpkg and rpm. Not with <code>version</code></td>
 </tr>
 <tr>
 <td><code>noarch</code></td>
@@ -17090,7 +17097,7 @@ earlier checks stop such a release before it publishes:</p>
 <ol>
 <li><strong><code>vrg-release</code> preflight</strong>, on a fresh start, before anything is
    tagged. This is the earliest point that knows the full versions: the
-   package name, <code>version</code> (or the release version) and the revision of
+   package name, the package version (see <code>version</code> and <code>upstream-version</code>) and the revision of
    every artifact in the release manifest are all known without
    building. See
    <a href="../../guides/releasing/#the-package-re-publish-check">Releasing</a>.</li>
@@ -17110,10 +17117,11 @@ derives from the same metadata the index reads. The release's own tag is
 never counted as an earlier release. Any failure to read the releases
 refuses the release; the check never skips. A repo without <code>[package]</code>
 passes.</p>
-<p>To fix a refusal, bump <code>[package].version</code>. For example, use a new
-<code>+&lt;date&gt;</code> build suffix, or add a rebuild counter
-(<code>3.14.8+20261003</code> → <code>3.14.8+20261003.1</code>). The revision (<code>-1</code>) is set by
-the tooling and cannot be configured.</p>
+<p>To fix a refusal, bump the package version. For an <code>upstream-version</code>
+package, set a new <code>upstream-version</code>, or cut a new repo release: the
+package version ends in the repo version, so a new release is a new
+version. For a <code>version</code> override, set a new <code>version</code>. The revision
+(<code>-1</code>) is set by the tooling and cannot be configured.</p>
 <h3 id="one-runtime-per-release">One runtime per release<a class="headerlink" href="#one-runtime-per-release" title="Permanent link">&para;</a></h3>
 <p>A <code>python</code> release must depend on one runtime on every architecture.
 Build cells run in parallel and at slightly different times, so if each
@@ -17247,10 +17255,10 @@ Add <code>--tier reduced</code> to see the reduced feature-PR matrix.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.indexes", "navigation.top", "content.code.copy", "search.highlight", "search.suggest"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.indexes", "navigation.top", "content.code.copy", "search.highlight", "search.suggest"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
       
     
   </body>
