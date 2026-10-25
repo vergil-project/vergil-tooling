@@ -54,7 +54,8 @@ def test_main_org_wide_without_dotgithub_fails_clearly(
     err = capsys.readouterr().err
     assert err == (
         "vrg-epic-audit: owner has no .github repository, so there is no org-wide "
-        "queue or epic home; pass --repo owner/<repo> to reach a self-homed repo's "
+        "queue or epic home; create the owner/.github repository to give it one, "
+        "or pass --repo owner/<repo> to reach a private, self-homed repo's "
         "own queues and epics\n"
     )
 
@@ -75,6 +76,31 @@ def test_main_org_wide_dotgithub_probe_error_fails_loud(
     err = capsys.readouterr().err
     assert err.startswith("vrg-epic-audit: cannot check for org/.github")
     assert "HTTP 502: boom" in err
+
+
+def test_main_public_repo_without_dotgithub_fails_clearly(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # --repo on a public repo whose owner has no .github: one clear line and
+    # exit 1, before any audit query runs (#3643).
+    def is_public(nwo: str) -> bool:
+        if nwo == "owner/.github":
+            raise github.GitHubAPIError(1, "cmd", "", "Could not resolve to a Repository")
+        return True
+
+    with (
+        patch(f"{_MOD}.epics.github.is_public", side_effect=is_public),
+        patch(f"{_MOD}.epic_audit.task_drift") as drift,
+        pytest.raises(SystemExit) as excinfo,
+    ):
+        main(["--repo", "owner/site"])
+    assert excinfo.value.code == 1
+    drift.assert_not_called()
+    assert capsys.readouterr().err == (
+        "vrg-epic-audit: owner/site is public, so its epics and queues live in "
+        "owner/.github, which does not exist; create the owner/.github repository "
+        "and try again\n"
+    )
 
 
 def test_main_repo_scopes_to_resolved_home() -> None:
