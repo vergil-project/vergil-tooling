@@ -34,7 +34,28 @@ def _init_repo(tmp_path: Path) -> Path:
     (repo / "feature.py").write_text("x = 1\n")
     _git(repo, "add", "feature.py")
     _git(repo, "commit", "-m", "feature work")
+    # A local bare origin, so report-ready's real branch push (#3602) lands
+    # somewhere the tests can inspect.
+    origin = tmp_path / "origin.git"
+    _git(tmp_path, "init", "--bare", str(origin))
+    _git(repo, "remote", "add", "origin", str(origin))
     return repo
+
+
+def _origin(repo: Path) -> Path:
+    return repo.parent / "origin.git"
+
+
+def _rev(repo: Path, ref: str) -> str:
+    """Resolve *ref* in *repo*, or '' when it does not exist."""
+    result = subprocess.run(
+        ("git", "rev-parse", "--verify", "--quiet", ref),
+        cwd=repo,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
 
 
 @pytest.fixture()
@@ -50,13 +71,15 @@ def _stub_relay_push() -> Iterator[None]:
     """Stub the relay-ref push for every test in this module (#2877).
 
     report-ready mirrors state onto refs/vergil/pr-workflow/<branch> via a real
-    ``git push --force origin`` (github_transport.write). These tests run in a
-    temp repo with no ``origin``, so that push fails with "could not read from
-    remote" — which retry.is_retryable() treats as transient, so git.run burns the
-    full 4-step backoff (~30s of real time.sleep) before report-ready swallows the
-    non-fatal failure. That made each report-ready test cost ~30-60s (11 tests =
-    ~96% of the whole suite's wall-clock). Stubbing GitHubTransport keeps the relay
-    push a no-op. The real push contract is still covered by
+    ``git push --force origin`` (github_transport.write). These tests used to run
+    in a temp repo with no ``origin``, so that push failed with "could not read
+    from remote" — which retry.is_retryable() treats as transient, so git.run
+    burned the full 4-step backoff (~30s of real time.sleep) before report-ready
+    swallowed the non-fatal failure. That made each report-ready test cost ~30-60s
+    (11 tests = ~96% of the whole suite's wall-clock). The temp repo now has a
+    bare local origin for report-ready's branch push (#3602); the relay stays
+    stubbed so these tests do not depend on it. Stubbing GitHubTransport keeps the
+    relay push a no-op. The real push contract is still covered by
     test_report_ready_pushes_relay_ref and
     test_report_ready_relay_push_failure_surfaces_but_local_persists (which
     re-patch GitHubTransport locally), and by test_github_transport.py.
@@ -179,7 +202,7 @@ def test_report_ready_rejects_epic(in_git_repo: Path, capsys: pytest.CaptureFixt
     # the point the value is entered, instead of only failing later at submit.
     with (
         patch("vergil_tooling.bin.vrg_pr_workflow.github.current_repo", return_value="org/repo"),
-        patch("vergil_tooling.bin.vrg_pr_workflow.epics.is_epic_linkage", return_value=True),
+        patch("vergil_tooling.bin.vrg_pr_workflow.epics.non_task_ref_kind", return_value="epic"),
     ):
         rc = vrg_pr_workflow.main(
             [
@@ -197,7 +220,22 @@ def test_report_ready_rejects_epic(in_git_repo: Path, capsys: pytest.CaptureFixt
             ]
         )
     assert rc == 1
-    assert "epic" in capsys.readouterr().err.lower()
+    assert "--issue (#72) is an epic, not a task" in capsys.readouterr().err
+
+
+def test_report_ready_rejects_archive(
+    in_git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # #2842: a standing epic's per-quarter archive is no more a task than the
+    # epic itself; report-ready refuses it with the shared refusal text.
+    with (
+        patch("vergil_tooling.bin.vrg_pr_workflow.github.current_repo", return_value="org/repo"),
+        patch("vergil_tooling.lib.epics.non_task_kind", return_value="archive"),
+    ):
+        rc = vrg_pr_workflow.main(_REPORT_READY_ARGS)
+    assert rc == 1
+    assert "--issue (#120) is an archive, not a task" in capsys.readouterr().err
+    assert not (in_git_repo / ".vergil" / "pr-workflow.json").exists()
 
 
 def test_report_ready_rejects_operational_task(
@@ -207,7 +245,7 @@ def test_report_ready_rejects_operational_task(
     # it is not PR-workable (its result is a comment, not a PR).
     with (
         patch("vergil_tooling.bin.vrg_pr_workflow.github.current_repo", return_value="org/repo"),
-        patch("vergil_tooling.bin.vrg_pr_workflow.epics.is_epic_linkage", return_value=False),
+        patch("vergil_tooling.bin.vrg_pr_workflow.epics.non_task_ref_kind", return_value=None),
         patch("vergil_tooling.bin.vrg_pr_workflow.epics.is_operational_task", return_value=True),
     ):
         rc = vrg_pr_workflow.main(
@@ -251,7 +289,7 @@ def _queue_guard(
     """Pass the earlier guards and stub ``epics.queue_item_kind`` as given."""
     with (
         patch("vergil_tooling.bin.vrg_pr_workflow.github.current_repo", return_value="org/repo"),
-        patch("vergil_tooling.bin.vrg_pr_workflow.epics.is_epic_linkage", return_value=False),
+        patch("vergil_tooling.bin.vrg_pr_workflow.epics.non_task_ref_kind", return_value=None),
         patch("vergil_tooling.bin.vrg_pr_workflow.epics.is_operational_task", return_value=False),
         patch(
             "vergil_tooling.bin.vrg_pr_workflow.epics.queue_item_kind",
@@ -319,12 +357,12 @@ def test_report_ready_bare_number_epic_is_caught(
     in_git_repo: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     # #2213 regression: a bare --issue number must be resolved to '#N' before the
-    # epic guard. Patching the deeper epics.is_epic (not is_epic_linkage) exercises
-    # the real parse_issue_ref path — which rejects a bare number, so on the old
-    # code the guard silently no-ops and this would pass through (rc 0).
+    # epic guard. Patching the deeper epics.non_task_kind (not non_task_ref_kind)
+    # exercises the real parse_issue_ref path — which rejects a bare number, so on
+    # the old code the guard silently no-ops and this would pass through (rc 0).
     with (
         patch("vergil_tooling.bin.vrg_pr_workflow.github.current_repo", return_value="org/repo"),
-        patch("vergil_tooling.lib.epics.is_epic", return_value=True) as mock_is_epic,
+        patch("vergil_tooling.lib.epics.non_task_kind", return_value="epic") as mock_kind,
     ):
         rc = vrg_pr_workflow.main(
             [
@@ -346,7 +384,7 @@ def test_report_ready_bare_number_epic_is_caught(
     assert "epic" in err.lower()
     assert "#120" in err  # the canonical ref, not a doubled '##120'
     # The guard actually reached the epic-ness check with a parseable ref.
-    assert mock_is_epic.call_args.args[0].number == 120
+    assert mock_kind.call_args.args[0].number == 120
 
 
 def test_report_ready_bare_number_operational_is_caught(
@@ -354,10 +392,10 @@ def test_report_ready_bare_number_operational_is_caught(
 ) -> None:
     # #2213 regression, operational variant: a bare --issue number must resolve
     # before the operational guard. epics.is_operational is patched so real
-    # parse_issue_ref runs; the epic check (is_epic) is left to return False.
+    # parse_issue_ref runs; the epic check (non_task_kind) is left to return None.
     with (
         patch("vergil_tooling.bin.vrg_pr_workflow.github.current_repo", return_value="org/repo"),
-        patch("vergil_tooling.lib.epics.is_epic", return_value=False),
+        patch("vergil_tooling.lib.epics.non_task_kind", return_value=None),
         patch("vergil_tooling.lib.epics.is_operational", return_value=True),
     ):
         rc = vrg_pr_workflow.main(
@@ -467,7 +505,7 @@ def test_report_ready_defers_cross_repo_when_repo_empty(
     # blocking; a bare same-repo issue then proceeds normally.
     with (
         patch("vergil_tooling.bin.vrg_pr_workflow.github.current_repo", return_value=""),
-        patch("vergil_tooling.bin.vrg_pr_workflow.epics.is_epic_linkage", return_value=False),
+        patch("vergil_tooling.bin.vrg_pr_workflow.epics.non_task_ref_kind", return_value=None),
     ):
         rc = vrg_pr_workflow.main(
             [
@@ -495,7 +533,7 @@ def test_report_ready_allows_explicit_same_repo_ref(
     # guard (same repo) and proceeds.
     with (
         patch("vergil_tooling.bin.vrg_pr_workflow.github.current_repo", return_value="org/repo"),
-        patch("vergil_tooling.bin.vrg_pr_workflow.epics.is_epic_linkage", return_value=False),
+        patch("vergil_tooling.bin.vrg_pr_workflow.epics.non_task_ref_kind", return_value=None),
         patch("vergil_tooling.bin.vrg_pr_workflow.epics.is_operational_task", return_value=False),
     ):
         rc = vrg_pr_workflow.main(
@@ -523,7 +561,7 @@ def test_report_ready_allows_non_epic_task(
     # The guard resolves the repo and finds a task (not an epic): proceeds.
     with (
         patch("vergil_tooling.bin.vrg_pr_workflow.github.current_repo", return_value="org/repo"),
-        patch("vergil_tooling.bin.vrg_pr_workflow.epics.is_epic_linkage", return_value=False),
+        patch("vergil_tooling.bin.vrg_pr_workflow.epics.non_task_ref_kind", return_value=None),
     ):
         rc = vrg_pr_workflow.main(
             [
@@ -768,7 +806,7 @@ def test_report_ready_rejects_linkage_keyword_in_notes(
 ) -> None:
     with (
         patch("vergil_tooling.bin.vrg_pr_workflow.github.current_repo", return_value="org/repo"),
-        patch("vergil_tooling.bin.vrg_pr_workflow.epics.is_epic_linkage", return_value=False),
+        patch("vergil_tooling.bin.vrg_pr_workflow.epics.non_task_ref_kind", return_value=None),
     ):
         rc = vrg_pr_workflow.main(
             [
@@ -787,3 +825,168 @@ def test_report_ready_rejects_linkage_keyword_in_notes(
         )
     assert rc == 1
     assert "Ref #157" in capsys.readouterr().err
+
+
+# --- report-ready publishes the branch itself (#3602) ---------------------------
+
+
+def _run_report_ready(title: str = "t") -> int:
+    return vrg_pr_workflow.main(
+        [
+            "--base",
+            "develop",
+            "report-ready",
+            "--issue",
+            "42",
+            "--title",
+            title,
+            "--summary",
+            "s",
+            "--notes",
+            "n",
+        ]
+    )
+
+
+def _install_pre_receive(origin: Path, script: str) -> None:
+    hook = origin / "hooks" / "pre-receive"
+    hook.write_text(f"#!/bin/sh\n{script}\n")
+    hook.chmod(0o755)
+
+
+def test_report_ready_pushes_branch_not_yet_on_origin(
+    in_git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    head = _rev(in_git_repo, "HEAD")
+    assert _rev(_origin(in_git_repo), "refs/heads/feature/42-x") == ""
+
+    rc = _run_report_ready()
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    # The push's chatter stays off stdout, which remains a pure JSON document.
+    assert json.loads(captured.out) == {"ok": True, "status": "ready"}
+    assert "pushed feature/42-x to origin" in captured.err
+    assert _rev(_origin(in_git_repo), "refs/heads/feature/42-x") == head
+    # The upstream is set, as `vrg-git push -u` would have.
+    assert _rev(in_git_repo, "feature/42-x@{upstream}") == head
+
+
+def test_report_ready_rerun_with_branch_already_on_origin_is_a_noop_push(
+    in_git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Correcting the prose of a frozen branch already on origin at the reported
+    # commit still works: the push is a no-op and the metadata is overwritten.
+    head = _rev(in_git_repo, "HEAD")
+    assert _run_report_ready(title="t1") == 0
+    capsys.readouterr()
+
+    assert _run_report_ready(title="t2") == 0
+
+    assert json.loads(capsys.readouterr().out) == {"ok": True, "status": "ready"}
+    assert _rev(_origin(in_git_repo), "refs/heads/feature/42-x") == head
+    state = json.loads((in_git_repo / ".vergil" / "pr-workflow.json").read_text())
+    assert state["pr_metadata"]["title"] == "t2"
+    assert state["git"]["head_sha"] == head
+
+
+def test_report_ready_workflow_push_refusal_is_expected_and_still_records(
+    in_git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # GitHub refuses an agent identity's push of a .github/workflows/** change.
+    # That is expected: report-ready says so, records the state, and writes the
+    # relay ref; the human's vrg-submit-pr pushes the branch at submit time.
+    _install_pre_receive(
+        _origin(in_git_repo),
+        'echo "refusing to allow a GitHub App to create or update workflow '
+        "'.github/workflows/ci.yml' without 'workflows' permission\" >&2\nexit 1",
+    )
+    with patch("vergil_tooling.bin.vrg_pr_workflow.GitHubTransport") as mock_transport:
+        rc = _run_report_ready()
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert json.loads(captured.out) == {"ok": True, "status": "ready"}
+    assert "EXPECTED" in captured.err
+    assert "vrg-submit-pr" in captured.err
+    assert _rev(_origin(in_git_repo), "refs/heads/feature/42-x") == ""
+    state = json.loads((in_git_repo / ".vergil" / "pr-workflow.json").read_text())
+    assert state["status"] == "ready"
+    mock_transport.return_value.write.assert_called_once()
+
+
+def test_report_ready_push_failure_records_nothing(
+    in_git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Any other push failure fails loudly: no local state (so no freeze) and no
+    # relay ref for a branch that is not on origin.
+    _install_pre_receive(_origin(in_git_repo), "echo 'rejected by policy' >&2\nexit 1")
+    with patch("vergil_tooling.bin.vrg_pr_workflow.GitHubTransport") as mock_transport:
+        rc = _run_report_ready()
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    assert "could not push feature/42-x to origin" in captured.err
+    assert "nothing was recorded" in captured.err
+    assert not (in_git_repo / ".vergil" / "pr-workflow.json").exists()
+    mock_transport.return_value.write.assert_not_called()
+
+
+def test_report_ready_refuses_drifted_rerun_without_pushing(
+    in_git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A re-run on a frozen branch whose HEAD moved past the reported commit must
+    # not publish (or re-record) the drift.
+    reported = _rev(in_git_repo, "HEAD")
+    assert _run_report_ready(title="t1") == 0
+    (in_git_repo / "more.py").write_text("y = 2\n")
+    _git(in_git_repo, "add", "more.py")
+    _git(in_git_repo, "commit", "-m", "straggler")
+    capsys.readouterr()
+
+    rc = _run_report_ready(title="t2")
+
+    assert rc == 1
+    assert "DRIFT DETECTED" in capsys.readouterr().err
+    assert _rev(_origin(in_git_repo), "refs/heads/feature/42-x") == reported
+    state = json.loads((in_git_repo / ".vergil" / "pr-workflow.json").read_text())
+    assert state["git"]["head_sha"] == reported
+    assert state["pr_metadata"]["title"] == "t1"
+
+
+def test_report_ready_after_unfreeze_pushes_new_commits(
+    in_git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The deliberate unfreeze lifts the drift refusal: the new HEAD is pushed.
+    assert _run_report_ready(title="t1") == 0
+    assert vrg_pr_workflow.main(["--base", "develop", "unfreeze"]) == 0
+    (in_git_repo / "more.py").write_text("y = 2\n")
+    _git(in_git_repo, "add", "more.py")
+    _git(in_git_repo, "commit", "-m", "more work")
+    capsys.readouterr()
+
+    assert _run_report_ready(title="t2") == 0
+    assert _rev(_origin(in_git_repo), "refs/heads/feature/42-x") == _rev(in_git_repo, "HEAD")
+
+
+def test_report_ready_refuses_detached_head(
+    in_git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _git(in_git_repo, "checkout", "--detach")
+
+    assert _run_report_ready() == 1
+    assert "detached" in capsys.readouterr().err
+    assert not (in_git_repo / ".vergil" / "pr-workflow.json").exists()
+
+
+def test_report_ready_refuses_state_recorded_for_another_branch(
+    in_git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert _run_report_ready() == 0
+    _git(in_git_repo, "checkout", "-b", "feature/42-y")
+    capsys.readouterr()
+
+    assert _run_report_ready() == 1
+    assert "records branch feature/42-x" in capsys.readouterr().err
+    assert _rev(_origin(in_git_repo), "refs/heads/feature/42-y") == ""

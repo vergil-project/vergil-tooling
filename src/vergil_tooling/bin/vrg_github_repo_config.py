@@ -19,6 +19,7 @@ from vergil_tooling.lib.github_config import (
     ClassicProtectionReport,
     ConfigDiff,
     DiffItem,
+    UndeclaredParam,
     apply_desired_state,
     assert_ci_gates_producible,
     compute_desired_state,
@@ -107,7 +108,7 @@ def _audit_and_apply(args: argparse.Namespace, repo: str, *, local_compliant: bo
 
     if github_diff.is_compliant():
         print("GitHub config compliant, nothing to apply.")
-    else:
+    elif github_diff.items:
         print(f"  Applying to {repo}...")
         try:
             reports = _apply_repo(repo, config)
@@ -121,6 +122,17 @@ def _audit_and_apply(args: argparse.Namespace, repo: str, *, local_compliant: bo
                 f"  {repo}: classic protection on {report.branch} — removed stale CI "
                 f"contexts [{', '.join(report.removed_contexts)}]; preserved [{preserved}]"
             )
+
+    if github_diff.undeclared:
+        # apply cannot converge an undeclared parameter: the PUT body omits
+        # the key, so GitHub re-applies its server-side default and the repo
+        # stays non-compliant until the spec decides on/off (#3548).
+        print(
+            f"  {repo}: apply cannot resolve {len(github_diff.undeclared)} undeclared "
+            f"ruleset parameter(s); declare each on or off in the desired spec, or "
+            f"add it to _STRIP_RULE_PARAMS, then re-run."
+        )
+        return 1
 
     if not local_compliant:
         return 1
@@ -271,6 +283,17 @@ def _format_item(item: DiffItem) -> str:
     return f"    {item.field}: expected={item.expected!r}, actual={item.actual!r}"
 
 
+def _format_undeclared(param: UndeclaredParam) -> str:
+    """Render an undeclared ruleset parameter as an actionable line (#3548)."""
+    return (
+        f"    UNDECLARED PARAMETER: rulesets.{param.ruleset} rule {param.rule_type!r} "
+        f"has {param.key!r} = {param.value!r} live, but the desired spec does not "
+        f"declare it (likely a new GitHub default). Declare it on or off in the "
+        f"desired ruleset (lib/github_config.py), or add it to _STRIP_RULE_PARAMS "
+        f"if it should be ignored."
+    )
+
+
 def _print_local_diff(diff: ConfigDiff) -> None:
     """Print local config audit results."""
     if diff.is_compliant():
@@ -293,9 +316,11 @@ def _print_diff(repo: str, diff: ConfigDiff) -> None:
     if diff.is_compliant():
         print(f"  {repo}: compliant")
     else:
-        print(f"  {repo}: NON-COMPLIANT ({len(diff.items)} issues)")
+        print(f"  {repo}: NON-COMPLIANT ({len(diff.items) + len(diff.undeclared)} issues)")
         for item in diff.items:
             print(_format_item(item))
+        for param in diff.undeclared:
+            print(_format_undeclared(param))
     for field_name in diff.skipped:
         if field_name.startswith("security."):
             print(

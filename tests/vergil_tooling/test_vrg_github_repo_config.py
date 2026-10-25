@@ -32,7 +32,12 @@ from vergil_tooling.lib.config import (
     VergilConfig,
 )
 from vergil_tooling.lib.github import GitHubAPIError
-from vergil_tooling.lib.github_config import ClassicProtectionReport, ConfigDiff, DiffItem
+from vergil_tooling.lib.github_config import (
+    ClassicProtectionReport,
+    ConfigDiff,
+    DiffItem,
+    UndeclaredParam,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -1123,3 +1128,94 @@ def test_config_resolution_api_error_exits_two(capsys: pytest.CaptureFixture[str
     assert "Could not resolve vergil.toml for o/r" in err
     assert "HTTP 500" in err
     assert "Traceback" not in err
+
+
+# -- Undeclared ruleset parameters (#3548) ------------------------------------
+
+
+def _mock_github_undeclared(*, with_items: bool = False) -> ConfigDiff:
+    items = (
+        [DiffItem(field="repo_settings.allow_auto_merge", expected=False, actual=True)]
+        if with_items
+        else []
+    )
+    return ConfigDiff(
+        items=items,
+        undeclared=[
+            UndeclaredParam(
+                ruleset="Branch protection",
+                rule_type="pull_request",
+                key="require_brand_new_knob",
+                value=True,
+            )
+        ],
+    )
+
+
+def test_audit_undeclared_parameter_is_noncompliant_and_actionable(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with (
+        patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
+        patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
+        patch(f"{_MODULE}._audit_repo", return_value=_mock_github_undeclared()),
+        patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
+        patch(f"{_MODULE}._resolve_config"),
+    ):
+        assert main(["audit", "--repo", "o/r"]) == 1
+    out = capsys.readouterr().out
+    assert "o/r: NON-COMPLIANT (1 issues)" in out
+    assert "UNDECLARED PARAMETER" in out
+    assert "rulesets.Branch protection rule 'pull_request'" in out
+    assert "'require_brand_new_knob' = True" in out
+    assert "Declare it on or off in the desired ruleset" in out
+    assert "_STRIP_RULE_PARAMS" in out
+
+
+def test_audit_counts_undeclared_with_value_items(capsys: pytest.CaptureFixture[str]) -> None:
+    with (
+        patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
+        patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
+        patch(f"{_MODULE}._audit_repo", return_value=_mock_github_undeclared(with_items=True)),
+        patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
+        patch(f"{_MODULE}._resolve_config"),
+    ):
+        assert main(["audit", "--repo", "o/r"]) == 1
+    out = capsys.readouterr().out
+    assert "o/r: NON-COMPLIANT (2 issues)" in out
+    assert "repo_settings.allow_auto_merge" in out
+
+
+def test_apply_only_undeclared_skips_write_and_fails(capsys: pytest.CaptureFixture[str]) -> None:
+    # apply cannot converge an undeclared parameter: the PUT omits the key and
+    # GitHub re-applies its default, so nothing is written and the run fails.
+    with (
+        patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
+        patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
+        patch(f"{_MODULE}._audit_repo", return_value=_mock_github_undeclared()),
+        patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
+        patch(f"{_MODULE}._resolve_config"),
+        patch(f"{_MODULE}._apply_repo") as mock_apply,
+    ):
+        assert main(["apply", "--repo", "o/r"]) == 1
+    mock_apply.assert_not_called()
+    out = capsys.readouterr().out
+    assert "apply cannot resolve 1 undeclared ruleset parameter(s)" in out
+
+
+def test_apply_with_undeclared_still_converges_value_drift(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with (
+        patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
+        patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
+        patch(f"{_MODULE}._audit_repo", return_value=_mock_github_undeclared(with_items=True)),
+        patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
+        patch(f"{_MODULE}._resolve_config"),
+        patch(f"{_MODULE}._apply_repo", return_value=[]) as mock_apply,
+    ):
+        assert main(["apply", "--repo", "o/r"]) == 1
+    mock_apply.assert_called_once()
+    out = capsys.readouterr().out
+    assert "o/r: applied" in out
+    assert "apply cannot resolve 1 undeclared ruleset parameter(s)" in out

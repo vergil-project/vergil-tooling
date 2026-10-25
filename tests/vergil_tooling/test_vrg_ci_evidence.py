@@ -512,7 +512,28 @@ def test_harvest_help_exits_zero(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as excinfo:
         vrg_ci_evidence.main(["harvest", "--help"])
     assert excinfo.value.code == 0
-    assert "--merge-sha" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "--merge-sha" in out
+    assert "--run-grace-secs" in out
+
+
+@pytest.mark.parametrize(
+    ("extra", "expected"),
+    [([], ci_evidence.RUN_VISIBILITY_GRACE_SECS), (["--run-grace-secs", "45"], 45.0)],
+)
+def test_harvest_passes_run_grace_to_library(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, extra: list[str], expected: float
+) -> None:
+    """``--run-grace-secs`` reaches ``run_harvest`` (default 300 s; #3434)."""
+    seen: dict[str, float] = {}
+
+    def _harvest(_repo: str, _sha: str, _staging: Path, *, run_grace: float) -> None:
+        seen["run_grace"] = run_grace
+
+    monkeypatch.setattr(ci_evidence, "run_harvest", _harvest)
+
+    assert main(_harvest_argv(tmp_path / "staging") + extra) == 0
+    assert seen["run_grace"] == expected
 
 
 def test_assemble_help_exits_zero(capsys: pytest.CaptureFixture[str]) -> None:

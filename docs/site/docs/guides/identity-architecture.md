@@ -22,13 +22,15 @@ user account:
 | `<username>-vergil-user` | Daily development (Driver) | GitHub App, write-shaped permissions |
 | `<username>-vergil-audit` | PR review (Officials) | GitHub App, read-shaped permissions (inverted) |
 | `<username>-vergil-admin` | Reserved — **not provisioned** | — |
-| `vergil-release[bot]` | Mechanized release automation | Org-level GitHub App |
+| `<org>-automation` | CI automation: nightly ops, epic roll-up, package-index dispatch | GitHub App owned by the org, one per org |
 
 The human account owns the decision-making authority: code review,
 PR approval, merge, and administrative operations. The two agent
 Apps do the bounded work — the user App writes code, the audit App
-reviews PRs. The release App handles automation that requires
-neither human judgment nor a per-contributor identity.
+reviews PRs. Each org's automation App runs scheduled and
+event-driven CI work that needs neither human judgment nor a
+per-contributor identity (see
+[The org automation Apps](#the-org-automation-apps)).
 
 A third agent role — `<username>-vergil-admin` — is a reserved slot
 and is **not** created. Do not provision it.
@@ -117,7 +119,9 @@ These restrictions are enforced primarily by the App permission
 shapes (a server-side hard gate) and branch protection, with the
 `vrg-gh`/`vrg-git` wrappers as a soft ergonomic layer on top. See
 [Permission Model](permission-model.md) for the full
-defense-in-depth architecture.
+defense-in-depth architecture. Where GitHub's permission shapes are
+coarser than the role model wants, the gap is recorded in
+[Security Boundaries](security-boundaries.md).
 
 > **Note (2026-06-25, #1872):** The local interactive USER/AUDIT loop
 > (where a running AUDIT agent reviewed code in a shared worktree before
@@ -177,16 +181,52 @@ The main output is attack reports documenting the success and
 failure of each breach attempt — demonstrating whether Vergil's
 guardrails hold under adversarial pressure.
 
-## The release App
+## The org automation Apps
 
-`vergil-release[bot]` is an org-level GitHub App that handles
-mechanized release automation. It is not a per-contributor identity —
-it is an automation identity with its own auth flow (JWT exchange
-for short-lived installation tokens).
+Each org has its own automation GitHub App, named
+`<org>-automation`. The App is **owned by the org** (registered under
+the org's Developer settings), and its installation covers **all
+repositories** in that org:
 
-The App creates release PRs, and the human account approves and
-merges them. This separation ensures that no single identity can
-both create and approve a release.
+| Org | App |
+|---|---|
+| `vergil-project` | `vergil-project-automation` |
+| `logical-minds-foundry` | `logical-minds-foundry-automation` |
+| `mnemosys-project` | `mnemosys-project-automation` |
+
+These Apps are an automation identity, not a per-contributor one, and
+they are separate from the agent Apps above. Workflows reach an org's
+App through the `APP_CLIENT_ID` and `APP_PRIVATE_KEY` Actions secrets
+and mint a short-lived installation token with
+`actions/create-github-app-token`. The `vergil-actions` reusable
+workflows use it for:
+
+- **Nightly ops** (`ops-github-config.yml`): the
+  `vrg-github-repo-config audit`, the branch sweep, and the
+  `vrg-dependabot-audit` open-alert gate. Each of these jobs mints a
+  token scoped to the calling repo.
+- **Epic roll-up and sweep** (`ops-epic-rollup.yml`,
+  `ops-epic-sweep.yml`): closing epics and tasks across the org.
+- **Package-index dispatch** (`cd-release.yml`): sending
+  `package-released` to the org's `packages` repo after a packaged
+  release.
+
+Two of the App's permissions matter to the tooling in this repo:
+
+- **Dependabot alerts: Read.** `vrg-dependabot-audit` needs it to list
+  a repo's open alerts (epic
+  [vergil-project/.github#420](https://github.com/vergil-project/.github/issues/420)).
+  Without it, or until an installation accepts it, the nightly
+  `dependabot-audit` job exits 2 ("could not check").
+- **Administration: Read-only.** The Apps run only the read-only
+  `vrg-github-repo-config audit`. `vrg-github-repo-config apply` is a
+  human action that runs as the human's own `gh` login, because the
+  tooling uses App credentials only when it finds an App key
+  (`VRG_APP_ID` or `~/.config/vergil/app.pem`). Read-only is the
+  correct least privilege.
+
+Release PRs are not opened by an App. `vrg-release` runs on the
+human's host under the human's own `gh` login.
 
 ## Related
 
@@ -196,5 +236,7 @@ both create and approve a release.
   installation tokens are minted and selected at runtime
 - [Permission Model](permission-model.md) — enforcement layers
   that constrain agent operations
+- [Security Boundaries](security-boundaries.md) — register of
+  known cross-system seams and their mitigations
 - [Git Workflow](git-workflow.md) — the per-change development
   cycle

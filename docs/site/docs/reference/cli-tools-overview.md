@@ -83,12 +83,17 @@ ref is world-readable on a public repo, keep secrets out of
 `--title/--summary/--notes`. Reaching **ready** *freezes* the branch:
 `vrg-commit` and the `vrg-git` push path then refuse further
 commits/pushes, because a task is exactly one PR and more work is a new
-follow-up issue (epic #146). Push the branch to origin **before**
-`report-ready` (it pushes only the relay ref, never the branch); when the
-delta touches `.github/workflows/**` the human's `vrg-submit-pr` pushes it
-instead. If that push was missed, an explicit `vrg-git push [-u] origin
-<branch>` is still allowed while HEAD is exactly the reported commit — it
-publishes, not advances, the branch (issue #3071). `unfreeze` is the only sanctioned way to
+follow-up issue (epic #146). `report-ready` pushes the branch itself, to
+`origin/<branch>` with upstream set, **before** recording anything (#3602),
+so no separate push is needed; a branch already on origin at that commit is a
+no-op push. When the delta touches `.github/workflows/**` GitHub refuses the
+agent push: `report-ready` reports that as expected, records the state anyway,
+and the human's `vrg-submit-pr` pushes the branch. Any other push failure
+fails `report-ready` with no local state and no relay ref written. A re-run on
+a frozen branch whose HEAD has drifted past the reported commit is refused
+before any push. An explicit `vrg-git push [-u] origin <branch>` also stays
+allowed while HEAD is exactly the reported commit — it publishes, not
+advances, the branch (issue #3071). `unfreeze` is the only sanctioned way to
 reopen a still-unsubmitted branch — it drops the state back to
 `implementing` while keeping the metadata; an already-submitted branch
 cannot be unfrozen. `status` prints the current state. `report-ready` (like
@@ -132,7 +137,8 @@ bounds allow, in a `deps/update-<version>` managed worktree: run the
 applicable updaters (`python`, `vergil`, `images`, then the repo
 `hook`), validate once, open a `dependency-update`-labelled PR, and
 merge it. A no-op run opens no PR. A validation or merge failure leaves
-the PR open and files a fix task. Every run prints the held-back report.
+the PR open and files a fix task; an updater or hook failure opens no PR
+but still files a fix task. Every run prints the held-back report.
 `vrg-release` runs the same pipeline as its `update-deps` stage.
 Human-only. See the [vrg-update-deps reference](dev/update-deps.md) and
 the [dependency-update reference](dependency-update-config.md).
@@ -155,7 +161,12 @@ the target branch, fast-forward pulls, deletes merged local branches
 each merged branch's PR-workflow relay ref
 (`refs/vergil/pr-workflow/<branch>`) and sweeps any orphaned relay ref
 whose branch is gone (issue #2369), prunes remotes, runs validation, and
-checks the CD workflow status. A
+checks the CD workflow status. It also removes each merged branch's
+cached dev images and sweeps cached images whose branch is live in no
+repo of the platform repo set, as `vrg-container-cache prune` decides it
+(skipped on the physical host, which has no default repo set); a failed
+image removal is reported as a warning, never a failed finalize
+(issue #3566). A
 merged/closed worktree the sweep cannot remove — a dirty tree, or a
 reused branch name with unmerged commits (issue #1719) — is surfaced
 **prominently after the pipeline** rather than buried in the stage log;
@@ -336,8 +347,10 @@ Development: 0 active, 0 needs-attention, 1 stalled (no-pr), 0 cruft (removable)
 ### vrg-ensure-label
 
 Ensure GitHub labels exist. Three modes: single-label (create/update
-one label), sync (provision all labels from the canonical registry),
-and project (discover repos via a GitHub Project and sync each). The
+one label), sync (provision all labels from the canonical registry,
+and delete the registry's `delete` list and the retired `triage`,
+`idea` and `research` labels where present), and project
+(discover repos via a GitHub Project and sync each). The
 registry is `src/vergil_tooling/data/labels.json`; the labels it
 defines are listed in
 [GitHub Issue Standards](../standards/github-issues.md#labels).
@@ -394,12 +407,14 @@ get counts by severity and the Security-tab link only. See the
 Interactive (or `--non-interactive`) wizard that bootstraps a new
 managed repository: creates and clones the repo, generates
 `vergil.toml`, scaffolds config files (`CLAUDE.md`, hook-guard shim,
-the managed `.gitignore` fence), scaffolds the language skeleton
+the managed `.gitignore` fence, the canonical report-only
+`.github/dependabot.yml`), scaffolds the language skeleton
 (born-green — see below), generates
 CI/CD/epic-rollup/`ops.yml` workflows, the docs site, branch structure,
 GitHub config, and Pages. The scaffolded `base + <language>`
-`.gitignore` fence and staggered-cron `ops.yml` make a new repo pass the
-config audit's two local checks from day one.
+`.gitignore` fence, canonical `dependabot.yml` and staggered-cron
+`ops.yml` make a new repo pass the config audit's checks for those
+files from day one.
 
 The vergil series a new repo uses comes from the installed
 vergil-tooling: `[dependencies].vergil` defaults to its `vX.Y`, and the
@@ -445,8 +460,12 @@ without a managed fragment), and either checks (default) or writes the
 composed `base + <language>` managed block through `lib/gitignore.py` —
 the same module the config audit renders through, so applicator and
 audit cannot diverge. It owns **only** the file change: it has no git or
-PR knowledge, and `--write` rewrites the fenced block in place while
-leaving genuinely repo-local lines outside the fence untouched. See the
+PR knowledge. `--write` rewrites the fenced block, moves it to the top of
+the file, and drops any exact repeat of one of the fence's own patterns
+outside it (the fence is the single source of truth), leaving genuinely
+repo-local lines untouched and in order. `--check` reports drift exactly
+when `--write` would change the file, so `--write` then `--check` always
+passes (#3568). See the
 [GitHub Config Audit reference](config-audit.md#the-composed-managed-fence).
 
 | Attribute | Value |
@@ -496,9 +515,12 @@ drives the generic fleet-sweep driver (`lib/fleet_sweep.py`): per repo it
 creates a worktree, shells out to the target's applicator, commits,
 and runs `report-ready`. Like every agent-run task it **never submits or
 merges** — it stops at `report-ready`, leaving submission and merge to the
-human. `--dry-run` reports the intended per-repo action, including the
-epic each repo would be filed under, without changing any git or GitHub
-state.
+human. `--dry-run` reports the verdict a live run would reach per repo
+(would change, naming the epic it would be filed under, or skip) from a
+disposable probe worktree, without opening an issue, branch, commit, or
+PR. Each target previews with its applicator's `--check`
+(`vrg-gitignore-sync --check` or `vrg-dependabot-sync --check`), whose
+drift verdict is exactly the change `--write` would make.
 
 | Attribute | Value |
 |---|---|
@@ -549,12 +571,42 @@ that Python does not satisfy `requires-python`. Always sets
 `NO_MKDOCS_2_WARNING=1` in the container, so local builds suppress the
 mkdocs-material MkDocs 2.0 warning banner the same way CI does.
 
+Before mkdocs runs, it stages the docs sources on the host the same way
+CI's docs job does (`actions/shared/docs/stage` in vergil-actions), so a
+local strict build passes or fails where CI's does:
+
+1. `vrg-docs-stage` copies `CHANGELOG.md` to `<config dir>/docs/changelog.md`
+   and `releases/*.md` to `<config dir>/docs/releases/`, and writes the
+   release index.
+2. `vrg-docs-patch-nav` patches the release versions into the nav of a
+   copy of the config, `mkdocs.staged.yml`, written next to `mkdocs.yml`.
+   The tracked `mkdocs.yml` is never modified. mkdocs runs with
+   `-f <config dir>/mkdocs.staged.yml`.
+
+Staging needs authenticated `gh` (or an App token in agent sessions)
+whenever the repo has release notes, because each release page links to
+its CI-evidence bundle. Without auth the command fails; it never skips
+staging.
+
+Staging must not dirty the working tree, so every generated path has to
+be gitignored. The managed base gitignore covers the default layout
+(`docs/site/docs/changelog.md`, `docs/site/docs/releases/`,
+`mkdocs.staged.yml`). If a generated path is not ignored, including a
+staged copy that the repo has committed, the command refuses before
+writing anything and lists the paths. To fix it, stop tracking any
+committed copies (`vrg-git rm --cached <path>`), then run
+`vrg-gitignore-sync`.
+
+`serve` stages once, at startup. Edits to the docs pages reload as usual,
+but edits to `mkdocs.yml`, `CHANGELOG.md` or `releases/` take effect only
+after a restart.
+
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_container_docs` |
 | Args | `<serve\|build> [mkdocs args...]` (manual parsing) |
-| Preconditions | Git repo, Docker daemon |
-| Failure mode | Usage message on missing/unknown subcommand |
+| Preconditions | Git repo, Docker daemon, mkdocs config at `MKDOCS_CONFIG` (default `docs/site/mkdocs.yml`), generated docs paths gitignored, `gh` auth when the repo has release notes |
+| Failure mode | Usage message on missing/unknown subcommand; explicit error for a missing config, un-ignored generated paths, or a staging failure (including missing `gh` auth) |
 | Exit codes | 0 (help), 1 error; command exit code after `execvp` |
 | Status | Active |
 
@@ -599,16 +651,54 @@ Manage the per-branch cached container image (base image plus
 vergil-tooling, `system-packages`, and the `build-command` artifact) that
 `vrg-container-run` builds over. Subcommands: `build` (build/refresh the
 cached image for the current branch), `clean` (remove it), `status` (show
-cache state and the expected tag), and `clean-all` (remove every image it
-manages).
+cache state and the expected tag), `clean-all` (remove every image it
+manages), and `prune` (remove the cached images of finished branches).
+
+`prune` covers every cached per-branch image in the local image store,
+whichever repo built it. It is a **dry run by default**: it prints the repo
+set and a keep or remove verdict, with the reason, for each image, and
+removes nothing until re-run with `--apply` (issue #3481). The image tag
+records the branch (sanitized: `/` becomes `-`) but not the repository, so
+the rule leans toward keeping. An image is kept when:
+
+- its branch is protected (`develop`, `main`, `release`);
+- a container, running or stopped, uses it;
+- its branch matches a live branch in **any** repo of the repo set. A
+  branch is live when it is a local branch (which covers every worktree)
+  or exists on the repo's `origin`.
+
+Only an image that matches none of these is removed. Origin is read with
+`git ls-remote`, so a branch deleted on GitHub counts as gone. When a
+repo's origin cannot be read (typically a private repo the agent's App
+cannot see), that repo's local `refs/remotes/origin/*` stand in, with a
+warning naming the repo; stale tracking refs can only keep extra images,
+never remove live ones. Any other failure to read the repo set, the images,
+the containers or a repo's branches stops the run before anything is
+removed. A failed image removal is reported with the runtime's error, the
+remaining removals still run, and the command exits 1.
+
+The repo set comes from `--root DIR` (repeatable; a projects directory, a
+directory of repos, or a single repo, searched down to `<org>/<repo>`),
+which replaces the platform default: `/vergil/projects` on a cloud VM, and
+on a Lima VM the projects mount, found two levels above the current repo's
+main worktree and accepted only if it is a mount point. The physical host
+has no default, so `--root` is required there. A root that does not exist,
+or roots that hold no repositories, are an error.
+
+`vrg-finalize-pr` runs the same sweep (in effect `prune --apply` against
+the platform's default repo set) after removing the merged branch's own
+cached images. It runs on agent VMs and is skipped on the physical Mac
+host, which has no default repo set; there finalize prints the
+`vrg-container-cache prune --root DIR` command to run by hand. A failed
+sweep or removal is a finalize warning, never a failure (issue #3566).
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_container_cache` |
-| Args | `build` \| `clean` \| `status` \| `clean-all` |
-| Preconditions | Git repo; a container runtime (`docker`/`nerdctl`) available for `build`/`clean`/`clean-all` |
-| Failure mode | Runtime-unavailable error; propagates the runtime's build/remove failures |
-| Exit codes | 0 success, non-zero on runtime or build failure |
+| Args | `build` \| `clean` \| `status` \| `clean-all` \| `prune [--apply] [--root DIR]...` |
+| Preconditions | A container runtime (`nerdctl` or `docker`) on PATH for every subcommand; a git repo for `build`/`clean`/`status`; for `prune`, a repo set (`--root DIR` on the physical host) |
+| Failure mode | Runtime-unavailable error; propagates the runtime's build failures; every failed image removal is reported with the runtime's error while the rest still run. `prune` refuses, before removing anything, a missing or empty repo set, or images, containers or branches it cannot read |
+| Exit codes | 0 success (including a `prune` dry run); 1 no subcommand, no runtime, a failed removal, or a `prune` refusal; non-zero on build failure |
 | Status | Active |
 
 ### vrg-host

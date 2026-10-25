@@ -22,13 +22,11 @@ from vergil_tooling.lib.container_cache import (
     apt_install_command,
     cache_image_tag,
     cache_sensitive_files,
-    clean_branch_images,
     compute_cache_hash,
     ensure_cached_image,
     find_cached_image,
     missing_warmup_files,
     provision_dev_image,
-    prune_orphan_branch_images,
     resolve_base_digest,
 )
 
@@ -47,6 +45,14 @@ def _marker_language_resolution() -> Iterator[None]:
         "vergil_tooling.lib.container_cache.repo_resolution", side_effect=window_default_resolution
     ):
         yield
+
+
+@pytest.fixture(autouse=True)
+def build_space() -> Iterator[MagicMock]:
+    # The low-disk auto-prune reads the real image store; stub it out. Its own
+    # behaviour is tested in test_cache_space.py (#3571).
+    with patch("vergil_tooling.lib.cache_space.ensure_build_space") as mock_space:
+        yield mock_space
 
 
 def _completed(returncode: int = 0, stdout: str = "", stderr: str = "") -> MagicMock:
@@ -300,6 +306,47 @@ def test_ensure_rebuilds_when_cached_image_unlaunchable(tmp_path: Path) -> None:
     assert full_tag in rmi_cmd
 
 
+def _ensure_cold_build(tmp_path: Path, build: MagicMock) -> str:
+    """Run ensure_cached_image with no cached image, so it goes to build."""
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    with (
+        patch("vergil_tooling.lib.git.current_branch", return_value="feature/42"),
+        patch(
+            "vergil_tooling.lib.container_cache.resolve_base_digest",
+            return_value=("sha256:abc", True),
+        ),
+        patch("vergil_tooling.lib.container_cache.find_cached_image", return_value=None),
+        patch("vergil_tooling.lib.container_cache._build_cached_image", build),
+    ):
+        return ensure_cached_image(
+            tmp_path, "go", "ghcr.io/r/dev-go:1.26", runtime="docker", build_env={}
+        )
+
+
+def test_ensure_checksbuild_space_before_building(tmp_path: Path, build_space: MagicMock) -> None:
+    # The low-disk auto-prune runs just before a cache build (#3571).
+    build = MagicMock(return_value="built:tag")
+    build_space.side_effect = lambda _rt: build.assert_not_called()
+    assert _ensure_cold_build(tmp_path, build) == "built:tag"
+    build_space.assert_called_once_with("docker")
+    build.assert_called_once()
+
+
+def test_ensure_does_not_build_without_space(tmp_path: Path, build_space: MagicMock) -> None:
+    from vergil_tooling.lib.cache_space import CacheSpaceError
+
+    build = MagicMock()
+    build_space.side_effect = CacheSpaceError("not enough disk space")
+    with pytest.raises(CacheSpaceError, match="not enough disk space"):
+        _ensure_cold_build(tmp_path, build)
+    build.assert_not_called()
+
+
+def test_ensure_skips_space_check_on_cache_hit(tmp_path: Path, build_space: MagicMock) -> None:
+    test_ensure_reuses_cache_when_hash_matches_and_launchable(tmp_path)
+    build_space.assert_not_called()
+
+
 def test_image_is_launchable_true_when_create_succeeds() -> None:
     created = _completed(0, stdout="cid123\n")
     removed = _completed(0)
@@ -480,98 +527,6 @@ def test_provision_returns_default_when_no_cache_files(tmp_path: Path) -> None:
     ):
         image, source = provision_dev_image(tmp_path, "python")
     assert (image, source) == ("base:1", "default")
-
-
-# -- clean_branch_images ------------------------------------------------------
-
-
-def test_clean_branch_images_removes_matching() -> None:
-    docker_output = (
-        "ghcr.io/r/dev-go:1.26--feature-42-thing--abcd1234\n"
-        "ghcr.io/r/dev-base:latest--feature-42-thing--efgh5678\n"
-        "ghcr.io/r/dev-python:3.14\n"
-    )
-    mock_result = MagicMock(returncode=0, stdout=docker_output)
-    calls = []
-
-    def capture_run(cmd: list[str], **kwargs: object) -> MagicMock:
-        calls.append(cmd)
-        return mock_result
-
-    with patch("vergil_tooling.lib.container_cache.subprocess.run", side_effect=capture_run):
-        removed = clean_branch_images("feature/42-thing", runtime="docker")
-    assert removed == 2
-
-
-def test_clean_branch_images_none_found() -> None:
-    mock_result = MagicMock(returncode=0, stdout="ghcr.io/r/dev-python:3.14\n")
-    with patch("vergil_tooling.lib.container_cache.subprocess.run", return_value=mock_result):
-        assert clean_branch_images("feature/99-other", runtime="docker") == 0
-
-
-def test_clean_branch_images_docker_error() -> None:
-    mock_result = MagicMock(returncode=1, stdout="")
-    with patch("vergil_tooling.lib.container_cache.subprocess.run", return_value=mock_result):
-        assert clean_branch_images("feature/42", runtime="docker") == 0
-
-
-# -- prune_orphan_branch_images -----------------------------------------------
-
-
-def test_prune_orphan_branch_images_removes_only_orphans() -> None:
-    images = (
-        "ghcr.io/r/dev-python:3.14--develop--aaaa1111\n"  # live
-        "ghcr.io/r/dev-python:3.14--feature-300-live--bbbb2222\n"  # live
-        "ghcr.io/r/dev-python:3.14--feature-42-gone--cccc3333\n"  # orphan
-        "ghcr.io/r/dev-go:1.26--feature-9-abandoned--dddd4444\n"  # orphan
-        "ghcr.io/r/dev-python:3.14\n"  # plain base image — never touched
-    )
-    removed_lines: list[str] = []
-
-    def capture_run(cmd: list[str], **kwargs: object) -> MagicMock:
-        if len(cmd) >= 2 and cmd[1] == "rmi":
-            removed_lines.append(cmd[2])
-            return MagicMock(returncode=0, stdout="")
-        return MagicMock(returncode=0, stdout=images)
-
-    with patch("vergil_tooling.lib.container_cache.subprocess.run", side_effect=capture_run):
-        removed = prune_orphan_branch_images(["develop", "feature/300-live"], runtime="docker")
-
-    assert removed == 2
-    assert removed_lines == [
-        "ghcr.io/r/dev-python:3.14--feature-42-gone--cccc3333",
-        "ghcr.io/r/dev-go:1.26--feature-9-abandoned--dddd4444",
-    ]
-
-
-def test_prune_orphan_branch_images_keeps_all_when_all_live() -> None:
-    images = "ghcr.io/r/dev-python:3.14--develop--aaaa1111\n"
-
-    def capture_run(cmd: list[str], **kwargs: object) -> MagicMock:
-        assert not (len(cmd) >= 2 and cmd[1] == "rmi"), "no image should be removed"
-        return MagicMock(returncode=0, stdout=images)
-
-    with patch("vergil_tooling.lib.container_cache.subprocess.run", side_effect=capture_run):
-        assert prune_orphan_branch_images(["develop"], runtime="docker") == 0
-
-
-def test_prune_orphan_branch_images_no_live_branches_removes_all_cached() -> None:
-    images = (
-        "ghcr.io/r/dev-python:3.14--feature-1-x--aaaa1111\n"
-        "ghcr.io/r/dev-python:3.14\n"  # base — no `--`, untouched
-    )
-
-    def capture_run(cmd: list[str], **kwargs: object) -> MagicMock:
-        return MagicMock(returncode=0, stdout=images)
-
-    with patch("vergil_tooling.lib.container_cache.subprocess.run", side_effect=capture_run):
-        assert prune_orphan_branch_images([], runtime="docker") == 1
-
-
-def test_prune_orphan_branch_images_docker_error() -> None:
-    mock_result = MagicMock(returncode=1, stdout="")
-    with patch("vergil_tooling.lib.container_cache.subprocess.run", return_value=mock_result):
-        assert prune_orphan_branch_images(["develop"], runtime="docker") == 0
 
 
 # -- _build_cached_image ------------------------------------------------------
@@ -1813,3 +1768,46 @@ def test_provision_passes_no_env_for_a_language_without_one(tmp_path: Path) -> N
     ):
         provision_dev_image(tmp_path, "go", runtime="docker")
     assert ensure.call_args.kwargs["build_env"] == {}
+
+
+# -- parse_cache_image_ref (#3481) --------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("ref", "expected"),
+    [
+        (
+            "ghcr.io/vergil-project/prod-python:3.14--feature-1-x--0123abcd",
+            ("3.14", "feature-1-x"),
+        ),
+        (
+            "ghcr.io/vergil-project/prod-cpp-clang:20--develop--deadbeef",
+            ("20", "develop"),
+        ),
+        # A sanitized branch that itself contains "--" parses whole.
+        (
+            "ghcr.io/vergil-project/prod-base:latest--feature--odd--0123abcd",
+            ("latest", "feature--odd"),
+        ),
+        ("ghcr.io/vergil-project/prod-python:3.14", None),  # base image
+        ("ghcr.io/vergil-project/prod-python:<none>", None),
+        ("ghcr.io/vergil-project/prod-python:3.14--x--NOTAHASH", None),
+        ("docker.io/library/redis:7--x--0123abcd", None),  # not ours
+    ],
+)
+def test_parse_cache_image_ref(ref: str, expected: tuple[str, str] | None) -> None:
+    from vergil_tooling.lib.container_cache import parse_cache_image_ref
+
+    assert parse_cache_image_ref(ref) == expected
+
+
+def test_parse_inverts_cache_image_tag() -> None:
+    from vergil_tooling.lib.container_cache import (
+        cache_image_tag,
+        parse_cache_image_ref,
+        sanitize_branch,
+    )
+
+    ref = cache_image_tag("ghcr.io/vergil-project/prod-go:1.24", "feature/12-x", "a1b2c3d4")
+    assert parse_cache_image_ref(ref) == ("1.24", sanitize_branch("feature/12-x"))
+    assert sanitize_branch("feature/12-x") == "feature-12-x"

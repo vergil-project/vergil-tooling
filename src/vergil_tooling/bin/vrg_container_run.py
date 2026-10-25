@@ -14,6 +14,7 @@ import sys
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import conan_token, git, platform_env
+from vergil_tooling.lib.cache_space import CacheSpaceError
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.config import (
     DEFAULT_VALIDATION_COMMAND,
@@ -162,9 +163,13 @@ def main(argv: list[str] | None = None) -> int:
         base = default_image(resolution, fallback=True, prefix=prefix)
         # The cache build's warmup runs with the same env as the run below, and
         # the env is part of the cache key (#3421).
-        image = ensure_cached_image(
-            repo_root, lang, base, runtime=runtime, build_env=container_env(resolution)
-        )
+        try:
+            image = ensure_cached_image(
+                repo_root, lang, base, runtime=runtime, build_env=container_env(resolution)
+            )
+        except CacheSpaceError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
         image_source = "cached" if image != base else "default"
 
     print(f"Language: {lang or '<none>'}")

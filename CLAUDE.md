@@ -140,13 +140,14 @@ identity and warns when the two disagree.
 **Agents must not run `vrg-submit-pr`.** PR submission, merge, and
 finalization are human actions. The PR handoff is:
 
-1. The agent pushes the branch to origin (`vrg-git push -u origin <branch>`)
-   **before** `report-ready` — `report-ready` pushes only the relay ref, never
-   the branch. When the delta touches `.github/workflows/**` the agent push is
-   refused by GitHub (expected); the human's `vrg-submit-pr` pushes it instead.
-   The agent then records the PR metadata with `vrg-pr-workflow report-ready
-   --issue <N> --title --summary --notes` (optional `--linkage`), which writes
-   it to `.vergil/pr-workflow.json`. `title`, `summary`, and `notes` are
+1. The agent records the PR metadata with `vrg-pr-workflow report-ready
+   --issue <N> --title --summary --notes` (optional `--linkage`), which pushes
+   the branch to origin (setting upstream) and then writes the metadata to
+   `.vergil/pr-workflow.json` — no separate push step. When the delta touches
+   `.github/workflows/**` GitHub refuses the agent push (expected):
+   `report-ready` says so and records the state anyway, and the human's
+   `vrg-submit-pr` pushes the branch instead. Any other push failure fails
+   `report-ready` with nothing recorded. `title`, `summary`, and `notes` are
    required and non-empty. `linkage` defaults to `Ref`; leave it there.
    `vrg-submit-pr` auto-selects the keyword at submit time — a **managed task**
    (an issue with an `epic`-labeled parent) links with `Closes` so it
@@ -170,15 +171,16 @@ commit, the reused-branch straggler of epic #146 / issue #1719). The rule
 follows directly from "a task is exactly one PR": more work is a **new
 follow-up issue**, never a change to this branch. Three things stay allowed:
 
-- **Publishing the reported commit** — if the branch was not pushed before
-  `report-ready`, an explicit `vrg-git push [-u] origin <branch>` is still
+- **Publishing the reported commit** — `report-ready` publishes the branch
+  itself, but an explicit `vrg-git push [-u] origin <branch>` is still
   allowed while HEAD is exactly the recorded `head_sha` on that branch (it
   cannot advance the branch past what was reported; issue #3071). A drifted
   HEAD, a missing `head_sha`, or any other refspec/flag stays refused.
 
 - **Correcting the PR prose** — re-running `report-ready` overwrites the
   recorded title/summary/notes. That is metadata, not code, so it is not
-  frozen.
+  frozen; its branch push is a no-op at the reported commit, and it refuses
+  a HEAD that has drifted past that commit.
 - **Deliberately reopening the branch** — `vrg-pr-workflow unfreeze` drops
   the workflow back to `implementing` (keeping the recorded metadata) so
   commits/pushes are allowed again. This is the *only* sanctioned way to
@@ -213,7 +215,7 @@ still holds).
 
 Because the metadata now rides GitHub, **a cloud VM can do PR-development
 end-to-end** — not just triage. A cloud agent implements the issue,
-commits, pushes the feature branch to origin, and runs `report-ready`,
+commits, and runs `report-ready` (which pushes the feature branch to origin),
 exactly as it would under Lima. The old "cloud x86 VMs are triage-only /
 not for PR-development" boundary is retired, along with the "until the
 relay lands" framing — the relay
@@ -319,8 +321,10 @@ test-and-coverage gate independently in a separate container per
 resolved matrix version (currently 3.12, 3.13, 3.14, 3.15). Because branch
 coverage (`--cov-branch`) can legitimately differ across CPython versions, code
 at 100% locally can still fall below 100% on a 3.12, 3.13 or 3.14 leg and fail
-CI —
-the multi-version coverage matrix is a PR-CI-only gate. See
+CI. Run `vrg-container-run -- vrg-validate --all-versions` (Python only) to
+catch that before pushing: it re-runs the gate on every resolved version, each
+on a uv-managed interpreter in the same container (about 1.5 minutes here,
+against about 20 seconds). See
 `docs/site/docs/guides/ci-architecture.md` for the full rationale and
 vergil-project/vergil-actions#176 for the parity audit.
 
@@ -377,7 +381,8 @@ CLI tools installed as `vrg-*` console scripts:
 - **`vrg-update-deps`** — Mechanized dependency update within declared bounds:
   built-in updaters (`python`, `vergil`, `images`) plus the
   `[dependency-update].hook`, one validation, a `dependency-update`-labelled
-  PR merged when green, a fix task when validation or merge fails, and the
+  PR merged when green, a fix task on any failure (validation, merge, or
+  an updater/hook failing before any PR exists), and the
   held-back report (`--only`/`--skip`/`--vergil X.Y`). Human-only
 - **`vrg-resolve-tracking-issue`** — Extract tracking issue number from a merge commit's PR linkage
 - **`vrg-finalize-pr`** — Merge a PR and run post-merge cleanup (branch/worktree deletion, remote pruning)

@@ -173,16 +173,20 @@ def test_failure_raises_release_error_with_report_and_tail(
 
 
 def test_update_failure_records_no_pr(monkeypatch: pytest.MonkeyPatch) -> None:
-    d = _deps()
+    d = _deps(fix_issue_url="https://x/issues/11")
     d.failure = DepsFailure(
         kind="update", message="python: boom", output_tail="", reproduce="uv lock"
     )
     _patch(monkeypatch, d)
     ctx = _rctx()
-    with pytest.raises(ReleaseError, match="No PR was opened"):
+    with pytest.raises(ReleaseError, match="No PR was opened") as info:
         update_deps(ctx)
     assert ctx.deps_pr_url is None
+    assert ctx.deps_fix_issue_url == "https://x/issues/11"
     assert ctx.deps_failure is not None
+    # The tracking issue names the standalone fix task (#3550).
+    assert "Fix task: https://x/issues/11" in ctx.deps_failure
+    assert "Reproduce on `develop`: `uv lock`" in str(info.value.detail)
 
 
 def test_sync_failure_propagates(monkeypatch: pytest.MonkeyPatch) -> None:

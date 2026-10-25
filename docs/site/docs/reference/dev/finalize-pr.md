@@ -70,21 +70,38 @@ still pending after that, the backing job's own conclusion decides
   out the deadline. Checks that really failed are still caught by the
   failed-checks gate.
 - The job **succeeded** but the check is one of the target branch's
-  **required** status checks: finalize **aborts at once** (issue #3379).
-  GitHub keeps blocking the merge on a required check it reports as
-  pending, so passing it would only move the wait to the merge step. The
-  error names the check, says GitHub will block the merge until it settles,
-  and gives the same close-and-reopen guidance.
+  **required** status checks: the check is a **suspected orphan** (issue
+  #3379). GitHub keeps blocking the merge on a required check it reports as
+  pending, so passing it would only move the wait to the merge step. If it
+  is still pending when the grace period below runs out, the error names the
+  check, says GitHub will block the merge until it settles, and gives the
+  same close-and-reopen guidance.
 - The job **succeeded** but the required checks **could not be read** (see
-  *Required checks* below): finalize **aborts at once** for the same reason,
-  because it cannot tell whether GitHub will block on the stale check. The
-  error says the required-check lookup failed. Without a stale check, a
-  failed lookup still only warns and waits on registered checks.
+  *Required checks* below): a **suspected orphan** for the same reason,
+  because finalize cannot tell whether GitHub will block on the stale check.
+  The error, if the grace runs out, says the required-check lookup failed.
+  Without a stale check, a failed lookup still only warns and waits on
+  registered checks.
 - The job **did not succeed**, has no conclusion, or its conclusion **cannot
-  be read**: finalize **aborts at once with recovery guidance**. The
-  guidance is to close and reopen the PR to re-run the gate, then re-run
-  `vrg-finalize-pr`. The error names each such check, its job's outcome and
-  its job link.
+  be read**: a **suspected orphan**. If the grace runs out, finalize aborts
+  with recovery guidance: close and reopen the PR to re-run the gate, then
+  re-run `vrg-finalize-pr`. The error names each such check, its job's
+  outcome and its job link.
+
+**Grace period for suspected orphans.** During a GitHub Actions incident,
+GitHub can write job results back minutes late, and at the moment of
+checking that looks exactly like an orphan (issue #3431). Closing and
+reopening the PR then would throw away results that are on their way. So a
+suspected orphan is not declared at once. The waiter prints a warning naming
+the suspects (`… have a completed run but no result yet … GitHub may be
+delayed; re-checking for up to 5m00s …`) and keeps polling, re-reading each
+suspect's job about every 30 seconds. A result that arrives in time lets the
+wait finish normally. Only a check still pending when the grace runs out is
+declared orphaned, and the error says how long each check waited. The grace
+defaults to 5 minutes from when the backing run was first seen completed.
+Set `VRG_ORPHAN_GRACE` (seconds, a positive whole number) to change it; a
+malformed value is an error. `vrg-pr-await` applies the same grace before it
+settles with `orphaned_check`.
 
 The deadline is the backstop. When it elapses with checks still pending,
 each one is checked against its backing run again, and a non-terminal check

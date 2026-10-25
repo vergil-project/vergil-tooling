@@ -16,7 +16,7 @@ from vergil_tooling.bin.vrg_submit_pr import (
     _origin_has_branch,
     _push_branch,
     _reject_if_cross_repo,
-    _reject_if_epic_link,
+    _reject_if_non_task,
     _reject_if_operational_task,
     _reject_if_queue_item,
     _resolve_linkage,
@@ -31,8 +31,9 @@ from vergil_tooling.bin.vrg_submit_pr import (
     parse_args,
 )
 from vergil_tooling.lib import epics, worktrees
-from vergil_tooling.lib.pr_workflow import engine
+from vergil_tooling.lib.pr_workflow import engine, freeze
 from vergil_tooling.lib.pr_workflow.errors import AlreadySubmittedError, WorkflowError
+from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
 from vergil_tooling.lib.worktrees import MergeCommitsError, Worktree
 
 if TYPE_CHECKING:
@@ -53,7 +54,7 @@ def _no_epic_link_check() -> Iterator[None]:
     """
     with (
         patch(_MOD + "._reject_if_cross_repo"),
-        patch(_MOD + "._reject_if_epic_link"),
+        patch(_MOD + "._reject_if_non_task"),
         patch(_MOD + "._reject_if_operational_task"),
         patch(_MOD + "._reject_if_queue_item"),
         patch(_MOD + "._task_linkage", side_effect=lambda _ref, requested: (requested, None)),
@@ -416,6 +417,53 @@ class TestIdentityGate:
         monkeypatch.setenv("VRG_IDENTITY_MODE", "audit")
         result = main(["--issue", "42", "--summary", "Fix", "--title", "fix: bug"])
         assert result != 0
+
+    def test_refusal_points_to_report_ready(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
+        result = main([])
+        assert result == 1
+        assert "vrg-pr-workflow report-ready" in capsys.readouterr().err
+
+    @pytest.mark.parametrize("flag", ["--help", "-h"])
+    @pytest.mark.parametrize("mode", ["user", "audit"])
+    def test_agent_help_redirects_instead_of_usage(
+        self,
+        flag: str,
+        mode: str,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """An agent's --help gets the human-only redirect, never the usage (issue #3545)."""
+        monkeypatch.setenv("VRG_IDENTITY_MODE", mode)
+        result = main(["--issue", "42", flag])
+        assert result == 0
+        out = capsys.readouterr().out
+        assert "human-only" in out
+        assert "vrg-pr-workflow report-ready" in out
+        assert "usage:" not in out
+        assert "--finalize" not in out
+
+    def test_agent_help_from_sys_argv(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The console-script entry point (argv=None) reads sys.argv."""
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
+        monkeypatch.setattr("sys.argv", ["vrg-submit-pr", "--help"])
+        assert main() == 0
+        assert "vrg-pr-workflow report-ready" in capsys.readouterr().out
+
+    def test_human_help_shows_usage(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.delenv("VRG_IDENTITY_MODE", raising=False)
+        monkeypatch.delenv("VRG_APP_ID", raising=False)
+        with patch(_MOD + ".identity_mode.is_agent", return_value=False), pytest.raises(SystemExit):
+            main(["--help"])
+        out = capsys.readouterr().out
+        assert "usage:" in out
+        assert "human-only" not in out
 
     def test_human_mode_allowed(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("VRG_IDENTITY_MODE", raising=False)
@@ -1802,25 +1850,29 @@ def test_reject_if_cross_repo_noop_for_unparseable_ref() -> None:
         _reject_if_cross_repo("not-a-ref")
 
 
-# -- _reject_if_epic_link (PRs link tasks, not epics) ------------------------
+# -- _reject_if_non_task (PRs link tasks, not epics or archives) ------------
 
 
-def test_reject_if_epic_link_raises_for_epic() -> None:
+@pytest.mark.parametrize("kind", ["epic", "archive"])
+def test_reject_if_non_task_raises_for_epic_or_archive(kind: str) -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
-        patch(f"{_MOD}.epics.is_epic", return_value=True),
-        pytest.raises(SystemExit, match="links an epic"),
+        patch(f"{_MOD}.epics.non_task_kind", return_value=kind),
+        pytest.raises(
+            SystemExit,
+            match=rf"^vrg-submit-pr: --issue \(org/\.github#40\) is an {kind}, not a task",
+        ),
     ):
-        _reject_if_epic_link("org/.github#40")
+        _reject_if_non_task("org/.github#40")
 
 
-def test_reject_if_epic_link_passes_for_task() -> None:
+def test_reject_if_non_task_passes_for_task() -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
-        patch(f"{_MOD}.epics.is_epic", return_value=False) as mock_is_epic,
+        patch(f"{_MOD}.epics.non_task_kind", return_value=None) as mock_kind,
     ):
-        _reject_if_epic_link("#42")
-    mock_is_epic.assert_called_once_with(epics.IssueRef("org", "repo", 42))
+        _reject_if_non_task("#42")
+    mock_kind.assert_called_once_with(epics.IssueRef("org", "repo", 42))
 
 
 # -- _reject_if_operational_task (operational tasks are not PR-workable) -------
@@ -1971,10 +2023,10 @@ def test_resolve_linkage_returns_requested_without_note() -> None:
         assert _resolve_linkage("#42", "Ref") == "Ref"
 
 
-def test_reject_if_epic_link_noop_when_repo_unresolvable() -> None:
+def test_reject_if_non_task_noop_when_repo_unresolvable() -> None:
     # A bare ref with no resolvable default repo is skipped, not an error.
     with patch(f"{_MOD}.github.current_repo", return_value=""):
-        _reject_if_epic_link("#42")
+        _reject_if_non_task("#42")
 
 
 # -- shared _open_pr core + worktree-free relay branch path (issue #2368) ------
@@ -2241,6 +2293,7 @@ class TestRelayBranchPath:
             patch(_MOD + ".GitHubTransport") as gh_cls,
             patch(_MOD + ".git.read_output", return_value="abc123\trefs/heads/feature/x"),
             patch(_MOD + "._push_branch"),
+            patch(_MOD + ".submission.record_submission"),
             patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/5"),
         ):
             rc = main(["feature/x", "--yes"])
@@ -2289,12 +2342,76 @@ class TestRelayBranchPath:
             patch(_MOD + ".LocalFileTransport", return_value=local),
             patch(_MOD + ".git.read_output", return_value="abc123\trefs/heads/feature/x"),
             patch(_MOD + "._push_branch") as push,
+            patch(_MOD + ".submission.record_submission") as record,
             patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/7") as create,
         ):
             rc = main(["feature/x", "--yes"])
         assert rc == 0
         push.assert_not_called()
         assert create.call_args.kwargs["head"] == "feature/x"
+        # Regression (issue #3525): the relay open records the submission on
+        # the local worktree too, so the hybrid branch does not stay frozen.
+        record.assert_called_once_with(wt.path, pr_url="https://github.com/pr/7")
+
+    def test_relay_open_with_local_worktree_lifts_the_freeze(self, tmp_path: Path) -> None:
+        """Regression (issue #3525): a branch on origin that also has a local
+        ready worktree is marked submitted after the relay open, so the freeze
+        that refuses pr-watch fix commits and pushes lifts."""
+        wt = Worktree(path=tmp_path, branch="feature/x")
+        LocalFileTransport(tmp_path).write(_ready_state(branch="feature/x", head_sha="abc123"))
+        assert freeze.check_worktree(tmp_path, action="commit").frozen
+        with (
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[wt]),
+            patch(_MOD + ".git.read_output", return_value="abc123\trefs/heads/feature/x"),
+            patch(_MOD + "._push_branch") as push,
+            patch(_MOD + ".github.create_pr", return_value="https://github.com/o/r/pull/7"),
+        ):
+            rc = main(["feature/x", "--yes"])
+        assert rc == 0
+        push.assert_not_called()
+        recorded = LocalFileTransport(tmp_path).read()
+        assert recorded is not None
+        assert recorded.submitted is not None
+        assert recorded.submitted["pr_url"] == "https://github.com/o/r/pull/7"
+        assert not freeze.check_worktree(tmp_path, action="commit").frozen
+
+    def test_relay_open_without_local_worktree_records_nothing(self) -> None:
+        """The pure cloud-to-Mac relay has no local state to mark (issue #3525)."""
+        transport = MagicMock()
+        transport.read.return_value = _ready_state(branch="feature/x", head_sha="abc123")
+        with (
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
+            patch(_MOD + ".GitHubTransport", return_value=transport),
+            patch(_MOD + ".git.read_output", return_value="abc123\trefs/heads/feature/x"),
+            patch(_MOD + ".submission.record_submission") as record,
+            patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/5"),
+        ):
+            rc = main(["feature/x", "--yes"])
+        assert rc == 0
+        record.assert_not_called()
+
+    def test_relay_open_failure_with_local_worktree_records_nothing(self) -> None:
+        """A failed relay open records nothing (issue #3525): only an opened PR
+        is a submission, so the local worktree stays ready and frozen."""
+        wt = Worktree(path=Path("/repo/.worktrees/issue-42-x"), branch="feature/x")
+        local = MagicMock()
+        local.read.return_value = _ready_state(branch="feature/x", head_sha="abc123")
+        with (
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[wt]),
+            patch(_MOD + ".LocalFileTransport", return_value=local),
+            patch(_MOD + ".git.read_output", return_value="abc123\trefs/heads/feature/x"),
+            patch(_MOD + ".submission.record_submission") as record,
+            patch(
+                _MOD + ".github.create_pr",
+                side_effect=subprocess.CalledProcessError(1, ["gh", "pr", "create"]),
+            ),
+            pytest.raises(subprocess.CalledProcessError),
+        ):
+            main(["feature/x", "--yes"])
+        record.assert_not_called()
 
     def test_relay_head_sha_mismatch_errors(self) -> None:
         state = _ready_state(branch="feature/x", head_sha="abc123")

@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from vergil_tooling.lib import github, intake_route
+from vergil_tooling.lib import epics, github, intake_route
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.intake_route import (
     Defer,
@@ -25,6 +25,8 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
 _MOD = "vergil_tooling.lib.intake_route"
+# Captured before any patching, to run the real planning ensure under Env.
+_REAL_ENSURE_PLANNING_EPIC = epics.ensure_planning_epic
 
 ITEM = IssueRef("org", ".github", 352)
 INTAKE = IssueRef("org", ".github", 7)
@@ -57,10 +59,15 @@ class Env:
         self.read_json = MagicMock(side_effect=lambda *a: self.issue_view)
         self.create_issue = MagicMock(side_effect=lambda **kw: self.created_url)
         self.ensure_labels = MagicMock()
-        self.add_child = MagicMock()
-        self.reparent_child = MagicMock()
+        # A link takes effect: the task's native parent becomes the epic.
+        self.add_child = MagicMock(side_effect=self.attach)
+        self.reparent_child = MagicMock(side_effect=self.attach)
+        self.sleep = MagicMock()
         self.ensure_planning_epic = MagicMock(return_value=PLANNING)
         self.resolve_epic_ref = MagicMock(return_value=TOOL_ADHOC)
+
+    def attach(self, epic: IssueRef, task: IssueRef) -> None:
+        self.native_parent[task] = epic
 
     def _read_output(self, *args: str) -> str:
         if args[:2] == ("issue", "transfer"):
@@ -92,6 +99,7 @@ def env() -> Iterator[Env]:
         patch(f"{_MOD}.github.read_json", state.read_json),
         patch(f"{_MOD}.github.create_issue", state.create_issue),
         patch(f"{_MOD}.ensure_labels", state.ensure_labels),
+        patch(f"{_MOD}.time.sleep", state.sleep),
     ):
         yield state
 
@@ -232,6 +240,26 @@ def test_route_planning_uses_items_repo_queue_home(env: Env) -> None:
     env.reparent_child.assert_called_once_with(secret_planning, secret_item)
 
 
+def test_route_planning_ensures_in_progress_label_in_items_repo(env: Env) -> None:
+    # Routing a member-repo item to planning goes through the real
+    # ensure_planning_epic, which ensures 'in-progress' in the item's repo as
+    # well as the home, so epic-create can label it (#3520).
+    tool_item = IssueRef("org", "tool", 36)
+    env.native_parent[tool_item] = INTAKE
+    with (
+        patch(f"{_MOD}.epics.ensure_planning_epic", _REAL_ENSURE_PLANNING_EPIC),
+        patch(f"{_MOD}.epics.resolve_epic_home", return_value="org/.github"),
+        patch(f"{_MOD}.epics._find_epic_by_title", return_value=PLANNING),
+        patch(f"{_MOD}.epics.ensure_labels") as mock_ensure,
+    ):
+        route(tool_item, ToPlanning(), today=TODAY)
+    assert [c.args for c in mock_ensure.call_args_list] == [
+        ("org/.github", ("in-progress",)),
+        ("org/tool", ("in-progress",)),
+    ]
+    env.reparent_child.assert_called_once_with(PLANNING, tool_item)
+
+
 def test_route_planning_refuses_private_item_to_public_planning_epic(env: Env) -> None:
     secret_item = IssueRef("org", "secret", 5)
     env.public = {"org/secret": False}
@@ -262,8 +290,12 @@ def test_route_one_off_transfers_then_links(env: Env) -> None:
         call("issue", "transfer", "352", "org/tool", "--repo", "org/.github")
     ]
     env.resolve_epic_ref.assert_called_once_with("adhoc", repo="org/tool")
-    # The transfer dropped the sub-issue link, so it is re-added under the new parent.
-    env.add_child.assert_called_once_with(TOOL_ADHOC, new)
+    # The transfer dropped the sub-issue link; it is still linked with
+    # replaceParent, in case the old parent surfaces before the link lands.
+    env.reparent_child.assert_called_once_with(TOOL_ADHOC, new)
+    env.add_child.assert_not_called()
+    assert env.native_parent[new] == TOOL_ADHOC
+    env.sleep.assert_called_once_with(intake_route._SETTLE_SECONDS)
     env.create_issue.assert_not_called()
     env.run.assert_not_called()
 
@@ -271,9 +303,48 @@ def test_route_one_off_transfers_then_links(env: Env) -> None:
 def test_route_one_off_transfer_kept_link_is_replaced(env: Env) -> None:
     new = IssueRef("org", "tool", 900)
     env.native_parent[new] = INTAKE
-    route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    result = route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    assert result == RouteResult(final=new, moved_by="transfer")
     env.reparent_child.assert_called_once_with(TOOL_ADHOC, new)
     env.add_child.assert_not_called()
+    assert env.native_parent[new] == TOOL_ADHOC
+
+
+def test_route_one_off_transfer_late_parent_is_replaced_again(
+    env: Env, capsys: pytest.CaptureFixture[str]
+) -> None:
+    new = IssueRef("org", "tool", 900)
+    # The transfer carries the intake parent over only after the first link,
+    # overwriting it (the silent #3556 failure); the next round replaces it.
+    late = iter([INTAKE])
+
+    def carry_over(*_: object) -> None:
+        env.native_parent[new] = next(late, TOOL_ADHOC)
+
+    env.sleep.side_effect = carry_over
+    result = route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    assert result == RouteResult(final=new, moved_by="transfer")
+    assert env.reparent_child.call_args_list == [call(TOOL_ADHOC, new), call(TOOL_ADHOC, new)]
+    assert env.native_parent[new] == TOOL_ADHOC
+    err = capsys.readouterr().err
+    assert "org/tool#900 is under org/.github#7 after linking it under org/.github#11" in err
+    assert "(round 1/4); replacing the parent" in err
+
+
+def test_route_one_off_transfer_parent_mismatch_fails_loudly(
+    env: Env, capsys: pytest.CaptureFixture[str]
+) -> None:
+    new = IssueRef("org", "tool", 900)
+    env.native_parent[new] = INTAKE
+    env.reparent_child.side_effect = None  # the link never takes
+    with pytest.raises(RuntimeError) as excinfo:
+        route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    message = str(excinfo.value)
+    assert "but it is under org/.github#7, not under org/.github#11" in message
+    assert "half-applied" in message
+    assert "vrg-epic-move --task org/tool#900 --epic org/.github#11" in message
+    assert env.reparent_child.call_count == intake_route._SETTLE_ROUNDS
+    assert capsys.readouterr().err.count("replacing the parent") == intake_route._SETTLE_ROUNDS
 
 
 def test_route_one_off_already_under_epic_is_left(env: Env) -> None:
@@ -310,7 +381,7 @@ def test_route_one_off_falls_back_to_recreate_when_transfer_fails(
     order: list[str] = []
     env.create_issue.side_effect = lambda **kw: order.append("create") or env.created_url
     env.run.side_effect = lambda *a: order.append(f"{a[0]}:{a[1]}")
-    env.add_child.side_effect = lambda *a: order.append("link")
+    env.add_child.side_effect = lambda *a: order.append("link") or env.attach(*a)
 
     result = route(ITEM, OneOff(repo="org/tool"), today=TODAY)
 
@@ -342,6 +413,17 @@ def test_route_one_off_falls_back_to_recreate_when_transfer_fails(
     assert "Resource not accessible by integration" in err
     assert f"); recreated as {env.created_url}" in err
     assert "label(s) not carried to org/tool#901 (not in the label registry): off-registry" in err
+    # A recreated issue has no parent to carry over: no settle wait.
+    env.reparent_child.assert_not_called()
+    env.sleep.assert_not_called()
+
+
+def test_route_recreate_parent_mismatch_fails_loudly(env: Env) -> None:
+    env.transfer = github.GitHubAPIError(1, ["gh"], "", "HTTP 422")
+    env.add_child.side_effect = None  # the link never takes
+    with pytest.raises(RuntimeError, match=r"but it is unparented, not under org/\.github#11"):
+        route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    env.add_child.assert_called_once_with(TOOL_ADHOC, IssueRef("org", "tool", 901))
 
 
 def test_route_recreate_with_empty_body_and_no_labels(
@@ -421,7 +503,3 @@ def test_route_one_off_refuses_queue_epic(env: Env) -> None:
     with pytest.raises(RouteRefusedError, match="queue epic"):
         route(ITEM, OneOff(repo="org/tool", epic="intake"), today=TODAY)
     assert _transfer_calls(env) == []
-
-
-def test_retired_labels_are_the_old_intake_kinds() -> None:
-    assert frozenset({"triage", "idea", "research"}) == intake_route.RETIRED_LABELS

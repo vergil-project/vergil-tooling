@@ -77,9 +77,13 @@ adding new public surface. Versions: `v1.3.0` → `v1.3.1`.
      the release; the index's weekly reconcile picks the release up.
    - `vrg-release`'s `package-index` stage then polls the published
      index (up to 20 minutes, every 30 seconds) until the new version is
-     visible, so the consumer refresh never races the index. A miss
+     visible, so the consumer refresh never races the index. While it
+     waits, it streams the `Publish package index` run in `<org>/packages`
+     that covers the release and prints a heartbeat line on each poll
+     otherwise; the index poll alone decides success. A miss
      (timeout or polling error) does not undo the release. It is recorded
-     as a deferred publish failure: the consumer-refresh stage holds (it
+     as a deferred publish failure: the tracking issue stays open with a
+     deferral comment, the consumer-refresh stage holds (it
      prints a warning not to advertise the version instead of the refresh
      commands), the stage error tells you to re-run the `publish-index`
      workflow in `<org>/packages`, and `vrg-release` exits 1. See the
@@ -102,16 +106,16 @@ issue and ticks its box in the issue's stage checklist.
 | Stage | Mode | What it does |
 |---|---|---|
 | `audit` | fail-fast | Runs `vrg-github-repo-config audit` on the repo. `--skip-audit` skips it |
-| `preflight` | fail-fast | Checks the host prerequisites, `gh` auth, `vergil.toml`, and that the root checkout is a clean `develop` matching `origin/develop`. On a fresh start it also checks the version is not tagged, that no tracking issue exists for it, runs the [package re-publish check](#the-package-re-publish-check), and runs the [dependency-update gate](#the-dependency-update-gate). Creates the `release/<version>` managed worktree |
+| `preflight` | fail-fast | Checks the host prerequisites, `gh` auth, `vergil.toml`, and that the root checkout is a clean `develop` matching `origin/develop`. On a fresh start it also runs the [main/develop divergence check](#the-maindevelop-divergence-check), checks the version is not tagged, that no tracking issue exists for it, runs the [package re-publish check](#the-package-re-publish-check), and runs the [dependency-update gate](#the-dependency-update-gate). Creates the `release/<version>` managed worktree |
 | `prepare` | fail-fast | Creates the `release: <version>` tracking issue, generates the changelog and release notes, and opens the release PR to `main` |
-| `merge-release` | fail-fast | Waits for the release PR's checks and merges it |
+| `merge-release` | fail-fast | Waits for the release PR's checks and merges it. If the PR conflicts with `main`, it merges `main` into the release branch and pushes it. A conflict in `CHANGELOG.md` alone is resolved by keeping the release branch's generated changelog; any other conflict aborts the merge and stops with the commands to resolve it by hand |
 | `confirm-main` | fail-fast | Watches CD on `main`. The release job must succeed; other failed publish jobs are recorded as deferred publish failures (see [Stale job records](#stale-job-records)) |
 | `back-merge-bump` | fail-fast | Creates `release/post-<version>` from `main`, bumps the version, and merges it to `develop`. Records the back-merge's merge commit |
 | `teardown-worktree` | deferred | Removes the release worktree and returns to the root checkout |
 | `confirm-develop` | deferred | Watches the CD run on `develop` for the back-merge's merge commit; a failed docs publish is deferred |
 | `promote` | deferred | Moves the rolling `vX.Y` tag to the new release (skipped with `--no-promote`) |
+| `package-index` | deferred | For repos with `[package]`, waits for the new version in the package index. A miss is a deferred publish failure, not a halted stage |
 | `close-finalize` | deferred | Closes the tracking issue with a summary and runs `vrg-finalize-pr --cleanup-only --no-wait-cd` |
-| `package-index` | deferred | For repos with `[package]`, waits for the new version in the package index |
 | `consumer-refresh` | deferred | Prints the `[publish].consumer-refresh` commands |
 | `update-deps` | deferred | Runs the dependency update on the new `develop` version (skipped with `--without-deps`); see [Dependency updates](#dependency-updates) |
 | `publish-status` | deferred | Repeats any deferred publish failure, and any dependency-update failure, so neither is lost |
@@ -119,8 +123,10 @@ issue and ticks its box in the issue's stage checklist.
 `close-finalize` leaves the tracking issue open, and skips the cleanup,
 when an earlier stage has failed, so the release can be resumed with
 `vrg-release --resume`. A deferred publish failure also leaves the
-issue open, but the release itself is complete: re-run the CD publish
-rather than resuming.
+issue open, with a comment that says how to finish each deferred item,
+but the release itself is complete: re-run the CD publish (or the
+`publish-index` workflow, for a `package-index` miss) rather than
+resuming.
 
 `confirm-develop` checks the CD run for the back-merge's merge commit,
 not for the current tip of `develop`. On `vrg-release --resume`, other
@@ -297,10 +303,13 @@ ignored. What it leaves behind depends on where it failed:
 
 - **An updater or the repo hook failed** (`update`), for example a
   lookup error, a non-zero hook exit, or a hook that committed: this
-  happens before validation, so nothing is pushed, no PR is opened, and
-  no fix task is filed. The worktree is removed and the failure is
-  reported on the tracking issue and in the run summary. With no
-  labelled PR, it does not gate the next release.
+  happens before validation, so nothing is pushed and no PR is opened.
+  A task titled "Fix failed dependency update for `<version>`" is still
+  filed under the repo's ad-hoc epic. It stands on its own: it names the
+  failing updater, carries the error and the command to reproduce it on
+  `develop`, and is linked from the failure on the tracking issue and in
+  the run summary. The worktree is removed. With no labelled PR, it does
+  not gate the next release.
 - **Validation failed** (`validation`), or **the PR's checks or merge
   failed** (`merge`): the PR stays open with its `dependency-update`
   label, and a task titled "Fix failed dependency update for
@@ -309,6 +318,11 @@ ignored. What it leaves behind depends on where it failed:
   failure, that section shows the output of the failing `vrg-validate`
   stage, or, when that stage cannot be isolated, a labelled tail of the
   raw output. It ends with the command to reproduce the failure.
+
+If a fix task for the same version and failure kind is already open,
+for example after `vrg-release --resume` re-runs an update that failed
+on a transient error, no second task is filed: the new failure is added
+as a comment on the open task, which is linked as above.
 
 Either way `vrg-release` exits 1, and the failure counts once in its
 summary: the `update-deps` stage fails, and `publish-status` repeats it
@@ -327,6 +341,11 @@ vrg-git worktree add -b chore/<fix-issue>-dep-update-<version> \
 Fix the cause, then hand off and merge as usual. When the fix PR merges
 and closes the fix task as completed, the next `vrg-release` closes the
 dependency-update PR for you.
+
+An `update` failure pushed no `deps/update-<version>` branch, so cut
+that fix task's branch from `origin/develop` instead. Once the fix
+merges, the next `vrg-update-deps` run, or the next `vrg-release`,
+applies the update.
 
 ### The dependency-update gate
 
@@ -387,6 +406,39 @@ new `+<date>` build suffix. If the check cannot read the repo's
 releases, it refuses rather than skipping. CD runs the same check as a
 backstop; see the
 [package reference](../reference/package-config.md#the-re-publish-check).
+
+### The main/develop divergence check
+
+A completed release leaves `main` contained in `develop`:
+`back-merge-bump` branches `release/post-<version>` from `main` and
+merges it to `develop` with a merge commit. `develop` being ahead of
+`main` is normal. `main` having commits that `develop` lacks is not. It
+means an earlier release stopped between `merge-release` and
+`back-merge-bump`, or something landed on `main` directly. A new
+release on top of that would fail late, at `merge-release`.
+
+So a fresh start (not `--resume`) fetches `main` and refuses, before
+any other fresh-start check, when `origin/main` has commits not on
+`origin/develop`. The refusal lists those commits. To recover:
+
+- If an earlier release stopped before its back-merge (its tracking
+  issue is still open), finish it with `vrg-release --resume`. A resume
+  skips this check, because a release between `merge-release` and
+  `back-merge-bump` has `main` ahead of `develop` by design.
+- Otherwise, back-merge `main` into `develop` by hand:
+
+  ```bash
+  git fetch origin
+  git switch -c release/back-merge-main origin/main
+  git push -u origin release/back-merge-main
+  ```
+
+  Open a PR from `release/back-merge-main` to `develop` and merge it
+  with a merge commit. A squash merge leaves `main`'s commits off
+  `develop`, and the check keeps refusing. Then re-run `vrg-release`.
+
+If preflight cannot fetch `main` or compare the branches, it refuses
+rather than skipping.
 
 ## Documentation publication
 

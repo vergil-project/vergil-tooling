@@ -9,7 +9,11 @@ from typing import TYPE_CHECKING
 from vergil_tooling.lib import progress
 from vergil_tooling.lib.managed_worktree import remove_worktree
 from vergil_tooling.lib.release.context import ReleaseError
-from vergil_tooling.lib.release.tracking import close_tracking_issue, comment_publish_deferred
+from vergil_tooling.lib.release.tracking import (
+    close_tracking_issue,
+    comment_publish_deferred,
+    publish_deferred_remedy,
+)
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.release.context import ReleaseContext
@@ -63,8 +67,8 @@ def close_and_finalize(ctx: ReleaseContext) -> None:
         print(
             "Leaving the tracking issue open — artifact publish deferred "
             f"({', '.join(ctx.deferred_publish_failures)}). The release is "
-            "complete; re-run the CD publish to deliver the artifacts (NOT "
-            "--resume)."
+            f"complete; {publish_deferred_remedy(ctx, ctx.deferred_publish_failures)} "
+            "(NOT --resume)."
         )
     else:
         summary = _build_summary(ctx)

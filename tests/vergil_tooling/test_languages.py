@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,7 @@ from vergil_tooling.lib import languages
 from vergil_tooling.lib.languages import (
     _TYPESCRIPT_LICENSES_ALLOWLIST,
     COVERAGE_REPORT,
+    JAVA_SBOM,
     JUNIT_REPORT,
     LICENSES_REPORT,
     MYPY_REPORT,
@@ -402,6 +404,102 @@ def test_java_audit_maven_licenses_allowlist_intact() -> None:
     assert len(licenses) == 9
 
 
+def _java_audit_cmd(marker: str) -> list[str]:
+    cmds = language_commands("java", CheckKind.AUDIT)
+    matches = [c for c in cmds if any(marker in arg for arg in c)]
+    assert len(matches) == 1
+    return matches[0]
+
+
+def test_java_audit_sbom_covers_full_resolved_graph() -> None:
+    """The SBOM is Maven's own resolved graph: every module, every scope."""
+    sbom_cmd = _java_audit_cmd("cyclonedx-maven-plugin")
+    assert sbom_cmd[0] == "./mvnw"
+    assert "org.cyclonedx:cyclonedx-maven-plugin:makeAggregateBom" in sbom_cmd
+    assert "-DincludeTestScope=true" in sbom_cmd
+    assert "-Dcyclonedx.skipNotDeployed=false" in sbom_cmd
+    assert "-DoutputFormat=json" in sbom_cmd
+    assert "-DoutputName=bom" in sbom_cmd
+
+
+def test_java_audit_vulnerability_scan_reads_the_sbom() -> None:
+    cmds = language_commands("java", CheckKind.AUDIT)
+    sbom_cmd = _java_audit_cmd("cyclonedx-maven-plugin")
+    scan_cmd = _java_audit_cmd("osv-scanner")
+    assert cmds.index(sbom_cmd) < cmds.index(scan_cmd)
+    assert scan_cmd[:2] == ["sh", "-c"]
+    script = scan_cmd[2]
+    assert f"--lockfile={JAVA_SBOM}" in script
+    assert "--allow-no-lockfiles" in script
+    assert JAVA_SBOM == "target/bom.json"
+
+
+def _write_fake_osv_scanner(bin_dir: Path, rc: int) -> Path:
+    """Install a stub ``osv-scanner`` that records its argv and exits *rc*."""
+    bin_dir.mkdir()
+    argv_log = bin_dir / "argv.txt"
+    stub = bin_dir / "osv-scanner"
+    stub.write_text(f'#!/bin/sh\nprintf "%s\\n" "$@" > "{argv_log}"\nexit {rc}\n')
+    stub.chmod(0o755)
+    return argv_log
+
+
+def _run_java_scan(cwd: Path, path: str) -> subprocess.CompletedProcess[str]:
+    script = _java_audit_cmd("osv-scanner")
+    return subprocess.run(  # noqa: S603
+        script,
+        cwd=cwd,
+        env={"PATH": path},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_java_audit_scan_runs_osv_scanner_on_the_sbom(tmp_path: Path) -> None:
+    argv_log = _write_fake_osv_scanner(tmp_path / "bin", rc=0)
+    result = _run_java_scan(tmp_path, f"{tmp_path / 'bin'}:/usr/bin:/bin")
+    assert result.returncode == 0, result.stderr
+    assert argv_log.read_text().splitlines() == [
+        "scan",
+        "source",
+        "--allow-no-lockfiles",
+        f"--lockfile={JAVA_SBOM}",
+    ]
+
+
+def test_java_audit_scan_fails_on_a_vulnerable_dependency(tmp_path: Path) -> None:
+    """osv-scanner exits 1 when it finds a vulnerability; the step must too."""
+    _write_fake_osv_scanner(tmp_path / "bin", rc=1)
+    result = _run_java_scan(tmp_path, f"{tmp_path / 'bin'}:/usr/bin:/bin")
+    assert result.returncode == 1
+
+
+def test_java_audit_scan_applies_a_committed_osv_config(tmp_path: Path) -> None:
+    """osv-scanner only finds a config beside the scanned file (``target/``),
+    so a repo-root ``osv-scanner.toml`` is passed explicitly when present."""
+    argv_log = _write_fake_osv_scanner(tmp_path / "bin", rc=0)
+    (tmp_path / "osv-scanner.toml").write_text("")
+    result = _run_java_scan(tmp_path, f"{tmp_path / 'bin'}:/usr/bin:/bin")
+    assert result.returncode == 0, result.stderr
+    assert argv_log.read_text().splitlines() == [
+        "scan",
+        "source",
+        "--config=osv-scanner.toml",
+        "--allow-no-lockfiles",
+        f"--lockfile={JAVA_SBOM}",
+    ]
+
+
+def test_java_audit_scan_fails_loudly_without_osv_scanner(tmp_path: Path) -> None:
+    empty_bin = tmp_path / "bin"
+    empty_bin.mkdir()
+    result = _run_java_scan(tmp_path, f"{empty_bin}:/usr/bin:/bin")
+    assert result.returncode == 127
+    assert "osv-scanner is not installed" in result.stderr
+    assert "vergil-containers" in result.stderr
+
+
 # -- Rust ---------------------------------------------------------------------
 
 
@@ -614,13 +712,32 @@ def test_cpp_audit_commands() -> None:
     # CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER env token. OSV-Scanner was reverted
     # because OSV.dev carries no ConanCenter data, so it produced a false
     # all-clear (T11 #2558; decision reversal #209). (#2579)
-    assert "conan audit scan ." in joined
+    # The scan resolves the graph in the lock's own configuration (Debug, as
+    # ``conan lock create`` and INSTALL use) against the COMMITTED conan.lock,
+    # so a Debug-conditional locked package is scanned and a missing lock is an
+    # error, not a silent fresh re-resolution. (#3553)
+    assert "conan audit scan . -s build_type=Debug --lockfile=conan.lock" in joined
     # OSV-Scanner is retired here.
     assert not any("osv-scanner" in c for c in joined)
     # Best-effort license-metadata surfacing (hardened gating deferred, §9 #7).
     # The graph is resolved against the COMMITTED conan.lock via --lockfile so
     # the audit reflects the pinned graph, not a fresh re-resolution. (#3021)
-    assert "conan graph info . --format=json --lockfile=conan.lock" in joined
+    assert "conan graph info . -s build_type=Debug --format=json --lockfile=conan.lock" in joined
+
+
+def test_cpp_audit_resolves_in_the_lock_build_type() -> None:
+    """Every AUDIT conan step resolves in the same build_type as the lock."""
+    lock = languages.language_lock_command("cpp")
+    assert lock is not None
+    lock_build_type = lock[lock.index("-s") + 1]
+    conan_cmds = [c for c in language_commands("cpp", CheckKind.AUDIT) if c[0] == "conan"]
+    assert len(conan_cmds) == 2
+    for cmd in conan_cmds:
+        # Without -s Conan resolves the default profile (Release) and silently
+        # skips Debug-conditional locked packages; without an explicit
+        # --lockfile a missing conan.lock falls back to a fresh resolution.
+        assert cmd[cmd.index("-s") + 1] == lock_build_type, cmd
+        assert "--lockfile=conan.lock" in cmd, cmd
 
 
 def test_cpp_ecosystem_metadata() -> None:
@@ -822,16 +939,28 @@ def test_typescript_test_enforces_100_line_coverage() -> None:
 def test_typescript_audit_commands() -> None:
     cmds = language_commands("typescript", CheckKind.AUDIT)
     joined = _joined(cmds)
-    # npm audit is the CVE scan, scoped to prod deps with an explicit severity
-    # threshold (spec §4 caveat 1).
+    # npm audit is the CVE scan, over the whole locked dependency set with an
+    # explicit severity threshold.
     npm_audit = [c for c in cmds if c[:2] == ["npm", "audit"]]
     assert len(npm_audit) == 1
-    assert "--omit=dev" in npm_audit[0]
     assert any(arg.startswith("--audit-level=") for arg in npm_audit[0])
     # OSV-Scanner is the documented contingency, not the v1 default.
     assert not any("osv-scanner" in c for c in joined)
     # Best-effort license-metadata surfacing (hardened gating deferred, §9 #7).
     assert any("license-checker" in c for c in joined)
+
+
+def test_typescript_audit_covers_dev_dependencies() -> None:
+    """The CVE scan audits devDependencies too, not just production (#3552).
+
+    A vulnerable devDependency (docs tooling, test runners) must fail the
+    gate, so ``npm audit`` must not narrow its scope to production.
+    """
+    cmds = language_commands("typescript", CheckKind.AUDIT)
+    npm_audit = [c for c in cmds if c[:2] == ["npm", "audit"]]
+    assert len(npm_audit) == 1
+    assert not any(arg.startswith(("--omit", "--only")) for arg in npm_audit[0])
+    assert "--production" not in npm_audit[0]
 
 
 def test_typescript_audit_license_allowlist_reviewed_set() -> None:

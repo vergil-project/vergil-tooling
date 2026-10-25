@@ -246,6 +246,7 @@ def test_updater_error_is_recorded_and_stops_updaters(monkeypatch) -> None:
     assert ctx.failure.message == "boom: hook failed"
     assert ctx.failure.output_tail == "trace"
     assert ctx.failure.reproduce == "hook-cmd"
+    assert ctx.failure.updater == "boom"
     assert [r.updater for r in ctx.results] == ["changed"]
     assert ctx.any_changes is True
     assert ctx.has_work is False
@@ -275,6 +276,7 @@ def test_updater_process_error_is_recorded(monkeypatch) -> None:
     assert ctx.failure.message.startswith("procboom: ")
     assert ctx.failure.output_tail == "resolving\nno solution"
     assert ctx.failure.reproduce == "uv lock --upgrade"
+    assert ctx.failure.updater == "procboom"
     assert ctx.results == []
 
 
@@ -362,7 +364,7 @@ def test_fix_task_stage_noop_on_success(monkeypatch) -> None:
     assert calls == []
 
 
-def test_update_failure_opens_no_pr_and_files_no_task(monkeypatch) -> None:
+def test_update_failure_opens_no_pr_but_files_a_task(monkeypatch) -> None:
     calls: list[str] = []
     monkeypatch.setattr(_MOD + ".pr.prepare_pr", lambda ctx: calls.append("prepare"))  # noqa: ARG005
     monkeypatch.setattr(_MOD + ".pr.merge_pr", lambda ctx: calls.append("merge"))  # noqa: ARG005
@@ -375,7 +377,8 @@ def test_update_failure_opens_no_pr_and_files_no_task(monkeypatch) -> None:
     prepare_pr_stage(state)
     merge_stage(state)
     fix_task_stage(state)
-    assert calls == []
+    # No PR, but the fix task is still filed, so the failure is not silent (#3550).
+    assert calls == ["fix"]
 
 
 def test_finalize_prints_report_on_noop(monkeypatch, capsys) -> None:
@@ -479,11 +482,14 @@ def test_run_update_returns_recorded_failure(monkeypatch) -> None:
         assert state.ctx is not None
         state.ctx.failure = _failure("update")
 
+    filed: list[UpdateDepsContext] = []
     monkeypatch.setattr(_MOD + ".run_updaters_stage", _fail)
+    monkeypatch.setattr(_MOD + ".pr.file_fix_task", filed.append)
     monkeypatch.setattr(_MOD + ".pr.cleanup_worktree", lambda c: None)  # noqa: ARG005
     result = run_update(repo_root=Path("/tmp/r"))  # noqa: S108
     assert result.failure is not None
     assert result.failure.kind == "update"
+    assert filed == [ctx]
 
 
 def test_run_update_cleans_up_when_a_stage_raises(monkeypatch) -> None:

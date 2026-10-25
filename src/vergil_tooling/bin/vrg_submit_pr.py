@@ -80,8 +80,37 @@ if TYPE_CHECKING:
     from vergil_tooling.lib.pr_workflow.state import WorkflowState
 
 
+_AGENT_HELP = """\
+vrg-submit-pr is a human-only command: PR submission is a Chief Steward
+operation, and agent identities cannot run it.
+
+Agents hand the PR off instead of submitting it. Push the validated branch,
+then record the PR metadata with:
+
+  vrg-pr-workflow report-ready --issue <N> --title <title> \\
+      --summary <summary> --notes <notes>
+
+Then stop: the human runs vrg-submit-pr to open the PR."""
+
+_AGENT_REFUSAL = (
+    "vrg-submit-pr: PR submission requires a human maintainer. Agents cannot submit PRs; "
+    "record the PR metadata with 'vrg-pr-workflow report-ready' and hand off to the human."
+)
+
+
 @cli_main
 def main(argv: list[str] | None = None) -> int:
+    # The identity gate runs before parsing so an agent's --help reaches it:
+    # agents run --help before invoking a command, so the help itself redirects
+    # them to the handoff instead of showing usage they cannot use (issue #3545).
+    if identity_mode.is_agent():
+        raw_args = sys.argv[1:] if argv is None else argv
+        if {"-h", "--help"} & set(raw_args):
+            print(_AGENT_HELP)
+            return 0
+        print(_AGENT_REFUSAL, file=sys.stderr)
+        return 1
+
     args = parse_args(argv)
 
     # Capture the cascade intent before normalization mutates the flags — the
@@ -96,13 +125,6 @@ def main(argv: list[str] | None = None) -> int:
         args.release = True
     if args.release:
         args.finalize = True
-
-    if identity_mode.is_agent():
-        print(
-            "vrg-submit-pr: PR submission requires a human maintainer. Agents cannot submit PRs.",
-            file=sys.stderr,
-        )
-        return 1
 
     if args.branches:
         # Relay path: branches identify the submit. It opens PRs worktree-free
@@ -371,18 +393,19 @@ def _reject_if_cross_repo(issue_ref: str) -> None:
         )
 
 
-def _reject_if_epic_link(issue_ref: str) -> None:
-    """Abort if the linkage points at an epic — PRs link a task, never an epic.
+def _reject_if_non_task(issue_ref: str) -> None:
+    """Abort if the linkage is an epic or archive — PRs link a task, never an umbrella.
 
     This lives here, at PR construction time, because deciding epic-ness needs
     an authenticated, cross-repo ``gh`` call (e.g. an epic in ``.github``) —
-    which vrg-submit-pr has via the App installation token. Self-scoping:
-    legacy issues are never epics, so they pass.
+    which vrg-submit-pr has via the App installation token. An ``archive`` (a
+    standing epic's per-quarter archive) is refused the same way (#2842).
+    Self-scoping: legacy issues are never epics or archives, so they pass.
     """
-    if epics.is_epic_linkage(issue_ref, default_repo=github.current_repo()):
+    kind = epics.non_task_ref_kind(issue_ref, default_repo=github.current_repo())
+    if kind is not None:
         raise SystemExit(
-            "vrg-submit-pr: --issue links an epic; link a task, not an epic "
-            "(epics are closed by rollup when their tasks complete)."
+            f"vrg-submit-pr: {epics.non_task_refusal_message('--issue', issue_ref, kind)}"
         )
 
 
@@ -427,7 +450,7 @@ def _task_linkage(issue_ref: str, requested: str) -> tuple[str, str | None]:
     single PR, so it links with ``Closes`` to auto-close on merge to the default
     branch (epic vergil-project/.github#75). Legacy issues (no epic parent) keep
     *requested* (default ``Ref``) and stay open for manual close. Assumes the
-    epic-target case was already rejected by :func:`_reject_if_epic_link`.
+    epic-target case was already rejected by :func:`_reject_if_non_task`.
 
     Deciding task-ness needs the same authenticated cross-repo ``gh`` call as the
     epic rejection — a parent epic may live in ``.github``. Returns
@@ -469,7 +492,7 @@ def _run_cli_mode(args: argparse.Namespace) -> int:
         raise SystemExit(msg)
     issue_ref = resolve_issue_ref(args.issue)
     _reject_if_cross_repo(issue_ref)
-    _reject_if_epic_link(issue_ref)
+    _reject_if_non_task(issue_ref)
     _reject_if_operational_task(issue_ref)
     _reject_if_queue_item(issue_ref)
     linkage = _resolve_linkage(issue_ref, args.linkage)
@@ -731,7 +754,7 @@ def _open_pr(
     """
     issue_ref = resolve_issue_ref(metadata["issue"])
     _reject_if_cross_repo(issue_ref)
-    _reject_if_epic_link(issue_ref)
+    _reject_if_non_task(issue_ref)
     _reject_if_operational_task(issue_ref)
     _reject_if_queue_item(issue_ref)
     try:
@@ -1012,6 +1035,14 @@ def _relay_open(
     the recorded ``head_sha``). The fallback is a live-run concern only: a dry
     run merely previews the body (push vs no-push does not change it) and never
     touches origin, so it stays on the relay preview.
+
+    Whenever the named branch has a local ready worktree, a successful live open
+    records the submission in that worktree's ``pr-workflow.json`` — on the
+    relay path as well as the push fallback (issue #3525). Without it a branch
+    that was pushed before ``report-ready`` and submitted by name would keep
+    ``status == "ready"`` with no submission, so the freeze would refuse every
+    pr-watch fix. A branch with no local worktree has nothing to mark, and a
+    failed open raises before anything is recorded.
     """
     state = _resolve_ready_state(root, branch)
     if state.submitted is not None:
@@ -1019,19 +1050,20 @@ def _relay_open(
     metadata = _metadata_from_state(state, branch)
     base = _target_branch(args.base, state.base)
 
-    if not args.dry_run:
-        wt_path = _local_worktree_with_state(root, branch)
-        if wt_path is not None and not _origin_has_branch(branch):
-            pr_url = _open_pr(branch, base, metadata, push=True, assume_yes=assume_yes)
-            if pr_url is None:  # pragma: no cover - a live push=True open always yields a URL
-                raise SystemExit("vrg-submit-pr: internal error: local submit returned no PR URL")
-            submission.record_submission(wt_path, pr_url=pr_url)
-            return pr_url, None
-        _verify_origin_tip(branch, state)
+    if args.dry_run:
+        return _open_pr(branch, base, metadata, push=False, dry_run=True), None
 
-    pr_url = _open_pr(
-        branch, base, metadata, push=False, dry_run=args.dry_run, assume_yes=assume_yes
-    )
+    wt_path = _local_worktree_with_state(root, branch)
+    push = wt_path is not None and not _origin_has_branch(branch)
+    if not push:
+        _verify_origin_tip(branch, state)
+    pr_url = _open_pr(branch, base, metadata, push=push, assume_yes=assume_yes)
+    if pr_url is None:  # pragma: no cover - a live open always yields a URL
+        raise SystemExit("vrg-submit-pr: internal error: live submit returned no PR URL")
+    if wt_path is not None:
+        # A branch with a local ready worktree is marked submitted on either
+        # path, so the freeze lifts for pr-watch fixes (issue #3525).
+        submission.record_submission(wt_path, pr_url=pr_url)
     return pr_url, None
 
 

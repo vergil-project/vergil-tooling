@@ -359,6 +359,10 @@ An epic's home repo is derived from repository visibility:
 - A **private** repo (with a public `.github`) homes its epics **in itself**.
 - A **private** `.github` means the whole org is private, so everything homes in
   `.github`.
+- A **private** repo whose owner has **no** `.github` at all (typically a
+  personal account) homes its epics **in itself**: there is no central home.
+  Only GitHub's "repository does not exist" answer counts as no `.github`; any
+  other failure to read its visibility is an error.
 
 Ad-hoc epics follow the same rule — `Epic (ad hoc): <repo>` lives in the repo's
 resolved home. See
@@ -501,6 +505,16 @@ with intake review, or expand it with `epic-create`. Routing it out of the queue
 is the only way to lift the refusal. The check reads the issue's native parent,
 not a label.
 
+### Epics and archives are not tasks
+
+An `epic`- or `archive`-labelled issue is an umbrella, never a task, so the
+tooling refuses one wherever a task is expected: `vrg-pr-workflow report-ready
+--issue` and `vrg-submit-pr` (a PR closes exactly one task, and an epic is
+closed only by rollup), `vrg-epic-link --task`, and `vrg-issue-create
+--blocked-by`. Create the task under the epic first and use its number. This
+check reads the issue's labels; a failed read refuses rather than passing,
+except at `report-ready`, which defers to `vrg-submit-pr`'s check.
+
 ## Labels
 
 Every managed repo carries the same label set. The canonical registry is
@@ -521,7 +535,6 @@ up to date (see
 | `chore` | Maintenance, tooling, configuration |
 | `ci` | CI/CD pipeline changes |
 | `build` | Build system or dependencies |
-| `research` | **Retired** (see below) |
 | `rtfm` | Resolved by reading existing docs |
 | `observability` | Monitoring, reporting, health checks |
 | `dependency-update` | Mechanized dependency update; an open one gates the next release (see [Dependency updates](../guides/releasing.md#dependency-updates)) |
@@ -531,8 +544,6 @@ up to date (see
 | `planning` | Marks the standing planning epic (with `epic`) and its archives (with `archive`); never auto-closes |
 | `in-progress` | Planning item whose `epic-create` session is underway |
 | `archive` | Terminal per-quarter archive of closed standing-epic work (ad-hoc, intake, planning); historical record |
-| `triage` | **Retired** (see below) |
-| `idea` | **Retired** (see below) |
 | `hotfix` | Emergency fix that skipped formal planning; flagged for retroactive review |
 | `validation` | Post-merge validation: run the checklist, record PASS/FAIL as a comment; never auto-closed |
 | `deployment` | Deployment task: install/sync merged changes so they are usable; never auto-closed |
@@ -543,8 +554,9 @@ The parent epic carries an issue's state, so no label restates it. `intake` and
 does, and `in-progress` is the single per-item label, used only on planning
 items. The former intake kind labels `triage`, `idea`, and `research` are
 **retired**: no tool or skill applies them, and the daily orphan pass strips
-them from every open issue. They remain in the registry (so a label sync still
-creates them) until the label-set review decides their fate.
+them from every open issue. They are no longer in the registry, and a label
+sync (`vrg-ensure-label --sync`) deletes them from any repo that still has
+them, which also strips them from any issue still carrying them.
 
 `dependency-update` goes on PRs, not issues: `vrg-update-deps` and the
 `vrg-release` `update-deps` stage put it on every dependency-update PR

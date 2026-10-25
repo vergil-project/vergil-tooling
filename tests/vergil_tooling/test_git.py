@@ -239,6 +239,68 @@ def test_is_ancestor_raises_on_error() -> None:
     assert "Not a valid commit" in exc_info.value.stderr
 
 
+def test_is_ignored_true() -> None:
+    with patch("vergil_tooling.lib.git.subprocess.run") as mock_run:
+        mock_run.return_value = _completed(returncode=0)
+        assert git.is_ignored(Path("docs/site/docs/changelog.md")) is True
+    args, kwargs = mock_run.call_args
+    assert args[0] == ("git", "check-ignore", "-q", "docs/site/docs/changelog.md")
+    assert kwargs["env"]["GIT_TERMINAL_PROMPT"] == "0"
+
+
+def test_is_ignored_false() -> None:
+    with patch("vergil_tooling.lib.git.subprocess.run") as mock_run:
+        mock_run.return_value = _completed(returncode=1)
+        assert git.is_ignored("tracked.md") is False
+
+
+def test_is_ignored_raises_on_error() -> None:
+    """A check-ignore failure (exit 128) is an error, never a silent 'not ignored'."""
+    with patch("vergil_tooling.lib.git.subprocess.run") as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=128, stdout="", stderr="fatal: outside repository"
+        )
+        with pytest.raises(subprocess.CalledProcessError) as exc_info:
+            git.is_ignored("/elsewhere/x")
+    assert exc_info.value.returncode == 128
+    assert "outside repository" in exc_info.value.stderr
+
+
+def test_ignored_paths_returns_ignored_subset() -> None:
+    with patch("vergil_tooling.lib.git.subprocess.run") as mock_run:
+        mock_run.return_value = _completed(returncode=0, stdout="b.md\0")
+        assert git.ignored_paths(["a.md", "b.md"], repo=Path("/repo")) == {"b.md"}
+    args, kwargs = mock_run.call_args
+    assert args[0] == ("git", "-C", "/repo", "check-ignore", "--stdin", "-z")
+    assert kwargs["input"] == "a.md\0b.md\0"
+    assert kwargs["env"]["GIT_TERMINAL_PROMPT"] == "0"
+
+
+def test_ignored_paths_none_ignored() -> None:
+    with patch("vergil_tooling.lib.git.subprocess.run") as mock_run:
+        mock_run.return_value = _completed(returncode=1)
+        assert git.ignored_paths(["a.md"]) == set()
+    assert mock_run.call_args[0][0] == ("git", "check-ignore", "--stdin", "-z")
+
+
+def test_ignored_paths_empty_skips_git() -> None:
+    with patch("vergil_tooling.lib.git.subprocess.run") as mock_run:
+        assert git.ignored_paths([]) == set()
+    mock_run.assert_not_called()
+
+
+def test_ignored_paths_raises_on_error() -> None:
+    """A check-ignore failure (exit 128) is an error, never a silent 'none ignored'."""
+    with patch("vergil_tooling.lib.git.subprocess.run") as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=128, stdout="", stderr="fatal: not a git repository"
+        )
+        with pytest.raises(subprocess.CalledProcessError) as exc_info:
+            git.ignored_paths(["x.md"], repo=Path("/elsewhere"))
+    assert exc_info.value.returncode == 128
+    assert "not a git repository" in exc_info.value.stderr
+
+
 def test_commit_sha_resolves_ref() -> None:
     with patch("vergil_tooling.lib.git.read_output", return_value="abc123") as mock:
         assert git.commit_sha("develop") == "abc123"
@@ -545,3 +607,100 @@ def test_branch_upstreams_maps_remote_tracking_branches() -> None:
 def test_branch_upstreams_empty() -> None:
     with patch("vergil_tooling.lib.git.read_output", return_value=""):
         assert git.branch_upstreams() == {}
+
+
+# -- another repository via -C (#3481) ----------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        (("-C", "/r", "ls-remote", "--heads"), ("/r", "ls-remote")),
+        (("ls-remote", "--heads"), (None, "ls-remote")),
+        (("-C", "/r"), ("/r", "")),
+        ((), (None, "")),
+    ],
+)
+def test_split_repo(args: tuple[str, ...], expected: tuple[str | None, str]) -> None:
+    assert git._split_repo(args) == expected
+
+
+def test_dash_c_remote_command_uses_the_target_repos_org_token() -> None:
+    with (
+        patch("vergil_tooling.lib.git.github.detect_org", return_value="other-org") as m_org,
+        patch(
+            "vergil_tooling.lib.git.github.get_installation_token",
+            return_value="ghs_other",
+        ) as m_token,
+        patch("vergil_tooling.lib.git.subprocess.run") as mock_run,
+    ):
+        mock_run.return_value = _completed(stdout="")
+        git.read_output("-C", "/projects/other-org/repo", "ls-remote", "--heads", "origin")
+    m_org.assert_called_once_with(cwd="/projects/other-org/repo")
+    m_token.assert_called_once_with("other-org")
+    assert "Authorization: Basic" in mock_run.call_args.kwargs["env"]["GIT_CONFIG_VALUE_0"]
+
+
+def test_dash_c_local_command_mints_no_token() -> None:
+    with (
+        patch("vergil_tooling.lib.git.github.get_installation_token") as m_token,
+        patch("vergil_tooling.lib.git.subprocess.run") as mock_run,
+    ):
+        mock_run.return_value = _completed(stdout="")
+        git.read_output("-C", "/r", "branch")
+    m_token.assert_not_called()
+
+
+def test_dash_c_network_command_is_retried() -> None:
+    err = subprocess.CalledProcessError(
+        128, ("git", "ls-remote"), stderr="fatal: Could not read from remote repository."
+    )
+    with (
+        patch("vergil_tooling.lib.git.github.detect_org", return_value=None),
+        patch("vergil_tooling.lib.git.github.get_installation_token", return_value=None),
+        patch("vergil_tooling.lib.git.subprocess.run") as mock_run,
+        patch("vergil_tooling.lib.git.time.sleep"),
+    ):
+        mock_run.side_effect = [err, _completed(stdout="ok")]
+        assert git.read_output("-C", "/r", "ls-remote", "origin") == "ok"
+    assert mock_run.call_count == 2
+
+
+def test_local_branches_in_another_repo(tmp_path: Path) -> None:
+    with patch("vergil_tooling.lib.git.read_output", return_value="develop") as mock:
+        assert git.local_branches(tmp_path) == {"develop"}
+    mock.assert_called_once_with("-C", str(tmp_path), "branch", "--format=%(refname:short)")
+
+
+def test_remote_branches_in_another_repo(tmp_path: Path) -> None:
+    with patch("vergil_tooling.lib.git.read_output", return_value="s\trefs/heads/x") as mock:
+        assert git.remote_branches("origin", tmp_path) == {"x"}
+    mock.assert_called_once_with("-C", str(tmp_path), "ls-remote", "--heads", "origin")
+
+
+def test_remote_names(tmp_path: Path) -> None:
+    with patch("vergil_tooling.lib.git.read_output", return_value="origin\nupstream") as mock:
+        assert git.remote_names(tmp_path) == {"origin", "upstream"}
+    mock.assert_called_once_with("-C", str(tmp_path), "remote")
+
+
+def test_remote_names_none_configured() -> None:
+    with patch("vergil_tooling.lib.git.read_output", return_value="") as mock:
+        assert git.remote_names() == set()
+    mock.assert_called_once_with("remote")
+
+
+def test_remote_tracking_branches_omits_head(tmp_path: Path) -> None:
+    with patch(
+        "vergil_tooling.lib.git.read_output",
+        return_value="HEAD\ndevelop\nfeature/12-x",
+    ) as mock:
+        assert git.remote_tracking_branches("origin", tmp_path) == {"develop", "feature/12-x"}
+    mock.assert_called_once_with(
+        "-C", str(tmp_path), "for-each-ref", "--format=%(refname:lstrip=3)", "refs/remotes/origin"
+    )
+
+
+def test_remote_tracking_branches_empty() -> None:
+    with patch("vergil_tooling.lib.git.read_output", return_value=""):
+        assert git.remote_tracking_branches() == set()

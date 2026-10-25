@@ -4,13 +4,16 @@ Run-and-done since #1872. The implementing agent calls ``report-ready`` when its
 work is green; that writes ``.vergil/pr-workflow.json`` with the PR metadata,
 and ``vrg-submit-pr`` (human-run) reads it. ``status`` prints the current state.
 
-Ordering: push the branch to origin (``vrg-git push -u origin <branch>``)
-*before* ``report-ready``. ``report-ready`` pushes only the relay ref, never the
-branch, and a relay ``vrg-submit-pr <branch>`` needs the branch already on
-origin. When the delta touches ``.github/workflows/**`` the agent push is
-refused by GitHub; that is expected — the human's ``vrg-submit-pr`` pushes the
-branch instead. If the push was missed, the freeze still allows publishing the
-branch at exactly the reported commit (issue #3071).
+``report-ready`` publishes the branch itself (#3602): it pushes the reported
+commit to ``origin/<branch>`` (setting upstream) *before* recording anything, so
+a relay ``vrg-submit-pr <branch>`` always finds the branch on origin and no
+caller has to remember a separate push. Already on origin at that commit, the
+push is a no-op. When the delta touches ``.github/workflows/**`` GitHub refuses
+an agent identity's push; that is expected — report-ready says so and records
+the state anyway, and the human's ``vrg-submit-pr`` pushes the branch instead.
+Any other push failure fails report-ready with nothing recorded and no relay ref
+written. A re-run on a frozen branch whose HEAD has drifted past the reported
+commit is refused before anything is pushed.
 """
 
 from __future__ import annotations
@@ -30,7 +33,7 @@ from vergil_tooling.lib.linkage import (
     normalize_linkage,
 )
 from vergil_tooling.lib.pr_body import normalize_issue_ref
-from vergil_tooling.lib.pr_workflow import engine
+from vergil_tooling.lib.pr_workflow import engine, freeze
 from vergil_tooling.lib.pr_workflow.errors import WorkflowError
 from vergil_tooling.lib.pr_workflow.github_transport import GitHubTransport
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
@@ -58,14 +61,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     p_ready = sub.add_parser(
         "report-ready",
-        help="Record the PR metadata for this worktree (push the branch first)",
+        help="Push the branch, record the PR metadata, and freeze the branch",
         description=(
-            "Record the PR metadata for this worktree and freeze the branch. "
-            "Push the branch to origin BEFORE running this "
-            "(vrg-git push -u origin <branch>): report-ready pushes only the "
-            "relay ref, not the branch. If the delta touches .github/workflows/**, "
-            "the agent push is refused and the human's vrg-submit-pr pushes the "
-            "branch instead."
+            "Push the branch to origin (setting upstream), record the PR metadata "
+            "for this worktree, and freeze the branch. No separate push is needed. "
+            "If the delta touches .github/workflows/**, GitHub refuses the agent "
+            "push; report-ready records the state anyway and the human's "
+            "vrg-submit-pr pushes the branch instead. Any other push failure "
+            "records nothing."
         ),
     )
     p_ready.add_argument("--issue", required=True)
@@ -127,25 +130,23 @@ def _reject_cross_repo_issue(issue_ref: str) -> None:
         )
 
 
-def _reject_epic_issue(issue_ref: str) -> None:
-    """Refuse an epic linkage at report time — a PR links a task, not an epic.
+def _reject_non_task_issue(issue_ref: str) -> None:
+    """Refuse an epic or archive linkage at report time — a PR links a task.
 
-    Mirrors vrg-submit-pr's guard so the error surfaces where the value is
-    entered (report time) rather than later at submit time. *issue_ref* is the
-    canonical ref (``#N`` or ``owner/repo#N``) so a bare number no longer slips
-    past ``parse_issue_ref`` (#2213). Best-effort: if epic-ness cannot be
-    determined (no remote, no gh auth — e.g. an offline run), it defers silently
-    to vrg-submit-pr's authoritative check rather than blocking report-ready.
+    Mirrors vrg-submit-pr's ``_reject_if_non_task`` so the error surfaces where
+    the value is entered (report time) rather than later at submit time (#2842).
+    *issue_ref* is the canonical ref (``#N`` or ``owner/repo#N``) so a bare
+    number no longer slips past ``parse_issue_ref`` (#2213). Best-effort: if the
+    labels cannot be read (no remote, no gh auth — e.g. an offline run), it
+    defers silently to vrg-submit-pr's authoritative check rather than blocking
+    report-ready.
     """
     try:
-        links_epic = epics.is_epic_linkage(issue_ref, default_repo=github.current_repo())
+        kind = epics.non_task_ref_kind(issue_ref, default_repo=github.current_repo())
     except (subprocess.CalledProcessError, OSError):
         return
-    if links_epic:
-        raise WorkflowError(
-            f"--issue links an epic ({issue_ref}); link a task, not an epic "
-            "(epics are closed by rollup when their tasks complete)."
-        )
+    if kind is not None:
+        raise WorkflowError(epics.non_task_refusal_message("--issue", issue_ref, kind))
 
 
 def _reject_operational_issue(issue_ref: str) -> None:
@@ -193,6 +194,57 @@ def _reject_queue_issue(issue_ref: str) -> None:
         raise WorkflowError(epics.queue_refusal_message(issue_ref, kind))
 
 
+def _push_branch(branch: str) -> None:
+    """Publish *branch* at the reported commit to origin, setting its upstream.
+
+    Runs before anything is recorded (#3602), so a failure leaves no ready state
+    and no relay ref behind for a branch that is not on origin. The push goes
+    through ``lib.git`` — the installation-token credentials and transient-retry
+    of every other tooling push — not the ``vrg-git`` wrapper, whose freeze would
+    otherwise refuse a re-run's push. Its output is captured, keeping stdout a
+    pure JSON document; a branch already on origin at this commit is a no-op.
+
+    GitHub's refusal to let an agent identity push a ``.github/workflows/**``
+    change is recognized from the push error itself — the authoritative signal,
+    where a diff of the delta would only predict it (a human identity's push of
+    the same delta succeeds). That case is expected: it is reported and the state
+    is still recorded, since the human's ``vrg-submit-pr`` pushes the branch.
+    """
+    try:
+        git.read_output("push", "-u", "origin", f"refs/heads/{branch}:refs/heads/{branch}")
+    except subprocess.CalledProcessError as exc:
+        if git.is_workflow_push_refusal(exc.stderr):
+            print(
+                f"report-ready: push of {branch} refused for workflow-file changes — "
+                "EXPECTED, not an error. This branch touches .github/workflows/**, "
+                "which an agent identity may not push; the human's vrg-submit-pr "
+                "pushes it at submit time. Recording the ready state anyway.",
+                file=sys.stderr,
+            )
+            return
+        raise WorkflowError(
+            f"report-ready: could not push {branch} to origin "
+            f"({error_text(exc, output=False)}); nothing was recorded. Fix the push "
+            "(e.g. after a rebase, vrg-git push --force-with-lease) and re-run report-ready."
+        ) from exc
+    print(f"report-ready: pushed {branch} to origin", file=sys.stderr)
+
+
+def _refuse_drifted_rerun(state: WorkflowState, head_sha: str) -> None:
+    """Refuse re-reporting a frozen branch whose HEAD moved past the reported commit.
+
+    Re-running report-ready on a frozen branch is a prose correction; it must not
+    push (or re-record) commits that landed after the freeze — that is the
+    reused-branch straggler (#1719). Reopening is the deliberate ``unfreeze``.
+    """
+    if freeze.is_frozen(state) and freeze.has_drifted(state, head_sha):
+        raise WorkflowError(
+            freeze.build_refusal(
+                state, action="push and re-report a drifted HEAD", current_head=head_sha
+            )
+        )
+
+
 def _push_relay_ref(state: WorkflowState, base: str) -> None:
     """Mirror the ready state onto the reserved relay ref, after the local write.
 
@@ -232,7 +284,7 @@ def cmd_report_ready(args: argparse.Namespace, transport: LocalFileTransport) ->
     except ValueError as exc:
         raise WorkflowError(f"report-ready: {exc}") from exc
     _reject_cross_repo_issue(issue_ref)
-    _reject_epic_issue(issue_ref)
+    _reject_non_task_issue(issue_ref)
     _reject_operational_issue(issue_ref)
     _reject_queue_issue(issue_ref)
     try:
@@ -243,13 +295,17 @@ def cmd_report_ready(args: argparse.Namespace, transport: LocalFileTransport) ->
         found = find_linkage_keyword(value)
         if found:
             raise WorkflowError(freetext_linkage_error(found, str(args.issue)))
+    branch = git.current_branch()
+    if branch == "HEAD":
+        raise WorkflowError("report-ready: HEAD is detached; check out the feature branch first.")
+    head_sha = transport.head_sha()
     state = transport.read()
     if state is None:
         state = engine.init_state(
             issue=args.issue,
-            branch=git.current_branch(),
+            branch=branch,
             base=transport.base,
-            head_sha=transport.head_sha(),
+            head_sha=head_sha,
             base_sha=transport.merge_base(),
             now=_now(),
         )
@@ -258,15 +314,23 @@ def cmd_report_ready(args: argparse.Namespace, transport: LocalFileTransport) ->
             f"stale workflow file for issue #{state.issue}; you passed #{args.issue}. "
             "Delete .vergil/pr-workflow.json to start fresh."
         )
+    elif state.branch != branch:
+        raise WorkflowError(
+            f"workflow file records branch {state.branch}, but {branch} is checked out; "
+            f"check out {state.branch} to re-report it."
+        )
+    else:
+        _refuse_drifted_rerun(state, head_sha)
     engine.apply_report_ready(
         state,
         title=args.title,
         summary=args.summary,
         notes=args.notes,
         linkage=linkage,
-        head_sha=transport.head_sha(),
+        head_sha=head_sha,
         now=_now(),
     )
+    _push_branch(branch)
     transport.write(state)
     _push_relay_ref(state, args.base)
     response: dict[str, object] = {"ok": True, "status": state.status}

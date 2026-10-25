@@ -1,7 +1,9 @@
 """Label registry: load the canonical label set from ``data/labels.json``.
 
 Also home of :func:`ensure_labels`, the one point-of-use primitive every
-label-applying command calls before it applies a label (#3373).
+label-applying command calls before it applies a label (#3373), of
+:data:`RETIRED_LABELS`, and of :func:`sync_labels`, the one whole-registry sync
+shared by ``vrg-ensure-label --sync`` and ``vrg-repo-init`` (#3558).
 """
 
 from __future__ import annotations
@@ -10,13 +12,20 @@ import json
 import subprocess
 import sys
 from importlib import resources
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from vergil_tooling.lib import github
 from vergil_tooling.lib.process_errors import error_text
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+# The pre-epic-#176 intake kind labels: parent, not label, is now the state. No
+# command applies them, the sync deletes them, and the orphan pass strips them.
+RETIRED_LABELS = frozenset({"triage", "idea", "research"})
+
+# Generous ceiling for ``gh label list``: a managed repo carries a few dozen.
+_LABEL_LIST_LIMIT = "1000"
 
 
 class UnknownLabelError(ValueError):
@@ -113,3 +122,58 @@ def ensure_labels_or_report(prog: str, repo: str, names: Sequence[str]) -> bool:
         )
         return False
     return True
+
+
+def labels_to_delete(registry: dict[str, Any]) -> list[str]:
+    """Return every label a sync de-provisions, in a stable order.
+
+    That is the registry's ``delete`` list (GitHub default cruft and deprecated
+    aliases) plus the retired intake kind labels (epic .github#176), whose one
+    source of truth is :data:`RETIRED_LABELS`.
+    """
+    names = [*registry.get("delete", []), *sorted(RETIRED_LABELS)]
+    return list(dict.fromkeys(names))
+
+
+def _existing_labels(repo: str) -> set[str]:
+    """Return the names of the labels *repo* currently has."""
+    data = github.read_json(
+        "label", "list", "--repo", repo, "--json", "name", "--limit", _LABEL_LIST_LIMIT
+    )
+    if not isinstance(data, list):
+        msg = f"unexpected `gh label list` output for {repo}: {data!r}"
+        raise TypeError(msg)
+    return {entry["name"] for entry in cast("list[dict[str, str]]", data)}
+
+
+def sync_labels(repo: str) -> None:
+    """Provision all canonical labels into *repo*; delete deprecated and retired ones.
+
+    Each registry label is created or updated by ``gh label create --force``
+    with its canonical colour and description. Deletion is idempotent: only
+    labels the repo actually has are deleted, so an already-clean repo is a
+    no-op, and a ``gh`` failure (a real API error, not an absent label)
+    propagates rather than being swallowed. Deleting a label also strips it
+    from every issue still carrying it, which is intended.
+    """
+    registry = load_labels()
+    print(f"Syncing labels for {repo}:")
+    for label in registry["labels"]:
+        github.run(
+            "label",
+            "create",
+            label["name"],
+            "--repo",
+            repo,
+            "--force",
+            "--color",
+            label["color"],
+            "--description",
+            label["description"],
+        )
+        print(f"  {label['name']}")
+    present = _existing_labels(repo)
+    for name in labels_to_delete(registry):
+        if name in present:
+            github.run("label", "delete", name, "--repo", repo, "--yes")
+            print(f"  deleted {name}")

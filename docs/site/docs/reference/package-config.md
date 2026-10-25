@@ -446,6 +446,23 @@ index build. It is either a typo, which would otherwise leave the package
 published, or a package whose releases are gone; either way, remove it from
 `packages.toml`.
 
+### Checking `packages.toml` without building
+
+```bash
+vrg-package index --check-config --config packages.toml
+```
+
+validates `packages.toml` and exits without building anything. It applies
+every check the index build makes on the file itself: known keys only, a
+non-empty `vendor`, well-formed and unique `products`, positive integer
+`keep` and `lines`, and well-formed and unique `retire` entries. It uses no
+network, signing keys or output directory, so `--keys` and `--out` are not
+needed. On success it prints `vrg-package: packages.toml: ok`. On any
+invalid value it prints the error and exits non-zero, so a repo's
+validation can catch a typo before publish time. Checks that need the
+collected releases, such as a `retire` entry that matches no package, still
+run only in the full index build.
+
 ## Inspecting the matrix
 
 ```bash

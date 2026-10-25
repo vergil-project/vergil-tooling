@@ -107,8 +107,8 @@ def _run_write(repo_root: Path, lang: str | None) -> int:
     (repo_root / ".gitignore").write_text(result.text, encoding="utf-8")
     if result.removed:
         print(
-            f"dropped {len(result.removed)} line(s) matching other-language "
-            f"fragments; this repo is {_lang_label(lang)}"
+            f"dropped {len(result.removed)} managed-pattern line(s) from outside "
+            f"the fence; this repo is {_lang_label(lang)}"
         )
     print(f"synced managed block in {repo_root / '.gitignore'}")
     return 0

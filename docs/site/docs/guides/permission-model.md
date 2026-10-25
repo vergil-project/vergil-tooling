@@ -125,56 +125,99 @@ second-level subcommands as a pair.
 
 ### Subcommand Allowlist
 
-| Subcommand | Notes |
-|---|---|
-| `issue view` | Read-only |
-| `issue create` | Issue tracking |
-| `issue close` | Post-finalization closure (escalates to human credentials) |
-| `issue edit` | Updating metadata |
-| `issue list` | Read-only |
-| `issue comment` | Adding comments |
-| `issue transfer` | Intra-org issue move (finite-epic relocation) |
-| `pr view` | Read-only |
-| `pr checks` | CI status |
-| `pr list` | Read-only |
-| `pr diff` | Read-only |
-| `pr comment` | Review context |
-| `pr edit` | Updating metadata |
-| `run list` | CI status |
-| `run view` | CI status |
-| `run watch` | Blocking wait for CI |
-| `repo view` | Read-only |
-| `label list` | Read-only |
-| `label create` | Used by `vrg-ensure-label` |
+The allowlist depends on the identity mode (resolved by
+`vrg-whoami`). The `human` and `user` identities share one
+allowlist (`_ALLOWED`), from which the `user` agent loses the
+agent-denied pairs below. The `audit` identity has its own, much
+narrower allowlist (`_ALLOWED_AUDIT`). Any pair not listed is
+rejected as not recognized.
+
+| Subcommand | `human` | `user` | `audit` | Notes |
+|---|---|---|---|---|
+| `issue view` | yes | yes | — | Read-only |
+| `issue list` | yes | yes | — | Read-only |
+| `issue edit` | yes | yes | — | Updating metadata |
+| `issue comment` | yes | yes | — | Adding comments |
+| `issue close` | yes | yes | — | Closing is mechanical and reversible |
+| `issue reopen` | yes | yes | — | Non-destructive; an errant reopen is re-closed |
+| `issue transfer` | yes | yes | — | Intra-org issue move (finite-epic relocation) |
+| `pr view` | yes | yes | yes | Read-only |
+| `pr checks` | yes | yes | yes | CI status |
+| `pr list` | yes | yes | yes | Read-only |
+| `pr diff` | yes | yes | yes | Read-only |
+| `pr comment` | yes | yes | yes | Review context |
+| `pr review` | yes | yes | yes | `--approve` is refused for `user` |
+| `pr update-branch` | yes | yes | — | Server-side update onto the base (`--rebase` allowed) |
+| `pr edit` | yes | — | — | Agents do not edit PRs |
+| `pr merge` | yes | — | — | Human only, and a PR number or URL is required |
+| `run list` | yes | yes | — | CI status |
+| `run view` | yes | yes | — | CI status |
+| `run watch` | yes | yes | — | Blocking wait for CI |
+| `run rerun` | yes | yes | — | Retry a failed CI job (`--failed` allowed) |
+| `workflow list` | yes | yes | yes | Read-only CI configuration |
+| `workflow view` | yes | yes | yes | Read-only CI configuration |
+| `cache list` | yes | yes | yes | Read-only CI state |
+| `repo view` | yes | yes | — | Read-only |
+| `repo list` | yes | yes | — | Read-only |
+| `release list` | yes | yes | — | Read-only release facts |
+| `release view` | yes | yes | — | Read-only release facts |
+| `label list` | yes | yes | — | Read-only |
+| `label create` | yes | yes | — | Used by `vrg-ensure-label` |
+| `search code` / `commits` / `issues` / `prs` / `repos` | yes | yes | — | Read-only, cross-org search |
+| `api` | full | — | GET only | See [`gh api`](#gh-api-by-identity) |
+
+The `audit` identity is a read/review reviewer, so it gets the
+PR read and review actions plus the read-only `workflow list`,
+`workflow view` and `cache list`, which only read CI
+configuration and state a reviewer may need to judge a PR's
+checks. Every write (`run rerun`, `pr update-branch`, the
+`issue` actions) stays off its allowlist.
 
 ### Denied Subcommands
 
-| Subcommand | Reason |
-|---|---|
-| `pr merge` | Agents do not merge (conditionally allowed for release workflows via credential escalation) |
-| `pr review --approve` | Agents do not approve (conditionally allowed for release workflows) |
-| `pr close` | Agents do not close PRs |
-| `pr create` | Use `vrg-submit-pr` instead |
-| `repo edit` | Admin operation |
-| `repo create` | Admin operation |
-| `repo delete` | Destructive |
-| `api` | Raw API access — can perform any operation |
-| `auth` | Credential management |
+These pairs are refused with an explanatory message rather than
+a bare "not recognized":
 
-### The `gh api` Denial
+| Subcommand | Denied for | Reason |
+|---|---|---|
+| `issue create` | every identity | Use `vrg-issue-create`, `vrg-epic-create` or `vrg-intake-create`, which force the issue's linkage |
+| `pr close` | every identity | Agents do not close PRs |
+| `repo edit` | every identity | Admin operation |
+| `repo create` | every identity | Admin operation |
+| `repo delete` | every identity | Destructive |
+| `workflow run` | every identity | Dispatching a workflow can start CD or a release, which is a human action |
+| `auth` | every identity | Credential management |
+| `pr create` | every identity | Agents are told PR creation needs a human; a human is pointed to `vrg-submit-pr` |
+| `pr edit` | `user`, `audit` | PR edit requires a human maintainer |
+| `pr merge` | `user`, `audit` | PR merge requires a human maintainer |
+| `pr review --approve` | `user` | Approval is restricted to the `audit` identity or a human |
+| `api` | `user` | Broad, write-capable escape hatch |
+| `api` (non-GET) | `audit` | Restricted to read-only GET calls |
+
+Other write actions of allowed top-level commands (`release
+create`, `workflow enable`/`disable`, `cache delete` and so on)
+are rejected by the allowlist's deny-by-default.
+
+### `gh api` by Identity
 
 `gh api` can perform any GitHub API operation — create repos,
 delete branches, modify settings, push code via the Contents API.
-Denying it entirely in the wrapper closes the escape hatch that
-individual hook-based blocks cannot fully cover.
+It has no fixed sub-actions, so the wrapper gates it by identity
+instead of by pair:
+
+- **`human`** — full access.
+- **`audit`** — read-only `GET` calls only. A call is treated as a
+  write when it passes `-X`/`--method` with anything but `GET`, or
+  passes a field flag (`-f`, `-F`, `--field`, `--raw-field`,
+  `--input`) without an explicit `GET`.
+- **`user`** — denied entirely, which closes the escape hatch that
+  individual hook-based blocks cannot fully cover.
 
 ### Credential Selection
 
 `vrg-gh` is responsible for choosing which account's token to use
 per-command. See [Credential Management](credential-management.md)
-for the selection logic. The `pr merge` and `pr review --approve`
-entries above are conditionally allowed for release workflow
-operations under the human account.
+for the selection logic.
 
 ### VRG Tools That Bypass the Wrapper
 
@@ -357,6 +400,10 @@ and branch protection rulesets.
 This and the VM sandbox are the real security model. Everything else
 is convenience.
 
+Where these boundaries meet other systems, their guarantees do not
+always line up. Known gaps of that kind are recorded in
+[Security Boundaries](security-boundaries.md).
+
 ### Why Client-Side Layers Still Matter
 
 If server-side enforcement is the only real boundary, why bother
@@ -461,6 +508,8 @@ historical context; it does not describe the model in use.
   `vrg-gh` selects credentials per-operation
 - [Account Setup](account-setup.md) — creating and configuring
   accounts
+- [Security Boundaries](security-boundaries.md) — register of
+  known cross-system seams and their mitigations
 - [Permission model design spec][perm-spec] — full decision
   rationale and alternatives considered
 

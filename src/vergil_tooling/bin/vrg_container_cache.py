@@ -6,6 +6,7 @@ Subcommands:
     clean      Remove the cached image for the current branch
     status     Show cache state for the current branch
     clean-all  Remove all cached images managed by vrg-container-cache
+    prune      Remove cached images whose branch is finished in every repo
 """
 
 from __future__ import annotations
@@ -13,8 +14,16 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+from pathlib import Path
 
 from vergil_tooling.lib import git
+from vergil_tooling.lib.cache_prune import (
+    images_in_use,
+    list_cache_images,
+    plan_prune,
+    remove_images,
+)
+from vergil_tooling.lib.cache_space import CacheSpaceError
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.container import (
     assert_runtime_available,
@@ -31,6 +40,13 @@ from vergil_tooling.lib.container_cache import (
     find_cached_image,
     resolve_base_digest,
 )
+from vergil_tooling.lib.live_branches import (
+    RepoSetError,
+    default_repo_roots,
+    discover_repos,
+    live_branches,
+)
+from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.versions import VersionsError
 from vergil_tooling.lib.versions.extensions import container_env
 
@@ -47,6 +63,28 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("clean", help="Remove cached image for current branch")
     sub.add_parser("status", help="Show cache state for current branch")
     sub.add_parser("clean-all", help="Remove all cached images")
+    prune = sub.add_parser(
+        "prune",
+        help="Remove cached images whose branch is finished (dry run unless --apply)",
+        description=(
+            "Remove cached per-branch images whose branch matches no live branch "
+            "(local, worktree or origin) in any repo of the repo set. Protected "
+            "branches and images used by a container are always kept. Dry run by "
+            "default; --apply removes."
+        ),
+    )
+    prune.add_argument("--apply", action="store_true", help="Remove the images (default: dry run)")
+    prune.add_argument(
+        "--root",
+        action="append",
+        type=Path,
+        metavar="DIR",
+        help=(
+            "Projects directory (or repo) to take live branches from; repeatable. "
+            "Replaces the platform default (/vergil/projects on a cloud VM, the "
+            "projects mount on a Lima VM)."
+        ),
+    )
 
     args = parser.parse_args(argv)
     if args.command is None:
@@ -60,10 +98,11 @@ def main(argv: list[str] | None = None) -> int:
         "clean": _cmd_clean,
         "status": _cmd_status,
         "clean-all": _cmd_clean_all,
+        "prune": _cmd_prune,
     }
     try:
         return dispatch[args.command](args, runtime=runtime)
-    except VersionsError as exc:
+    except (VersionsError, CacheSpaceError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
@@ -91,10 +130,10 @@ def _cmd_clean(_args: argparse.Namespace, *, runtime: str) -> int:
     if existing is None:
         print("No cached image for this branch.")
         return 0
-    subprocess.run(  # noqa: S603
-        [runtime, "rmi", existing[0]],  # noqa: S607
-        capture_output=True,
-    )
+    failures = remove_images([existing[0]], runtime)
+    if failures:
+        _report_failures(failures)
+        return 1
     print(f"Removed: {existing[0]}")
     return 0
 
@@ -145,17 +184,74 @@ def _cmd_clean_all(_args: argparse.Namespace, *, runtime: str) -> int:
         print("Failed to list container images.", file=sys.stderr)
         return 1
 
-    removed = 0
-    for line in result.stdout.splitlines():
-        if "--" in line.split(":")[-1]:
-            subprocess.run(  # noqa: S603
-                [runtime, "rmi", line],  # noqa: S607
-                capture_output=True,
-            )
-            removed += 1
+    doomed = [line for line in result.stdout.splitlines() if "--" in line.split(":")[-1]]
+    failures = remove_images(doomed, runtime)
+    print(f"Removed {len(doomed) - len(failures)} of {len(doomed)} cached image(s).")
+    _report_failures(failures)
+    return 1 if failures else 0
 
-    print(f"Removed {removed} cached image(s).")
-    return 0
+
+def _cmd_prune(args: argparse.Namespace, *, runtime: str) -> int:
+    """Report, or with --apply remove, cached images of finished branches.
+
+    Dry run by default, as vrg-branch-sweep: the verdicts rest on a name
+    match the tag cannot make exact (no repo, sanitized branch), so the human
+    sees the list before anything is deleted. Any failure to read the repo set,
+    the images or a repo's branches stops before a single removal; a failed
+    rmi is reported and makes the run exit 1 (#3481).
+    """
+    try:
+        roots = args.root or default_repo_roots()
+        repos = discover_repos(roots)
+    except RepoSetError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    where = ", ".join(str(r) for r in roots)
+    if not repos:
+        print(
+            f"error: no git repositories under {where}; refusing to prune against an "
+            "empty repo set. Pass --root DIR.",
+            file=sys.stderr,
+        )
+        return 1
+    print(f"Repo set: {len(repos)} repo(s) under {where}")
+    for repo in repos:
+        print(f"  {repo}")
+
+    try:
+        images = list_cache_images(runtime)
+        if not images:
+            print("No cached per-branch images.")
+            return 0
+        live = live_branches(repos)
+        in_use = images_in_use(runtime)
+    except (RuntimeError, subprocess.CalledProcessError) as exc:
+        print(f"error: {' '.join(error_text(exc).split())}", file=sys.stderr)
+        return 1
+
+    verdicts = plan_prune(images, live, in_use)
+    print()
+    for verdict in verdicts:
+        action = "remove" if verdict.remove else "keep"
+        print(f"  {action:<6}  {verdict.image.ref}  ({verdict.reason})")
+    doomed = [v.image.ref for v in verdicts if v.remove]
+    print()
+    if not args.apply:
+        print(
+            f"Dry run: {len(doomed)} of {len(verdicts)} cached image(s) would be removed. "
+            "Re-run with --apply to remove them."
+        )
+        return 0
+    failures = remove_images(doomed, runtime)
+    print(f"Removed {len(doomed) - len(failures)} of {len(doomed)} cached image(s).")
+    _report_failures(failures)
+    return 1 if failures else 0
+
+
+def _report_failures(failures: list[tuple[str, str]]) -> None:
+    """Print each failed ``rmi`` with the runtime's error (#3566)."""
+    for ref, error in failures:
+        print(f"error: could not remove {ref}: {error}", file=sys.stderr)
 
 
 if __name__ == "__main__":

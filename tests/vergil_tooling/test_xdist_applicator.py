@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
+from vergil_tooling.lib.config import ConfigError
 from vergil_tooling.lib.xdist_applicator import (
     UvLockError,
     _insert_into_array,
@@ -370,3 +371,105 @@ def test_failed_uv_lock_falls_back_to_stdout_detail(tmp_path: Path) -> None:
         pytest.raises(UvLockError, match="only stdout"),
     ):
         add_xdist(tmp_path)
+
+
+# --- scope: only Python repos (#3549) --------------------------------------
+
+
+def test_non_python_primary_language_is_out_of_scope(tmp_path: Path) -> None:
+    # A declared non-Python repo is skipped even if it carries a pyproject.toml,
+    # and never flagged for a follow-up issue.
+    original = '[dependency-groups]\ndev = ["pytest"]\n'
+    (tmp_path / "pyproject.toml").write_text(original)
+    with patch(f"{_MOD}.resolve_language", return_value="go"):
+        result = add_xdist(tmp_path)
+    assert result.changed is False
+    assert result.needs_followup is False
+    assert result.summary.startswith("out of scope: primary-language is go;")
+    assert (tmp_path / "pyproject.toml").read_text() == original
+
+
+def test_repo_with_no_python_project_is_out_of_scope(tmp_path: Path) -> None:
+    # The docs/containers/actions repos of the 2026-10-14 dry run: no declared
+    # language and no Python project files. Before #3549 each became a follow-up.
+    (tmp_path / "README.md").write_text("# docs\n")
+    result = add_xdist(tmp_path)
+    assert result.changed is False
+    assert result.needs_followup is False
+    assert "no primary-language declared and no Python project files" in result.summary
+
+
+def test_declared_python_with_unknown_shape_still_needs_followup(tmp_path: Path) -> None:
+    with patch(f"{_MOD}.resolve_language", return_value="python"):
+        result = add_xdist(tmp_path)
+    assert result.changed is False
+    assert result.needs_followup is True
+
+
+def test_undeclared_requirements_only_repo_stays_in_scope(tmp_path: Path) -> None:
+    (tmp_path / "requirements-dev.txt").write_text("pytest\n")
+    result = add_xdist(tmp_path)
+    assert result.changed is True
+
+
+def test_malformed_vergil_toml_raises_not_skips(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text("not = [valid toml")
+    with pytest.raises(ConfigError):
+        add_xdist(tmp_path)
+
+
+# --- check-only mode (#3549) -----------------------------------------------
+
+
+def test_check_uv_groups_reports_without_writing_or_locking(tmp_path: Path) -> None:
+    original = '[dependency-groups]\ndev = ["pytest"]\n'
+    (tmp_path / "pyproject.toml").write_text(original)
+    (tmp_path / "uv.lock").write_text("version = 1\n")
+    with (
+        patch(f"{_MOD}.shutil.which", return_value="/usr/bin/uv"),
+        patch(f"{_MOD}.subprocess.run") as run,
+    ):
+        result = add_xdist(tmp_path, check=True)
+    assert result.changed is True
+    assert (
+        result.summary == "would add pytest-xdist to [dependency-groups].dev (and refresh uv.lock)"
+    )
+    assert (tmp_path / "pyproject.toml").read_text() == original
+    run.assert_not_called()
+
+
+def test_check_without_uv_lock(tmp_path: Path) -> None:
+    original = '[project]\nname = "x"\n\n[project.optional-dependencies]\ndev = ["pytest"]\n'
+    (tmp_path / "pyproject.toml").write_text(original)
+    result = add_xdist(tmp_path, check=True)
+    assert result.summary == "would add pytest-xdist to [project.optional-dependencies].dev"
+    assert (tmp_path / "pyproject.toml").read_text() == original
+
+
+def test_check_missing_uv_raises_like_the_write(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text('[dependency-groups]\ndev = ["pytest"]\n')
+    (tmp_path / "uv.lock").write_text("version = 1\n")
+    with (
+        patch(f"{_MOD}.shutil.which", return_value=None),
+        pytest.raises(UvLockError, match="`uv` is not on PATH"),
+    ):
+        add_xdist(tmp_path, check=True)
+
+
+def test_check_requirements_reports_without_writing(tmp_path: Path) -> None:
+    (tmp_path / "requirements-dev.txt").write_text("pytest\n")
+    result = add_xdist(tmp_path, check=True)
+    assert result.changed is True
+    assert result.summary == "would add pytest-xdist to requirements-dev.txt"
+    assert (tmp_path / "requirements-dev.txt").read_text() == "pytest\n"
+
+
+def test_check_matches_write_for_skip_and_followup(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text('[dependency-groups]\ndev = ["pytest-xdist"]\n')
+    assert add_xdist(tmp_path, check=True) == add_xdist(tmp_path)
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.poetry]\nname = "x"\n\n[tool.poetry.group.dev.dependencies]\npytest = "*"\n'
+    )
+    preview = add_xdist(tmp_path, check=True)
+    assert preview == add_xdist(tmp_path)
+    assert preview.needs_followup is True

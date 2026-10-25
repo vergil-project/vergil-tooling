@@ -13,7 +13,10 @@ an orphaned check-run emits no further event, so waiting for a state transition
 that will never arrive would block indefinitely. Detecting it lets ``pr-watch``
 surface the condition (close/reopen the PR to re-run the gate) instead of
 spinning silently. The detection reuses ``github.orphaned_check_names`` — the
-same signal ``vrg-finalize-pr`` uses — rather than re-deriving it.
+same signal ``vrg-finalize-pr`` uses — rather than re-deriving it. Like that
+waiter it only settles once the suspected orphan has outlasted a grace period
+(``$VRG_ORPHAN_GRACE``), because GitHub writing results back late during an
+Actions incident looks identical at the moment of checking (#3431).
 
 A merged PR can never settle into anything actionable — continued polling
 would just spin as an orphaned watcher — so every poll (including the first)
@@ -27,6 +30,7 @@ tokens — the agent only acts on the returned verdict.
 
 from __future__ import annotations
 
+import sys
 import time
 from dataclasses import dataclass, field
 
@@ -157,6 +161,7 @@ def wait_for_settle(
     since_sha: str | None,
     since_reviews: int | None,
     poll_interval: float = _POLL_INTERVAL,
+    orphan_grace: float | None = None,
 ) -> tuple[PrState, str]:
     """Block until the PR settles; return the settled state and the reason.
 
@@ -169,7 +174,19 @@ def wait_for_settle(
     ``BLOCKED`` and every pending check is an orphaned check-run. That settle
     exists so the watch reports the wedge instead of hanging forever on an event
     that will never fire.
+
+    The orphan verdict is not immediate (#3431): during a GitHub Actions incident
+    job results are written back late, and that looks exactly like an orphan at
+    the moment of checking. The same orphaned block must persist — over the same
+    pending checks — for *orphan_grace* seconds (default
+    ``github.orphan_grace_secs()``, ``$VRG_ORPHAN_GRACE`` or 300s) before the
+    watch settles on it. The wait is announced on stderr when it starts and its
+    length named when it ends; a late result arriving in the window settles the
+    watch normally instead.
     """
+    grace = github.orphan_grace_secs() if orphan_grace is None else orphan_grace
+    suspected: list[str] = []
+    suspected_since = 0.0
     while True:
         state = gather_state(pr)
         if state.merged:
@@ -177,8 +194,27 @@ def wait_for_settle(
         reason = settle_reason(state, since_sha=since_sha, since_reviews=since_reviews)
         if reason is not None:
             return state, reason
-        if is_orphaned_block(state, pr):
-            return state, _ORPHANED_CHECK_REASON
+        if not is_orphaned_block(state, pr):
+            suspected = []
+        else:
+            now = time.monotonic()
+            names = state.pending_check_names
+            if names != suspected:
+                suspected, suspected_since = names, now
+                print(
+                    f"{len(names)} check-run(s) have a completed run but no result yet "
+                    f"({', '.join(names)}) — GitHub may be delayed; re-checking for up "
+                    f"to {github.format_wait(grace)} before reporting them orphaned.",
+                    file=sys.stderr,
+                )
+            if now - suspected_since >= grace:
+                print(
+                    f"Still no result for {', '.join(names)} after "
+                    f"{github.format_wait(now - suspected_since)}; reporting orphaned "
+                    "check-run(s).",
+                    file=sys.stderr,
+                )
+                return state, _ORPHANED_CHECK_REASON
         time.sleep(poll_interval)
 
 

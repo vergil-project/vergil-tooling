@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from vergil_tooling.lib.config import vrg_install_tag
 from vergil_tooling.lib.container import (
+    _GHCR,
     container_platform,
     default_image,
     detect_runtime,
@@ -22,7 +23,7 @@ from vergil_tooling.lib.languages import CheckKind, language_commands
 from vergil_tooling.lib.versions.extensions import container_env
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping
+    from collections.abc import Mapping
     from pathlib import Path
 
 _SELF_PROJECT_NAME = "vergil-tooling"
@@ -297,6 +298,37 @@ def cache_image_tag(base_image: str, branch: str, cache_hash: str) -> str:
     base_repo = base_image.split(":")[0]
     sanitized = _sanitize_branch(branch)
     return f"{base_repo}:{base_tag}--{sanitized}--{cache_hash}"
+
+
+# A cached image's reference, as cache_image_tag builds it:
+# ``<base_repo>:<base_tag>--<sanitized_branch>--<cache_hash>``. Base images are
+# only ever ours (default_image), the base tag never contains ``--``, and the hash
+# is compute_cache_hash's 8 hex chars. The branch is the greedy middle, so a
+# sanitized name that itself contains ``--`` still parses whole.
+_CACHE_REF_RE = re.compile(
+    rf"^{re.escape(_GHCR)}/[^:]+:(?P<base_tag>.+?)--(?P<branch>.+)--(?P<hash>[0-9a-f]{{8}})$"
+)
+
+
+def parse_cache_image_ref(ref: str) -> tuple[str, str] | None:
+    """Return ``(base_tag, sanitized_branch)`` for a cached image *ref*, else None.
+
+    The inverse of :func:`cache_image_tag`, as far as it goes: the branch comes
+    back sanitized (``feature/1-x`` and ``feature-1-x`` both read
+    ``feature-1-x``), and the tag carries no repository at all, so the caller
+    must match the branch against every repository that could have built it.
+    Anything not shaped exactly like a cached image (a base image, a foreign
+    image, ``<none>``) returns None so it is never treated as ours.
+    """
+    match = _CACHE_REF_RE.match(ref)
+    if match is None:
+        return None
+    return match["base_tag"], match["branch"]
+
+
+def sanitize_branch(branch: str) -> str:
+    """Return *branch* as it appears in a cached image tag."""
+    return _sanitize_branch(branch)
 
 
 def find_cached_image(base_image: str, branch: str, *, runtime: str = "") -> tuple[str, str] | None:
@@ -574,6 +606,11 @@ def ensure_cached_image(
     the same env the run path passes). It is required, so no caller can build a
     cache without deciding it: it is exported for the setup step and folded into
     the cache key, so a change of resolved version or source rebuilds (#3421).
+
+    Before a build it runs the low-disk auto-prune
+    (:func:`~vergil_tooling.lib.cache_space.ensure_build_space`), which raises
+    :class:`~vergil_tooling.lib.cache_space.CacheSpaceError` when the build
+    cannot have the room it needs.
     """
     rt = runtime or detect_runtime()
     files = cache_sensitive_files(repo_root, lang)
@@ -612,6 +649,12 @@ def ensure_cached_image(
                 file=sys.stderr,
             )
 
+    # Make room first: below the free-space threshold, prune finished branches'
+    # images, and stop here rather than fail part way through the build (#3571).
+    # Imported here because cache_space depends on this module.
+    from vergil_tooling.lib.cache_space import ensure_build_space
+
+    ensure_build_space(rt)
     target_tag = cache_image_tag(base_image, branch, current_hash)
     return _build_cached_image(
         repo_root,
@@ -668,70 +711,3 @@ def provision_dev_image(
         build_env=container_env(resolution),
     )
     return image, ("cached" if image != base else "default")
-
-
-def clean_branch_images(branch: str, *, runtime: str = "") -> int:
-    """Remove all cached images for *branch*. Returns count removed."""
-    rt = runtime or detect_runtime()
-    sanitized = _sanitize_branch(branch)
-    pattern = f"--{sanitized}--"
-
-    result = subprocess.run(  # noqa: S603
-        [rt, "images", "--format", "{{.Repository}}:{{.Tag}}"],  # noqa: S607
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0 or not result.stdout:
-        return 0
-
-    removed = 0
-    for line in result.stdout.splitlines():
-        if pattern in line:
-            subprocess.run(  # noqa: S603
-                [rt, "rmi", line],  # noqa: S607
-                capture_output=True,
-            )
-            removed += 1
-    return removed
-
-
-def prune_orphan_branch_images(live_branches: Iterable[str], *, runtime: str = "") -> int:
-    """Remove cached per-branch images whose branch is no longer live.
-
-    ``clean_branch_images`` prunes only the branch handed to it — the one being
-    finalized. A branch that is never finalized (abandoned, or its PR closed out
-    of band) leaves its ~1.3–2G cached image behind to accumulate and fill the
-    disk (issue #2600). This is the swept safety net, the image analogue of
-    ``vrg_finalize_pr._prune_orphan_relay_refs``: any cached image whose branch
-    segment matches no entry in *live_branches* is orphaned and removed.
-
-    A cached tag is ``<base_tag>--<sanitized_branch>--<cache_hash>``; a plain base
-    tag (``3.14``, ``latest``, ``clang-20``) never contains ``--``, so ``--`` in
-    the tag distinguishes our cached images without needing to know the base repo.
-    Cached images are local artifacts of local branches, so passing the live
-    *local* branches is the correct keep signal — an orphaned image simply
-    rebuilds on demand if its branch is resumed. Returns the count removed.
-    """
-    rt = runtime or detect_runtime()
-    keep = {f"--{_sanitize_branch(b)}--" for b in live_branches}
-    result = subprocess.run(  # noqa: S603
-        [rt, "images", "--format", "{{.Repository}}:{{.Tag}}"],  # noqa: S607
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0 or not result.stdout:
-        return 0
-
-    removed = 0
-    for line in result.stdout.splitlines():
-        tag = line.rsplit(":", 1)[-1]
-        if "--" not in tag:
-            continue
-        if any(marker in tag for marker in keep):
-            continue
-        subprocess.run(  # noqa: S603
-            [rt, "rmi", line],  # noqa: S607
-            capture_output=True,
-        )
-        removed += 1
-    return removed

@@ -27,7 +27,16 @@ Per repo, :func:`run_sweep`:
    ``.worktrees/issue-<N>-<slug>`` convention, creates the
    ``feature/<issue>-<slug>`` branch carrying the working-tree change, **stages**
    it, commits via ``vrg-commit``, and hands off via ``vrg-pr-workflow
-   report-ready`` — recording ``"ready"``.
+   report-ready`` (which pushes the branch to origin itself, #3602) — recording
+   ``"ready"``.
+
+``dry_run`` previews exactly that verdict without changing anything: it creates
+the same detached probe, runs the applicator in **check-only** mode
+(``check=True`` — the applicator reports what it *would* do and writes
+nothing), removes the probe, and reports the real outcome — ``"ready"`` (would
+change), ``"skipped"`` (no change), or ``"skipped"`` with ``needs_followup``
+(could not be changed safely) — so a dry run never disagrees with the live run
+(#3549). It mints no issue, branch, commit, or PR.
 
 Each repo runs inside its own ``try``/``except`` so one repo's failure is
 recorded (``"error"``) and never aborts the sweep. A failure before the probe
@@ -41,9 +50,9 @@ from __future__ import annotations
 
 import re
 import subprocess  # noqa: S404 - all invocations are fixed vrg-* argv, never shell
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol
 
 from vergil_tooling.lib import git, github
 from vergil_tooling.lib.process_errors import error_text
@@ -70,11 +79,26 @@ class AppResult:
     needs_followup: bool = False
 
 
-# The bespoke file change for ONE repo's worktree. It receives the worktree
-# path, performs its change in place, and reports whether anything changed plus
-# a human-readable summary. gitignore's applicator shells out to
-# ``vrg-gitignore-sync --write --repo <worktree>``.
-Applicator = Callable[[Path], "AppResult"]
+class Applicator(Protocol):
+    """The bespoke file change for ONE repo's worktree.
+
+    It receives the worktree path, performs its change in place, and reports
+    whether anything changed plus a human-readable summary. gitignore's
+    applicator shells out to ``vrg-gitignore-sync --write --repo <worktree>``.
+
+    With ``check=True`` (the dry-run preview, #3549) it reports the verdict a
+    write would produce — ``changed=True`` for a change it *would* make,
+    ``changed=False`` for an already-current repo, and ``needs_followup``
+    exactly as the write would set it — and must have **no** effect outside the
+    worktree (no lockfile refresh, no network). It should write nothing; the
+    worktree is the driver's disposable probe, discarded after the preview, so
+    an applicator with no exact check-only mode may instead write there to learn
+    its verdict, rather than guess.
+    """
+
+    def __call__(
+        self, worktree: Path, /, *, check: bool = False
+    ) -> AppResult: ...  # pragma: no cover
 
 
 @dataclass
@@ -97,8 +121,9 @@ class RepoResult:
     ``needs_followup`` propagates :attr:`AppResult.needs_followup` for a repo
     the applicator recognized but could not safely change, so a consumer can
     report those repos prominently and file follow-ups after the sweep. It
-    defaults ``False`` for the ``ready``/``error``/dry-run paths, where no
-    deferral is possible.
+    defaults ``False`` for the ``ready``/``error`` paths, where no deferral is
+    possible. A dry run reports the same statuses a live run would reach, with
+    ``detail`` prefixed ``dry-run:``.
     """
 
     repo: str
@@ -319,6 +344,48 @@ def _process_repo(spec: SweepSpec, applicator: Applicator, repo: str) -> RepoRes
     return RepoResult(repo=repo, status="ready", detail=result.summary)
 
 
+def _preview_repo(spec: SweepSpec, applicator: Applicator, repo: str) -> RepoResult:
+    """Report what :func:`_process_repo` would do for *repo*, changing nothing.
+
+    The applicator runs in check-only mode against the same detached
+    ``origin/develop`` probe a live run uses, so the verdict is the live one
+    (#3549). The probe is always removed; a failure to remove it after an
+    applicator failure is reported alongside that failure, as in the live probe
+    phase.
+    """
+    repo_path = Path(repo).resolve()
+    repo_dir = str(repo_path)
+    probe = repo_path / ".worktrees" / f"probe-{spec.branch_slug}"
+
+    git.run("-C", repo_dir, "worktree", "add", "--detach", str(probe), "origin/develop")
+    try:
+        result = applicator(probe, check=True)
+        # Only a repo that would change needs an epic; resolving it may read the
+        # repo's owner, so a lookup failure is an error inside the probe phase.
+        epic = _resolve_epic(spec, repo_dir) if result.changed else None
+    except Exception as exc:
+        _discard_probe(repo_dir, probe, exc)
+        raise
+    git.run("-C", repo_dir, "worktree", "remove", "--force", str(probe))
+
+    if not result.changed:
+        return RepoResult(
+            repo=repo,
+            status="skipped",
+            detail=f"dry-run: {result.summary}",
+            needs_followup=result.needs_followup,
+        )
+    return RepoResult(
+        repo=repo,
+        status="ready",
+        detail=(
+            f"dry-run: would ensure issue under epic {epic}, "
+            f"create feature/<issue>-{spec.branch_slug}, commit, and report-ready: "
+            f"{result.summary}"
+        ),
+    )
+
+
 def run_sweep(spec: SweepSpec, applicator: Applicator, *, dry_run: bool) -> list[RepoResult]:
     """Run the sweep across ``spec.repos``, one PR per repo that needs one.
 
@@ -326,28 +393,19 @@ def run_sweep(spec: SweepSpec, applicator: Applicator, *, dry_run: bool) -> list
     ``status="error"`` with the exception message, and the sweep continues to
     the next repo — one repo can never abort the whole run.
 
-    ``dry_run=True`` performs **no** mutation at all — no worktree, no issue, no
-    commit, no PR. It resolves the repo list and reports the intended action per
-    repo (``status="ready"``, the terminal action a live run would drive
-    toward), including the epic each repo's issue would be filed under, touching
-    no git or GitHub state (resolving that epic may *read* the repo's owner).
+    ``dry_run=True`` mints no issue, branch, commit, or PR. Per repo it runs the
+    applicator in check-only mode in a transient detached probe worktree
+    (removed again before the next repo) and reports the verdict a live run
+    would reach — ``"ready"`` naming the epic the issue would be filed under,
+    ``"skipped"``, or ``"skipped"`` with ``needs_followup`` — via
+    :func:`_preview_repo` (#3549). Resolving the epic may *read* the repo's
+    owner.
     """
     results: list[RepoResult] = []
     for repo in spec.repos:
         try:
             if dry_run:
-                epic = _resolve_epic(spec, str(Path(repo).resolve()))
-                results.append(
-                    RepoResult(
-                        repo=repo,
-                        status="ready",
-                        detail=(
-                            f"dry-run: would ensure issue under epic {epic}, "
-                            f"create feature/<issue>-{spec.branch_slug}, "
-                            f"apply the change, commit, and report-ready"
-                        ),
-                    )
-                )
+                results.append(_preview_repo(spec, applicator, repo))
             else:
                 results.append(_process_repo(spec, applicator, repo))
         except Exception as exc:  # noqa: BLE001 - failure isolation is the contract

@@ -8,6 +8,7 @@ Epic homes are derived from repository visibility (see the
 | public | public | `<org>/.github` |
 | public | **private** | **the member repo itself** |
 | private | (any) | `<org>/.github` |
+| absent (e.g. a personal account) | **private** | **the member repo itself** |
 
 So a repo's epic home is stable only while its visibility is stable.
 Visibility changes are supported in **one direction only**:

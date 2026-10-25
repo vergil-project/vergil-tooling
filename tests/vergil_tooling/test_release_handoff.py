@@ -121,3 +121,15 @@ def test_consumer_refresh_holds_when_publish_deferred() -> None:
     assert ctx.consumer_refresh_commands is None
     assert "held" in (ctx.consumer_refresh_message or "").lower()
     assert "2.1.0" in (ctx.consumer_refresh_message or "")  # version named
+    assert "re-run the CD publish" in (ctx.consumer_refresh_message or "")
+
+
+def test_consumer_refresh_hold_gives_per_kind_advice_for_an_index_deferral() -> None:
+    ctx = _ctx()
+    ctx.deferred_publish_failures = ["package-index"]
+    with patch(_MOD + ".publish_deferred_remedy", return_value="re-run publish-index") as remedy:
+        consumer_refresh(ctx)
+    remedy.assert_called_once_with(ctx, ["package-index"])
+    message = ctx.consumer_refresh_message or ""
+    assert "re-run publish-index" in message
+    assert "CD publish" not in message

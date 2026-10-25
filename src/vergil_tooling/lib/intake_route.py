@@ -10,9 +10,13 @@ mechanics so the skill never hand-rolls them:
   repo's ad-hoc epic (or a named finite epic). A move *transfers* the issue,
   keeping its history; when GitHub refuses the transfer it falls back to
   recreating the item in the target repo with a link back and closing the
-  original with a pointer — and says so on stderr. Either way the resulting
-  issue is re-linked, because a transfer may not keep the sub-issue link. A
-  one-off whose work lands in the item's own repo is just reparented.
+  original with a pointer — and says so on stderr. A transfer carries the
+  item's intake parent across (sometimes only after a delay), so the moved
+  issue is *reparented* with ``replaceParent`` and its final parent verified
+  after a settle delay, replaced again if the old parent came back late
+  (#3556). A recreated issue starts unparented and is simply linked. Either
+  way, a final parent other than the target epic fails loudly. A one-off whose
+  work lands in the item's own repo is just reparented.
 - **planning** — reparent from the intake epic to the planning epic of the
   same queue home.
 - **split** — the replacement tasks already exist (made with
@@ -29,13 +33,14 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from datetime import date
 from typing import Any, Literal
 
 from vergil_tooling.lib import epics, github
 from vergil_tooling.lib.epics import IssueRef
-from vergil_tooling.lib.labels import ensure_labels, load_labels
+from vergil_tooling.lib.labels import RETIRED_LABELS, ensure_labels, load_labels
 from vergil_tooling.lib.process_errors import error_text
 
 DROP_COMMENT = "Dropped in intake review: {reason}"
@@ -44,9 +49,11 @@ SPLIT_COMMENT = "Split into: {refs}. {reason}"
 MOVED_TO_COMMENT = "Moved to {url}"
 MOVED_FROM_LINE = "Moved from {url}"
 
-# The pre-epic-#176 intake kinds. No route applies them; a recreated item does
-# not carry them over.
-RETIRED_LABELS = frozenset({"triage", "idea", "research"})
+# A transfer carries the intake parent over eventually, not atomically: a link
+# made right after it can be overwritten seconds later (#3556). Each settle
+# round replaces the parent, waits, then re-reads it.
+_SETTLE_ROUNDS = 4
+_SETTLE_SECONDS = 3.0
 
 _ISSUE_URL_RE = re.compile(r"https?://[^/\s]+/([^/\s]+)/([^/\s]+)/issues/([0-9]+)")
 
@@ -187,13 +194,51 @@ def _one_off(ref: IssueRef, action: OneOff) -> RouteResult:
     except github.MissingGitHubTokenError:
         raise
     except subprocess.CalledProcessError as exc:
-        final = _recreate(ref, dest, exc)
-        moved_by: Literal["transfer", "recreate"] = "recreate"
-    else:
-        final = _transferred_ref(ref, dest, epic, output)
-        moved_by = "transfer"
-    _link(epic, final)
-    return RouteResult(final=final, moved_by=moved_by)
+        new = _recreate(ref, dest, exc)
+        # A recreated issue has no parent to carry over: link it, then check.
+        _link(epic, new)
+        current = epics.native_parent_of(new)
+        if current != epic:
+            raise _parent_mismatch(epic, new, current) from None
+        return RouteResult(final=new, moved_by="recreate")
+    final = _transferred_ref(ref, dest, epic, output)
+    _settle_parent(epic, final)
+    return RouteResult(final=final, moved_by="transfer")
+
+
+def _settle_parent(epic: IssueRef, task: IssueRef) -> None:
+    """Make *epic* the transferred *task*'s parent, robust to a late carry-over.
+
+    The transfer keeps the intake parent, but it may surface only after a first
+    read, so every round replaces (never plainly adds) the parent, waits, and
+    verifies; a parent that reverts is replaced again. Raise if it never holds.
+    """
+    current: IssueRef | None = None
+    for attempt in range(1, _SETTLE_ROUNDS + 1):
+        _link(epic, task, replace=True)
+        time.sleep(_SETTLE_SECONDS)
+        current = epics.native_parent_of(task)
+        if current == epic:
+            return
+        print(
+            f"intake-route: {task.slug} is {_placement(current)} after linking it "
+            f"under {epic.slug} (round {attempt}/{_SETTLE_ROUNDS}); replacing the parent",
+            file=sys.stderr,
+        )
+    raise _parent_mismatch(epic, task, current)
+
+
+def _placement(parent: IssueRef | None) -> str:
+    return f"under {parent.slug}" if parent is not None else "unparented"
+
+
+def _parent_mismatch(epic: IssueRef, task: IssueRef, current: IssueRef | None) -> RuntimeError:
+    """The loud failure for a move whose final parent is not *epic*."""
+    return RuntimeError(
+        f"moved the item to {task.slug}, but it is {_placement(current)}, "
+        f"not under {epic.slug}; the route is half-applied. Fix it with: "
+        f"vrg-epic-move --task {task.slug} --epic {epic.slug}"
+    )
 
 
 def _issue_ref_from_url(output: str, *, failure: str) -> IssueRef:
@@ -252,12 +297,18 @@ def _recreate(ref: IssueRef, dest: str, exc: subprocess.CalledProcessError) -> I
     return new
 
 
-def _link(epic: IssueRef, task: IssueRef) -> None:
-    """Link *task* under *epic*, replacing any current parent in one atomic call."""
+def _link(epic: IssueRef, task: IssueRef, *, replace: bool = False) -> None:
+    """Link *task* under *epic*, replacing any current parent in one atomic call.
+
+    With *replace*, an apparently unparented *task* is still linked with
+    ``replaceParent``, so a parent that surfaces between the read and the link
+    is replaced rather than refusing the link ("Sub issue may only have one
+    parent").
+    """
     current = epics.native_parent_of(task)
     if current == epic:
         return
-    if current is None:
+    if current is None and not replace:
         epics.add_child(epic, task)  # reopens a closed epic itself
         return
     state = github.read_output(

@@ -158,6 +158,28 @@ _MAVEN_LICENSES_ALLOWLIST = "|".join(
     ]
 )
 
+# The Java vulnerability-audit input (issue #3554): a CycloneDX SBOM of the
+# whole reactor, written by the AUDIT stage's ``makeAggregateBom`` step. It is
+# Maven's own resolved graph, so dependency management, BOM imports, profiles
+# and every module are resolved exactly as the build resolves them.
+JAVA_SBOM = "target/bom.json"
+
+# The Java vulnerability scan: OSV-Scanner over ``JAVA_SBOM``, as one ``sh -c``
+# step for two reasons. osv-scanner only finds an ``osv-scanner.toml`` beside the
+# scanned file (``target/``), so a repo-root config holding reviewed
+# suppressions is passed explicitly when one is committed. And a dev image
+# without osv-scanner fails with a message naming the fix, not a bare
+# FileNotFoundError. ``--allow-no-lockfiles`` lets a project with no
+# dependencies pass (an empty SBOM); a missing SBOM still fails.
+_JAVA_OSV_SCAN = (
+    "command -v osv-scanner >/dev/null 2>&1 || { "
+    "echo 'ERROR: osv-scanner is not installed. The Java audit needs it on PATH;"
+    " add it to the dev-java image in vergil-containers.' >&2; exit 127; }; "
+    f"set -- --allow-no-lockfiles --lockfile={JAVA_SBOM}; "
+    'if [ -f osv-scanner.toml ]; then set -- --config=osv-scanner.toml "$@"; fi; '
+    'exec osv-scanner scan source "$@"'
+)
+
 # C++ license allowlist (epic vergil-project/.github#207 §4). C++/Conan has no
 # turnkey allowlist-enforcing gate the way pip-licenses / go-licenses do, so v1
 # license checking is *best-effort surfacing* (see the AUDIT commands below) and
@@ -444,6 +466,21 @@ _REGISTRY: dict[str, Language] = {
                     f"-Dlicense.includedLicenses={_MAVEN_LICENSES_ALLOWLIST}",
                     "-B",
                 ],
+                # Vulnerability audit over the full resolved graph (#3554):
+                # every module (``skipNotDeployed=false`` keeps modules that
+                # are never deployed) and every scope, test included, like the
+                # Python audit of the whole lock (#3498).
+                [
+                    "./mvnw",
+                    "org.cyclonedx:cyclonedx-maven-plugin:makeAggregateBom",
+                    "-DincludeTestScope=true",
+                    "-Dcyclonedx.skipNotDeployed=false",
+                    "-DoutputFormat=json",
+                    "-DoutputName=bom",
+                    "-B",
+                    "-q",
+                ],
+                ["sh", "-c", _JAVA_OSV_SCAN],
             ],
         },
         ecosystem=EcosystemInfo(
@@ -685,11 +722,30 @@ _REGISTRY: dict[str, Language] = {
             # vergil-project/.github#209 (#2579). License checking stays
             # best-effort surfacing in v1 (no turnkey Conan allowlist gate);
             # hardened gating against ``_CPP_LICENSES_ALLOWLIST`` is ledger #7.
+            #
+            # Scope (verified against Conan 2.33, #3553): ``audit scan`` submits
+            # every non-root graph node in *both* contexts, so ``test_requires``
+            # (host) and ``tool_requires`` (build) are covered. But the graph is
+            # the one resolved for the active profile: bare, it resolved the
+            # default profile (Release) and silently skipped locked packages a
+            # recipe only requires in Debug — the build_type ``conan lock
+            # create`` and INSTALL use. So both steps pin ``build_type=Debug``
+            # and name the lock explicitly: the implicit ``conan.lock`` lookup
+            # falls back to a fresh re-resolution when the lock is missing.
             CheckKind.AUDIT: [
-                ["conan", "audit", "scan", "."],
+                ["conan", "audit", "scan", ".", "-s", "build_type=Debug", "--lockfile=conan.lock"],
                 # Resolve the graph against the COMMITTED conan.lock so the audit
                 # reflects the pinned graph, not a fresh re-resolution. (#3021)
-                ["conan", "graph", "info", ".", "--format=json", "--lockfile=conan.lock"],
+                [
+                    "conan",
+                    "graph",
+                    "info",
+                    ".",
+                    "-s",
+                    "build_type=Debug",
+                    "--format=json",
+                    "--lockfile=conan.lock",
+                ],
             ],
         },
         ecosystem=EcosystemInfo(
@@ -802,9 +858,11 @@ _REGISTRY: dict[str, Language] = {
                     "--coverage.thresholds.lines=100",
                 ],
             ],
-            # AUDIT runs *once* (§3.6). ``npm audit`` is the CVE scan, scoped to
-            # production dependencies (``--omit=dev`` — dev-only advisories must
-            # not gate, spec §4 caveat 1) with an explicit severity threshold
+            # AUDIT runs *once* (§3.6). ``npm audit`` is the CVE scan over the
+            # whole locked dependency set, devDependencies included — no
+            # ``--omit=dev``, so a vulnerable docs or test tool fails the gate
+            # just as a runtime dependency does (#3552, superseding spec §4
+            # caveat 1's prod-only scope) — with an explicit severity threshold
             # (``--audit-level=high``). Contingency (spec §4 caveat 1): if
             # ``npm audit``'s signal/noise is unworkable, fall back to
             # OSV-Scanner over ``package-lock.json`` — the switch is proven or
@@ -814,7 +872,7 @@ _REGISTRY: dict[str, Language] = {
             # hardened gating against ``_TYPESCRIPT_LICENSES_ALLOWLIST`` is
             # deferred (spec §9 ledger #7).
             CheckKind.AUDIT: [
-                ["npm", "audit", "--audit-level=high", "--omit=dev"],
+                ["npm", "audit", "--audit-level=high"],
                 ["license-checker", "--production", "--summary"],
             ],
         },

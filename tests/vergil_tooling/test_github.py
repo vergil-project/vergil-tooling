@@ -31,6 +31,7 @@ def _no_credential_injection(monkeypatch: pytest.MonkeyPatch) -> None:
     github._warned_stale_links.clear()
     github._warned_no_installation.clear()
     monkeypatch.delenv(github.CHECKS_TIMEOUT_ENV, raising=False)
+    monkeypatch.delenv(github.ORPHAN_GRACE_ENV, raising=False)
 
 
 def _completed(
@@ -2388,6 +2389,12 @@ def test_head_ref() -> None:
         assert github.head_ref("1423") == "feature/1423-x"
 
 
+def test_base_ref() -> None:
+    with patch("vergil_tooling.lib.github.read_output", return_value="develop") as mock_read:
+        assert github.base_ref("3555") == "develop"
+    assert "baseRefName" in mock_read.call_args.args
+
+
 def test_merge_commit_sha_reads_merge_commit_oid() -> None:
     with patch("vergil_tooling.lib.github.read_output", return_value="cafef00dbabe") as mock_read:
         assert github.merge_commit_sha("1423") == "cafef00dbabe"
@@ -2503,6 +2510,19 @@ def test_repo_exists_reraises_other_errors() -> None:
         pytest.raises(github.GitHubAPIError, match="Bad credentials"),
     ):
         github.repo_exists("org", "repo")
+
+
+@pytest.mark.parametrize(
+    ("detail", "expected"),
+    [
+        ("GraphQL: Could not resolve to a Repository with the name 'o/r'.", True),
+        ("HTTP 404: Not Found", True),
+        ("HTTP 401: Bad credentials", False),
+    ],
+)
+def test_is_repo_not_found(detail: str, *, expected: bool) -> None:
+    exc = github.GitHubAPIError(1, ["gh", "repo", "view"], "", detail)
+    assert github.is_repo_not_found(exc) is expected
 
 
 # --- #3170: stale check-runs and the bounded, visible check wait ---
@@ -2805,6 +2825,21 @@ def test_checks_timeout_secs_rejects_bad_override(
     monkeypatch.setenv(github.CHECKS_TIMEOUT_ENV, raw)
     with pytest.raises(ValueError, match="VRG_CHECKS_TIMEOUT must be a positive"):
         github.checks_timeout_secs()
+
+
+def test_orphan_grace_secs_default_and_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert github.orphan_grace_secs() == 300
+    monkeypatch.setenv(github.ORPHAN_GRACE_ENV, " 600 ")
+    assert github.orphan_grace_secs() == 600
+    monkeypatch.setenv(github.ORPHAN_GRACE_ENV, "")
+    assert github.orphan_grace_secs() == 300
+
+
+@pytest.mark.parametrize("raw", ["soon", "0", "-5", "1.5"])
+def test_orphan_grace_secs_rejects_bad_override(monkeypatch: pytest.MonkeyPatch, raw: str) -> None:
+    monkeypatch.setenv(github.ORPHAN_GRACE_ENV, raw)
+    with pytest.raises(ValueError, match="VRG_ORPHAN_GRACE must be a positive"):
+        github.orphan_grace_secs()
 
 
 # --- download_api_binary (#3171) ---

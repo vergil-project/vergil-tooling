@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vergil_tooling.bin.vrg_epic_audit import main
+from vergil_tooling.lib import github
 from vergil_tooling.lib.epic_audit import Orphan, RetiredLabels, StandingEpicFull
 from vergil_tooling.lib.epics import ChildState, IssueRef
 
@@ -26,12 +27,54 @@ def standing_drain() -> Iterator[MagicMock]:
     # by default so tests that do not exercise it make no GitHub calls. Tests
     # that do exercise it patch drain_standing_org themselves (innermost wins).
     # Likewise the org-wide open-issue enumeration behind the orphan pass: an
-    # empty org makes every pass a no-op with no GitHub calls.
+    # empty org makes every pass a no-op with no GitHub calls. The org-wide
+    # path's <org>/.github existence probe answers "exists" by default.
     with (
         patch(f"{_MOD}.epics.drain_standing_org", return_value=[]) as mock_drain,
         patch(f"{_MOD}.epic_audit.open_issues", return_value=[]),
+        patch(f"{_MOD}.epics.github.repo_exists", return_value=True),
     ):
         yield mock_drain
+
+
+def test_main_org_wide_without_dotgithub_fails_clearly(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # An owner with no .github has no org-wide home: one clear line and exit 1,
+    # before any audit query runs (#3613).
+    with (
+        patch(f"{_MOD}.github.detect_org", return_value="owner"),
+        patch(f"{_MOD}.epics.github.repo_exists", return_value=False),
+        patch(f"{_MOD}.epic_audit.task_drift") as drift,
+        pytest.raises(SystemExit) as excinfo,
+    ):
+        main([])
+    assert excinfo.value.code == 1
+    drift.assert_not_called()
+    err = capsys.readouterr().err
+    assert err == (
+        "vrg-epic-audit: owner has no .github repository, so there is no org-wide "
+        "queue or epic home; pass --repo owner/<repo> to reach a self-homed repo's "
+        "own queues and epics\n"
+    )
+
+
+def test_main_org_wide_dotgithub_probe_error_fails_loud(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with (
+        patch(f"{_MOD}.github.detect_org", return_value="org"),
+        patch(
+            f"{_MOD}.epics.github.repo_exists",
+            side_effect=github.GitHubAPIError(1, "cmd", "", "HTTP 502: boom"),
+        ),
+        pytest.raises(SystemExit) as excinfo,
+    ):
+        main([])
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert err.startswith("vrg-epic-audit: cannot check for org/.github")
+    assert "HTTP 502: boom" in err
 
 
 def test_main_repo_scopes_to_resolved_home() -> None:
@@ -81,6 +124,56 @@ def test_main_epic_enumerates_children_as_json(capsys: pytest.CaptureFixture[str
     assert states == {2500: "CLOSED", 2538: "OPEN"}
     # child_states is asked about the resolved epic ref.
     assert cs.call_args.args[0] == IssueRef("vergil-project", ".github", 201)
+
+
+@pytest.mark.parametrize(
+    ("cwd_repo", "public", "expected_epic"),
+    [
+        # Public code repo: its epics home in <org>/.github.
+        ("org/tooling", {"org/tooling", "org/.github"}, IssueRef("org", ".github", 407)),
+        # Private repo with a public .github: its epics home in the repo itself.
+        ("org/lab", {"org/.github"}, IssueRef("org", "lab", 407)),
+    ],
+)
+def test_main_bare_epic_resolves_against_cwd_epic_home(
+    cwd_repo: str, public: set[str], expected_epic: IssueRef
+) -> None:
+    """A bare '--epic #N' reads against the current repo's epic home (#3415).
+
+    Every visibility probe runs under the current repo owner's App token.
+    """
+    seen_orgs: list[str | None] = []
+
+    def is_public(nwo: str) -> bool:
+        seen_orgs.append(github._target_org.get())
+        return nwo in public
+
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value=cwd_repo),
+        patch("vergil_tooling.lib.github.is_public", side_effect=is_public),
+        patch(f"{_MOD}.epics.is_epic", return_value=True) as ie,
+        patch(f"{_MOD}.epics.child_states", return_value=[]) as cs,
+    ):
+        rc = main(["--epic", "#407"])
+    assert rc == 0
+    ie.assert_called_once_with(expected_epic)
+    assert cs.call_args.args[0] == expected_epic
+    assert seen_orgs
+    assert set(seen_orgs) == {"org"}
+
+
+def test_main_qualified_epic_ref_skips_visibility_lookup() -> None:
+    """A full 'owner/repo#N' is used as written, with no visibility probe."""
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/tooling"),
+        patch("vergil_tooling.lib.github.is_public") as probe,
+        patch(f"{_MOD}.epics.is_epic", return_value=True) as ie,
+        patch(f"{_MOD}.epics.child_states", return_value=[]),
+    ):
+        rc = main(["--epic", "other/repo#12"])
+    assert rc == 0
+    ie.assert_called_once_with(IssueRef("other", "repo", 12))
+    probe.assert_not_called()
 
 
 def test_main_epic_rejects_non_epic_ref(capsys: pytest.CaptureFixture[str]) -> None:

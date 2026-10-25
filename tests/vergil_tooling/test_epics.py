@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from datetime import UTC, datetime
 from unittest.mock import patch
 
@@ -419,22 +420,71 @@ def test_is_epic_false_without_label() -> None:
         assert epics.is_epic(TASK) is False
 
 
-def test_is_epic_linkage_true_for_epic() -> None:
-    with patch("vergil_tooling.lib.epics.is_epic", return_value=True) as mock:
-        assert epics.is_epic_linkage("org/.github#40", default_repo="org/repo") is True
+@pytest.mark.parametrize(
+    ("labels", "expected"),
+    [
+        (["epic", "enhancement"], "epic"),
+        (["epic", "adhoc"], "epic"),  # a live standing epic is still an epic
+        (["archive", "adhoc"], "archive"),  # a per-quarter standing-epic archive
+        (["archive", "epic"], "epic"),  # both: the epic it still is
+        (["bug"], None),
+        ([], None),
+    ],
+)
+def test_non_task_kind(labels: list[str], expected: str | None) -> None:
+    raw = {"labels": [{"name": name} for name in labels]}
+    with patch("vergil_tooling.lib.github.read_json", return_value=raw):
+        assert epics.non_task_kind(TASK) == expected
+    # The lookup-free form gives the same answer from the labels alone (#3592).
+    assert epics.non_task_kind_of_labels(set(labels)) == expected
+
+
+def test_non_task_ref_kind_resolves_ref() -> None:
+    with patch("vergil_tooling.lib.epics.non_task_kind", return_value="archive") as mock:
+        assert epics.non_task_ref_kind("org/.github#40", default_repo="org/repo") == "archive"
     mock.assert_called_once_with(IssueRef("org", ".github", 40))
 
 
-def test_is_epic_linkage_false_for_task() -> None:
-    with patch("vergil_tooling.lib.epics.is_epic", return_value=False):
-        assert epics.is_epic_linkage("#42", default_repo="org/repo") is False
+def test_non_task_ref_kind_bare_ref_uses_default_repo() -> None:
+    with patch("vergil_tooling.lib.epics.non_task_kind", return_value=None) as mock:
+        assert epics.non_task_ref_kind("#42", default_repo="org/repo") is None
+    mock.assert_called_once_with(IssueRef("org", "repo", 42))
 
 
-def test_is_epic_linkage_false_for_unparseable_ref() -> None:
-    # No resolvable default repo -> parse fails -> never an epic (is_epic unused).
-    with patch("vergil_tooling.lib.epics.is_epic") as mock:
-        assert epics.is_epic_linkage("#42", default_repo="") is False
+def test_non_task_ref_kind_none_for_unparseable_ref() -> None:
+    # No resolvable default repo -> parse fails -> never a non-task (no lookup).
+    with patch("vergil_tooling.lib.epics.non_task_kind") as mock:
+        assert epics.non_task_ref_kind("#42", default_repo="") is None
     mock.assert_not_called()
+
+
+def test_non_task_ref_kind_propagates_lookup_failure() -> None:
+    # Fail closed: a failed label read is never taken as "a task".
+    with (
+        patch(
+            "vergil_tooling.lib.github.read_json",
+            side_effect=subprocess.CalledProcessError(1, ["gh"]),
+        ),
+        pytest.raises(subprocess.CalledProcessError),
+    ):
+        epics.non_task_ref_kind("#42", default_repo="org/repo")
+
+
+def test_non_task_refusal_message_epic() -> None:
+    msg = epics.non_task_refusal_message("--task", "org/.github#40", "epic")
+    assert msg.startswith("--task (org/.github#40) is an epic, not a task; ")
+    assert "Create the task under the epic first" in msg
+
+
+def test_non_task_refusal_message_archive() -> None:
+    msg = epics.non_task_refusal_message("--issue", "#7", "archive")
+    assert msg.startswith("--issue (#7) is an archive, not a task; ")
+    assert "closed tasks" in msg
+
+
+def test_non_task_refusal_message_rejects_unknown_kind() -> None:
+    with pytest.raises(ValueError, match="not a non-task kind"):
+        epics.non_task_refusal_message("--issue", "#7", "intake")
 
 
 def test_is_operational_true_when_labeled() -> None:
@@ -927,9 +977,10 @@ def test_qualify_epic_ref_visibility_error_propagates() -> None:
     err = github.GitHubAPIError(1, "gh repo view", "boom")
     with (
         patch("vergil_tooling.lib.github.is_public", side_effect=err),
-        pytest.raises(github.GitHubAPIError),
+        pytest.raises(epics.EpicHomeError) as excinfo,
     ):
         epics.qualify_epic_ref("#12", repo="org/lab")
+    assert excinfo.value.__cause__ is err
 
 
 def test_qualify_epic_ref_rejects_malformed_ref() -> None:
@@ -1285,14 +1336,101 @@ def test_resolve_epic_home_private_org_is_central() -> None:
 
 
 def test_resolve_epic_home_fails_loud() -> None:
+    # A failed probe of the target is a clear EpicHomeError, never a traceback.
     with (
         patch(
             "vergil_tooling.lib.epics.github.is_public",
-            side_effect=github.GitHubAPIError(1, "cmd", "boom"),
+            side_effect=github.GitHubAPIError(1, "cmd", "", "HTTP 502: boom"),
         ),
-        pytest.raises(github.GitHubAPIError),
+        pytest.raises(epics.EpicHomeError, match=r"(?s)org/missing:.*HTTP 502: boom"),
     ):
         epics.resolve_epic_home("org", "missing")
+
+
+_NO_REPO = "GraphQL: Could not resolve to a Repository with the name 'owner/.github'."
+
+
+def test_resolve_epic_home_missing_dotgithub_self_homes() -> None:
+    # A personal account with no <owner>/.github has no central home, so a
+    # private repo self-homes its epics (#3603).
+    def pub(nwo: str) -> bool:
+        if nwo == "owner/.github":
+            raise github.GitHubAPIError(1, "cmd", "", _NO_REPO)
+        return False
+
+    with patch("vergil_tooling.lib.epics.github.is_public", side_effect=pub):
+        assert epics.resolve_epic_home("owner", "notes") == "owner/notes"
+
+
+def test_resolve_epic_home_dotgithub_probe_error_fails_loud() -> None:
+    # Only "does not exist" self-homes; any other .github probe failure is a
+    # clear EpicHomeError naming the repo it could not resolve (#3603).
+    def pub(nwo: str) -> bool:
+        if nwo == "owner/.github":
+            raise github.GitHubAPIError(1, "cmd", "", "HTTP 401: Bad credentials")
+        return False
+
+    with (
+        patch("vergil_tooling.lib.epics.github.is_public", side_effect=pub),
+        pytest.raises(epics.EpicHomeError, match=r"(?s)owner/notes:.*Bad credentials"),
+    ):
+        epics.resolve_epic_home("owner", "notes")
+
+
+def test_resolve_epic_home_missing_token_is_not_rewrapped() -> None:
+    # A missing token keeps its own error so cli_main prints the token fix.
+    missing = github.MissingGitHubTokenError(4, "cmd", "", "set GH_TOKEN")
+    with (
+        patch("vergil_tooling.lib.epics.github.is_public", side_effect=missing),
+        pytest.raises(github.MissingGitHubTokenError),
+    ):
+        epics.resolve_epic_home("owner", "notes")
+
+
+def test_require_org_home_returns_existing_dotgithub() -> None:
+    with patch("vergil_tooling.lib.epics.github.repo_exists", return_value=True) as exists:
+        assert epics.require_org_home("org") == "org/.github"
+    exists.assert_called_once_with("org", ".github")
+
+
+def test_require_org_home_missing_dotgithub_is_clear() -> None:
+    # An owner with no .github has no org-wide home; the message says so and
+    # points at --repo for a self-homed repo (#3613).
+    with (
+        patch(
+            "vergil_tooling.lib.epics.github.repo_visibility",
+            side_effect=github.GitHubAPIError(1, "cmd", "", _NO_REPO),
+        ),
+        pytest.raises(epics.EpicHomeError) as excinfo,
+    ):
+        epics.require_org_home("owner")
+    assert str(excinfo.value) == (
+        "owner has no .github repository, so there is no org-wide queue or epic "
+        "home; pass --repo owner/<repo> to reach a self-homed repo's own queues "
+        "and epics"
+    )
+
+
+def test_require_org_home_other_probe_error_fails_loud() -> None:
+    # Only "does not exist" is the no-.github message; any other failure is a
+    # clear EpicHomeError carrying the API error.
+    with (
+        patch(
+            "vergil_tooling.lib.epics.github.repo_visibility",
+            side_effect=github.GitHubAPIError(1, "cmd", "", "HTTP 502: boom"),
+        ),
+        pytest.raises(epics.EpicHomeError, match=r"(?s)cannot check for org/\.github,.*HTTP 502"),
+    ):
+        epics.require_org_home("org")
+
+
+def test_require_org_home_missing_token_is_not_rewrapped() -> None:
+    missing = github.MissingGitHubTokenError(4, "cmd", "", "set GH_TOKEN")
+    with (
+        patch("vergil_tooling.lib.epics.github.repo_visibility", side_effect=missing),
+        pytest.raises(github.MissingGitHubTokenError),
+    ):
+        epics.require_org_home("org")
 
 
 # --- Task 4: per-repo drain (plan + apply) ---
@@ -1914,7 +2052,38 @@ def test_ensure_planning_epic_ensures_in_progress_label() -> None:
     ):
         assert epics.ensure_planning_epic("org/tool") == IssueRef("org", ".github", 90)
     mock_create.assert_not_called()
-    mock_ensure.assert_called_once_with("org/.github", ("in-progress",))
+    assert [c.args for c in mock_ensure.call_args_list] == [
+        ("org/.github", ("in-progress",)),
+        ("org/tool", ("in-progress",)),
+    ]
+
+
+def test_ensure_planning_epic_ensures_in_progress_label_in_item_repo() -> None:
+    # A planning item can live in a member repo while the queue homes in
+    # <org>/.github; epic-create labels the item itself, so the member repo
+    # needs the label too, not just the home (#3520).
+    created = "https://github.com/org/.github/issues/90"
+    with (
+        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
+        patch("vergil_tooling.lib.github.read_json", return_value=[]),
+        patch("vergil_tooling.lib.epics.ensure_labels") as mock_ensure,
+        patch("vergil_tooling.lib.github.create_issue", return_value=created),
+    ):
+        epics.ensure_planning_epic("org/tool")
+    ensured = [c.args for c in mock_ensure.call_args_list]
+    assert ("org/tool", ("in-progress",)) in ensured
+
+
+def test_ensure_planning_epic_self_homed_ensures_label_once() -> None:
+    # A self-homed repo is both the home and the item's repo: one ensure, not two.
+    rows = [{"number": 3, "title": "Epic (planning): secret"}]
+    with (
+        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/secret"),
+        patch("vergil_tooling.lib.github.read_json", return_value=rows),
+        patch("vergil_tooling.lib.epics.ensure_labels") as mock_ensure,
+    ):
+        assert epics.ensure_planning_epic("org/secret") == IssueRef("org", "secret", 3)
+    mock_ensure.assert_called_once_with("org/secret", ("in-progress",))
 
 
 def test_ensure_standing_epic_duplicate_title_raises_naming_kind() -> None:

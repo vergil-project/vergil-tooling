@@ -6,22 +6,31 @@ This stage polls the published index until the released version is visible, so
 the consumer refresh that follows never races it. A miss (timeout, or any
 error while polling) is recorded as a deferred publish failure — the release
 itself stands, and ``consumer_refresh`` holds while any publish is deferred.
+
+While it waits, the stage streams the ``Publish package index`` run in
+``<org>/packages`` that covers this release, and prints a heartbeat on every
+poll while no run is being streamed (#3528). Run-watching is progress output
+only: the index poll is the sole pass/fail check.
 """
 
 from __future__ import annotations
 
 import gzip
+import json
+import subprocess
 import time
 import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET  # noqa: N817
 from collections.abc import Callable
+from datetime import datetime
 from fnmatch import fnmatchcase
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from vergil_tooling.lib import config
+from vergil_tooling.lib import config, github, retry
 from vergil_tooling.lib.package import matrix, naming, orgs
 from vergil_tooling.lib.release.context import ReleaseError
+from vergil_tooling.lib.release.subprocess import watch_workflow
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.config import PackageConfig
@@ -31,6 +40,10 @@ if TYPE_CHECKING:
 Fetch = Callable[[str], bytes]
 
 PHASE = "package-index"
+
+# The org packages repo's index workflow, dispatched by cd-release's release job.
+_INDEX_WORKFLOW = "publish-index.yml"
+_RUN_LIST_LIMIT = "20"
 
 
 def _fetch(url: str) -> bytes:
@@ -195,6 +208,110 @@ def _revision(pkg: PackageConfig, target: Target) -> str:
     return f"1~{target.suite}" if target.fmt == "deb" else f"1.{target.suite}"
 
 
+def _timestamp(value: str) -> datetime:
+    """A GitHub API timestamp (``2026-10-24T09:33:22Z``) as an aware datetime."""
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def _dispatch_time(ctx: ReleaseContext) -> datetime | None:
+    """A lower bound on when this release's CD run dispatched ``package-released``.
+
+    cd-release dispatches at the end of its release job, so the job's start
+    time precedes the dispatch. ``None`` when no CD run is recorded (a resumed
+    release) or the run has no started release job.
+    """
+    run_id = ctx.cd_run_id
+    if not run_id:
+        return None
+    out = retry.retry_known_resource(
+        lambda: github.read_output("run", "view", "--repo", ctx.repo, run_id, "--json", "jobs"),
+        resource=f"CD run {run_id}",
+    )
+    jobs: list[dict[str, Any]] = json.loads(out).get("jobs", []) if out.strip() else []
+    for job in jobs:
+        # The release job is identified by its leaf segment, as in confirm.
+        if job.get("name", "").rsplit(" / ", 1)[-1] == "release" and job.get("startedAt"):
+            return _timestamp(job["startedAt"])
+    return None
+
+
+def _following(ctx: ReleaseContext, packages_repo: str) -> datetime | None:
+    """The dispatch time to follow index runs from, or ``None`` to poll only.
+
+    Run-following is progress output, so a ``gh`` failure here is reported and
+    the stage falls back to polling rather than failing.
+    """
+    try:
+        since = _dispatch_time(ctx)
+    except subprocess.CalledProcessError as exc:
+        print(f"  Could not read the CD run's dispatch time ({exc}); polling the index only.")
+        return None
+    if since is None:
+        print("  No CD release job recorded; polling the index only.")
+    else:
+        print(f"  Following {packages_repo} publish-index runs created since {since.isoformat()}.")
+    return since
+
+
+def _next_index_run(packages_repo: str, since: datetime, seen: set[str]) -> dict[str, Any] | None:
+    """The earliest index run created since ``since`` that is not cancelled or followed.
+
+    A ``repository_dispatch`` run carries no release SHA, so it is matched by
+    time. Every run rebuilds the whole index, so any run after the dispatch
+    covers this release, including one that supersedes a cancelled run.
+    """
+    out = github.read_output(
+        "run",
+        "list",
+        "--repo",
+        packages_repo,
+        "--workflow",
+        _INDEX_WORKFLOW,
+        "--limit",
+        _RUN_LIST_LIMIT,
+        "--json",
+        "databaseId,createdAt,conclusion,url",
+    )
+    runs: list[dict[str, Any]] = json.loads(out) if out.strip() else []
+    candidates = [
+        run
+        for run in runs
+        if str(run["databaseId"]) not in seen
+        and run.get("conclusion") != "cancelled"
+        and _timestamp(run["createdAt"]) >= since
+    ]
+    candidates.sort(key=lambda run: _timestamp(run["createdAt"]))
+    return candidates[0] if candidates else None
+
+
+def _follow_index_run(packages_repo: str, run: dict[str, Any]) -> None:
+    """Stream ``run`` until it completes and say how it ended (progress output only)."""
+    run_id = str(run["databaseId"])
+    resource = f"publish-index run {run_id}"
+    print(f"  Publish-index run: {run['url']}")
+    retry.retry_known_resource(
+        lambda: watch_workflow(packages_repo, run_id, check_status=False), resource=resource
+    )
+    conclusion = retry.retry_known_resource(
+        lambda: github.read_output(
+            "run",
+            "view",
+            "--repo",
+            packages_repo,
+            run_id,
+            "--json",
+            "conclusion",
+            "--jq",
+            ".conclusion",
+        ),
+        resource=resource,
+    ).strip()
+    if conclusion == "cancelled":
+        print("  Publish-index run was cancelled (superseded); following the next one.")
+    else:
+        print(f"  Publish-index run finished ({conclusion}); checking the index.")
+
+
 def _wait(
     ctx: ReleaseContext,
     *,
@@ -229,9 +346,14 @@ def _wait(
         return rpm_has(base, target.suite, target.rpm_arch, name, version, release, fetch)
 
     print(f"Waiting for {name} {full} in {where} (timeout {timeout}s)...")
-    deadline = now() + timeout
+    start = now()
+    deadline = start + timeout
+    packages_repo = f"{org.github_org}/packages"
+    since = _following(ctx, packages_repo)
+    seen: set[str] = set()
     while not visible():
-        if now() >= deadline:
+        current = now()
+        if current >= deadline:
             raise ReleaseError(
                 phase=PHASE,
                 command="poll package index",
@@ -241,6 +363,20 @@ def _wait(
                     "the release itself stands"
                 ),
             )
+        if since is not None:
+            try:
+                run = _next_index_run(packages_repo, since, seen)
+                if run is not None:
+                    seen.add(str(run["databaseId"]))
+                    _follow_index_run(packages_repo, run)
+                    continue
+            except subprocess.CalledProcessError as exc:
+                since = None
+                print(f"  Could not follow the publish-index run ({exc}); polling the index only.")
+        print(
+            f"  {name} {full} not in the index yet ({int(current - start)}s elapsed); "
+            f"polling again in {interval}s"
+        )
         sleep(interval)
     ctx.package_index_url = where
     print(f"{name} {full} is visible in {where}.")

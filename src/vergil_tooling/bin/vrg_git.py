@@ -12,9 +12,9 @@ import sys
 import time
 from pathlib import Path
 
-from vergil_tooling.lib import branch_names, github, retry
+from vergil_tooling.lib import branch_names, epics, github, retry
 from vergil_tooling.lib.cli import cli_main
-from vergil_tooling.lib.git import _git_auth_env, main_worktree_root
+from vergil_tooling.lib.git import _git_auth_env, is_workflow_push_refusal, main_worktree_root
 from vergil_tooling.lib.pr_workflow import freeze
 
 _ALLOWED_SIMPLE: set[str] = {
@@ -221,7 +221,7 @@ def main(argv: list[str] | None = None) -> int:
         if (
             subcmd == "push"
             and net_result.returncode != 0
-            and _WORKFLOW_PERMISSION_RE.search(net_result.stderr or "")
+            and is_workflow_push_refusal(net_result.stderr)
         ):
             # A workflow-file push refusal is expected and routine: the agent
             # never pushes a workflow branch — the human's vrg-submit-pr does,
@@ -532,33 +532,172 @@ def _check_worktree_add(args: list[str]) -> str | None:
             f"'{new_branch}'. Use '.worktrees/{expected}' so the directory, "
             f"branch, and issue number stay in lockstep (issue #2550)."
         )
-    return None
+    return _check_issue_is_open_task(new_branch)
+
+
+# `git branch` options that select a mode naming no new branch: listing (and the
+# filters that imply it; -a/-r refuse a name), deleting, and upstream or
+# description edits. Any one of them means the command creates nothing.
+_BRANCH_NO_CREATE_LONG: set[str] = {
+    "--list",
+    "--all",
+    "--remotes",
+    "--verbose",
+    "--show-current",
+    "--contains",
+    "--no-contains",
+    "--merged",
+    "--no-merged",
+    "--points-at",
+    "--delete",
+    "--set-upstream-to",
+    "--unset-upstream",
+    "--edit-description",
+}
+_BRANCH_NO_CREATE_SHORT: set[str] = set("lavrdDu")
+# Rename (-m/-M/--move) and copy (-c/-C/--copy) take ``[<old>] <new>``.
+_BRANCH_RENAME_LONG: set[str] = {"--move", "--copy"}
+_BRANCH_RENAME_SHORT: set[str] = set("mMcC")
+# Short flags whose remaining cluster characters are their value, not flags.
+_BRANCH_SHORT_WITH_VALUE: set[str] = set("tu")
+# Long options that consume the following token as their value.
+_BRANCH_VALUE_OPTS: set[str] = {"--sort", "--format"}
+
+
+def _parse_branch_create(args: list[str]) -> str | None:
+    """Return the branch name ``git branch *args*`` brings into being, or None.
+
+    Three forms name a new branch: ``branch [-f] <name> [<start>]``, a copy
+    (``-c``/``-C``/``--copy``) and a rename (``-m``/``-M``/``--move``), whose
+    new name is the last of ``[<old>] <new>``. A rename is covered because
+    renaming a branch *to* an issue-branch name makes that branch as surely as
+    creating it; a rename to a non-issue name is unaffected. Every other form
+    (listing, deleting, upstream and description edits, ``--show-current``)
+    names no new branch and returns None.
+    """
+    positionals: list[str] = []
+    rename = False
+    skip_next = False
+    after_separator = False
+    for arg in args:
+        if skip_next:
+            skip_next = False
+            continue
+        if after_separator or not arg.startswith("-"):
+            positionals.append(arg)
+            continue
+        if arg == "--":
+            after_separator = True
+            continue
+        if arg.startswith("--"):
+            name = arg.split("=", 1)[0]
+            if name in _BRANCH_NO_CREATE_LONG:
+                return None
+            if name in _BRANCH_RENAME_LONG:
+                rename = True
+            elif arg in _BRANCH_VALUE_OPTS:
+                skip_next = True
+            continue
+        for char in arg[1:]:
+            if char in _BRANCH_NO_CREATE_SHORT:
+                return None
+            if char in _BRANCH_RENAME_SHORT:
+                rename = True
+            if char in _BRANCH_SHORT_WITH_VALUE:
+                break
+    if not positionals:
+        return None
+    return positionals[-1] if rename else positionals[0]
 
 
 def _check_new_branch_name(subcmd: str, args: list[str]) -> str | None:
-    """Reject ``checkout -b``/``switch -c`` creating a malformed issue branch.
+    """Reject ``checkout -b``/``switch -c``/``branch`` making a bad issue branch.
 
     Extends the issue-number rule to the other creation paths the worktree
     convention allows inside a secondary worktree, so a non-conforming branch is
-    caught at creation rather than only later at commit (issue #2550). A
-    non-issue branch (e.g. ``release/*``) and a plain checkout/switch of an
-    existing branch are left untouched.
+    caught at creation rather than only later at commit (issue #2550); ``branch
+    <name>`` and its copy/rename forms no longer bypass it (issue #3606). A
+    non-issue branch (e.g. ``release/*``), a plain checkout/switch of an
+    existing branch, and the non-creating ``branch`` forms are left untouched.
     """
-    create_flags = {"checkout": ("-b", "-B"), "switch": ("-c", "-C")}.get(subcmd)
-    if create_flags is None:
-        return None
-    new_branch = _parse_new_branch(create_flags, args)
+    if subcmd == "branch":
+        new_branch = _parse_branch_create(args)
+    else:
+        create_flags = {"checkout": ("-b", "-B"), "switch": ("-c", "-C")}.get(subcmd)
+        if create_flags is None:
+            return None
+        new_branch = _parse_new_branch(create_flags, args)
     if new_branch is None or not branch_names.requires_issue_number(new_branch):
         return None
     if not branch_names.is_valid_issue_branch(new_branch):
         return _branch_format_error(new_branch)
+    return _check_issue_is_open_task(new_branch)
+
+
+# A failed issue read, in any of the shapes the gh boundary raises: gh exiting
+# non-zero (incl. GitHubAPIError), gh not runnable, unparseable JSON
+# (JSONDecodeError is a ValueError), or no App token for the repo's owner.
+_ISSUE_READ_ERRORS = (
+    subprocess.CalledProcessError,
+    OSError,
+    ValueError,
+    github.NoInstallationError,
+    github.AppAuthError,
+)
+
+
+def _check_issue_is_open_task(branch: str) -> str | None:
+    """Refuse an issue branch whose ``<N>`` is not an open task (#3592).
+
+    For a well-formed ``<type>/<N>-<slug>`` *branch*, the issue ``<N>``, read
+    from the current repo, must be open and carry neither the ``epic`` nor the
+    ``archive`` label: a branch is one task's single PR, and an epic or archive
+    is never closed by a PR (#2842). Refusing here stops the work at its source
+    rather than at report-ready or submit, after it is built. Any other branch
+    name is not this convention's and is left alone (no lookup).
+
+    One ``gh issue view`` reads state and labels together, so the guard costs a
+    single call per creation. Fail closed: a failed or malformed read refuses
+    with the reason and never passes as "a task".
+    """
+    parsed = branch_names.parse_issue_branch(branch)
+    if parsed is None:
+        return None
+    number = parsed.number
+    try:
+        raw = github.read_json("issue", "view", number, "--json", "state,labels")
+    except _ISSUE_READ_ERRORS as exc:
+        return _issue_read_refusal(branch, number, str(exc).strip() or type(exc).__name__)
+    if not isinstance(raw, dict):
+        return _issue_read_refusal(branch, number, f"unexpected response {raw!r}")
+    labels = {str(label.get("name", "")) for label in _as_label_list(raw.get("labels"))}
+    kind = epics.non_task_kind_of_labels(labels)
+    if kind is not None:
+        return epics.non_task_refusal_message(branch, f"#{number}", kind)
+    if raw.get("state") != "OPEN":
+        return (
+            f"{branch} (#{number}) is not an open issue (state: {raw.get('state')}); "
+            "a branch carries an open task's work. Reopen the issue, or create a "
+            "new task and use its number."
+        )
     return None
 
 
-_WORKFLOW_PERMISSION_RE = re.compile(
-    r"refusing to allow.*workflow.*without.*workflows.*permission",
-    re.IGNORECASE,
-)
+def _as_label_list(value: object) -> list[dict[str, object]]:
+    """The label objects of a ``gh issue view --json labels`` payload."""
+    if not isinstance(value, list):
+        return []
+    return [label for label in value if isinstance(label, dict)]
+
+
+def _issue_read_refusal(branch: str, number: str, reason: str) -> str:
+    """The refusal when issue #*number* cannot be read to vet *branch*."""
+    return (
+        f"cannot create {branch}: could not read issue #{number} to confirm it is "
+        f"an open task, not an epic or archive ({reason}). Check that "
+        f"'vrg-gh issue view {number}' works here (auth, network, and that the "
+        "issue exists in this repo), then retry."
+    )
 
 
 def _current_worktree_root() -> Path | None:
@@ -738,6 +877,8 @@ def _print_help() -> None:
         "    'worktree add -b', 'checkout -b', 'switch -c') requires the\n"
         "    <type>/<N>-<slug> form, and 'worktree add' requires the directory\n"
         "    to be the matching issue-<N>-<slug> (dir/branch stay in lockstep).\n"
+        "    Issue <N> must be open and not an epic or archive; a failed issue\n"
+        "    read refuses the branch.\n"
         "  - Freeze: a push is refused once the branch was reported ready\n"
         "    (vrg-pr-workflow report-ready); unfreeze deliberately to reopen it.\n"
         "  - Identity: remote ops run with the GitHub App installation token for\n"

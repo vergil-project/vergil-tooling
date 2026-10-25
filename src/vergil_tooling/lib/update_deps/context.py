@@ -24,7 +24,8 @@ TAIL_HEADING = "Last lines of output:"
 class DepsFailure:
     """A recorded (not raised) failure; the status stage surfaces it loud.
 
-    ``update`` — an updater or hook failed before validation: no PR.
+    ``update`` — an updater or hook failed before validation: no PR, so the
+    fix task stands on its own (#3550).
     ``validation`` — the single vrg-validate run failed: PR stays open.
     ``merge`` — remote CI failed or the merge aborted: PR stays open.
     """
@@ -35,6 +36,8 @@ class DepsFailure:
     reproduce: str
     # Says what ``output_tail`` is: the failing validation stage, or a raw tail.
     output_heading: str = TAIL_HEADING
+    # The failing updater's name (``hook`` for the repo hook); ``update`` kind only.
+    updater: str | None = None
 
 
 @dataclass

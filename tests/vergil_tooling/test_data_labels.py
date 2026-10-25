@@ -32,5 +32,5 @@ def test_registry_includes_full_kind_axis() -> None:
     # historically absent — ``bug`` leaned on GitHub's default and ``docs`` had to
     # be created ad hoc mid-migration (issue #1971).
     names = {entry["name"] for entry in _labels()}
-    for kind in {"bug", "feature", "docs", "refactor", "chore", "research"}:
+    for kind in {"bug", "feature", "docs", "refactor", "chore"}:
         assert kind in names, f"kind label missing from labels.json: {kind}"

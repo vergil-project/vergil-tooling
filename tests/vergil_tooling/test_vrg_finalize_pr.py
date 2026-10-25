@@ -16,6 +16,8 @@ from vergil_tooling.bin.vrg_finalize_pr import (
     CDRunProblem,
     FinalizeContext,
     FinalizeError,
+    _clean_branch_images,
+    _conflict_resolution_msg,
     _delete_branch_and_worktree,
     _dirt_is_untracked_only,
     _parse_pr_list,
@@ -36,11 +38,15 @@ from vergil_tooling.bin.vrg_finalize_pr import (
     main,
     parse_args,
 )
-from vergil_tooling.lib.pr_merge import MergeAbortError
+from vergil_tooling.lib.cache_space import CacheSpaceError
+from vergil_tooling.lib.live_branches import RepoSetError
+from vergil_tooling.lib.pr_merge import MergeAbortError, MergeConflictError
 from vergil_tooling.lib.pr_provenance import Action, ProvenanceResult, Role
+from vergil_tooling.lib.versions import VersionsError
 from vergil_tooling.lib.worktrees import Worktree, WorktreeState, WorktreeStatus
 
 _MOD = "vergil_tooling.bin.vrg_finalize_pr"
+_PROJECTS = Path("/vergil/projects")
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
@@ -105,14 +111,16 @@ def _relay_refs_inert() -> Iterator[None]:
 def _branch_images_inert() -> Iterator[None]:
     """Default: the cached-image sweep touches nothing (issue #2600).
 
-    Cleanup sweeps orphaned per-branch dev images, which lists local branches and
-    shells out to the container runtime. Stub both seams so the many cleanup
-    tests neither hit docker/nerdctl nor need to know about image pruning. Tests
-    that assert sweep behavior re-patch these directly — the innermost patch wins.
+    Cleanup sweeps orphaned per-branch dev images, which resolves the platform
+    repo set and shells out to the container runtime. Stub those seams so the
+    many cleanup tests neither hit docker/nerdctl nor need to know about image
+    pruning. Tests that assert sweep behavior re-patch these directly — the
+    innermost patch wins.
     """
     with (
-        patch(_MOD + ".prune_orphan_branch_images", return_value=0),
-        patch(_MOD + ".git.local_branches", return_value=set()),
+        patch(_MOD + ".default_repo_roots", return_value=[_PROJECTS]),
+        patch(_MOD + ".discover_repos", return_value=[_PROJECTS / "org" / "repo"]),
+        patch(_MOD + ".prune_orphan_branch_images", return_value=(0, [])),
     ):
         yield
 
@@ -224,7 +232,7 @@ def test_main_library_release(tmp_path: Path) -> None:
             return_value=["feature/x", "develop"],
         ),
         patch(_MOD + ".git.read_output", return_value=""),
-        patch(_MOD + ".clean_branch_images", return_value=0),
+        patch(_MOD + ".clean_branch_images", return_value=(0, [])),
         patch(_MOD + "._wait_for_cd_run", return_value=None),
     ):
         result = main([])
@@ -253,7 +261,7 @@ def test_main_cleanup_syncs_target_without_pull(tmp_path: Path) -> None:
             return_value=["feature/x", "develop"],
         ),
         patch(_MOD + ".git.read_output", return_value=""),
-        patch(_MOD + ".clean_branch_images", return_value=0),
+        patch(_MOD + ".clean_branch_images", return_value=(0, [])),
         patch(_MOD + "._wait_for_cd_run", return_value=None),
     ):
         result = main([])
@@ -334,7 +342,7 @@ def test_main_application_promotion(tmp_path: Path) -> None:
             return_value=["develop", "release", "main", "feature/y"],
         ),
         patch(_MOD + ".git.read_output", return_value=""),
-        patch(_MOD + ".clean_branch_images", return_value=0),
+        patch(_MOD + ".clean_branch_images", return_value=(0, [])),
         patch(_MOD + "._wait_for_cd_run", return_value=None),
     ):
         result = main([])
@@ -390,6 +398,40 @@ def test_main_validation_fails(tmp_path: Path) -> None:
     assert result == 1
     # fail_defer: a validation failure must not skip the CD check.
     cd_check.assert_called_once()
+
+
+def test_main_failed_rebuild_fails_finalize_and_still_reports(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Validation's container would not launch and the rebuild was refused, so
+    # validation never ran: the stage is recorded failed and finalize exits
+    # non-zero (#3316, #3605), while the CD check and final summary still run.
+    _make_profile(tmp_path, "library-release")
+    launch = subprocess.CalledProcessError(
+        125, ("vrg-container-run",), output="", stderr="parent snapshot x does not exist: not found"
+    )
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".git.current_branch", return_value="develop"),
+        patch(_MOD + ".git.run"),
+        patch(_MOD + ".git.merged_branches", return_value=[]),
+        patch(_MOD + ".progress.run", side_effect=[launch]) as run,
+        patch(_MOD + ".clean_branch_images", return_value=(0, [])),
+        patch(
+            _MOD + ".provision_dev_image",
+            side_effect=[("img", "cached"), CacheSpaceError("only 1.2G free")],
+        ),
+        patch(_MOD + ".git.read_output", return_value="deadbeefcafe"),
+        patch(_MOD + "._wait_for_cd_run", return_value=None) as cd_check,
+    ):
+        result = main([])
+    assert result == 1
+    assert run.call_count == 1  # no retry against an image that was never rebuilt
+    cd_check.assert_called_once()
+    out = capsys.readouterr().out
+    assert "✗  failures:" in out
+    assert "validation — FinalizeError: post-finalization validation did not run" in out
+    assert "only 1.2G free" in out
 
 
 # -- _wait_for_cd_run (issue #2753) ----------------------------------------
@@ -733,7 +775,7 @@ def test_main_removes_worktree_before_deleting_branch(tmp_path: Path) -> None:
         # is patched directly (the autouse fixture stubs list_worktrees).
         patch(_MOD + ".worktrees.worktree_for_branch", return_value=wt_dir.resolve()),
         patch(_MOD + "._worktree_is_dirty", return_value=False),
-        patch(_MOD + ".clean_branch_images", return_value=0),
+        patch(_MOD + ".clean_branch_images", return_value=(0, [])),
         patch(_MOD + "._wait_for_cd_run", return_value=None),
     ):
         result = main([])
@@ -766,7 +808,7 @@ def test_main_skips_worktree_remove_when_branch_not_in_worktree(tmp_path: Path) 
         patch(_MOD + ".git.run", side_effect=mock_git_run),
         patch(_MOD + ".git.merged_branches", return_value=["feature/99-x"]),
         patch(_MOD + ".git.read_output", return_value=porcelain),
-        patch(_MOD + ".clean_branch_images", return_value=0),
+        patch(_MOD + ".clean_branch_images", return_value=(0, [])),
         patch(_MOD + "._wait_for_cd_run", return_value=None),
     ):
         result = main([])
@@ -823,7 +865,7 @@ def test_main_cleans_docker_cache_on_branch_delete(
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.merged_branches", return_value=["feature/x"]),
         patch(_MOD + ".git.read_output", return_value=""),
-        patch(_MOD + ".clean_branch_images", return_value=2) as mock_clean,
+        patch(_MOD + ".clean_branch_images", return_value=(2, [])) as mock_clean,
         patch(_MOD + "._wait_for_cd_run", return_value=None),
     ):
         result = main([])
@@ -1307,7 +1349,7 @@ def test_explicit_target_cleanup_deletes_merged_pr_branch(tmp_path: Path) -> Non
         patch(_MOD + ".git.merged_branches", return_value=[]),  # squash: sweep is blind
         patch(_MOD + ".git.read_output", return_value="feature/7-foo"),
         patch(_MOD + ".worktrees.worktree_for_branch", return_value=None),
-        patch(_MOD + ".clean_branch_images", return_value=0),
+        patch(_MOD + ".clean_branch_images", return_value=(0, [])),
         patch(_MOD + "._wait_for_cd_run", return_value=None),
     ):
         rc = main(["123"])
@@ -1482,7 +1524,7 @@ def test_sweep_deletes_straggler_with_commits_and_merge_evidence(tmp_path: Path)
         patch(_MOD + ".git.run", side_effect=mock_git_run),
         patch(_MOD + ".git.merged_branches", return_value=["feature/55-straggler"]),
         patch(_MOD + ".worktrees.worktree_for_branch", return_value=None),
-        patch(_MOD + ".clean_branch_images", return_value=0),
+        patch(_MOD + ".clean_branch_images", return_value=(0, [])),
         patch(_MOD + "._wait_for_cd_run", return_value=None),
     ):
         result = main([])
@@ -1513,7 +1555,7 @@ def test_explicit_target_cleanup_bypasses_sweep_guards(tmp_path: Path) -> None:
         patch(_MOD + ".git.commit_sha") as sha,
         patch(_MOD + ".github.closed_pr_for_branch") as evidence,
         patch(_MOD + ".worktrees.worktree_for_branch", return_value=None),
-        patch(_MOD + ".clean_branch_images", return_value=0),
+        patch(_MOD + ".clean_branch_images", return_value=(0, [])),
         patch(_MOD + "._wait_for_cd_run", return_value=None),
     ):
         rc = main(["123"])
@@ -1586,6 +1628,66 @@ def test_stage_merge_abort_raises() -> None:
         pytest.raises(FinalizeError, match="is a draft"),
     ):
         _stage_merge(ctx)
+
+
+def _conflict_error(root: Path, worktree: Path | None) -> str:
+    """Run _stage_merge into a merge conflict; return the FinalizeError text."""
+    ctx = _stage_ctx(["123"], root=root)
+    with (
+        patch(_MOD + ".github.pr_state", return_value="OPEN"),
+        patch(_MOD + ".github.head_ref", return_value="feature/42-fix-thing"),
+        patch(_MOD + ".github.base_ref", return_value="develop"),
+        patch(_MOD + ".worktrees.worktree_for_branch", return_value=worktree),
+        patch(
+            _MOD + ".pr_merge.wait_and_merge",
+            side_effect=MergeConflictError("PR 123 has merge conflicts."),
+        ),
+        pytest.raises(FinalizeError) as excinfo,
+    ):
+        _stage_merge(ctx)
+    return str(excinfo.value)
+
+
+def test_stage_merge_conflict_gives_human_the_exact_commands() -> None:
+    """A conflict on a submitted PR names the worktree and every command the
+    human runs, in order: merge (not rebase), validate, raw-git commit and
+    push, re-finalize (issue #3555)."""
+    wt = Path("/repo/.worktrees/issue-42-fix-thing")
+    msg = _conflict_error(Path("/repo"), wt)
+    assert "PR 123 has merge conflicts with develop" in msg
+    steps = [
+        f"cd {wt}",
+        "git fetch origin",
+        "git merge --ff-only origin/feature/42-fix-thing",
+        "git merge --no-commit origin/develop",
+        "vrg-container-run -- vrg-validate",
+        "git commit --no-edit",
+        "git push origin feature/42-fix-thing",
+        "cd /repo && vrg-finalize-pr 123",
+    ]
+    positions = [msg.index(step) for step in steps]
+    assert positions == sorted(positions)
+    assert "git worktree add" not in msg
+    assert "rebase" not in msg.replace("do not rebase", "")
+    # Paste-safe in interactive zsh: no inline comments on command lines.
+    assert not [line for line in msg.splitlines() if line.startswith("  ") and "#" in line]
+
+
+def test_stage_merge_conflict_without_worktree_says_how_to_get_one() -> None:
+    msg = _conflict_error(Path("/repo"), None)
+    assert (
+        "cd /repo && git fetch origin && git worktree add "
+        ".worktrees/issue-42-fix-thing feature/42-fix-thing"
+    ) in msg
+    assert "cd /repo/.worktrees/issue-42-fix-thing" in msg
+    assert msg.index("git worktree add") < msg.index("git merge --no-commit")
+
+
+def test_conflict_msg_non_issue_branch_falls_back_to_flattened_dirname() -> None:
+    with patch(_MOD + ".worktrees.worktree_for_branch", return_value=None):
+        msg = _conflict_resolution_msg("7", "release/2.1.30", "main", Path("/repo"))
+    assert "git worktree add .worktrees/release-2.1.30 release/2.1.30" in msg
+    assert "git merge --no-commit origin/main" in msg
 
 
 def test_resolve_strategy_release_branch_merges() -> None:
@@ -1771,7 +1873,7 @@ def test_stage_validation_launch_failure_reprovisions_and_retries(tmp_path: Path
     with (
         patch(_MOD + ".progress.run", side_effect=[_launch_err(), 0]) as run,
         patch(_MOD + ".resolve_language", return_value="python"),
-        patch(_MOD + ".clean_branch_images") as clean,
+        patch(_MOD + ".clean_branch_images", return_value=(0, [])) as clean,
         patch(_MOD + ".provision_dev_image", return_value=("img", "cached")) as prov,
     ):
         _stage_validation(ctx)  # must not raise
@@ -1790,7 +1892,7 @@ def test_stage_validation_snapshot_signature_without_125_reprovisions(tmp_path: 
     with (
         patch(_MOD + ".progress.run", side_effect=[sig_err, 0]) as run,
         patch(_MOD + ".resolve_language", return_value="python"),
-        patch(_MOD + ".clean_branch_images"),
+        patch(_MOD + ".clean_branch_images", return_value=(0, [])),
         patch(_MOD + ".provision_dev_image", return_value=("img", "cached")),
     ):
         _stage_validation(ctx)  # must not raise
@@ -1806,7 +1908,7 @@ def test_stage_validation_launch_failure_persists_raises_distinct_error(tmp_path
             side_effect=[_launch_err(), _launch_err(stderr=snapshot)],
         ),
         patch(_MOD + ".resolve_language", return_value="python"),
-        patch(_MOD + ".clean_branch_images"),
+        patch(_MOD + ".clean_branch_images", return_value=(0, [])),
         patch(_MOD + ".provision_dev_image", return_value=("img", "cached")),
         pytest.raises(FinalizeError) as excinfo,
     ):
@@ -1827,11 +1929,86 @@ def test_stage_validation_reprovision_then_real_failure_raises_fix_branch(tmp_pa
     with (
         patch(_MOD + ".progress.run", side_effect=[_launch_err(), real_failure]),
         patch(_MOD + ".resolve_language", return_value="python"),
-        patch(_MOD + ".clean_branch_images"),
+        patch(_MOD + ".clean_branch_images", return_value=(0, [])),
         patch(_MOD + ".provision_dev_image", return_value=("img", "cached")),
         pytest.raises(FinalizeError, match="fix develop"),
     ):
         _stage_validation(ctx)
+
+
+def test_stage_validation_refused_rebuild_fails_as_unknown(tmp_path: Path) -> None:
+    # The low-disk guard refusing the rebuild (#3571) means validation never ran:
+    # an unknown result, not a pass (#3316), so the stage fails with a readable
+    # message naming the image, the cause and the retry command, and validation
+    # is not retried against an image that was never rebuilt (#3605).
+    ctx = _stage_ctx([], root=tmp_path)
+    refused = CacheSpaceError("only 1.2G free after pruning; the build needs 4.0G")
+    with (
+        patch(_MOD + ".progress.run", side_effect=[_launch_err()]) as run,
+        patch(_MOD + ".resolve_language", return_value="python"),
+        patch(_MOD + ".clean_branch_images", return_value=(0, [])),
+        patch(_MOD + ".provision_dev_image", side_effect=refused),
+        pytest.raises(FinalizeError) as excinfo,
+    ):
+        _stage_validation(ctx)
+    assert run.call_count == 1
+    msg = str(excinfo.value)
+    assert msg.startswith("post-finalization validation did not run; result unknown")
+    assert "could not rebuild the develop dev image" in msg
+    assert "only 1.2G free after pruning; the build needs 4.0G" in msg
+    assert "retry with: vrg-container-run -- vrg-validate" in msg
+    assert "fix develop" not in msg  # not misattributed to a develop regression
+    assert excinfo.value.__cause__ is refused
+
+
+def test_stage_validation_failed_rebuild_keeps_full_error_text(tmp_path: Path) -> None:
+    # A generic cache-build failure carries the captured build output on later
+    # lines; none of it may be dropped from the failure.
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+    ctx = _stage_ctx([], root=tmp_path)
+    failed = RuntimeError("Cache build failed\nE: Unable to locate package nope")
+    with (
+        patch(_MOD + ".progress.run", side_effect=[_launch_err()]) as run,
+        patch(_MOD + ".resolve_language", return_value="python"),
+        patch(_MOD + ".clean_branch_images", return_value=(0, [])),
+        patch(_MOD + ".provision_dev_image", side_effect=failed),
+        pytest.raises(FinalizeError) as excinfo,
+    ):
+        _stage_validation(ctx)
+    assert run.call_count == 1
+    msg = str(excinfo.value)
+    assert "Cache build failed\nE: Unable to locate package nope" in msg
+    assert "retry with: vrg-container-run -- uv run vrg-validate" in msg
+
+
+@pytest.mark.parametrize(
+    ("exc", "cause"),
+    [
+        (
+            subprocess.CalledProcessError(
+                1, ("docker", "commit"), stderr="no space left on device"
+            ),
+            "no space left on device",
+        ),
+        (VersionsError("no published version window"), "no published version window"),
+    ],
+)
+def test_stage_validation_other_rebuild_failures_fail(
+    tmp_path: Path, exc: Exception, cause: str
+) -> None:
+    # The cache build commits the image with check=True, and the version
+    # resolver raises VersionsError: both are rebuild failures, reported the same.
+    ctx = _stage_ctx([], root=tmp_path)
+    with (
+        patch(_MOD + ".progress.run", side_effect=[_launch_err()]) as run,
+        patch(_MOD + ".resolve_language", return_value="python"),
+        patch(_MOD + ".clean_branch_images", return_value=(0, [])),
+        patch(_MOD + ".provision_dev_image", side_effect=exc),
+        pytest.raises(FinalizeError, match="did not run; result unknown") as excinfo,
+    ):
+        _stage_validation(ctx)
+    assert run.call_count == 1
+    assert cause in str(excinfo.value)
 
 
 def test_stage_validation_dry_run_skips(tmp_path: Path) -> None:
@@ -2182,7 +2359,7 @@ def _sweep_with_stuck(tmp_path: Path, status: WorktreeStatus) -> Generator[list[
         patch(_MOD + ".git.merged_branches", return_value=[]),
         patch(_MOD + ".worktrees.list_worktrees", return_value=[status.worktree]),
         patch(_MOD + ".worktrees.gather_worktree_status", return_value=status),
-        patch(_MOD + ".clean_branch_images", return_value=0),
+        patch(_MOD + ".clean_branch_images", return_value=(0, [])),
         patch(_MOD + "._wait_for_cd_run", return_value=None),
     ):
         yield calls
@@ -2723,7 +2900,7 @@ def test_delete_branch_and_worktree_prunes_relay_ref(tmp_path: Path) -> None:
     with (
         patch(_MOD + ".worktrees.worktree_for_branch", return_value=None),
         patch(_MOD + ".git.run"),
-        patch(_MOD + ".clean_branch_images", return_value=0),
+        patch(_MOD + ".clean_branch_images", return_value=(0, [])),
         patch(_MOD + ".github_transport.GitHubTransport") as mock_transport,
     ):
         assert _delete_branch_and_worktree("feature/9-x", tmp_path, dry_run=False)
@@ -2736,7 +2913,7 @@ def test_delete_branch_and_worktree_skips_relay_ref_on_dry_run(tmp_path: Path) -
     with (
         patch(_MOD + ".worktrees.worktree_for_branch", return_value=None),
         patch(_MOD + ".git.run"),
-        patch(_MOD + ".clean_branch_images", return_value=0),
+        patch(_MOD + ".clean_branch_images", return_value=(0, [])),
         patch(_MOD + ".github_transport.GitHubTransport") as mock_transport,
     ):
         assert _delete_branch_and_worktree("feature/9-x", tmp_path, dry_run=True)
@@ -2755,7 +2932,7 @@ def test_main_merged_branch_prunes_relay_ref(tmp_path: Path) -> None:
         patch(f"{_MOD}.git.read_output", return_value="feature/42-x"),
         patch(f"{_MOD}.git.run"),
         patch(f"{_MOD}.worktrees.worktree_for_branch", return_value=None),
-        patch(f"{_MOD}.clean_branch_images", return_value=0),
+        patch(f"{_MOD}.clean_branch_images", return_value=(0, [])),
         patch(f"{_MOD}.git.repo_root", return_value=tmp_path),
         patch(f"{_MOD}._wait_for_cd_run", return_value=None),
         patch(f"{_MOD}.github_transport.GitHubTransport") as mock_transport,
@@ -2776,7 +2953,7 @@ def test_main_closed_pr_cleanup_prunes_relay_ref(tmp_path: Path) -> None:
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.merged_branches", return_value=["feature/x", "develop"]),
         patch(_MOD + ".git.read_output", return_value=""),
-        patch(_MOD + ".clean_branch_images", return_value=0),
+        patch(_MOD + ".clean_branch_images", return_value=(0, [])),
         patch(_MOD + "._wait_for_cd_run", return_value=None),
         patch(_MOD + ".github_transport.GitHubTransport") as mock_transport,
     ):
@@ -2831,31 +3008,120 @@ def test_prune_orphan_relay_refs_skipped_on_dry_run(
     assert "[dry-run] prune orphaned" in capsys.readouterr().out
 
 
-def test_prune_orphan_branch_images_sweeps_dead_branches(
+def test_prune_orphan_branch_images_checks_every_repo_in_the_set(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Cached images for branches absent locally are swept; live ones kept."""
+    """The sweep asks the whole platform repo set, not the finalized repo (#3566)."""
+    repos = [_PROJECTS / "org" / "a", _PROJECTS / "other-org" / "b"]
     with (
-        patch(_MOD + ".git.local_branches", return_value={"develop", "feature/live"}),
-        patch(_MOD + ".prune_orphan_branch_images", return_value=3) as mock_prune,
+        patch(_MOD + ".default_repo_roots", return_value=[_PROJECTS]) as mock_roots,
+        patch(_MOD + ".discover_repos", return_value=repos) as mock_discover,
+        patch(_MOD + ".prune_orphan_branch_images", return_value=(3, [])) as mock_prune,
     ):
         _prune_orphan_branch_images(dry_run=False)
-    mock_prune.assert_called_once_with({"develop", "feature/live"})
-    assert "Pruned 3 orphaned cached container image(s)" in capsys.readouterr().out
+    mock_roots.assert_called_once_with()
+    mock_discover.assert_called_once_with([_PROJECTS])
+    mock_prune.assert_called_once_with(repos)
+    out = capsys.readouterr()
+    assert "Pruned 3 orphaned cached container image(s)" in out.out
+    assert out.err == ""
+
+
+def test_prune_orphan_branch_images_quiet_when_nothing_removed(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _prune_orphan_branch_images(dry_run=False)
+    assert capsys.readouterr() == ("", "")
+
+
+def test_prune_orphan_branch_images_warns_on_rmi_failure(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A refused rmi is named with the runtime's error; finalize carries on (#3566)."""
+    failure = ("ghcr.io/vergil-project/dev-python:3.14--feature-1-x--0123abcd", "image is in use")
+    with patch(_MOD + ".prune_orphan_branch_images", return_value=(1, [failure])):
+        _prune_orphan_branch_images(dry_run=False)
+    out = capsys.readouterr()
+    assert "Pruned 1 orphaned cached container image(s)" in out.out
+    assert f"WARNING: could not remove cached image {failure[0]}: image is in use" in out.err
+
+
+def test_prune_orphan_branch_images_skipped_without_a_repo_set(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """No confirmable repo set (the physical host) skips the sweep and says so."""
+    err = RepoSetError("no default repo set on the physical host. Pass --root DIR.")
+    with (
+        patch(_MOD + ".default_repo_roots", side_effect=err),
+        patch(_MOD + ".prune_orphan_branch_images") as mock_prune,
+    ):
+        _prune_orphan_branch_images(dry_run=False)
+    mock_prune.assert_not_called()
+    out = capsys.readouterr().out
+    assert "Skipping the orphaned-image sweep: no default repo set" in out
+    assert "vrg-container-cache prune --root DIR" in out
+
+
+def test_prune_orphan_branch_images_refuses_an_empty_repo_set(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with (
+        patch(_MOD + ".discover_repos", return_value=[]),
+        patch(_MOD + ".prune_orphan_branch_images") as mock_prune,
+    ):
+        _prune_orphan_branch_images(dry_run=False)
+    mock_prune.assert_not_called()
+    assert f"WARNING: no git repositories under {_PROJECTS}" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        RuntimeError("'docker images' failed: daemon down"),
+        subprocess.CalledProcessError(128, ["git", "branch"], stderr="not a git repository"),
+    ],
+)
+def test_prune_orphan_branch_images_lookup_failure_warns_and_continues(
+    exc: Exception, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A failed image or branch lookup skips the sweep loudly but never fails finalize."""
+    with patch(_MOD + ".prune_orphan_branch_images", side_effect=exc):
+        _prune_orphan_branch_images(dry_run=False)
+    assert "WARNING: skipped the orphaned-image sweep:" in capsys.readouterr().err
 
 
 def test_prune_orphan_branch_images_skipped_on_dry_run(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """--dry-run neither lists local branches nor removes any image."""
+    """--dry-run neither resolves the repo set nor removes any image."""
     with (
-        patch(_MOD + ".git.local_branches") as mock_local,
+        patch(_MOD + ".default_repo_roots") as mock_roots,
         patch(_MOD + ".prune_orphan_branch_images") as mock_prune,
     ):
         _prune_orphan_branch_images(dry_run=True)
-    mock_local.assert_not_called()
+    mock_roots.assert_not_called()
     mock_prune.assert_not_called()
     assert "[dry-run] prune orphaned cached dev images" in capsys.readouterr().out
+
+
+def test_clean_branch_images_warns_on_rmi_failure(capsys: pytest.CaptureFixture[str]) -> None:
+    """The finalized branch's image cleanup reports a refused rmi (#3566)."""
+    failure = ("ghcr.io/vergil-project/dev-python:3.14--feature-1-x--0123abcd", "conflict")
+    with patch(_MOD + ".clean_branch_images", return_value=(0, [failure])):
+        _clean_branch_images("feature/1-x")
+    out = capsys.readouterr()
+    assert "Cleaned" not in out.out
+    assert f"WARNING: could not remove cached image {failure[0]}: conflict" in out.err
+
+
+def test_clean_branch_images_warns_when_images_cannot_be_listed(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with patch(_MOD + ".clean_branch_images", side_effect=RuntimeError("daemon down")):
+        _clean_branch_images("feature/1-x")
+    assert "WARNING: could not clean cached images for feature/1-x: daemon down" in (
+        capsys.readouterr().err
+    )
 
 
 def test_main_sweeps_orphan_relay_ref(tmp_path: Path) -> None:

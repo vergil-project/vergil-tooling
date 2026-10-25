@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
@@ -25,6 +26,79 @@ def label_gh() -> Iterator[MagicMock]:
     """Stub the gh boundary under the real ensure_labels (#3373)."""
     with patch("vergil_tooling.lib.labels.github.run") as mock_run:
         yield mock_run
+
+
+@pytest.fixture(autouse=True)
+def dep_kind() -> Iterator[MagicMock]:
+    """Every --blocked-by dependency is a plain task unless a test says otherwise."""
+    with patch(f"{_MOD}.epics.non_task_kind", return_value=None) as mock_kind:
+        yield mock_kind
+
+
+@pytest.mark.parametrize("kind", ["epic", "archive"])
+@pytest.mark.parametrize("issue_kind", ["task", "validation"])
+def test_blocked_by_epic_or_archive_creates_nothing(
+    dep_kind: MagicMock, capsys: pytest.CaptureFixture[str], kind: str, issue_kind: str
+) -> None:
+    # #2842: a dependency names the task this one waits on, never an umbrella.
+    dep_kind.side_effect = lambda ref: kind if ref.number == 6 else None
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
+        patch(f"{_MOD}.github.create_issue") as mock_create,
+        patch(f"{_MOD}.epics.add_child") as mock_add,
+    ):
+        rc = main(
+            [
+                "--epic",
+                "adhoc",
+                "--title",
+                "T",
+                "--kind",
+                issue_kind,
+                "--blocked-by",
+                "org/repo#5",
+                "--blocked-by",
+                "#6",
+            ]
+        )
+    assert rc == 1
+    mock_create.assert_not_called()
+    mock_add.assert_not_called()
+    assert f"vrg-issue-create: --blocked-by (org/repo#6) is an {kind}, not a task" in (
+        capsys.readouterr().err
+    )
+    assert [c.args[0] for c in dep_kind.call_args_list] == [
+        epics.IssueRef("org", "repo", 5),
+        epics.IssueRef("org", "repo", 6),
+    ]
+
+
+def test_blocked_by_task_deps_are_checked_and_pass(dep_kind: MagicMock) -> None:
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
+        patch(f"{_MOD}.github.create_issue", return_value=_URL) as mock_create,
+        patch(f"{_MOD}.epics.add_child"),
+    ):
+        rc = main(["--epic", "adhoc", "--title", "T", "--blocked-by", "org/repo#5"])
+    assert rc == 0
+    dep_kind.assert_called_once_with(epics.IssueRef("org", "repo", 5))
+    mock_create.assert_called_once()
+
+
+def test_blocked_by_lookup_failure_creates_nothing(dep_kind: MagicMock) -> None:
+    # Fail closed: an unreadable dependency is never stamped as though a task.
+    dep_kind.side_effect = subprocess.CalledProcessError(1, ["gh"])
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
+        patch(f"{_MOD}.github.create_issue") as mock_create,
+        patch(f"{_MOD}.epics.add_child"),
+        pytest.raises(subprocess.CalledProcessError),
+    ):
+        main(["--epic", "adhoc", "--title", "T", "--blocked-by", "org/repo#5"])
+    mock_create.assert_not_called()
 
 
 def test_main_ensures_labels_in_target_repo_before_create(label_gh: MagicMock) -> None:
@@ -533,6 +607,52 @@ def test_main_bare_epic_resolves_against_target_epic_home(
     assert set(seen_orgs) == {"org"}
 
 
+def _personal_account_probe(dotgithub_error: str) -> object:
+    """A visibility probe for a private personal repo whose owner's .github fails."""
+
+    def is_public(nwo: str) -> bool:
+        if nwo == "owner/.github":
+            raise github.GitHubAPIError(1, ["gh", "repo", "view"], "", dotgithub_error)
+        return False
+
+    return is_public
+
+
+def test_main_personal_repo_without_dotgithub_self_homes() -> None:
+    """A private repo whose owner has no .github links under its own epic (#3603)."""
+    probe = _personal_account_probe("GraphQL: Could not resolve to a Repository")
+    with (
+        patch("vergil_tooling.lib.github.is_public", side_effect=probe),
+        patch("vergil_tooling.lib.epics.is_epic", return_value=True),
+        patch(
+            f"{_MOD}.github.create_issue", return_value="https://github.com/owner/notes/issues/9"
+        ),
+        patch(f"{_MOD}.epics.add_child") as mock_add,
+    ):
+        rc = main(["--repo", "owner/notes", "--epic", "#4", "--title", "T"])
+    assert rc == 0
+    mock_add.assert_called_once_with(
+        epics.IssueRef("owner", "notes", 4), epics.IssueRef("owner", "notes", 9)
+    )
+
+
+def test_main_epic_home_api_error_is_a_clean_failure(capsys: pytest.CaptureFixture[str]) -> None:
+    """Any other probe failure exits 1 with a one-line message, creating nothing."""
+    probe = _personal_account_probe("HTTP 502: Bad Gateway")
+    with (
+        patch("vergil_tooling.lib.github.is_public", side_effect=probe),
+        patch(f"{_MOD}.github.create_issue") as mock_create,
+        pytest.raises(SystemExit) as excinfo,
+    ):
+        main(["--repo", "owner/notes", "--epic", "#4", "--title", "T"])
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert err.startswith("vrg-issue-create: cannot resolve the epic home of owner/notes:")
+    assert "Bad Gateway" in err
+    assert "Traceback" not in err
+    mock_create.assert_not_called()
+
+
 def test_main_explicit_same_org_epic_proceeds() -> None:
     """An explicit epic ref in the issue's own org passes the guard and links."""
     with (
@@ -593,6 +713,24 @@ def test_main_accepts_every_standing_sentinel(sentinel: str) -> None:
     assert rc == 0
     mock_resolve.assert_called_once_with(sentinel, repo="org/repo")
     mock_add.assert_called_once_with(EPIC, epics.IssueRef("org", "repo", 123))
+
+
+def test_main_planning_ensures_in_progress_label_in_target_repo(label_gh: MagicMock) -> None:
+    """Creating an issue into planning ensures 'in-progress' in its repo (#3520)."""
+    planning = epics.IssueRef("org", ".github", 439)
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
+        patch("vergil_tooling.lib.epics._find_epic_by_title", return_value=planning),
+        patch(f"{_MOD}.github.create_issue", return_value=_URL),
+        patch(f"{_MOD}.epics.add_child") as mock_add,
+    ):
+        rc = main(["--epic", "planning", "--title", "T"])
+    assert rc == 0
+    ensured = [(c.args[2], c.args[4]) for c in label_gh.call_args_list]
+    assert ("in-progress", "org/.github") in ensured
+    assert ("in-progress", "org/repo") in ensured
+    mock_add.assert_called_once_with(planning, epics.IssueRef("org", "repo", 123))
 
 
 def test_epic_help_names_every_standing_sentinel(capsys: pytest.CaptureFixture[str]) -> None:

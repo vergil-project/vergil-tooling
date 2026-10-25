@@ -39,6 +39,8 @@ Subcommands:
           and verify the stable releases of every product in --config, apply
           retention, write and sign the metadata, and size-check the result in
           --out. Needs PACKAGE_SIGNING_KEY and PACKAGE_SIGNING_PASSPHRASE.
+          With --check-config, only validate --config and exit (no network,
+          keys or output; --keys and --out are then not needed).
 
   install-test  In a clean container for one test cell (--cell), install that
           cell's artifact from --artifacts, verify shipped systemd units, run
@@ -60,6 +62,7 @@ from vergil_tooling.lib.package import PackageError, build, matrix, python_build
 from vergil_tooling.lib.package import runtime as pkg_runtime
 from vergil_tooling.lib.package import staged as _staged  # noqa: F401  (registers the builder)
 from vergil_tooling.lib.package.index import collect, published, site
+from vergil_tooling.lib.package.index import config as index_config
 
 
 @cli_main
@@ -163,28 +166,34 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Repository whose releases to check (default: $GITHUB_REPOSITORY)",
     )
     c.set_defaults(func=_cmd_check_unpublished)
-    p = sub.add_parser(
+    ix = sub.add_parser(
         "index",
         help="Build the signed apt/dnf package-repository site",
         description="Collect, verify, retain, index, sign and size-check (spec §7.2).",
     )
-    p.add_argument("--config", required=True, metavar="PATH", help="packages.toml")
-    p.add_argument("--keys", required=True, metavar="DIR", help="Directory holding <vendor>.asc")
-    p.add_argument("--out", required=True, metavar="DIR", help="Site output (wiped first)")
-    p.add_argument(
+    ix.add_argument("--config", required=True, metavar="PATH", help="packages.toml")
+    ix.add_argument(
+        "--check-config",
+        action="store_true",
+        help="Only validate --config and exit (no network, keys or output)",
+    )
+    # Required for a build, so enforced after parsing: --check-config needs neither.
+    ix.add_argument("--keys", metavar="DIR", help="Directory holding <vendor>.asc")
+    ix.add_argument("--out", metavar="DIR", help="Site output (wiped first)")
+    ix.add_argument(
         "--work",
         default=".vergil/index-work",
         metavar="DIR",
         help="Download and scratch directory (default: .vergil/index-work)",
     )
-    p.add_argument(
+    ix.add_argument(
         "--base-url",
         default="",
         metavar="URL",
         help="Public URL of the site (default: https://<owner>.github.io/<repo> "
         "from GITHUB_REPOSITORY)",
     )
-    p.set_defaults(func=_cmd_index)
+    ix.set_defaults(func=_cmd_index)
     it = sub.add_parser(
         "install-test",
         help="Install-test one test cell's artifact (install, units, smoke, removal)",
@@ -198,7 +207,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     it.add_argument("--artifacts", required=True, metavar="DIR", help="Built artifact directory")
     it.add_argument("--report", required=True, metavar="PATH", help="Write the JSON report here")
     it.set_defaults(func=_cmd_install_test)
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.command == "index" and not args.check_config and not (args.keys and args.out):
+        ix.error("--keys and --out are required unless --check-config is given")
+    return args
 
 
 def _cmd_matrix(args: argparse.Namespace) -> int:
@@ -307,6 +319,10 @@ def _cmd_check_unpublished(args: argparse.Namespace) -> int:
 
 
 def _cmd_index(args: argparse.Namespace) -> int:
+    if args.check_config:
+        index_config.load(Path(args.config))
+        print(f"vrg-package: {args.config}: ok")
+        return 0
     site.build_site(
         Path(args.config),
         Path(args.keys),

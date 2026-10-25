@@ -2,18 +2,26 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib.process_errors import command_text, error_text
 from vergil_tooling.lib.progress import Stage, mark_warn
 from vergil_tooling.lib.promote import promote
+from vergil_tooling.lib.release import package_index
 from vergil_tooling.lib.release.bump import back_merge_and_bump
 from vergil_tooling.lib.release.confirm import confirm_develop, confirm_main
+from vergil_tooling.lib.release.conflict import merge_main_into_release
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.finalize import close_and_finalize, teardown_worktree
 from vergil_tooling.lib.release.handoff import consumer_refresh
-from vergil_tooling.lib.release.merge import known_pr_state, sync_local_branch, wait_and_merge
+from vergil_tooling.lib.release.merge import (
+    ReleaseConflictError,
+    known_pr_state,
+    sync_local_branch,
+    wait_and_merge,
+)
 from vergil_tooling.lib.release.package_index import wait_for_index
 from vergil_tooling.lib.release.preflight import preflight, run_audit
 from vergil_tooling.lib.release.prepare import prepare
@@ -21,6 +29,7 @@ from vergil_tooling.lib.release.tracking import (
     comment_phase_complete,
     comment_phase_failed,
     ensure_checklist,
+    publish_deferred_remedy,
     tick_stage,
 )
 from vergil_tooling.lib.release.update_deps_stage import update_deps
@@ -30,6 +39,12 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from vergil_tooling.lib.release.context import ReleaseContext
+
+
+# merge-release merges main into a conflicting release PR at most this many
+# times per run, pausing after each push so GitHub recomputes mergeable (#3526).
+_MAX_CONFLICT_HEALS = 3
+_CONFLICT_SETTLE_SECS = 10
 
 
 @dataclass
@@ -91,7 +106,7 @@ def _tracked(name: str, fn: Callable[[ReleaseContext], None]) -> Callable[[Relea
             fn(ctx)
         except ReleaseError as exc:
             comment_phase_failed(ctx, name, exc)
-            ctx.deferred_failures.append(name)
+            _record_failure(ctx, name)
             raise
         except Exception as exc:
             wrapped = ReleaseError(
@@ -101,7 +116,7 @@ def _tracked(name: str, fn: Callable[[ReleaseContext], None]) -> Callable[[Relea
                 detail=(getattr(exc, "stderr", None) or getattr(exc, "stdout", None)),
             )
             comment_phase_failed(ctx, name, wrapped)
-            ctx.deferred_failures.append(name)
+            _record_failure(ctx, name)
             raise wrapped from exc
         comment_phase_complete(ctx, name, _phase_details(ctx, name))
         names = _stage_names()
@@ -109,6 +124,18 @@ def _tracked(name: str, fn: Callable[[ReleaseContext], None]) -> Callable[[Relea
         tick_stage(ctx, name)
 
     return stage
+
+
+def _record_failure(ctx: ReleaseContext, name: str) -> None:
+    """Record a failed stage as halted, unless it deferred itself as a publish.
+
+    A stage that recorded its own failure in ``deferred_publish_failures``
+    (package-index) left the release complete, not halted: close-finalize must
+    still post the deferral comment and leave the issue open, not treat it as
+    a stage to fix and ``--resume`` (#3557).
+    """
+    if name not in ctx.deferred_publish_failures:
+        ctx.deferred_failures.append(name)
 
 
 def _stage_names() -> list[str]:
@@ -136,14 +163,15 @@ def build_stages() -> list[Stage]:
             mode="fail_defer",
         ),
         Stage("promote", _tracked("promote", _promote_phase), mode="fail_defer"),
+        # Waits for the published package index before close-finalize, so a
+        # miss (a deferred publish) leaves the tracking issue open with the
+        # deferral comment (#3557); the consumer refresh then holds on it.
+        Stage("package-index", _tracked("package-index", wait_for_index), mode="fail_defer"),
         Stage(
             "close-finalize",
             _tracked("close-finalize", close_and_finalize),
             mode="fail_defer",
         ),
-        # Waits for the published package index before the consumer refresh,
-        # which holds on the deferred publish failure a miss records.
-        Stage("package-index", _tracked("package-index", wait_for_index), mode="fail_defer"),
         Stage(
             "consumer-refresh",
             _tracked("consumer-refresh", consumer_refresh),
@@ -161,6 +189,10 @@ def merge_release(ctx: ReleaseContext) -> None:
 
     Resume-safe: if the PR is already merged (a prior run got this far), skip
     the merge and hydrate ``release_merge_sha`` rather than re-attempting it.
+
+    A CONFLICTING release PR self-heals: main is merged into the release
+    branch and pushed, a CHANGELOG-only conflict resolved automatically, and
+    any other conflict refused with recovery steps (#3526, ``conflict``).
     """
     if ctx.release_pr_url is None:
         raise ReleaseError(
@@ -174,16 +206,51 @@ def merge_release(ctx: ReleaseContext) -> None:
         ctx.release_merge_sha = "merged"
         return
     updates: list[None] = []
-    wait_and_merge(
-        ctx.release_pr_url,
-        phase="merge-release",
-        on_branch_updated=lambda: updates.append(None),
-    )
+    heals = 0
+    while True:
+        try:
+            wait_and_merge(
+                ctx.release_pr_url,
+                phase="merge-release",
+                on_branch_updated=lambda: updates.append(None),
+            )
+            break
+        except ReleaseConflictError as exc:
+            # main moved since the branch was cut: merge it in, resolving a
+            # CHANGELOG-only conflict, and wait again (#3526). Bounded, since
+            # main can keep moving and GitHub's mergeable can read stale.
+            heals += 1
+            if heals > _MAX_CONFLICT_HEALS:
+                raise ReleaseError(
+                    phase="merge-release",
+                    command="merge_main_into_release",
+                    message=(
+                        f"{exc} The release PR still conflicts after merging main into "
+                        f"it {_MAX_CONFLICT_HEALS} times; re-run: vrg-release --resume"
+                    ),
+                ) from exc
+            _heal_conflict(ctx, ctx.release_pr_url)
+            time.sleep(_CONFLICT_SETTLE_SECS)
     if updates:
         # GitHub added a merge commit the local release branch never saw;
         # bring the managed worktree up to what actually merged (#3175).
         _sync_release_branch(ctx, ctx.release_pr_url)
     ctx.release_merge_sha = "merged"
+
+
+def _heal_conflict(ctx: ReleaseContext, pr_url: str) -> None:
+    if ctx.release_branch is None or ctx.worktree_path is None:
+        raise ReleaseError(
+            phase="merge-release",
+            command="merge_main_into_release",
+            message=(
+                "The release PR conflicts with main, but release_branch or "
+                "worktree_path is not set, so main cannot be merged into it."
+            ),
+        )
+    merge_main_into_release(
+        pr_url, branch=ctx.release_branch, worktree=ctx.worktree_path, phase="merge-release"
+    )
 
 
 def _sync_release_branch(ctx: ReleaseContext, pr_url: str) -> None:
@@ -232,11 +299,11 @@ def _publish_status_stage(state: ReleaseState) -> None:
             mark_warn(f"repeats the update-deps failure: {ctx.deps_failure}")
         return
     jobs = ", ".join(ctx.deferred_publish_failures)
+    remedy = publish_deferred_remedy(ctx, ctx.deferred_publish_failures)
     problems = [
-        f"Release v{ctx.version} is published (tag + GitHub Release), but these "
-        f"CD publish jobs did not succeed: {jobs}. Re-run the CD publish to "
-        "deliver the artifacts — do NOT use vrg-release --resume (the version "
-        "is already tagged)."
+        f"Release v{ctx.version} is published (tag + GitHub Release), but "
+        f"artifact publish was deferred ({jobs}). To finish delivery, {remedy} — "
+        "do NOT use vrg-release --resume (the version is already tagged)."
     ]
     if ctx.deps_failure:
         problems.append(ctx.deps_failure)
@@ -244,6 +311,34 @@ def _publish_status_stage(state: ReleaseState) -> None:
         phase="publish-status",
         command="publish-status",
         message=" ".join(problems),
+    )
+
+
+def _close_finalize_outcome(ctx: ReleaseContext) -> str:
+    """What close-finalize actually did, mirroring ``close_and_finalize``'s branches.
+
+    The issue is closed only when nothing deferred. A deferred publish leaves it
+    open (the repo is still finalized) and names each deferred kind; a halted
+    earlier stage leaves it open and skips cleanup entirely (#3593).
+    """
+    if ctx.deferred_failures:
+        return (
+            "Tracking issue left open and cleanup skipped — earlier stages failed "
+            f"({', '.join(ctx.deferred_failures)}). Fix the cause and resume with "
+            "`vrg-release --resume`."
+        )
+    jobs = ctx.deferred_publish_failures
+    if not jobs:
+        return "Tracking issue closed. Repository finalized."
+    kinds = []
+    cd_jobs = [job for job in jobs if job != package_index.PHASE]
+    if cd_jobs:
+        kinds.append(f"CD publish ({', '.join(cd_jobs)})")
+    if package_index.PHASE in jobs:
+        kinds.append(f"package index ({package_index.PHASE})")
+    return (
+        "Tracking issue left open until the deferred publish completes: "
+        f"{'; '.join(kinds)}. Repository finalized."
     )
 
 
@@ -299,7 +394,7 @@ def _phase_details(ctx: ReleaseContext, phase: str) -> str:
         else:
             lines.append("Promote skipped (--no-promote).")
     elif phase == "close-finalize":
-        lines.append("Tracking issue closed. Repository finalized.")
+        lines.append(_close_finalize_outcome(ctx))
     elif phase == "package-index":
         if ctx.package_index_url:
             lines.append(f"Package visible in index: {ctx.package_index_url}")

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import gzip
 import io
+import json
+import subprocess
 import urllib.error
 from email.message import Message
 from typing import TYPE_CHECKING, NoReturn
@@ -17,6 +19,8 @@ from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
     from pathlib import Path
+
+    from vergil_tooling.lib.release.package_index import Fetch
 
 _BASE = "https://vergil-project.github.io/packages"
 
@@ -404,6 +408,197 @@ def test_noarch_polls_a_concrete_arch_directory(tmp_path: Path) -> None:
     text = b"Package: vergil-archive-keyring\nVersion: 2.1.240-1\nArchitecture: all\n"
     package_index.wait_for_index(ctx, fetch=lambda _u: text, sleep=_boom)
     assert ctx.package_index_url == _NOBLE_AMD64
+
+
+# -- streaming the publish-index run (#3528) ---------------------------------
+
+_PACKAGES_REPO = "vergil-project/packages"
+_RELEASE_JOBS = json.dumps(
+    {
+        "jobs": [
+            {"name": "package-matrix / plan", "startedAt": "2026-10-24T09:00:00Z"},
+            {"name": "release / release", "startedAt": "2026-10-24T09:30:00Z"},
+        ]
+    }
+)
+
+
+def _run(run_id: int, created: str, conclusion: str = "") -> dict[str, object]:
+    return {
+        "databaseId": run_id,
+        "createdAt": f"2026-10-24T{created}Z",
+        "conclusion": conclusion,
+        "url": f"https://github.com/{_PACKAGES_REPO}/actions/runs/{run_id}",
+    }
+
+
+class _FakeGh:
+    """Stands in for ``github.read_output``: the CD jobs, run lists and conclusions."""
+
+    def __init__(
+        self,
+        *,
+        jobs: str = _RELEASE_JOBS,
+        lists: list[str] | None = None,
+        conclusions: dict[str, str] | None = None,
+    ) -> None:
+        self.jobs = jobs
+        self.lists = lists or [""]
+        self.conclusions = conclusions or {}
+        self.list_calls = 0
+
+    def __call__(self, *args: str) -> str:
+        if args[:2] == ("run", "list"):
+            assert args[args.index("--repo") + 1] == _PACKAGES_REPO
+            assert args[args.index("--workflow") + 1] == "publish-index.yml"
+            out = self.lists[min(self.list_calls, len(self.lists) - 1)]
+            self.list_calls += 1
+            return out
+        if args[-1] == "jobs":
+            assert args[3:5] == ("vergil-project/vergil-tooling", "111")
+            return self.jobs
+        assert args[3] == _PACKAGES_REPO
+        return self.conclusions[args[4]]
+
+
+def _answers(*texts: bytes) -> Fetch:
+    it = iter(texts)
+    return lambda _u: next(it)
+
+
+def _follow(
+    ctx: ReleaseContext, gh: Callable[..., str], fetch: Fetch, sleep: Callable[[float], None]
+) -> list[str]:
+    """Run the stage with a recorded CD run; return the run IDs streamed."""
+    ctx.cd_run_id = "111"
+    watched: list[str] = []
+
+    def watch(repo: str, run_id: str, *, check_status: bool) -> None:
+        assert repo == _PACKAGES_REPO
+        assert check_status is False
+        watched.append(run_id)
+
+    with (
+        patch.object(package_index.github, "read_output", side_effect=gh),
+        patch.object(package_index, "watch_workflow", side_effect=watch),
+    ):
+        package_index.wait_for_index(ctx, fetch=fetch, sleep=sleep, now=_clock())
+    return watched
+
+
+def test_streams_earliest_covering_run(
+    release_ctx_with_package: ReleaseContext, capsys: pytest.CaptureFixture[str]
+) -> None:
+    runs = [
+        _run(3, "09:40:00"),
+        _run(2, "09:33:00"),
+        _run(4, "09:31:00", "cancelled"),
+        _run(1, "09:20:00", "success"),
+    ]
+    gh = _FakeGh(lists=[json.dumps(runs)], conclusions={"2": "success"})
+    watched = _follow(release_ctx_with_package, gh, _answers(b"", _PACKAGES.encode()), _boom)
+    assert watched == ["2"]
+    out = capsys.readouterr().out
+    assert "publish-index runs created since 2026-10-24T09:30:00+00:00" in out
+    assert f"Publish-index run: https://github.com/{_PACKAGES_REPO}/actions/runs/2" in out
+    assert "Publish-index run finished (success); checking the index." in out
+    assert release_ctx_with_package.package_index_url == _NOBLE_AMD64
+
+
+def test_cancelled_run_follows_the_next(
+    release_ctx_with_package: ReleaseContext, capsys: pytest.CaptureFixture[str]
+) -> None:
+    runs = json.dumps([_run(3, "09:40:00"), _run(2, "09:33:00")])
+    gh = _FakeGh(lists=[runs], conclusions={"2": "cancelled", "3": "success"})
+    fetch = _answers(b"", b"", _PACKAGES.encode())
+    assert _follow(release_ctx_with_package, gh, fetch, _boom) == ["2", "3"]
+    assert "cancelled (superseded); following the next one" in capsys.readouterr().out
+
+
+def test_heartbeat_while_index_propagates(
+    release_ctx_with_package: ReleaseContext, capsys: pytest.CaptureFixture[str]
+) -> None:
+    gh = _FakeGh(lists=[json.dumps([_run(2, "09:33:00")])], conclusions={"2": "failure"})
+    sleeps: list[float] = []
+    fetch = _answers(b"", b"", _PACKAGES.encode())
+    assert _follow(release_ctx_with_package, gh, fetch, sleeps.append) == ["2"]
+    assert sleeps == [30]
+    out = capsys.readouterr().out
+    assert "Publish-index run finished (failure)" in out
+    assert "vergil-tooling 2.1.240-1 not in the index yet (" in out
+    assert "polling again in 30s" in out
+
+
+def test_heartbeat_until_run_appears(
+    release_ctx_with_package: ReleaseContext, capsys: pytest.CaptureFixture[str]
+) -> None:
+    gh = _FakeGh(lists=["", json.dumps([_run(2, "09:33:00")])], conclusions={"2": "success"})
+    sleeps: list[float] = []
+    fetch = _answers(b"", b"", _PACKAGES.encode())
+    assert _follow(release_ctx_with_package, gh, fetch, sleeps.append) == ["2"]
+    assert sleeps == [30]
+    assert "not in the index yet" in capsys.readouterr().out
+
+
+def test_run_list_failure_falls_back_to_polling(
+    release_ctx_with_package: ReleaseContext, capsys: pytest.CaptureFixture[str]
+) -> None:
+    gh = _FakeGh()
+
+    def failing(*args: str) -> str:
+        if args[:2] == ("run", "list"):
+            gh.list_calls += 1
+            raise subprocess.CalledProcessError(1, ["gh", *args], stderr="boom")
+        return gh(*args)
+
+    sleeps: list[float] = []
+    fetch = _answers(b"", b"", _PACKAGES.encode())
+    assert _follow(release_ctx_with_package, failing, fetch, sleeps.append) == []
+    assert gh.list_calls == 1
+    assert sleeps == [30, 30]
+    out = capsys.readouterr().out
+    assert "Could not follow the publish-index run" in out
+    assert "polling the index only" in out
+    assert release_ctx_with_package.deferred_publish_failures == []
+
+
+def test_dispatch_time_failure_polls_only(
+    release_ctx_with_package: ReleaseContext, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def failing(*args: str) -> str:
+        raise subprocess.CalledProcessError(1, ["gh", *args], stderr="boom")
+
+    fetch = _answers(b"", _PACKAGES.encode())
+    assert _follow(release_ctx_with_package, failing, fetch, lambda _s: None) == []
+    assert "Could not read the CD run's dispatch time" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "jobs",
+    [
+        "",
+        json.dumps({"jobs": [{"name": "package-matrix / plan", "startedAt": "x"}]}),
+        json.dumps({"jobs": [{"name": "release / release", "startedAt": None}]}),
+    ],
+)
+def test_no_release_job_polls_only(
+    release_ctx_with_package: ReleaseContext, capsys: pytest.CaptureFixture[str], jobs: str
+) -> None:
+    gh = _FakeGh(jobs=jobs)
+    fetch = _answers(b"", _PACKAGES.encode())
+    assert _follow(release_ctx_with_package, gh, fetch, lambda _s: None) == []
+    assert gh.list_calls == 0
+    assert "No CD release job recorded; polling the index only." in capsys.readouterr().out
+
+
+def test_no_cd_run_polls_with_heartbeat(
+    release_ctx_with_package: ReleaseContext, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fetch = _answers(b"", _PACKAGES.encode())
+    package_index.wait_for_index(release_ctx_with_package, fetch=fetch, sleep=lambda _s: None)
+    out = capsys.readouterr().out
+    assert "No CD release job recorded; polling the index only." in out
+    assert "not in the index yet (" in out
 
 
 # -- _fetch -----------------------------------------------------------------

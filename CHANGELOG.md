@@ -5,6 +5,66 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.265] - 2026-10-25
+
+### Bug fixes
+
+- give per-kind advice for deferred publishes (#3561)
+- remove the retired triage/idea/research labels and have the sync delete them (#3564)
+- audit TypeScript devDependencies, not just production (#3567)
+- replace and verify the parent after a cross-repo one-off transfer (#3569)
+- resolve a bare --epic #N against the current repo's epic home (#3572)
+- re-poll suspected orphaned check-runs for a grace period before failing (#3574)
+- retry an empty head-SHA run lookup before failing the evidence gate (#3575)
+- stage docs sources like CI before mkdocs runs (#3576)
+- add vrg-container-cache prune for finished-branch cache images (#3577)
+- ensure the in-progress label in a planning item's own repo (#3578)
+- record relay submissions on the local worktree (#3579)
+- preflight refuses on main/develop divergence with a recovery path (#3580)
+- preview the real per-repo verdict in a sweep dry run (#3585)
+- file a fix task when an updater or hook fails (#3586)
+- scan the C++ conan audit in the lock's Debug configuration (#3587)
+- give the human exact commands to resolve a submitted PR's merge conflict (#3589)
+- defer a package-index miss before close-finalize so the tracking issue stays open (#3596)
+- comment on the open fix task instead of filing a duplicate on a re-run (#3597)
+- run the image's mkdocs when a Python repo has no docs dependency group (#3598)
+- keep other repos' branch images in finalize's prune; report rmi failures (#3599)
+- make vrg-gitignore-sync --check and --write agree (#3600)
+- self-heal a conflicting release PR by merging main into it (#3601)
+- say whether close-finalize closed the tracking issue or left it open (#3609)
+- skip gitignored files in the common lint checks (#3610)
+- self-home a private repo whose owner has no .github (#3614)
+- fail validation cleanly when the image rebuild fails (#3616)
+- guard branch creation through vrg-git branch (#3617)
+- fail org-wide vrg-queue and vrg-epic-audit clearly when <owner>/.github is missing (#3618)
+
+### Documentation
+
+- document the report-only Dependabot posture and the per-org automation Apps (#3521)
+- add the security-boundary register for cross-system seams (#3570)
+- document vrg-container-cache prune in the CLI tools overview (#3611)
+
+### Features
+
+- allow pr update-branch for the USER identity (#3559)
+- redirect agents to vrg-pr-workflow report-ready from --help (#3562)
+- add index --check-config to validate packages.toml without building (#3565)
+- allow run rerun and read-only workflow/cache commands (#3573)
+- stream the publish-index run in the package-index stage (#3581)
+- add day x repo summary, per-day pages and --repo filter (#3582)
+- add --all-versions to run the coverage gate on every CI version (#3583)
+- report undeclared ruleset parameters as a distinct audit category (#3584)
+- add an OSV-Scanner vulnerability audit to the Java profile (#3588)
+- refuse epic/archive-labelled issues where a task is expected (#3591)
+- auto-prune per-branch cache images when the image store runs low (#3607)
+- refuse epic, archive and closed issues when creating an issue branch (#3608)
+- report-ready pushes the branch itself, not just the relay ref (#3612)
+- prune finished cache images inside the VM on vrg-vm update (#3615)
+
+### Refactoring
+
+- one RETIRED_LABELS in lib/labels.py; repo_init reuses the label sync (#3590)
+
 ## [2.1.264] - 2026-10-24
 
 ### Bug fixes

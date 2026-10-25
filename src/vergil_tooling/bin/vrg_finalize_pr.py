@@ -51,6 +51,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import (
+    branch_names,
     config,
     git,
     github,
@@ -59,15 +60,14 @@ from vergil_tooling.lib import (
     progress,
     worktrees,
 )
+from vergil_tooling.lib.cache_prune import clean_branch_images, prune_orphan_branch_images
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.confirm import add_yes_argument, confirm
 from vergil_tooling.lib.container import resolve_language
-from vergil_tooling.lib.container_cache import (
-    clean_branch_images,
-    provision_dev_image,
-    prune_orphan_branch_images,
-)
+from vergil_tooling.lib.container_cache import provision_dev_image
+from vergil_tooling.lib.live_branches import RepoSetError, default_repo_roots, discover_repos
 from vergil_tooling.lib.pr_workflow import batch, github_transport
+from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.progress import Stage
 from vergil_tooling.lib.repo_init import prompt_choice
 from vergil_tooling.lib.versions import VersionsError
@@ -438,22 +438,82 @@ def _prune_orphan_relay_refs(*, dry_run: bool) -> None:
         github_transport.GitHubTransport(branch).delete()
 
 
+_IMAGE_FAILURE_HINT = "remove it by hand, or with vrg-container-cache"
+
+
+def _warn_image_failures(failures: list[tuple[str, str]]) -> None:
+    """Report each failed cached-image ``rmi`` loudly, without failing finalize.
+
+    Image cleanup runs after the merge has already succeeded, so a refused
+    ``rmi`` must not fail the command — but it must not vanish either (#3566).
+    """
+    for ref, error in failures:
+        print(
+            f"  WARNING: could not remove cached image {ref}: {error} ({_IMAGE_FAILURE_HINT})",
+            file=sys.stderr,
+        )
+
+
+def _clean_branch_images(branch: str) -> None:
+    """Remove *branch*'s cached dev images, warning on any failure (#3566)."""
+    try:
+        removed, failures = clean_branch_images(branch)
+    except RuntimeError as exc:
+        print(
+            f"  WARNING: could not clean cached images for {branch}: {exc}",
+            file=sys.stderr,
+        )
+        return
+    if removed:
+        print(f"  Cleaned {removed} cached container image(s) for {branch}")
+    _warn_image_failures(failures)
+
+
 def _prune_orphan_branch_images(*, dry_run: bool) -> None:
-    """Prune cached dev images whose branch no longer exists locally (issue #2600).
+    """Prune cached dev images whose branch is finished everywhere (#2600, #3566).
 
     The per-branch cleanup already prunes the finalized branch's cached image
     (``clean_branch_images``). This is the swept safety net for the branch that
     was never finalized — abandoned, or its PR closed out of band — whose
-    ~1.3–2G cached image would otherwise linger and fill the VM disk. Mirrors
-    ``_prune_orphan_relay_refs``: keep images for still-live local branches,
-    remove the rest.
+    ~1.3–2G cached image would otherwise linger and fill the VM disk.
+
+    The tag records no repository and every repo of a language shares the image
+    name, so "live" is asked of the whole platform repo set, exactly as
+    ``vrg-container-cache prune`` asks it — never of the finalized repo alone,
+    which would delete every other repo's in-progress images. Where no repo set
+    can be confirmed (the physical host has no default) the sweep is skipped
+    and says so; a failed lookup skips it with a warning. Neither fails
+    finalize: the merge has already landed.
     """
     if dry_run:
         print("  [dry-run] prune orphaned cached dev images")
         return
-    removed = prune_orphan_branch_images(git.local_branches())
+    try:
+        roots = default_repo_roots()
+        repos = discover_repos(roots)
+    except RepoSetError as exc:
+        print(f"  Skipping the orphaned-image sweep: {exc}")
+        print("  Sweep by hand with: vrg-container-cache prune --root DIR")
+        return
+    if not repos:
+        where = ", ".join(str(r) for r in roots)
+        print(
+            f"  WARNING: no git repositories under {where}; skipping the orphaned-image "
+            "sweep rather than pruning against an empty repo set.",
+            file=sys.stderr,
+        )
+        return
+    try:
+        removed, failures = prune_orphan_branch_images(repos)
+    except (RuntimeError, subprocess.CalledProcessError) as exc:
+        print(
+            f"  WARNING: skipped the orphaned-image sweep: {' '.join(error_text(exc).split())}",
+            file=sys.stderr,
+        )
+        return
     if removed:
         print(f"  Pruned {removed} orphaned cached container image(s)")
+    _warn_image_failures(failures)
 
 
 def _delete_branch_and_worktree(
@@ -497,9 +557,7 @@ def _delete_branch_and_worktree(
     print(f"  Deleting merged branch: {branch}")
     _run(["branch", "-D", branch], dry_run=dry_run)
     if not dry_run:
-        removed = clean_branch_images(branch)
-        if removed:
-            print(f"  Cleaned {removed} cached container image(s) for {branch}")
+        _clean_branch_images(branch)
     # Drop the branch's relay ref too, so a cloud-handoff ref never outlives the
     # branch it belonged to (issue #2369). Shared by both cleanup paths.
     _delete_relay_ref(branch, dry_run=dry_run)
@@ -946,6 +1004,46 @@ def _resolve_strategy(branch: str, override: str | None) -> str:
     return "merge" if branch.startswith(_RELEASE_BRANCH_PREFIX) else "squash"
 
 
+def _conflict_resolution_msg(pr: str, head: str, base: str, root: Path) -> str:
+    """The exact commands for the human to resolve *pr*'s conflict with *base*.
+
+    A submitted branch is frozen to agents — ``unfreeze`` refuses it and
+    ``vrg-commit``/``vrg-git`` refuse the commit and push — so the human, who
+    is not bound by the wrappers, resolves it with raw git (issue #3555). It
+    is a merge, not a rebase: the PR is already public, so its history must
+    not be rewritten. The ``--ff-only`` step first picks up any commits GitHub
+    added to the branch (update-branch) so the push fast-forwards, and the
+    commands carry no inline ``#`` comments because interactive zsh does not
+    treat them as comments. ``--no-commit`` stops the merge for validation before
+    the human commits, and the push names the branch explicitly because a
+    worktree created with ``-b … origin/<base>`` tracks the base, not itself.
+    """
+    wt = worktrees.worktree_for_branch(head, root)
+    if wt is not None:
+        enter = f"  cd {wt}"
+    else:
+        dirname = branch_names.expected_worktree_dirname(head) or head.replace("/", "-")
+        wt = root / ".worktrees" / dirname
+        enter = (
+            f"  cd {root} && git fetch origin && git worktree add .worktrees/{dirname} {head}\n"
+            f"  cd {wt}"
+        )
+    return (
+        f"PR {pr} has merge conflicts with {base}. The branch is already submitted, "
+        f"so only you can resolve it (agents are frozen out of it). Merge {base} in — "
+        f"do not rebase a public PR — then validate, commit and push with raw git. "
+        f"After the --no-commit merge stops, resolve each conflicted file and git add it:\n"
+        f"{enter}\n"
+        f"  git fetch origin\n"
+        f"  git merge --ff-only origin/{head}\n"
+        f"  git merge --no-commit origin/{base}\n"
+        f"  vrg-container-run -- vrg-validate\n"
+        f"  git commit --no-edit\n"
+        f"  git push origin {head}\n"
+        f"  cd {root} && vrg-finalize-pr {pr}"
+    )
+
+
 def _stage_merge(ctx: FinalizeContext) -> None:
     """Merge the PR (or confirm it is already merged) and record its branch."""
     args = ctx.args
@@ -958,6 +1056,9 @@ def _stage_merge(ctx: FinalizeContext) -> None:
     else:
         try:
             pr_merge.wait_and_merge(args.pr, strategy=strategy)
+        except pr_merge.MergeConflictError as exc:
+            msg = _conflict_resolution_msg(args.pr, branch, github.base_ref(args.pr), ctx.root)
+            raise FinalizeError(msg) from exc
         except pr_merge.MergeAbortError as exc:
             raise FinalizeError(str(exc)) from exc
     ctx.merged_branch = branch
@@ -1196,16 +1297,40 @@ def _launch_failure_msg(branch: str, exc: subprocess.CalledProcessError) -> str:
     )
 
 
-def _reprovision_target_image(ctx: FinalizeContext) -> None:
+def _rebuild_failure_msg(branch: str, exc: BaseException, retry: tuple[str, ...]) -> str:
+    """The message for a dev-image rebuild that failed, so validation never ran.
+
+    Like a CD watch timeout (issue #3316), an unrun validation is an unknown
+    result, not a pass: it fails the stage. Carries the original error text in
+    full (a failed cache build folds its captured output into it) and the
+    command to retry once the cause is fixed (issue #3605).
+    """
+    return (
+        f"post-finalization validation did not run; result unknown: could not "
+        f"rebuild the {branch} dev image after the container failed to launch.\n"
+        f"{error_text(exc)}\n"
+        f"Free space or fix the cause, then retry with: {' '.join(retry)}"
+    )
+
+
+def _reprovision_target_image(ctx: FinalizeContext, retry: tuple[str, ...]) -> None:
     """Force a clean rebuild of the target-branch dev image (issue #3016).
 
     Drop any cached image for the target branch so the rebuild cannot reuse a
     corrupt one, then provision fresh. Used to recover from a container-launch
     failure discovered during validation.
+
+    A failed rebuild — the low-disk guard refusing it (#3571), a failed cache
+    build, or an unresolvable version window — raises :class:`FinalizeError`
+    naming the image, the cause and the *retry* command (issue #3605).
     """
-    clean_branch_images(ctx.args.target_branch)
+    branch = ctx.args.target_branch
+    _clean_branch_images(branch)
     lang = resolve_language(ctx.root)
-    provision_dev_image(ctx.root, lang, quiet_warmup=True)
+    try:
+        provision_dev_image(ctx.root, lang, quiet_warmup=True)
+    except (RuntimeError, VersionsError, subprocess.CalledProcessError) as exc:
+        raise FinalizeError(_rebuild_failure_msg(branch, exc, retry)) from exc
 
 
 def _stage_validation(ctx: FinalizeContext) -> None:
@@ -1220,7 +1345,9 @@ def _stage_validation(ctx: FinalizeContext) -> None:
     (or a runtime snapshot error) means the container never started, so
     validation never ran. That is usually a stale image-cache snapshot whose
     parent layer was orphaned; rebuild the dev image and retry once before
-    concluding anything about the branch (issue #3016).
+    concluding anything about the branch (issue #3016). If that rebuild itself
+    fails, validation did not run and its result is unknown, so the stage fails
+    without a pointless retry (issues #3316, #3605).
     """
     args = ctx.args
     if args.dry_run:
@@ -1245,7 +1372,8 @@ def _stage_validation(ctx: FinalizeContext) -> None:
         "rebuilding the dev image and retrying once...",
         file=sys.stderr,
     )
-    _reprovision_target_image(ctx)
+    # A failed rebuild raises here: there is no new image to retry against.
+    _reprovision_target_image(ctx, cmd)
     try:
         progress.run(cmd)
     except subprocess.CalledProcessError as exc:

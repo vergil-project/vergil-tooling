@@ -34,6 +34,7 @@ import logging
 import shutil
 import tarfile
 import tempfile
+import time
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -47,9 +48,10 @@ from vergil_tooling.lib.github_config import (
 )
 from vergil_tooling.lib.linkage import extract_merge_pr
 from vergil_tooling.lib.remote_config import require_config_at_ref
+from vergil_tooling.lib.retry import compute_delay
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Callable, Mapping, Sequence
 
     from vergil_tooling.lib.github_config import EvidenceGate
 
@@ -467,7 +469,8 @@ def validate_completeness(
 # All GitHub I/O for the evidence bundle, isolated behind mockable functions so
 # the CLI and the bundle core stay network-free. Every call routes through
 # ``vergil_tooling.lib.github``, whose ``_run_with_retry`` already retries
-# transient API failures — no bespoke retry loop is needed here.
+# transient API failures. The one bespoke loop is :func:`wait_for_ci_run`,
+# which re-queries an *empty* head-SHA run lookup while GitHub's index lags.
 
 # Prefix a gate workflow uploads its evidence artifact under
 # (``ci-evidence-<gate>``); the producer convention that decouples gate
@@ -483,9 +486,15 @@ class NoQualifyingRunError(Exception):
     validated by a green CI run, so no evidence can be harvested.
     """
 
-    def __init__(self, head_sha: str) -> None:
-        super().__init__(f"no completed+success CI run for head SHA {head_sha}")
+    def __init__(self, head_sha: str, *, visible: bool = True, waited: float = 0.0) -> None:
+        message = f"no completed+success CI run for head SHA {head_sha}"
+        if waited > 0:
+            message += f" (no run became visible within {waited:g}s; GitHub's run index may lag)"
+        super().__init__(message)
         self.head_sha = head_sha
+        # False when the head-SHA lookup returned no run of the workflow at all
+        # — the one case that may be GitHub's run index lagging (issue #3434).
+        self.visible = visible
 
 
 class EvidenceArtifactError(Exception):
@@ -576,8 +585,61 @@ def select_ci_run(repo: str, head_sha: str, *, workflow: str = "CI") -> dict[str
     runs = cast("list[dict[str, Any]]", raw)
     qualifying = [run for run in runs if _is_qualifying_run(run, workflow)]
     if not qualifying:
-        raise NoQualifyingRunError(head_sha)
+        visible = any(run.get("name") == workflow for run in runs)
+        raise NoQualifyingRunError(head_sha, visible=visible)
     return max(qualifying, key=lambda run: run["run_started_at"])
+
+
+# Default grace period for a CI run to appear in GitHub's head-SHA run index.
+# The index can trail a just-completed run by minutes during a GitHub incident
+# (issue #3434); 5 min sits well inside the gate step's 15-min timeout.
+RUN_VISIBILITY_GRACE_SECS = 300.0
+
+
+def wait_for_ci_run(
+    repo: str,
+    head_sha: str,
+    *,
+    grace: float = RUN_VISIBILITY_GRACE_SECS,
+    sleep: Callable[[float], None] | None = None,
+    clock: Callable[[], float] | None = None,
+) -> dict[str, Any]:
+    """:func:`select_ci_run`, re-queried while the head-SHA run index lags.
+
+    Only an **empty** lookup (no ``CI`` run visible for ``head_sha`` at all)
+    is retried: GitHub's run-by-SHA index can trail a run that already completed
+    (issue #3434). Each retry is logged and backs off with
+    :func:`~vergil_tooling.lib.retry.compute_delay`, the last sleep clamped to
+    the deadline, then one final query. When *grace* elapses with still nothing
+    visible, :class:`NoQualifyingRunError` is raised naming the wait. A visible
+    run that is failed, cancelled or in progress fails at once, as before — the
+    grace period never weakens the completed+success requirement. *sleep* and
+    *clock* default to :func:`time.sleep`/:func:`time.monotonic` and are
+    injectable for tests.
+    """
+    sleep = sleep or time.sleep
+    clock = clock or time.monotonic
+    deadline = clock() + grace
+    attempt = 0
+    while True:
+        try:
+            return select_ci_run(repo, head_sha)
+        except NoQualifyingRunError as exc:
+            if exc.visible:
+                raise
+            remaining = deadline - clock()
+            if remaining <= 0:
+                raise NoQualifyingRunError(head_sha, visible=False, waited=grace) from exc
+            delay = min(compute_delay(attempt), remaining)
+            log.warning(
+                "CI run for %s not visible yet — GitHub index may lag; "
+                "retrying in %.1fs (up to %gs total)",
+                head_sha,
+                delay,
+                grace,
+            )
+            sleep(delay)
+            attempt += 1
 
 
 def download_evidence_artifacts(
@@ -803,7 +865,13 @@ def load_harvested_gates_from_state(state: HarvestState, staging_dir: Path) -> l
 # is the network-free attach; ``run_bundle`` composes them for back-compat.
 
 
-def run_harvest(repo: str, merge_sha: str, staging_dir: Path) -> HarvestState:
+def run_harvest(
+    repo: str,
+    merge_sha: str,
+    staging_dir: Path,
+    *,
+    run_grace: float = RUN_VISIBILITY_GRACE_SECS,
+) -> HarvestState:
     """Harvest a release's CI evidence into ``staging_dir`` (the pre-publish gate).
 
     Each line is one library stage: resolve the release PR, its validated head
@@ -821,7 +889,9 @@ def run_harvest(repo: str, merge_sha: str, staging_dir: Path) -> HarvestState:
     # A bare PR number resolves against the cwd checkout's repo; the URL pins
     # the lookup to *repo* so it reads the right PR from any directory (#3220).
     head_sha = github.head_sha(f"https://github.com/{repo}/pull/{release_pr}")
-    run = select_ci_run(repo, head_sha)
+    # GitHub's head-SHA run index can lag a just-completed run (#3434), so an
+    # empty lookup is re-queried for *run_grace* seconds before failing.
+    run = wait_for_ci_run(repo, head_sha, grace=run_grace)
 
     # The required set comes from *repo*'s own vergil.toml at the validated
     # head — never the cwd checkout, which may be another repo or none (#3226).

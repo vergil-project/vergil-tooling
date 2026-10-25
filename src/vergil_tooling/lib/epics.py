@@ -25,7 +25,7 @@ from vergil_tooling.lib.config import CONFIG_FILE
 from vergil_tooling.lib.labels import ensure_labels
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Collection, Sequence
 
 
 @dataclass(frozen=True)
@@ -425,21 +425,70 @@ def resolve_epic_ref(ref: str, *, repo: str) -> IssueRef:
     return epic
 
 
+class EpicHomeError(Exception):
+    """An epic home could not be resolved because a visibility probe failed.
+
+    Carries a one-line, user-facing message; :func:`cli.cli_main` prints it as
+    ``<prog>: <message>`` instead of a traceback.
+    """
+
+
 def resolve_epic_home(org: str, target_repo: str) -> str:
     """Map an explicit *target_repo* (bare name) to its epic home ``"owner/repo"``.
 
     A public target homes centrally in ``<org>/.github`` (today's behavior). A
     private target with a public ``.github`` homes its epics in itself
     (self-contained). A private ``.github`` means the whole org is private, so
-    everything routes to ``.github``. Fail-loud: visibility errors propagate
-    (see :func:`github.repo_visibility`).
+    everything routes to ``.github``. A private target whose owner has no
+    ``.github`` at all (a personal account, typically) self-homes too: there is
+    no central home to use (#3603). Fail-loud: any other probe failure raises
+    :class:`EpicHomeError` (a missing token keeps its own error for
+    :func:`cli.cli_main`).
     """
     if target_repo == ".github":
         return f"{org}/.github"
-    if github.is_public(f"{org}/{target_repo}"):
-        return f"{org}/.github"
-    if github.is_public(f"{org}/.github"):
+    try:
+        if github.is_public(f"{org}/{target_repo}"):
+            return f"{org}/.github"
+        try:
+            dotgithub_public = github.is_public(f"{org}/.github")
+        except github.GitHubAPIError as exc:
+            if not github.is_repo_not_found(exc):
+                raise
+            return f"{org}/{target_repo}"  # no <org>/.github: nowhere central to home
+    except github.MissingGitHubTokenError:
+        raise
+    except github.GitHubAPIError as exc:
+        msg = f"cannot resolve the epic home of {org}/{target_repo}: {exc}"
+        raise EpicHomeError(msg) from exc
+    if dotgithub_public:
         return f"{org}/{target_repo}"
+    return f"{org}/.github"
+
+
+def require_org_home(org: str) -> str:
+    """Return ``<org>/.github``, the org-wide queue and epic home, checking it exists.
+
+    The org-wide paths of ``vrg-queue`` and ``vrg-epic-audit`` assume it does; an
+    owner with none (a personal account, typically) has no org-wide home at all,
+    only self-homed repos reached with ``--repo`` (#3613). Fail-loud: a missing
+    ``.github`` and any other probe failure both raise :class:`EpicHomeError` (a
+    missing token keeps its own error for :func:`cli.cli_main`).
+    """
+    try:
+        exists = github.repo_exists(org, ".github")
+    except github.MissingGitHubTokenError:
+        raise
+    except github.GitHubAPIError as exc:
+        msg = f"cannot check for {org}/.github, the org-wide queue and epic home: {exc}"
+        raise EpicHomeError(msg) from exc
+    if not exists:
+        msg = (
+            f"{org} has no .github repository, so there is no org-wide queue or "
+            f"epic home; pass --repo {org}/<repo> to reach a self-homed repo's own "
+            "queues and epics"
+        )
+        raise EpicHomeError(msg)
     return f"{org}/.github"
 
 
@@ -663,12 +712,16 @@ def ensure_intake_epic(target_repo: str) -> IssueRef:
 def ensure_planning_epic(target_repo: str) -> IssueRef:
     """Return the planning queue epic for *target_repo*'s queue home, creating it if absent.
 
-    Also ensures the per-item ``in-progress`` label exists in that home, every
-    time, so ``epic-create`` can apply it in any planning home.
+    Also ensures the per-item ``in-progress`` label exists, every time, in that
+    home and in *target_repo* — the item's own repo, which differs from the home
+    for a member-repo item — so ``epic-create`` can apply it to the item (#3520).
+    Every entry into planning (the ``planning`` sentinel and
+    ``vrg-intake-route … planning``) comes through here with the item's repo.
     """
     home, name = queue_home(target_repo)
     epic = ensure_standing_epic(PLANNING, home, name)
-    ensure_labels(home, (PLANNING_IN_PROGRESS_LABEL,))
+    for repo in dict.fromkeys((home, target_repo)):
+        ensure_labels(repo, (PLANNING_IN_PROGRESS_LABEL,))
     return epic
 
 
@@ -1296,19 +1349,64 @@ def normalize_adhoc_archives(org: str, *, apply: bool) -> list[ArchiveConversion
     return conversions
 
 
-def is_epic_linkage(ref: str, *, default_repo: str) -> bool:
-    """True if *ref* points at an epic, so it must not be linked as a PR's task.
+# Labels marking an umbrella issue that is never itself a task: an ``epic`` (live
+# or standing) or a per-quarter standing-epic ``archive``. Checked in this order,
+# so an issue carrying both reads as the epic it still is.
+_NON_TASK_LABELS = ("epic", "archive")
 
-    Single source of truth for "is this linkage an epic?", shared by
-    ``vrg-submit-pr`` and ``vrg-pr-workflow report-ready``. Self-scoping: an
-    unparseable ref (e.g. a legacy issue with no resolvable repo) is never an
-    epic and returns False.
+
+def non_task_kind_of_labels(labels: Collection[str]) -> str | None:
+    """``"epic"`` or ``"archive"`` when *labels* mark an umbrella, not a task; else None.
+
+    The lookup-free form of :func:`non_task_kind`, for a caller that already
+    read the labels alongside other fields in one call (``vrg-git``'s
+    branch-creation guard reads state and labels together, #3592).
+    """
+    return next((label for label in _NON_TASK_LABELS if label in labels), None)
+
+
+def non_task_kind(ref: IssueRef) -> str | None:
+    """``"epic"`` or ``"archive"`` when *ref* is an umbrella, not a task; else None."""
+    return non_task_kind_of_labels(_labels(ref))
+
+
+def non_task_ref_kind(ref: str, *, default_repo: str) -> str | None:
+    """``"epic"`` / ``"archive"`` when the ref string *ref* names a non-task, else None.
+
+    Single source of truth for "is this an epic or archive where a task is
+    expected?" (#2842), shared by ``vrg-submit-pr``, ``vrg-pr-workflow
+    report-ready``, ``vrg-epic-link --task`` and ``vrg-issue-create
+    --blocked-by``. Self-scoping: an unparseable ref (e.g. a legacy issue with
+    no resolvable repo) is never a non-task and returns None. A failed label
+    lookup raises — it is never read as "a task".
     """
     try:
         issue = parse_issue_ref(ref, default_repo=default_repo)
     except ValueError:
-        return False
-    return is_epic(issue)
+        return None
+    return non_task_kind(issue)
+
+
+_NON_TASK_REFUSAL_TAILS = {
+    "epic": (
+        "an epic is closed by rollup when its tasks complete, never by a PR. "
+        "Create the task under the epic first and use the task's number."
+    ),
+    "archive": "an archive only holds a standing epic's closed tasks. Use a task's number.",
+}
+
+
+def non_task_refusal_message(flag: str, ref: str, kind: str) -> str:
+    """The one refusal text for an epic or archive given where a task is expected.
+
+    *flag* names the option the value came in on (``--issue``, ``--task``,
+    ``--blocked-by``); *kind* is a :func:`non_task_kind` result (``"epic"`` or
+    ``"archive"``). Anything else is a caller bug and raises ``ValueError``.
+    """
+    tail = _NON_TASK_REFUSAL_TAILS.get(kind)
+    if tail is None:
+        raise ValueError(f"not a non-task kind: {kind!r}")
+    return f"{flag} ({ref}) is an {kind}, not a task; {tail}"
 
 
 # Labels marking a not-PR-workable *operational task* — one that is run and whose

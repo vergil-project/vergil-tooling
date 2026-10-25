@@ -58,7 +58,7 @@ def test_failure_markdown_has_tail_and_reproduce() -> None:
     text = failure.failure_markdown(f)
     assert "## Failure: validation" in text
     assert "```text\nE   assert 1 == 2\n```" in text
-    assert "`vrg-container-run -- vrg-validate`" in text
+    assert "Reproduce on the branch: `vrg-container-run -- vrg-validate`" in text
 
 
 def test_failure_summary_names_pr_and_fix_task() -> None:
@@ -86,7 +86,30 @@ def test_failure_summary_without_fix_task() -> None:
 def test_failure_summary_update_kind_has_no_pr() -> None:
     ctx = UpdateDepsContext(repo="o/r", repo_root=Path("/r"), version="2.1.243")
     ctx.failure = DepsFailure(kind="update", message="hook failed", output_tail="", reproduce="x")
-    assert "No PR was opened" in failure.failure_summary(ctx)
+    text = failure.failure_summary(ctx)
+    assert "No PR was opened" in text
+    assert "Fix task" not in text
+    assert "gated" not in text
+
+
+def test_failure_summary_update_kind_names_fix_task() -> None:
+    # An update failure has no PR, so its fix task is the only record (#3550).
+    ctx = UpdateDepsContext(repo="o/r", repo_root=Path("/r"), version="2.1.243")
+    ctx.failure = DepsFailure(kind="update", message="hook failed", output_tail="", reproduce="x")
+    ctx.fix_issue_url = "https://github.com/o/r/issues/10"
+    text = failure.failure_summary(ctx)
+    assert text == (
+        "Dependency update for 2.1.243 failed (update): hook failed No PR was opened. "
+        "Fix task: https://github.com/o/r/issues/10."
+    )
+
+
+def test_failure_markdown_update_kind_reproduces_on_develop() -> None:
+    # Nothing is pushed for an update failure, so there is no branch (#3550).
+    f = DepsFailure(kind="update", message="hook: x", output_tail="t", reproduce="./hook.sh")
+    text = failure.failure_markdown(f)
+    assert "Reproduce on `develop`: `./hook.sh`" in text
+    assert "on the branch" not in text
 
 
 def test_failure_summary_requires_a_failure() -> None:

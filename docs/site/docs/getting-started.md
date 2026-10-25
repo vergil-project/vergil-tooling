@@ -94,8 +94,8 @@ vrg-github-repo-init --adopt
 
 Adopt overwrites every Vergil-managed file to its canonical state —
 `vergil.toml`, `CLAUDE.md`, `.claude/settings.json`,
-`.claude/hooks/guard.sh`, `LICENSE`, `README.md`, `.gitignore`, the
-CI/CD workflows and the docs site config — and applies the GitHub
+`.claude/hooks/guard.sh`, `LICENSE`, `README.md`, `.gitignore`,
+`.github/dependabot.yml`, the CI/CD workflows and the docs site config — and applies the GitHub
 settings, rulesets and labels. It asks for confirmation first. Values
 already in `vergil.toml` become the prompt defaults, and hand-written
 tables such as `[package]` or `[container]` are kept. Review the
@@ -110,7 +110,8 @@ Either way, the repository ends up with:
 | `.claude/settings.json` | Wires the hook guard, enables the Vergil Claude Code plugin, and turns off Claude Code's AI co-author attribution |
 | `.claude/hooks/guard.sh` | Hook-guard shim that blocks raw `git`/`gh` in agent sessions |
 | `.gitignore` | The vergil-managed ignore block for your language, including `.worktrees/` |
-| `.github/workflows/` | `ci.yml`, `ops.yml` (nightly config audit), `epic-rollup.yml`, and `cd.yml` when the repo publishes releases or docs |
+| `.github/dependabot.yml` | The canonical report-only Dependabot config: every entry has `open-pull-requests-limit: 0`, so Dependabot never opens a PR |
+| `.github/workflows/` | `ci.yml`, `ops.yml` (nightly config audit, branch sweep and Dependabot alert audit), `epic-rollup.yml`, and `cd.yml` when the repo publishes releases or docs |
 
 `.claude/settings.json` is generated from the packaged template
 [`claude_settings.json`](https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/data/claude_settings.json),

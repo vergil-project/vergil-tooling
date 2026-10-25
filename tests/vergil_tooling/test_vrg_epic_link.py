@@ -2,14 +2,26 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+import subprocess
+from typing import TYPE_CHECKING
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from vergil_tooling.bin.vrg_epic_link import main, parse_args
 from vergil_tooling.lib import epics, github
 
+if TYPE_CHECKING:
+    from collections.abc import Generator
+
 _MOD = "vergil_tooling.bin.vrg_epic_link"
+
+
+@pytest.fixture(autouse=True)
+def _task_is_a_task() -> Generator[MagicMock]:
+    """Every --task is a plain task unless a test says otherwise (no gh label read)."""
+    with patch(f"{_MOD}.epics.non_task_kind", return_value=None) as mock_kind:
+        yield mock_kind
 
 
 def test_parse_args_requires_epic_and_task() -> None:
@@ -161,3 +173,34 @@ def test_allows_private_task_under_public_epic() -> None:
         rc = main(["--epic", "org/.github#5", "--task", "org/lab#9"])
     assert rc == 0
     mock_add.assert_called_once()
+
+
+@pytest.mark.parametrize("kind", ["epic", "archive"])
+def test_refuses_epic_or_archive_as_task(
+    kind: str, _task_is_a_task: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # #2842: --task must be a task; an epic or archive is refused before any link.
+    _task_is_a_task.return_value = kind
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.github.is_public", return_value=True),
+        patch(f"{_MOD}.epics.add_child") as mock_add,
+    ):
+        rc = main(["--epic", "org/.github#40", "--task", "#42"])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert f"vrg-epic-link: --task (org/repo#42) is an {kind}, not a task" in err
+    _task_is_a_task.assert_called_once_with(epics.IssueRef("org", "repo", 42))
+    mock_add.assert_not_called()
+
+
+def test_task_label_lookup_failure_propagates(_task_is_a_task: MagicMock) -> None:
+    # Fail closed: an unreadable --task is never linked as though it were a task.
+    _task_is_a_task.side_effect = subprocess.CalledProcessError(1, ["gh"])
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.epics.add_child") as mock_add,
+        pytest.raises(subprocess.CalledProcessError),
+    ):
+        main(["--epic", "org/.github#40", "--task", "#42"])
+    mock_add.assert_not_called()

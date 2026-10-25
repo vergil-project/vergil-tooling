@@ -12,6 +12,7 @@ import yaml
 
 from vergil_tooling.bin.validate_common import (
     _ansible_lint_overrides,
+    _drop_gitignored,
     _find_ansible_lint_config,
     _find_dockerfiles,
     _find_prose_markdown_files,
@@ -24,6 +25,7 @@ from vergil_tooling.bin.validate_common import (
 from vergil_tooling.lib import dependabot
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
 _MINIMAL_TOML = """\
@@ -40,6 +42,98 @@ vergil = "v2.0"
 [ci]
 versions = ["3.14"]
 """
+
+
+@pytest.fixture(autouse=True)
+def _no_gitignore_filter() -> Iterator[None]:
+    """Keep every discovered file: most tests use a plain ``tmp_path`` that is
+    not a git repository, so ``git check-ignore`` would fail there. The
+    gitignore filter itself is tested against a real repo below (#3594)."""
+    with patch(
+        "vergil_tooling.bin.validate_common._drop_gitignored",
+        side_effect=lambda _root, paths: paths,
+    ):
+        yield
+
+
+def _git_repo(path: Path, gitignore: str) -> Path:
+    """Initialise a real git repository at *path* with *gitignore*."""
+    path.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-q", str(path)], check=True, capture_output=True)
+    (path / ".gitignore").write_text(gitignore)
+    return path
+
+
+# -- _drop_gitignored ---------------------------------------------------------
+
+
+def test_drop_gitignored_drops_ignored_keeps_rest(tmp_path: Path) -> None:
+    repo = _git_repo(tmp_path / "repo", "docs/site/docs/releases/\n")
+    releases = repo / "docs" / "site" / "docs" / "releases"
+    releases.mkdir(parents=True)
+    generated = str(releases / "v1.0.md")
+    source = str(repo / "docs" / "site" / "docs" / "index.md")
+    (releases / "v1.0.md").write_text("# Generated\n")
+    (repo / "docs" / "site" / "docs" / "index.md").write_text("# Source\n")
+
+    assert _drop_gitignored(repo, [source, generated]) == [source]
+
+
+def test_drop_gitignored_keeps_tracked_file_matching_pattern(tmp_path: Path) -> None:
+    repo = _git_repo(tmp_path / "repo", "*.md\n")
+    readme = repo / "README.md"
+    readme.write_text("# Hello\n")
+    subprocess.run(
+        ["git", "-C", str(repo), "add", "-f", "README.md"], check=True, capture_output=True
+    )
+
+    assert _drop_gitignored(repo, [str(readme)]) == [str(readme)]
+
+
+def test_drop_gitignored_empty_list(tmp_path: Path) -> None:
+    assert _drop_gitignored(tmp_path, []) == []
+
+
+def test_drop_gitignored_outside_repo_raises(tmp_path: Path) -> None:
+    """Outside a repository check-ignore fails: an error, never 'lint less'."""
+    (tmp_path / "x.md").write_text("# X\n")
+    with pytest.raises(subprocess.CalledProcessError):
+        _drop_gitignored(tmp_path, [str(tmp_path / "x.md")])
+
+
+@pytest.mark.skipif(
+    shutil.which("markdownlint") is None,
+    reason="markdownlint binary not on PATH (only present in the dev container)",
+)
+def test_main_skips_gitignored_markdown(tmp_path: Path) -> None:
+    """A gitignored build artifact under docs/site/ that would FAIL lint is
+    skipped, while the committed docs still lint clean (issue #3594)."""
+    repo = _git_repo(tmp_path / "repo", "docs/site/docs/changelog.md\n")
+    (repo / "vergil.toml").write_text(_MINIMAL_TOML)
+    docs = repo / "docs" / "site" / "docs"
+    docs.mkdir(parents=True)
+    (docs / "index.md").write_text("# Hello\n")
+    (docs / "changelog.md").write_text("no heading   \n\n\n")
+
+    with (
+        patch(
+            "vergil_tooling.bin.validate_common._drop_gitignored",
+            side_effect=_drop_gitignored,
+        ),
+        patch(
+            "vergil_tooling.bin.validate_common.git.repo_root",
+            return_value=repo,
+        ),
+        patch(
+            "vergil_tooling.bin.validate_common.vrg_repo_profile.main",
+            return_value=0,
+        ),
+    ):
+        assert main() == 0
+        # Un-ignoring the same file makes the step fail: the skip, not a
+        # lenient config, is what let it pass.
+        (repo / ".gitignore").write_text("")
+        assert main() != 0
 
 
 # -- _find_shell_files --------------------------------------------------------

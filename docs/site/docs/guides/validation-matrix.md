@@ -19,7 +19,7 @@ where it runs. No git hooks are installed: every check runs inside a
 | Versions resolve against the window; toolchain selection; language floor | `vrg-validate` (config check, before any stage) | Yes | Every `vrg-validate` job |
 | Markdown, shell, YAML, Dockerfile, workflow and Ansible lint | `vrg-validate` (common checks) | Yes | `quality / common` |
 | Lint and typecheck | `vrg-validate` | Yes (primary version) | `quality / lint / <version>`, `quality / typecheck / <version>` |
-| Tests | `vrg-validate` | Yes (primary version) | `test / unit / <version>` |
+| Tests | `vrg-validate` | Yes (primary version; every version with `--all-versions`, Python only) | `test / unit / <version>` |
 | Dependency audit | `vrg-validate` | Yes (primary version) | `audit / dependencies / <version>` |
 | Security scans (CodeQL, Trivy, Semgrep) | `ci-security.yml` | -- | `security / *` |
 | Version bump | `ci-version-bump.yml` | -- | `version / version-bump` |
@@ -64,6 +64,8 @@ repository that has a `vergil.toml`.
   `<type>/<N>-<slug>` and the directory must be `issue-<N>-<slug>`.
 - `vrg-git checkout -b` and `vrg-git switch -c` apply the same branch
   name format.
+- On all three creation paths, issue `<N>` must be open and must not be
+  labelled `epic` or `archive`. A failed issue read refuses the branch.
 - When `.worktrees/` exists, switching branches in the main worktree is
   blocked, except to a protected branch.
 
@@ -125,6 +127,27 @@ as `quality / common`.
 `vrg-validate` then runs the lint, typecheck, test and audit commands
 for `[project].primary-language`. Pass `--check lint`, `typecheck`,
 `test` or `audit` to run one stage.
+
+### All versions (Python)
+
+`vrg-validate --all-versions` adds one `test (python X.Y)` stage per
+resolved CI version after the test stage, so the
+`--cov-branch --cov-fail-under=100` gate runs on every interpreter PR-CI
+tests, not only the dev container's. Combine it with `--check test` to
+run only the tests. Each stage has `uv` install the version as a managed
+interpreter and sync the `dev` group into its own environment under the
+container's temp directory, so the project `.venv` is untouched. The
+container interpreter's own version is skipped: the plain test stage
+already covers it. Its coverage and JUnit reports go beside that
+environment, so the workspace's `coverage.xml` and `junit.xml` stay the
+container interpreter's.
+
+It needs network access to download the interpreters, and it costs one
+extra suite run per extra version: on a Lima VM a full
+`vrg-container-run -- vrg-validate --all-versions` for this repo's four
+versions takes about 1.5 minutes, against about 20 seconds without it.
+The default `vrg-validate` is unchanged. Other languages are refused: their
+toolchains are not uv-managed, and their PR-CI matrix stays CI-only.
 
 ## Exit Codes
 
