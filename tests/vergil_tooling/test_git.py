@@ -625,6 +625,94 @@ def test_split_repo(args: tuple[str, ...], expected: tuple[str | None, str]) -> 
     assert git._split_repo(args) == expected
 
 
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("remote",),
+        ("remote", "-v"),
+        ("remote", "get-url", "origin"),
+        ("-C", "/r", "remote"),
+        ("-C", "/r", "remote", "get-url", "origin"),
+    ],
+)
+def test_local_remote_actions_mint_no_token(args: tuple[str, ...]) -> None:
+    # Listing remotes is purely local: asking for a token there aborted a
+    # multi-repo sweep on a repo with no GitHub origin (#3624).
+    with (
+        patch("vergil_tooling.lib.git.github.get_installation_token") as m_token,
+        patch("vergil_tooling.lib.git.github.repo_installation_token") as m_repo_token,
+        patch("vergil_tooling.lib.git.subprocess.run") as mock_run,
+    ):
+        mock_run.return_value = _completed(stdout="origin")
+        git.read_output(*args)
+    m_token.assert_not_called()
+    m_repo_token.assert_not_called()
+    assert "GIT_CONFIG_KEY_0" not in mock_run.call_args.kwargs["env"]
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("remote", "prune", "origin"),
+        ("remote", "update"),
+        ("remote", "show", "origin"),
+        ("remote", "-v", "show", "origin"),
+        ("remote", "add", "-f", "up", "https://github.com/o/r"),
+        ("remote", "set-head", "origin", "-a"),
+    ],
+)
+def test_networked_remote_actions_keep_the_token(args: tuple[str, ...]) -> None:
+    with (
+        patch(
+            "vergil_tooling.lib.git.github.get_installation_token", return_value="ghs_t"
+        ) as m_token,
+        patch("vergil_tooling.lib.git.subprocess.run") as mock_run,
+    ):
+        mock_run.return_value = _completed(stdout="")
+        git.read_output(*args)
+    m_token.assert_called_once_with()
+    assert "Authorization: Basic" in mock_run.call_args.kwargs["env"]["GIT_CONFIG_VALUE_0"]
+
+
+def test_dash_c_networked_remote_action_uses_the_target_repos_token() -> None:
+    with (
+        patch(
+            "vergil_tooling.lib.git.github.repo_installation_token", return_value="ghs_other"
+        ) as m_repo_token,
+        patch("vergil_tooling.lib.git.subprocess.run") as mock_run,
+    ):
+        mock_run.return_value = _completed(stdout="")
+        git.read_output("-C", "/r", "remote", "prune", "origin")
+    m_repo_token.assert_called_once_with("/r")
+    assert "Authorization: Basic" in mock_run.call_args.kwargs["env"]["GIT_CONFIG_VALUE_0"]
+
+
+def test_dash_c_repo_without_a_github_remote_runs_without_a_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # End to end through the real git remote lookup: in App mode, a repo whose
+    # origin is on another host gets no token and does not borrow the CWD's org.
+    monkeypatch.setenv("VRG_APP_ID", "12345")
+    monkeypatch.setenv("VRG_PRIVATE_KEY_PATH", "/keys/app.pem")
+    repo = tmp_path / "r"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "remote", "add", "origin", "https://gitlab.com/o/r.git"], cwd=repo, check=True
+    )
+    with patch("vergil_tooling.lib.git.github.get_installation_token") as m_token:
+        env = git._git_env(("-C", str(repo), "ls-remote", "--heads", "origin"))
+    m_token.assert_not_called()
+    assert "GIT_CONFIG_KEY_0" not in env
+    assert env["GIT_TERMINAL_PROMPT"] == "0"
+
+
+def test_remote_url(tmp_path: Path) -> None:
+    with patch("vergil_tooling.lib.git.read_output", return_value="git@x:o/r") as mock:
+        assert git.remote_url("origin", tmp_path) == "git@x:o/r"
+    mock.assert_called_once_with("-C", str(tmp_path), "remote", "get-url", "origin")
+
+
 def test_dash_c_remote_command_uses_the_target_repos_org_token() -> None:
     with (
         patch("vergil_tooling.lib.git.github.detect_org", return_value="other-org") as m_org,
@@ -656,8 +744,7 @@ def test_dash_c_network_command_is_retried() -> None:
         128, ("git", "ls-remote"), stderr="fatal: Could not read from remote repository."
     )
     with (
-        patch("vergil_tooling.lib.git.github.detect_org", return_value=None),
-        patch("vergil_tooling.lib.git.github.get_installation_token", return_value=None),
+        patch("vergil_tooling.lib.git.github.repo_installation_token", return_value=None),
         patch("vergil_tooling.lib.git.subprocess.run") as mock_run,
         patch("vergil_tooling.lib.git.time.sleep"),
     ):

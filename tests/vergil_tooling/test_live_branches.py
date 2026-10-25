@@ -18,6 +18,7 @@ from vergil_tooling.lib.live_branches import (
 from vergil_tooling.lib.platform_env import Platform
 
 _MOD = "vergil_tooling.lib.live_branches"
+_GITHUB_ORIGIN = "https://github.com/org/repo.git"
 
 
 # -- default_repo_roots ---------------------------------------------------------
@@ -115,6 +116,7 @@ def test_repo_live_branches_unions_local_and_origin(tmp_path: Path) -> None:
     with (
         patch(_MOD + ".git.local_branches", return_value={"develop", "feature/1-a"}) as m_local,
         patch(_MOD + ".git.remote_names", return_value={"origin"}),
+        patch(_MOD + ".git.remote_url", return_value=_GITHUB_ORIGIN),
         patch(_MOD + ".git.remote_branches", return_value={"develop", "feature/2-b"}) as m_rem,
     ):
         live = repo_live_branches(tmp_path)
@@ -133,6 +135,31 @@ def test_repo_without_origin_contributes_local_branches(tmp_path: Path) -> None:
     m_rem.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    "url", ["https://gitlab.com/someone/repo.git", "git@gitlab.com:someone/repo.git", "/srv/r.git"]
+)
+def test_origin_off_github_reads_tracking_refs_without_the_network(
+    tmp_path: Path, url: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with (
+        patch(_MOD + ".git.local_branches", return_value={"main"}),
+        patch(_MOD + ".git.remote_names", return_value={"origin"}),
+        patch(_MOD + ".git.remote_url", return_value=url) as m_url,
+        patch(_MOD + ".git.remote_branches") as m_rem,
+        patch(
+            _MOD + ".git.remote_tracking_branches", return_value={"feature/4-tracked"}
+        ) as m_tracking,
+    ):
+        assert repo_live_branches(tmp_path) == {"main", "feature/4-tracked"}
+    m_url.assert_called_once_with("origin", tmp_path)
+    m_rem.assert_not_called()
+    m_tracking.assert_called_once_with("origin", tmp_path)
+    err_out = capsys.readouterr().err
+    assert f"warning: origin of {tmp_path} is not on GitHub" in err_out
+    assert "refs/remotes/origin/*" in err_out
+    assert url not in err_out  # a URL may embed credentials
+
+
 def test_unreadable_origin_falls_back_to_tracking_refs_with_a_warning(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -142,6 +169,7 @@ def test_unreadable_origin_falls_back_to_tracking_refs_with_a_warning(
     with (
         patch(_MOD + ".git.local_branches", return_value={"develop"}),
         patch(_MOD + ".git.remote_names", return_value={"origin"}),
+        patch(_MOD + ".git.remote_url", return_value=_GITHUB_ORIGIN),
         patch(_MOD + ".git.remote_branches", side_effect=err),
         patch(
             _MOD + ".git.remote_tracking_branches", return_value={"feature/7-tracked"}
@@ -160,6 +188,7 @@ def test_unreadable_tracking_refs_propagate(tmp_path: Path) -> None:
     with (
         patch(_MOD + ".git.local_branches", return_value={"develop"}),
         patch(_MOD + ".git.remote_names", return_value={"origin"}),
+        patch(_MOD + ".git.remote_url", return_value=_GITHUB_ORIGIN),
         patch(_MOD + ".git.remote_branches", side_effect=err),
         patch(_MOD + ".git.remote_tracking_branches", side_effect=err),
         pytest.raises(subprocess.CalledProcessError),
@@ -208,7 +237,11 @@ def test_repo_live_branches_against_real_git(tmp_path: Path) -> None:
     _git("clone", "-q", str(origin), str(clone), cwd=tmp_path)
     _git("branch", "feature/8-local-only", cwd=clone)
 
-    with patch("vergil_tooling.lib.git.github.get_installation_token", return_value=None):
+    # The local-path origin stands in for GitHub so ls-remote really runs.
+    with (
+        patch(_MOD + ".github.is_github_url", return_value=True),
+        patch("vergil_tooling.lib.git.github.repo_installation_token", return_value=None),
+    ):
         live = repo_live_branches(clone)
     assert live == {"develop", "feature/8-local-only", "feature/9-remote-only"}
 
@@ -216,7 +249,14 @@ def test_repo_live_branches_against_real_git(tmp_path: Path) -> None:
     # (still holding the remote-only branch) stand in, with a warning.
     origin.rename(tmp_path / "gone.git")
     with (
-        patch("vergil_tooling.lib.git.github.get_installation_token", return_value=None),
+        patch(_MOD + ".github.is_github_url", return_value=True),
+        patch("vergil_tooling.lib.git.github.repo_installation_token", return_value=None),
         patch("vergil_tooling.lib.git.time.sleep"),  # the failure may look transient
     ):
         assert repo_live_branches(clone) == live
+
+    # Taken as what it is — an origin off GitHub — it is never read over the
+    # network: the tracking refs answer, and no token is asked for.
+    with patch("vergil_tooling.lib.git.github.repo_installation_token") as m_token:
+        assert repo_live_branches(clone) == live
+    m_token.assert_not_called()
