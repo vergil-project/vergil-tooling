@@ -271,6 +271,13 @@ the release attaches and the index reads:
 - A single package with a runtime also keeps the top-level `runtime`, the
   shape that older readers check.
 
+The index pairs each manifest entry with exactly one attached file. A named
+entry matches only files of that exact package name, so two packages built
+for the same `(fmt, arch, suite)` each claim their own file, and a package
+named `foo` never claims `foo-bar`'s files. An entry without `name` (a single
+package, or any release from before multi-package repos) matches as it always
+did. A manifest that names some artifacts but not others is rejected.
+
 Because a shared cell builds on Ubuntu 24.04 for every target, the python
 builder applies a **glibc floor guard**: any ELF object in the venv that needs
 a `GLIBC_x.y` symbol newer than the lowest glibc among the cell's targets is a
