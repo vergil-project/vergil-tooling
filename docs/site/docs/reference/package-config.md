@@ -45,6 +45,56 @@ smoke   = "vrg-whoami --mode" # the install test runs this after install
 # build-command = "packaging/build.sh"  # populates $VRG_STAGING_ROOT for $VRG_TARGET_ARCH
 ```
 
+### Several packages: `[[package]]`
+
+A repo that publishes more than one package declares each one as an entry in
+an array of tables, `[[package]]`. Each entry takes the same keys and
+subtables as a single `[package]`. A subtable such as `[package.python]` or
+`[package.staged]` belongs to the `[[package]]` entry directly above it.
+
+```toml
+[[package]]
+name    = "example-server"
+builder = "staged"
+vendor  = "vergil"
+summary = "Example server"
+smoke   = "example-server --version"
+
+[package.staged]
+build-command = "packaging/build-server.sh"
+
+[[package]]
+name    = "example-client"
+builder = "staged"
+vendor  = "vergil"
+summary = "Example client"
+smoke   = "example-client --version"
+
+[package.staged]
+build-command = "packaging/build-client.sh"
+```
+
+A single `[package]` table is one entry and behaves exactly as before. A
+single `[[package]]` entry behaves the same as a `[package]` table. With more
+than one entry, `vrg-validate` (and every tool that reads `vergil.toml`)
+refuses the config unless:
+
+- every entry sets an explicit `name`, and no two entries share one. The
+  `pyproject.toml` name fallback for `builder = "python"` applies only to a
+  single package.
+- every entry has the same `vendor`. The release wait and the tracking issue
+  resolve one `<org>/packages` repository from it.
+- the repo has no `packaging/nfpm.overlay.yaml`. That overlay has one fixed
+  path, so it would apply to every package. It is allowed only with a single
+  package.
+
+The other repo-level checks run once per entry. For example, a `python`
+entry still requires `uv.lock` (see [Validation](#validation)).
+
+The design is epic
+[vergil-project/.github#472](https://github.com/vergil-project/.github/issues/472)
+(spec `epics/472-multi-series-runtime/spec.md`, §5.1).
+
 ## Keys
 
 | Key | Type | Default | Semantics |
@@ -261,7 +311,10 @@ Install tests run in plain containers without systemd as PID 1, so:
 - `[package.python]` with `builder = "staged"`, or `[package.staged]` with
   `builder = "python"`;
 - an overlay that is not a YAML mapping or that sets a key outside the list
-  above.
+  above;
+- with several `[[package]]` entries, a missing or duplicate `name`, entries
+  with different vendors, or a `packaging/nfpm.overlay.yaml` (see
+  [Several packages](#several-packages-package)).
 
 Unrecognized keys are the exception: an unknown key in `[package]`,
 `[package.python]` or `[package.staged]` only prints an

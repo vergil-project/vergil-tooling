@@ -379,11 +379,19 @@ def test_comment_publish_deferred_names_jobs_and_warns_resume() -> None:
     assert "publish-index" not in body  # no packages advice for CD jobs alone
 
 
-def _vendor_config(vendor: str | None = "vergil") -> Any:
+def _vendor_config(vendor: str | None = "vergil", count: int = 1) -> Any:
     from types import SimpleNamespace
 
-    pkg = None if vendor is None else SimpleNamespace(vendor=vendor)
-    return SimpleNamespace(package=pkg)
+    pkgs = () if vendor is None else tuple(SimpleNamespace(vendor=vendor) for _ in range(count))
+    return SimpleNamespace(packages=pkgs)
+
+
+def test_publish_deferred_remedy_several_packages_share_vendor() -> None:
+    # Several [[package]] entries share one vendor, so one packages repo (epic .github#472).
+    from vergil_tooling.lib.release.tracking import publish_deferred_remedy
+
+    with patch(_MOD + ".config.read_config", return_value=_vendor_config(count=2)):
+        assert "vergil-project/packages" in publish_deferred_remedy(_ctx(), ["package-index"])
 
 
 def test_comment_publish_deferred_package_index_gives_packages_advice() -> None:

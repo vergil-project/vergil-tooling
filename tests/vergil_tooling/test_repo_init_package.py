@@ -267,6 +267,27 @@ class TestAdoptPreservesPackage:
         }
         assert written["container"] == {"env-prefixes": ["DEMO_"]}
 
+    def test_adopt_keeps_package_array_entry(self, tmp_path: Path) -> None:
+        # The [[package]] form (epic vergil-project/.github#472) counts as a
+        # package and is carried verbatim, array-of-tables header included.
+        entry = (
+            "\n[[package]]\n"
+            'name = "a"\n'
+            'builder = "staged"\n'
+            'vendor = "vergil"\n'
+            'summary = "S"\n'
+            'smoke = "true"\n'
+            "\n[package.staged]\n"
+            'build-command = "x"\n'
+        )
+        ctx = _adopt(tmp_path, _BASE_TOML + entry)
+        assert ctx.package is True
+        text = (tmp_path / "vergil.toml").read_text()
+        assert "[[package]]\n" in text
+        written = tomllib.loads(text)
+        assert [p["name"] for p in written["package"]] == ["a"]
+        assert written["package"][0]["staged"] == {"build-command": "x"}
+
     def test_adopt_without_package_leaves_flag_false(self, tmp_path: Path) -> None:
         ctx = _adopt(tmp_path, _BASE_TOML)
         assert ctx.package is False
