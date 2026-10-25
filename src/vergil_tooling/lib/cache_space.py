@@ -34,10 +34,11 @@ from vergil_tooling.lib.process_errors import error_text
 PRUNE_FREE_GB_ENV = "VRG_CACHE_PRUNE_FREE_GB"
 DEFAULT_PRUNE_FREE_GB = 10.0
 
-# The free space, in GB, a cache build needs to go ahead at all: one cached
-# image is about 1.3-2 GB, so below this the build would fail part way, with a
-# less useful error, after minutes of work.
-MIN_BUILD_FREE_GB = 3.0
+# The free space, in GB, a cache build needs after a prune to go ahead at all
+# (capped at the threshold): one cached image is about 1.3-2 GB, so below this
+# the build would fail part way, with a less useful error, after minutes of work.
+BUILD_FREE_GB_ENV = "VRG_CACHE_BUILD_FREE_GB"
+DEFAULT_BUILD_FREE_GB = 3.0
 
 _GB = 1_000_000_000
 
@@ -45,7 +46,26 @@ _MANUAL_PRUNE = "vrg-container-cache prune --apply (add --root DIR on the physic
 
 
 class CacheSpaceError(RuntimeError):
-    """A cache build cannot go ahead: too little free space, or a bad threshold."""
+    """A cache build cannot go ahead: too little free space, or a bad setting."""
+
+
+def _env_gb(name: str, default: float) -> float:
+    """Return environment variable *name* as a number of GB, or *default*.
+
+    Unset or empty means *default*. A value that is not a non-negative number
+    raises :class:`CacheSpaceError`: a typo must not silently change a limit.
+    """
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        value = -1.0
+    if not value >= 0:  # also rejects nan
+        msg = f"{name}={raw!r} is not a non-negative number of GB"
+        raise CacheSpaceError(msg)
+    return value
 
 
 def prune_threshold_gb() -> float:
@@ -55,17 +75,17 @@ def prune_threshold_gb() -> float:
     non-negative number raises :class:`CacheSpaceError`: a typo must not
     silently turn the prune off or set it to something else.
     """
-    raw = os.environ.get(PRUNE_FREE_GB_ENV, "").strip()
-    if not raw:
-        return DEFAULT_PRUNE_FREE_GB
-    try:
-        value = float(raw)
-    except ValueError:
-        value = -1.0
-    if not value >= 0:  # also rejects nan
-        msg = f"{PRUNE_FREE_GB_ENV}={raw!r} is not a non-negative number of GB"
-        raise CacheSpaceError(msg)
-    return value
+    return _env_gb(PRUNE_FREE_GB_ENV, DEFAULT_PRUNE_FREE_GB)
+
+
+def build_floor_gb() -> float:
+    """Return the post-prune build floor in GB, from ``VRG_CACHE_BUILD_FREE_GB``.
+
+    Unset or empty means :data:`DEFAULT_BUILD_FREE_GB`. A value that is not a
+    non-negative number raises :class:`CacheSpaceError`: a typo must not
+    silently let a build start without room for it, or refuse one that has it.
+    """
+    return _env_gb(BUILD_FREE_GB_ENV, DEFAULT_BUILD_FREE_GB)
 
 
 def _runtime_output(runtime: str, *args: str) -> str:
@@ -148,13 +168,15 @@ def ensure_build_space(runtime: str) -> None:
 
     Silent when the store has at least :func:`prune_threshold_gb` free. Below
     that it runs the prune (see :func:`_prune`), then measures again: the build
-    goes ahead with at least :data:`MIN_BUILD_FREE_GB` free (or the threshold,
-    if that is lower), with a warning while still under the threshold; with less
+    goes ahead with at least :func:`build_floor_gb` free (or the threshold, if
+    that is lower), with a warning while still under the threshold; with less
     it raises :class:`CacheSpaceError` naming the numbers and the manual
     command. When the store cannot be located or measured — Docker Desktop keeps
-    it inside its own VM — the check is skipped with a note, never guessed.
+    it inside its own VM — the check is skipped with a note, never guessed. Both
+    settings are read first, so a bad value stops every build, not only a low one.
     """
     threshold = prune_threshold_gb()
+    build_floor = build_floor_gb()
     if threshold == 0:
         return
     try:
@@ -179,13 +201,14 @@ def ensure_build_space(runtime: str) -> None:
     if free >= threshold:
         print(f"Free space now {free:.1f} GB.")
         return
-    floor = min(MIN_BUILD_FREE_GB, threshold)
+    # The floor never exceeds the threshold; name whichever setting set it.
+    floor, floor_env = min((build_floor, BUILD_FREE_GB_ENV), (threshold, PRUNE_FREE_GB_ENV))
     if free < floor:
         what = "the auto-prune failed and " if not pruned else ""
         msg = (
             f"not enough disk space to build the cached image: {what}{free:.1f} GB is free "
-            f"under {store}, and a build needs at least {floor:g} GB. Free space with "
-            f"{_MANUAL_PRUNE}, or remove other images."
+            f"under {store}, and a build needs at least {floor:g} GB ({floor_env}). "
+            f"Free space with {_MANUAL_PRUNE}, or remove other images."
         )
         raise CacheSpaceError(msg)
     print(
