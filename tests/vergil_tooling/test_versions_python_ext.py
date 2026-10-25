@@ -189,6 +189,67 @@ def test_explicit_runtime_outside_window_fatal() -> None:
     assert "Fix: remove [package.python].runtime" in message
 
 
+# -- several [[package]] entries (epic vergil-project/.github#472, T5) ------------
+
+
+def _staged_entry(name: str) -> dict[str, Any]:
+    return {**_PACKAGE, "builder": "staged", "name": name, "staged": {"build-command": "true"}}
+
+
+def _python_entry(name: str, runtime: str | None = None) -> dict[str, Any]:
+    entry: dict[str, Any] = {**_PACKAGE, "name": name}
+    if runtime is not None:
+        entry["python"] = {"runtime": runtime}
+    return entry
+
+
+def _multi_cfg(*entries: dict[str, Any], repo_type: str = "application") -> VergilConfig:
+    multi = _parse_raw_config(
+        {
+            "project": {
+                "repository-type": repo_type,
+                "versioning-scheme": "semver",
+                "branching-model": "library-release",
+                "release-model": "tagged-release",
+                "primary-language": "python",
+            },
+            "dependencies": {"vergil": "v2.1"},
+            "ci": {},
+            "package": list(entries),
+        }
+    )
+    assert len(multi.packages) == len(entries)
+    return multi
+
+
+def test_staged_only_multi_has_no_runtime() -> None:
+    cfg = _multi_cfg(_staged_entry("a"), _staged_entry("b"))
+    assert _resolve(cfg).versions == ("3.15",)
+
+
+def test_resolution_narrows_with_python_entry() -> None:
+    cfg = _multi_cfg(_staged_entry("a"), _python_entry("b"))
+    assert _resolve(cfg).versions == ("3.14",)
+    library = _multi_cfg(_staged_entry("a"), _python_entry("b"), repo_type="library")
+    assert _resolve(library).versions == ("3.15", "3.14", "3.13", "3.12")
+
+
+def test_single_python_pin_in_a_list_is_checked() -> None:
+    inside = _multi_cfg(_python_entry("a", "3.14.8"), _python_entry("b"), _staged_entry("c"))
+    assert _resolve(inside).versions == ("3.14",)
+    outside = _multi_cfg(_staged_entry("a"), _python_entry("b", "3.11.9"))
+    with pytest.raises(ResolutionError, match=r"runtime 3\.11\.9 is not in the python window"):
+        _resolve(outside)
+
+
+def test_two_pins_refused() -> None:
+    cfg = _multi_cfg(_python_entry("a", "3.14.8"), _python_entry("b", "3.14.9"))
+    with pytest.raises(
+        VersionsError, match=r"several \[\[package\]\] entries pin a runtime; pin it on one entry"
+    ):
+        _resolve(cfg)
+
+
 @pytest.mark.parametrize(("runtime", "series"), [("3.14", "3.14"), ("3.14.8", "3.14")])
 def test_runtime_series(runtime: str, series: str) -> None:
     assert py_ext.runtime_series(runtime) == series

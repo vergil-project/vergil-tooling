@@ -288,6 +288,34 @@ class TestAdoptPreservesPackage:
         assert [p["name"] for p in written["package"]] == ["a"]
         assert written["package"][0]["staged"] == {"build-command": "x"}
 
+    def test_adopt_keeps_two_package_entries(self, tmp_path: Path) -> None:
+        # Version resolution reads the packages list (epic
+        # vergil-project/.github#472, T5), so a two-entry config with one
+        # pinned python-builder entry adopts instead of failing.
+        entries = (
+            "\n[[package]]\n"
+            'name = "a"\n'
+            'builder = "staged"\n'
+            'vendor = "vergil"\n'
+            'summary = "S"\n'
+            'smoke = "true"\n'
+            "\n[package.staged]\n"
+            'build-command = "x"\n'
+            "\n[[package]]\n"
+            'name = "b"\n'
+            'builder = "python"\n'
+            'vendor = "vergil"\n'
+            'summary = "S"\n'
+            'smoke = "b --help"\n'
+            "\n[package.python]\n"
+            'runtime = "3.14.0"\n'
+        )
+        ctx = _adopt(tmp_path, _BASE_TOML + entries)
+        assert ctx.package is True
+        written = tomllib.loads((tmp_path / "vergil.toml").read_text())
+        assert [p["name"] for p in written["package"]] == ["a", "b"]
+        assert written["package"][1]["python"] == {"runtime": "3.14.0"}
+
     def test_adopt_without_package_leaves_flag_false(self, tmp_path: Path) -> None:
         ctx = _adopt(tmp_path, _BASE_TOML)
         assert ctx.package is False

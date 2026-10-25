@@ -27,8 +27,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import config
-from vergil_tooling.lib.package import matrix, orgs, python_builder
-from vergil_tooling.lib.package.runtime import runtime_package
+from vergil_tooling.lib.package import PackageError, matrix, orgs, python_builder
+from vergil_tooling.lib.package.runtime import pinned_python_package, runtime_package
 from vergil_tooling.lib.package.targets import ARCHES
 from vergil_tooling.lib.release import package_index
 from vergil_tooling.lib.release.context import ReleaseError
@@ -193,12 +193,28 @@ def served_runtime(
 
 
 def served_runtime_for(base: Path) -> ServedRuntime:
-    """``served_runtime`` for the ``[package]`` block in ``base/vergil.toml``."""
-    pkg = config.read_config(base).package
-    if pkg is None:
+    """``served_runtime`` for the pinned ``python``-builder entry in ``base/vergil.toml``.
+
+    The pin is read from the packages list (spec §5.2): at most one entry may
+    pin a runtime, and more than one is refused rather than guessed.
+    """
+    cfg = config.read_config(base)
+    if not cfg.packages:
         raise UpdateDepsError(
             phase="update",
             command="served_runtime_for",
             message="[package] is missing, so there is no runtime to resolve.",
+        )
+    try:
+        pkg = pinned_python_package(cfg)
+    except PackageError as exc:
+        raise UpdateDepsError(
+            phase="update", command="served_runtime_for", message=str(exc)
+        ) from exc
+    if pkg is None:
+        raise UpdateDepsError(
+            phase="update",
+            command="served_runtime_for",
+            message="[package] has no [package.python].runtime pin, so there is nothing to bump.",
         )
     return served_runtime(pkg)

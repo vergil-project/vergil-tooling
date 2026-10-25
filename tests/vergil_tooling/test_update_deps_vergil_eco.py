@@ -9,6 +9,7 @@ from vergil_tooling.lib.update_deps.context import UpdateDepsContext, UpdateDeps
 from vergil_tooling.lib.update_deps.report import HeldBack
 from vergil_tooling.lib.update_deps.updaters.vergil_eco import (
     VergilUpdater,
+    _declared_runtime,
     bump_runtime,
     format_version,
     normalize_claude_ref,
@@ -536,3 +537,90 @@ def test_apply_holds_the_bump_while_indexes_disagree(tmp_path: Path) -> None:
     assert note is not None
     assert "3.14.9 on deb noble/amd64; 3.14.8 on rpm el9/x86_64" in note
     assert (tmp_path / "vergil.toml").read_text() == _SOURCE_TOML + "\n" + _RUNTIME_TOML
+
+
+# -- runtime pins over the packages list (epic vergil-project/.github#472, T5) --
+
+_STAGED_ENTRY = (
+    '[[package]]\nname = "{name}"\nbuilder = "staged"\nvendor = "vergil"\n'
+    'summary = "s"\nsmoke = "true"\n\n[package.staged]\nbuild-command = "true"\n\n'
+)
+_PYTHON_ENTRY = (
+    '[[package]]\nname = "{name}"\nbuilder = "python"\nvendor = "vergil"\n'
+    'summary = "s"\nsmoke = "true"\n\n'
+)
+_PIN = '[package.python]\nruntime = "{runtime}"\n\n'
+
+
+def _must_not_call(base: Path) -> ServedRuntime:
+    raise AssertionError("index lookup without a [package.python] runtime pin")
+
+
+def test_declared_runtime_reads_package_list() -> None:
+    text = (
+        _STAGED_ENTRY.format(name="a")
+        + _PYTHON_ENTRY.format(name="b")
+        + _PIN.format(runtime="3.14.8")
+        + _PYTHON_ENTRY.format(name="c")
+    )
+    assert _declared_runtime(text) == "3.14.8"
+
+
+def test_declared_runtime_single_table_unchanged() -> None:
+    assert _declared_runtime(_RUNTIME_TOML) == "3.14.8"
+    assert _declared_runtime(_SOURCE_TOML) is None
+
+
+def test_declared_runtime_ignores_non_table_entries() -> None:
+    # Not a valid [package] (lib.config refuses it); there is simply no pin here.
+    assert _declared_runtime('package = ["x"]\n') is None
+    assert _declared_runtime('package = "x"\n') is None
+
+
+def test_staged_only_multi_has_no_runtime(tmp_path: Path) -> None:
+    text = _SOURCE_TOML + "\n" + _STAGED_ENTRY.format(name="a") + _STAGED_ENTRY.format(name="b")
+    (tmp_path / "vergil.toml").write_text(text)
+    result = VergilUpdater(served_runtime=_must_not_call).apply(_ctx(tmp_path))
+    assert result.changed is False
+    assert result.held_back == []
+    assert bump_runtime(tmp_path, _served("3.14.9")) == (None, [])
+    assert (tmp_path / "vergil.toml").read_text() == text
+
+
+def test_single_python_pin_unchanged(tmp_path: Path) -> None:
+    # The pinned single-[package] fixture bumps exactly as before.
+    (tmp_path / "vergil.toml").write_text(_SOURCE_TOML + "\n" + _RUNTIME_TOML)
+    result = VergilUpdater(served_runtime=lambda _b: _served("3.14.9")).apply(_ctx(tmp_path))
+    assert result.summary == "vergil-python runtime 3.14.9"
+    assert (tmp_path / "vergil.toml").read_text() == (
+        _SOURCE_TOML + "\n" + _RUNTIME_TOML.replace("3.14.8", "3.14.9")
+    )
+
+
+def test_bump_runtime_rewrites_the_one_pin_in_a_list(tmp_path: Path) -> None:
+    text = (
+        _STAGED_ENTRY.format(name="a")
+        + _PYTHON_ENTRY.format(name="b")
+        + _PIN.format(runtime="3.14.8")
+    )
+    (tmp_path / "vergil.toml").write_text(text)
+    assert bump_runtime(tmp_path, _served("3.14.9")) == ("3.14.9", [])
+    assert (tmp_path / "vergil.toml").read_text() == text.replace("3.14.8", "3.14.9")
+
+
+def test_two_pins_refused(tmp_path: Path) -> None:
+    text = (
+        _SOURCE_TOML
+        + "\n"
+        + _PYTHON_ENTRY.format(name="a")
+        + _PIN.format(runtime="3.14.8")
+        + _PYTHON_ENTRY.format(name="b")
+        + _PIN.format(runtime="3.15.1")
+    )
+    (tmp_path / "vergil.toml").write_text(text)
+    msg = r"several \[\[package\]\] entries pin a runtime; pin it on one entry"
+    with pytest.raises(UpdateDepsError, match=msg):
+        VergilUpdater(served_runtime=_must_not_call).apply(_ctx(tmp_path))
+    with pytest.raises(UpdateDepsError, match=msg):
+        bump_runtime(tmp_path, _served("3.14.9"))
+    assert (tmp_path / "vergil.toml").read_text() == text
