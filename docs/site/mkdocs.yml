@@ -72,6 +72,7 @@ nav:
       - Test Config ([test]): reference/test-config.md
       - Package Config ([package]): reference/package-config.md
       - Dependency Update ([dependency-update]): reference/dependency-update-config.md
+      - Upstream Refresh ([upstream-refresh]): reference/upstream-refresh-config.md
       - Hook Guard:
           - Claude Code Hook Guard: reference/hooks/pre-commit.md
       - Validators:

@@ -129,6 +129,10 @@ Use the hook for what the built-in updaters do not cover, such as
 binary tool versions or provider pins. Keep repo-specific update logic
 in the repo, not in vergil-tooling.
 
+This hook is separate from the [`[upstream-refresh]`](upstream-refresh-config.md)
+hook: `vrg-update-deps` never runs the upstream-refresh hook, and
+`vrg-upstream-refresh` never runs this one.
+
 ### The hook contract
 
 The hook runs from the root of the update worktree, inside the dev
