@@ -845,19 +845,21 @@ workflows; `matrix` is also useful locally. See the
   them as JSON (read-only). `--tier {full,reduced}` (default `full`),
   `--github-output` (append `enabled`/`build`/`test`/`tier` to
   `$GITHUB_OUTPUT`), `--manifest PATH` (also write the release artifact
-  manifest). A repo without `[package]` reports `enabled: false`. A
-  `python` release resolves its runtime here, once, and records it as
-  `runtime` on every build cell and in the manifest.
+  manifest). A repo without `[package]` reports `enabled: false`. Each
+  `python` package resolves its runtime here, once, and records it as
+  `runtime` on every build cell of that package and in the manifest's
+  `runtimes` map. With several `[[package]]` entries, every cell id is
+  qualified as `<name>--<id>`.
 - `build` — build every format of one build cell: `--cell` (required),
   `--version` (required), `--out` (default `dist/packages`),
   `--staging` (default `.vergil/package-staging`, wiped first),
   `--runtime` (the cell's recorded runtime; when empty or absent, the
   build resolves the runtime itself). Prints the runtime it chose.
   Needs `nfpm` on `PATH`.
-- `check-runtime` — refuse (exit 1) when any `.deb`/`.rpm` in
-  `--artifacts DIR` does not depend on exactly the runtime that
-  `--manifest PATH` records. Read-only. See
-  [one runtime per release](package-config.md#one-runtime-per-release).
+- `check-runtime` — refuse (exit 1) when any `.deb`/`.rpm` of a
+  `python` package in `--artifacts DIR` does not depend on exactly the
+  runtime that `--manifest PATH` records for that package. Read-only.
+  See [one runtime per package](package-config.md#one-runtime-per-package).
 - `check-unpublished` — refuse (exit 1) when a release at `--version`
   (required) would publish a package with the same name, full version,
   architecture and format as one an earlier stable release of `--repo`

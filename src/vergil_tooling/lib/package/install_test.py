@@ -30,8 +30,9 @@ import subprocess
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib.config import read_config
-from vergil_tooling.lib.package import PackageError, matrix, naming, orgs, repo_setup
+from vergil_tooling.lib.package import PackageError, matrix, orgs, repo_setup
 from vergil_tooling.lib.package import targets as tg
+from vergil_tooling.lib.package.index.published import parse_filename
 from vergil_tooling.lib.package.repo_setup import local_run
 
 if TYPE_CHECKING:
@@ -58,6 +59,10 @@ def select_artifact(artifacts: Path, name: str, cell: TestCell, noarch: bool) ->
     ``<name>-<version>-<rev>.<rpm-arch>.rpm``, with ``<rev>`` ``1`` for shared
     builds and ``1~<suite>`` (deb) / ``1.<suite>`` (rpm) for native ones. A
     ``noarch`` package is ``all`` (deb) / ``noarch`` (rpm).
+
+    Only files whose parsed package name is exactly ``name`` count, so with
+    packages ``foo`` and ``foo-bar`` side by side the rpm glob for ``foo``
+    (``foo-*``) never selects ``foo-bar``'s file.
     """
     if cell.fmt == "deb":
         arch = "all" if noarch else cell.arch
@@ -67,7 +72,7 @@ def select_artifact(artifacts: Path, name: str, cell: TestCell, noarch: bool) ->
         arch = "noarch" if noarch else tg.REGISTRY[cell.target].rpm_arch
         rev = f"1.{cell.suite}" if cell.native else "1"
         pattern = f"{name}-*-{rev}.{arch}.rpm"
-    hits = sorted(artifacts.glob(pattern))
+    hits = sorted(p for p in artifacts.glob(pattern) if parse_filename(p.name).name == name)
     if len(hits) != 1:
         found = ", ".join(p.name for p in hits) or "none"
         msg = (
@@ -103,16 +108,16 @@ def run_install_test(
     a failed smoke, a misresolved shim or any residue raises ``PackageError``.
     """
     cfg = read_config(repo_root)
-    if cfg.package is None:
+    if not cfg.packages:
         msg = "vergil.toml has no [package] section"
         raise PackageError(msg)
-    pkg = cfg.package
-    cells = {c.id: c for c in matrix.resolve(pkg).test}
+    cells = {c.id: c for c in matrix.resolve_all(repo_root, cfg.packages).test}
     if cell_id not in cells:
         msg = f"unknown test cell {cell_id!r} (known: {', '.join(cells)})"
         raise PackageError(msg)
     cell = cells[cell_id]
-    name = naming.package_name(repo_root, pkg)
+    name = cell.package
+    pkg = matrix.named(repo_root, cfg.packages)[name]
     artifact = select_artifact(artifacts, name, cell, noarch=pkg.noarch).resolve()
     deb = cell.fmt == "deb"
     installer = repo_setup.apt_get() if deb else ("dnf",)

@@ -30,7 +30,15 @@ def _pkg(**kw: Any) -> PackageConfig:
 
 def _ctx(tmp_path: Path, cell: BuildCell | None = None, **pkgkw: Any) -> BuildContext:
     cell = cell or BuildCell(
-        "shared-amd64", "amd64", "r", "i", ("deb", "rpm"), ("ubuntu/24.04/amd64",), False, None
+        "shared-amd64",
+        "amd64",
+        "r",
+        "i",
+        ("deb", "rpm"),
+        ("ubuntu/24.04/amd64",),
+        False,
+        None,
+        package="x",
     )
     return BuildContext(
         tmp_path, _pkg(**pkgkw), cell, "vergil-tooling", "2.1.240", tmp_path / "s", tmp_path / "o"
@@ -76,7 +84,9 @@ def test_render_identity_and_depends(tmp_path: Path) -> None:
 
 
 def test_render_native_release(tmp_path: Path) -> None:
-    cell = BuildCell("native-rhel-9-arm64", "arm64", "r", "i", ("rpm",), (), True, "el9")
+    cell = BuildCell(
+        "native-rhel-9-arm64", "arm64", "r", "i", ("rpm",), (), True, "el9", package="x"
+    )
     cfg = nfpm.render(_ctx(tmp_path, cell), BuildResult(contents=[]), "rpm", {})
     assert cfg["release"] == "1.el9"
     assert cfg["arch"] == "arm64"

@@ -209,11 +209,15 @@ def test_contents_metacharacter_in_staging_root_escapes_every_file(tmp_path: Pat
 
 
 def test_package_release_revision() -> None:
-    shared = BuildCell("shared-amd64", "amd64", "r", "i", ("deb", "rpm"), (), False, None)
-    native = BuildCell(
-        "native-ubuntu-26.04-amd64", "amd64", "r", "i", ("deb",), (), True, "resolute"
+    shared = BuildCell(
+        "shared-amd64", "amd64", "r", "i", ("deb", "rpm"), (), False, None, package="x"
     )
-    native_rpm = BuildCell("native-rhel-10-amd64", "amd64", "r", "i", ("rpm",), (), True, "el10")
+    native = BuildCell(
+        "native-ubuntu-26.04-amd64", "amd64", "r", "i", ("deb",), (), True, "resolute", package="x"
+    )
+    native_rpm = BuildCell(
+        "native-rhel-10-amd64", "amd64", "r", "i", ("rpm",), (), True, "el10", package="x"
+    )
     assert build.package_release(shared, "deb") == "1"
     assert build.package_release(shared, "rpm") == "1"
     assert build.package_release(native, "deb") == "1~resolute"
@@ -230,10 +234,11 @@ def test_glibc_floor_is_lowest_among_cell_targets() -> None:
         ("rhel/10/amd64", "rhel/9/amd64", "ubuntu/24.04/amd64", "ubuntu/26.04/amd64"),
         False,
         None,
+        package="x",
     )
     assert build.glibc_floor(cell) == (2, 34)
     ub26 = ("ubuntu/26.04/amd64",)
-    only_ubuntu = BuildCell("native-u26", "amd64", "r", "i", ("deb",), ub26, True, "x")
+    only_ubuntu = BuildCell("native-u26", "amd64", "r", "i", ("deb",), ub26, True, "x", package="x")
     assert build.glibc_floor(only_ubuntu) == (2, 43)
 
 
@@ -389,3 +394,72 @@ def test_run_build_rejects_raw_systemctl_before_packaging(
     with pytest.raises(PackageError, match=r"raw 'systemctl'"):
         build.run_build(tmp_path, "shared-amd64", "1.0.0", tmp_path / "o", tmp_path / "s")
     assert calls == []
+
+
+# --- several [[package]] entries (epic vergil-project/.github#472, spec §5.2) ---
+
+
+def _series_toml(build_command: str) -> str:
+    entry = """
+[[package]]
+builder = "staged"
+vendor = "vergil"
+name = "vergil-python{series}"
+upstream-version = "{series}.1+20261021"
+summary = "Python {series}"
+smoke = "/opt/vergil/python/{series}/bin/python{series} -V"
+targets = ["ubuntu/24.04/*"]
+
+[package.staged]
+build-command = '{cmd}'
+"""
+    return _BASE_TOML + "".join(entry.format(series=s, cmd=build_command) for s in ("3.14", "3.15"))
+
+
+def test_run_build_selects_entry_by_cell(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "vergil.toml").write_text(_series_toml("true"))
+    seen: list[build.BuildContext] = []
+
+    def fake(ctx: build.BuildContext) -> build.BuildResult:
+        seen.append(ctx)
+        return build.BuildResult(contents=[{"src": "x", "dst": "/x"}])
+
+    monkeypatch.setitem(build.BUILDERS, "staged", fake)
+    calls: list[tuple[dict[str, Any], str, Path]] = []
+    monkeypatch.setattr(nfpm, "package", _fake_package(calls))
+    out = tmp_path / "o"
+    got = build.run_build(tmp_path, "vergil-python3.15--shared-amd64", "1.0.5", out, tmp_path / "s")
+    [ctx] = seen
+    assert ctx.name == "vergil-python3.15"
+    assert ctx.pkg.name == "vergil-python3.15"
+    assert ctx.version == "3.15.1+20261021.1.0.5"
+    assert ctx.cell.id == "vergil-python3.15--shared-amd64"
+    assert got == [out / "vergil-python3.15.deb"]
+    assert calls[0][0]["version"] == "3.15.1+20261021.1.0.5"
+
+
+def test_run_build_unqualified_cell_is_unknown_with_several_packages(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_series_toml("true"))
+    match = r"unknown build cell 'shared-amd64'.*vergil-python3\.14--"
+    with pytest.raises(PackageError, match=match):
+        build.run_build(tmp_path, "shared-amd64", "1.0.5", tmp_path / "o", tmp_path / "s")
+
+
+def test_staged_env_name_and_version(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    seen = tmp_path / "seen"
+    cmd = (
+        f'echo "$VRG_PACKAGE_NAME $VRG_PACKAGE_VERSION $VRG_TARGET_ARCH" >> {seen}'
+        " && touch $VRG_STAGING_ROOT/f"
+    )
+    (tmp_path / "vergil.toml").write_text(_series_toml(cmd))
+    monkeypatch.setattr(nfpm, "package", _fake_package([]))
+    build.run_build(
+        tmp_path, "vergil-python3.15--shared-arm64", "1.0.5", tmp_path / "o", tmp_path / "s"
+    )
+    build.run_build(
+        tmp_path, "vergil-python3.14--shared-amd64", "1.0.5", tmp_path / "o", tmp_path / "s"
+    )
+    assert seen.read_text().splitlines() == [
+        "vergil-python3.15 3.15.1+20261021.1.0.5 arm64",
+        "vergil-python3.14 3.14.1+20261021.1.0.5 amd64",
+    ]

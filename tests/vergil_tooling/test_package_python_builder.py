@@ -22,6 +22,7 @@ _SHARED_AMD64 = BuildCell(
     ("rhel/9/amd64", "ubuntu/24.04/amd64"),
     native=False,
     suite=None,
+    package="x",
 )
 _NATIVE_RHEL9 = BuildCell(
     "native-rhel-9-arm64",
@@ -32,6 +33,7 @@ _NATIVE_RHEL9 = BuildCell(
     ("rhel/9/arm64",),
     native=True,
     suite="el9",
+    package="x",
 )
 _NATIVE_RESOLUTE = BuildCell(
     "native-ubuntu-26.04-amd64",
@@ -42,6 +44,7 @@ _NATIVE_RESOLUTE = BuildCell(
     ("ubuntu/26.04/amd64",),
     native=True,
     suite="resolute",
+    package="x",
 )
 
 _PYPROJECT = '[project]\nname = "vergil-tooling"\n[project.scripts]\nvrg-b = "m:b"\nvrg-a = "m:a"\n'
@@ -460,6 +463,7 @@ _SHARED_ARM64 = BuildCell(
     ("rhel/9/arm64", "ubuntu/24.04/arm64"),
     native=False,
     suite=None,
+    package="x",
 )
 
 

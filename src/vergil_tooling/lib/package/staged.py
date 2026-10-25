@@ -3,9 +3,11 @@
 The generic builder for anything that is not a Python venv product. If
 ``[package.staged].build-command`` is set, it runs (via ``bash -c``, from the
 repo root) with ``VRG_STAGING_ROOT`` — an empty directory standing in for
-``/`` — and ``VRG_TARGET_ARCH`` set, and must populate the staging root. A
-non-zero exit is a hard error. The overlay's files are merged at render time;
-an empty result is rejected by :func:`build.run_build`.
+``/`` — ``VRG_TARGET_ARCH``, ``VRG_PACKAGE_NAME`` (the package being built, one
+of possibly several ``[[package]]`` entries) and ``VRG_PACKAGE_VERSION`` (its
+full version, :func:`naming.package_version`) set, and must populate the
+staging root. A non-zero exit is a hard error. The overlay's files are merged
+at render time; an empty result is rejected by :func:`build.run_build`.
 """
 
 from __future__ import annotations
@@ -32,6 +34,8 @@ def build_staged(ctx: BuildContext) -> BuildResult:
             **os.environ,
             "VRG_STAGING_ROOT": str(ctx.staging_root),
             "VRG_TARGET_ARCH": ctx.cell.arch,
+            "VRG_PACKAGE_NAME": ctx.name,
+            "VRG_PACKAGE_VERSION": ctx.version,
         }
         proc = subprocess.run(  # noqa: S603 - the repo's own configured build command
             ["bash", "-c", cmd],  # noqa: S607

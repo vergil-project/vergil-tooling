@@ -15,7 +15,15 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 _SHARED_AMD64 = BuildCell(
-    "shared-amd64", "amd64", "r", "i", ("deb", "rpm"), ("ubuntu/24.04/amd64",), False, None
+    "shared-amd64",
+    "amd64",
+    "r",
+    "i",
+    ("deb", "rpm"),
+    ("ubuntu/24.04/amd64",),
+    False,
+    None,
+    package="x",
 )
 
 
