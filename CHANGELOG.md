@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.266] - 2026-10-25
+
+### Bug fixes
+
+- prune repos without a GitHub origin in App mode (#3625)
+
+### Chores
+
+- uv lock --upgrade
+
 ## [2.1.265] - 2026-10-25
 
 ### Bug fixes
