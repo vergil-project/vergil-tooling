@@ -19,7 +19,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -27,10 +27,10 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
       
       
 
@@ -1328,6 +1328,8 @@
       
         
       
+        
+      
     
     
     
@@ -1380,6 +1382,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.267/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.267
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -12323,6 +12353,8 @@
       
         
       
+        
+      
     
     
     
@@ -12607,6 +12639,34 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="../../reference/upstream-refresh-config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Upstream Refresh ([upstream-refresh])
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
     
     
       
@@ -12625,10 +12685,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_10" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_11" >
         
           
-          <label class="md-nav__link" for="__nav_4_10" id="__nav_4_10_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_11" id="__nav_4_11_label" tabindex="0">
             
   
   
@@ -12646,8 +12706,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_10_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_10">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_11">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -12719,10 +12779,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_11" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_12" >
         
           
-          <label class="md-nav__link" for="__nav_4_11" id="__nav_4_11_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_12" id="__nav_4_12_label" tabindex="0">
             
   
   
@@ -12740,8 +12800,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_11_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_11">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_12_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_12">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -12853,10 +12913,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_12" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_13" >
         
           
-          <label class="md-nav__link" for="__nav_4_12" id="__nav_4_12_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_13" id="__nav_4_13_label" tabindex="0">
             
   
   
@@ -12874,8 +12934,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_12_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_12">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_13_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_13">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -16531,7 +16591,9 @@ adding new public surface. Versions: <code>v1.3.0</code> → <code>v1.3.1</code>
      the release; the index's weekly reconcile picks the release up.
    - <code>vrg-release</code>'s <code>package-index</code> stage then polls the published
      index (up to 20 minutes, every 30 seconds) until the new version is
-     visible, so the consumer refresh never races the index. While it
+     visible, so the consumer refresh never races the index. With several
+     <code>[[package]]</code> entries it waits for every package, each at its own full
+     version, and succeeds only once all of them are listed. While it
      waits, it streams the <code>Publish package index</code> run in <code>&lt;org&gt;/packages</code>
      that covers the release and prints a heartbeat line on each poll
      otherwise; the index poll alone decides success. A miss
@@ -16904,8 +16966,10 @@ built from every release of every repo, the refusal would fail every
 repo's index publish until the duplicate assets were removed by hand.</p>
 <p>The check runs in <code>preflight</code>, before anything is branched, tagged or
 published. That is the earliest point that knows the full package
-versions: they follow from <code>[package]</code> (its <code>version</code>, or the release
-version when unset) and the build matrix, without building anything.
+versions: they follow from <code>[package]</code> (its <code>version</code>, its
+<code>upstream-version</code> joined with the release version, or the release
+version when neither is set) and the build matrix, without building
+anything.
 It runs before the dependency-update gate, so a refusal changes
 nothing. The refusal names each conflicting package and the release
 that first published it:</p>
@@ -16913,8 +16977,10 @@ that first published it:</p>
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>  - vergil-python3.15 3.15.1+20261021-1 amd64 (deb): already published by vergil-project/vergil-python@v1.0.3
 <a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>  ...
 </code></pre></div>
-<p>To fix it, bump <code>[package].version</code> in <code>vergil.toml</code>, for example to a
-new <code>+&lt;date&gt;</code> build suffix. If the check cannot read the repo's
+<p>To fix it, bump the package version in <code>vergil.toml</code>: a new
+<code>upstream-version</code>, or for a <code>version</code> override a new <code>version</code>. An
+<code>upstream-version</code> package's version ends in the repo version, so each
+new release is already a new package version. If the check cannot read the repo's
 releases, it refuses rather than skipping. CD runs the same check as a
 backstop; see the
 <a href="../../reference/package-config/#the-re-publish-check">package reference</a>.</p>
@@ -17050,10 +17116,10 @@ Follow-ups move to their own issues.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.indexes", "navigation.top", "content.code.copy", "search.highlight", "search.suggest"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.indexes", "navigation.top", "content.code.copy", "search.highlight", "search.suggest"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
       
     
   </body>
