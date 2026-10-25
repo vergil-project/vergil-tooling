@@ -1819,6 +1819,107 @@ class TestDetectOrg:
             assert github.detect_org() is None
 
 
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("https://github.com/org/repo.git", True),
+        ("https://user@github.com/org/repo", True),
+        ("git@github.com:org/repo.git", True),
+        ("ssh://git@github.com:22/org/repo.git", True),
+        ("HTTPS://GitHub.com/org/repo", True),
+        ("  git@github.com:org/repo.git\n", True),
+        ("https://gitlab.com/org/repo.git", False),
+        ("git@gitlab.com:org/repo.git", False),
+        ("https://github.com.evil.example/org/repo", False),
+        ("https://notgithub.com/org/repo", False),
+        ("/srv/git/repo.git", False),
+        ("", False),
+    ],
+)
+def test_is_github_url(url: str, expected: bool) -> None:
+    assert github.is_github_url(url) is expected
+
+
+def _checkout(path: Path, *remotes: tuple[str, str]) -> Path:
+    """Create a git checkout at *path* with the given ``(name, url)`` remotes."""
+    path.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q"], cwd=path, check=True, capture_output=True)
+    for name, url in remotes:
+        subprocess.run(
+            ["git", "remote", "add", name, url], cwd=path, check=True, capture_output=True
+        )
+    return path
+
+
+class TestRepoInstallationToken:
+    """The token for ``git -C <repo>``: the repo's own org, or none off GitHub (#3624)."""
+
+    @pytest.fixture(autouse=True)
+    def _app_mode(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        monkeypatch.setenv("VRG_APP_ID", "12345")
+        monkeypatch.setenv("VRG_PRIVATE_KEY_PATH", "/keys/app.pem")
+
+    def test_github_origin_mints_its_own_orgs_token(self, tmp_path: Path) -> None:
+        repo = _checkout(tmp_path / "r", ("origin", "git@github.com:other-org/r.git"))
+        with patch(
+            "vergil_tooling.lib.github.get_installation_token", return_value="ghs_other"
+        ) as m_token:
+            assert github.repo_installation_token(repo) == "ghs_other"
+        m_token.assert_called_once_with("other-org")
+
+    def test_repo_without_remotes_mints_nothing(self, tmp_path: Path) -> None:
+        repo = _checkout(tmp_path / "r")
+        with patch("vergil_tooling.lib.github.get_installation_token") as m_token:
+            assert github.repo_installation_token(repo) is None
+        m_token.assert_not_called()
+
+    def test_origin_on_another_host_mints_nothing(self, tmp_path: Path) -> None:
+        # Never the CWD's org: the CWD here is this repo's own GitHub checkout.
+        repo = _checkout(tmp_path / "r", ("origin", "https://gitlab.com/someone/r.git"))
+        with patch("vergil_tooling.lib.github.get_installation_token") as m_token:
+            assert github.repo_installation_token(repo) is None
+        m_token.assert_not_called()
+
+    def test_github_remote_without_a_readable_origin_org_refuses(self, tmp_path: Path) -> None:
+        # A GitHub remote must never run on ambient auth in App mode (#3217).
+        repo = _checkout(
+            tmp_path / "r",
+            ("origin", "https://gitlab.com/someone/r.git"),
+            ("upstream", "https://github.com/org/r.git"),
+        )
+        with (
+            patch("vergil_tooling.lib.github.get_installation_token") as m_token,
+            pytest.raises(github.NoTargetOrgError) as excinfo,
+        ):
+            github.repo_installation_token(repo)
+        m_token.assert_not_called()
+        msg = github.app_auth_message(excinfo.value)
+        assert f"{repo} has a remote on GitHub" in msg
+        assert "Refusing to fall back to ambient gh auth" in msg
+
+    def test_github_remote_without_app_mode_is_ambient(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("VRG_APP_ID")
+        monkeypatch.delenv("VRG_PRIVATE_KEY_PATH")
+        repo = _checkout(tmp_path / "r", ("upstream", "https://github.com/org/r.git"))
+        assert github.repo_installation_token(repo) is None
+
+    def test_insteadof_rewrite_onto_github_counts(self, tmp_path: Path) -> None:
+        repo = _checkout(tmp_path / "r", ("mirror", "https://gitlab.com/org/r.git"))
+        subprocess.run(
+            ["git", "config", "url.https://github.com/.insteadOf", "https://gitlab.com/"],
+            cwd=repo,
+            check=True,
+        )
+        assert github.has_github_remote(cwd=repo) is True
+
+    def test_unreadable_checkout_raises(self, tmp_path: Path) -> None:
+        with pytest.raises(subprocess.CalledProcessError):
+            github.has_github_remote(cwd=tmp_path)
+
+
 _URLOPEN = "vergil_tooling.lib.github.urllib.request.urlopen"
 
 

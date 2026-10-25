@@ -93,13 +93,16 @@ class NoTargetOrgError(AppAuthError):
     App-auth failure handler covers it.
     """
 
-    def __init__(self, app_id: str, key_path: Path) -> None:
+    def __init__(self, app_id: str, key_path: Path, detail: str | None = None) -> None:
         super().__init__(
             "",
             app_id,
             key_path,
-            "no target org could be determined (no explicit owner was given and "
-            "the current directory is not a repo with a GitHub 'origin' remote)",
+            detail
+            or (
+                "no target org could be determined (no explicit owner was given and "
+                "the current directory is not a repo with a GitHub 'origin' remote)"
+            ),
         )
 
 
@@ -182,6 +185,66 @@ def detect_org(*, cwd: str | Path | None = None) -> str | None:
             if org:
                 return org
     return None
+
+
+# A remote URL on github.com, in any form git accepts: ``https://`` (optionally
+# with a user), ``ssh://`` (optionally with a port) or scp-style ``git@github.com:``.
+_GITHUB_URL_RE = re.compile(
+    r"^(?:[a-z][a-z0-9+.-]*://)?(?:[^@/]+@)?github\.com(?:[:/]|$)", re.IGNORECASE
+)
+
+
+def is_github_url(url: str) -> bool:
+    """True when the remote *url* points at github.com."""
+    return bool(_GITHUB_URL_RE.match(url.strip()))
+
+
+def has_github_remote(*, cwd: str | Path) -> bool:
+    """True when any remote of the checkout at *cwd* points at github.com.
+
+    Reads ``git remote -v``, whose URLs have ``url.*.insteadOf`` rewrites
+    applied, so a remote rewritten onto GitHub counts. A *cwd* that is not a
+    readable checkout raises ``CalledProcessError`` rather than reading as "no
+    GitHub remote".
+    """
+    result = subprocess.run(  # noqa: S603
+        ["git", "remote", "-v"],  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=cwd,
+    )
+    return any(
+        is_github_url(fields[1])
+        for fields in (line.split() for line in result.stdout.splitlines())
+        if len(fields) >= 2
+    )
+
+
+def repo_installation_token(repo: str | Path) -> str | None:
+    """Return the installation token for git run against the checkout *repo*.
+
+    The token of *repo*'s own ``origin`` org, never the CWD's (#3463): a ``git
+    -C <repo>`` call in a multi-repo sweep must not borrow the org of the
+    directory it was started in. A checkout with no remote on github.com gets
+    ``None`` — there is nothing on GitHub to authenticate, and the token header
+    is scoped to ``https://github.com/`` anyway (#3624). A checkout that does
+    have a GitHub remote but no org readable from ``origin`` raises
+    :class:`NoTargetOrgError` in App mode rather than return ``None``, which
+    would hand the call to ambient auth (#3217).
+    """
+    org = detect_org(cwd=repo)
+    if org is not None:
+        return get_installation_token(org)
+    if not has_github_remote(cwd=repo):
+        return None
+    config = _load_app_config()
+    if config is None:
+        return None
+    raise NoTargetOrgError(
+        *config,
+        f"{repo} has a remote on GitHub but no GitHub org could be read from its 'origin' remote",
+    )
 
 
 @functools.cache
