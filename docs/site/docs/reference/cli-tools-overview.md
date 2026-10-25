@@ -152,6 +152,25 @@ the [dependency-update reference](dependency-update-config.md).
 | Exit codes | 0 success or no-op, 1 failure or refusal, 130 interrupted |
 | Status | Active |
 
+### vrg-upstream-refresh
+
+Run the repo's `[upstream-refresh].hook` on a clean checkout of the
+base branch, then open, refresh or close the single `upstream-refresh`
+PR. A no-change run closes any stale refresh PR, or exits quietly when
+there is none. It never merges, and never runs dependency updaters,
+validation or a release. It runs from the scheduled
+`ops-upstream-refresh` workflow, or by hand as a human. See the
+[upstream-refresh reference](upstream-refresh-config.md).
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_upstream_refresh` |
+| Args | `--repo OWNER/NAME` (default: `$GITHUB_REPOSITORY`, then origin), `--base BRANCH` (default: the repo's default branch), `--dry-run` |
+| Preconditions | Not an agent identity; `[upstream-refresh]` in `vergil.toml`; clean working tree with `HEAD` at `origin/<base>`; `gh` authenticated with contents and pull-requests write |
+| Failure mode | A hook failure or untracked files left by the hook stop the run before any push; errors on stderr |
+| Exit codes | 0 any outcome (`nothing`, `closed`, `opened`, `refreshed`, `unchanged`), 1 error or refusal |
+| Status | Active |
+
 ### vrg-finalize-pr
 
 Finalize a pull request. Given a PR, runs the provenance check, merges

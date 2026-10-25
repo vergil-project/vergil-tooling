@@ -990,6 +990,47 @@ def test_dependency_update_unknown_key_warns(
     assert "unrecognized key 'schedule' in [dependency-update]" in capsys.readouterr().err
 
 
+# -- [upstream-refresh] section (epic vergil-project/.github#472) -------------
+
+
+def test_config_upstream_refresh_absent(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    assert read_config(tmp_path).upstream_refresh is None
+
+
+def test_config_upstream_refresh_parses(tmp_path: Path) -> None:
+    toml = _VALID_TOML + '\n[upstream-refresh]\nhook = "scripts/dev/upstream-refresh.sh"\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    cfg = read_config(tmp_path)
+    assert cfg.upstream_refresh is not None
+    assert cfg.upstream_refresh.hook == "scripts/dev/upstream-refresh.sh"
+    # The two hooks are separate: [upstream-refresh] never sets [dependency-update].
+    assert cfg.dependency_update.hook is None
+
+
+def test_config_upstream_refresh_unknown_key(tmp_path: Path) -> None:
+    toml = _VALID_TOML + '\n[upstream-refresh]\nhook = "h"\nschedule = "daily"\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=r"unknown key\(s\) in \[upstream-refresh\]: schedule"):
+        read_config(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("toml", "match"),
+    [
+        (_VALID_TOML + '\n[upstream-refresh]\nhook = ""\n', "must be a non-empty string"),
+        (_VALID_TOML + '\n[upstream-refresh]\nhook = "  "\n', "must be a non-empty string"),
+        (_VALID_TOML + "\n[upstream-refresh]\nhook = 3\n", "must be a non-empty string"),
+        (_VALID_TOML + "\n[upstream-refresh]\n", "hook is required"),
+        ('upstream-refresh = "x"\n' + _VALID_TOML, r"\[upstream-refresh\] must be a table"),
+    ],
+)
+def test_config_upstream_refresh_invalid(tmp_path: Path, toml: str, match: str) -> None:
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=match):
+        read_config(tmp_path)
+
+
 # -- [vm] cascade (issue #99) -------------------------------------------------
 
 

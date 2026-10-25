@@ -135,6 +135,7 @@ _KNOWN_SECTIONS = frozenset(
         "vm",
         "package",
         "dependency-update",
+        "upstream-refresh",
     },
 )
 
@@ -153,6 +154,7 @@ _KNOWN_KEYS: dict[str, frozenset[str]] = {
     "typescript": frozenset({"module", "target"}),
     "test": frozenset({"parallel", "workers", *TEST_CONTEXTS}),
     "dependency-update": frozenset({"hook"}),
+    "upstream-refresh": frozenset({"hook"}),
     "package": frozenset(
         {
             "builder",
@@ -282,6 +284,14 @@ class DependencyUpdateConfig:
 
 
 @dataclass
+class UpstreamRefreshConfig:
+    # [upstream-refresh] (epic vergil-project/.github#472, spec §5.6): a
+    # repo-owned command vrg-upstream-refresh runs to refresh upstream inputs.
+    # Separate from [dependency-update]: neither command runs the other's hook.
+    hook: str
+
+
+@dataclass
 class CppConfig:
     # The two cheap in-build C++ axes (epic vergil-project/.github#207 §3.3):
     # ``std`` is the ``-std=`` flag, ``stdlib`` selects the standard library.
@@ -401,6 +411,7 @@ class VergilConfig:
     # [package] table is a one-element tuple.
     packages: tuple[PackageConfig, ...] = ()
     dependency_update: DependencyUpdateConfig = field(default_factory=DependencyUpdateConfig)
+    upstream_refresh: UpstreamRefreshConfig | None = None
 
     @property
     def package(self) -> PackageConfig | None:
@@ -733,6 +744,26 @@ def _parse_dependency_update(
         msg = f"{source}: [dependency-update].hook must be a non-empty string"
         raise ConfigError(msg)
     return DependencyUpdateConfig(hook=hook)
+
+
+def _parse_upstream_refresh(
+    raw: dict[str, Any], source: str = CONFIG_FILE
+) -> UpstreamRefreshConfig | None:
+    table = raw.get("upstream-refresh")
+    if table is None:
+        return None
+    if not isinstance(table, dict):
+        msg = f"{source}: [upstream-refresh] must be a table"
+        raise ConfigError(msg)
+    unknown = sorted(set(table) - _KNOWN_KEYS["upstream-refresh"])
+    if unknown:
+        msg = f"{source}: unknown key(s) in [upstream-refresh]: {', '.join(unknown)}"
+        raise ConfigError(msg)
+    hook = table.get("hook")
+    if not isinstance(hook, str) or not hook.strip():
+        msg = f"{source}: [upstream-refresh].hook is required and must be a non-empty string"
+        raise ConfigError(msg)
+    return UpstreamRefreshConfig(hook=hook)
 
 
 def parse_test_workers(value: Any, where: str) -> int | str:
@@ -1214,6 +1245,7 @@ def _parse_raw_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> VergilC
         vm=parse_vm_stanza(raw, source),
         packages=_parse_packages(raw, source),
         dependency_update=_parse_dependency_update(raw, source),
+        upstream_refresh=_parse_upstream_refresh(raw, source),
     )
 
 
