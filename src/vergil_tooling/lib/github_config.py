@@ -724,7 +724,7 @@ def compute_desired_state(
             config.ci,
             ghas=ghas,
             docs=config.publish.docs,
-            package=config.package is not None,
+            package=bool(config.packages),
             integration_versions=resolved_integration_versions(config),
         )
     )

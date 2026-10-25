@@ -37,6 +37,7 @@ from vergil_tooling.lib.config import (
     parse_test_workers,
     parse_vm_stanza,
     read_config,
+    single_vendor,
     validation_container_command,
     vrg_install_tag,
 )
@@ -2087,6 +2088,154 @@ def test_overlay_is_ignored_without_package_section(tmp_path: Path) -> None:
     (tmp_path / "packaging").mkdir()
     (tmp_path / "packaging" / "nfpm.overlay.yaml").write_text("name: other\n")
     assert read_config(tmp_path).package is None
+
+
+# -- [[package]]: several packages per repo (epic vergil-project/.github#472) ---
+
+
+def _staged_entry(name: str | None, vendor: str = "vergil", extra: str = "") -> str:
+    name_line = f'name = "{name}"\n' if name is not None else ""
+    return (
+        "\n[[package]]\n"
+        'builder = "staged"\n'
+        f'vendor = "{vendor}"\n'
+        f"{name_line}"
+        'summary = "S"\n'
+        'smoke = "true"\n'
+        "noarch = true\n"
+        f"{extra}"
+        "\n[package.staged]\n"
+        'build-command = "x"\n'
+    )
+
+
+def _python_entry(name: str | None) -> str:
+    name_line = f'name = "{name}"\n' if name is not None else ""
+    return (
+        "\n[[package]]\n"
+        'builder = "python"\n'
+        'vendor = "vergil"\n'
+        f"{name_line}"
+        'summary = "S"\n'
+        'smoke = "true"\n'
+    )
+
+
+def test_single_table_is_one_entry(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_PKG_PY)
+    (tmp_path / "uv.lock").write_text("version = 1\n")
+    cfg = read_config(tmp_path)
+    assert len(cfg.packages) == 1
+    assert cfg.package is cfg.packages[0]
+    assert single_vendor(cfg) == "vergil"
+
+
+def test_single_array_entry_is_one_entry(tmp_path: Path) -> None:
+    # One [[package]] entry is a single package: the pyproject name fallback holds.
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML + _python_entry(None))
+    (tmp_path / "uv.lock").write_text("version = 1\n")
+    cfg = read_config(tmp_path)
+    assert len(cfg.packages) == 1
+    assert cfg.package is cfg.packages[0]
+    assert cfg.packages[0].name is None
+
+
+def test_single_array_entry_may_use_overlay(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML + _staged_entry("a"))
+    (tmp_path / "packaging").mkdir()
+    (tmp_path / "packaging" / "nfpm.overlay.yaml").write_text(_KEYRING_OVERLAY)
+    assert read_config(tmp_path).package is not None
+
+
+def test_array_of_tables_parses(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML + _staged_entry("a") + _staged_entry("b"))
+    cfg = read_config(tmp_path)
+    assert [p.name for p in cfg.packages] == ["a", "b"]
+    assert isinstance(cfg.packages, tuple)
+    assert single_vendor(cfg) == "vergil"
+    assert "unrecognized" not in capsys.readouterr().err
+
+
+def test_array_entry_unknown_key_warns(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    body = _VALID_TOML + _staged_entry("a") + _staged_entry("b", extra="bogus = 1\n")
+    (tmp_path / "vergil.toml").write_text(body)
+    read_config(tmp_path)
+    assert "unrecognized key 'bogus' in [package]" in capsys.readouterr().err
+
+
+def test_multi_requires_names(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML + _staged_entry("a") + _python_entry(None))
+    (tmp_path / "uv.lock").write_text("version = 1\n")
+    with pytest.raises(ConfigError, match=r"every \[\[package\]\] entry must set name"):
+        read_config(tmp_path)
+
+
+def test_multi_unique_names(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML + _staged_entry("a") + _staged_entry("a"))
+    with pytest.raises(ConfigError, match=r"duplicate \[\[package\]\] name 'a'"):
+        read_config(tmp_path)
+
+
+def test_multi_single_vendor(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(
+        _VALID_TOML + _staged_entry("a", "vergil") + _staged_entry("b", "other")
+    )
+    with pytest.raises(ConfigError, match=r"all \[\[package\]\] entries must share one vendor"):
+        read_config(tmp_path)
+
+
+def test_multi_refuses_overlay(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML + _staged_entry("a") + _staged_entry("b"))
+    (tmp_path / "packaging").mkdir()
+    (tmp_path / "packaging" / "nfpm.overlay.yaml").write_text(_KEYRING_OVERLAY)
+    with pytest.raises(
+        ConfigError,
+        match=r"packaging/nfpm\.overlay\.yaml applies only to a single \[package\]",
+    ):
+        read_config(tmp_path)
+
+
+def test_multi_checks_each_entry(tmp_path: Path) -> None:
+    # The repo-level checks run per entry: a python entry still needs uv.lock.
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML + _staged_entry("a") + _python_entry("b"))
+    with pytest.raises(ConfigError, match=r'builder = "python" requires a uv\.lock'):
+        read_config(tmp_path)
+
+
+def test_multi_entry_errors_propagate(tmp_path: Path) -> None:
+    body = _VALID_TOML + _staged_entry("a") + _staged_entry("b", extra='exclude = "x"\n')
+    (tmp_path / "vergil.toml").write_text(body)
+    with pytest.raises(ConfigError, match=r"\[package\]\.exclude must be a list of strings"):
+        read_config(tmp_path)
+
+
+def test_package_array_entry_must_be_a_table(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text("package = [1, 2]\n" + _VALID_TOML)
+    with pytest.raises(ConfigError, match=r"every \[\[package\]\] entry must be a table"):
+        read_config(tmp_path)
+
+
+def test_empty_package_array_is_an_error(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text("package = []\n" + _VALID_TOML)
+    with pytest.raises(ConfigError, match=r"\[\[package\]\] must have at least one entry"):
+        read_config(tmp_path)
+
+
+def test_package_property_refuses_multi(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML + _staged_entry("a") + _staged_entry("b"))
+    cfg = read_config(tmp_path)
+    with pytest.raises(
+        ConfigError, match=r"declares 2 \[\[package\]\] entries; read cfg\.packages"
+    ):
+        _ = cfg.package
+
+
+def test_no_package_empty(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    cfg = read_config(tmp_path)
+    assert cfg.packages == ()
+    assert cfg.package is None
+    assert single_vendor(cfg) is None
 
 
 # -- integration_branch (issue #3386) ------------------------------------------

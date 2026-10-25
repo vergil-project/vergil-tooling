@@ -396,8 +396,26 @@ class VergilConfig:
     )
     test: TestConfig = field(default_factory=TestConfig)
     vm: VmStanza | None = None
-    package: PackageConfig | None = None
+    # Every [package] / [[package]] entry, in file order (epic
+    # vergil-project/.github#472, spec §5.1). Empty when there is none; a single
+    # [package] table is a one-element tuple.
+    packages: tuple[PackageConfig, ...] = ()
     dependency_update: DependencyUpdateConfig = field(default_factory=DependencyUpdateConfig)
+
+    @property
+    def package(self) -> PackageConfig | None:
+        """The sole package entry, or None when there is none.
+
+        Raises ConfigError when the repo declares several ``[[package]]``
+        entries: a caller that assumes one package must iterate ``packages``.
+        """
+        if len(self.packages) > 1:
+            msg = (
+                f"{CONFIG_FILE} declares {len(self.packages)} [[package]] entries; "
+                "read cfg.packages"
+            )
+            raise ConfigError(msg)
+        return self.packages[0] if self.packages else None
 
 
 @dataclass
@@ -834,17 +852,63 @@ def _parse_package_staged(st: dict[str, Any] | None, source: str) -> PackageStag
     return PackageStagedConfig(build_command=cmd)
 
 
-def _parse_package_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> PackageConfig | None:
-    """Parse and validate ``[package]`` (spec §5.4). Returns None when absent.
+def _parse_packages(raw: dict[str, Any], source: str = CONFIG_FILE) -> tuple[PackageConfig, ...]:
+    """Parse ``[package]`` or ``[[package]]`` into a tuple of entries (spec §5.1).
+
+    A single table is a one-element tuple; absent is empty. Each entry goes
+    through :func:`_parse_package_config`. With more than one entry, every
+    entry must set a unique ``name`` and all must share one ``vendor``.
+    """
+    p = raw.get("package")
+    if p is None:
+        return ()
+    if not isinstance(p, list):
+        return (_parse_package_config(p, source),)
+    if not p:
+        msg = f"{source}: [[package]] must have at least one entry"
+        raise ConfigError(msg)
+    if not all(isinstance(entry, dict) for entry in p):
+        msg = f"{source}: every [[package]] entry must be a table (got {p!r})"
+        raise ConfigError(msg)
+    pkgs = tuple(_parse_package_config(entry, source) for entry in p)
+    if len(pkgs) == 1:
+        return pkgs
+    seen: set[str] = set()
+    for pkg in pkgs:
+        if pkg.name is None:
+            msg = (
+                f"{source}: every [[package]] entry must set name when there are "
+                f"several (the pyproject.toml name applies only to a single [package])"
+            )
+            raise ConfigError(msg)
+        if pkg.name in seen:
+            msg = f"{source}: duplicate [[package]] name {pkg.name!r}"
+            raise ConfigError(msg)
+        seen.add(pkg.name)
+    vendors = sorted({pkg.vendor for pkg in pkgs})
+    if len(vendors) > 1:
+        msg = f"{source}: all [[package]] entries must share one vendor (got {', '.join(vendors)})"
+        raise ConfigError(msg)
+    return pkgs
+
+
+def single_vendor(cfg: VergilConfig) -> str | None:
+    """The vendor every package entry shares, or None with no packages.
+
+    The parser guarantees all entries share one vendor (spec §5.1), so the
+    release wait and tracking issue resolve one ``<org>/packages`` repo from it.
+    """
+    return cfg.packages[0].vendor if cfg.packages else None
+
+
+def _parse_package_config(p: Any, source: str = CONFIG_FILE) -> PackageConfig:
+    """Parse and validate one ``[package]`` entry (spec §5.4).
 
     Every §5.4 condition that can be decided from ``vergil.toml`` alone is a
     hard ``ConfigError`` here, including a target selection that resolves to
     zero targets. The overlay file's shape is checked by
     :func:`_check_package_overlay`, which needs the repo root.
     """
-    p = raw.get("package")
-    if p is None:
-        return None
     if not isinstance(p, dict):
         msg = f"{source}: [package] must be a table (got {p!r})"
         raise ConfigError(msg)
@@ -964,17 +1028,24 @@ def _warn_unrecognized_keys(raw: dict[str, Any], source: str = CONFIG_FILE) -> N
         if section not in _KNOWN_SECTIONS:
             print(f"{source}: unrecognized section [{section}]", file=sys.stderr)
             continue
-        if not isinstance(raw[section], dict):
+        value = raw[section]
+        # [[package]] is an array of tables: check each entry's keys (spec §5.1).
+        if section == "package" and isinstance(value, list):
+            tables = [entry for entry in value if isinstance(entry, dict)]
+        elif isinstance(value, dict):
+            tables = [value]
+        else:
             continue
         if section == "vm":
             continue  # [vm] keys (incl. [vm.<role>] subtables) are validated in parse_vm_stanza
         known = _KNOWN_KEYS.get(section, frozenset())
-        for key in raw[section]:
-            if key not in known:
-                print(
-                    f"{source}: unrecognized key '{key}' in [{section}]",
-                    file=sys.stderr,
-                )
+        for table in tables:
+            for key in table:
+                if key not in known:
+                    print(
+                        f"{source}: unrecognized key '{key}' in [{section}]",
+                        file=sys.stderr,
+                    )
 
 
 def _parse_raw_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> VergilConfig:
@@ -1141,7 +1212,7 @@ def _parse_raw_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> VergilC
         typescript=_parse_typescript_config(raw, source),
         test=_parse_test_config(raw, source),
         vm=parse_vm_stanza(raw, source),
-        package=_parse_package_config(raw, source),
+        packages=_parse_packages(raw, source),
         dependency_update=_parse_dependency_update(raw, source),
     )
 
@@ -1161,9 +1232,17 @@ def read_config(repo_root: Path) -> VergilConfig:
         raise ConfigError(msg) from exc
 
     cfg = _parse_raw_config(raw, source=str(config_path))
-    if cfg.package is not None:
-        _check_package_overlay(repo_root, cfg.package, str(config_path))
-        _check_package_python_lock(repo_root, cfg.package, str(config_path))
+    source = str(config_path)
+    if len(cfg.packages) > 1 and (repo_root / PACKAGE_OVERLAY_PATH).is_file():
+        # A shared overlay would be applied to every package (spec §5.1).
+        msg = (
+            f"{source}: {PACKAGE_OVERLAY_PATH} applies only to a single [package]; "
+            f"this repo declares {len(cfg.packages)} [[package]] entries"
+        )
+        raise ConfigError(msg)
+    for pkg in cfg.packages:
+        _check_package_overlay(repo_root, pkg, source)
+        _check_package_python_lock(repo_root, pkg, source)
     return cfg
 
 
