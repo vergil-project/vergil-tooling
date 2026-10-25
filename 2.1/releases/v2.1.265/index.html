@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.266/">
       
       
         <link rel="next" href="../v2.1.264/">
@@ -1335,6 +1335,8 @@
       
         
       
+        
+      
     
     
     
@@ -1390,6 +1392,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.266/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.266
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -16261,6 +16291,7 @@ After the reinstall, vrg-vm update (and each box of --all) runs the box's own vr
 <li><strong>one RETIRED_LABELS in lib/labels.py; repo_init reuses the label sync (#3590)</strong>
 Move RETIRED_LABELS, labels_to_delete and the whole-registry sync into lib/labels.py (sync_labels). vrg-ensure-label --sync, intake_route and the epic-audit orphan pass import from there; epic_audit loses its private copy. repo_init's label step now calls the same sync_labels, so a newly initialised repo also gets deprecated and retired labels deleted. Ref #3558.</li>
 </ul>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.265/v2.1.265-ci-evidence.tar.gz">Download →</a></p>
 
 
 
