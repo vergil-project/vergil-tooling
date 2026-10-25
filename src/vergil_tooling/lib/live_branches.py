@@ -11,9 +11,10 @@ so ``vrg-container-cache prune`` (#3481) and the finalize-time orphan prune
 A branch is *live* in a repo when it is a local branch there (which covers every
 worktree's branch) or exists on the repo's ``origin``. Origin is read with
 ``ls-remote``, not the possibly-stale remote-tracking refs, so a branch deleted
-on GitHub is seen as gone; only when the origin cannot be read do the tracking
-refs stand in, with a warning. Any other git failure propagates: a repo whose
-branches cannot be read must stop the caller, never count as "no live branches".
+on GitHub is seen as gone; only when the origin cannot be read, or is not on
+GitHub, do the tracking refs stand in, with a warning. Any other git failure
+propagates: a repo whose branches cannot be read must stop the caller, never
+count as "no live branches".
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import git
+from vergil_tooling.lib import git, github
 from vergil_tooling.lib.platform_env import Platform, current_platform
 from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.vm_cloud import CLOUD_PROJECTS_VOLUME
@@ -117,6 +118,13 @@ def repo_live_branches(repo: Path) -> frozenset[str]:
     ``git._git_env``), so a repo set spanning orgs reads each origin with the
     right App installation.
 
+    An ``origin`` that is not on GitHub (another host, a local path) is not read
+    over the network at all: its ``refs/remotes/origin/*`` stand in, with a
+    warning naming the repo (#3624). No App token covers another host, and an
+    unauthenticated ``ls-remote`` could reach for the human's credential helper
+    or block on an SSH prompt; the URL itself is not printed, as it may embed
+    credentials.
+
     When ``ls-remote`` fails — typically a private repo in the mounted projects
     tree that the agent's App cannot read — the repo's ``refs/remotes/origin/*``
     stand in, with a warning naming the repo and the error. The fallback errs
@@ -126,6 +134,13 @@ def repo_live_branches(repo: Path) -> frozenset[str]:
     """
     live = git.local_branches(repo)
     if "origin" in git.remote_names(repo):
+        if not github.is_github_url(git.remote_url("origin", repo)):
+            print(
+                f"warning: origin of {repo} is not on GitHub; "
+                "using its local refs/remotes/origin/* instead",
+                file=sys.stderr,
+            )
+            return frozenset(live | git.remote_tracking_branches("origin", repo))
         try:
             live |= git.remote_branches("origin", repo)
         except subprocess.CalledProcessError as exc:

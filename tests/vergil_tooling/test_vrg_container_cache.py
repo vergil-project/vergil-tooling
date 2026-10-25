@@ -11,6 +11,7 @@ import pytest
 
 from tests.vergil_tooling.conftest import window_default_resolution
 from vergil_tooling.bin.vrg_container_cache import main
+from vergil_tooling.lib import git as git_lib
 from vergil_tooling.lib.cache_prune import CacheImage
 from vergil_tooling.lib.live_branches import RepoSetError
 from vergil_tooling.lib.versions.resolve import ResolutionError
@@ -507,6 +508,71 @@ def test_prune_root_replaces_the_default(
         assert main(["prune", "--root", str(root)]) == 0
     m_default.assert_not_called()
     assert f"under {root}" in capsys.readouterr().out
+
+
+def _git(*args: str, cwd: Path) -> None:
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+    )
+
+
+def _real_repo(path: Path, *remotes: tuple[str, str]) -> Path:
+    path.mkdir(parents=True)
+    _git("init", "-q", "-b", "main", cwd=path)
+    _git("commit", "-q", "--allow-empty", "-m", "init", cwd=path)
+    for name, url in remotes:
+        _git("remote", "add", name, url, cwd=path)
+    return path
+
+
+def test_prune_from_outside_a_repo_spans_a_mixed_repo_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # #3624: in App mode, run from a non-repo CWD (as vrg-vm update does from
+    # /tmp), a repo with no remotes or an origin off GitHub must not abort the
+    # prune; the GitHub repo still reads its origin with its own org's token.
+    monkeypatch.setenv("VRG_APP_ID", "12345")
+    monkeypatch.setenv("VRG_PRIVATE_KEY_PATH", "/keys/app.pem")
+    projects = tmp_path / "projects"
+    _git("branch", "feature/2-local", cwd=_real_repo(projects / "me" / "no-remotes"))
+    gitlab = _real_repo(projects / "them" / "gitlab", ("origin", "https://gitlab.com/them/r.git"))
+    _git("update-ref", "refs/remotes/origin/feature/3-tracked", "HEAD", cwd=gitlab)
+    github_repo = _real_repo(projects / "gh-org" / "r", ("origin", "git@github.com:gh-org/r.git"))
+    cwd = tmp_path / "elsewhere"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+
+    def _ls_remote(remote: str, repo: Path) -> set[str]:
+        # Only the GitHub repo reaches ls-remote, authenticated as its own org.
+        assert repo == github_repo.resolve()
+        env = git_lib._git_env(("-C", str(repo), "ls-remote", "--heads", remote))
+        assert "Authorization: Basic" in env["GIT_CONFIG_VALUE_0"]
+        return {"feature/1-live"}
+
+    def _token(org: str | None) -> str:
+        assert org == "gh-org"
+        return "ghs_gh_org"
+
+    images = [
+        CacheImage(f"{_PY}:3.14--feature-{n}--0123abcd", f"id-{n}", f"feature-{n}")
+        for n in ("1-live", "2-local", "3-tracked", "4-gone")
+    ]
+    with (
+        patch(_CLI + ".detect_runtime", return_value="docker"),
+        patch(_CLI + ".list_cache_images", return_value=images),
+        patch(_CLI + ".images_in_use", return_value=set()),
+        patch("vergil_tooling.lib.live_branches.git.remote_branches", side_effect=_ls_remote),
+        patch("vergil_tooling.lib.github.get_installation_token", side_effect=_token),
+    ):
+        assert main(["prune", "--root", str(projects)]) == 0
+    captured = capsys.readouterr()
+    assert "Repo set: 3 repo(s)" in captured.out
+    assert f"remove  {_PY}:3.14--feature-4-gone--0123abcd" in captured.out
+    assert "Dry run: 1 of 4 cached image(s) would be removed." in captured.out
+    assert f"warning: origin of {gitlab.resolve()} is not on GitHub" in captured.err
 
 
 def test_prune_refuses_an_empty_repo_set(

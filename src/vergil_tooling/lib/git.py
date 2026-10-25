@@ -18,9 +18,14 @@ if TYPE_CHECKING:
 
 # Subcommands that may contact the remote and therefore need the installation
 # token. "remote" is included because `git remote prune`/`update` ls-remote the
-# origin to compute stale refs — a network op — even though most `git remote`
-# subcommands are local (#1830).
+# origin to compute stale refs — a network op (#1830) — but its listing and
+# get-url actions (_LOCAL_REMOTE_ACTIONS) are purely local and need none (#3624).
 _REMOTE_SUBCOMMANDS: set[str] = {"push", "pull", "fetch", "ls-remote", "remote"}
+
+# `git remote` actions that never contact the remote: the bare listing (``git
+# remote [-v]``, action "") and ``get-url``. Every other action keeps the token,
+# so one that may reach the remote (``add -f``, ``set-head -a``) is never starved.
+_LOCAL_REMOTE_ACTIONS: frozenset[str] = frozenset({"", "get-url"})
 
 # Subcommands whose transient GitHub failures we retry (#2835). A subset of
 # _REMOTE_SUBCOMMANDS: "remote" is excluded because `git remote prune` is
@@ -99,6 +104,16 @@ def _subcommand(args: tuple[str, ...]) -> str:
     return _split_repo(args)[1]
 
 
+def _needs_token(args: tuple[str, ...]) -> bool:
+    """True when the git invocation *args* may contact the remote (see _REMOTE_SUBCOMMANDS)."""
+    repo, subcommand = _split_repo(args)
+    if subcommand == "remote":
+        rest = args[3:] if repo is not None else args[1:]
+        action = next((arg for arg in rest if not arg.startswith("-")), "")
+        return action not in _LOCAL_REMOTE_ACTIONS
+    return subcommand in _REMOTE_SUBCOMMANDS
+
+
 def _git_env(args: tuple[str, ...]) -> dict[str, str]:
     """Build the env for a git invocation.
 
@@ -107,13 +122,14 @@ def _git_env(args: tuple[str, ...]) -> dict[str, str]:
     unanswerable interactive prompt (the bug that wedged `git remote prune` in
     vrg-finalize-pr). For remote-capable subcommands the GitHub installation
     token is layered on when available — for a ``-C <repo>`` call, the token of
-    that repo's org rather than the CWD's.
+    that repo's org rather than the CWD's, and none for a repo with no remote on
+    GitHub (``github.repo_installation_token``).
     """
     env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
-    repo, subcommand = _split_repo(args)
-    if subcommand in _REMOTE_SUBCOMMANDS:
+    if _needs_token(args):
+        repo = _split_repo(args)[0]
         token = (
-            github.get_installation_token(github.detect_org(cwd=repo))
+            github.repo_installation_token(repo)
             if repo is not None
             else github.get_installation_token()
         )
@@ -347,6 +363,11 @@ def remote_tracking_branches(remote: str = "origin", repo: Path | None = None) -
         f"refs/remotes/{remote}",
     )
     return {name for name in output.splitlines() if name and name != "HEAD"}
+
+
+def remote_url(remote: str = "origin", repo: Path | None = None) -> str:
+    """Return the URL of *remote* in *repo* (or the CWD's repo); local, no network."""
+    return read_output(*_in_repo(repo), "remote", "get-url", remote)
 
 
 def remote_names(repo: Path | None = None) -> set[str]:
