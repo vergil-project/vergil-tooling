@@ -160,6 +160,22 @@ def test_runtime_depends_formats() -> None:
     }
 
 
+@pytest.mark.parametrize("served", ["3.15.1+20261021", "3.15.1+20261021.1.0.5"])
+def test_runtime_readers_accept_new_format(served: str) -> None:
+    """A release-suffixed series version (epic .github#472, spec §5.5) reads like the old one.
+
+    The dependency floor is the served version itself, and the pinned-patch
+    check reads CPython 3.15.1 from both formats.
+    """
+    assert python_builder.runtime_depends("3.15", served) == {
+        "deb": [f"vergil-python3.15 (>= {served})"],
+        "rpm": [f"vergil-python3.15 >= {served}"],
+    }
+    python_builder.check_pinned_patch("3.15.1", "vergil-python3.15", served)
+    with pytest.raises(PackageError, match=r"update the pin to 3\.15\.1$"):
+        python_builder.check_pinned_patch("3.15.2", "vergil-python3.15", served)
+
+
 def test_runtime_dir() -> None:
     assert python_builder.runtime_dir("vergil", "3.14") == "/opt/vergil/python/3.14"
 

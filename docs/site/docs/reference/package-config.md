@@ -34,6 +34,7 @@ smoke   = "vrg-whoami --mode" # the install test runs this after install
 # native  = ["ubuntu/26.04/*"]  # own build cell, inside that OS
 # name    = "..."               # required for staged; python defaults to pyproject [project].name
 # version = "3.14.4+20261001"   # explicit package version; default: the repo version
+# upstream-version = "3.15.1+20261021"  # upstream inputs; package version is <this>.<repo version>
 # noarch  = true                # architecture-independent: built once, deb `all` / rpm `noarch`
 
 [package.python]               # optional for builder = "python"
@@ -104,7 +105,8 @@ The design is epic
 | `summary` | string | *(required)* | One-line package description |
 | `smoke` | string | *(required)* | Shell command the install test runs after installing the package |
 | `name` | string | see semantics | Package name. Required for `staged`; `python` defaults to `pyproject.toml` `[project].name` |
-| `version` | string | repo version | Explicit package version (`[0-9][0-9A-Za-z.+~]*`), for when it is not the repo's semver (e.g. `vergil-python`). A release refuses a version an earlier release already published; see [the re-publish check](#the-re-publish-check) |
+| `version` | string | repo version | Explicit package version (`[0-9][0-9A-Za-z.+~]*`), for when it is not the repo's semver (e.g. `vergil-python`). A release refuses a version an earlier release already published; see [the re-publish check](#the-re-publish-check). Not with `upstream-version` |
+| `upstream-version` | string | *(unset)* | The upstream inputs a package is built from (`[0-9][0-9A-Za-z.+~]*`), for example `3.15.1+20261021`. The package version is `<upstream-version>.<repo version>` (`3.15.1+20261021.1.0.5` at repo `1.0.5`), so every repo release publishes a new version and the inputs show first in `apt policy`. That version sorts above the same inputs without the suffix and above an earlier repo release, under both dpkg and rpm. Not with `version` |
 | `noarch` | boolean | `false` | Architecture-independent: one build cell on amd64, emitting deb `all` / rpm `noarch` |
 | `exclude` | list of globs | `[]` | Targets to drop from the default set |
 | `targets` | list of globs | *(unset)* | Explicit subset replacing the default set |
@@ -398,7 +400,7 @@ earlier checks stop such a release before it publishes:
 
 1. **`vrg-release` preflight**, on a fresh start, before anything is
    tagged. This is the earliest point that knows the full versions: the
-   package name, `version` (or the release version) and the revision of
+   package name, the package version (see `version` and `upstream-version`) and the revision of
    every artifact in the release manifest are all known without
    building. See
    [Releasing](../guides/releasing.md#the-package-re-publish-check).
@@ -422,10 +424,11 @@ never counted as an earlier release. Any failure to read the releases
 refuses the release; the check never skips. A repo without `[package]`
 passes.
 
-To fix a refusal, bump `[package].version`. For example, use a new
-`+<date>` build suffix, or add a rebuild counter
-(`3.14.8+20261003` → `3.14.8+20261003.1`). The revision (`-1`) is set by
-the tooling and cannot be configured.
+To fix a refusal, bump the package version. For an `upstream-version`
+package, set a new `upstream-version`, or cut a new repo release: the
+package version ends in the repo version, so a new release is a new
+version. For a `version` override, set a new `version`. The revision
+(`-1`) is set by the tooling and cannot be configured.
 
 ### One runtime per release
 

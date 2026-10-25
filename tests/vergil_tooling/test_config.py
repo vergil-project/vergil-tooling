@@ -1888,6 +1888,26 @@ def test_package_python_full_parse(tmp_path: Path) -> None:
     )
 
 
+def test_package_upstream_version_parses(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "vergil.toml").write_text(
+        _with_pkg_line(_PKG_STAGED, 'upstream-version = "3.15.1+20261021"')
+        + '[package.staged]\nbuild-command = "x"\n'
+    )
+    pkg = read_config(tmp_path).package
+    assert pkg is not None
+    assert (pkg.version, pkg.upstream_version) == (None, "3.15.1+20261021")
+    assert "unrecognized key" not in capsys.readouterr().err
+
+
+def test_upstream_version_and_version_exclusive(tmp_path: Path) -> None:
+    body = _with_pkg_line(_PKG_STAGED, 'version = "2.0"\nupstream-version = "3.15.1+20261021"')
+    (tmp_path / "vergil.toml").write_text(body)
+    with pytest.raises(ConfigError, match=r"\[package\] sets both version and upstream-version"):
+        read_config(tmp_path)
+
+
 def test_package_targets_subset_parses(tmp_path: Path) -> None:
     (tmp_path / "vergil.toml").write_text(_with_pkg_line(_PKG_PY, 'targets = ["ubuntu/*/*"]'))
     (tmp_path / "uv.lock").write_text("version = 1\n")
@@ -1922,6 +1942,12 @@ def test_no_package_section_is_none(tmp_path: Path) -> None:
         ('noarch = "yes"', r"\[package\]\.noarch must be a boolean"),
         ('version = "v1"', r"\[package\]\.version must match"),
         ("version = 1", r"\[package\]\.version must match"),
+        ('upstream-version = "v1"', r"\[package\]\.upstream-version must match"),
+        ("upstream-version = 1", r"\[package\]\.upstream-version must match"),
+        (
+            'version = "2.0"\nupstream-version = "3.15.1+20261021"',
+            r"\[package\] sets both version and upstream-version",
+        ),
         ("name = 5", r"\[package\]\.name must be a non-empty string"),
         ('name = ""', r"\[package\]\.name must be a non-empty string"),
         ('native = ["*/*/*"]\nnoarch = true', r"\[package\]\.native cannot be combined with"),

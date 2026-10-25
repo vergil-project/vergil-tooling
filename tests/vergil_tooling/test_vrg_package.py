@@ -562,8 +562,8 @@ def _record_check_release(
 ) -> list[tuple[Any, ...]]:
     calls: list[tuple[Any, ...]] = []
 
-    def fake(repo_root: Path, pkg: Any, product: str, version: str) -> list[Identity]:
-        calls.append((repo_root, pkg is not None, product, version))
+    def fake(repo_root: Path, cfg: Any, product: str, version: str) -> list[Identity]:
+        calls.append((repo_root, bool(cfg.packages), product, version))
         if isinstance(result, Exception):
             raise result
         return result

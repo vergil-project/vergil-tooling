@@ -161,6 +161,7 @@ _KNOWN_KEYS: dict[str, frozenset[str]] = {
             "vendor",
             "name",
             "version",
+            "upstream-version",
             "summary",
             "smoke",
             "exclude",
@@ -368,7 +369,11 @@ class PackageConfig:
     summary: str
     smoke: str
     name: str | None = None
+    # ``version`` is a full package-version override; ``upstream-version`` holds
+    # the upstream inputs that :func:`naming.package_version` joins with the repo
+    # version (epic vergil-project/.github#472, spec §5.5). At most one is set.
     version: str | None = None
+    upstream_version: str | None = None
     exclude: list[str] = field(default_factory=list)
     targets: list[str] | None = None
     native: list[str] = field(default_factory=list)
@@ -932,6 +937,17 @@ def single_vendor(cfg: VergilConfig) -> str | None:
     return cfg.packages[0].vendor if cfg.packages else None
 
 
+def _pkg_version(p: dict[str, Any], key: str, source: str) -> str | None:
+    """An optional ``[package]`` version key, checked against the package version pattern."""
+    value = p.get(key)
+    if value is not None and (
+        not isinstance(value, str) or not _PACKAGE_VERSION_RE.fullmatch(value)
+    ):
+        msg = f"{source}: [package].{key} must match {_PACKAGE_VERSION_RE.pattern} (got {value!r})"
+        raise ConfigError(msg)
+    return value
+
+
 def _parse_package_config(p: Any, source: str = CONFIG_FILE) -> PackageConfig:
     """Parse and validate one ``[package]`` entry (spec §5.4).
 
@@ -954,13 +970,13 @@ def _parse_package_config(p: Any, source: str = CONFIG_FILE) -> PackageConfig:
     if name is not None and (not isinstance(name, str) or not name):
         msg = f"{source}: [package].name must be a non-empty string (got {name!r})"
         raise ConfigError(msg)
-    version = p.get("version")
-    if version is not None and (
-        not isinstance(version, str) or not _PACKAGE_VERSION_RE.fullmatch(version)
-    ):
+    version = _pkg_version(p, "version", source)
+    upstream_version = _pkg_version(p, "upstream-version", source)
+    if version is not None and upstream_version is not None:
         msg = (
-            f"{source}: [package].version must match {_PACKAGE_VERSION_RE.pattern} "
-            f"(got {version!r})"
+            f"{source}: [package] sets both version and upstream-version "
+            "(version is the full package version; upstream-version is joined with "
+            "the repo version; set one)"
         )
         raise ConfigError(msg)
     noarch = p.get("noarch", False)
@@ -974,6 +990,7 @@ def _parse_package_config(p: Any, source: str = CONFIG_FILE) -> PackageConfig:
         smoke=_pkg_req_str(p, "smoke", source),
         name=name,
         version=version,
+        upstream_version=upstream_version,
         exclude=_pkg_str_list(p.get("exclude", []), "[package].exclude", source),
         targets=(
             _pkg_str_list(p["targets"], "[package].targets", source) if "targets" in p else None
