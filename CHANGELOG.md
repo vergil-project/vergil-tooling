@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.270] - 2026-10-26
+
+### Documentation
+
+- document the custom validator stage running in PR CI (#3672)
+
+### Features
+
+- add the deferred standing queue kind (#3684)
+- add security records core library and labels (#3685)
+- route items into and out of the deferred queue (#3686)
+- add the vrg-queue deferred view (#3687)
+
 ## [2.1.269] - 2026-10-26
 
 ### Chores
