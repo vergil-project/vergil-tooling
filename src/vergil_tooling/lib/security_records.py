@@ -309,20 +309,29 @@ def unmark_issue(ref: IssueRef, moved_to: Sequence[IssueRef]) -> None:
 
     Idempotent: each step runs only if it is still needed, so a re-run after a
     partial failure finishes the job without a second comment.
+
+    The comment goes first and the line and label then go in **one** PATCH, so
+    an interrupted unmark never leaves the issue with only one of the two: it
+    either still carries both (and :func:`security_issues` still finds it
+    naming this advisory, so a re-run of :func:`retarget` finishes it) or
+    neither.
     """
     if not moved_to:
         raise ValueError(f"unmark {ref.slug}: no issue the record moved to")
     endpoint = _issue_endpoint(ref)
     present, body = _issue_labels_body(ref)
-    if _ADVISORY_RE.search(body):
-        kept = _ADVISORY_RE.sub("", body)
-        github.write_json("PATCH", endpoint, {"body": re.sub(r"\n{3,}", "\n\n", kept).rstrip()})
-    if SECURITY_LABEL in present:
-        github.delete(f"{endpoint}/labels/{SECURITY_LABEL}")
     comment = _moved_comment(moved_to)
     existing = github.read_json_paginated(f"{endpoint}/comments", jq="[.[] | .body]")
     if comment not in existing:
         github.write_json("POST", f"{endpoint}/comments", {"body": comment})
+    update: dict[str, object] = {}
+    if _ADVISORY_RE.search(body):
+        kept = _ADVISORY_RE.sub("", body)
+        update["body"] = re.sub(r"\n{3,}", "\n\n", kept).rstrip()
+    if SECURITY_LABEL in present:
+        update["labels"] = sorted(present - {SECURITY_LABEL})
+    if update:
+        github.write_json("PATCH", endpoint, update)
 
 
 def _with_tracking(description: str, targets: Sequence[IssueRef]) -> str:
@@ -357,11 +366,19 @@ def retarget(
     """Move advisory *ghsa_id*'s tracking to *targets*.
 
     In order: mark every target, replace every ``Tracking issue:`` line with
-    one per target, then unmark every previously tracked issue that is not a
-    target. Each step only starts when the one before succeeded, so a failure
-    never leaves an advisory tracking an unmarked issue. Any failure raises
-    :class:`RetargetError` naming the advisory and the step; the caller must
-    not close or move the old issue until this returns.
+    one per target, then unmark every dropped issue. Each step only starts when
+    the one before succeeded, so a failure never leaves an advisory tracking an
+    unmarked issue. Any failure raises :class:`RetargetError` naming the
+    advisory and the step; the caller must not close or move the old issue
+    until this returns.
+
+    A **dropped** issue is one that is not a target and either was named by
+    the tracking lines this run replaced, or is a ``security``-labelled issue
+    in the home's org whose advisory line names *ghsa_id*
+    (:func:`security_issues`, a REST listing, never search). The second source
+    is what makes a re-run with the same arguments finish an interrupted run:
+    once the tracking lines are rewritten they no longer name the dropped
+    issue, but the issue itself still does until it is unmarked.
 
     *renamed* names old numbers of issues that are themselves a target (a
     transferred issue): their tracking line is replaced but they are never
@@ -378,7 +395,13 @@ def retarget(
     previous = parse_tracking(description)
     with _step(ghsa_id, "rewriting the tracking lines"):
         _write_description(home, ghsa_id, _with_tracking(description, wanted))
-    for ref in previous:
+    with _step(ghsa_id, "listing the security issues"):
+        marked = [
+            issue.ref
+            for issue in security_issues(home.split("/", 1)[0])
+            if issue.ghsa_id == ghsa_id
+        ]
+    for ref in dict.fromkeys((*previous, *marked)):
         if ref not in wanted and ref not in renamed:
             with _step(ghsa_id, f"unmarking {ref.slug}"):
                 unmark_issue(ref, wanted)
