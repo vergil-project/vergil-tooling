@@ -314,7 +314,9 @@ end-of-stage "correct me if I'm wrong" review rather than gating each one. The
 goal is to front-load analysis so implementation runs near-automated. If the
 design collapses to a single-PR change, it drops onto the target repo's ad-hoc
 epic instead of minting a finite epic. The full doctrine lives in the
-`epic-create` skill (`vergil-claude-plugin`).
+`epic-create` skill (`vergil-claude-plugin`). How the workflow uses paad, and
+every place it deviates from the paad authors' recommendations, is recorded in
+the [paad usage policy](https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-policy.md).
 
 ### The bookend convention
 

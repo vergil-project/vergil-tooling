@@ -173,7 +173,8 @@ so they cannot diverge.
 
 **Composed per language.** A repo's block is the union of the
 language-agnostic `base` (editors, OS, secrets, logs, Vergil internals
-like `.venv/` / `.worktrees/` / `.vergil/` / `.superpowers/`, and all
+like `.venv/` / `.worktrees/` / `.vergil/` / `.superpowers/`, paad's
+`paad/security/` output, and all
 build/validation/CI-evidence output including the mkdocs build path
 `docs/site/site/` and the paths `vrg-container-docs` stages:
 `docs/site/docs/changelog.md`, `docs/site/docs/releases/` and
