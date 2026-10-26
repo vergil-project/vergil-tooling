@@ -8,9 +8,10 @@ from unittest.mock import patch
 
 import pytest
 
-from vergil_tooling.lib import epics, queue_view
+from vergil_tooling.lib import epics, queue_view, security_records
 from vergil_tooling.lib.epics import ChildState, IssueRef
 from vergil_tooling.lib.queue_view import Deferral, PlanningMarkers, QueueItem
+from vergil_tooling.lib.security_records import Advisory
 
 _MOD = "vergil_tooling.lib.queue_view"
 _EPIC = IssueRef("org", ".github", 1)
@@ -22,12 +23,14 @@ def _view(
     *,
     labels: tuple[str, ...] = (),
     comments: tuple[str, ...] = (),
+    body: str = "",
 ) -> dict[str, Any]:
     return {
         "title": title,
         "createdAt": created_at,
         "labels": [{"name": name} for name in labels],
-        "comments": [{"body": body} for body in comments],
+        "comments": [{"body": comment} for comment in comments],
+        "body": body,
     }
 
 
@@ -396,6 +399,122 @@ def test_deferred_items_missing_queue_epic_raises() -> None:
         pytest.raises(queue_view.QueueNotFoundError, match=r"Epic \(deferred\): org.*org/\.github"),
     ):
         queue_view.deferred_items("org/.github", "org")
+
+
+# -- planning: the security-advisory hold ------------------------------------------
+
+_GHSA = "GHSA-abcd-efgh-ijkl"
+_OTHER_GHSA = "GHSA-mnop-qrst-uvwx"
+_ADVISORY_BODY = f"Neutral planning body.\n\nSecurity advisory: org/.github {_GHSA}"
+_PLAN = IssueRef("org", ".github", 5)
+_FIX = IssueRef("org", "tool", 60)
+_HELD_NOTE = (
+    f"held: advisory {_GHSA} still tracks this planning issue — retarget it "
+    "to the fix task(s) with vrg-security-record retarget"
+)
+
+
+def _advisory(ghsa_id: str, *tracking: IssueRef) -> Advisory:
+    return Advisory(
+        ghsa_id=ghsa_id, state="draft", affected="tool", tracking=tracking, external=False
+    )
+
+
+def _ready_view(body: str = _ADVISORY_BODY, *, labels: tuple[str, ...] = ("in-progress",)) -> Any:
+    return _view("plan x", "2026-10-01T00:00:00Z", labels=labels, comments=_ALL_MARKERS, body=body)
+
+
+def _security_planning(
+    views: dict[int, dict[str, Any]],
+    advisories: list[Advisory],
+    states: dict[int, str] | None = None,
+) -> tuple[list[QueueItem], Any, Any]:
+    with (
+        patch(f"{_MOD}.security_records.advisory_home", return_value="org/.github") as home,
+        patch(f"{_MOD}.security_records.list_advisories", return_value=advisories) as listing,
+    ):
+        items = _planning(views, states if states is not None else {51: "CLOSED"})
+    return items, home, listing
+
+
+def test_planning_state_held_while_advisory_tracks_it() -> None:
+    [item], home, listing = _security_planning({5: _ready_view()}, [_advisory(_GHSA, _PLAN)])
+    assert item.state == "in-progress"
+    assert item.note == _HELD_NOTE
+    home.assert_called_once_with("org")
+    listing.assert_called_once_with("org/.github")
+
+
+def test_planning_state_ready_after_retarget() -> None:
+    [item], _home, _listing = _security_planning({5: _ready_view()}, [_advisory(_GHSA, _FIX)])
+    assert item.state == "ready-to-close"
+    assert item.note == "Docs task: org/.github#51"
+
+
+def test_planning_state_not_held_when_named_advisory_is_absent() -> None:
+    # The pair is broken (the sweep reports it); this view does not hold the item.
+    [item], _home, _listing = _security_planning(
+        {5: _ready_view()}, [_advisory(_OTHER_GHSA, _PLAN)]
+    )
+    assert item.state == "ready-to-close"
+
+
+def test_planning_held_item_not_otherwise_ready_keeps_its_note() -> None:
+    open_docs, _home, _listing = _security_planning(
+        {5: _ready_view()}, [_advisory(_GHSA, _PLAN)], {51: "OPEN"}
+    )
+    assert [(i.state, i.note) for i in open_docs] == [("in-progress", "Docs task: org/.github#51")]
+    waiting, _home, _listing = _security_planning(
+        {5: _ready_view(labels=())}, [_advisory(_GHSA, _PLAN)]
+    )
+    assert [i.state for i in waiting] == ["waiting"]
+
+
+def test_planning_items_lists_advisories_once() -> None:
+    views = {5: _ready_view(), 6: _ready_view(), 7: _ready_view(body="no line here")}
+    tracked = (_PLAN, IssueRef("org", ".github", 6))
+    items, home, listing = _security_planning(views, [_advisory(_GHSA, *tracked)])
+    home.assert_called_once_with("org")
+    listing.assert_called_once_with("org/.github")
+    assert [(i.ref.number, i.state) for i in items] == [
+        (5, "in-progress"),
+        (6, "in-progress"),
+        (7, "ready-to-close"),
+    ]
+
+
+def test_non_security_planning_item_unchanged() -> None:
+    views = {5: _ready_view(), 8: _ready_view(body="An ordinary planning issue.")}
+    advisories = [_advisory(_GHSA, _PLAN, IssueRef("org", ".github", 8))]
+    items, _home, _listing = _security_planning(views, advisories)
+    by_number = {i.ref.number: i for i in items}
+    assert by_number[5].state == "in-progress"
+    # #8 has no advisory line, so a tracking line naming it does not hold it.
+    assert by_number[8].state == "ready-to-close"
+    assert by_number[8].note == "Docs task: org/.github#51"
+
+
+def test_no_advisory_lines_never_resolves_home() -> None:
+    views = {5: _ready_view(body="Mentions Security advisory: org/.github GHSA-x inline.")}
+    items, home, listing = _security_planning(views, [])
+    assert [i.state for i in items] == ["ready-to-close"]
+    home.assert_not_called()
+    listing.assert_not_called()
+
+
+def test_planning_private_advisory_home_is_refused_loudly() -> None:
+    children = [ChildState(_PLAN, "OPEN", "")]
+    with (
+        patch(f"{_MOD}.epics.find_standing_epic", return_value=_EPIC),
+        patch(f"{_MOD}.epics.child_states", return_value=children),
+        patch(f"{_MOD}.github.read_json", side_effect=_fake_gh({5: _ready_view()})),
+        patch(
+            f"{_MOD}.security_records.advisory_home",
+            side_effect=security_records.PrivateHomeError("org/.github is not public"),
+        ),
+        pytest.raises(security_records.PrivateHomeError, match="not public"),
+    ):
+        queue_view.planning_items("org/.github", "org")
 
 
 # -- rendering -------------------------------------------------------------------
