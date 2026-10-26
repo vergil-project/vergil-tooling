@@ -308,15 +308,20 @@ under the intake epic, oldest first. `vrg-queue planning` lists the open items
 under the planning epic with their state: **waiting** (no `in-progress`
 label), **in-progress** (labelled, with its latest progress note), or
 **ready-to-close** (labelled, the `Epic:` / `Docs task:` / `Tasks filed: yes`
-markers present, and the docs task closed). Used by `intake-review`'s collect
-step and `epic-create`'s no-argument summary.
+markers present, and the docs task closed). `vrg-queue deferred` lists the
+open items under the deferred epic, all **waiting**, least recently deferred
+first; each item's note is its latest deferral
+(`Deferred <day>: <reason> | Revisit when: <conditions>`), and an item with no
+deferral comment sorts first with an empty note. A bare `vrg-queue` lists all
+three queues in that order (intake, planning, deferred). Used by
+`intake-review`'s collect step and `epic-create`'s no-argument summary.
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_queue` (views: `lib/queue_view.py`) |
-| Args | `{intake,planning}` (required); `--repo OWNER/NAME` (that repo's queue home; default: the current org's `.github` queues); `--json` |
+| Args | `{intake,planning,deferred}` (optional; default: all three); `--repo OWNER/NAME` (that repo's queue home; default: the current org's `.github` queues); `--json` (a list of items; with no queue named, an object keyed by queue, `null` for a missing one) |
 | Preconditions | GitHub App credentials for the target org |
-| Failure mode | A queue home with no live queue epic exits 1 naming the missing epic; nothing is created |
+| Failure mode | A named queue whose home has no live queue epic exits 1 naming the missing epic; with no queue named, a missing queue prints `<queue> queue for <name> in <home>: no queue yet` and the run exits 0. Nothing is created |
 | Exit codes | 0 success, 1 error, 2 bad arguments |
 | Status | Active |
 

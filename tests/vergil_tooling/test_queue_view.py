@@ -1,4 +1,4 @@
-"""Tests for vergil_tooling.lib.queue_view (the read-only intake/planning views)."""
+"""Tests for vergil_tooling.lib.queue_view (the read-only intake/planning/deferred views)."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import pytest
 
 from vergil_tooling.lib import epics, queue_view
 from vergil_tooling.lib.epics import ChildState, IssueRef
-from vergil_tooling.lib.queue_view import PlanningMarkers, QueueItem
+from vergil_tooling.lib.queue_view import Deferral, PlanningMarkers, QueueItem
 
 _MOD = "vergil_tooling.lib.queue_view"
 _EPIC = IssueRef("org", ".github", 1)
@@ -175,6 +175,7 @@ def test_items_never_mutate() -> None:
     ):
         assert queue_view.intake_items("org/.github", "org") == []
         assert queue_view.planning_items("org/.github", "org") == []
+        assert queue_view.deferred_items("org/.github", "org") == []
     ensure.assert_not_called()
     create.assert_not_called()
     run.assert_not_called()
@@ -298,6 +299,103 @@ def test_docs_task_state_rejects_non_object_response() -> None:
         pytest.raises(ValueError, match=r"org/\.github#51"),
     ):
         queue_view.planning_items("org/.github", "org")
+
+
+# -- parse_latest_deferral / deferred_items --------------------------------------
+
+
+def test_parse_latest_deferral_latest_wins_and_reads_revisit_line() -> None:
+    d = queue_view.parse_latest_deferral(
+        [
+            "Deferred 2026-10-01: waits on X\nRevisit when: X ships\nDeferred from: org/.github#7",
+            "Deferred 2026-10-25: still waits on X\nsee the thread\nRevisit when: X 2.0 ships",
+        ]
+    )
+    assert d == Deferral(day="2026-10-25", reason="still waits on X", revisit_when="X 2.0 ships")
+
+
+def test_parse_latest_deferral_ignores_non_deferral_comments() -> None:
+    comments = [
+        "Deferred 2026-10-01: waits on X",
+        "a later discussion comment\nDeferred 2026-10-30: not a first line",
+        "We Deferred 2026-10-31: inline mention",
+        "Deferred 26-10-31: malformed date",
+    ]
+    # The newest real deferral has no Revisit line, so revisit_when is "".
+    assert queue_view.parse_latest_deferral(comments) == Deferral(
+        day="2026-10-01", reason="waits on X", revisit_when=""
+    )
+    assert queue_view.parse_latest_deferral([]) is None
+    assert queue_view.parse_latest_deferral(["just a note", ""]) is None
+
+
+def _deferred(views: dict[int, dict[str, Any]]) -> list[QueueItem]:
+    children = [ChildState(IssueRef("org", ".github", n), "OPEN", "") for n in views]
+    children.append(ChildState(IssueRef("org", ".github", 99), "CLOSED", "gone"))
+    gh = _fake_gh(views)
+    with (
+        patch(f"{_MOD}.epics.find_standing_epic", return_value=_EPIC) as find,
+        patch(f"{_MOD}.epics.child_states", return_value=children),
+        patch(f"{_MOD}.github.read_json", side_effect=gh),
+    ):
+        items = queue_view.deferred_items("org/.github", "org")
+    find.assert_called_once_with(epics.DEFERRED, "org/.github", "org")
+    # Closed children are never fetched; each open child is fetched once.
+    assert sorted(int(c[2]) for c in gh.calls) == sorted(views)
+    return items
+
+
+def test_deferred_items_least_recently_deferred_first() -> None:
+    views = {
+        # A: created later, deferred 2026-10-20.
+        1: _view(
+            "A",
+            "2026-09-15T00:00:00Z",
+            comments=("Deferred 2026-10-20: waits on Y\nRevisit when: Y lands",),
+        ),
+        # B: created earlier, deferred 2026-10-01 then refreshed 2026-10-25.
+        2: _view(
+            "B",
+            "2026-09-01T00:00:00Z",
+            comments=(
+                "Deferred 2026-10-01: waits on X\nRevisit when: X ships\n"
+                "Deferred from: org/.github#7",
+                "a discussion comment",
+                "Deferred 2026-10-25: still waits on X\nRevisit when: X 2.0 ships",
+            ),
+        ),
+    }
+    items = _deferred(views)
+    assert [i.title for i in items] == ["A", "B"]
+    assert all(i.state == "waiting" and i.epic is None for i in items)
+    assert items[0].note == "Deferred 2026-10-20: waits on Y | Revisit when: Y lands"
+    assert items[1].note == "Deferred 2026-10-25: still waits on X | Revisit when: X 2.0 ships"
+
+
+def test_deferred_items_without_deferral_sort_first() -> None:
+    views = {
+        1: _view(
+            "deferred",
+            "2026-01-01T00:00:00Z",
+            comments=("Deferred 2026-10-01: r\nRevisit when: c",),
+        ),
+        # Hand-moved or legacy items: no deferral comment at all.
+        2: _view("hand-moved", "2026-10-20T00:00:00Z", comments=("just a note",)),
+        3: _view("legacy", "2026-10-10T00:00:00Z"),
+    }
+    items = _deferred(views)
+    assert [i.title for i in items] == ["legacy", "hand-moved", "deferred"]
+    assert items[0].note == ""
+    assert items[1].note == ""
+    assert items[2].note == "Deferred 2026-10-01: r | Revisit when: c"
+
+
+def test_deferred_items_missing_queue_epic_raises() -> None:
+    with (
+        patch(f"{_MOD}.epics.find_standing_epic", return_value=None),
+        pytest.raises(queue_view.QueueNotFoundError, match=r"Epic \(deferred\): org.*org/\.github"),
+    ):
+        queue_view.deferred_items("org/.github", "org")
 
 
 # -- rendering -------------------------------------------------------------------
