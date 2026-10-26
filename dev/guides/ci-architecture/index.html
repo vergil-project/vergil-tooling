@@ -16996,7 +16996,7 @@ is the local command. Nothing else needs to be added to the repository.</p>
 </thead>
 <tbody>
 <tr>
-<td><code>quality / common</code></td>
+<td><code>quality / evidence</code></td>
 <td>Always</td>
 </tr>
 <tr>
@@ -17010,10 +17010,6 @@ is the local command. Nothing else needs to be added to the repository.</p>
 <tr>
 <td><code>audit / evidence</code></td>
 <td>The language has an audit command</td>
-</tr>
-<tr>
-<td><code>quality / evidence</code></td>
-<td>The language has a lint or typecheck command</td>
 </tr>
 <tr>
 <td><code>test / evidence</code></td>
@@ -17049,7 +17045,7 @@ never report, so they are not required.</p>
 <h3 id="every-check-that-runs-is-a-gate">Every check that runs is a gate<a class="headerlink" href="#every-check-that-runs-is-a-gate" title="Permanent link">&para;</a></h3>
 <p>There is no tier of checks that runs on a PR but does not block it. The
 required set above is pinned by a test so it cannot drift silently.</p>
-<p>For the matrixed kinds — audit, quality (lint + typecheck), and unit tests —
+<p>For the matrixed kinds — audit, quality, and unit tests —
 the required check is the <strong>stable, version-agnostic <code>&lt;kind&gt; / evidence</code>
 aggregate</strong> each reusable workflow emits (<code>audit / evidence</code>,
 <code>quality / evidence</code>, <code>test / evidence</code>), <strong>not</strong> the per-version legs
@@ -17061,8 +17057,14 @@ old deadlock, where branch protection required a per-version leg that a reduced
 matrix could never produce, leaving the PR "expected, never reported" and
 permanently blocked with no <code>--admin</code> escape (epic
 <a href="https://github.com/vergil-project/.github/issues/338">vergil-project/.github#338</a>).
-Non-matrixed checks (the security scanners, <code>quality / common</code>, the version-bump
-gate, <code>docs / docs</code>) keep their fixed, version-free names. A repo whose
+<code>quality / evidence</code> also aggregates the non-matrixed <code>quality / common</code> and
+<code>quality / custom</code> jobs: it needs <code>common</code>, <code>custom</code>, <code>lint</code> and <code>typecheck</code> and
+fails if any of them did not succeed. That holds in every repo, whatever its
+language, so <code>quality / evidence</code> is required everywhere and <code>quality / common</code>,
+which still runs, is not required on its own. A failing custom validator
+therefore blocks the merge even in a repo with no primary language. The other
+non-matrixed checks (the security scanners, the version-bump gate,
+<code>docs / docs</code>) keep their fixed, version-free names. A repo whose
 <code>vergil.toml</code> has a <code>[package]</code> section also requires <code>package / evidence</code>, the
 one stable gate <code>ci-package.yml</code> emits over its whole target matrix; repos
 without <code>[package]</code> neither call <code>ci-package.yml</code> nor require the gate.</p>
