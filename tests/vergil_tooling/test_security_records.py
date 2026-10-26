@@ -538,6 +538,14 @@ def test_retarget_onto_a_description_with_no_text(issues: Issues) -> None:
     assert issues.description == "Tracking issue: org/tool#12"
 
 
+def test_retarget_never_unmarks_a_renamed_issue(issues: Issues) -> None:
+    """A transferred issue's old number is rewritten away but never unmarked."""
+    issues.add(C, advisory_line(HOME, GHSA), {"security"})
+    retarget(HOME, GHSA, (C,), renamed=(A,))
+    assert issues.description == f"{SECRET}\n\nTracking issue: org/tool#12"
+    assert not [w for w in issues.writes if "/issues/10" in w[1]]
+
+
 def test_retarget_requires_targets(issues: Issues) -> None:
     with pytest.raises(RetargetError, match=f"advisory {GHSA}: no target issues given"):
         retarget(HOME, GHSA, ())

@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from vergil_tooling.lib import epics, github, intake_route
+from vergil_tooling.lib import epics, github, intake_route, security_records
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.intake_route import (
     Defer,
@@ -38,6 +38,8 @@ TOOL_ADHOC = IssueRef("org", ".github", 11)
 DEV_EPIC = IssueRef("org", ".github", 400)
 TODAY = date(2026, 10, 23)
 ORIG_URL = "https://github.com/org/.github/issues/352"
+GHSA = "GHSA-abcd-2345-wxyz"
+ADVISORY_LINE = f"Security advisory: org/.github {GHSA}"
 
 
 class Env:
@@ -81,6 +83,16 @@ class Env:
         self.ensure_intake_epic = MagicMock(return_value=INTAKE)
         self.ensure_deferred_epic = MagicMock(return_value=DEFERRED)
         self.resolve_epic_ref = MagicMock(return_value=TOOL_ADHOC)
+        self.advisory_home = MagicMock(side_effect=lambda org: f"{org}/.github")
+        self.retarget = MagicMock()
+
+    def make_security_item(self) -> None:
+        """Turn the item into a security item: the label and the advisory line."""
+        self.issue_view = {
+            **self.issue_view,
+            "body": f"It is slow.\n\n{ADVISORY_LINE}",
+            "labels": [{"name": "bug"}, {"name": "security"}],
+        }
 
     def attach(self, epic: IssueRef, task: IssueRef) -> None:
         self.native_parent[task] = epic
@@ -140,6 +152,8 @@ def env() -> Iterator[Env]:
         patch(f"{_MOD}.github.create_issue", state.create_issue),
         patch(f"{_MOD}.ensure_labels", state.ensure_labels),
         patch(f"{_MOD}.time.sleep", state.sleep),
+        patch(f"{_MOD}.security_records.advisory_home", state.advisory_home),
+        patch(f"{_MOD}.security_records.retarget", state.retarget),
     ):
         yield state
 
@@ -851,3 +865,168 @@ def test_route_one_off_refuses_queue_epic(env: Env) -> None:
     with pytest.raises(RouteRefusedError, match="queue epic"):
         route(ITEM, OneOff(repo="org/tool", epic="intake"), today=TODAY)
     assert _transfer_calls(env) == []
+
+
+# -- security items keep the advisory link (epic vergil-project/.github#517) ----
+
+SPLIT_INTO = (IssueRef("org", "tool", 10), IssueRef("org", "lib", 11))
+RETARGET_FAILED = security_records.RetargetError(
+    f"advisory {GHSA}: marking org/tool#10 failed: HTTP 500"
+)
+
+
+def _transfer_fails(env: Env) -> None:
+    env.transfer = github.GitHubAPIError(1, ["gh"], "", "HTTP 422")
+
+
+def test_split_security_item_retargets_to_all_tasks_before_close(env: Env) -> None:
+    env.make_security_item()
+    order: list[str] = []
+    env.retarget.side_effect = lambda *a, **kw: order.append("retarget")
+    env.run.side_effect = lambda *a: order.append(f"{a[0]}:{a[1]}")
+    route(ITEM, Split(into=SPLIT_INTO, reason="two fixes"), today=TODAY)
+    env.advisory_home.assert_called_once_with("org")
+    env.retarget.assert_called_once_with("org/.github", GHSA, SPLIT_INTO, renamed=())
+    assert order == ["retarget", "issue:close"]
+
+
+def test_split_security_item_retarget_failure_leaves_original_open(env: Env) -> None:
+    env.make_security_item()
+    env.retarget.side_effect = RETARGET_FAILED
+    with pytest.raises(RouteRefusedError) as excinfo:
+        route(ITEM, Split(into=SPLIT_INTO, reason="two fixes"), today=TODAY)
+    message = str(excinfo.value)
+    assert f"advisory {GHSA} was not retargeted to org/tool#10, org/lib#11" in message
+    assert "marking org/tool#10 failed" in message
+    assert "org/.github#352 is left open" in message
+    env.run.assert_not_called()
+
+
+def test_split_security_item_private_home_leaves_original_open(env: Env) -> None:
+    env.make_security_item()
+    env.advisory_home.side_effect = security_records.PrivateHomeError("org/.github is not public")
+    with pytest.raises(RouteRefusedError, match=f"advisory {GHSA} was not retargeted"):
+        route(ITEM, Split(into=SPLIT_INTO, reason="two fixes"), today=TODAY)
+    env.retarget.assert_not_called()
+    env.run.assert_not_called()
+
+
+def test_recreate_security_item_retargets_before_closing(env: Env) -> None:
+    env.make_security_item()
+    _transfer_fails(env)
+    order: list[str] = []
+    env.create_issue.side_effect = lambda **kw: order.append("create") or env.created_url
+    env.retarget.side_effect = lambda *a, **kw: order.append("retarget")
+    env.run.side_effect = lambda *a: order.append(f"{a[0]}:{a[1]}")
+    result = route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    new = IssueRef("org", "tool", 901)
+    assert result == RouteResult(final=new, moved_by="recreate")
+    env.retarget.assert_called_once_with("org/.github", GHSA, (new,), renamed=())
+    assert order == ["create", "retarget", "issue:close"]
+    # The copy carries the label and the advisory line; retarget's mark is idempotent.
+    kwargs = env.create_issue.call_args.kwargs
+    assert "security" in kwargs["labels"]
+    assert ADVISORY_LINE in kwargs["body"]
+
+
+def test_recreate_security_item_retarget_failure_leaves_original_open(env: Env) -> None:
+    env.make_security_item()
+    _transfer_fails(env)
+    env.retarget.side_effect = RETARGET_FAILED
+    with pytest.raises(RouteRefusedError) as excinfo:
+        route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    message = str(excinfo.value)
+    assert f"recreated org/.github#352 as org/tool#901, but advisory {GHSA}" in message
+    assert "org/.github#352 is left open" in message
+    assert f"vrg-security-record retarget {GHSA} --to org/tool#901" in message
+    env.run.assert_not_called()
+    env.add_child.assert_not_called()
+
+
+def test_transfer_security_item_retargets_to_final(env: Env) -> None:
+    env.make_security_item()
+    order: list[str] = []
+    env.sleep.side_effect = lambda *_: order.append("settle")
+    env.retarget.side_effect = lambda *a, **kw: order.append("retarget")
+    result = route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    final = IssueRef("org", "tool", 900)
+    assert result == RouteResult(final=final, moved_by="transfer")
+    # The old number is the moved issue itself: rewritten away, never unmarked.
+    env.retarget.assert_called_once_with("org/.github", GHSA, (final,), renamed=(ITEM,))
+    assert order == ["settle", "retarget"]
+    # The item was read before the move, while it still had its labels.
+    env.read_json.assert_called_once_with(
+        "issue", "view", "352", "--repo", "org/.github", "--json", "labels,body"
+    )
+
+
+def test_transfer_retarget_failure_reports_moved_not_refused(env: Env) -> None:
+    env.make_security_item()
+    env.retarget.side_effect = RETARGET_FAILED
+    with pytest.raises(RuntimeError) as excinfo:
+        route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    assert not isinstance(excinfo.value, RouteRefusedError)
+    assert str(excinfo.value) == (
+        f"org/.github#352 moved to org/tool#900, but advisory {GHSA} was not retargeted; "
+        f"run: vrg-security-record retarget {GHSA} --to org/tool#900"
+    )
+    assert excinfo.value.__cause__ is RETARGET_FAILED
+
+
+def test_transfer_parent_mismatch_also_names_the_advisory(env: Env) -> None:
+    env.make_security_item()
+    env.reparent_child.side_effect = None  # the link never takes
+    with pytest.raises(RuntimeError) as excinfo:
+        route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    message = str(excinfo.value)
+    assert "half-applied" in message
+    assert f"also, advisory {GHSA} was not retargeted" in message
+    assert f"vrg-security-record retarget {GHSA} --to org/tool#900" in message
+    env.retarget.assert_not_called()
+
+
+def test_non_security_item_never_touches_advisories(env: Env) -> None:
+    route(ITEM, Split(into=SPLIT_INTO, reason="x"), today=TODAY)
+    route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    _transfer_fails(env)
+    route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    env.advisory_home.assert_not_called()
+    env.retarget.assert_not_called()
+
+
+def test_planning_route_leaves_advisory_on_item(env: Env) -> None:
+    env.make_security_item()
+    route(ITEM, ToPlanning(), today=TODAY)
+    env.read_json.assert_not_called()
+    env.advisory_home.assert_not_called()
+    env.retarget.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("body", "labels", "has", "lacks"),
+    [
+        ("Neutral.", [{"name": "security"}], "the security label", "a Security advisory: line"),
+        (ADVISORY_LINE, [], "a Security advisory: line", "the security label"),
+    ],
+)
+def test_half_marked_item_is_warned_and_not_retargeted(
+    env: Env,
+    capsys: pytest.CaptureFixture[str],
+    body: str,
+    labels: list[dict[str, str]],
+    has: str,
+    lacks: str,
+) -> None:
+    env.issue_view = {**env.issue_view, "body": body, "labels": labels}
+    route(ITEM, Split(into=SPLIT_INTO, reason="x"), today=TODAY)
+    env.retarget.assert_not_called()
+    env.run.assert_called_once()
+    err = capsys.readouterr().err
+    assert f"org/.github#352 has {has} but not {lacks}" in err
+    assert "no advisory retargeted (a broken security pair)" in err
+
+
+def test_item_with_no_body_or_labels_is_not_a_security_item(env: Env) -> None:
+    env.issue_view = {**env.issue_view, "body": None, "labels": None}
+    route(ITEM, Split(into=SPLIT_INTO, reason="x"), today=TODAY)
+    env.retarget.assert_not_called()

@@ -347,7 +347,13 @@ def _step(ghsa_id: str, step: str) -> Generator[None]:
         raise RetargetError(f"advisory {ghsa_id}: {step} failed: {exc}") from exc
 
 
-def retarget(home: str, ghsa_id: str, targets: Sequence[IssueRef]) -> None:
+def retarget(
+    home: str,
+    ghsa_id: str,
+    targets: Sequence[IssueRef],
+    *,
+    renamed: Sequence[IssueRef] = (),
+) -> None:
     """Move advisory *ghsa_id*'s tracking to *targets*.
 
     In order: mark every target, replace every ``Tracking issue:`` line with
@@ -356,6 +362,10 @@ def retarget(home: str, ghsa_id: str, targets: Sequence[IssueRef]) -> None:
     never leaves an advisory tracking an unmarked issue. Any failure raises
     :class:`RetargetError` naming the advisory and the step; the caller must
     not close or move the old issue until this returns.
+
+    *renamed* names old numbers of issues that are themselves a target (a
+    transferred issue): their tracking line is replaced but they are never
+    unmarked, since the old number now leads to the moved issue itself.
     """
     wanted = tuple(dict.fromkeys(targets))
     if not wanted:
@@ -369,7 +379,7 @@ def retarget(home: str, ghsa_id: str, targets: Sequence[IssueRef]) -> None:
     with _step(ghsa_id, "rewriting the tracking lines"):
         _write_description(home, ghsa_id, _with_tracking(description, wanted))
     for ref in previous:
-        if ref not in wanted:
+        if ref not in wanted and ref not in renamed:
             with _step(ghsa_id, f"unmarking {ref.slug}"):
                 unmark_issue(ref, wanted)
 
