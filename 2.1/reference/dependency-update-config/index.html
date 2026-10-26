@@ -1332,6 +1332,8 @@
       
         
       
+        
+      
     
     
     
@@ -1384,6 +1386,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.268/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.268
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -16322,8 +16352,10 @@ packages are never reported.</p>
 <p>For a repo with an exact <code>[package.python] runtime</code> pin such as <code>3.14.8</code>
 (see <a href="../package-config/">Package Config</a>), it also bumps the pin to the
 CPython patch that the pin's series package, <code>vergil-python3.14</code>, serves.
-That package's version is <code>&lt;cpython&gt;+&lt;pbs_tag&gt;</code> (for example
-<code>3.14.9+20261020</code>), and the patch is the part before the <code>+</code>. Each
+That package's version is <code>&lt;cpython&gt;+&lt;pbs_tag&gt;.&lt;release&gt;</code> (for example
+<code>3.14.9+20261021.1.0.4</code>, where <code>1.0.4</code> is the vergil-python release;
+releases before v1.0.4 have no <code>.&lt;release&gt;</code> suffix), and the patch is
+the part before the <code>+</code>. Each
 index installs the newest version it lists, and the patch counts only
 when every apt and rpm index the package build and install test read
 from serves the same one, so the bump cannot pass validation and then
@@ -16342,7 +16374,8 @@ bump held until they agree</code>. A later run bumps the pin once they agree.</p
 <li>any of those indexes lacks the series package, or cannot be read.
   The legacy per-patch packages (<code>vergil-python3.14.8</code>) are retired and
   are not read;</li>
-<li>a series package version is not <code>&lt;cpython&gt;+&lt;pbs_tag&gt;</code>;</li>
+<li>a series package version is not <code>&lt;cpython&gt;+&lt;pbs_tag&gt;</code>, optionally
+  followed by <code>.&lt;release&gt;</code>;</li>
 <li>the series package serves a patch on another series, or a patch
   older than the pin.</li>
 </ul>

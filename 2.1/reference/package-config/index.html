@@ -1332,6 +1332,8 @@
       
         
       
+        
+      
     
     
     
@@ -1384,6 +1386,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.268/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.268
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -16801,7 +16831,7 @@ published <code>vergil-python</code> runtime (see <a href="#packagepython"><code
 <td><code>version</code></td>
 <td>string</td>
 <td>repo version</td>
-<td>Explicit package version (<code>[0-9][0-9A-Za-z.+~]*</code>), for when it is not the repo's semver (e.g. <code>vergil-python</code>). A release refuses a version an earlier release already published; see <a href="#the-re-publish-check">the re-publish check</a>. Not with <code>upstream-version</code></td>
+<td>Explicit package version (<code>[0-9][0-9A-Za-z.+~]*</code>), used unchanged as the full package version, for when it is not the repo's semver. A release refuses a version an earlier release already published; see <a href="#the-re-publish-check">the re-publish check</a>. Not with <code>upstream-version</code></td>
 </tr>
 <tr>
 <td><code>upstream-version</code></td>
@@ -16861,11 +16891,15 @@ published <code>vergil-python</code> runtime (see <a href="#packagepython"><code
 </tr>
 </tbody>
 </table>
-<p><code>vergil-python</code> publishes one package per CPython series,
-<code>vergil-python&lt;X.Y&gt;</code>, versioned <code>&lt;cpython&gt;+&lt;pbs-tag&gt;</code> (for example
-<code>3.15.1+20261021</code>). Its patch floats: each release replaces the previous
-patch. A package always builds against, installs and depends on the
-per-series package, at <code>/opt/vergil/python/&lt;X.Y&gt;</code>.</p>
+<p><code>vergil-python</code> publishes one package per CPython series it lists,
+<code>vergil-python&lt;X.Y&gt;</code>, as one <code>[[package]]</code> entry each. Every
+vergil-python release publishes every listed series. The version is the
+entry's <code>upstream-version</code> joined with the vergil-python release,
+<code>&lt;cpython&gt;+&lt;pbs-tag&gt;.&lt;release&gt;</code> (for example <code>3.15.1+20261021.1.0.4</code>);
+releases before v1.0.4 are <code>&lt;cpython&gt;+&lt;pbs-tag&gt;</code> alone. Its patch
+floats: each release replaces the previous patch. A package always
+builds against, installs and depends on the per-series package, at
+<code>/opt/vergil/python/&lt;X.Y&gt;</code>.</p>
 <p>With no <code>runtime</code>, the series is derived: it is the newest resolved
 version whose window entry marks the runtime published (epic
 <a href="https://github.com/vergil-project/.github/issues/407">vergil-project/.github#407</a>,

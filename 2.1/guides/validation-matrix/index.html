@@ -1332,6 +1332,8 @@
       
         
       
+        
+      
     
     
     
@@ -1384,6 +1386,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.268/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.268
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -16056,6 +16086,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#custom-validator" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Custom validator
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#all-versions-python" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -16252,6 +16293,17 @@
     <span class="md-ellipsis">
       
         Language checks
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#custom-validator" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Custom validator
       
     </span>
   </a>
@@ -16526,6 +16578,14 @@ as <code>quality / common</code>.</p>
 <p><code>vrg-validate</code> then runs the lint, typecheck, test and audit commands
 for <code>[project].primary-language</code>. Pass <code>--check lint</code>, <code>typecheck</code>,
 <code>test</code> or <code>audit</code> to run one stage.</p>
+<h3 id="custom-validator">Custom validator<a class="headerlink" href="#custom-validator" title="Permanent link">&para;</a></h3>
+<p>Last, <code>vrg-validate</code> runs the repository's custom validator, when it has
+one: <code>scripts/bin/validate-custom</code> or a <code>vrg-validate-custom</code> on <code>PATH</code>.
+<code>--check custom</code> runs only that stage, after the language's install
+stage so the validator sees the dev dependencies. With no custom
+validator it prints <code>custom: no custom validator (scripts/bin/validate-custom
+or vrg-validate-custom) — nothing to run</code> and exits 0. A validator that
+is present but not an executable regular file fails the stage.</p>
 <h3 id="all-versions-python">All versions (Python)<a class="headerlink" href="#all-versions-python" title="Permanent link">&para;</a></h3>
 <p><code>vrg-validate --all-versions</code> adds one <code>test (python X.Y)</code> stage per
 resolved CI version after the test stage, so the
