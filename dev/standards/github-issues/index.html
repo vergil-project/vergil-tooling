@@ -17328,6 +17328,8 @@ warns, ignores <code>--kind</code>, and forwards to <code>vrg-intake-create</cod
 <h3 id="viewing-the-queues-vrg-queue">Viewing the queues: <code>vrg-queue</code><a class="headerlink" href="#viewing-the-queues-vrg-queue" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>vrg-queue<span class="w"> </span>intake<span class="w">    </span><span class="c1"># open intake items, oldest first</span>
 <a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>vrg-queue<span class="w"> </span>planning<span class="w">  </span><span class="c1"># open planning items: waiting / in-progress / ready-to-close</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>vrg-queue<span class="w"> </span>deferred<span class="w">  </span><span class="c1"># open deferred items, least recently deferred first</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>vrg-queue<span class="w">           </span><span class="c1"># all three queues, in that order</span>
 </code></pre></div>
 <p>It defaults to the current org's <code>.github</code> queues; <code>--repo &lt;owner&gt;/&lt;repo&gt;</code>
 selects that repo's queue home (a self-homed private repo's own queues), and

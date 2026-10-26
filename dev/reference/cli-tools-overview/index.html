@@ -17678,8 +17678,13 @@ under the intake epic, oldest first. <code>vrg-queue planning</code> lists the o
 under the planning epic with their state: <strong>waiting</strong> (no <code>in-progress</code>
 label), <strong>in-progress</strong> (labelled, with its latest progress note), or
 <strong>ready-to-close</strong> (labelled, the <code>Epic:</code> / <code>Docs task:</code> / <code>Tasks filed: yes</code>
-markers present, and the docs task closed). Used by <code>intake-review</code>'s collect
-step and <code>epic-create</code>'s no-argument summary.</p>
+markers present, and the docs task closed). <code>vrg-queue deferred</code> lists the
+open items under the deferred epic, all <strong>waiting</strong>, least recently deferred
+first; each item's note is its latest deferral
+(<code>Deferred &lt;day&gt;: &lt;reason&gt; | Revisit when: &lt;conditions&gt;</code>), and an item with no
+deferral comment sorts first with an empty note. A bare <code>vrg-queue</code> lists all
+three queues in that order (intake, planning, deferred). Used by
+<code>intake-review</code>'s collect step and <code>epic-create</code>'s no-argument summary.</p>
 <table>
 <thead>
 <tr>
@@ -17694,7 +17699,7 @@ step and <code>epic-create</code>'s no-argument summary.</p>
 </tr>
 <tr>
 <td>Args</td>
-<td><code>{intake,planning}</code> (required); <code>--repo OWNER/NAME</code> (that repo's queue home; default: the current org's <code>.github</code> queues); <code>--json</code></td>
+<td><code>{intake,planning,deferred}</code> (optional; default: all three); <code>--repo OWNER/NAME</code> (that repo's queue home; default: the current org's <code>.github</code> queues); <code>--json</code> (a list of items; with no queue named, an object keyed by queue, <code>null</code> for a missing one)</td>
 </tr>
 <tr>
 <td>Preconditions</td>
@@ -17702,7 +17707,7 @@ step and <code>epic-create</code>'s no-argument summary.</p>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>A queue home with no live queue epic exits 1 naming the missing epic; nothing is created</td>
+<td>A named queue whose home has no live queue epic exits 1 naming the missing epic; with no queue named, a missing queue prints <code>&lt;queue&gt; queue for &lt;name&gt; in &lt;home&gt;: no queue yet</code> and the run exits 0. Nothing is created</td>
 </tr>
 <tr>
 <td>Exit codes</td>
