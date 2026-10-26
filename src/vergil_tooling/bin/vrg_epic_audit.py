@@ -11,7 +11,7 @@ import os
 import sys
 from datetime import UTC, datetime, timedelta
 
-from vergil_tooling.lib import epic_audit, epics, github, identity_mode
+from vergil_tooling.lib import epic_audit, epics, github, identity_mode, security_records
 from vergil_tooling.lib.cli import cli_main
 
 _DEFAULT_WINDOW_DAYS = 30
@@ -125,7 +125,10 @@ def main(argv: list[str] | None = None) -> int:
                 private_under_public=epic_audit.private_under_public_epic(org, issues=issues),
             )
         )
-        return _apply_orphan_pass(org, issues)
+        # The security pass runs even when the orphan pass failed, so one broken
+        # pass never hides the other's work or errors; the worse exit code wins.
+        orphan_rc = _apply_orphan_pass(org, issues)
+        return max(orphan_rc, _apply_security_pass(org))
     epics_outside = epic_audit.epic_outside_dotgithub(org)
     stray = epic_audit.stray_dotgithub_issue(org, home=home)
     pending_operational = epic_audit.operational_pending(org, home=home)
@@ -142,6 +145,8 @@ def main(argv: list[str] | None = None) -> int:
     # Read-only preview of the orphan pass: one shared enumeration, no writes
     # (an absent intake epic is named, not created).
     issues = epic_audit.open_issues(org)
+    # Read-only preview of the security pass: the same reads, no state writes.
+    security_rc = _security_pass(org, apply=False)
     print(
         epic_audit.render(
             tasks,
@@ -161,7 +166,59 @@ def main(argv: list[str] | None = None) -> int:
             private_under_public=epic_audit.private_under_public_epic(org, issues=issues),
         )
     )
-    return 0
+    return security_rc
+
+
+def _apply_security_pass(org: str) -> int:
+    """Sync advisory states to their issues and report broken pairs (epic .github#517).
+
+    Runs after the orphan pass on the ``--close`` path. Exit 1 when any pair is
+    broken (after syncing the rest) or the pass fails.
+    """
+    return _security_pass(org, apply=True)
+
+
+def _security_pass(org: str, *, apply: bool) -> int:
+    """The security-records pass; *apply* False previews it without writing.
+
+    Its output reaches public Actions logs (the sweep runs in ``.github``), so
+    it names only GHSA IDs, issue refs and states, never advisory text: every
+    advisory read it makes projects the text away, and :class:`Advisory` has
+    no text field. The advisory home is resolved only when the org has a
+    ``security`` issue or a ``.github`` repo; with neither there is nothing to
+    check. A private ``.github`` is refused loudly, never skipped.
+    """
+    mode = "" if apply else " (preview)"
+    try:
+        with github.target_org(org):
+            issues = security_records.security_issues(org)
+            if not issues and not github.repo_exists(org, ".github"):
+                print(f"Security records{mode}: none.")
+                return 0
+            home = security_records.advisory_home(org)
+            advisories = security_records.list_advisories(home)
+            result = security_records.classify(advisories, issues)
+            if apply:
+                synced = security_records.sync_states(home, result, issues)
+            else:
+                synced = len(security_records.pending_syncs(result, issues))
+    except github.MissingGitHubTokenError:
+        raise
+    except (github.GitHubAPIError, security_records.PrivateHomeError) as exc:
+        print(f"vrg-epic-audit: security records pass failed: {exc}", file=sys.stderr)
+        return 1
+    verb = "synced" if apply else "would sync"
+    print(
+        f"Security records{mode}: {synced} advisory state(s) {verb}, "
+        f"{len(result.broken)} broken pair(s)."
+    )
+    for line in result.broken:
+        print(f"- broken: {line}")
+    for advisory in result.external:
+        print(f"- unpaired external report (left untouched): {advisory.ghsa_id}")
+    # The preview is read-only and reports drift without failing, like the rest
+    # of the report path; the --close sweep fails on any broken pair.
+    return 1 if apply and result.broken else 0
 
 
 def _apply_orphan_pass(org: str, issues: list[epic_audit.OpenIssue]) -> int:
@@ -255,7 +312,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
             "remove the retired triage/idea/research labels, move now-public "
             "repos' queue items under .github, and attach every orphan to its "
             "intake epic (exit 1, listing what was not attached, if an intake "
-            "epic is full). A "
+            "epic is full). Then, even if the orphan pass failed, run the "
+            "security-records pass: set each paired draft advisory in "
+            "<org>/.github to closed when every issue it tracks is closed and "
+            "back to draft while any is open, and report broken pairs by ID "
+            "only (exit 1 if any). A "
             "human action (or the scheduled reconciliation sweep) — refused in "
             "interactive agent sessions. Default: read-only."
         ),

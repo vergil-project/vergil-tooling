@@ -28,6 +28,13 @@ routes each container allows:
 - **split** — the replacement tasks already exist (made with
   ``vrg-issue-create``); comment the links and the reason, then close.
 
+A **security** item (the ``security`` label and a ``Security advisory:``
+line, epic vergil-project/.github#517) keeps its advisory link: a split or a
+recreate retargets the advisory to the new issue(s) *before* the original
+closes, and stops with the original open if that fails; a transfer retargets
+it after the move and, if that fails, reports the moved-but-not-retargeted
+state with the exact recovery command. The planning route leaves it alone.
+
 A task in a development epic, an epic, and an unparented issue are refused
 (``planning`` alone accepts an unparented issue: the ``epic-create`` free-text
 path), the refusal naming the parent. A planning item whose ``epic-create``
@@ -47,7 +54,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any, Literal, cast
 
-from vergil_tooling.lib import epics, github
+from vergil_tooling.lib import epics, github, security_records
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.labels import RETIRED_LABELS, ensure_labels, load_labels
 from vergil_tooling.lib.process_errors import error_text
@@ -165,6 +172,15 @@ def _route(ref: IssueRef, action: RouteAction, today: date) -> RouteResult:
         if not action.into:
             raise RouteRefusedError("split needs at least one --into task")
         refs = ", ".join(task.slug for task in action.into)
+        ghsa = _item_advisory(ref)
+        if ghsa is not None:
+            try:
+                _retarget(ref, ghsa, action.into)
+            except _RETARGET_ERRORS as exc:
+                raise RouteRefusedError(
+                    f"{ref.slug}: advisory {ghsa} was not retargeted to {refs} ({exc}); "
+                    f"{ref.slug} is left open"
+                ) from exc
         _close(ref, SPLIT_COMMENT.format(refs=refs, reason=action.reason), reason="completed")
         return RouteResult(final=ref, moved_by="none")
     if isinstance(action, ToPlanning):
@@ -331,12 +347,14 @@ def _one_off(ref: IssueRef, action: OneOff) -> RouteResult:
     if dest == source:
         _link(epic, ref)
         return RouteResult(final=ref, moved_by="none")
+    # Read before the move: a transfer drops labels the target repo lacks.
+    ghsa = _item_advisory(ref)
     try:
         output = github.read_output("issue", "transfer", str(ref.number), dest, "--repo", source)
     except github.MissingGitHubTokenError:
         raise
     except subprocess.CalledProcessError as exc:
-        new = _recreate(ref, dest, exc)
+        new = _recreate(ref, dest, exc, ghsa)
         # A recreated issue has no parent to carry over: link it, then check.
         _link(epic, new)
         current = epics.native_parent_of(new)
@@ -344,8 +362,79 @@ def _one_off(ref: IssueRef, action: OneOff) -> RouteResult:
             raise _parent_mismatch(epic, new, current) from None
         return RouteResult(final=new, moved_by="recreate")
     final = _transferred_ref(ref, dest, epic, output)
-    _settle_parent(epic, final)
+    if ghsa is None:
+        _settle_parent(epic, final)
+        return RouteResult(final=final, moved_by="transfer")
+    recovery = (
+        f"advisory {ghsa} was not retargeted; "
+        f"run: vrg-security-record retarget {ghsa} --to {final.slug}"
+    )
+    try:
+        _settle_parent(epic, final)
+    except RuntimeError as exc:
+        raise RuntimeError(f"{exc}; also, {recovery}") from exc
+    try:
+        # The old number is the same issue: rewrite its tracking line, never unmark it.
+        _retarget(ref, ghsa, (final,), renamed=(ref,))
+    except _RETARGET_ERRORS as exc:
+        # The move already happened, so this is not a refusal: report what is left.
+        raise RuntimeError(f"{ref.slug} moved to {final.slug}, but {recovery}") from exc
     return RouteResult(final=final, moved_by="transfer")
+
+
+# The failures that leave an advisory not retargeted: the retarget itself, or
+# resolving the org's advisory home (a private or unreadable ``.github``).
+_RETARGET_ERRORS = (
+    security_records.RetargetError,
+    security_records.PrivateHomeError,
+    github.GitHubAPIError,
+)
+
+
+def _security_ghsa(ref: IssueRef, labels: set[str], body: str) -> str | None:
+    """The advisory *ref* tracks, given its *labels* and *body*; None if it has none.
+
+    An item is a security item only with both the ``security`` label and an
+    advisory line; one without the other is a broken pair, warned about here
+    (the scheduled sweep reports it too) and left for a human to repair.
+    """
+    ghsa = security_records.parse_advisory_ref(body)
+    labelled = security_records.SECURITY_LABEL in labels
+    if labelled and ghsa is not None:
+        return ghsa
+    if labelled or ghsa is not None:
+        has, lacks = (
+            ("the security label", "a Security advisory: line")
+            if labelled
+            else ("a Security advisory: line", "the security label")
+        )
+        print(
+            f"intake-route: {ref.slug} has {has} but not {lacks}; "
+            "no advisory retargeted (a broken security pair)",
+            file=sys.stderr,
+        )
+    return None
+
+
+def _item_advisory(ref: IssueRef) -> str | None:
+    """Read *ref*'s labels and body; return the advisory it tracks, if any."""
+    raw: Any = github.read_json(
+        "issue", "view", str(ref.number), "--repo", _repo_of(ref), "--json", "labels,body"
+    )
+    names = {str(label.get("name", "")) for label in raw.get("labels") or []}
+    return _security_ghsa(ref, names, str(raw.get("body") or ""))
+
+
+def _retarget(
+    ref: IssueRef,
+    ghsa: str,
+    targets: tuple[IssueRef, ...],
+    *,
+    renamed: tuple[IssueRef, ...] = (),
+) -> None:
+    """Move advisory *ghsa* (homed in *ref*'s org ``.github``) to track *targets*."""
+    home = security_records.advisory_home(ref.owner)
+    security_records.retarget(home, ghsa, targets, renamed=renamed)
 
 
 def _settle_parent(epic: IssueRef, task: IssueRef) -> None:
@@ -398,8 +487,14 @@ def _transferred_ref(ref: IssueRef, dest: str, epic: IssueRef, output: str) -> I
     )
 
 
-def _recreate(ref: IssueRef, dest: str, exc: subprocess.CalledProcessError) -> IssueRef:
-    """Copy *ref* into *dest* with a link back, then close the original with a pointer."""
+def _recreate(
+    ref: IssueRef, dest: str, exc: subprocess.CalledProcessError, ghsa: str | None
+) -> IssueRef:
+    """Copy *ref* into *dest* with a link back, then close the original with a pointer.
+
+    A security item's advisory *ghsa* is retargeted to the copy before the
+    original closes; if that fails the original stays open and the route stops.
+    """
     source = _repo_of(ref)
     raw: Any = github.read_json(
         "issue", "view", str(ref.number), "--repo", source, "--json", "title,body,labels,url"
@@ -423,6 +518,16 @@ def _recreate(ref: IssueRef, dest: str, exc: subprocess.CalledProcessError) -> I
     new = _issue_ref_from_url(
         new_url, failure=f"recreated {ref.slug} in {dest} (original left open)"
     )
+    if ghsa is not None:
+        try:
+            _retarget(ref, ghsa, (new,))
+        except _RETARGET_ERRORS as err:
+            raise RouteRefusedError(
+                f"recreated {ref.slug} as {new.slug}, but advisory {ghsa} was not retargeted "
+                f"({err}); {ref.slug} is left open and {new.slug} unlinked. Finish by hand: "
+                f"vrg-security-record retarget {ghsa} --to {new.slug}, then close "
+                f"{ref.slug} with a pointer and link {new.slug} under its epic"
+            ) from err
     _close(ref, MOVED_TO_COMMENT.format(url=new_url), reason="not planned")
     detail = " ".join(error_text(exc).split())
     print(

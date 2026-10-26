@@ -347,7 +347,13 @@ def _step(ghsa_id: str, step: str) -> Generator[None]:
         raise RetargetError(f"advisory {ghsa_id}: {step} failed: {exc}") from exc
 
 
-def retarget(home: str, ghsa_id: str, targets: Sequence[IssueRef]) -> None:
+def retarget(
+    home: str,
+    ghsa_id: str,
+    targets: Sequence[IssueRef],
+    *,
+    renamed: Sequence[IssueRef] = (),
+) -> None:
     """Move advisory *ghsa_id*'s tracking to *targets*.
 
     In order: mark every target, replace every ``Tracking issue:`` line with
@@ -356,6 +362,10 @@ def retarget(home: str, ghsa_id: str, targets: Sequence[IssueRef]) -> None:
     never leaves an advisory tracking an unmarked issue. Any failure raises
     :class:`RetargetError` naming the advisory and the step; the caller must
     not close or move the old issue until this returns.
+
+    *renamed* names old numbers of issues that are themselves a target (a
+    transferred issue): their tracking line is replaced but they are never
+    unmarked, since the old number now leads to the moved issue itself.
     """
     wanted = tuple(dict.fromkeys(targets))
     if not wanted:
@@ -369,7 +379,7 @@ def retarget(home: str, ghsa_id: str, targets: Sequence[IssueRef]) -> None:
     with _step(ghsa_id, "rewriting the tracking lines"):
         _write_description(home, ghsa_id, _with_tracking(description, wanted))
     for ref in previous:
-        if ref not in wanted:
+        if ref not in wanted and ref not in renamed:
             with _step(ghsa_id, f"unmarking {ref.slug}"):
                 unmark_issue(ref, wanted)
 
@@ -465,3 +475,44 @@ def classify(advisories: Sequence[Advisory], issues: Sequence[SecurityIssue]) ->
         if problem is not None:
             broken.append(problem)
     return Classification(paired=paired, external=external, broken=broken)
+
+
+# The states the sweep keeps in step with the issues. Any other state (a
+# published or withdrawn advisory, or a triage-state report a pair adopted) is
+# a human's decision, so the sweep never moves an advisory out of it.
+_SYNCED_STATES = ("draft", "closed")
+
+
+def pending_syncs(
+    classification: Classification, issues: Sequence[SecurityIssue]
+) -> list[tuple[str, Literal["draft", "closed"]]]:
+    """The ``(GHSA ID, target state)`` changes the issue-driven sync would make.
+
+    For each **paired** advisory the target is ``closed`` when every issue it
+    tracks is closed, and ``draft`` while any is open (spec 4.3: the issue
+    always wins). Only a mismatch is listed. External reports are never
+    touched, and neither is an advisory outside ``draft``/``closed``.
+    """
+    open_by_ref = {issue.ref: issue.open for issue in issues}
+    changes: list[tuple[str, Literal["draft", "closed"]]] = []
+    for advisory in classification.paired:
+        if advisory.external or advisory.state not in _SYNCED_STATES:
+            continue
+        # classify() pairs an advisory only when every tracked issue is listed.
+        any_open = any(open_by_ref[ref] for ref in advisory.tracking)
+        target: Literal["draft", "closed"] = "draft" if any_open else "closed"
+        if advisory.state != target:
+            changes.append((advisory.ghsa_id, target))
+    return changes
+
+
+def sync_states(home: str, classification: Classification, issues: Sequence[SecurityIssue]) -> int:
+    """Apply :func:`pending_syncs` to *home* and return the number of advisories changed.
+
+    Stops at the first failed write, which propagates scrubbed of its stdout;
+    the next sweep retries whatever is still out of step.
+    """
+    changes = pending_syncs(classification, issues)
+    for ghsa_id, state in changes:
+        set_state(home, ghsa_id, state)
+    return len(changes)

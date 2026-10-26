@@ -19,6 +19,11 @@ Its note is the latest deferral comment (``Deferred <day>: <reason>`` with its
 refreshed item sinks to the bottom. An item with no deferral comment (moved by
 hand, or legacy) has an empty note and sorts first.
 
+A ``security`` planning issue whose advisory still tracks it is never
+``ready-to-close``: it stays ``in-progress``, with a note saying to retarget the
+advisory to the fix task(s) first. Advisories are read only when some item's
+body carries a ``Security advisory:`` line.
+
 Nothing here mutates GitHub: the queue epic is looked up with
 :func:`epics.find_standing_epic` (never created), and a missing queue epic is
 reported as :class:`QueueNotFoundError` rather than an empty queue.
@@ -31,7 +36,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
 
-from vergil_tooling.lib import epics, github
+from vergil_tooling.lib import epics, github, security_records
 from vergil_tooling.lib.epics import IssueRef
 
 if TYPE_CHECKING:
@@ -183,30 +188,78 @@ def intake_items(home: str, name: str) -> list[QueueItem]:
     return _oldest_first(items)
 
 
-def _planning_state(labels: set[str], markers: PlanningMarkers) -> QueueState:
+def _planning_state(
+    labels: set[str], markers: PlanningMarkers, *, advisory_held: bool
+) -> tuple[QueueState, bool]:
+    """The item's state, and whether an advisory hold demoted it from ready-to-close.
+
+    A held item that would otherwise be ``ready-to-close`` is ``in-progress``:
+    closing it would close the advisory with the fix unwritten.
+    """
     if epics.PLANNING_IN_PROGRESS_LABEL not in labels:
-        return "waiting"
+        return "waiting", False
     if markers.epic is None or markers.docs_task is None or not markers.tasks_filed:
-        return "in-progress"
+        return "in-progress", False
     docs = _view(markers.docs_task, "state")
-    return "ready-to-close" if str(docs.get("state")).upper() == "CLOSED" else "in-progress"
+    if str(docs.get("state")).upper() != "CLOSED":
+        return "in-progress", False
+    if advisory_held:
+        return "in-progress", True
+    return "ready-to-close", False
+
+
+def _held_note(ghsa_id: str) -> str:
+    return (
+        f"held: advisory {ghsa_id} still tracks this planning issue — retarget it "
+        "to the fix task(s) with vrg-security-record retarget"
+    )
+
+
+def _tracked_by(home: str, named: set[str]) -> dict[str, tuple[IssueRef, ...]]:
+    """Each named advisory's tracked issues; empty, with no lookup, when none is named.
+
+    The advisory home is resolved and the advisories listed only when some item
+    names one, so the view works unchanged for an org without security items.
+    """
+    if not named:
+        return {}
+    advisory_home = security_records.advisory_home(home.split("/", 1)[0])
+    return {
+        advisory.ghsa_id: advisory.tracking
+        for advisory in security_records.list_advisories(advisory_home)
+        if advisory.ghsa_id in named
+    }
 
 
 def planning_items(home: str, name: str) -> list[QueueItem]:
-    """The open planning items under *home*'s planning epic for *name*, oldest first."""
+    """The open planning items under *home*'s planning epic for *name*, oldest first.
+
+    An item whose body names an advisory that still tracks it is held back
+    from ``ready-to-close`` (spec 4.4b of epic vergil-project/.github#517).
+    """
+    views = [
+        (ref, _view(ref, "title,createdAt,labels,comments,body"))
+        for ref in _open_children(epics.PLANNING, home, name)
+    ]
+    ghsa_ids = {
+        ref: security_records.parse_advisory_ref(str(view.get("body") or "")) for ref, view in views
+    }
+    tracked = _tracked_by(home, {ghsa for ghsa in ghsa_ids.values() if ghsa is not None})
     items: list[QueueItem] = []
-    for ref in _open_children(epics.PLANNING, home, name):
-        view = _view(ref, "title,createdAt,labels,comments")
+    for ref, view in views:
         comments = _comment_bodies(view)
         markers = parse_planning_markers(comments)
         labels = {str(lbl.get("name") or "") for lbl in view.get("labels") or []}
+        ghsa = ghsa_ids[ref]
+        held = ghsa is not None and ref in tracked.get(ghsa, ())
+        state, demoted = _planning_state(labels, markers, advisory_held=held)
         items.append(
             QueueItem(
                 ref=ref,
                 title=str(view.get("title") or ""),
                 created_at=str(view.get("createdAt") or ""),
-                state=_planning_state(labels, markers),
-                note=_latest_note(comments),
+                state=state,
+                note=_held_note(str(ghsa)) if demoted else _latest_note(comments),
                 epic=markers.epic,
             )
         )

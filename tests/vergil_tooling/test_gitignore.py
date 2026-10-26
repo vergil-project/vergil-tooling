@@ -30,7 +30,8 @@ if TYPE_CHECKING:
 #: #3044 re-ignored it, restoring it to the cpp fragment and to this set (the
 #: sibling ``CMakePresets.json`` genuinely lives under ``build/`` and stays
 #: pruned). #3377 then dropped the two patterns of a retired language's fragment
-#: together with that fragment. The
+#: together with that fragment. #3666 added ``paad/security/`` to base so paad's
+#: never-committed security reports stay ignored in every managed repo. The
 #: lossless-split invariant below proves ``base ∪ all-fragments`` still
 #: reconstitutes exactly this set, so a future fragment edit that silently drops
 #: or invents a pattern fails CI. This is the regression guard the monolith used
@@ -51,6 +52,7 @@ _LEGACY_GITIGNORE_PATTERNS: tuple[str, ...] = (
     ".worktrees/",
     ".vergil/",
     ".superpowers/",
+    "paad/security/",
     ".claude/scheduled_tasks.lock",
     ".claude/settings.local.json",
     "build/",
@@ -206,6 +208,17 @@ def test_compose_cpp_keeps_cmake_user_presets() -> None:
 
 def test_compose_none_is_base_only() -> None:
     assert gitignore.compose(None) == gitignore.load_base()
+
+
+def test_base_ignores_paad_security() -> None:
+    """paad's security reports must never be committed (#3666)."""
+    assert "paad/security/" in gitignore.load_base()
+
+
+def test_compose_every_language_ignores_paad_security() -> None:
+    """Every composed fence, base-only included, ignores ``paad/security/``."""
+    for lang in (*gitignore.FRAGMENT_LANGS, None):
+        assert "paad/security/" in gitignore.compose(lang)
 
 
 def test_compose_unknown_language_is_base_only() -> None:

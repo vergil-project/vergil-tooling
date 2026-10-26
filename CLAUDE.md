@@ -409,6 +409,10 @@ CLI tools installed as `vrg-*` console scripts:
 - **`vrg-intake-route`** — Route one intake item (`drop`, `defer`, `one-off`,
   `planning`, `split`); owns transfer-or-recreate, reparent, re-link and
   close-with-pointer for the `intake-review` skill
+- **`vrg-security-record`** — Record a security finding as a private draft
+  advisory in `<org>/.github` paired with a neutral `security` intake issue
+  (`create` with attach and resume, `list`, `show`, `retarget`); advisory text
+  is printed only by `show` and `list --details` (epic vergil-project/.github#517)
 - **`vrg-queue`** — Read-only view of the `intake` queue (oldest first) or the
   `planning` queue (waiting / in-progress / ready-to-close)
 - **`vrg-epic-audit`** — Epic/task drift and invariant report (read-only);
