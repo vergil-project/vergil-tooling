@@ -2,18 +2,29 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from typing import TYPE_CHECKING
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from vergil_tooling.bin.vrg_epic_move import main, parse_args
 from vergil_tooling.lib import epics, github
 
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
 _MOD = "vergil_tooling.bin.vrg_epic_move"
 
 OLD = epics.IssueRef("org", "repo", 100)
 NEW = epics.IssueRef("org", "repo", 200)
 TASK = epics.IssueRef("org", "repo", 42)
+
+
+@pytest.fixture(autouse=True)
+def queue_kind() -> Iterator[MagicMock]:
+    """Every epic is a non-deferred epic unless a test says otherwise (#3673)."""
+    with patch(f"{_MOD}.epics.queue_kind", return_value=None) as mock_kind:
+        yield mock_kind
 
 
 def test_parse_args_requires_task_and_epic() -> None:
@@ -243,3 +254,82 @@ def test_epic_help_names_every_standing_sentinel(capsys: pytest.CaptureFixture[s
     out = " ".join(capsys.readouterr().out.split())
     for sentinel in ("adhoc", "intake", "planning"):
         assert f"'{sentinel}'" in out
+
+
+# -- Deferred queue: entered and left only through vrg-intake-route (#3673) ---
+
+
+def test_epic_move_refuses_deferred_sentinel(capsys: pytest.CaptureFixture[str]) -> None:
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.github.target_org"),
+        patch(f"{_MOD}.epics.resolve_epic_ref") as mock_resolve,
+        patch(f"{_MOD}.epics.parent_of", return_value=OLD),
+        patch(f"{_MOD}.epics.remove_child") as mock_remove,
+        patch(f"{_MOD}.epics.add_child") as mock_add,
+    ):
+        rc = main(["--task", "#42", "--epic", "deferred"])
+    assert rc == 1
+    assert "vrg-intake-route" in capsys.readouterr().err
+    mock_resolve.assert_not_called()  # the deferred epic is never created
+    mock_remove.assert_not_called()
+    mock_add.assert_not_called()
+
+
+def test_epic_move_refuses_deferred_epic_number(
+    queue_kind: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    queue_kind.side_effect = lambda epic: "deferred" if epic == NEW else None
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.github.target_org"),
+        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=NEW),
+        patch(f"{_MOD}.epics.parent_of", return_value=OLD),
+        patch(f"{_MOD}.epics.remove_child") as mock_remove,
+        patch(f"{_MOD}.epics.add_child") as mock_add,
+    ):
+        rc = main(["--task", "#42", "--epic", "org/repo#200"])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "vrg-intake-route" in err
+    assert "org/repo#200" in err
+    mock_remove.assert_not_called()
+    mock_add.assert_not_called()
+
+
+def test_epic_move_refuses_task_under_deferred_epic(
+    queue_kind: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    queue_kind.side_effect = lambda epic: "deferred" if epic == OLD else None
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.github.target_org"),
+        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=NEW),
+        patch(f"{_MOD}.epics.parent_of", return_value=OLD),
+        patch(f"{_MOD}.epics.remove_child") as mock_remove,
+        patch(f"{_MOD}.epics.add_child") as mock_add,
+    ):
+        rc = main(["--task", "#42", "--epic", "org/repo#200"])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "vrg-intake-route" in err
+    assert "org/repo#100" in err
+    mock_remove.assert_not_called()
+    mock_add.assert_not_called()
+
+
+def test_epic_move_moves_task_out_of_intake(queue_kind: MagicMock) -> None:
+    """Only the deferred queue is route-only; an intake parent still moves."""
+    queue_kind.side_effect = lambda epic: "intake" if epic == OLD else None
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.github.target_org"),
+        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=NEW),
+        patch(f"{_MOD}.epics.parent_of", return_value=OLD),
+        patch(f"{_MOD}.epics.remove_child") as mock_remove,
+        patch(f"{_MOD}.epics.add_child") as mock_add,
+    ):
+        rc = main(["--task", "#42", "--epic", "org/repo#200"])
+    assert rc == 0
+    mock_remove.assert_called_once_with(OLD, TASK)
+    mock_add.assert_called_once_with(NEW, TASK)

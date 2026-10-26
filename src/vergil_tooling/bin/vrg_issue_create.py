@@ -34,6 +34,15 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     repo = args.repo or github.current_repo()
     owner, name = repo.split("/", 1)
+    # The deferred queue is entered only through vrg-intake-route, which records
+    # the deferral (#3673). Refused before resolving: resolving the sentinel
+    # would create the epic.
+    if args.epic == epics.DEFERRED.sentinel:
+        print(
+            f"vrg-issue-create: refusing --epic {args.epic}: {epics.DEFERRED_ROUTE_ONLY}",
+            file=sys.stderr,
+        )
+        return 1
     # Pre-network cross-org guard: the issue and its epic must share an owner so
     # one App-installation token reaches both (#2070). The standing sentinels
     # (adhoc/intake/planning) and a bare '#N' all resolve within *repo*'s epic
@@ -116,6 +125,13 @@ def main(argv: list[str] | None = None) -> int:
                 epic = epics.resolve_epic_ref(args.epic, repo=repo)
             except ValueError as exc:
                 print(f"vrg-issue-create: {exc}", file=sys.stderr)
+                return 1
+            if epics.queue_kind(epic) == epics.DEFERRED.key:
+                print(
+                    f"vrg-issue-create: refusing to create an issue under deferred epic "
+                    f"{epic.slug}: {epics.DEFERRED_ROUTE_ONLY}",
+                    file=sys.stderr,
+                )
                 return 1
 
             # Dependency guard (#2842): a Blocked-by ref names the task this one

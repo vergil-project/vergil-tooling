@@ -1242,7 +1242,7 @@ def test_move_public_queues_targets_planning_for_planning_epic() -> None:
 def test_move_public_queues_rejects_non_queue_epic() -> None:
     with (
         patch("vergil_tooling.lib.epics.queue_kind", return_value=None),
-        pytest.raises(ValueError, match="org/lab#4 is not an intake or planning epic"),
+        pytest.raises(ValueError, match="org/lab#4 is not a queue epic"),
     ):
         epic_audit.move_public_queues([epics.IssueRef("org", "lab", 4)], org="org")
 
@@ -1413,3 +1413,43 @@ def test_render_closed_lists_private_under_public() -> None:
     assert "No drift" not in out
     assert "Private repo work under public .github epics" in out
     assert "- org/secret#3" in out
+
+
+# -- Deferred queue kind (epic .github#508) ------------------------------------
+
+
+def test_public_self_homed_queues_includes_deferred() -> None:
+    issues = [
+        _issue("org/lab", 6, labels=("epic", "deferred")),  # public repo queue -> move
+        _issue("org/secret", 6, labels=("epic", "deferred"), public=False),  # still private
+        _issue("org/.github", 10, labels=("epic", "deferred")),  # the org queue itself
+        _issue("org/lab", 7, labels=("archive", "deferred")),  # an archive, not live
+    ]
+    assert epic_audit.public_self_homed_queues("org", issues=issues) == [
+        epics.IssueRef("org", "lab", 6),
+    ]
+
+
+def test_move_public_queues_moves_deferred_to_dotgithub_deferred() -> None:
+    old = epics.IssueRef("org", "lab", 6)
+    new = epics.IssueRef("org", ".github", 10)
+    kid = epics.IssueRef("org", "lab", 20)
+    with (
+        patch("vergil_tooling.lib.epics.queue_kind", return_value="deferred"),
+        patch("vergil_tooling.lib.epics.ensure_standing_epic", return_value=new) as ensure,
+        patch(
+            "vergil_tooling.lib.epics.child_states",
+            side_effect=lambda e: [epics.ChildState(kid, "OPEN", "a")] if e == old else [],
+        ),
+        patch("vergil_tooling.lib.epics.reparent_child") as reparent,
+        patch("vergil_tooling.lib.github.run"),
+    ):
+        assert epic_audit.move_public_queues([old], org="org") == 1
+    ensure.assert_called_once_with(epics.DEFERRED, "org/.github", "org")
+    reparent.assert_called_once_with(new, kid)
+
+
+def test_queue_full_hint_deferred() -> None:
+    assert epic_audit._QUEUE_FULL_HINT["deferred"] == "Run deferred-review."
+    # Every queue kind has a hint, so StandingEpicFull never KeyErrors.
+    assert set(epic_audit._QUEUE_FULL_HINT) == set(epics.QUEUE_KIND_BY_KEY)

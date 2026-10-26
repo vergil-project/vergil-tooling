@@ -249,28 +249,56 @@ other argument to `vrg-intake-create`.
 
 ### vrg-intake-route
 
-Apply one intake-review decision to one intake item. Owns the routing
-mechanics — transfer-or-recreate, reparent, re-link, close with a pointer — so
-the `intake-review` skill never hand-rolls them. Routes:
+Route one item between the container epics — intake, planning, ad hoc and
+deferred — applying one queue-review decision. Owns the routing mechanics —
+transfer-or-recreate, reparent, re-link, close with a pointer, record a
+deferral — so no review skill hand-rolls them. Routes:
 
-- `drop --reason TEXT` — comment the reason and close (not planned).
-- `defer --reason TEXT` — add a dated comment; the item keeps its age.
+- `drop --reason TEXT` — comment the reason, naming the queue it was dropped
+  from (`Dropped in <queue> review: …`), and close (not planned).
+- `defer --reason TEXT --revisit-when TEXT [--date YYYY-MM-DD]` — move the
+  item into its queue home's deferred epic and post the deferral record:
+
+  ```text
+  Deferred <YYYY-MM-DD>: <reason>
+  Revisit when: <conditions>
+  Deferred from: <owner>/<repo>#<N>
+  ```
+
+  `--date` stamps an original deferral date instead of today. The item is
+  linked before the record is posted, and a planning item's `in-progress`
+  label is removed. On an item already deferred, `defer` is a **refresh**: a
+  new record, no move, and no `Deferred from:` line. If the record fails after
+  the move, the command fails loudly and prints the full intended comment to
+  post by hand.
+- `intake` — reparent a deferred item back onto its home's intake epic.
 - `one-off --repo OWNER/REPO [--epic REF]` — move the item into the target
   repo (transfer, or recreate with a link back when GitHub refuses the
   transfer) and link it under that repo's ad-hoc epic (default `adhoc`) or the
   named epic.
-- `planning` — reparent the item from the intake epic to the planning epic of
-  the same queue home.
+- `planning` — reparent the item onto the planning epic of the same queue
+  home.
 - `split --into REF [--into REF …] --reason TEXT` — comment links to the
   replacement tasks (already created with `vrg-issue-create`) and close.
 
+Which routes an item allows depends on the container epic it is in:
+
+| Item is in | Allowed routes |
+|---|---|
+| intake | `drop`, `defer`, `one-off`, `planning`, `split` |
+| planning | `defer`, `drop` — both refused once an `Epic:` marker is recorded |
+| ad hoc | `defer` — refused while an open PR would close the item |
+| deferred | `defer` (refresh), `intake`, `planning`, `one-off`, `drop`, `split` |
+| no parent | `planning` (the `epic-create` free-text path) |
+| a development epic, or anything else | none — refused, naming the parent |
+
 | Attribute | Value |
 |---|---|
-| Source | `vergil_tooling.bin.vrg_intake_route` (mechanics: `lib/intake_route.py`) |
-| Args | `<issue-ref>` (`owner/repo#N`, or `#N` in the current repo), then a route: `drop`, `defer`, `one-off`, `planning`, `split` |
-| Preconditions | The item is a child of an intake epic (`planning` also accepts an unparented issue); GitHub App credentials for the item's org |
-| Failure mode | A refused route — not an intake item, a cross-org target, or a private item headed to a public repo or epic — exits 1 with the reason on stderr |
-| Exit codes | 0 routed, 1 refused or error, 2 bad arguments |
+| Source | `vergil_tooling.bin.vrg_intake_route` (mechanics and route table: `lib/intake_route.py`) |
+| Args | `<issue-ref>` (`owner/repo#N`, or `#N` in the current repo), then a route: `drop`, `defer`, `intake`, `one-off`, `planning`, `split` |
+| Preconditions | The item is a child of a container epic that allows the route (`planning` also accepts an unparented issue); GitHub App credentials for the item's org |
+| Failure mode | A refused route — not allowed from the item's container, a development-epic task, a planning item with an `Epic:` marker, an ad-hoc item with an open closing PR, a cross-org target, or a private item headed to a public repo or epic — exits 1 with the reason on stderr. A route half-applied by a failure raises with the state it left and how to fix it |
+| Exit codes | 0 routed, 1 refused or error, 2 bad arguments (including a missing `--revisit-when` or a malformed `--date`) |
 | Status | Active |
 
 ### vrg-queue
@@ -280,15 +308,20 @@ under the intake epic, oldest first. `vrg-queue planning` lists the open items
 under the planning epic with their state: **waiting** (no `in-progress`
 label), **in-progress** (labelled, with its latest progress note), or
 **ready-to-close** (labelled, the `Epic:` / `Docs task:` / `Tasks filed: yes`
-markers present, and the docs task closed). Used by `intake-review`'s collect
-step and `epic-create`'s no-argument summary.
+markers present, and the docs task closed). `vrg-queue deferred` lists the
+open items under the deferred epic, all **waiting**, least recently deferred
+first; each item's note is its latest deferral
+(`Deferred <day>: <reason> | Revisit when: <conditions>`), and an item with no
+deferral comment sorts first with an empty note. A bare `vrg-queue` lists all
+three queues in that order (intake, planning, deferred). Used by
+`intake-review`'s collect step and `epic-create`'s no-argument summary.
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_queue` (views: `lib/queue_view.py`) |
-| Args | `{intake,planning}` (required); `--repo OWNER/NAME` (that repo's queue home; default: the current org's `.github` queues); `--json` |
+| Args | `{intake,planning,deferred}` (optional; default: all three); `--repo OWNER/NAME` (that repo's queue home; default: the current org's `.github` queues); `--json` (a list of items; with no queue named, an object keyed by queue, `null` for a missing one) |
 | Preconditions | GitHub App credentials for the target org |
-| Failure mode | A queue home with no live queue epic exits 1 naming the missing epic; nothing is created |
+| Failure mode | A named queue whose home has no live queue epic exits 1 naming the missing epic; with no queue named, a missing queue prints `<queue> queue for <name> in <home>: no queue yet` and the run exits 0. Nothing is created |
 | Exit codes | 0 success, 1 error, 2 bad arguments |
 | Status | Active |
 
@@ -765,6 +798,30 @@ between `BEGIN/END GENERATED MQSC METHODS` markers.
 Container tools run inside dev containers launched by `vrg-container-run`.
 They assume language toolchain dependencies (ruff, mypy, shellcheck,
 markdownlint, yamllint) are available on PATH.
+
+### vrg-validate
+
+The unified validation driver. It reads `[project].primary-language`
+from `vergil.toml` and runs the stages in order: common checks, the
+language's install, lint, typecheck, test and audit commands, and last
+the repository's custom validator (`scripts/bin/validate-custom` or
+`vrg-validate-custom` on `PATH`) when it has one. `--check` runs one
+stage. `--check custom` runs the install stage (when the language has
+one) and then the custom stage; with no custom validator it prints one
+"no custom validator" line and exits 0, and a validator that is present
+but not an executable regular file fails. PR CI runs each stage through
+the `vergil-actions` reusable workflows, the custom stage as
+`quality / custom`. See the [Validation Matrix](../guides/validation-matrix.md)
+for every check and where it runs.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_validate` |
+| Args | `--check {common,lint,typecheck,test,audit,custom}`, `--all-versions` (Python only; alone or with `--check test`) |
+| Preconditions | Inside a dev container (run it as `vrg-container-run -- vrg-validate`) |
+| Failure mode | Runs every stage after install and reports all failures in one run; install fails fast |
+| Exit codes | 0 all passed, 1 a stage failed or the config is invalid, 2 usage error (for example `--check custom --all-versions`) |
+| Status | Active |
 
 ### vrg-validate-common
 

@@ -34,3 +34,14 @@ def test_registry_includes_full_kind_axis() -> None:
     names = {entry["name"] for entry in _labels()}
     for kind in {"bug", "feature", "docs", "refactor", "chore"}:
         assert kind in names, f"kind label missing from labels.json: {kind}"
+
+
+def test_security_labels_registered() -> None:
+    # Security records (epic vergil-project/.github#517, spec 4.7).
+    by_name = {entry["name"]: entry for entry in _labels()}
+    assert by_name["security"]["description"] == (
+        "Has a private security record in the org's .github advisories"
+    )
+    assert by_name["security-disclosed"]["description"] == (
+        "Past issue that disclosed a security problem publicly; fixed, no private record"
+    )

@@ -17,6 +17,7 @@ from vergil_tooling.lib.intake_route import (
     RouteRefusedError,
     RouteResult,
     Split,
+    ToIntake,
     ToPlanning,
     route,
 )
@@ -32,7 +33,9 @@ ITEM = IssueRef("org", ".github", 352)
 INTAKE = IssueRef("org", ".github", 7)
 PLANNING = IssueRef("org", ".github", 8)
 ADHOC_DOTGITHUB = IssueRef("org", ".github", 9)
+DEFERRED = IssueRef("org", ".github", 10)
 TOOL_ADHOC = IssueRef("org", ".github", 11)
+DEV_EPIC = IssueRef("org", ".github", 400)
 TODAY = date(2026, 10, 23)
 ORIG_URL = "https://github.com/org/.github/issues/352"
 
@@ -42,7 +45,18 @@ class Env:
 
     def __init__(self) -> None:
         self.parent: IssueRef | None = INTAKE
-        self.kinds: dict[IssueRef, str | None] = {INTAKE: "intake", PLANNING: "planning"}
+        # The container_kind map; queue_kind is derived from it.
+        self.kinds: dict[IssueRef, str | None] = {
+            INTAKE: "intake",
+            PLANNING: "planning",
+            DEFERRED: "deferred",
+            ADHOC_DOTGITHUB: "ad-hoc",
+            TOOL_ADHOC: "ad-hoc",
+        }
+        self.labels: list[str] = []
+        self.comments: list[str] = []
+        # Closing-PR URL -> state (OPEN, CLOSED, MERGED).
+        self.closing_prs: dict[str, str] = {}
         self.public: dict[str, bool] = {}
         self.native_parent: dict[IssueRef, IssueRef | None] = {}
         self.epic_state = "open"
@@ -56,7 +70,7 @@ class Env:
         self.created_url = "https://github.com/org/tool/issues/901"
         self.run = MagicMock()
         self.read_output = MagicMock(side_effect=self._read_output)
-        self.read_json = MagicMock(side_effect=lambda *a: self.issue_view)
+        self.read_json = MagicMock(side_effect=self._read_json)
         self.create_issue = MagicMock(side_effect=lambda **kw: self.created_url)
         self.ensure_labels = MagicMock()
         # A link takes effect: the task's native parent becomes the epic.
@@ -64,16 +78,39 @@ class Env:
         self.reparent_child = MagicMock(side_effect=self.attach)
         self.sleep = MagicMock()
         self.ensure_planning_epic = MagicMock(return_value=PLANNING)
+        self.ensure_intake_epic = MagicMock(return_value=INTAKE)
+        self.ensure_deferred_epic = MagicMock(return_value=DEFERRED)
         self.resolve_epic_ref = MagicMock(return_value=TOOL_ADHOC)
 
     def attach(self, epic: IssueRef, task: IssueRef) -> None:
         self.native_parent[task] = epic
+
+    def queue_kind(self, ref: IssueRef) -> str | None:
+        kind = self.kinds.get(ref)
+        return kind if kind in ("intake", "planning", "deferred") else None
+
+    def _read_json(self, *args: str) -> object:
+        fields = args[-1]
+        if fields == "labels,comments":
+            return {
+                "labels": [{"name": name} for name in self.labels],
+                "comments": [{"body": body} for body in self.comments],
+            }
+        if fields == "closedByPullRequestsReferences":
+            return {
+                "closedByPullRequestsReferences": [
+                    {"number": int(url.rsplit("/", 1)[1]), "url": url} for url in self.closing_prs
+                ]
+            }
+        return self.issue_view
 
     def _read_output(self, *args: str) -> str:
         if args[:2] == ("issue", "transfer"):
             if isinstance(self.transfer, BaseException):
                 raise self.transfer
             return str(self.transfer)
+        if args[:2] == ("pr", "view"):
+            return self.closing_prs[args[2]]
         assert args[0] == "api"
         assert args[-1] == ".state"
         return self.epic_state
@@ -84,7 +121,8 @@ def env() -> Iterator[Env]:
     state = Env()
     with (
         patch(f"{_MOD}.epics.parent_of", side_effect=lambda ref: state.parent),
-        patch(f"{_MOD}.epics.queue_kind", side_effect=lambda ref: state.kinds.get(ref)),
+        patch(f"{_MOD}.epics.queue_kind", side_effect=state.queue_kind),
+        patch(f"{_MOD}.epics.container_kind", side_effect=lambda ref: state.kinds.get(ref)),
         patch(
             f"{_MOD}.epics.native_parent_of",
             side_effect=lambda ref: state.native_parent.get(ref),
@@ -92,6 +130,8 @@ def env() -> Iterator[Env]:
         patch(f"{_MOD}.epics.add_child", state.add_child),
         patch(f"{_MOD}.epics.reparent_child", state.reparent_child),
         patch(f"{_MOD}.epics.ensure_planning_epic", state.ensure_planning_epic),
+        patch(f"{_MOD}.epics.ensure_intake_epic", state.ensure_intake_epic),
+        patch(f"{_MOD}.epics.ensure_deferred_epic", state.ensure_deferred_epic),
         patch(f"{_MOD}.epics.resolve_epic_ref", state.resolve_epic_ref),
         patch(f"{_MOD}.github.is_public", side_effect=lambda r: state.public.get(r, True)),
         patch(f"{_MOD}.github.run", state.run),
@@ -127,8 +167,56 @@ def test_route_drop_comments_and_closes(env: Env) -> None:
     )
 
 
-def test_route_defer_comments_with_date_only(env: Env) -> None:
-    result = route(ITEM, Defer(reason="waiting on the release"), today=TODAY)
+def _comment_calls(env: Env) -> list[Any]:
+    return [c for c in env.run.call_args_list if c.args[:2] == ("issue", "comment")]
+
+
+def test_route_defer_moves_intake_item_and_records(env: Env) -> None:
+    env.native_parent[ITEM] = INTAKE
+    result = route(ITEM, Defer(reason="waits on X", revisit_when="X ships"), today=TODAY)
+    assert result == RouteResult(final=ITEM, moved_by="none")
+    env.ensure_deferred_epic.assert_called_once_with("org/.github")
+    # The intake parent is replaced atomically, never unlinked first.
+    env.reparent_child.assert_called_once_with(DEFERRED, ITEM)
+    assert env.native_parent[ITEM] == DEFERRED
+    env.run.assert_called_once_with(
+        "issue",
+        "comment",
+        "352",
+        "--repo",
+        "org/.github",
+        "--body",
+        "Deferred 2026-10-23: waits on X\nRevisit when: X ships\nDeferred from: org/.github#7",
+    )
+
+
+def test_route_defer_links_before_commenting(env: Env) -> None:
+    env.native_parent[ITEM] = INTAKE
+    order: list[str] = []
+    env.reparent_child.side_effect = lambda *a: order.append("link") or env.attach(*a)
+    env.run.side_effect = lambda *a: order.append(f"{a[0]}:{a[1]}")
+    route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
+    assert order == ["link", "issue:comment"]
+
+
+def test_route_defer_date_override(env: Env) -> None:
+    env.native_parent[ITEM] = INTAKE
+    route(ITEM, Defer(reason="r", revisit_when="w", day=date(2026, 10, 24)), today=TODAY)
+    assert _comment_calls(env)[0].args[-1].startswith("Deferred 2026-10-24: r\n")
+
+
+def test_route_defer_defaults_to_today(env: Env) -> None:
+    env.native_parent[ITEM] = INTAKE
+    with patch(f"{_MOD}.date") as mock_date:
+        mock_date.today.return_value = date(2027, 1, 2)
+        route(ITEM, Defer(reason="later", revisit_when="soon"))
+    assert _comment_calls(env)[0].args[-1].startswith("Deferred 2027-01-02: later\n")
+
+
+def test_route_defer_refresh_does_not_move_or_add_from_line(env: Env) -> None:
+    env.parent = DEFERRED
+    env.native_parent[ITEM] = DEFERRED
+    result = route(ITEM, Defer(reason="still waiting", revisit_when="Y ships"), today=TODAY)
     assert result == RouteResult(final=ITEM, moved_by="none")
     env.run.assert_called_once_with(
         "issue",
@@ -137,17 +225,277 @@ def test_route_defer_comments_with_date_only(env: Env) -> None:
         "--repo",
         "org/.github",
         "--body",
-        "Deferred 2026-10-23: waiting on the release",
+        "Deferred 2026-10-23: still waiting\nRevisit when: Y ships",
     )
+    env.ensure_deferred_epic.assert_not_called()
     env.add_child.assert_not_called()
     env.reparent_child.assert_not_called()
 
 
-def test_route_defer_defaults_to_today(env: Env) -> None:
-    with patch(f"{_MOD}.date") as mock_date:
-        mock_date.today.return_value = date(2027, 1, 2)
-        route(ITEM, Defer(reason="later"))
-    assert env.run.call_args.args[-1] == "Deferred 2027-01-02: later"
+def test_route_defer_from_planning_removes_in_progress(env: Env) -> None:
+    env.parent = PLANNING
+    env.native_parent[ITEM] = PLANNING
+    env.labels = ["in-progress", "idea"]
+    env.comments = ["Some progress note."]
+    route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
+    env.reparent_child.assert_called_once_with(DEFERRED, ITEM)
+    env.run.assert_any_call(
+        "issue", "edit", "352", "--repo", "org/.github", "--remove-label", "in-progress"
+    )
+    body = _comment_calls(env)[0].args[-1]
+    assert body.endswith("\nDeferred from: org/.github#8")
+
+
+def test_route_defer_from_planning_without_in_progress_leaves_labels(env: Env) -> None:
+    env.parent = PLANNING
+    env.native_parent[ITEM] = PLANNING
+    route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
+    assert [c.args[1] for c in env.run.call_args_list] == ["comment"]
+
+
+def test_route_defer_from_adhoc_moves(env: Env) -> None:
+    env.parent = ADHOC_DOTGITHUB
+    env.native_parent[ITEM] = ADHOC_DOTGITHUB
+    route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
+    env.reparent_child.assert_called_once_with(DEFERRED, ITEM)
+    assert _comment_calls(env)[0].args[-1].endswith("\nDeferred from: org/.github#9")
+
+
+def test_route_defer_refuses_development_epic_task(env: Env) -> None:
+    env.parent = DEV_EPIC
+    with pytest.raises(RouteRefusedError, match=r"org/\.github#400"):
+        route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
+    env.run.assert_not_called()
+    env.add_child.assert_not_called()
+    env.reparent_child.assert_not_called()
+    env.ensure_deferred_epic.assert_not_called()
+
+
+def test_route_defer_refuses_unparented(env: Env) -> None:
+    env.parent = None
+    with pytest.raises(RouteRefusedError, match="has no parent"):
+        route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
+    env.run.assert_not_called()
+    env.ensure_deferred_epic.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "action", [Defer(reason="r", revisit_when="w"), Drop(reason="no longer needed")]
+)
+def test_route_planning_with_epic_marker_refuses_defer_and_drop(
+    env: Env, action: Defer | Drop
+) -> None:
+    env.parent = PLANNING
+    env.native_parent[ITEM] = PLANNING
+    env.labels = ["in-progress"]
+    env.comments = ["Epic: org/.github#600\nDocs task: org/.github#601"]
+    with pytest.raises(RouteRefusedError, match=r"has a development epic \(org/\.github#600\)"):
+        route(ITEM, action, today=TODAY)
+    env.run.assert_not_called()
+    env.reparent_child.assert_not_called()
+    env.ensure_deferred_epic.assert_not_called()
+
+
+def test_route_drop_planning_without_marker_closes(env: Env) -> None:
+    env.parent = PLANNING
+    env.comments = ["Just a note."]
+    route(ITEM, Drop(reason="superseded"), today=TODAY)
+    env.run.assert_called_once_with(
+        "issue",
+        "close",
+        "352",
+        "--repo",
+        "org/.github",
+        "--reason",
+        "not planned",
+        "--comment",
+        "Dropped in planning review: superseded",
+    )
+
+
+def test_route_defer_adhoc_refuses_open_closing_pr(env: Env) -> None:
+    env.parent = ADHOC_DOTGITHUB
+    env.closing_prs = {
+        "https://github.com/org/tool/pull/41": "MERGED",
+        "https://github.com/org/tool/pull/42": "OPEN",
+    }
+    with pytest.raises(RouteRefusedError, match=r"https://github\.com/org/tool/pull/42"):
+        route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
+    env.run.assert_not_called()
+    env.reparent_child.assert_not_called()
+    env.ensure_deferred_epic.assert_not_called()
+
+
+def test_route_defer_adhoc_ignores_closed_pr(env: Env) -> None:
+    env.parent = ADHOC_DOTGITHUB
+    env.native_parent[ITEM] = ADHOC_DOTGITHUB
+    env.closing_prs = {
+        "https://github.com/org/tool/pull/41": "MERGED",
+        "https://github.com/org/tool/pull/43": "CLOSED",
+    }
+    route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
+    env.reparent_child.assert_called_once_with(DEFERRED, ITEM)
+
+
+def test_route_defer_comment_failure_after_move_fails_loudly(env: Env) -> None:
+    env.native_parent[ITEM] = INTAKE
+    env.run.side_effect = github.GitHubAPIError(1, ["gh"], "", "HTTP 502")
+    with pytest.raises(RuntimeError) as excinfo:
+        route(ITEM, Defer(reason="waits on X", revisit_when="X ships"), today=TODAY)
+    message = str(excinfo.value)
+    assert env.native_parent[ITEM] == DEFERRED
+    assert "org/.github#352 is under the deferred epic org/.github#10" in message
+    assert "without a deferral record" in message
+    assert "HTTP 502" in message
+    # The full intended comment, including the origin a refresh would not write.
+    assert (
+        "Deferred 2026-10-23: waits on X\nRevisit when: X ships\nDeferred from: org/.github#7"
+        in message
+    )
+
+
+def test_route_defer_label_failure_after_move_fails_loudly(env: Env) -> None:
+    env.parent = PLANNING
+    env.native_parent[ITEM] = PLANNING
+    env.labels = ["in-progress"]
+    env.run.side_effect = github.GitHubAPIError(1, ["gh"], "", "HTTP 502")
+    with pytest.raises(RuntimeError) as excinfo:
+        route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
+    message = str(excinfo.value)
+    assert "without a deferral record" in message
+    assert "--remove-label in-progress" in message
+    assert "Deferred 2026-10-23: r\nRevisit when: w\nDeferred from: org/.github#8" in message
+
+
+def test_route_defer_refuses_private_item_to_public_deferred_epic(env: Env) -> None:
+    secret_item = IssueRef("org", "secret", 5)
+    env.public = {"org/secret": False}
+    with pytest.raises(RouteRefusedError, match="private repo org/secret"):
+        route(secret_item, Defer(reason="r", revisit_when="w"), today=TODAY)
+    env.reparent_child.assert_not_called()
+    env.add_child.assert_not_called()
+    env.run.assert_not_called()
+
+
+def test_route_defer_uses_items_repo_queue_home(env: Env) -> None:
+    secret_item = IssueRef("org", "secret", 5)
+    secret_deferred = IssueRef("org", "secret", 3)
+    env.ensure_deferred_epic.return_value = secret_deferred
+    env.public = {"org/secret": False}
+    route(secret_item, Defer(reason="r", revisit_when="w"), today=TODAY)
+    env.ensure_deferred_epic.assert_called_once_with("org/secret")
+    env.add_child.assert_called_once_with(secret_deferred, secret_item)
+
+
+# -- revive (out of deferred) ------------------------------------------------
+
+
+def test_route_to_intake_from_deferred(env: Env) -> None:
+    env.parent = DEFERRED
+    env.native_parent[ITEM] = DEFERRED
+    result = route(ITEM, ToIntake(), today=TODAY)
+    assert result == RouteResult(final=ITEM, moved_by="none")
+    env.ensure_intake_epic.assert_called_once_with("org/.github")
+    env.reparent_child.assert_called_once_with(INTAKE, ITEM)
+    env.run.assert_not_called()
+
+
+def test_route_to_intake_refused_from_intake(env: Env) -> None:
+    with pytest.raises(RouteRefusedError, match="the intake route is not allowed"):
+        route(ITEM, ToIntake(), today=TODAY)
+    env.ensure_intake_epic.assert_not_called()
+    env.reparent_child.assert_not_called()
+
+
+def test_route_to_intake_refuses_private_item_to_public_intake_epic(env: Env) -> None:
+    secret_item = IssueRef("org", "secret", 5)
+    env.parent = DEFERRED
+    env.public = {"org/secret": False}
+    with pytest.raises(RouteRefusedError, match="private repo org/secret"):
+        route(secret_item, ToIntake(), today=TODAY)
+    env.reparent_child.assert_not_called()
+    env.add_child.assert_not_called()
+
+
+def test_route_planning_from_deferred(env: Env) -> None:
+    env.parent = DEFERRED
+    env.native_parent[ITEM] = DEFERRED
+    route(ITEM, ToPlanning(), today=TODAY)
+    env.reparent_child.assert_called_once_with(PLANNING, ITEM)
+
+
+def test_route_one_off_from_deferred_same_repo_reparents(env: Env) -> None:
+    env.parent = DEFERRED
+    env.native_parent[ITEM] = DEFERRED
+    env.resolve_epic_ref.return_value = ADHOC_DOTGITHUB
+    result = route(ITEM, OneOff(repo="org/.github"), today=TODAY)
+    assert result == RouteResult(final=ITEM, moved_by="none")
+    env.reparent_child.assert_called_once_with(ADHOC_DOTGITHUB, ITEM)
+    assert _transfer_calls(env) == []
+
+
+def test_route_split_from_deferred_closes(env: Env) -> None:
+    env.parent = DEFERRED
+    route(ITEM, Split(into=(IssueRef("org", "tool", 10),), reason="r"), today=TODAY)
+    assert env.run.call_args.args[:2] == ("issue", "close")
+
+
+@pytest.mark.parametrize(
+    ("parent", "queue"), [(INTAKE, "intake"), (PLANNING, "planning"), (DEFERRED, "deferred")]
+)
+def test_route_drop_names_source_queue(env: Env, parent: IssueRef, queue: str) -> None:
+    env.parent = parent
+    route(ITEM, Drop(reason="obsolete"), today=TODAY)
+    assert env.run.call_args.args[-1] == f"Dropped in {queue} review: obsolete"
+
+
+def test_routes_table_matches_spec() -> None:
+    expected: dict[str | None, frozenset[type]] = {
+        "intake": frozenset({Drop, Defer, OneOff, ToPlanning, Split}),
+        "planning": frozenset({Defer, Drop}),
+        "ad-hoc": frozenset({Defer}),
+        "deferred": frozenset({Defer, ToIntake, ToPlanning, OneOff, Drop, Split}),
+        None: frozenset({ToPlanning}),
+    }
+    assert expected == intake_route.ROUTES
+
+
+def test_route_defer_unexpected_issue_view_fails_loudly(env: Env) -> None:
+    env.read_json.side_effect = lambda *a: ["not", "a", "dict"]
+    with pytest.raises(RuntimeError, match="unexpected 'gh issue view' response"):
+        route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
+    env.reparent_child.assert_not_called()
+    env.run.assert_not_called()
+
+
+def test_route_defer_adhoc_closing_pr_without_url_fails_loudly(env: Env) -> None:
+    env.parent = ADHOC_DOTGITHUB
+    view = {"labels": [], "comments": [], "closedByPullRequestsReferences": [{"number": 5}]}
+    env.read_json.side_effect = lambda *a: view
+    with pytest.raises(RuntimeError, match="has no URL"):
+        route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
+    env.reparent_child.assert_not_called()
+    env.run.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("parent", "action", "name"),
+    [
+        (PLANNING, ToPlanning(), "planning"),
+        (PLANNING, OneOff(repo="org/tool"), "one-off"),
+        (ADHOC_DOTGITHUB, Drop(reason="x"), "drop"),
+        (ADHOC_DOTGITHUB, ToIntake(), "intake"),
+    ],
+)
+def test_route_refuses_routes_outside_the_table(
+    env: Env, parent: IssueRef, action: Any, name: str
+) -> None:
+    env.parent = parent
+    with pytest.raises(RouteRefusedError, match=f"the {name} route is not allowed"):
+        route(ITEM, action, today=TODAY)
+    env.run.assert_not_called()
+    env.reparent_child.assert_not_called()
+    env.resolve_epic_ref.assert_not_called()
 
 
 def test_route_split_closes_with_links(env: Env) -> None:
@@ -176,9 +524,9 @@ def test_route_split_refuses_empty_into(env: Env) -> None:
 # -- eligibility -------------------------------------------------------------
 
 
-def test_route_refuses_non_intake_item(env: Env) -> None:
-    env.parent = ADHOC_DOTGITHUB
-    with pytest.raises(RouteRefusedError, match=r"under org/\.github#9, not an intake epic"):
+def test_route_refuses_development_epic_task(env: Env) -> None:
+    env.parent = DEV_EPIC
+    with pytest.raises(RouteRefusedError, match=r"under org/\.github#400, not a container epic"):
         route(ITEM, Drop(reason="x"), today=TODAY)
     env.run.assert_not_called()
 
@@ -186,13 +534,13 @@ def test_route_refuses_non_intake_item(env: Env) -> None:
 def test_route_refuses_unparented_item_for_non_planning(env: Env) -> None:
     env.parent = None
     with pytest.raises(RouteRefusedError, match="has no parent"):
-        route(ITEM, Defer(reason="x"), today=TODAY)
+        route(ITEM, Drop(reason="x"), today=TODAY)
     env.run.assert_not_called()
 
 
 def test_route_refuses_planning_item_for_planning(env: Env) -> None:
     env.parent = PLANNING
-    with pytest.raises(RouteRefusedError, match="not an intake epic"):
+    with pytest.raises(RouteRefusedError, match="the planning route is not allowed"):
         route(ITEM, ToPlanning(), today=TODAY)
     env.reparent_child.assert_not_called()
 

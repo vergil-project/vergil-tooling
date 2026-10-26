@@ -172,11 +172,11 @@ def _reject_operational_issue(issue_ref: str) -> None:
 
 
 def _reject_queue_issue(issue_ref: str) -> None:
-    """Refuse an intake or planning queue item at report time — it is not buildable.
+    """Refuse a queue (intake/planning/deferred) item at report time — not buildable.
 
     Mirrors vrg-submit-pr's ``_reject_if_queue_item`` so the error surfaces where
     the value is entered (#2485). The test is the issue's native parent: a child
-    of the intake or planning epic must be routed out before it can take a PR.
+    of a queue epic must be routed out before it can take a PR.
     Best-effort like :func:`_reject_operational_issue`: if the parent cannot be
     read (no remote, no gh auth), defer to vrg-submit-pr's authoritative check —
     but say so on stderr rather than passing silently.

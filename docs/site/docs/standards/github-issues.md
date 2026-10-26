@@ -450,6 +450,8 @@ warns, ignores `--kind`, and forwards to `vrg-intake-create`.
 ```bash
 vrg-queue intake    # open intake items, oldest first
 vrg-queue planning  # open planning items: waiting / in-progress / ready-to-close
+vrg-queue deferred  # open deferred items, least recently deferred first
+vrg-queue           # all three queues, in that order
 ```
 
 It defaults to the current org's `.github` queues; `--repo <owner>/<repo>`
@@ -466,7 +468,7 @@ owns the mechanics so nothing is hand-rolled:
 | Route | Command | Effect |
 |---|---|---|
 | Drop | `vrg-intake-route <ref> drop --reason TEXT` | Comment the reason and close (not planned). Closed is archived and stays searchable. |
-| Defer | `vrg-intake-route <ref> defer --reason TEXT` | Add a dated comment; the item keeps its age and comes up first next time. |
+| Defer | `vrg-intake-route <ref> defer --reason TEXT --revisit-when TEXT [--date YYYY-MM-DD]` | Move the item into the deferred queue with a dated record of why it waits, when to look again, and where it came from. |
 | One-off | `vrg-intake-route <ref> one-off --repo OWNER/REPO [--epic REF]` | Move the item into its target repo and link it under that repo's ad-hoc epic (default) or a named epic. |
 | Split | `vrg-intake-route <ref> split --into REF [--into REF …] --reason TEXT` | Comment links to the replacement tasks (already created with `vrg-issue-create`), then close. |
 | To planning | `vrg-intake-route <ref> planning` | Reparent from the intake epic to the planning epic of the same queue home. |
@@ -474,8 +476,10 @@ owns the mechanics so nothing is hand-rolled:
 A move **transfers** the issue, keeping its history; if GitHub refuses the
 transfer, the item is recreated in the target repo with a link back and the
 original closed with a pointer. Either way the resulting issue is re-linked under
-its new parent. A route is refused for an issue that is not an intake item, for a
-cross-org target, and for a private item headed to a public repo or epic.
+its new parent. A route is refused when the item's container epic does not allow
+it (see [`vrg-intake-route`](../reference/cli-tools-overview.md#vrg-intake-route)
+for the route table), for a cross-org target, and for a private item headed to a
+public repo or epic.
 
 ### Planning
 
