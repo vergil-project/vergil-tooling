@@ -1241,3 +1241,129 @@ def test_default_test_version_without_pytest_is_loud() -> None:
         pytest.raises(ValidationError, match="cannot read the test interpreter version"),
     ):
         _default_test_version()
+
+
+# -- --check custom (issue #3650) ----------------------------------------------
+
+_NO_CUSTOM_LINE = (
+    "custom: no custom validator (scripts/bin/validate-custom or "
+    "vrg-validate-custom) — nothing to run"
+)
+
+
+def test_build_stages_check_custom_runs_install_then_custom() -> None:
+    with (
+        patch(_MOD + ".language_commands") as m_cmds,
+        patch(_MOD + "._find_custom_validator", return_value="/path/to/custom"),
+    ):
+        m_cmds.side_effect = lambda lang, kind, **_kw: [["echo", kind.value]]
+        stages = _build_stages("custom", "python", Path("/tmp/r"))  # noqa: S108
+    assert [s.name for s in stages] == ["install", "custom"]
+    assert stages[0].mode == "fail_fast"
+    assert stages[1].mode == "fail_defer"
+
+
+def test_build_stages_check_custom_no_install_commands() -> None:
+    with (
+        patch(_MOD + ".language_commands", return_value=[]),
+        patch(_MOD + "._find_custom_validator", return_value="/path/to/custom"),
+    ):
+        stages = _build_stages("custom", "python", Path("/tmp/r"))  # noqa: S108
+    assert [s.name for s in stages] == ["custom"]
+
+
+def test_build_stages_check_custom_no_language() -> None:
+    with (
+        patch(_MOD + ".language_commands") as m_cmds,
+        patch(_MOD + "._find_custom_validator", return_value="/path/to/custom"),
+    ):
+        stages = _build_stages("custom", None, Path("/tmp/r"))  # noqa: S108
+    assert [s.name for s in stages] == ["custom"]
+    m_cmds.assert_not_called()
+
+
+def test_build_stages_check_custom_no_validator() -> None:
+    with (
+        patch(_MOD + ".language_commands") as m_cmds,
+        patch(_MOD + "._find_custom_validator", return_value=None),
+    ):
+        m_cmds.side_effect = lambda lang, kind, **_kw: [["echo", kind.value]]
+        stages = _build_stages("custom", "python", Path("/tmp/r"))  # noqa: S108
+    assert stages == []
+
+
+def test_build_stages_check_lint_excludes_custom() -> None:
+    with (
+        patch(_MOD + ".language_commands") as m_cmds,
+        patch(_MOD + "._find_custom_validator", return_value="/path/to/custom"),
+    ):
+        m_cmds.side_effect = lambda lang, kind, **_kw: [["echo", kind.value]]
+        stages = _build_stages("lint", "python", Path("/tmp/r"))  # noqa: S108
+    assert "custom" not in [s.name for s in stages]
+
+
+def test_main_check_custom_no_validator(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _write_config(tmp_path)
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + "._find_custom_validator", return_value=None),
+        patch(_MOD + ".progress.run_pipeline") as m_pipeline,
+    ):
+        assert main(["--check", "custom"]) == 0
+    m_pipeline.assert_not_called()
+    assert _NO_CUSTOM_LINE in capsys.readouterr().out
+
+
+def test_main_check_custom_runs_validator(tmp_path: Path) -> None:
+    _write_config(tmp_path)
+    ran: list[str] = []
+
+    def mock_run(cmd: tuple[str, ...], *, check: bool = True) -> int:
+        ran.append(cmd[0])
+        return 0
+
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + "._run_common_checks") as m_common,
+        patch(_MOD + ".progress.run", side_effect=mock_run),
+        patch(_MOD + "._find_custom_validator", return_value="/path/to/custom"),
+        patch(_MOD + "._check_custom_validator"),
+    ):
+        assert main(["--check", "custom"]) == 0
+    m_common.assert_not_called()
+    assert ran == ["/path/to/custom"]
+
+
+def test_main_check_custom_failure(tmp_path: Path) -> None:
+    _write_config(tmp_path)
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".progress.run", return_value=1),
+        patch(_MOD + "._find_custom_validator", return_value="/path/to/custom"),
+        patch(_MOD + "._check_custom_validator"),
+    ):
+        assert main(["--check", "custom"]) == 1
+
+
+def test_main_check_custom_non_executable_fails(tmp_path: Path) -> None:
+    _write_config(tmp_path)
+    _custom_script(tmp_path, 0o644)
+    ran: list[str] = []
+
+    def mock_run(cmd: tuple[str, ...], *, check: bool = True) -> int:
+        ran.append(cmd[0])
+        return 0
+
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".shutil.which", return_value=None),
+        patch(_MOD + ".progress.run", side_effect=mock_run),
+    ):
+        assert main(["--check", "custom"]) == 1
+    assert ran == []
+
+
+def test_check_custom_rejects_all_versions() -> None:
+    with pytest.raises(SystemExit) as exc:
+        main(["--check", "custom", "--all-versions"])
+    assert exc.value.code == 2
