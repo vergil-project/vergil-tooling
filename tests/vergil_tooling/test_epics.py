@@ -853,7 +853,7 @@ def test_ensure_adhoc_epic_zero_creates_in_dotgithub() -> None:
     created = "https://github.com/org/.github/issues/77"
     with (
         patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
-        patch("vergil_tooling.lib.github.read_json", return_value=[]),
+        patch("vergil_tooling.lib.github.read_json", side_effect=[[], [_adhoc_row(77)]]),
         patch("vergil_tooling.lib.epics.ensure_labels"),
         patch("vergil_tooling.lib.github.create_issue", return_value=created) as mock_create,
     ):
@@ -869,7 +869,7 @@ def test_ensure_adhoc_epic_private_repo_homes_in_self() -> None:
     created = "https://github.com/org/lab/issues/3"
     with (
         patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/lab"),
-        patch("vergil_tooling.lib.github.read_json", return_value=[]),
+        patch("vergil_tooling.lib.github.read_json", side_effect=[[], [_adhoc_row(3, "lab")]]),
         patch("vergil_tooling.lib.epics.ensure_labels"),
         patch("vergil_tooling.lib.github.create_issue", return_value=created) as mock_create,
     ):
@@ -882,7 +882,7 @@ def test_ensure_adhoc_epic_private_repo_homes_in_self() -> None:
 def test_ensure_adhoc_epic_for_dotgithub_itself() -> None:
     created = "https://github.com/org/.github/issues/5"
     with (
-        patch("vergil_tooling.lib.github.read_json", return_value=[]),
+        patch("vergil_tooling.lib.github.read_json", side_effect=[[], [_adhoc_row(5, ".github")]]),
         patch("vergil_tooling.lib.epics.ensure_labels"),
         patch("vergil_tooling.lib.github.create_issue", return_value=created) as mock_create,
     ):
@@ -1179,7 +1179,7 @@ def test_ensure_adhoc_epic_create_self_heals_labels() -> None:
     created = "https://github.com/org/.github/issues/77"
     with (
         patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
-        patch("vergil_tooling.lib.github.read_json", return_value=[]),
+        patch("vergil_tooling.lib.github.read_json", side_effect=[[], [_adhoc_row(77)]]),
         patch("vergil_tooling.lib.epics.ensure_labels") as mock_ensure,
         patch("vergil_tooling.lib.github.create_issue", return_value=created),
     ):
@@ -2029,7 +2029,10 @@ def test_ensure_intake_epic_private_repo_creates_in_self() -> None:
     created = "https://github.com/org/secret/issues/4"
     with (
         patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/secret"),
-        patch("vergil_tooling.lib.github.read_json", return_value=[]),
+        patch(
+            "vergil_tooling.lib.github.read_json",
+            side_effect=[[], [{"number": 4, "title": "Epic (intake): secret"}]],
+        ),
         patch("vergil_tooling.lib.epics.ensure_labels") as mock_ensure,
         patch("vergil_tooling.lib.github.create_issue", return_value=created) as mock_create,
     ):
@@ -2046,7 +2049,10 @@ def test_ensure_planning_epic_creates_when_absent() -> None:
     created = "https://github.com/org/.github/issues/90"
     with (
         patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
-        patch("vergil_tooling.lib.github.read_json", return_value=[]),
+        patch(
+            "vergil_tooling.lib.github.read_json",
+            side_effect=[[], [{"number": 90, "title": "Epic (planning): org"}]],
+        ),
         patch("vergil_tooling.lib.epics.ensure_labels") as mock_ensure,
         patch("vergil_tooling.lib.github.create_issue", return_value=created) as mock_create,
     ):
@@ -2086,7 +2092,10 @@ def test_ensure_planning_epic_ensures_in_progress_label_in_item_repo() -> None:
     created = "https://github.com/org/.github/issues/90"
     with (
         patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
-        patch("vergil_tooling.lib.github.read_json", return_value=[]),
+        patch(
+            "vergil_tooling.lib.github.read_json",
+            side_effect=[[], [{"number": 90, "title": "Epic (planning): org"}]],
+        ),
         patch("vergil_tooling.lib.epics.ensure_labels") as mock_ensure,
         patch("vergil_tooling.lib.github.create_issue", return_value=created),
     ):
@@ -2117,6 +2126,146 @@ def test_ensure_standing_epic_duplicate_title_raises_naming_kind() -> None:
         pytest.raises(ValueError, match="multiple intake epics"),
     ):
         epics.ensure_standing_epic(epics.INTAKE, "org/.github", "org")
+
+
+# -- ensure_standing_epic waits for its new epic to be listable (#3695) --------
+
+
+class _FakeClock:
+    """A monotonic clock that only advances when the code under test sleeps."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+        self.sleeps: list[float] = []
+
+    def clock(self) -> float:
+        return self.now
+
+    def sleep(self, secs: float) -> None:
+        self.sleeps.append(secs)
+        self.now += secs
+
+
+_DEFERRED_URL = "https://github.com/org/.github/issues/10"
+_DEFERRED_ROW = {"number": 10, "title": "Epic (deferred): org"}
+
+
+def test_ensure_standing_epic_created_and_visible_at_once() -> None:
+    # The first post-create list already shows the new epic: return without sleeping.
+    fake = _FakeClock()
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=[[], [_DEFERRED_ROW]]),
+        patch("vergil_tooling.lib.epics.ensure_labels"),
+        patch("vergil_tooling.lib.github.create_issue", return_value=_DEFERRED_URL),
+    ):
+        got = epics.ensure_standing_epic(
+            epics.DEFERRED, "org/.github", "org", sleep=fake.sleep, clock=fake.clock
+        )
+    assert got == IssueRef("org", ".github", 10)
+    assert fake.sleeps == []
+
+
+def test_ensure_standing_epic_visible_after_polls() -> None:
+    # The list lags the create: poll with backoff until the new epic shows up.
+    fake = _FakeClock()
+    lists = [[], [], [], [_DEFERRED_ROW]]
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=lists) as mock_list,
+        patch("vergil_tooling.lib.epics.ensure_labels"),
+        patch("vergil_tooling.lib.github.create_issue", return_value=_DEFERRED_URL),
+    ):
+        got = epics.ensure_standing_epic(
+            epics.DEFERRED, "org/.github", "org", sleep=fake.sleep, clock=fake.clock
+        )
+    assert got == IssueRef("org", ".github", 10)
+    assert mock_list.call_count == 4
+    assert len(fake.sleeps) == 2
+
+
+def test_ensure_standing_epic_never_visible_raises_naming_created_ref() -> None:
+    # Fail loud: an epic the next caller cannot see is never returned.
+    fake = _FakeClock()
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=[]),
+        patch("vergil_tooling.lib.epics.ensure_labels"),
+        patch("vergil_tooling.lib.github.create_issue", return_value=_DEFERRED_URL),
+        pytest.raises(epics.StandingEpicNotVisibleError) as excinfo,
+    ):
+        epics.ensure_standing_epic(
+            epics.DEFERRED, "org/.github", "org", sleep=fake.sleep, clock=fake.clock
+        )
+    message = str(excinfo.value)
+    assert "org/.github#10" in message
+    assert "'Epic (deferred): org'" in message
+    assert "saw no matching open epic" in message
+    assert fake.now == pytest.approx(epics.STANDING_EPIC_VISIBILITY_BUDGET_SECS)
+
+
+def test_ensure_standing_epic_never_visible_names_other_epic_seen() -> None:
+    # A different same-titled epic is listed but ours is not: keep waiting, and
+    # if ours never appears, name both in the error.
+    fake = _FakeClock()
+    other = [{"number": 9, "title": "Epic (deferred): org"}]
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=[[], *[other] * 50]),
+        patch("vergil_tooling.lib.epics.ensure_labels"),
+        patch("vergil_tooling.lib.github.create_issue", return_value=_DEFERRED_URL),
+        pytest.raises(
+            epics.StandingEpicNotVisibleError, match=r"org/\.github#10.*saw org/\.github#9"
+        ),
+    ):
+        epics.ensure_standing_epic(
+            epics.DEFERRED, "org/.github", "org", sleep=fake.sleep, clock=fake.clock
+        )
+
+
+def test_ensure_standing_epic_back_to_back_creates_exactly_one() -> None:
+    # Regression for vergil-project/.github#531/#532: an eventually consistent
+    # list hides a new issue for a few reads. Two back-to-back ensures must
+    # create one epic, not two.
+    fake = _FakeClock()
+    created: list[dict[str, object]] = []
+    hidden_reads = {"left": 0}
+
+    def fake_list(*_args: object) -> list[dict[str, object]]:
+        if hidden_reads["left"] > 0:
+            hidden_reads["left"] -= 1
+            return []
+        return list(created)
+
+    def fake_create(**kwargs: object) -> str:
+        number = 531 + len(created)
+        created.append({"number": number, "title": kwargs["title"]})
+        hidden_reads["left"] = 3  # the new issue is unlisted for the next 3 reads
+        return f"https://github.com/org/.github/issues/{number}"
+
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=fake_list),
+        patch("vergil_tooling.lib.epics.ensure_labels"),
+        patch("vergil_tooling.lib.github.create_issue", side_effect=fake_create) as mock_create,
+    ):
+        first = epics.ensure_standing_epic(
+            epics.DEFERRED, "org/.github", "org", sleep=fake.sleep, clock=fake.clock
+        )
+        second = epics.ensure_standing_epic(
+            epics.DEFERRED, "org/.github", "org", sleep=fake.sleep, clock=fake.clock
+        )
+    assert first == second == IssueRef("org", ".github", 531)
+    assert mock_create.call_count == 1
+
+
+def test_ensure_standing_epic_defaults_to_real_sleep_and_clock() -> None:
+    # Without injection the wait uses time.sleep / time.monotonic, resolved at
+    # call time so they stay patchable.
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=[[], [], [_DEFERRED_ROW]]),
+        patch("vergil_tooling.lib.epics.ensure_labels"),
+        patch("vergil_tooling.lib.github.create_issue", return_value=_DEFERRED_URL),
+        patch("vergil_tooling.lib.epics.time.sleep") as mock_sleep,
+    ):
+        got = epics.ensure_standing_epic(epics.DEFERRED, "org/.github", "org")
+    assert got == IssueRef("org", ".github", 10)
+    mock_sleep.assert_called_once()
 
 
 def test_is_standing() -> None:
@@ -2807,7 +2956,10 @@ def test_ensure_deferred_epic_creates_with_kind_labels() -> None:
     created = "https://github.com/org/.github/issues/10"
     with (
         patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
-        patch("vergil_tooling.lib.github.read_json", return_value=[]),
+        patch(
+            "vergil_tooling.lib.github.read_json",
+            side_effect=[[], [{"number": 10, "title": "Epic (deferred): org"}]],
+        ),
         patch("vergil_tooling.lib.epics.ensure_labels") as mock_ensure,
         patch("vergil_tooling.lib.github.create_issue", return_value=created) as mock_create,
     ):

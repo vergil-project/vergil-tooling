@@ -14,18 +14,22 @@ mock the ``github`` boundary; real GraphQL/REST correctness is exercised in use.
 
 from __future__ import annotations
 
+import logging
 import re
 import sys
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from vergil_tooling.lib import github, release, remote_config
+from vergil_tooling.lib import github, release, remote_config, retry
 from vergil_tooling.lib.config import CONFIG_FILE
 from vergil_tooling.lib.labels import ensure_labels
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Sequence
+    from collections.abc import Callable, Collection, Sequence
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -697,12 +701,80 @@ def ensure_adhoc_epic(target_repo: str) -> IssueRef:
     return ensure_standing_epic(ADHOC, resolve_epic_home(owner, bare), bare)
 
 
-def ensure_standing_epic(kind: StandingKind, home: str, name: str) -> IssueRef:
+# How long a just-created standing epic may stay missing from ``gh issue list``
+# before ensure_standing_epic gives up. Shares the known-resource budget: the
+# list lag is seconds (8 s was enough to duplicate a deferred epic,
+# vergil-project/.github#531/#532), and 60 s is generous while still surfacing a
+# real problem promptly.
+STANDING_EPIC_VISIBILITY_BUDGET_SECS = retry.KNOWN_RESOURCE_BUDGET_SECS
+
+
+class StandingEpicNotVisibleError(RuntimeError):
+    """A standing epic was created but never became visible to the title lookup."""
+
+
+def _await_listed(
+    kind: StandingKind,
+    home: str,
+    title: str,
+    created: IssueRef,
+    *,
+    sleep: Callable[[float], None],
+    clock: Callable[[], float],
+) -> None:
+    """Block until :func:`_find_epic_by_title` returns exactly *created*.
+
+    ``gh issue list`` is eventually consistent, so an issue just created can be
+    missing from it for several seconds; a find-or-create caller in that window
+    would create a duplicate (#3695). Polls with :func:`retry.compute_delay`'s
+    jittered backoff, the last sleep clamped to land on the deadline, followed
+    by one final look. Raises :class:`StandingEpicNotVisibleError` naming
+    *created* and what the lookup last saw if the budget runs out. A lookup
+    that sees two same-titled epics raises its own ambiguity error at once.
+    """
+    deadline = clock() + STANDING_EPIC_VISIBILITY_BUDGET_SECS
+    attempt = 0
+    while True:
+        seen = _find_epic_by_title(home, title, labels=kind.labels)
+        if seen == created:
+            return
+        remaining = deadline - clock()
+        if remaining <= 0:
+            saw = f"saw {seen.slug}" if seen is not None else "saw no matching open epic"
+            raise StandingEpicNotVisibleError(
+                f"created {kind.key} epic {created.slug} ({title!r}) but it is still not "
+                f"listed in {home} after {STANDING_EPIC_VISIBILITY_BUDGET_SECS:g}s ({saw}); "
+                f"a later lookup could create a duplicate — check {created.slug} before retrying"
+            )
+        delay = min(retry.compute_delay(attempt), remaining)
+        log.warning(
+            "%s not listed yet right after creating it, rechecking in %.1fs", created.slug, delay
+        )
+        sleep(delay)
+        attempt += 1
+
+
+def ensure_standing_epic(
+    kind: StandingKind,
+    home: str,
+    name: str,
+    *,
+    sleep: Callable[[float], None] | None = None,
+    clock: Callable[[], float] | None = None,
+) -> IssueRef:
     """Return the *kind* standing epic ``<title_prefix><name>`` in *home*, creating it if absent.
 
     Idempotent: an open issue in *home* carrying ``kind.labels`` with exactly
     that title is reused; none means ensure the labels exist and create it; two
     sharing the title is ambiguous and raises rather than guessing.
+
+    After a create it does not return until the title lookup lists exactly the
+    new epic (see :func:`_await_listed`), so a back-to-back caller finds it
+    rather than creating a duplicate; it raises
+    :class:`StandingEpicNotVisibleError` if that never happens within
+    :data:`STANDING_EPIC_VISIBILITY_BUDGET_SECS`. *sleep* and *clock* default to
+    :func:`time.sleep`/:func:`time.monotonic` (resolved at call time) and are
+    injectable for tests.
     """
     home_owner, home_repo = home.split("/", 1)
     title = f"{kind.title_prefix}{name}"
@@ -717,7 +789,11 @@ def ensure_standing_epic(kind: StandingKind, home: str, name: str) -> IssueRef:
         labels=list(kind.labels),
     )
     number = int(url.rstrip("/").rsplit("/", 1)[-1])
-    return IssueRef(owner=home_owner, repo=home_repo, number=number)
+    created = IssueRef(owner=home_owner, repo=home_repo, number=number)
+    _await_listed(
+        kind, home, title, created, sleep=sleep or time.sleep, clock=clock or time.monotonic
+    )
+    return created
 
 
 def queue_home(target_repo: str) -> tuple[str, str]:
