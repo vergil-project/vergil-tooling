@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -16,6 +17,7 @@ from vergil_tooling.lib.intake_route import (
     RouteRefusedError,
     RouteResult,
     Split,
+    ToIntake,
     ToPlanning,
 )
 
@@ -54,9 +56,52 @@ def test_main_drop(capsys: pytest.CaptureFixture[str]) -> None:
 
 
 def test_main_defer() -> None:
-    rc, mock_route = _run(["org/.github#352", "defer", "--reason", "later"])
+    rc, mock_route = _run(
+        ["org/.github#352", "defer", "--reason", "later", "--revisit-when", "X ships"]
+    )
     assert rc == 0
-    mock_route.assert_called_once_with(ITEM, Defer(reason="later"))
+    mock_route.assert_called_once_with(ITEM, Defer(reason="later", revisit_when="X ships"))
+
+
+def test_main_defer_with_date() -> None:
+    rc, mock_route = _run(
+        [
+            "org/.github#352",
+            "defer",
+            "--reason",
+            "later",
+            "--revisit-when",
+            "X ships",
+            "--date",
+            "2026-03-04",
+        ]
+    )
+    assert rc == 0
+    mock_route.assert_called_once_with(
+        ITEM, Defer(reason="later", revisit_when="X ships", day=date(2026, 3, 4))
+    )
+
+
+def test_parse_args_defer_requires_revisit_when() -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        parse_args(["org/.github#352", "defer", "--reason", "later"])
+    assert excinfo.value.code == 2
+
+
+@pytest.mark.parametrize("bad", ["2026-13-01", "26-10-01", "2026/10/01", "soon"])
+def test_parse_args_defer_rejects_bad_date(bad: str, capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        parse_args(
+            ["org/.github#352", "defer", "--reason", "r", "--revisit-when", "w", "--date", bad]
+        )
+    assert excinfo.value.code == 2
+    assert "YYYY-MM-DD" in capsys.readouterr().err
+
+
+def test_main_intake() -> None:
+    rc, mock_route = _run(["org/.github#352", "intake"])
+    assert rc == 0
+    mock_route.assert_called_once_with(ITEM, ToIntake())
 
 
 def test_main_planning() -> None:
