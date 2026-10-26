@@ -328,10 +328,10 @@ call it to obtain the exact command to run per job (see
 [CI Architecture → Repo-specific build steps](../guides/ci-architecture.md#repo-specific-build-steps)),
 mirroring how `vrg-container-system-packages --install-script` feeds the apt step.
 
-## Low-disk auto-prune (`VRG_CACHE_PRUNE_FREE_GB`)
+## Low-disk auto-prune (`VRG_CACHE_PRUNE_FREE_GB`, `VRG_CACHE_BUILD_FREE_GB`)
 
-Not a `[container]` key: the image store belongs to the machine, not the repo, so
-this is a host environment variable.
+Not `[container]` keys: the image store belongs to the machine, not the repo, so
+these are host environment variables.
 
 Just before `vrg-container-run` (or `vrg-container-cache build`, or
 `vrg-finalize-pr`'s provisioning step) builds a cached dev image, it checks the
@@ -343,6 +343,7 @@ image it removed.
 | Variable | Default | Semantics |
 |---|---|---|
 | `VRG_CACHE_PRUNE_FREE_GB` | `10` | Free space, in GB, below which a cache build first prunes finished branches' images. `0` turns the auto-prune off; a value that is not a non-negative number stops the build |
+| `VRG_CACHE_BUILD_FREE_GB` | `3` | Free space, in GB, a cache build needs after the prune to go ahead at all (one cached image is about 1.3–2 GB). Capped at `VRG_CACHE_PRUNE_FREE_GB`: when the threshold is lower, the threshold is the floor. `0` lets the build go ahead whatever is left; a value that is not a non-negative number stops the build |
 
 - **The repo set is never guessed.** On the physical host, which has no default
   repo set, the prune is skipped with a warning; run
@@ -350,8 +351,13 @@ image it removed.
 - **Failures are loud.** A prune that cannot run, or an image it cannot remove,
   is printed as a warning.
 - **The build goes ahead only with room for it.** After the prune, the build
-  continues if at least 3 GB (or the threshold, if lower) is free, with a warning
-  while still below the threshold. With less, it stops with the free-space
-  numbers and the manual command, rather than fail part way through.
+  continues if at least `VRG_CACHE_BUILD_FREE_GB` (default 3 GB; or the
+  threshold, if lower) is free, with a warning while still below the threshold.
+  With less, it stops with the free-space numbers, the setting that set the
+  floor, and the manual command, rather than fail part way through.
+- **A bad value is never ignored.** Both variables are read before every cache
+  build, so a value that is not a non-negative number stops the build with an
+  error naming the variable, even when the disk has room — never a silent
+  fallback to the default.
 - **An unmeasurable store is skipped.** Docker Desktop keeps its image store
   inside its own VM; there the check is skipped with a note.
