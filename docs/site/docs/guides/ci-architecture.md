@@ -73,8 +73,9 @@ image.
 `vrg-validate` first runs the common checks: `vrg-repo-profile`,
 markdownlint, shellcheck, yamllint, hadolint, actionlint, and
 ansible-lint when the repository has Ansible content. It then runs the
-language's lint, typecheck, test and audit commands. To run one stage,
-pass `--check common`, `lint`, `typecheck`, `test` or `audit`. The
+language's lint, typecheck, test and audit commands, and last the
+repository's custom validator when it has one. To run one stage, pass
+`--check common`, `lint`, `typecheck`, `test`, `audit` or `custom`. The
 [Validation Matrix](validation-matrix.md) lists every check and where
 it runs.
 
