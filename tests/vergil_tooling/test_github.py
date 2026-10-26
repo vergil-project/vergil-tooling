@@ -1136,6 +1136,74 @@ class TestReadJsonPaginated:
             assert github.read_json_paginated("repos/o/r/x", "artifacts") == [{"name": "a"}]
         assert mock_run.call_count == 2
 
+    def test_jq_filter_is_passed_and_applied_per_page(self) -> None:
+        stdout = json.dumps([{"id": 1}]) + "\n" + json.dumps([{"id": 2}])
+        with patch(
+            "vergil_tooling.lib.retry.subprocess.run", return_value=_completed(stdout=stdout)
+        ) as mock_run:
+            result = github.read_json_paginated("repos/o/r/x", jq="[.[] | {id}]")
+        assert mock_run.call_args.args[0] == (
+            "gh",
+            "api",
+            "--paginate",
+            "repos/o/r/x?per_page=100",
+            "--jq",
+            "[.[] | {id}]",
+        )
+        assert result == [{"id": 1}, {"id": 2}]
+
+
+class TestPostJsonOnce:
+    """``post_json_once`` sends one POST and never retries (epic .github#517)."""
+
+    def test_posts_body_via_stdin_and_returns_the_object(self) -> None:
+        cp = _completed(stdout=json.dumps({"ghsa_id": "GHSA-aaaa-bbbb-cccc"}))
+        with patch("vergil_tooling.lib.github.subprocess.run", return_value=cp) as mock_run:
+            result = github.post_json_once("repos/o/r/x", {"k": "v"})
+        assert result == {"ghsa_id": "GHSA-aaaa-bbbb-cccc"}
+        mock_run.assert_called_once_with(
+            ("gh", "api", "repos/o/r/x", "-X", "POST", "--input", "-"),
+            input='{"k": "v"}',
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+
+    def test_passes_the_app_token_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(github, "_gh_env", lambda: {"GH_TOKEN": "t"})
+        cp = _completed(stdout="{}")
+        with patch("vergil_tooling.lib.github.subprocess.run", return_value=cp) as mock_run:
+            github.post_json_once("repos/o/r/x", {})
+        assert mock_run.call_args.kwargs["env"] == {"GH_TOKEN": "t"}
+
+    def test_transient_failure_is_not_retried(self) -> None:
+        cp = _completed(returncode=1, stderr="HTTP 502 Bad Gateway")
+        with (
+            # github and retry share subprocess.run, so a retry would be a 2nd call.
+            patch("vergil_tooling.lib.github.subprocess.run", return_value=cp) as mock_run,
+            patch("vergil_tooling.lib.retry.time.sleep"),
+            pytest.raises(github.GitHubAPIError) as excinfo,
+        ):
+            github.post_json_once("repos/o/r/x", {})
+        assert mock_run.call_count == 1
+        assert excinfo.value.returncode == 1
+
+    def test_missing_token_raises_the_distinct_error(self) -> None:
+        cp = _completed(returncode=4, stderr="set the GH_TOKEN environment variable")
+        with (
+            patch("vergil_tooling.lib.github.subprocess.run", return_value=cp),
+            pytest.raises(github.MissingGitHubTokenError),
+        ):
+            github.post_json_once("repos/o/r/x", {})
+
+    def test_non_object_response_raises(self) -> None:
+        cp = _completed(stdout="[1]")
+        with (
+            patch("vergil_tooling.lib.github.subprocess.run", return_value=cp),
+            pytest.raises(github.GitHubAPIError, match="not a JSON object"),
+        ):
+            github.post_json_once("repos/o/r/x", {})
+
 
 def test_write_json_sends_body_via_stdin() -> None:
     with patch("vergil_tooling.lib.retry.subprocess.run") as mock_run:
