@@ -404,9 +404,12 @@ def resolve_epic_ref(ref: str, *, repo: str) -> IssueRef:
 
     ``"adhoc"`` ensures *repo*'s ad-hoc epic exists in its epic home — creating
     it if absent and reusing it otherwise — via :func:`ensure_adhoc_epic`.
-    ``"intake"`` and ``"planning"`` likewise ensure *repo*'s intake or planning
-    queue epic in its queue home (:func:`ensure_intake_epic`,
-    :func:`ensure_planning_epic`). Any other ref is parsed with
+    ``"intake"``, ``"planning"`` and ``"deferred"`` likewise ensure *repo*'s
+    intake, planning or deferred queue epic in its queue home
+    (:func:`ensure_intake_epic`, :func:`ensure_planning_epic`,
+    :func:`ensure_deferred_epic`). The ``vrg-epic-move`` and ``vrg-issue-create``
+    CLIs refuse the deferred epic themselves (:data:`DEFERRED_ROUTE_ONLY`); the
+    sentinel resolves here so internal callers can reach it. Any other ref is parsed with
     :func:`qualify_epic_ref` (a bare ``#N`` reads against *repo*'s epic home)
     and validated to carry the ``epic`` label.
     """
@@ -416,6 +419,7 @@ def resolve_epic_ref(ref: str, *, repo: str) -> IssueRef:
         ADHOC.sentinel: ensure_adhoc_epic,
         INTAKE.sentinel: ensure_intake_epic,
         PLANNING.sentinel: ensure_planning_epic,
+        DEFERRED.sentinel: ensure_deferred_epic,
     }.get(ref)
     if ensure is not None:
         return ensure(repo)
@@ -505,7 +509,7 @@ def require_org_home(org: str) -> str:
 
 @dataclass(frozen=True)
 class StandingKind:
-    """One kind of perpetual standing epic: ad-hoc, intake, or planning.
+    """One kind of perpetual standing epic: ad-hoc, intake, planning, or deferred.
 
     ``key`` is the discriminating label that, alongside ``epic``, marks a live
     standing epic of this kind (and, alongside ``archive``, its per-quarter
@@ -566,8 +570,26 @@ PLANNING = StandingKind(
     ),
     archive_body="Planning items for {name} closed in {quarter}. Managed automatically.\n",
 )
-STANDING_KINDS: tuple[StandingKind, ...] = (ADHOC, INTAKE, PLANNING)
-# The --epic sentinels resolve_epic_ref accepts: "adhoc", "intake", "planning".
+DEFERRED = StandingKind(
+    key="deferred",
+    sentinel="deferred",
+    title_prefix="Epic (deferred): ",
+    labels=("epic", "deferred"),
+    archive_prefix="Archive (deferred): ",
+    archive_labels=("archive", "deferred"),
+    body=(
+        "Perpetual deferred queue for {name}: evaluated items parked until their "
+        "revival conditions are met. Reviewed by deferred-review.\n"
+    ),
+    archive_body="Deferred items for {name} closed in {quarter}. Managed automatically.\n",
+)
+STANDING_KINDS: tuple[StandingKind, ...] = (ADHOC, INTAKE, PLANNING, DEFERRED)
+# The queue kinds: one intake, one planning and one deferred epic per queue home
+# (queue_home). Their items are not PR-workable (queue_item_kind).
+QUEUE_KINDS: tuple[StandingKind, ...] = (INTAKE, PLANNING, DEFERRED)
+QUEUE_KIND_BY_KEY: dict[str, StandingKind] = {kind.key: kind for kind in QUEUE_KINDS}
+# The --epic sentinels resolve_epic_ref accepts: "adhoc", "intake", "planning",
+# "deferred".
 # Each resolves within the target repo's own org (its epic or queue home), so a
 # CLI's pre-network cross-org guard exempts exactly these (#3514).
 EPIC_SENTINELS: tuple[str, ...] = tuple(kind.sentinel for kind in STANDING_KINDS)
@@ -699,7 +721,9 @@ def ensure_standing_epic(kind: StandingKind, home: str, name: str) -> IssueRef:
 
 
 def queue_home(target_repo: str) -> tuple[str, str]:
-    """Map *target_repo* (``"owner/repo"``) to its intake/planning queue home and name.
+    """Map *target_repo* (``"owner/repo"``) to its queue home and name.
+
+    The home of its intake, planning and deferred queue epics.
 
     Returns ``(home, name)``. Queues follow the epic-home rule
     (:func:`resolve_epic_home`): a repo homed in ``<org>/.github`` (every public
@@ -736,6 +760,12 @@ def ensure_planning_epic(target_repo: str) -> IssueRef:
     return epic
 
 
+def ensure_deferred_epic(target_repo: str) -> IssueRef:
+    """Return the deferred queue epic for *target_repo*'s queue home, creating it if absent."""
+    home, name = queue_home(target_repo)
+    return ensure_standing_epic(DEFERRED, home, name)
+
+
 def resolve_orphan_epic(repo: str) -> IssueRef:
     """The epic an orphaned issue in *repo* is attached to: its intake queue epic."""
     return ensure_intake_epic(repo)
@@ -753,23 +783,34 @@ def standing_kind_of(labels: set[str]) -> StandingKind | None:
 
 
 def is_standing(labels: set[str]) -> bool:
-    """True iff *labels* mark a perpetual standing epic (ad-hoc, intake, or planning)."""
+    """True iff *labels* mark a perpetual standing epic (ad-hoc or a queue kind)."""
     return standing_kind_of(labels) is not None
 
 
 def queue_kind(epic: IssueRef) -> str | None:
-    """``"intake"`` or ``"planning"`` when *epic* is a live queue epic, else None."""
+    """``"intake"``, ``"planning"`` or ``"deferred"`` for a live queue epic, else None."""
     kind = standing_kind_of(_labels(epic))
-    if kind is INTAKE or kind is PLANNING:
+    if kind in QUEUE_KINDS:
         return kind.key
     return None
 
 
-def queue_item_kind(ref: str, *, default_repo: str) -> str | None:
-    """``"intake"`` / ``"planning"`` when *ref*'s parent is a live queue epic, else None.
+def container_kind(epic: IssueRef) -> str | None:
+    """The container kind of a live standing epic, else None.
 
-    The PR refusal's test (#2485): an item under the intake or planning epic is
-    not buildable until it is routed out, so ``vrg-pr-workflow report-ready``
+    ``"ad-hoc"``, ``"intake"``, ``"planning"`` or ``"deferred"`` when *epic* is
+    the live standing epic of that kind; None for a development (finite) epic,
+    an archive, or a non-epic. One label read.
+    """
+    kind = standing_kind_of(_labels(epic))
+    return kind.key if kind is not None else None
+
+
+def queue_item_kind(ref: str, *, default_repo: str) -> str | None:
+    """The queue kind (:func:`queue_kind`) of *ref*'s parent queue epic, else None.
+
+    The PR refusal's test (#2485): an item under the intake, planning or
+    deferred epic is not buildable until it is routed out, so ``vrg-pr-workflow report-ready``
     and ``vrg-submit-pr`` refuse it. Keys off the **native** parent only
     (:func:`native_parent_of`), the same link intake review lists and the
     orphan migration writes. Self-scoping: an unparseable ref is never queued
@@ -790,13 +831,25 @@ _QUEUE_REFUSAL_TAILS = {
     PLANNING.key: (
         "it is not buildable until its epic is expanded. Expand it with epic-create first."
     ),
+    DEFERRED.key: (
+        "it is deferred until its revival conditions are met. Revive it with deferred-review first."
+    ),
 }
+
+# The shared refusal for a direct move into or out of the deferred queue
+# (vrg-epic-move, vrg-issue-create): only the route records a deferral, so no
+# item is deferred without its record and none is revived silently.
+DEFERRED_ROUTE_ONLY = (
+    "an item enters and leaves the deferred queue only through vrg-intake-route, "
+    "which records the deferral (use 'vrg-intake-route <ref> defer' to defer, or a "
+    "vrg-intake-route revive route to bring it back)"
+)
 
 
 def queue_refusal_message(ref: str, kind: str) -> str:
     """The one refusal text for a queue item, shared by every PR-path guard.
 
-    *kind* is a :func:`queue_item_kind` result (``"intake"`` or ``"planning"``);
+    *kind* is a :func:`queue_item_kind` result (a :data:`QUEUE_KINDS` key);
     anything else is a caller bug and raises ``ValueError``.
     """
     tail = _QUEUE_REFUSAL_TAILS.get(kind)
@@ -1185,12 +1238,8 @@ def drain_adhoc_org(org: str, *, apply: bool, now: datetime) -> list[DrainPlan]:
     return plans
 
 
-# The queue kinds: one intake and one planning epic per queue home.
-_QUEUE_KINDS: tuple[StandingKind, ...] = (INTAKE, PLANNING)
-
-
 def _queue_homes(org: str) -> dict[str, str]:
-    """Every intake/planning queue home in *org* mapped to its queue name.
+    """Every queue home in *org* mapped to its queue name.
 
     ``<org>/.github`` (named for the org) always, plus each private repo that
     self-homes its queues (named for its bare repo name) — the same rule
@@ -1204,9 +1253,9 @@ def _queue_homes(org: str) -> dict[str, str]:
 
 
 def drain_standing_org(org: str, *, apply: bool, now: datetime) -> list[DrainPlan]:
-    """Drain the intake and planning epics of every queue home in *org*.
+    """Drain the queue epics (:data:`QUEUE_KINDS`) of every queue home in *org*.
 
-    Covers ``<org>/.github``'s pair and every private repo's self-homed pair
+    Covers ``<org>/.github``'s queues and every private repo's self-homed queues
     (:func:`_queue_homes`). Each (kind, home) is planned and, when *apply*,
     executed via :func:`apply_standing_drain`. A corrupted home (e.g. two intake
     epics sharing a title) is reported on stderr and skipped — never aborting the
@@ -1215,7 +1264,7 @@ def drain_standing_org(org: str, *, apply: bool, now: datetime) -> list[DrainPla
     """
     plans: list[DrainPlan] = []
     for home, name in _queue_homes(org).items():
-        for kind in _QUEUE_KINDS:
+        for kind in QUEUE_KINDS:
             try:
                 plan = plan_standing_drain(kind, home, name, now=now)
                 if plan is not None and apply:

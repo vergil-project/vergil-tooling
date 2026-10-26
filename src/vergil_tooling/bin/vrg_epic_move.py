@@ -11,6 +11,11 @@ never the cwd repo: ``adhoc`` is the task repo's ad-hoc epic, ``intake`` and
 is issue N in the task repo's epic home (``<org>/.github`` for a public repo,
 the repo itself for a self-homed private one). A fully qualified
 ``owner/repo#N`` is taken as written (#3409, #3411).
+
+The deferred queue is entered and left only through ``vrg-intake-route``, which
+records the deferral: this refuses the ``deferred`` sentinel, a target epic that
+is a deferred queue epic, and a task whose current parent is one (#3673). Every
+refusal runs before any write.
 """
 
 from __future__ import annotations
@@ -26,6 +31,13 @@ from vergil_tooling.lib.cli import cli_main
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     default_repo = github.current_repo()
+    if args.epic == epics.DEFERRED.sentinel:
+        # Refused before resolving: resolving the sentinel would create the epic.
+        print(
+            f"vrg-epic-move: refusing --epic {args.epic}: {epics.DEFERRED_ROUTE_ONLY}",
+            file=sys.stderr,
+        )
+        return 1
     try:
         task = epics.parse_issue_ref(args.task, default_repo=default_repo)
         task_repo = f"{task.owner}/{task.repo}"
@@ -56,7 +68,21 @@ def main(argv: list[str] | None = None) -> int:
             except ValueError as exc:
                 print(f"vrg-epic-move: {exc}", file=sys.stderr)
                 return 1
+            if epics.queue_kind(epic) == epics.DEFERRED.key:
+                print(
+                    f"vrg-epic-move: refusing to move {task.slug} into deferred epic "
+                    f"{epic.slug}: {epics.DEFERRED_ROUTE_ONLY}",
+                    file=sys.stderr,
+                )
+                return 1
             current = epics.parent_of(task)
+            if current is not None and epics.queue_kind(current) == epics.DEFERRED.key:
+                print(
+                    f"vrg-epic-move: refusing to move {task.slug} out of deferred epic "
+                    f"{current.slug}: {epics.DEFERRED_ROUTE_ONLY}",
+                    file=sys.stderr,
+                )
+                return 1
             if current == epic:
                 print(f"{task.slug} is already under epic {epic.slug}; nothing to do.")
                 return 0

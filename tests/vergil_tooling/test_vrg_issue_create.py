@@ -29,6 +29,13 @@ def label_gh() -> Iterator[MagicMock]:
 
 
 @pytest.fixture(autouse=True)
+def queue_kind() -> Iterator[MagicMock]:
+    """The resolved epic is a non-deferred epic unless a test says otherwise (#3673)."""
+    with patch(f"{_MOD}.epics.queue_kind", return_value=None) as mock_kind:
+        yield mock_kind
+
+
+@pytest.fixture(autouse=True)
 def dep_kind() -> Iterator[MagicMock]:
     """Every --blocked-by dependency is a plain task unless a test says otherwise."""
     with patch(f"{_MOD}.epics.non_task_kind", return_value=None) as mock_kind:
@@ -765,3 +772,41 @@ def test_epic_help_names_every_standing_sentinel(capsys: pytest.CaptureFixture[s
     out = " ".join(capsys.readouterr().out.split())
     for sentinel in ("adhoc", "intake", "planning"):
         assert f"'{sentinel}'" in out
+
+
+# -- Deferred queue: entered only through vrg-intake-route (#3673) -----------
+
+
+def test_issue_create_refuses_deferred_epic(capsys: pytest.CaptureFixture[str]) -> None:
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.epics.resolve_epic_ref") as mock_resolve,
+        patch(f"{_MOD}.github.create_issue") as mock_create,
+        patch(f"{_MOD}.epics.add_child") as mock_add,
+    ):
+        rc = main(["--epic", "deferred", "--title", "T"])
+    assert rc == 1
+    assert "vrg-intake-route" in capsys.readouterr().err
+    mock_resolve.assert_not_called()  # the deferred epic is never created
+    mock_create.assert_not_called()
+    mock_add.assert_not_called()
+
+
+def test_issue_create_refuses_deferred_epic_number(
+    queue_kind: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    queue_kind.return_value = "deferred"
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
+        patch(f"{_MOD}.github.create_issue") as mock_create,
+        patch(f"{_MOD}.epics.add_child") as mock_add,
+    ):
+        rc = main(["--epic", "org/repo#710", "--title", "T"])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "vrg-intake-route" in err
+    assert "org/repo#710" in err
+    queue_kind.assert_called_once_with(EPIC)
+    mock_create.assert_not_called()
+    mock_add.assert_not_called()

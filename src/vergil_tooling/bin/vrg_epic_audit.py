@@ -96,7 +96,7 @@ def main(argv: list[str] | None = None) -> int:
         # ad-hoc epic into per-quarter archives and close past archives. main() has
         # no other org scope, so scope the App token to the org before this
         # mutation (spec §7), matching vrg-adhoc-epic and vrg-epic-move.
-        # The intake and planning queue epics drain the same way (epic
+        # The intake, planning and deferred queue epics drain the same way (epic
         # vergil-project/.github#176), under the same org scope.
         now = datetime.now(UTC)
         with github.target_org(org):
