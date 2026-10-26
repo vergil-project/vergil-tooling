@@ -48,6 +48,8 @@ export PATH="$(pwd)/.venv/bin:$PATH"
   the dependency update
 - `vrg-update-deps` — Update dependencies within their declared bounds,
   validate, and merge the result (also run by every `vrg-release`)
+- `vrg-upstream-refresh` — Run the repo's `[upstream-refresh]` hook and
+  open, refresh or close one PR for a human to merge (run on a schedule)
 - `vrg-finalize-pr` — Merge a PR and run post-merge cleanup
 - `vrg-validate` — Unified validation driver (via vrg-container-run)
 - `vrg-ensure-label` — Idempotent GitHub label creation
