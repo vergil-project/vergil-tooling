@@ -28,10 +28,12 @@ from vergil_tooling.lib.security_records import (
     mark_issue,
     parse_advisory_ref,
     parse_tracking,
+    pending_syncs,
     read_text,
     retarget,
     security_issues,
     set_state,
+    sync_states,
     tracking_line,
     unmark_issue,
 )
@@ -678,6 +680,96 @@ class TestClassifyPairedExternalBroken:
         for line in result.broken:
             assert "\n" not in line
             assert line.startswith(("GHSA-", "org/"))
+
+
+# --- state sync (the sweep) ---------------------------------------------------
+
+
+def _sync(
+    monkeypatch: pytest.MonkeyPatch,
+    advisories: list[Advisory],
+    issue_list: list[SecurityIssue],
+) -> tuple[int, MagicMock]:
+    write = MagicMock()
+    monkeypatch.setattr(github, "write_json", write)
+    changed = sync_states(HOME, classify(advisories, issue_list), issue_list)
+    return changed, write
+
+
+def _patched_state(ghsa: str, state: str) -> Any:
+    return call("PATCH", f"repos/org/.github/security-advisories/{ghsa}", {"state": state})
+
+
+def test_sync_closes_when_all_tracked_issues_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    advisory = _adv(tracking=(A, C))
+    changed, write = _sync(monkeypatch, [advisory], [_iss(A, open_=False), _iss(C, open_=False)])
+    assert changed == 1
+    assert write.call_args_list == [_patched_state(GHSA, "closed")]
+
+
+def test_sync_keeps_draft_while_any_tracked_issue_open(monkeypatch: pytest.MonkeyPatch) -> None:
+    advisory = _adv(tracking=(A, C))
+    changed, write = _sync(monkeypatch, [advisory], [_iss(A, open_=False), _iss(C)])
+    assert changed == 0
+    write.assert_not_called()
+
+
+def test_sync_reopens_when_issue_reopened(monkeypatch: pytest.MonkeyPatch) -> None:
+    advisory = _adv(tracking=(A,), state="closed")
+    changed, write = _sync(monkeypatch, [advisory], [_iss(A)])
+    assert changed == 1
+    assert write.call_args_list == [_patched_state(GHSA, "draft")]
+
+
+def test_sync_leaves_a_closed_advisory_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    advisory = _adv(tracking=(A,), state="closed")
+    changed, write = _sync(monkeypatch, [advisory], [_iss(A, open_=False)])
+    assert changed == 0
+    write.assert_not_called()
+
+
+def test_sync_skips_external_reports(monkeypatch: pytest.MonkeyPatch) -> None:
+    # An unpaired external report is never touched, and neither is one a pair
+    # adopted while it is still marked as a submission.
+    unpaired = _adv(OTHER, tracking=(), state="triage", external=True)
+    adopted = _adv(tracking=(A,), external=True)
+    changed, write = _sync(monkeypatch, [unpaired, adopted], [_iss(A, open_=False)])
+    assert changed == 0
+    write.assert_not_called()
+
+
+@pytest.mark.parametrize("state", ["published", "withdrawn", "triage"])
+def test_sync_never_moves_an_advisory_out_of_a_human_state(
+    monkeypatch: pytest.MonkeyPatch, state: str
+) -> None:
+    advisory = _adv(tracking=(A,), state=state)
+    changed, write = _sync(monkeypatch, [advisory], [_iss(A, open_=False)])
+    assert changed == 0
+    write.assert_not_called()
+
+
+def test_sync_skips_broken_pairs(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A pair whose links are wrong is reported, never acted on.
+    advisory = _adv(tracking=(A, C))
+    changed, write = _sync(monkeypatch, [advisory], [_iss(A, open_=False)])
+    assert changed == 0
+    write.assert_not_called()
+
+
+def test_pending_syncs_lists_only_mismatches() -> None:
+    issue_list = [_iss(A, open_=False), _iss(C, OTHER)]
+    advisories = [_adv(tracking=(A,)), _adv(OTHER, tracking=(C,))]
+    assert pending_syncs(classify(advisories, issue_list), issue_list) == [(GHSA, "closed")]
+
+
+def test_sync_failure_is_scrubbed_of_stdout(monkeypatch: pytest.MonkeyPatch) -> None:
+    write = MagicMock(side_effect=github.GitHubAPIError(1, ["gh"], SECRET, "HTTP 403"))
+    monkeypatch.setattr(github, "write_json", write)
+    issue_list = [_iss(A, open_=False)]
+    with pytest.raises(github.GitHubAPIError) as excinfo:
+        sync_states(HOME, classify([_adv()], issue_list), issue_list)
+    assert SECRET not in str(excinfo.value)
+    assert excinfo.value.stdout is None
 
 
 def test_retarget_issue_calls_in_order(issues: Issues) -> None:
