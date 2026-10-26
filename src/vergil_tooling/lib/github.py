@@ -797,7 +797,9 @@ def _iter_json_documents(raw: str) -> Iterator[object]:
         yield document
 
 
-def read_json_paginated(endpoint: str, key: str | None = None) -> list[object]:
+def read_json_paginated(
+    endpoint: str, key: str | None = None, *, jq: str | None = None
+) -> list[object]:
     """GET every page of a REST list *endpoint* and return the flattened items.
 
     A bare ``gh api`` call returns only the first page — 30 items by default —
@@ -812,10 +814,19 @@ def read_json_paginated(endpoint: str, key: str | None = None) -> list[object]:
     page size rides the URL query string. Retries are inherited from
     :func:`read_output`. A page that lacks *key*, or whose list is not a list,
     raises :class:`ValueError` rather than being treated as empty.
+
+    *jq*, when given, is passed as ``--jq`` and applied by ``gh`` to **each
+    page** before it reaches stdout, so fields the caller must never hold in
+    its output (an advisory's text, say) are projected away at the source. The
+    filter must emit one JSON array per page (``[.[] | {...}]``) for a bare
+    array endpoint, or an object carrying *key* for an envelope endpoint.
     """
     separator = "&" if "?" in endpoint else "?"
     paged = f"{endpoint}{separator}per_page={_PAGE_SIZE}"
-    raw = read_output("api", "--paginate", paged)
+    args = ["api", "--paginate", paged]
+    if jq is not None:
+        args += ["--jq", jq]
+    raw = read_output(*args)
     items: list[object] = []
     for document in _iter_json_documents(raw):
         page: object = document
@@ -859,6 +870,35 @@ def write_json(method: str, endpoint: str, body: dict[str, object]) -> None:
         text=True,
         capture_output=True,
     )
+
+
+def post_json_once(endpoint: str, body: dict[str, object]) -> dict[str, Any]:
+    """POST a JSON *body* to *endpoint* **exactly once** and return the response object.
+
+    Unlike :func:`write_json`, this never goes through :func:`_run_with_retry`:
+    it is for a create whose duplicate cannot be undone (a draft security
+    advisory has no delete), where a transient error may have hidden a POST
+    that landed, so a retry could create a second record. The caller decides
+    what a failure means. Any non-zero exit raises :class:`GitHubAPIError`
+    (:class:`MissingGitHubTokenError` for a missing token); a response that is
+    not a JSON object raises :class:`GitHubAPIError` too.
+    """
+    cmd = ("gh", "api", endpoint, "-X", "POST", "--input", "-")
+    kwargs: dict[str, Any] = {}
+    env = _gh_env()
+    if env is not None:
+        kwargs["env"] = env
+    result = subprocess.run(  # noqa: S603
+        cmd, input=json.dumps(body), check=False, text=True, capture_output=True, **kwargs
+    )
+    if result.returncode != 0:
+        missing_token = _is_missing_token_error(result.stderr)
+        error_type = MissingGitHubTokenError if missing_token else GitHubAPIError
+        raise error_type(result.returncode, cmd, result.stdout, result.stderr)
+    payload = json.loads(result.stdout)
+    if not isinstance(payload, dict):
+        raise GitHubAPIError(1, cmd, None, "response is not a JSON object")
+    return cast("dict[str, Any]", payload)
 
 
 def delete(endpoint: str) -> None:

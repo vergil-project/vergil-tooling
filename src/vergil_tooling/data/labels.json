@@ -22,7 +22,9 @@
     {"name": "hotfix", "color": "b60205", "description": "Emergency fix that skipped formal planning; flagged for retroactive review"},
     {"name": "validation", "color": "006b75", "description": "Post-merge validation: run the checklist, record PASS/FAIL as a comment; never auto-closed"},
     {"name": "deployment", "color": "0052cc", "description": "Deployment task: install/sync merged changes so they are usable; never auto-closed"},
-    {"name": "retrospective", "color": "c2e0c6", "description": "Epic retrospective bookend; PR-workable, its docs PR publishes retrospective.md"}
+    {"name": "retrospective", "color": "c2e0c6", "description": "Epic retrospective bookend; PR-workable, its docs PR publishes retrospective.md"},
+    {"name": "security", "color": "ee0701", "description": "Has a private security record in the org's .github advisories"},
+    {"name": "security-disclosed", "color": "d93f0b", "description": "Past issue that disclosed a security problem publicly; fixed, no private record"}
   ],
   "delete": ["enhancement", "standing"]
 }

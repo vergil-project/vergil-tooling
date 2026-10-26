@@ -143,8 +143,8 @@ def test_main_sync_provisions_all_labels() -> None:
     # 22 after adding 'dependency-update' (issue #3253);
     # 25 after adding 'intake', 'planning', and 'in-progress' (issue #2481);
     # 22 after removing the retired 'triage', 'idea', 'research' (issue #3546);
-    # 23 after adding the 'deferred' queue label (issue #3673).
-    assert len(label_calls) == 23
+    # 25 after adding 'security' and 'security-disclosed' (issue #3677).
+    assert len(label_calls) == 25
 
 
 def test_main_sync_uses_force_with_color_description() -> None:
