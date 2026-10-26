@@ -305,8 +305,16 @@ def desired_ci_gates_ruleset(
     checks: list[dict[str, object]] = []
     lang = project.primary_language
 
-    # Always present
-    checks.append(_make_check("quality / common"))
+    # Always present. ``quality / evidence`` is the single quality gate in every
+    # repo, whatever its language: since vergil-actions v2.1.58, ci-quality.yml's
+    # ``evidence`` job ``needs: [common, custom, lint, typecheck]`` with
+    # ``if: always()`` and fails on any non-success, so it covers the
+    # ``quality / common`` job (still emitted, no longer required) and the
+    # repo's custom validator. Gating it on a lint/typecheck language left
+    # language-less repos with a custom validator merging on a red
+    # ``quality / custom`` (vergil-project/vergil-tooling#3660, epic
+    # vergil-project/.github#488).
+    checks.append(_make_check("quality / evidence"))
     checks.append(_make_check("security / trivy"))
     checks.append(_make_check("security / semgrep"))
     # docs / docs is emitted only when the repo publishes docs; requiring it on
@@ -338,16 +346,14 @@ def desired_ci_gates_ruleset(
     # report ("expected, never reported" — a permanently blocked PR with no
     # ``--admin`` escape). Epic vergil-project/.github#338.
     #
-    # A gate is emitted only when the language's command registry has the
-    # underlying check, so the required set stays aligned with what CI can
-    # produce: ``quality / evidence`` covers lint + typecheck (both live in the
-    # ci-quality workflow), ``test / evidence`` covers unit, ``audit / evidence``
-    # covers dependencies. This is version-independent, so the ruleset stops
-    # churning when ``[ci].versions`` changes.
+    # ``audit / evidence`` and ``test / evidence`` are emitted only when the
+    # language's command registry has the underlying check (dependencies and
+    # unit respectively), so the required set stays aligned with what CI can
+    # produce. ``quality / evidence`` is unconditional (above): its aggregate
+    # always runs. This is version-independent, so the ruleset stops churning
+    # when ``[ci].versions`` changes.
     if _lang_has_check(lang, "dependencies"):
         checks.append(_make_check("audit / evidence"))
-    if _lang_has_check(lang, "lint") or _lang_has_check(lang, "typecheck"):
-        checks.append(_make_check("quality / evidence"))
     if _lang_has_check(lang, "unit"):
         checks.append(_make_check("test / evidence"))
 
@@ -560,8 +566,14 @@ def assert_ci_gates_producible(
 # ``quality / lint / <version>``, ``test / unit / <version>``, ...) are
 # deliberately absent — the workflows emit them only as *non-required* PR check
 # runs, so a ruleset still requiring one is exactly the stale-gate drift this
-# check surfaces. ``test_producible_gate_catalog_covers_desired_stable_gates``
-# guards the catalog against drift from ``desired_ci_gates_ruleset``.
+# check surfaces. ``quality / common`` stays in the catalog although
+# ``desired_ci_gates_ruleset`` no longer requires it (replaced by
+# ``quality / evidence``, issue #3660): ci-quality.yml still runs the job on
+# every PR, so a live ruleset that still requires it cannot deadlock a merge.
+# That is ordinary ruleset drift, which the audit reports and ``apply``
+# converges, not an unproducible gate.
+# ``test_producible_gate_catalog_covers_desired_stable_gates`` guards the
+# catalog against drift from ``desired_ci_gates_ruleset``.
 _PRODUCIBLE_GATE_CATALOG: frozenset[str] = frozenset(
     {
         "quality / common",

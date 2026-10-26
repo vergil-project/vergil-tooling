@@ -331,10 +331,11 @@ def test_ci_gates_strict_policy() -> None:
     assert params["strict_required_status_checks_policy"] is True
 
 
-def test_ci_gates_always_includes_common_and_security() -> None:
+def test_ci_gates_always_includes_quality_evidence_and_security() -> None:
     r = desired_ci_gates_ruleset(_project(), _ci(), ghas=True)
     check_names = _check_names(r)
-    assert "quality / common" in check_names
+    assert "quality / evidence" in check_names
+    assert "quality / common" not in check_names
     assert "security / trivy" in check_names
     assert "security / semgrep" in check_names
     assert "security / standards" not in check_names
@@ -380,7 +381,7 @@ def test_ci_gates_omits_package_evidence_without_package_section() -> None:
 # `[publish].docs` (see the two tests above), not universal.
 UNIVERSAL_REUSABLE_CI_CHECKS = frozenset(
     {
-        "quality / common",
+        "quality / evidence",
         "security / trivy",
         "security / semgrep",
         "version / version-bump",
@@ -472,7 +473,8 @@ def test_ci_gates_without_ghas_drops_alert_checks() -> None:
     assert "security / trivy" in names
     assert "security / semgrep" in names
     assert "security / standards" not in names
-    assert "quality / common" in names
+    assert "quality / evidence" in names
+    assert "quality / common" not in names
 
 
 def test_ci_gates_without_ghas_has_no_ghas_integration_checks() -> None:
@@ -530,9 +532,24 @@ def test_ci_gates_no_release_when_none() -> None:
 def test_ci_gates_no_language_has_no_versioned_checks() -> None:
     r = desired_ci_gates_ruleset(_project(language=None), _ci(versions=["latest"]), ghas=True)
     names = _check_names(r)
-    assert "quality / common" in names
+    assert "quality / evidence" in names
     assert not any("quality / lint" in n for n in names)
     assert not any("test / unit" in n for n in names)
+
+
+@pytest.mark.parametrize("language", [None, "python"])
+def test_ci_gates_require_quality_evidence_not_common(language: str | None) -> None:
+    """Since vergil-actions v2.1.58, ci-quality.yml's ``evidence`` job needs
+    ``common``, ``custom``, ``lint`` and ``typecheck`` in every repo whatever
+    its language, so ``quality / evidence`` is the one quality gate: required
+    for a language-less repo (where a red ``quality / custom`` would otherwise
+    merge) and for a Python repo alike, replacing ``quality / common`` outright
+    (vergil-project/vergil-tooling#3660, epic vergil-project/.github#488)."""
+    for ghas in (True, False):
+        ruleset = desired_ci_gates_ruleset(_project(language=language), _ci(), ghas=ghas)
+        names = _check_names(ruleset)
+        assert names.count("quality / evidence") == 1
+        assert "quality / common" not in names
 
 
 def test_lang_has_check_returns_false_for_unknown_check() -> None:
@@ -573,7 +590,8 @@ _PACKAGE_CI_JOBS = {**_FULL_CI_JOBS, "package": "ci-package.yml"}
 def test_required_status_contexts_extracts_names() -> None:
     ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=True)
     contexts = required_status_contexts(ruleset)
-    assert "quality / common" in contexts
+    assert "quality / evidence" in contexts
+    assert "quality / common" not in contexts
     assert "test / evidence" in contexts
     # No empty strings from malformed entries.
     assert all(contexts)
@@ -822,7 +840,7 @@ def test_vergil_actions_real_ci_yaml_passes_the_guard() -> None:
         "Semgrep OSS",
         "Trivy",
         "docs / docs",
-        "quality / common",
+        "quality / evidence",
         "security / semgrep",
         "security / trivy",
         "version / version-bump",
@@ -951,10 +969,11 @@ def test_audit_does_not_mislabel_producible_gate_as_unproducible() -> None:
 
 def test_ci_gates_matrixed_kinds_emit_one_evidence_gate_each() -> None:
     """Each matrixed reusable workflow contributes exactly one stable evidence
-    gate: quality (lint + typecheck), test (unit), audit (dependencies)."""
+    gate: quality (common, custom, lint, typecheck), test (unit), audit
+    (dependencies)."""
     ci = _ci(versions=["3.12", "3.13", "3.14"])
     names = _check_names(desired_ci_gates_ruleset(_project(), ci, ghas=True))
-    assert [n for n in names if n.endswith("/ evidence")] == [
+    assert sorted(n for n in names if n.endswith("/ evidence")) == [
         "audit / evidence",
         "quality / evidence",
         "test / evidence",
@@ -982,7 +1001,7 @@ def test_ci_gates_matrixed_gates_are_independent_of_version_count() -> None:
 # here.
 
 _EXPECTED_GATES_TWO_VERSIONS = [
-    "quality / common",
+    "quality / evidence",
     "security / trivy",
     "security / semgrep",
     "docs / docs",
@@ -991,7 +1010,6 @@ _EXPECTED_GATES_TWO_VERSIONS = [
     "security / codeql",
     "CodeQL",
     "audit / evidence",
-    "quality / evidence",
     "test / evidence",
     "version / version-bump",
 ]
@@ -3230,8 +3248,7 @@ class TestRequiredEvidenceGates:
         gates = {g.name: g for g in required_evidence_gates(_project(), _ci(), ghas=True)}
         assert "test / evidence" in gates["test"].checks
         assert "audit / evidence" in gates["audit"].checks
-        assert "quality / common" in gates["quality"].checks
-        assert "quality / evidence" in gates["quality"].checks
+        assert gates["quality"].checks == ("quality / evidence",)
         assert "security / trivy" in gates["security"].checks
 
     def test_no_ghas_drops_codeql_from_security(self) -> None:
