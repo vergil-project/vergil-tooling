@@ -172,20 +172,24 @@ before it succeeded:
    already present).
 2. **Rewrite** the advisory's description: every `Tracking issue:` line is
    replaced by one line per target. The rest of the description is kept.
-3. **Unmark** every issue the advisory tracked before and no longer does:
-   remove its `Security advisory:` line and `security` label, and comment
-   `Security record moved to <refs>` (posted once, even on a re-run).
+3. **Unmark** every issue that names this advisory but is no longer a
+   target. These are the issues in the old tracking lines, plus every
+   `security`-labelled issue in the org whose `Security advisory:` line
+   names this GHSA ID (found by REST listing, never by search). Each one
+   gets the comment `Security record moved to <refs>` (posted once, even on
+   a re-run). Then this advisory's line and the `security` label are
+   removed in one edit. An issue whose line names a different advisory is
+   never touched.
 
 A failure at any step exits 1 with a message naming the advisory and the
 step. Because a later step never runs before an earlier one succeeds, an
 advisory never ends up tracking an issue that lacks the label and line.
-A failure while marking leaves the tracking lines unchanged, so re-running
-the same command is safe. A failure while unmarking comes after the
-rewrite: the advisory already tracks the targets, and the issue the error
-names still carries the label and line. A re-run does not revisit it (the
-advisory no longer tracks it), so remove them by hand; until then the
-sweep reports that issue as a broken pair. On success it prints
-`Retargeted <GHSA-id> to <refs>.`
+After a failure at any step, re-run the same command: it finishes the
+job. An issue that still carries this advisory's line and label is found
+again by the listing, so an interrupted unmark is completed. The one case
+a re-run cannot reach is an issue whose `security` label was removed by
+hand while its advisory line stayed; the sweep reports it as a broken pair.
+On success it prints `Retargeted <GHSA-id> to <refs>.`
 
 The library's `retarget` also takes a `renamed=` list, which the CLI does
 not expose. `vrg-intake-route` uses it for a transfer: the old number of a
