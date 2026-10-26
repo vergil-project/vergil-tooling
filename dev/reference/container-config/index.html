@@ -12800,10 +12800,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#low-disk-auto-prune-vrg_cache_prune_free_gb" class="md-nav__link">
+  <a href="#low-disk-auto-prune-vrg_cache_prune_free_gb-vrg_cache_build_free_gb" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Low-disk auto-prune (VRG_CACHE_PRUNE_FREE_GB)
+        Low-disk auto-prune (VRG_CACHE_PRUNE_FREE_GB, VRG_CACHE_BUILD_FREE_GB)
       
     </span>
   </a>
@@ -16450,10 +16450,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#low-disk-auto-prune-vrg_cache_prune_free_gb" class="md-nav__link">
+  <a href="#low-disk-auto-prune-vrg_cache_prune_free_gb-vrg_cache_build_free_gb" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Low-disk auto-prune (VRG_CACHE_PRUNE_FREE_GB)
+        Low-disk auto-prune (VRG_CACHE_PRUNE_FREE_GB, VRG_CACHE_BUILD_FREE_GB)
       
     </span>
   </a>
@@ -16803,9 +16803,9 @@ prints nothing. <code>--script</code> is the CI-consumption entry point — the 
 call it to obtain the exact command to run per job (see
 <a href="../../guides/ci-architecture/#repo-specific-build-steps">CI Architecture → Repo-specific build steps</a>),
 mirroring how <code>vrg-container-system-packages --install-script</code> feeds the apt step.</p>
-<h2 id="low-disk-auto-prune-vrg_cache_prune_free_gb">Low-disk auto-prune (<code>VRG_CACHE_PRUNE_FREE_GB</code>)<a class="headerlink" href="#low-disk-auto-prune-vrg_cache_prune_free_gb" title="Permanent link">&para;</a></h2>
-<p>Not a <code>[container]</code> key: the image store belongs to the machine, not the repo, so
-this is a host environment variable.</p>
+<h2 id="low-disk-auto-prune-vrg_cache_prune_free_gb-vrg_cache_build_free_gb">Low-disk auto-prune (<code>VRG_CACHE_PRUNE_FREE_GB</code>, <code>VRG_CACHE_BUILD_FREE_GB</code>)<a class="headerlink" href="#low-disk-auto-prune-vrg_cache_prune_free_gb-vrg_cache_build_free_gb" title="Permanent link">&para;</a></h2>
+<p>Not <code>[container]</code> keys: the image store belongs to the machine, not the repo, so
+these are host environment variables.</p>
 <p>Just before <code>vrg-container-run</code> (or <code>vrg-container-cache build</code>, or
 <code>vrg-finalize-pr</code>'s provisioning step) builds a cached dev image, it checks the
 free space on the filesystem that holds the runtime's image store. When that is
@@ -16826,6 +16826,11 @@ image it removed.</p>
 <td><code>10</code></td>
 <td>Free space, in GB, below which a cache build first prunes finished branches' images. <code>0</code> turns the auto-prune off; a value that is not a non-negative number stops the build</td>
 </tr>
+<tr>
+<td><code>VRG_CACHE_BUILD_FREE_GB</code></td>
+<td><code>3</code></td>
+<td>Free space, in GB, a cache build needs after the prune to go ahead at all (one cached image is about 1.3–2 GB). Capped at <code>VRG_CACHE_PRUNE_FREE_GB</code>: when the threshold is lower, the threshold is the floor. <code>0</code> lets the build go ahead whatever is left; a value that is not a non-negative number stops the build</td>
+</tr>
 </tbody>
 </table>
 <ul>
@@ -16835,9 +16840,14 @@ image it removed.</p>
 <li><strong>Failures are loud.</strong> A prune that cannot run, or an image it cannot remove,
   is printed as a warning.</li>
 <li><strong>The build goes ahead only with room for it.</strong> After the prune, the build
-  continues if at least 3 GB (or the threshold, if lower) is free, with a warning
-  while still below the threshold. With less, it stops with the free-space
-  numbers and the manual command, rather than fail part way through.</li>
+  continues if at least <code>VRG_CACHE_BUILD_FREE_GB</code> (default 3 GB; or the
+  threshold, if lower) is free, with a warning while still below the threshold.
+  With less, it stops with the free-space numbers, the setting that set the
+  floor, and the manual command, rather than fail part way through.</li>
+<li><strong>A bad value is never ignored.</strong> Both variables are read before every cache
+  build, so a value that is not a non-negative number stops the build with an
+  error naming the variable, even when the disk has room — never a silent
+  fallback to the default.</li>
 <li><strong>An unmeasurable store is skipped.</strong> Docker Desktop keeps its image store
   inside its own VM; there the check is skipped with a note.</li>
 </ul>
