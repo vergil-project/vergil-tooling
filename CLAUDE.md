@@ -384,6 +384,11 @@ CLI tools installed as `vrg-*` console scripts:
   PR merged when green, a fix task on any failure (validation, merge, or
   an updater/hook failing before any PR exists), and the
   held-back report (`--only`/`--skip`/`--vergil X.Y`). Human-only
+- **`vrg-upstream-refresh`** — Run the repo's `[upstream-refresh].hook`
+  (separate from `[dependency-update]`) and open, refresh or close the one
+  `upstream-refresh` PR; never merges. Run by the scheduled
+  `ops-upstream-refresh` workflow under the App token, or by a human;
+  refuses agent identities
 - **`vrg-resolve-tracking-issue`** — Extract tracking issue number from a merge commit's PR linkage
 - **`vrg-finalize-pr`** — Merge a PR and run post-merge cleanup (branch/worktree deletion, remote pruning)
 - **`vrg-branch-sweep`** — Report (dry run) or delete (`--apply`) a repo's

@@ -120,7 +120,7 @@ The design is epic
 | `summary` | string | *(required)* | One-line package description |
 | `smoke` | string | *(required)* | Shell command the install test runs after installing the package |
 | `name` | string | see semantics | Package name. Required for `staged`; `python` defaults to `pyproject.toml` `[project].name` |
-| `version` | string | repo version | Explicit package version (`[0-9][0-9A-Za-z.+~]*`), for when it is not the repo's semver (e.g. `vergil-python`). A release refuses a version an earlier release already published; see [the re-publish check](#the-re-publish-check). Not with `upstream-version` |
+| `version` | string | repo version | Explicit package version (`[0-9][0-9A-Za-z.+~]*`), used unchanged as the full package version, for when it is not the repo's semver. A release refuses a version an earlier release already published; see [the re-publish check](#the-re-publish-check). Not with `upstream-version` |
 | `upstream-version` | string | *(unset)* | The upstream inputs a package is built from (`[0-9][0-9A-Za-z.+~]*`), for example `3.15.1+20261021`. The package version is `<upstream-version>.<repo version>` (`3.15.1+20261021.1.0.5` at repo `1.0.5`), so every repo release publishes a new version and the inputs show first in `apt policy`. That version sorts above the same inputs without the suffix and above an earlier repo release, under both dpkg and rpm. Not with `version` |
 | `noarch` | boolean | `false` | Architecture-independent: one build cell on amd64, emitting deb `all` / rpm `noarch` |
 | `exclude` | list of globs | `[]` | Targets to drop from the default set |
@@ -136,11 +136,15 @@ Valid only with `builder = "python"`, and optional there.
 | `runtime` | string | derived | Exact-patch pin (`3.Y.Z`) on the `vergil-python` runtime. Absent, the runtime is derived (see below) |
 | `commands` | list of strings | all of `[project.scripts]` | The commands to shim into `/usr/bin`; each must be in `[project.scripts]` |
 
-`vergil-python` publishes one package per CPython series,
-`vergil-python<X.Y>`, versioned `<cpython>+<pbs-tag>` (for example
-`3.15.1+20261021`). Its patch floats: each release replaces the previous
-patch. A package always builds against, installs and depends on the
-per-series package, at `/opt/vergil/python/<X.Y>`.
+`vergil-python` publishes one package per CPython series it lists,
+`vergil-python<X.Y>`, as one `[[package]]` entry each. Every
+vergil-python release publishes every listed series. The version is the
+entry's `upstream-version` joined with the vergil-python release,
+`<cpython>+<pbs-tag>.<release>` (for example `3.15.1+20261021.1.0.4`);
+releases before v1.0.4 are `<cpython>+<pbs-tag>` alone. Its patch
+floats: each release replaces the previous patch. A package always
+builds against, installs and depends on the per-series package, at
+`/opt/vergil/python/<X.Y>`.
 
 With no `runtime`, the series is derived: it is the newest resolved
 version whose window entry marks the runtime published (epic
