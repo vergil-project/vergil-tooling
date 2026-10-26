@@ -1338,6 +1338,8 @@
       
         
       
+        
+      
     
     
     
@@ -1390,6 +1392,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.270/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.270
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17328,6 +17358,8 @@ warns, ignores <code>--kind</code>, and forwards to <code>vrg-intake-create</cod
 <h3 id="viewing-the-queues-vrg-queue">Viewing the queues: <code>vrg-queue</code><a class="headerlink" href="#viewing-the-queues-vrg-queue" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>vrg-queue<span class="w"> </span>intake<span class="w">    </span><span class="c1"># open intake items, oldest first</span>
 <a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>vrg-queue<span class="w"> </span>planning<span class="w">  </span><span class="c1"># open planning items: waiting / in-progress / ready-to-close</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>vrg-queue<span class="w"> </span>deferred<span class="w">  </span><span class="c1"># open deferred items, least recently deferred first</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>vrg-queue<span class="w">           </span><span class="c1"># all three queues, in that order</span>
 </code></pre></div>
 <p>It defaults to the current org's <code>.github</code> queues; <code>--repo &lt;owner&gt;/&lt;repo&gt;</code>
 selects that repo's queue home (a self-homed private repo's own queues), and
@@ -17353,8 +17385,8 @@ owns the mechanics so nothing is hand-rolled:</p>
 </tr>
 <tr>
 <td>Defer</td>
-<td><code>vrg-intake-route &lt;ref&gt; defer --reason TEXT</code></td>
-<td>Add a dated comment; the item keeps its age and comes up first next time.</td>
+<td><code>vrg-intake-route &lt;ref&gt; defer --reason TEXT --revisit-when TEXT [--date YYYY-MM-DD]</code></td>
+<td>Move the item into the deferred queue with a dated record of why it waits, when to look again, and where it came from.</td>
 </tr>
 <tr>
 <td>One-off</td>
@@ -17376,8 +17408,10 @@ owns the mechanics so nothing is hand-rolled:</p>
 <p>A move <strong>transfers</strong> the issue, keeping its history; if GitHub refuses the
 transfer, the item is recreated in the target repo with a link back and the
 original closed with a pointer. Either way the resulting issue is re-linked under
-its new parent. A route is refused for an issue that is not an intake item, for a
-cross-org target, and for a private item headed to a public repo or epic.</p>
+its new parent. A route is refused when the item's container epic does not allow
+it (see <a href="../../reference/cli-tools-overview/#vrg-intake-route"><code>vrg-intake-route</code></a>
+for the route table), for a cross-org target, and for a private item headed to a
+public repo or epic.</p>
 <h3 id="planning">Planning<a class="headerlink" href="#planning" title="Permanent link">&para;</a></h3>
 <p>A planning item records its own epic-creation process: <code>epic-create</code> always
 works through one, and posts progress comments (what is done, what is blocked,
