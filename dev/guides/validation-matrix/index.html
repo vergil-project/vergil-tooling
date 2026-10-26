@@ -16478,6 +16478,12 @@ where it runs. No git hooks are installed: every check runs inside a
 <td><code>audit / dependencies / &lt;version&gt;</code></td>
 </tr>
 <tr>
+<td>Custom validator</td>
+<td><code>vrg-validate</code> (custom stage)</td>
+<td>Yes (primary version)</td>
+<td><code>quality / custom</code> (once, primary version)</td>
+</tr>
+<tr>
 <td>Security scans (CodeQL, Trivy, Semgrep)</td>
 <td><code>ci-security.yml</code></td>
 <td>--</td>
@@ -16615,7 +16621,17 @@ one: <code>scripts/bin/validate-custom</code> or a <code>vrg-validate-custom</co
 stage so the validator sees the dev dependencies. With no custom
 validator it prints <code>custom: no custom validator (scripts/bin/validate-custom
 or vrg-validate-custom) — nothing to run</code> and exits 0. A validator that
-is present but not an executable regular file fails the stage.</p>
+is present but not an executable regular file fails the stage.
+<code>--check custom --all-versions</code> is a usage error.</p>
+<p>PR CI runs the same stage once per run, as <code>quality / custom</code>, on the
+primary-version image that <code>quality / common</code> uses. Its transcript is
+<code>quality-custom.log</code> in the <code>ci-evidence-quality</code> artifact, and the
+<code>quality / evidence</code> gate needs the job, so a failed or skipped custom
+stage fails that gate. <code>quality / custom</code> is not a required check of its
+own, but every repository requires <code>quality / evidence</code> (see
+<a href="../ci-architecture/#ci-gates">CI gates</a>), so a failing custom validator
+blocks the merge whatever the repository's language. A repository's
+custom validator therefore runs both locally and in PR CI.</p>
 <h3 id="all-versions-python">All versions (Python)<a class="headerlink" href="#all-versions-python" title="Permanent link">&para;</a></h3>
 <p><code>vrg-validate --all-versions</code> adds one <code>test (python X.Y)</code> stage per
 resolved CI version after the test stage, so the

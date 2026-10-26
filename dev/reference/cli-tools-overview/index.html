@@ -12880,6 +12880,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#vrg-validate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-validate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-validate-common" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -16912,6 +16923,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#vrg-validate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-validate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-validate-common" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18472,6 +18494,53 @@ between <code>BEGIN/END GENERATED MQSC METHODS</code> markers.</p>
 <p>Container tools run inside dev containers launched by <code>vrg-container-run</code>.
 They assume language toolchain dependencies (ruff, mypy, shellcheck,
 markdownlint, yamllint) are available on PATH.</p>
+<h3 id="vrg-validate">vrg-validate<a class="headerlink" href="#vrg-validate" title="Permanent link">&para;</a></h3>
+<p>The unified validation driver. It reads <code>[project].primary-language</code>
+from <code>vergil.toml</code> and runs the stages in order: common checks, the
+language's install, lint, typecheck, test and audit commands, and last
+the repository's custom validator (<code>scripts/bin/validate-custom</code> or
+<code>vrg-validate-custom</code> on <code>PATH</code>) when it has one. <code>--check</code> runs one
+stage. <code>--check custom</code> runs the install stage (when the language has
+one) and then the custom stage; with no custom validator it prints one
+"no custom validator" line and exits 0, and a validator that is present
+but not an executable regular file fails. PR CI runs each stage through
+the <code>vergil-actions</code> reusable workflows, the custom stage as
+<code>quality / custom</code>. See the <a href="../../guides/validation-matrix/">Validation Matrix</a>
+for every check and where it runs.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_validate</code></td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>--check {common,lint,typecheck,test,audit,custom}</code>, <code>--all-versions</code> (Python only; alone or with <code>--check test</code>)</td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>Inside a dev container (run it as <code>vrg-container-run -- vrg-validate</code>)</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td>Runs every stage after install and reports all failures in one run; install fails fast</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 all passed, 1 a stage failed or the config is invalid, 2 usage error (for example <code>--check custom --all-versions</code>)</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
 <h3 id="vrg-validate-common">vrg-validate-common<a class="headerlink" href="#vrg-validate-common" title="Permanent link">&para;</a></h3>
 <p>Shared validation checks for all repos: repository profile
 validation, markdownlint on published markdown (<code>docs/site/**/*.md</code>

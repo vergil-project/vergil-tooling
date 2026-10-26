@@ -16665,7 +16665,11 @@ that PR-CI didn't already provide and created a concurrency-group
 deadlock with <code>ci.yml</code>. Integration-test coverage at push-time was
 deliberately dropped and is tracked separately as future work on local
 integration testing. See vergil-project/vergil-actions#176 for the
-parity audit and removal rationale. The "parity with PR-CI" framing is
+parity audit and removal rationale. Since epic
+<a href="https://github.com/vergil-project/.github/issues/488">vergil-project/.github#488</a>
+the repository's custom validator also runs in PR CI (as
+<code>quality / custom</code>), so every Tier 1 stage now has a PR-CI job. The
+"parity with PR-CI" framing is
 precise only for the single-interpreter checks Tier 1 runs — see the
 coverage-parity caveat under <a href="#tier-2-pr-ci">Tier 2: PR CI</a> below for
 the one deliberate gap.</p>
@@ -16733,8 +16737,11 @@ for the measured evidence.</p>
 <li><code>audit</code> (<code>ci-audit.yml</code>): dependency audit across the full version
   matrix, for languages that have an audit command</li>
 <li><code>quality</code> (<code>ci-quality.yml</code>): the common checks once (<code>vrg-validate
-  --check common</code>), then lint and typecheck across the full version
-  matrix</li>
+  --check common</code>), the repository's custom validator once
+  (<code>vrg-validate --check custom</code>, as <code>quality / custom</code>), then lint and
+  typecheck across the full version matrix. The custom job's transcript
+  is <code>quality-custom.log</code>, and <code>quality / evidence</code> needs the job, so a
+  failing custom validator fails that gate</li>
 <li><code>security</code> (<code>ci-security.yml</code>): CodeQL, Trivy and Semgrep</li>
 <li><code>test</code> (<code>ci-test.yml</code>): the language's test command across the full
   version matrix</li>

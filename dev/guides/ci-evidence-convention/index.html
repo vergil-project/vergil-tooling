@@ -16618,7 +16618,7 @@ prefix:</p>
 <td>Yes</td>
 </tr>
 <tr>
-<td><code>quality / …</code> (lint, typecheck)</td>
+<td><code>quality / …</code> (common, custom, lint, typecheck)</td>
 <td><code>quality</code></td>
 <td>Yes</td>
 </tr>
@@ -16640,10 +16640,12 @@ prefix:</p>
 </tbody>
 </table>
 <p>The guiding principle: <strong>any gate that can block the build is evidence worth
-keeping.</strong> Quality (lint/typecheck) sits alongside security, test, and audit as
-first-class evidence. A repo whose <code>vergil.toml</code> has a <code>[package]</code> section also
-requires the <code>package / evidence</code> gate (the <code>ci-package.yml</code> aggregate over its
-whole target matrix), so the harvest pulls <code>ci-evidence-package</code> for it; a repo
+keeping.</strong> Quality (common checks, custom validator, lint and typecheck)
+sits alongside security, test, and audit as first-class evidence, and
+every repo requires the <code>quality / evidence</code> gate, whatever its language.
+A repo whose <code>vergil.toml</code> has a <code>[package]</code> section also requires the
+<code>package / evidence</code> gate (the <code>ci-package.yml</code> aggregate over its whole
+target matrix), so the harvest pulls <code>ci-evidence-package</code> for it; a repo
 without <code>[package]</code> never calls <code>ci-package.yml</code> and is never asked for it.
 <code>version/</code> is a sanity check on version state, not substantive evidence, and
 <code>docs</code> is low-signal; the absence of either does not fail the release.</p>
@@ -16669,10 +16671,10 @@ carry only an <code>evidence.json</code> envelope and no report is an <strong>em
 there is no point publishing empty reports.</strong></p>
 <p>Producers must therefore emit real report files at the workspace-root paths the
 producer composite globs for:</p>
-<p>The test, audit, and quality report files are emitted <strong>once per resolved
-version</strong> (<code>&lt;ver&gt;</code> ∈ <code>3.12</code> / <code>3.13</code> / <code>3.14</code> / <code>3.15</code> for this repo today);
-the security SARIF are <strong>not</strong>
-per-version:</p>
+<p>The test and audit report files and the quality lint and typecheck reports
+are emitted <strong>once per resolved version</strong> (<code>&lt;ver&gt;</code> ∈ <code>3.12</code> / <code>3.13</code> /
+<code>3.14</code> / <code>3.15</code> for this repo today). The quality transcripts and the
+security SARIF are <strong>not</strong> per-version:</p>
 <table>
 <thead>
 <tr>
@@ -16691,7 +16693,7 @@ per-version:</p>
 </tr>
 <tr>
 <td><code>quality</code></td>
-<td><code>quality-ruff-&lt;ver&gt;.json</code>, <code>quality-mypy-&lt;ver&gt;.xml</code></td>
+<td><code>quality-common.log</code>, <code>quality-custom.log</code>, <code>quality-ruff-&lt;ver&gt;.json</code>, <code>quality-mypy-&lt;ver&gt;.xml</code></td>
 </tr>
 <tr>
 <td><code>security</code></td>
@@ -16699,6 +16701,12 @@ per-version:</p>
 </tr>
 </tbody>
 </table>
+<p><code>quality-common.log</code> is the transcript of <code>vrg-validate --check common</code> and
+<code>quality-custom.log</code> the transcript of <code>vrg-validate --check custom</code>, each
+captured once per run by the <code>quality / common</code> and <code>quality / custom</code> jobs.
+Every repository emits both, so even a language-less repository's quality
+gate carries real reports. A repository with no custom validator still
+ships <code>quality-custom.log</code>, holding the one "no custom validator" line.</p>
 <p>Producers emit these files today: the check registry runs <code>pytest --cov …
 --cov-report=xml --junitxml=…</code>, <code>pip-audit</code> / license checks write <code>--output</code>
 JSON, and ruff / mypy write their machine-readable reports — each per Python
@@ -16720,7 +16728,7 @@ self-describing and verifiable:</p>
 <a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>   │   ├─ security/          # python.sarif, trivy-results.sarif, semgrep-results.sarif, evidence.json
 <a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>   │   ├─ test/              # coverage-&lt;ver&gt;.xml, junit-&lt;ver&gt;.xml (per Python version), evidence.json
 <a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>   │   ├─ audit/             # pip-audit-&lt;ver&gt;.json, licenses-&lt;ver&gt;.json (per Python version), evidence.json
-<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>   │   ├─ quality/           # quality-ruff-&lt;ver&gt;.json, quality-mypy-&lt;ver&gt;.xml (per Python version), evidence.json
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>   │   ├─ quality/           # quality-common.log, quality-custom.log, quality-ruff-&lt;ver&gt;.json, quality-mypy-&lt;ver&gt;.xml (per Python version), evidence.json
 <a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>   │   └─ sbom/              # sbom.cdx.json
 <a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>   └─ README.md              # human orientation for the archive
 </code></pre></div>
