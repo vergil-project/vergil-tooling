@@ -128,6 +128,16 @@ as `quality / common`.
 for `[project].primary-language`. Pass `--check lint`, `typecheck`,
 `test` or `audit` to run one stage.
 
+### Custom validator
+
+Last, `vrg-validate` runs the repository's custom validator, when it has
+one: `scripts/bin/validate-custom` or a `vrg-validate-custom` on `PATH`.
+`--check custom` runs only that stage, after the language's install
+stage so the validator sees the dev dependencies. With no custom
+validator it prints `custom: no custom validator (scripts/bin/validate-custom
+or vrg-validate-custom) — nothing to run` and exits 0. A validator that
+is present but not an executable regular file fails the stage.
+
 ### All versions (Python)
 
 `vrg-validate --all-versions` adds one `test (python X.Y)` stage per

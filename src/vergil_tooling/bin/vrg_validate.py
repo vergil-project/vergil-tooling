@@ -4,6 +4,13 @@ Reads primary_language from vergil.toml, then either runs a
 specific check type (--check) or all checks in sequence:
   common -> install -> lint -> typecheck -> test -> audit -> custom
 
+The single checks are common, lint, typecheck, test, audit and custom.
+``--check custom`` runs only the repo's custom validator
+(``scripts/bin/validate-custom`` or ``vrg-validate-custom``), after the
+install stage when the language has one so the validator sees the dev
+dependencies. With no custom validator it reports that and exits 0; a
+validator that is present but unusable still fails (issue #3650).
+
 Checks run as progress-framework stages: install is fail_fast,
 everything else is fail_defer so all failures are reported in one run.
 
@@ -47,7 +54,13 @@ _CHECK_KINDS = {
     "typecheck": CheckKind.TYPECHECK,
     "test": CheckKind.TEST,
     "audit": CheckKind.AUDIT,
+    "custom": None,
 }
+
+_NO_CUSTOM_VALIDATOR = (
+    "custom: no custom validator (scripts/bin/validate-custom or "
+    "vrg-validate-custom) — nothing to run"
+)
 
 _LANGUAGE_CHECK_ORDER = [
     CheckKind.LINT,
@@ -150,6 +163,9 @@ def main(argv: list[str] | None = None) -> int:
         all_versions=ci_versions if args.all_versions else (),
     )
     if not stages:
+        if args.check == "custom":
+            print(_NO_CUSTOM_VALIDATOR)
+            return 0
         print(f"No {args.check} commands for language '{language or '<not set>'}'")
         return 0
 
@@ -630,9 +646,17 @@ def _build_stages(
                     for version in all_versions
                 )
 
-    if check is None:
+    if check in (None, "custom"):
         custom = _find_custom_validator(repo_root)
         if custom is not None:
+            if check == "custom" and language is not None:
+                # Run alone, the validator still needs the dev dependencies the
+                # full run's install stage would have provided.
+                install_cmds = language_commands(
+                    language, CheckKind.INSTALL, cpp_std=cpp_std, cpp_stdlib=cpp_stdlib
+                )
+                if install_cmds:
+                    stages.append(_command_stage("install", install_cmds, mode="fail_fast"))
 
             def custom_fn(_ctx: object) -> None:
                 _check_custom_validator(Path(custom))

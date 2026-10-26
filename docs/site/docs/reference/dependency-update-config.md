@@ -61,8 +61,10 @@ Keeps the vergil ecosystem references consistent with
 For a repo with an exact `[package.python] runtime` pin such as `3.14.8`
 (see [Package Config](package-config.md)), it also bumps the pin to the
 CPython patch that the pin's series package, `vergil-python3.14`, serves.
-That package's version is `<cpython>+<pbs_tag>` (for example
-`3.14.9+20261020`), and the patch is the part before the `+`. Each
+That package's version is `<cpython>+<pbs_tag>.<release>` (for example
+`3.14.9+20261021.1.0.4`, where `1.0.4` is the vergil-python release;
+releases before v1.0.4 have no `.<release>` suffix), and the patch is
+the part before the `+`. Each
 index installs the newest version it lists, and the patch counts only
 when every apt and rpm index the package build and install test read
 from serves the same one, so the bump cannot pass validation and then
@@ -84,7 +86,8 @@ The update fails loudly, rather than reporting "no change", when:
 - any of those indexes lacks the series package, or cannot be read.
   The legacy per-patch packages (`vergil-python3.14.8`) are retired and
   are not read;
-- a series package version is not `<cpython>+<pbs_tag>`;
+- a series package version is not `<cpython>+<pbs_tag>`, optionally
+  followed by `.<release>`;
 - the series package serves a patch on another series, or a patch
   older than the pin.
 

@@ -1314,11 +1314,6 @@ def test_resolve_epic_home_dotgithub_short_circuits() -> None:
         pub.assert_not_called()
 
 
-def test_resolve_epic_home_public_target_is_central() -> None:
-    with patch("vergil_tooling.lib.epics.github.is_public", return_value=True):
-        assert epics.resolve_epic_home("org", "tooling") == "org/.github"
-
-
 def test_resolve_epic_home_private_target_public_dotgithub_is_self() -> None:
     def pub(nwo: str) -> bool:
         return {"org/lab": False, "org/.github": True}[nwo]
@@ -1360,6 +1355,32 @@ def test_resolve_epic_home_missing_dotgithub_self_homes() -> None:
 
     with patch("vergil_tooling.lib.epics.github.is_public", side_effect=pub):
         assert epics.resolve_epic_home("owner", "notes") == "owner/notes"
+
+
+def test_resolve_epic_home_public_target_with_dotgithub_probes_it() -> None:
+    # A public target homes centrally only once <org>/.github is confirmed (#3643).
+    with patch("vergil_tooling.lib.epics.github.is_public", return_value=True) as pub:
+        assert epics.resolve_epic_home("org", "tooling") == "org/.github"
+    assert [c.args[0] for c in pub.call_args_list] == ["org/tooling", "org/.github"]
+
+
+def test_resolve_epic_home_public_target_missing_dotgithub_is_refused() -> None:
+    # A public repo whose owner has no .github is refused up front, naming the
+    # repo to create, instead of failing later on GitHub "not found" (#3643).
+    def pub(nwo: str) -> bool:
+        if nwo == "owner/.github":
+            raise github.GitHubAPIError(1, "cmd", "", _NO_REPO)
+        return True
+
+    with (
+        patch("vergil_tooling.lib.epics.github.is_public", side_effect=pub),
+        pytest.raises(epics.EpicHomeError) as excinfo,
+    ):
+        epics.resolve_epic_home("owner", "site")
+    assert str(excinfo.value) == (
+        "owner/site is public, so its epics and queues live in owner/.github, "
+        "which does not exist; create the owner/.github repository and try again"
+    )
 
 
 def test_resolve_epic_home_dotgithub_probe_error_fails_loud() -> None:
@@ -1406,8 +1427,8 @@ def test_require_org_home_missing_dotgithub_is_clear() -> None:
         epics.require_org_home("owner")
     assert str(excinfo.value) == (
         "owner has no .github repository, so there is no org-wide queue or epic "
-        "home; pass --repo owner/<repo> to reach a self-homed repo's own queues "
-        "and epics"
+        "home; create the owner/.github repository to give it one, or pass --repo "
+        "owner/<repo> to reach a private, self-homed repo's own queues and epics"
     )
 
 

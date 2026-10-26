@@ -400,8 +400,8 @@ nothing. The refusal names each conflicting package and the release
 that first published it:
 
 ```text
-vergil-project/vergil-python@v1.0.4 would re-publish 4 package(s) at a version an earlier release already published:
-  - vergil-python3.15 3.15.1+20261021-1 amd64 (deb): already published by vergil-project/vergil-python@v1.0.3
+vergil-project/example@v1.2.0 would re-publish 4 package(s) at a version an earlier release already published:
+  - example-server 2.0.0-1 amd64 (deb): already published by vergil-project/example@v1.1.0
   ...
 ```
 

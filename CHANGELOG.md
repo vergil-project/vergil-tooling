@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.268] - 2026-10-26
+
+### Bug fixes
+
+- refuse a public repo whose owner has no .github up front (#3648)
+
+### Documentation
+
+- reflect the multi-series runtime in the package and update docs (#3652)
+
+### Features
+
+- make the post-prune cache-build floor tunable with VRG_CACHE_BUILD_FREE_GB (#3647)
+- add --check custom to run the custom validator stage alone (#3653)
+
 ## [2.1.267] - 2026-10-25
 
 ### Features

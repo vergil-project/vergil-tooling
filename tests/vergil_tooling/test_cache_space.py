@@ -10,9 +10,12 @@ from unittest.mock import patch
 import pytest
 
 from vergil_tooling.lib.cache_space import (
+    BUILD_FREE_GB_ENV,
+    DEFAULT_BUILD_FREE_GB,
     DEFAULT_PRUNE_FREE_GB,
     PRUNE_FREE_GB_ENV,
     CacheSpaceError,
+    build_floor_gb,
     ensure_build_space,
     free_gb,
     image_store_path,
@@ -40,6 +43,7 @@ def _done(
 @pytest.fixture(autouse=True)
 def _no_threshold_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(PRUNE_FREE_GB_ENV, raising=False)
+    monkeypatch.delenv(BUILD_FREE_GB_ENV, raising=False)
 
 
 # -- prune_threshold_gb -------------------------------------------------------
@@ -65,6 +69,31 @@ def test_threshold_rejects_a_bad_value(monkeypatch: pytest.MonkeyPatch, raw: str
     monkeypatch.setenv(PRUNE_FREE_GB_ENV, raw)
     with pytest.raises(CacheSpaceError, match=PRUNE_FREE_GB_ENV):
         prune_threshold_gb()
+
+
+# -- build_floor_gb -----------------------------------------------------------
+
+
+def test_build_floor_defaults_when_unset_or_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert build_floor_gb() == DEFAULT_BUILD_FREE_GB
+    monkeypatch.setenv(BUILD_FREE_GB_ENV, "  ")
+    assert build_floor_gb() == DEFAULT_BUILD_FREE_GB
+
+
+@pytest.mark.parametrize(("raw", "expected"), [("5", 5.0), ("1.5", 1.5), ("0", 0.0)])
+def test_build_floor_reads_the_env(
+    monkeypatch: pytest.MonkeyPatch, raw: str, expected: float
+) -> None:
+    monkeypatch.setenv(BUILD_FREE_GB_ENV, raw)
+    assert build_floor_gb() == expected
+
+
+@pytest.mark.parametrize("raw", ["three", "-1", "nan"])
+def test_build_floor_rejects_a_bad_value(monkeypatch: pytest.MonkeyPatch, raw: str) -> None:
+    # A typo must stop the build, never silently change the floor.
+    monkeypatch.setenv(BUILD_FREE_GB_ENV, raw)
+    with pytest.raises(CacheSpaceError, match=BUILD_FREE_GB_ENV):
+        build_floor_gb()
 
 
 # -- image_store_path ---------------------------------------------------------
@@ -199,7 +228,7 @@ def test_too_little_space_after_prune_fails_with_the_numbers(fakes: _Fakes) -> N
         ensure_build_space("nerdctl")
     message = str(excinfo.value)
     assert "2.5 GB is free" in message
-    assert "at least 3 GB" in message
+    assert f"at least 3 GB ({BUILD_FREE_GB_ENV})" in message
     assert "vrg-container-cache prune --apply" in message
     assert "auto-prune failed" not in message
 
@@ -210,8 +239,34 @@ def test_floor_never_exceeds_a_lower_threshold(
     # A threshold under the build floor is itself the floor.
     monkeypatch.setenv(PRUNE_FREE_GB_ENV, "2")
     fakes.free.side_effect = [1.0, 1.5]
-    with pytest.raises(CacheSpaceError, match="at least 2 GB"):
+    with pytest.raises(CacheSpaceError, match=rf"at least 2 GB \({PRUNE_FREE_GB_ENV}\)"):
         ensure_build_space("nerdctl")
+
+
+def test_floor_comes_from_the_env(fakes: _Fakes, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(BUILD_FREE_GB_ENV, "6")
+    fakes.free.side_effect = [4.0, 5.0]
+    with pytest.raises(CacheSpaceError, match=rf"at least 6 GB \({BUILD_FREE_GB_ENV}\)"):
+        ensure_build_space("nerdctl")
+
+
+def test_lower_floor_from_the_env_lets_the_build_go_ahead(
+    fakes: _Fakes, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv(BUILD_FREE_GB_ENV, "1")
+    fakes.free.side_effect = [2.0, 2.5]
+    ensure_build_space("nerdctl")
+    assert "WARNING: still only 2.5 GB free" in capsys.readouterr().err
+
+
+def test_bad_floor_stops_the_build_even_with_room(
+    fakes: _Fakes, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Read up front: a typo is caught on every build, not only a low-disk one.
+    monkeypatch.setenv(BUILD_FREE_GB_ENV, "3GB")
+    with pytest.raises(CacheSpaceError, match=BUILD_FREE_GB_ENV):
+        ensure_build_space("nerdctl")
+    fakes.free.assert_not_called()
 
 
 def test_no_repo_set_does_not_guess(fakes: _Fakes, capsys: pytest.CaptureFixture[str]) -> None:
