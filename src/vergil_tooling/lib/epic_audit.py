@@ -110,7 +110,7 @@ def task_drift(since: str, *, org: str) -> list[TaskDrift]:
             title=str(issue.get("title") or ""), body=str(issue.get("body") or "")
         ):
             continue
-        # An intake or planning queue item is never a PR-tracked task: its parent
+        # A queue (intake/planning/deferred) item is never a PR-tracked task: its parent
         # (the queue epic), not a kind label, marks it (epic .github#176).
         task_owner, task_bare = task_repo.split("/", 1)
         parent = epics.parent_of(epics.IssueRef(task_owner, task_bare, task))
@@ -315,8 +315,8 @@ def stray_dotgithub_issue(org: str, *, home: str | None = None) -> list[str]:
 
     The home holds only epics, the ``archive``-labelled per-quarter buckets (a
     legitimate top-level home issue, skipped like epics), and issues linked under
-    an epic — managed tasks and intake/planning queue items alike (a queue item
-    is parented under its queue epic, so no kind-label exemption is needed). An
+    an epic — managed tasks and queue (intake/planning/deferred) items alike (a
+    queue item is parented under its queue epic, so no kind-label exemption is needed). An
     open issue that is none of these — an unlinked, non-epic, non-archive issue —
     is a stray; returns their
     slugs. *home* defaults to ``<org>/.github``; a ``--repo``-targeted audit passes
@@ -543,6 +543,7 @@ def orphan_drift(org: str, *, issues: list[OpenIssue] | None = None) -> list[Orp
 _QUEUE_FULL_HINT = {
     "intake": "Run intake-review.",
     "planning": "Work the planning queue (epic-create).",
+    "deferred": "Run deferred-review.",
 }
 
 
@@ -672,16 +673,15 @@ def nativize_parents(pairs: list[tuple[epics.IssueRef, epics.IssueRef]]) -> int:
 def public_self_homed_queues(
     org: str, *, issues: list[OpenIssue] | None = None
 ) -> list[epics.IssueRef]:
-    """Live intake/planning epics outside ``<org>/.github`` in a repo that is now public."""
+    """Live queue epics outside ``<org>/.github`` in a repo that is now public."""
     if issues is None:
         issues = open_issues(org)
-    queues = (epics.INTAKE, epics.PLANNING)
     return [
         issue.ref
         for issue in issues
         if issue.public
         and issue.ref.repo != ".github"
-        and epics.standing_kind_of(set(issue.labels)) in queues
+        and epics.standing_kind_of(set(issue.labels)) in epics.QUEUE_KINDS
     ]
 
 
@@ -699,8 +699,8 @@ def move_public_queues(queue_epics: list[epics.IssueRef], *, org: str) -> int:
     for old in queue_epics:
         key = epics.queue_kind(old)
         if key is None:
-            raise ValueError(f"{old.slug} is not an intake or planning epic")
-        kind = epics.INTAKE if key == "intake" else epics.PLANNING
+            raise ValueError(f"{old.slug} is not a queue epic")
+        kind = epics.QUEUE_KIND_BY_KEY[key]
         target = epics.ensure_standing_epic(kind, f"{org}/.github", org)
         open_kids = [c.ref for c in epics.child_states(old) if c.state == "OPEN"]
         for index, child in enumerate(open_kids):

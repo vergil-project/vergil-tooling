@@ -1949,11 +1949,11 @@ def test_list_open_adhoc_archives_includes_segmented_titles() -> None:
     assert (IssueRef("org", ".github", 91), "2026-Q3") in got
 
 
-# -- standing kinds: intake / planning queues (epic vergil-project/.github#176) --
+# -- standing kinds: intake / planning / deferred queues (epic .github#176, #508) --
 
 
 def test_standing_kinds_table() -> None:
-    assert epics.STANDING_KINDS == (epics.ADHOC, epics.INTAKE, epics.PLANNING)
+    assert epics.STANDING_KINDS == (epics.ADHOC, epics.INTAKE, epics.PLANNING, epics.DEFERRED)
     assert epics.ADHOC.title_prefix == "Epic (ad hoc): "
     assert epics.ADHOC.labels == ("epic", "ad-hoc")
     assert epics.ADHOC.archive_prefix == "Archive (ad hoc): "
@@ -1966,7 +1966,7 @@ def test_standing_kinds_table() -> None:
     assert epics.PLANNING.labels == ("epic", "planning")
     assert epics.PLANNING.archive_prefix == "Archive (planning): "
     assert epics.PLANNING.archive_labels == ("archive", "planning")
-    assert [k.key for k in epics.STANDING_KINDS] == ["ad-hoc", "intake", "planning"]
+    assert [k.key for k in epics.STANDING_KINDS] == ["ad-hoc", "intake", "planning", "deferred"]
 
 
 def test_standing_kind_labels_are_in_registry() -> None:
@@ -2625,15 +2625,19 @@ def test_drain_standing_org_covers_dotgithub_and_private_self_homes() -> None:
     assert seen == [
         ("intake", "org/.github", "org"),
         ("planning", "org/.github", "org"),
+        ("deferred", "org/.github", "org"),
         ("intake", "org/secret", "secret"),
         ("planning", "org/secret", "secret"),
+        ("deferred", "org/secret", "secret"),
     ]
-    assert len(plans) == 4
+    assert len(plans) == 6
     assert [c.args[:3] for c in mock_apply.call_args_list] == [
         (epics.INTAKE, "org/.github", "org"),
         (epics.PLANNING, "org/.github", "org"),
+        (epics.DEFERRED, "org/.github", "org"),
         (epics.INTAKE, "org/secret", "secret"),
         (epics.PLANNING, "org/secret", "secret"),
+        (epics.DEFERRED, "org/secret", "secret"),
     ]
 
 
@@ -2670,8 +2674,11 @@ def test_drain_standing_org_skips_home_that_raises(capsys: pytest.CaptureFixture
         patch("vergil_tooling.lib.epics.apply_standing_drain") as mock_apply,
     ):
         plans = epics.drain_standing_org("org", apply=True, now=Q4_NOW)  # must NOT raise
-    assert plans == [good]
-    mock_apply.assert_called_once_with(epics.PLANNING, "org/.github", "org", good)
+    assert plans == [good, good]
+    assert [c.args for c in mock_apply.call_args_list] == [
+        (epics.PLANNING, "org/.github", "org", good),
+        (epics.DEFERRED, "org/.github", "org", good),
+    ]
     assert "skipped intake drain in org/.github: multiple intake epics" in capsys.readouterr().err
 
 
@@ -2679,7 +2686,7 @@ def test_drain_standing_org_skips_home_that_raises(capsys: pytest.CaptureFixture
 
 
 def test_epic_sentinels_are_the_standing_kinds_sentinels() -> None:
-    assert epics.EPIC_SENTINELS == ("adhoc", "intake", "planning")
+    assert epics.EPIC_SENTINELS == ("adhoc", "intake", "planning", "deferred")
     assert tuple(k.sentinel for k in epics.STANDING_KINDS) == epics.EPIC_SENTINELS
 
 
@@ -2689,6 +2696,7 @@ def test_epic_sentinels_are_the_standing_kinds_sentinels() -> None:
         ("adhoc", "ensure_adhoc_epic"),
         ("intake", "ensure_intake_epic"),
         ("planning", "ensure_planning_epic"),
+        ("deferred", "ensure_deferred_epic"),
     ],
 )
 def test_resolve_epic_ref_handles_every_sentinel(sentinel: str, ensure: str) -> None:
@@ -2702,3 +2710,139 @@ def test_resolve_epic_ref_handles_every_sentinel(sentinel: str, ensure: str) -> 
     mock_ensure.assert_called_once_with("org/tool")
     mock_qualify.assert_not_called()
     assert sentinel in epics.EPIC_SENTINELS
+
+
+# -- DEFERRED standing queue kind (epic .github#508) ---------------------------
+
+
+def test_deferred_is_a_standing_queue_kind() -> None:
+    assert epics.DEFERRED in epics.STANDING_KINDS
+    assert epics.QUEUE_KINDS == (epics.INTAKE, epics.PLANNING, epics.DEFERRED)
+    assert "deferred" in epics.EPIC_SENTINELS
+    assert epics.standing_kind_of({"epic", "deferred"}) is epics.DEFERRED
+    assert epics.standing_kind_of({"archive", "deferred"}) is None
+
+
+def test_deferred_kind_fields() -> None:
+    kind = epics.DEFERRED
+    assert kind.key == "deferred"
+    assert kind.sentinel == "deferred"
+    assert kind.title_prefix == "Epic (deferred): "
+    assert kind.labels == ("epic", "deferred")
+    assert kind.archive_prefix == "Archive (deferred): "
+    assert kind.archive_labels == ("archive", "deferred")
+    assert kind.body.format(owner="org", name="org") == (
+        "Perpetual deferred queue for org: evaluated items parked until their revival "
+        "conditions are met. Reviewed by deferred-review.\n"
+    )
+
+
+def test_deferred_label_is_defined() -> None:
+    names = {label["name"] for label in load_labels()["labels"]}
+    assert "deferred" in names
+
+
+def test_queue_kind_by_key() -> None:
+    assert epics.QUEUE_KIND_BY_KEY == {
+        "intake": epics.INTAKE,
+        "planning": epics.PLANNING,
+        "deferred": epics.DEFERRED,
+    }
+
+
+def test_archive_re_matches_deferred_archive() -> None:
+    m = epics.archive_re(epics.DEFERRED).match("Archive (deferred): org — 2026-Q4")
+    assert m and m["name"] == "org" and m["quarter"] == "2026-Q4"
+    assert epics.archive_re(epics.DEFERRED).match("Archive (planning): org — 2026-Q4") is None
+    assert epics.archive_re(epics.DEFERRED).match("Epic (deferred): org") is None
+
+
+@pytest.mark.parametrize(
+    ("labels", "queue", "container"),
+    [
+        ({"epic", "deferred"}, "deferred", "deferred"),
+        ({"epic", "intake"}, "intake", "intake"),
+        ({"epic", "planning"}, "planning", "planning"),
+        ({"epic", "ad-hoc"}, None, "ad-hoc"),
+        ({"epic"}, None, None),  # a development epic is not a container
+        ({"archive", "deferred"}, None, None),  # archives are not live containers
+    ],
+)
+def test_queue_kind_and_container_kind_deferred_and_adhoc(
+    labels: set[str], queue: str | None, container: str | None
+) -> None:
+    with patch("vergil_tooling.lib.epics._labels", return_value=labels):
+        assert epics.queue_kind(EPIC) == queue
+        assert epics.container_kind(EPIC) == container
+
+
+def test_queue_item_kind_deferred() -> None:
+    with (
+        patch("vergil_tooling.lib.epics.native_parent_of", return_value=EPIC),
+        patch("vergil_tooling.lib.epics._labels", return_value={"epic", "deferred"}),
+    ):
+        assert epics.queue_item_kind("#101", default_repo="org/repo-a") == "deferred"
+
+
+def test_ensure_deferred_epic_uses_queue_home() -> None:
+    epic = IssueRef("org", ".github", 10)
+    with (
+        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
+        patch("vergil_tooling.lib.epics.ensure_standing_epic", return_value=epic) as mock_ens,
+    ):
+        assert epics.ensure_deferred_epic("org/tool") == epic
+    mock_ens.assert_called_once_with(epics.DEFERRED, "org/.github", "org")
+
+    private = IssueRef("org", "secret", 3)
+    with (
+        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/secret"),
+        patch("vergil_tooling.lib.epics.ensure_standing_epic", return_value=private) as mock_ens,
+    ):
+        assert epics.ensure_deferred_epic("org/secret") == private
+    mock_ens.assert_called_once_with(epics.DEFERRED, "org/secret", "secret")
+
+
+def test_ensure_deferred_epic_creates_with_kind_labels() -> None:
+    # ensure_standing_epic ensures the kind's labels at the point of use (#3378).
+    created = "https://github.com/org/.github/issues/10"
+    with (
+        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
+        patch("vergil_tooling.lib.github.read_json", return_value=[]),
+        patch("vergil_tooling.lib.epics.ensure_labels") as mock_ensure,
+        patch("vergil_tooling.lib.github.create_issue", return_value=created) as mock_create,
+    ):
+        assert epics.ensure_deferred_epic("org/tool") == IssueRef("org", ".github", 10)
+    mock_ensure.assert_called_once_with("org/.github", ("epic", "deferred"))
+    kwargs = mock_create.call_args.kwargs
+    assert kwargs["title"] == "Epic (deferred): org"
+    assert kwargs["labels"] == ["epic", "deferred"]
+    assert kwargs["body"].startswith("Perpetual deferred queue for org:")
+
+
+def test_queue_refusal_message_deferred() -> None:
+    msg = epics.queue_refusal_message("org/tool#5", "deferred")
+    assert msg == (
+        "--issue (org/tool#5) is in the deferred queue; it is deferred until its "
+        "revival conditions are met. Revive it with deferred-review first."
+    )
+
+
+def test_deferred_route_only_points_at_intake_route() -> None:
+    assert "vrg-intake-route" in epics.DEFERRED_ROUTE_ONLY
+
+
+def test_drain_standing_org_covers_deferred() -> None:
+    seen: list[epics.StandingKind] = []
+
+    def fake_plan(
+        kind: epics.StandingKind, home: str, name: str, *, now: datetime
+    ) -> epics.DrainPlan | None:
+        seen.append(kind)
+        return None
+
+    with (
+        patch("vergil_tooling.lib.github.list_org_repos", return_value=[]),
+        patch("vergil_tooling.lib.epics.plan_standing_drain", side_effect=fake_plan),
+    ):
+        epics.drain_standing_org("org", apply=False, now=Q4_NOW)
+    assert seen == [epics.INTAKE, epics.PLANNING, epics.DEFERRED]

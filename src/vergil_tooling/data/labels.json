@@ -16,6 +16,7 @@
     {"name": "ad-hoc", "color": "5319e7", "description": "Perpetual umbrella for ad-hoc work; never auto-closes"},
     {"name": "intake", "color": "fbca04", "description": "Perpetual intake queue of captured, unreviewed work; never auto-closes"},
     {"name": "planning", "color": "1d76db", "description": "Perpetual planning queue of items awaiting or undergoing epic-create; never auto-closes"},
+    {"name": "deferred", "color": "c5def5", "description": "Perpetual deferred queue of items parked until revival conditions are met; never auto-closes"},
     {"name": "in-progress", "color": "0e8a16", "description": "Planning-queue item whose epic-create session is underway"},
     {"name": "archive","color": "6a737d", "description": "Terminal per-quarter archive of closed ad-hoc work; historical record"},
     {"name": "hotfix", "color": "b60205", "description": "Emergency fix that skipped formal planning; flagged for retroactive review"},
