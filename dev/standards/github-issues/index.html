@@ -17353,8 +17353,8 @@ owns the mechanics so nothing is hand-rolled:</p>
 </tr>
 <tr>
 <td>Defer</td>
-<td><code>vrg-intake-route &lt;ref&gt; defer --reason TEXT</code></td>
-<td>Add a dated comment; the item keeps its age and comes up first next time.</td>
+<td><code>vrg-intake-route &lt;ref&gt; defer --reason TEXT --revisit-when TEXT [--date YYYY-MM-DD]</code></td>
+<td>Move the item into the deferred queue with a dated record of why it waits, when to look again, and where it came from.</td>
 </tr>
 <tr>
 <td>One-off</td>
@@ -17376,8 +17376,10 @@ owns the mechanics so nothing is hand-rolled:</p>
 <p>A move <strong>transfers</strong> the issue, keeping its history; if GitHub refuses the
 transfer, the item is recreated in the target repo with a link back and the
 original closed with a pointer. Either way the resulting issue is re-linked under
-its new parent. A route is refused for an issue that is not an intake item, for a
-cross-org target, and for a private item headed to a public repo or epic.</p>
+its new parent. A route is refused when the item's container epic does not allow
+it (see <a href="../../reference/cli-tools-overview/#vrg-intake-route"><code>vrg-intake-route</code></a>
+for the route table), for a cross-org target, and for a private item headed to a
+public repo or epic.</p>
 <h3 id="planning">Planning<a class="headerlink" href="#planning" title="Permanent link">&para;</a></h3>
 <p>A planning item records its own epic-creation process: <code>epic-create</code> always
 works through one, and posts progress comments (what is done, what is blocked,

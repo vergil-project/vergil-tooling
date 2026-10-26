@@ -17574,21 +17574,70 @@ other argument to <code>vrg-intake-create</code>.</p>
 </tbody>
 </table>
 <h3 id="vrg-intake-route">vrg-intake-route<a class="headerlink" href="#vrg-intake-route" title="Permanent link">&para;</a></h3>
-<p>Apply one intake-review decision to one intake item. Owns the routing
-mechanics — transfer-or-recreate, reparent, re-link, close with a pointer — so
-the <code>intake-review</code> skill never hand-rolls them. Routes:</p>
+<p>Route one item between the container epics — intake, planning, ad hoc and
+deferred — applying one queue-review decision. Owns the routing mechanics —
+transfer-or-recreate, reparent, re-link, close with a pointer, record a
+deferral — so no review skill hand-rolls them. Routes:</p>
 <ul>
-<li><code>drop --reason TEXT</code> — comment the reason and close (not planned).</li>
-<li><code>defer --reason TEXT</code> — add a dated comment; the item keeps its age.</li>
-<li><code>one-off --repo OWNER/REPO [--epic REF]</code> — move the item into the target
+<li><code>drop --reason TEXT</code> — comment the reason, naming the queue it was dropped
+  from (<code>Dropped in &lt;queue&gt; review: …</code>), and close (not planned).</li>
+<li><code>defer --reason TEXT --revisit-when TEXT [--date YYYY-MM-DD]</code> — move the
+  item into its queue home's deferred epic and post the deferral record:</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>Deferred &lt;YYYY-MM-DD&gt;: &lt;reason&gt;
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>Revisit when: &lt;conditions&gt;
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>Deferred from: &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;
+</code></pre></div>
+<p><code>--date</code> stamps an original deferral date instead of today. The item is
+  linked before the record is posted, and a planning item's <code>in-progress</code>
+  label is removed. On an item already deferred, <code>defer</code> is a <strong>refresh</strong>: a
+  new record, no move, and no <code>Deferred from:</code> line. If the record fails after
+  the move, the command fails loudly and prints the full intended comment to
+  post by hand.
+- <code>intake</code> — reparent a deferred item back onto its home's intake epic.
+- <code>one-off --repo OWNER/REPO [--epic REF]</code> — move the item into the target
   repo (transfer, or recreate with a link back when GitHub refuses the
   transfer) and link it under that repo's ad-hoc epic (default <code>adhoc</code>) or the
-  named epic.</li>
-<li><code>planning</code> — reparent the item from the intake epic to the planning epic of
-  the same queue home.</li>
-<li><code>split --into REF [--into REF …] --reason TEXT</code> — comment links to the
-  replacement tasks (already created with <code>vrg-issue-create</code>) and close.</li>
-</ul>
+  named epic.
+- <code>planning</code> — reparent the item onto the planning epic of the same queue
+  home.
+- <code>split --into REF [--into REF …] --reason TEXT</code> — comment links to the
+  replacement tasks (already created with <code>vrg-issue-create</code>) and close.</p>
+<p>Which routes an item allows depends on the container epic it is in:</p>
+<table>
+<thead>
+<tr>
+<th>Item is in</th>
+<th>Allowed routes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>intake</td>
+<td><code>drop</code>, <code>defer</code>, <code>one-off</code>, <code>planning</code>, <code>split</code></td>
+</tr>
+<tr>
+<td>planning</td>
+<td><code>defer</code>, <code>drop</code> — both refused once an <code>Epic:</code> marker is recorded</td>
+</tr>
+<tr>
+<td>ad hoc</td>
+<td><code>defer</code> — refused while an open PR would close the item</td>
+</tr>
+<tr>
+<td>deferred</td>
+<td><code>defer</code> (refresh), <code>intake</code>, <code>planning</code>, <code>one-off</code>, <code>drop</code>, <code>split</code></td>
+</tr>
+<tr>
+<td>no parent</td>
+<td><code>planning</code> (the <code>epic-create</code> free-text path)</td>
+</tr>
+<tr>
+<td>a development epic, or anything else</td>
+<td>none — refused, naming the parent</td>
+</tr>
+</tbody>
+</table>
 <table>
 <thead>
 <tr>
@@ -17599,23 +17648,23 @@ the <code>intake-review</code> skill never hand-rolls them. Routes:</p>
 <tbody>
 <tr>
 <td>Source</td>
-<td><code>vergil_tooling.bin.vrg_intake_route</code> (mechanics: <code>lib/intake_route.py</code>)</td>
+<td><code>vergil_tooling.bin.vrg_intake_route</code> (mechanics and route table: <code>lib/intake_route.py</code>)</td>
 </tr>
 <tr>
 <td>Args</td>
-<td><code>&lt;issue-ref&gt;</code> (<code>owner/repo#N</code>, or <code>#N</code> in the current repo), then a route: <code>drop</code>, <code>defer</code>, <code>one-off</code>, <code>planning</code>, <code>split</code></td>
+<td><code>&lt;issue-ref&gt;</code> (<code>owner/repo#N</code>, or <code>#N</code> in the current repo), then a route: <code>drop</code>, <code>defer</code>, <code>intake</code>, <code>one-off</code>, <code>planning</code>, <code>split</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>The item is a child of an intake epic (<code>planning</code> also accepts an unparented issue); GitHub App credentials for the item's org</td>
+<td>The item is a child of a container epic that allows the route (<code>planning</code> also accepts an unparented issue); GitHub App credentials for the item's org</td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>A refused route — not an intake item, a cross-org target, or a private item headed to a public repo or epic — exits 1 with the reason on stderr</td>
+<td>A refused route — not allowed from the item's container, a development-epic task, a planning item with an <code>Epic:</code> marker, an ad-hoc item with an open closing PR, a cross-org target, or a private item headed to a public repo or epic — exits 1 with the reason on stderr. A route half-applied by a failure raises with the state it left and how to fix it</td>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 routed, 1 refused or error, 2 bad arguments</td>
+<td>0 routed, 1 refused or error, 2 bad arguments (including a missing <code>--revisit-when</code> or a malformed <code>--date</code>)</td>
 </tr>
 <tr>
 <td>Status</td>
@@ -17706,21 +17755,21 @@ merged verdict was withheld, issue #1719) is counted under
 behind a "0 cruft" message (issue #2347). A merged release or deps
 worktree shows as <code>merged</code> in its own section but is not counted as
 <code>vrg-finalize-pr</code> cruft.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>Main checkout (integration branch: develop)
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>CHECKOUT               BRANCH   DIRTY  LAST COMMIT  STATUS
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>mq-gateway-replay-lab  develop  -      23d ago      ok
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>Development
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>WORKTREE                      BRANCH                          PR  STATE  WORKFLOW  AHEAD  DIRTY  LAST COMMIT  LAST MODIFIED
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>issue-315-deps-security-bump  feature/315-deps-security-bump  -   no-pr  ready     1      -      1h ago       1h ago
-<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>
-<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>Other / unknown
-<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>WORKTREE         BRANCH      PR  STATE     WORKFLOW  AHEAD  DIRTY  LAST COMMIT  LAST MODIFIED
-<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>tmp-wheel-build  (detached)  -   detached  -         0      -      82d ago      82d ago
-<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>  note: tmp-wheel-build (detached): detached HEAD — no branch checked out; check out a branch to resume work
-<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>
-<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>3 worktrees: main checkout (ok), 1 development, 0 release and dependency machinery, 1 other / unknown.
-<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>Development: 0 active, 0 needs-attention, 1 stalled (no-pr), 0 cruft (removable). 1 PR prepared.
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>Main checkout (integration branch: develop)
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>CHECKOUT               BRANCH   DIRTY  LAST COMMIT  STATUS
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>mq-gateway-replay-lab  develop  -      23d ago      ok
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>Development
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>WORKTREE                      BRANCH                          PR  STATE  WORKFLOW  AHEAD  DIRTY  LAST COMMIT  LAST MODIFIED
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>issue-315-deps-security-bump  feature/315-deps-security-bump  -   no-pr  ready     1      -      1h ago       1h ago
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>Other / unknown
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>WORKTREE         BRANCH      PR  STATE     WORKFLOW  AHEAD  DIRTY  LAST COMMIT  LAST MODIFIED
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>tmp-wheel-build  (detached)  -   detached  -         0      -      82d ago      82d ago
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>  note: tmp-wheel-build (detached): detached HEAD — no branch checked out; check out a branch to resume work
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>3 worktrees: main checkout (ok), 1 development, 0 release and dependency machinery, 1 other / unknown.
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a>Development: 0 active, 0 needs-attention, 1 stalled (no-pr), 0 cruft (removable). 1 PR prepared.
 </code></pre></div>
 <table>
 <thead>
