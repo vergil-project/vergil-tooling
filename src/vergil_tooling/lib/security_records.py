@@ -304,34 +304,40 @@ def _moved_comment(moved_to: Sequence[IssueRef]) -> str:
     return f"Security record moved to {', '.join(ref.slug for ref in moved_to)}"
 
 
-def unmark_issue(ref: IssueRef, moved_to: Sequence[IssueRef]) -> None:
-    """Drop *ref*'s advisory line and ``security`` label and say where it moved.
+def unmark_issue(ref: IssueRef, ghsa_id: str, moved_to: Sequence[IssueRef]) -> None:
+    """Drop *ref*'s line naming *ghsa_id* and its ``security`` label; say where it moved.
 
-    Idempotent: each step runs only if it is still needed, so a re-run after a
-    partial failure finishes the job without a second comment.
+    An issue names one advisory (:func:`parse_advisory_ref`). If *ref*'s body
+    does not name *ghsa_id* — it names another advisory, or none — the issue
+    is left untouched: no body edit, no label change, no comment. Otherwise
+    only the line naming *ghsa_id* is removed.
 
     The comment goes first and the line and label then go in **one** PATCH, so
     an interrupted unmark never leaves the issue with only one of the two: it
     either still carries both (and :func:`security_issues` still finds it
     naming this advisory, so a re-run of :func:`retarget` finishes it) or
-    neither.
+    neither. That makes it idempotent: once the PATCH has landed the line is
+    gone and a re-run does nothing, so the comment is never posted twice.
     """
     if not moved_to:
         raise ValueError(f"unmark {ref.slug}: no issue the record moved to")
     endpoint = _issue_endpoint(ref)
     present, body = _issue_labels_body(ref)
+    if parse_advisory_ref(body) != ghsa_id:
+        return
     comment = _moved_comment(moved_to)
     existing = github.read_json_paginated(f"{endpoint}/comments", jq="[.[] | .body]")
     if comment not in existing:
         github.write_json("POST", f"{endpoint}/comments", {"body": comment})
-    update: dict[str, object] = {}
-    if _ADVISORY_RE.search(body):
-        kept = _ADVISORY_RE.sub("", body)
-        update["body"] = re.sub(r"\n{3,}", "\n\n", kept).rstrip()
+    this_line = re.compile(
+        rf"^Security advisory: {_NAME}/\.github {re.escape(ghsa_id)}[ \t]*\r?$", re.M
+    )
+    update: dict[str, object] = {
+        "body": re.sub(r"\n{3,}", "\n\n", this_line.sub("", body)).rstrip()
+    }
     if SECURITY_LABEL in present:
         update["labels"] = sorted(present - {SECURITY_LABEL})
-    if update:
-        github.write_json("PATCH", endpoint, update)
+    github.write_json("PATCH", endpoint, update)
 
 
 def _with_tracking(description: str, targets: Sequence[IssueRef]) -> str:
@@ -378,7 +384,9 @@ def retarget(
     (:func:`security_issues`, a REST listing, never search). The second source
     is what makes a re-run with the same arguments finish an interrupted run:
     once the tracking lines are rewritten they no longer name the dropped
-    issue, but the issue itself still does until it is unmarked.
+    issue, but the issue itself still does until it is unmarked. A dropped
+    issue whose body does not name *ghsa_id* (it names another advisory, or
+    none) is never touched (:func:`unmark_issue`).
 
     *renamed* names old numbers of issues that are themselves a target (a
     transferred issue): their tracking line is replaced but they are never
@@ -404,7 +412,7 @@ def retarget(
     for ref in dict.fromkeys((*previous, *marked)):
         if ref not in wanted and ref not in renamed:
             with _step(ghsa_id, f"unmarking {ref.slug}"):
-                unmark_issue(ref, wanted)
+                unmark_issue(ref, ghsa_id, wanted)
 
 
 def security_issues(org: str) -> list[SecurityIssue]:
