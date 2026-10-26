@@ -766,6 +766,30 @@ Container tools run inside dev containers launched by `vrg-container-run`.
 They assume language toolchain dependencies (ruff, mypy, shellcheck,
 markdownlint, yamllint) are available on PATH.
 
+### vrg-validate
+
+The unified validation driver. It reads `[project].primary-language`
+from `vergil.toml` and runs the stages in order: common checks, the
+language's install, lint, typecheck, test and audit commands, and last
+the repository's custom validator (`scripts/bin/validate-custom` or
+`vrg-validate-custom` on `PATH`) when it has one. `--check` runs one
+stage. `--check custom` runs the install stage (when the language has
+one) and then the custom stage; with no custom validator it prints one
+"no custom validator" line and exits 0, and a validator that is present
+but not an executable regular file fails. PR CI runs each stage through
+the `vergil-actions` reusable workflows, the custom stage as
+`quality / custom`. See the [Validation Matrix](../guides/validation-matrix.md)
+for every check and where it runs.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_validate` |
+| Args | `--check {common,lint,typecheck,test,audit,custom}`, `--all-versions` (Python only; alone or with `--check test`) |
+| Preconditions | Inside a dev container (run it as `vrg-container-run -- vrg-validate`) |
+| Failure mode | Runs every stage after install and reports all failures in one run; install fails fast |
+| Exit codes | 0 all passed, 1 a stage failed or the config is invalid, 2 usage error (for example `--check custom --all-versions`) |
+| Status | Active |
+
 ### vrg-validate-common
 
 Shared validation checks for all repos: repository profile

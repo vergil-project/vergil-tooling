@@ -154,16 +154,18 @@ prefix:
 | `security / …`, plus GHAS `Trivy` / `Semgrep OSS` / `CodeQL` | `security`    | Yes                 |
 | `test / …`                                         | `test`        | Yes                 |
 | `audit / …`                                        | `audit`       | Yes                 |
-| `quality / …` (lint, typecheck)                    | `quality`     | Yes                 |
+| `quality / …` (common, custom, lint, typecheck)    | `quality`     | Yes                 |
 | `package / …` (only with `[package]`)              | `package`     | Yes                 |
 | `version / …`                                      | —             | No (non-blocking)   |
 | `docs`                                             | —             | No (low-signal)     |
 
 The guiding principle: **any gate that can block the build is evidence worth
-keeping.** Quality (lint/typecheck) sits alongside security, test, and audit as
-first-class evidence. A repo whose `vergil.toml` has a `[package]` section also
-requires the `package / evidence` gate (the `ci-package.yml` aggregate over its
-whole target matrix), so the harvest pulls `ci-evidence-package` for it; a repo
+keeping.** Quality (common checks, custom validator, lint and typecheck)
+sits alongside security, test, and audit as first-class evidence, and
+every repo requires the `quality / evidence` gate, whatever its language.
+A repo whose `vergil.toml` has a `[package]` section also requires the
+`package / evidence` gate (the `ci-package.yml` aggregate over its whole
+target matrix), so the harvest pulls `ci-evidence-package` for it; a repo
 without `[package]` never calls `ci-package.yml` and is never asked for it.
 `version/` is a sanity check on version state, not substantive evidence, and
 `docs` is low-signal; the absence of either does not fail the release.
@@ -196,17 +198,24 @@ there is no point publishing empty reports.**
 Producers must therefore emit real report files at the workspace-root paths the
 producer composite globs for:
 
-The test, audit, and quality report files are emitted **once per resolved
-version** (`<ver>` ∈ `3.12` / `3.13` / `3.14` / `3.15` for this repo today);
-the security SARIF are **not**
-per-version:
+The test and audit report files and the quality lint and typecheck reports
+are emitted **once per resolved version** (`<ver>` ∈ `3.12` / `3.13` /
+`3.14` / `3.15` for this repo today). The quality transcripts and the
+security SARIF are **not** per-version:
 
 | Gate      | Required report file(s)                                             |
 | --------- | ------------------------------------------------------------------- |
 | `test`    | `coverage-<ver>.xml`, `junit-<ver>.xml`                             |
 | `audit`   | `pip-audit-<ver>.json`, `licenses-<ver>.json`                       |
-| `quality` | `quality-ruff-<ver>.json`, `quality-mypy-<ver>.xml`                 |
+| `quality` | `quality-common.log`, `quality-custom.log`, `quality-ruff-<ver>.json`, `quality-mypy-<ver>.xml` |
 | `security`| `python.sarif`, `trivy-results.sarif`, `semgrep-results.sarif`      |
+
+`quality-common.log` is the transcript of `vrg-validate --check common` and
+`quality-custom.log` the transcript of `vrg-validate --check custom`, each
+captured once per run by the `quality / common` and `quality / custom` jobs.
+Every repository emits both, so even a language-less repository's quality
+gate carries real reports. A repository with no custom validator still
+ships `quality-custom.log`, holding the one "no custom validator" line.
 
 Producers emit these files today: the check registry runs `pytest --cov …
 --cov-report=xml --junitxml=…`, `pip-audit` / license checks write `--output`
@@ -233,7 +242,7 @@ v{version}-ci-evidence.tar.gz
    │   ├─ security/          # python.sarif, trivy-results.sarif, semgrep-results.sarif, evidence.json
    │   ├─ test/              # coverage-<ver>.xml, junit-<ver>.xml (per Python version), evidence.json
    │   ├─ audit/             # pip-audit-<ver>.json, licenses-<ver>.json (per Python version), evidence.json
-   │   ├─ quality/           # quality-ruff-<ver>.json, quality-mypy-<ver>.xml (per Python version), evidence.json
+   │   ├─ quality/           # quality-common.log, quality-custom.log, quality-ruff-<ver>.json, quality-mypy-<ver>.xml (per Python version), evidence.json
    │   └─ sbom/              # sbom.cdx.json
    └─ README.md              # human orientation for the archive
 ```
