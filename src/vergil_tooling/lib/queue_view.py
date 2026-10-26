@@ -1,4 +1,4 @@
-"""Read-only views of the intake and planning queues.
+"""Read-only views of the intake, planning and deferred queues.
 
 The intake queue is the open children of a home's ``Epic (intake): <name>``
 standing epic, oldest first; every item is *waiting* (captured, not reviewed).
@@ -11,6 +11,13 @@ markers ``epic-create`` writes as comments:
 - **ready-to-close** — labelled, the ``Epic:``, ``Docs task:`` and
   ``Tasks filed: yes`` markers are all present, and the docs task is closed
   (closed means its spec + plan docs PR merged).
+
+The deferred queue is the open children of ``Epic (deferred): <name>``; every
+item is *waiting* (evaluated and parked until its revival conditions are met).
+Its note is the latest deferral comment (``Deferred <day>: <reason>`` with its
+``Revisit when:`` line), and it lists least recently deferred first, so a
+refreshed item sinks to the bottom. An item with no deferral comment (moved by
+hand, or legacy) has an empty note and sorts first.
 
 Nothing here mutates GitHub: the queue epic is looked up with
 :func:`epics.find_standing_epic` (never created), and a missing queue epic is
@@ -43,6 +50,11 @@ _EPIC_RE = re.compile(rf"^{re.escape(EPIC_MARKER)}\s*{_SLUG}\s*$")
 _DOCS_TASK_RE = re.compile(rf"^{re.escape(DOCS_TASK_MARKER)}\s*{_SLUG}\s*$")
 _TASKS_FILED_RE = re.compile(rf"^{re.escape(TASKS_FILED_MARKER)}\s*(\S+)\s*$")
 
+# A deferral comment's first line, and its ``Revisit when:`` line; the comment
+# is written by ``vrg-intake-route <ref> defer``.
+_DEFERRED_RE = re.compile(r"^Deferred (\d{4}-\d{2}-\d{2}): (.*)$")
+_REVISIT_WHEN = "Revisit when:"
+
 QueueState = Literal["waiting", "in-progress", "ready-to-close"]
 
 
@@ -69,6 +81,35 @@ class PlanningMarkers:
     epic: IssueRef | None
     docs_task: IssueRef | None
     tasks_filed: bool
+
+
+@dataclass(frozen=True)
+class Deferral:
+    """The latest deferral recorded on a deferred item."""
+
+    day: str
+    reason: str
+    revisit_when: str
+
+
+def parse_latest_deferral(comments: Sequence[str]) -> Deferral | None:
+    """The latest deferral among *comments* (oldest first), or None when there is none.
+
+    A deferral is a comment whose first line is ``Deferred <YYYY-MM-DD>: <reason>``;
+    its ``revisit_when`` is the value of its ``Revisit when:`` line (``""`` if absent).
+    """
+    for comment in reversed(comments):
+        lines = comment.strip().splitlines()
+        if not lines or not (m := _DEFERRED_RE.match(lines[0].strip())):
+            continue
+        revisit_when = ""
+        for raw in lines[1:]:
+            line = raw.strip()
+            if line.startswith(_REVISIT_WHEN):
+                revisit_when = line.removeprefix(_REVISIT_WHEN).strip()
+                break
+        return Deferral(day=m.group(1), reason=m.group(2).strip(), revisit_when=revisit_when)
+    return None
 
 
 def _ref(match: re.Match[str]) -> IssueRef:
@@ -170,6 +211,34 @@ def planning_items(home: str, name: str) -> list[QueueItem]:
             )
         )
     return _oldest_first(items)
+
+
+def deferred_items(home: str, name: str) -> list[QueueItem]:
+    """The open deferred items under *home*'s deferred epic for *name*.
+
+    Least recently deferred first; an item with no deferral comment sorts first,
+    with an empty note.
+    """
+    keyed: list[tuple[str, QueueItem]] = []
+    for ref in _open_children(epics.DEFERRED, home, name):
+        view = _view(ref, "title,createdAt,comments")
+        deferral = parse_latest_deferral(_comment_bodies(view))
+        note = (
+            f"Deferred {deferral.day}: {deferral.reason} | Revisit when: {deferral.revisit_when}"
+            if deferral is not None
+            else ""
+        )
+        item = QueueItem(
+            ref=ref,
+            title=str(view.get("title") or ""),
+            created_at=str(view.get("createdAt") or ""),
+            state="waiting",
+            note=note,
+            epic=None,
+        )
+        keyed.append((deferral.day if deferral is not None else "", item))
+    keyed.sort(key=lambda pair: (pair[0], pair[1].created_at, pair[1].ref.slug))
+    return [item for _, item in keyed]
 
 
 def _age(created_at: str, now: datetime) -> str:

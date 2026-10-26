@@ -36,11 +36,105 @@ _ITEM = QueueItem(
 )
 
 
-def test_parse_args_requires_known_queue() -> None:
-    with pytest.raises(SystemExit):
-        parse_args([])
+def test_parse_args_queue_optional_but_known() -> None:
+    assert parse_args([]).queue is None
+    assert parse_args(["deferred"]).queue == "deferred"
     with pytest.raises(SystemExit):
         parse_args(["triage"])
+
+
+_DEFERRED_ITEM = QueueItem(
+    ref=IssueRef("org", "tool", 7),
+    title="park the thing",
+    created_at="2026-09-01T00:00:00Z",
+    state="waiting",
+    note="Deferred 2026-10-20: waits on X | Revisit when: X ships",
+    epic=None,
+)
+
+
+def _missing(kind: str) -> object:
+    def view(home: str, name: str) -> list[QueueItem]:
+        msg = f"no open 'Epic ({kind}): {name}' {kind} epic in {home}"
+        raise queue_view.QueueNotFoundError(msg)
+
+    return view
+
+
+def test_vrg_queue_deferred_text_and_json(capsys: pytest.CaptureFixture[str]) -> None:
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
+        patch(f"{_MOD}.epics.queue_home", return_value=("org/.github", "org")),
+        patch.dict(f"{_MOD}._VIEWS", {"deferred": lambda _h, _n: [_DEFERRED_ITEM]}),
+    ):
+        assert main(["deferred"]) == 0
+        lines = capsys.readouterr().out.splitlines()
+        assert main(["deferred", "--json"]) == 0
+        data = json.loads(capsys.readouterr().out)
+    assert lines[0] == "deferred queue for org in org/.github: 1 open item(s)"
+    assert lines[1].startswith("org/tool#7  ")
+    assert lines[1].endswith(
+        "d  waiting  park the thing  — Deferred 2026-10-20: waits on X | Revisit when: X ships"
+    )
+    assert len(lines) == 2
+    assert data == [
+        {
+            "ref": {"owner": "org", "repo": "tool", "number": 7},
+            "title": "park the thing",
+            "created_at": "2026-09-01T00:00:00Z",
+            "state": "waiting",
+            "note": "Deferred 2026-10-20: waits on X | Revisit when: X ships",
+            "epic": None,
+        }
+    ]
+
+
+def test_vrg_queue_named_deferred_missing_fails_loud(capsys: pytest.CaptureFixture[str]) -> None:
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
+        patch(f"{_MOD}.epics.queue_home", return_value=("org/.github", "org")),
+        patch.dict(f"{_MOD}._VIEWS", {"deferred": _missing("deferred")}),
+    ):
+        rc = main(["deferred"])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "vrg-queue: no open 'Epic (deferred): org' deferred epic" in captured.err
+
+
+def test_vrg_queue_bare_lists_all_three_and_tolerates_missing(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    views = {
+        "intake": lambda _h, _n: [_ITEM],
+        "planning": _missing("planning"),
+        "deferred": lambda _h, _n: [_DEFERRED_ITEM],
+    }
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
+        patch(f"{_MOD}.epics.queue_home", return_value=("org/.github", "org")) as home,
+        patch.dict(f"{_MOD}._VIEWS", views),
+    ):
+        assert main([]) == 0
+        captured = capsys.readouterr()
+        assert main(["--json"]) == 0
+        data = json.loads(capsys.readouterr().out)
+    assert home.call_count == 2
+    assert captured.err == ""
+    lines = captured.out.splitlines()
+    assert lines[0] == "intake queue for org in org/.github: 1 open item(s)"
+    assert lines[1].startswith("org/.github#5  ")
+    assert lines[2] == ""
+    assert lines[3] == "planning queue for org in org/.github: no queue yet"
+    assert lines[4] == ""
+    assert lines[5] == "deferred queue for org in org/.github: 1 open item(s)"
+    assert lines[6].startswith("org/tool#7  ")
+    assert len(lines) == 7
+    # JSON: one key per queue, in order; a missing queue is null.
+    assert list(data) == ["intake", "planning", "deferred"]
+    assert data["intake"] == queue_view.to_json([_ITEM])
+    assert data["planning"] is None
+    assert data["deferred"] == queue_view.to_json([_DEFERRED_ITEM])
 
 
 def test_vrg_queue_json_output(capsys: pytest.CaptureFixture[str]) -> None:
@@ -197,4 +291,6 @@ def test_views_wire_to_queue_view() -> None:
 
     assert vrg_queue._VIEWS["intake"] is queue_view.intake_items
     assert vrg_queue._VIEWS["planning"] is queue_view.planning_items
-    assert set(vrg_queue._VIEWS) == {"intake", "planning"}
+    assert vrg_queue._VIEWS["deferred"] is queue_view.deferred_items
+    # Bare vrg-queue lists the queues in this order.
+    assert list(vrg_queue._VIEWS) == ["intake", "planning", "deferred"]

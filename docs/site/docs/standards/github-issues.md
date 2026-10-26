@@ -450,6 +450,8 @@ warns, ignores `--kind`, and forwards to `vrg-intake-create`.
 ```bash
 vrg-queue intake    # open intake items, oldest first
 vrg-queue planning  # open planning items: waiting / in-progress / ready-to-close
+vrg-queue deferred  # open deferred items, least recently deferred first
+vrg-queue           # all three queues, in that order
 ```
 
 It defaults to the current org's `.github` queues; `--repo <owner>/<repo>`
