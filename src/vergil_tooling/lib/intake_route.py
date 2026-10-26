@@ -1,31 +1,40 @@
-"""Deterministic routing of an intake item (epic vergil-project/.github#176).
+"""Deterministic routing between the container epics (epics vergil-project/.github#176, #508).
 
-Intake review decides, per item, one of five routes; this module owns the
-mechanics so the skill never hand-rolls them:
+Every queue review decides, per item, one route; this module owns the mechanics
+so no skill hand-rolls them. An item is routed out of the **container epic** it
+sits in (intake, planning, ad hoc or deferred), and :data:`ROUTES` says which
+routes each container allows:
 
-- **drop** — comment the reason and close (not planned).
-- **defer** — add a dated comment; nothing else changes, so the item keeps its
-  age and comes up first next review.
+- **drop** — comment the reason, naming the queue it was dropped from, and
+  close (not planned).
+- **defer** — move the item into its queue home's deferred epic and record why
+  it waits and when to look again, plus the container it came ``from``; on an
+  item already deferred it is a **refresh**: a new record, no move, no
+  ``Deferred from:`` line. The link lands before the record, and a record that
+  fails after the move raises with the full intended comment.
+- **intake** — reparent a deferred item back onto its home's intake epic.
 - **one-off** — move the item into its target repo and link it under that
   repo's ad-hoc epic (or a named finite epic). A move *transfers* the issue,
   keeping its history; when GitHub refuses the transfer it falls back to
   recreating the item in the target repo with a link back and closing the
   original with a pointer — and says so on stderr. A transfer carries the
-  item's intake parent across (sometimes only after a delay), so the moved
+  item's old parent across (sometimes only after a delay), so the moved
   issue is *reparented* with ``replaceParent`` and its final parent verified
   after a settle delay, replaced again if the old parent came back late
   (#3556). A recreated issue starts unparented and is simply linked. Either
   way, a final parent other than the target epic fails loudly. A one-off whose
   work lands in the item's own repo is just reparented.
-- **planning** — reparent from the intake epic to the planning epic of the
-  same queue home.
+- **planning** — reparent onto the planning epic of the same queue home.
 - **split** — the replacement tasks already exist (made with
   ``vrg-issue-create``); comment the links and the reason, then close.
 
-Only an intake child may be routed (``planning`` also accepts an unparented
-issue: the ``epic-create`` free-text path). A private repo's item is never
-routed to a public repo or epic. The whole route runs under the item owner's
-App token (:func:`github.target_org`).
+A task in a development epic, an epic, and an unparented issue are refused
+(``planning`` alone accepts an unparented issue: the ``epic-create`` free-text
+path), the refusal naming the parent. A planning item whose ``epic-create``
+session already recorded an ``Epic:`` marker refuses defer and drop, and an
+ad-hoc item refuses defer while an open PR would close it. A private repo's item
+is never routed to a public repo or epic. The whole route runs under the item
+owner's App token (:func:`github.target_org`).
 """
 
 from __future__ import annotations
@@ -36,20 +45,22 @@ import sys
 import time
 from dataclasses import dataclass
 from datetime import date
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from vergil_tooling.lib import epics, github
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.labels import RETIRED_LABELS, ensure_labels, load_labels
 from vergil_tooling.lib.process_errors import error_text
+from vergil_tooling.lib.queue_view import parse_planning_markers
 
-DROP_COMMENT = "Dropped in intake review: {reason}"
-DEFER_COMMENT = "Deferred {day}: {reason}"
+DROP_COMMENT = "Dropped in {queue} review: {reason}"
+DEFER_COMMENT = "Deferred {day}: {reason}\nRevisit when: {revisit_when}"
+DEFERRED_FROM_LINE = "Deferred from: {epic}"
 SPLIT_COMMENT = "Split into: {refs}. {reason}"
 MOVED_TO_COMMENT = "Moved to {url}"
 MOVED_FROM_LINE = "Moved from {url}"
 
-# A transfer carries the intake parent over eventually, not atomically: a link
+# A transfer carries the old parent over eventually, not atomically: a link
 # made right after it can be overwritten seconds later (#3556). Each settle
 # round replaces the parent, waits, then re-reads it.
 _SETTLE_ROUNDS = 4
@@ -59,7 +70,7 @@ _ISSUE_URL_RE = re.compile(r"https?://[^/\s]+/([^/\s]+)/([^/\s]+)/issues/([0-9]+
 
 
 class RouteRefusedError(ValueError):
-    """A route that must not run: wrong queue, cross-org, or private → public."""
+    """A route that must not run: wrong container, cross-org, or private → public."""
 
 
 @dataclass(frozen=True)
@@ -70,6 +81,8 @@ class Drop:
 @dataclass(frozen=True)
 class Defer:
     reason: str
+    revisit_when: str
+    day: date | None = None  # overrides today (e.g. to keep an original deferral date)
 
 
 @dataclass(frozen=True)
@@ -84,12 +97,38 @@ class ToPlanning:
 
 
 @dataclass(frozen=True)
+class ToIntake:
+    pass
+
+
+@dataclass(frozen=True)
 class Split:
     into: tuple[IssueRef, ...]
     reason: str
 
 
-RouteAction = Drop | Defer | OneOff | ToPlanning | Split
+RouteAction = Drop | Defer | OneOff | ToPlanning | ToIntake | Split
+
+# The routes each container allows, keyed by :func:`epics.container_kind` of the
+# item's parent; ``None`` is an unparented item. A parent of any other kind (a
+# development epic, an archive) allows nothing.
+ROUTES: dict[str | None, frozenset[type]] = {
+    "intake": frozenset({Drop, Defer, OneOff, ToPlanning, Split}),
+    "planning": frozenset({Defer, Drop}),
+    "ad-hoc": frozenset({Defer}),
+    "deferred": frozenset({Defer, ToIntake, ToPlanning, OneOff, Drop, Split}),
+    None: frozenset({ToPlanning}),
+}
+
+# The CLI name of each route, for refusals.
+_ROUTE_NAMES: dict[type, str] = {
+    Drop: "drop",
+    Defer: "defer",
+    OneOff: "one-off",
+    ToPlanning: "planning",
+    ToIntake: "intake",
+    Split: "split",
+}
 
 
 @dataclass(frozen=True)
@@ -101,7 +140,7 @@ class RouteResult:
 
 
 def route(ref: IssueRef, action: RouteAction, *, today: date | None = None) -> RouteResult:
-    """Apply *action* to the intake item *ref*; raise :class:`RouteRefusedError` to refuse."""
+    """Apply *action* to the container item *ref*; raise :class:`RouteRefusedError` to refuse."""
     with github.target_org(ref.owner):
         return _route(ref, action, today or date.today())
 
@@ -112,12 +151,15 @@ def _repo_of(ref: IssueRef) -> str:
 
 def _route(ref: IssueRef, action: RouteAction, today: date) -> RouteResult:
     parent = epics.parent_of(ref)
-    _check_eligible(ref, action, parent)
+    kind = _check_eligible(ref, action, parent)
     if isinstance(action, Drop):
-        _close(ref, DROP_COMMENT.format(reason=action.reason), reason="not planned")
+        if kind == epics.PLANNING.key:
+            _guard_planning_epic(ref, _view(ref, "labels,comments"), "dropping")
+        _close(ref, DROP_COMMENT.format(queue=kind, reason=action.reason), reason="not planned")
         return RouteResult(final=ref, moved_by="none")
     if isinstance(action, Defer):
-        _comment(ref, DEFER_COMMENT.format(day=today.isoformat(), reason=action.reason))
+        # _check_eligible refuses an unparented defer, so *parent* is set here.
+        _defer(ref, action, kind, cast("IssueRef", parent), action.day or today)
         return RouteResult(final=ref, moved_by="none")
     if isinstance(action, Split):
         if not action.into:
@@ -130,23 +172,123 @@ def _route(ref: IssueRef, action: RouteAction, today: date) -> RouteResult:
         _guard_visibility(ref, _repo_of(planning))
         _link(planning, ref)
         return RouteResult(final=ref, moved_by="none")
+    if isinstance(action, ToIntake):
+        intake = epics.ensure_intake_epic(_repo_of(ref))
+        _guard_visibility(ref, _repo_of(intake))
+        _link(intake, ref)
+        return RouteResult(final=ref, moved_by="none")
     return _one_off(ref, action)
 
 
-def _check_eligible(ref: IssueRef, action: RouteAction, parent: IssueRef | None) -> None:
-    """Refuse unless *ref* is an intake child (or unparented, for ``planning``)."""
+def _check_eligible(ref: IssueRef, action: RouteAction, parent: IssueRef | None) -> str | None:
+    """Refuse *action* unless :data:`ROUTES` allows it from *ref*'s container.
+
+    Returns the container kind of *parent* (None for an unparented item).
+    """
+    name = _ROUTE_NAMES[type(action)]
     if parent is None:
-        if isinstance(action, ToPlanning):
-            return
+        if type(action) in ROUTES[None]:
+            return None
         raise RouteRefusedError(
-            f"{ref.slug} has no parent; only intake items can be routed "
-            "(the planning route also accepts an unparented issue)"
+            f"{ref.slug} has no parent; only an item in a container epic (intake, planning, "
+            "ad hoc or deferred) can be routed (the planning route also accepts an "
+            "unparented issue)"
         )
-    if epics.queue_kind(parent) == "intake":
-        return
-    raise RouteRefusedError(
-        f"{ref.slug} is under {parent.slug}, not an intake epic; only intake items can be routed"
+    kind = epics.container_kind(parent)
+    if kind is None or kind not in ROUTES:
+        raise RouteRefusedError(
+            f"{ref.slug} is under {parent.slug}, not a container epic (intake, planning, "
+            "ad hoc or deferred); a task in a development epic cannot be routed or "
+            "deferred, since deferring one task in effect suspends its whole epic"
+        )
+    allowed = ROUTES[kind]
+    if type(action) not in allowed:
+        names = ", ".join(sorted(_ROUTE_NAMES[route_type] for route_type in allowed))
+        raise RouteRefusedError(
+            f"{ref.slug} is in the {kind} epic {parent.slug}; the {name} route is not "
+            f"allowed from {kind} (allowed: {names})"
+        )
+    return kind
+
+
+def _view(ref: IssueRef, fields: str) -> dict[str, Any]:
+    raw: Any = github.read_json(
+        "issue", "view", str(ref.number), "--repo", _repo_of(ref), "--json", fields
     )
+    if not isinstance(raw, dict):
+        raise RuntimeError(f"unexpected 'gh issue view' response for {ref.slug}: {raw!r}")
+    return raw
+
+
+def _label_names(view: dict[str, Any]) -> set[str]:
+    return {str(label.get("name", "")) for label in view.get("labels") or []}
+
+
+def _guard_planning_epic(ref: IssueRef, view: dict[str, Any], doing: str) -> None:
+    """Refuse a planning item whose ``epic-create`` session already made an epic."""
+    comments = [str(c.get("body") or "") for c in view.get("comments") or []]
+    epic = parse_planning_markers(comments).epic
+    if epic is not None:
+        raise RouteRefusedError(
+            f"{ref.slug} has a development epic ({epic.slug}); {doing} it would orphan that epic"
+        )
+
+
+def _guard_open_closing_pr(ref: IssueRef) -> None:
+    """Refuse deferring an ad-hoc item that an open PR would close (it would strand the PR)."""
+    view = _view(ref, "closedByPullRequestsReferences")
+    for pr in view.get("closedByPullRequestsReferences") or []:
+        url = str(pr.get("url") or "")
+        if not url:
+            raise RuntimeError(f"closing PR of {ref.slug} has no URL: {pr!r}")
+        state = github.read_output("pr", "view", url, "--json", "state", "--jq", ".state")
+        if state.strip().upper() == "OPEN":
+            raise RouteRefusedError(
+                f"{ref.slug} has an open PR that would close it ({url}); deferring it would "
+                "strand that work — finish or close the PR first"
+            )
+
+
+def _defer(ref: IssueRef, action: Defer, kind: str | None, parent: IssueRef, day: date) -> None:
+    """Move *ref* into its home's deferred epic and record why; a refresh only records."""
+    record = DEFER_COMMENT.format(
+        day=day.isoformat(), reason=action.reason, revisit_when=action.revisit_when
+    )
+    if kind == epics.DEFERRED.key:
+        _comment(ref, record)
+        return
+    view = _view(ref, "labels,comments")
+    if kind == epics.PLANNING.key:
+        _guard_planning_epic(ref, view, "deferring")
+    if kind == epics.ADHOC.key:
+        _guard_open_closing_pr(ref)
+    deferred = epics.ensure_deferred_epic(_repo_of(ref))
+    _guard_visibility(ref, _repo_of(deferred))
+    body = f"{record}\n{DEFERRED_FROM_LINE.format(epic=parent.slug)}"
+    _link(deferred, ref)
+    stranded = f"{ref.slug} is under the deferred epic {deferred.slug} without a deferral record"
+    by_hand = (
+        f"Post this comment on {ref.slug} by hand (re-running defer would be a refresh "
+        f"and lose the 'Deferred from:' line):\n\n{body}"
+    )
+    if epics.PLANNING_IN_PROGRESS_LABEL in _label_names(view):
+        label = epics.PLANNING_IN_PROGRESS_LABEL
+        try:
+            github.run(
+                "issue", "edit", str(ref.number), "--repo", _repo_of(ref), "--remove-label", label
+            )
+        except subprocess.CalledProcessError as exc:
+            raise RuntimeError(
+                f"{stranded}: removing the '{label}' label failed "
+                f"({' '.join(error_text(exc).split())}). Fix it with: gh issue edit "
+                f"{ref.number} --repo {_repo_of(ref)} --remove-label {label}. {by_hand}"
+            ) from exc
+    try:
+        _comment(ref, body)
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            f"{stranded}: posting it failed ({' '.join(error_text(exc).split())}). {by_hand}"
+        ) from exc
 
 
 def _guard_visibility(ref: IssueRef, *targets: str) -> None:
