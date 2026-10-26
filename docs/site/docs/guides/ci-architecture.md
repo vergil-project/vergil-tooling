@@ -424,11 +424,10 @@ The `CI gates` ruleset requires these checks. The list is computed from
 
 | Check | Required when |
 | ----- | ------------- |
-| `quality / common` | Always |
+| `quality / evidence` | Always |
 | `security / trivy`, `security / semgrep` | Always |
 | `docs / docs` | `[publish].docs` is on |
 | `audit / evidence` | The language has an audit command |
-| `quality / evidence` | The language has a lint or typecheck command |
 | `test / evidence` | The language has a unit test command |
 | `version / version-bump` | `[project].release-model` is not `none` |
 | `package / evidence` | `vergil.toml` has `[package]` |
@@ -447,7 +446,7 @@ never report, so they are not required.
 There is no tier of checks that runs on a PR but does not block it. The
 required set above is pinned by a test so it cannot drift silently.
 
-For the matrixed kinds — audit, quality (lint + typecheck), and unit tests —
+For the matrixed kinds — audit, quality, and unit tests —
 the required check is the **stable, version-agnostic `<kind> / evidence`
 aggregate** each reusable workflow emits (`audit / evidence`,
 `quality / evidence`, `test / evidence`), **not** the per-version legs
@@ -459,8 +458,14 @@ old deadlock, where branch protection required a per-version leg that a reduced
 matrix could never produce, leaving the PR "expected, never reported" and
 permanently blocked with no `--admin` escape (epic
 [vergil-project/.github#338](https://github.com/vergil-project/.github/issues/338)).
-Non-matrixed checks (the security scanners, `quality / common`, the version-bump
-gate, `docs / docs`) keep their fixed, version-free names. A repo whose
+`quality / evidence` also aggregates the non-matrixed `quality / common` and
+`quality / custom` jobs: it needs `common`, `custom`, `lint` and `typecheck` and
+fails if any of them did not succeed. That holds in every repo, whatever its
+language, so `quality / evidence` is required everywhere and `quality / common`,
+which still runs, is not required on its own. A failing custom validator
+therefore blocks the merge even in a repo with no primary language. The other
+non-matrixed checks (the security scanners, the version-bump gate,
+`docs / docs`) keep their fixed, version-free names. A repo whose
 `vergil.toml` has a `[package]` section also requires `package / evidence`, the
 one stable gate `ci-package.yml` emits over its whole target matrix; repos
 without `[package]` neither call `ci-package.yml` nor require the gate.
