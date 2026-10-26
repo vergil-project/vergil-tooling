@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.271] - 2026-10-26
+
+### Chores
+
+- uv lock --upgrade
+
+### Features
+
+- ignore paad/security/ in the managed base fence (#3692)
+- add the vrg-security-record CLI (#3693)
+- add the security-records pass to the scheduled sweep (#3694)
+- keep the security-record link on transfer, recreate and split (#3696)
+- hold a planning issue while an advisory still tracks it (#3697)
+
 ## [2.1.270] - 2026-10-26
 
 ### Documentation
