@@ -636,6 +636,31 @@ def test_main_personal_repo_without_dotgithub_self_homes() -> None:
     )
 
 
+def test_main_public_repo_without_dotgithub_is_refused(capsys: pytest.CaptureFixture[str]) -> None:
+    """A public repo whose owner has no .github fails up front, creating nothing (#3643)."""
+
+    def is_public(nwo: str) -> bool:
+        if nwo == "owner/.github":
+            raise github.GitHubAPIError(
+                1, ["gh", "repo", "view"], "", "GraphQL: Could not resolve to a Repository"
+            )
+        return True
+
+    with (
+        patch("vergil_tooling.lib.github.is_public", side_effect=is_public),
+        patch(f"{_MOD}.github.create_issue") as mock_create,
+        pytest.raises(SystemExit) as excinfo,
+    ):
+        main(["--repo", "owner/site", "--epic", "#4", "--title", "T"])
+    assert excinfo.value.code == 1
+    assert capsys.readouterr().err == (
+        "vrg-issue-create: owner/site is public, so its epics and queues live in "
+        "owner/.github, which does not exist; create the owner/.github repository "
+        "and try again\n"
+    )
+    mock_create.assert_not_called()
+
+
 def test_main_epic_home_api_error_is_a_clean_failure(capsys: pytest.CaptureFixture[str]) -> None:
     """Any other probe failure exits 1 with a one-line message, creating nothing."""
     probe = _personal_account_probe("HTTP 502: Bad Gateway")

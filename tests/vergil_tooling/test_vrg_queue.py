@@ -135,6 +135,30 @@ def test_vrg_queue_org_wide_probes_dotgithub(dotgithub_exists: MagicMock) -> Non
     dotgithub_exists.assert_called_once_with("org", ".github")
 
 
+def test_vrg_queue_public_repo_without_dotgithub_fails_clearly(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # --repo on a public repo whose owner has no .github: one clear line, exit 1 (#3643).
+    def is_public(nwo: str) -> bool:
+        if nwo == "owner/.github":
+            raise github.GitHubAPIError(1, "cmd", "", "Could not resolve to a Repository")
+        return True
+
+    with (
+        patch(f"{_MOD}.epics.github.is_public", side_effect=is_public),
+        pytest.raises(SystemExit) as excinfo,
+    ):
+        main(["intake", "--repo", "owner/site"])
+    assert excinfo.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == (
+        "vrg-queue: owner/site is public, so its epics and queues live in "
+        "owner/.github, which does not exist; create the owner/.github repository "
+        "and try again\n"
+    )
+
+
 def test_vrg_queue_repo_flag_skips_dotgithub_probe(dotgithub_exists: MagicMock) -> None:
     # --repo reaches a self-homed repo's own queues, .github or not.
     with (
@@ -162,7 +186,8 @@ def test_vrg_queue_org_wide_without_dotgithub_fails_clearly(
     assert captured.out == ""
     assert captured.err == (
         "vrg-queue: owner has no .github repository, so there is no org-wide "
-        "queue or epic home; pass --repo owner/<repo> to reach a self-homed "
+        "queue or epic home; create the owner/.github repository to give it one, "
+        "or pass --repo owner/<repo> to reach a private, self-homed "
         "repo's own queues and epics\n"
     )
 

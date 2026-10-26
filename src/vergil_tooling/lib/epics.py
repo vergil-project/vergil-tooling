@@ -441,29 +441,39 @@ def resolve_epic_home(org: str, target_repo: str) -> str:
     (self-contained). A private ``.github`` means the whole org is private, so
     everything routes to ``.github``. A private target whose owner has no
     ``.github`` at all (a personal account, typically) self-homes too: there is
-    no central home to use (#3603). Fail-loud: any other probe failure raises
-    :class:`EpicHomeError` (a missing token keeps its own error for
-    :func:`cli.cli_main`).
+    no central home to use (#3603). A **public** target whose owner has no
+    ``.github`` is refused up front with an :class:`EpicHomeError` naming the
+    repo to create, rather than failing later when GitHub cannot find it
+    (#3643). Fail-loud: any other probe failure raises :class:`EpicHomeError`
+    (a missing token keeps its own error for :func:`cli.cli_main`).
     """
     if target_repo == ".github":
         return f"{org}/.github"
     try:
-        if github.is_public(f"{org}/{target_repo}"):
-            return f"{org}/.github"
+        target_public = github.is_public(f"{org}/{target_repo}")
         try:
-            dotgithub_public = github.is_public(f"{org}/.github")
+            dotgithub_public: bool | None = github.is_public(f"{org}/.github")
         except github.GitHubAPIError as exc:
             if not github.is_repo_not_found(exc):
                 raise
-            return f"{org}/{target_repo}"  # no <org>/.github: nowhere central to home
+            dotgithub_public = None  # no <org>/.github: nowhere central to home
     except github.MissingGitHubTokenError:
         raise
     except github.GitHubAPIError as exc:
         msg = f"cannot resolve the epic home of {org}/{target_repo}: {exc}"
         raise EpicHomeError(msg) from exc
-    if dotgithub_public:
-        return f"{org}/{target_repo}"
-    return f"{org}/.github"
+    if target_public:
+        if dotgithub_public is None:
+            msg = (
+                f"{org}/{target_repo} is public, so its epics and queues live in "
+                f"{org}/.github, which does not exist; create the {org}/.github "
+                "repository and try again"
+            )
+            raise EpicHomeError(msg)
+        return f"{org}/.github"
+    if dotgithub_public is False:
+        return f"{org}/.github"  # a private .github: the whole org is private
+    return f"{org}/{target_repo}"  # public .github, or none: self-home
 
 
 def require_org_home(org: str) -> str:
@@ -485,7 +495,8 @@ def require_org_home(org: str) -> str:
     if not exists:
         msg = (
             f"{org} has no .github repository, so there is no org-wide queue or "
-            f"epic home; pass --repo {org}/<repo> to reach a self-homed repo's own "
+            f"epic home; create the {org}/.github repository to give it one, or "
+            f"pass --repo {org}/<repo> to reach a private, self-homed repo's own "
             "queues and epics"
         )
         raise EpicHomeError(msg)
