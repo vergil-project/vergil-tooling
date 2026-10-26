@@ -294,9 +294,9 @@ Testing is split across two tiers with increasing scope and cost:
 
 **Tier 1 — Local pre-commit (seconds):** The single entry point
 `vrg-container-run -- vrg-validate` runs everything
-(lint, typecheck, tests, audit, common checks) inside one dev
-container. (Here that transparently expands to `uv run vrg-validate`
-via the `[validation]` override in `vergil.toml` — see
+(common checks, lint, typecheck, tests, audit, and the repo's custom
+validator when it has one) inside one dev container. (Here that
+transparently expands to `uv run vrg-validate` via the `[validation]` override in `vergil.toml` — see
 [Validation](#validation).)
 
 **Tier 2 — PR CI (~5-8 min):** Triggers on `pull_request`. Runs every
@@ -313,6 +313,10 @@ checks — so a matrix change needs no edit to `ci.yml` or the ruleset (epic
 vergil-project/.github#338).
 
 Push-CI was retired once `vrg-validate` matched the checks push-CI ran.
+Every `vrg-validate` stage now has a PR-CI job, including the custom stage
+(`vrg-validate --check custom`, run once as `quality / custom` and folded
+into `quality / evidence`, which every repo requires; epic
+vergil-project/.github#488).
 Note one deliberate gap in the "parity with PR-CI" framing: local
 `vrg-container-run -- vrg-validate` runs a single dev container on one
 Python interpreter (currently 3.15), so its `--cov-fail-under=100` gate
@@ -339,7 +343,8 @@ exactly one container per run:
   `vergil.toml` and runs common checks (markdownlint,
   shellcheck, yamllint, hadolint, actionlint), then language-specific
   checks (lint, typecheck, test, audit) from the built-in command
-  registry.
+  registry, and last the repo's custom validator
+  (`scripts/bin/validate-custom` or `vrg-validate-custom`) when present.
 
 Dev container images are maintained in
 [vergil-containers](https://github.com/vergil-project/vergil-containers).
