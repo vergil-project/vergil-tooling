@@ -210,8 +210,9 @@ def _planning_state(
 
 
 def _held_note(ghsa_ids: tuple[str, ...]) -> str:
+    tracks = "advisory still tracks" if len(ghsa_ids) == 1 else "advisories still track"
     return (
-        f"held: {len(ghsa_ids)} advisory(ies) still track this planning issue "
+        f"held: {len(ghsa_ids)} {tracks} this planning issue "
         f"({', '.join(ghsa_ids)}) — retarget each to its fix task(s) with "
         "vrg-security-record retarget"
     )
