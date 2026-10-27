@@ -353,6 +353,61 @@ collect step of the three review skills (`intake-review`, `planning-review`,
 | Exit codes | 0 success, 1 error, 2 bad arguments |
 | Status | Active |
 
+### vrg-epic-audit
+
+Report epic/task drift and invariant violations for an org, as Markdown on
+stdout. It is read-only by default. **Drift** is a task still open although
+the merged PR that `Ref`s it landed within the last `--window-days` days, and
+an open finite epic whose children are all closed. The **invariant** checks
+are the [compliance invariants](../standards/github-issues.md#compliance-invariants):
+epics outside `.github`, stray `.github` issues, a closed epic with an open
+child, orphans, retired kind labels, body-only `Parent:` links, self-homed
+queues in a now-public repo, and private work under a public epic. It also
+lists open epics with operational tasks still pending, and closed
+operational tasks with no `Outcome: SUCCESS`. The report previews, without
+writing, the ad-hoc and queue-epic drains and the security-records pass that
+`--close` would run.
+
+The org comes from the current repo's `origin` remote (there is no `--org`
+flag). `--repo OWNER/NAME` audits that repo's resolved epic home instead of
+the org's `.github`, so a private repo that self-homes its epics can be
+audited; the home-scoped checks (epic drift, stray issues, operation-pending
+epics, and the `--close` drift closes) then target it.
+`--epic REF` is a separate read-only mode: it prints one epic's children as
+JSON (`{"epic": <slug>, "children": [{repo, number, title, state}, …]}`) and
+skips the drift audit. A bare `#N` resolves against the current repo's epic
+home.
+
+`--close` applies the fixes, in order:
+
+1. Close the drifted tasks and rolled-up epics, and reopen each epic closed
+   while a child was still open, with an explanatory comment on each.
+2. Drain the closed children of the ad-hoc, intake, planning and deferred
+   epics into per-quarter archives, and close past archives (see
+   [Ad-hoc epic archiving](../standards/github-issues.md#ad-hoc-epic-archiving)).
+3. Run the [orphan pass](../standards/github-issues.md#the-orphan-pass-auto-heal):
+   nativize body-only `Parent:` links, strip the retired kind labels, move a
+   now-public repo's queue items under `.github`, and attach every orphan to
+   its home's intake epic.
+4. Run the security-records pass, even when the orphan pass failed: each
+   paired draft advisory in the org's `.github` is set to closed once every
+   issue it tracks is closed, and back to draft while any is open; broken
+   pairs are reported, not repaired. Its output names only GHSA IDs, issue
+   refs and states, never advisory text (see
+   [Security Records](../guides/security-records.md#managing-a-record-through-its-issue)).
+
+`--close` is a human action, or the scheduled `ops-epic-sweep` workflow,
+which sets `VRG_EPIC_SWEEP=1`. Other invariant violations stay report-only.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_epic_audit` (checks and passes: `lib/epic_audit.py`; security pass: `lib/security_records.py`) |
+| Args | `--window-days N` (positive; default 30), `--repo OWNER/NAME`, `--epic REF`, `--close` |
+| Preconditions | Run inside a repo in the target org; GitHub App credentials for that org. `--close` needs a human identity or `VRG_EPIC_SWEEP=1`. The security-records pass needs Repository security advisories: Read and write |
+| Failure mode | `--close` in an agent session is refused before any network call; a `--repo` without `/`, an org that cannot be detected, or an org with no `.github` home exits 1. A full intake epic stops the orphan pass, listing what it did not attach; a broken security pair or a failed security pass exits 1 after the rest of the run. With `--epic`, a ref that is not an epic exits 1 |
+| Exit codes | 0 success (the read-only report exits 0 even when it finds drift), 1 refused, a pass failed, or error, 2 bad arguments |
+| Status | Active |
+
 ### vrg-worktree-status
 
 Show every worktree git knows about in the current repo, grouped by
