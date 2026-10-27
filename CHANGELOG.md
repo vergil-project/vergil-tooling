@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.274] - 2026-10-27
+
+### Bug fixes
+
+- count-aware plurals in the held note and the show refusal (#3739)
+- count-free wording for the held note's retarget hint (#3744)
+
+### Chores
+
+- uv lock --upgrade
+
+### Documentation
+
+- describe the three-queue model (intake, planning, deferred) (#3713)
+- reflect security records in issue standards and CLAUDE.md (#3716)
+- align the security-boundaries register with the security-records policy (#3717)
+- add the vrg-epic-audit overview section (#3718)
+- document several advisories per issue (#3745)
+
+### Features
+
+- several advisories per issue in the library, the sweep and show (#3734)
+- routing and the planning hold over every advisory (#3735)
+
 ## [2.1.273] - 2026-10-27
 
 ### Bug fixes
