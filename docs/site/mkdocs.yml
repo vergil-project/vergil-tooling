@@ -87,6 +87,7 @@ nav:
           - vrg-finalize-pr: reference/dev/finalize-pr.md
           - vrg-branch-sweep: reference/dev/branch-sweep.md
           - vrg-host: reference/dev/host.md
+          - vrg-security-record: reference/dev/security-record.md
   - Standards:
       - Authoring:
           - Markdown Authoring: standards/markdown-authoring.md
@@ -156,6 +157,7 @@ nav:
   - Guides:
       - Git Workflow: guides/git-workflow.md
       - Epic Home Visibility Flips: guides/epic-home-visibility-flip.md
+      - Security Records: guides/security-records.md
       - Consuming Repo Setup: guides/consuming-repo-setup.md
       - CI Architecture: guides/ci-architecture.md
       - CI Evidence Convention: guides/ci-evidence-convention.md
