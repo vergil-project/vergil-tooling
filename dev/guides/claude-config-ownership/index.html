@@ -16811,9 +16811,11 @@ that disables hooks would disable a hook-based check too. <code>vrg-validate</co
 not a chokepoint: it runs inside a dev container, where it sees neither the
 main checkout's working tree nor the identity. The nightly config audit does
 not check this file either, because a CI checkout has no local file.</p>
-<p>The guard is being added under epic
-<a href="https://github.com/vergil-project/.github/issues/558">vergil-project/.github#558</a>;
-until it ships, the rule is stated in the <code>CLAUDE.md</code> template region only.</p>
+<p>The guard enforces the rule in <code>vrg-commit</code>, <code>vrg-pr-workflow report-ready</code>
+and <code>vrg-container-run</code> (epic
+<a href="https://github.com/vergil-project/.github/issues/558">vergil-project/.github#558</a>),
+and the <code>CLAUDE.md</code> template region also states it, so agents know the rule
+before a tool refuses.</p>
 <p><strong>Known limit.</strong> Claude Code keeps the local file with <code>.claude/settings.json</code>
 instead of at the main checkout's root when the repository root, or its
 <code>.git</code> or <code>.claude</code> entry, isn't owned by the user (and in a few other
@@ -16827,10 +16829,12 @@ and what needs judgment.</p>
 <h3 id="mechanical-the-nightly-config-audit">Mechanical: the nightly config audit<a class="headerlink" href="#mechanical-the-nightly-config-audit" title="Permanent link">&para;</a></h3>
 <p><code>vrg-github-repo-config audit</code> runs in each managed repo's scheduled
 <code>ops.yml</code> job (see <a href="../../reference/config-audit/">GitHub Config Audit</a>).
-Under this model it checks the following. Epic
+Under this model it checks the following. The audit already compares
+<code>.claude/settings.json</code> and the template region with the template exactly
+(accepting the previous template, with a warning, until the fleet is
+swept); epic
 <a href="https://github.com/vergil-project/.github/issues/558">vergil-project/.github#558</a>
-adds the line budget, the <code>AGENTS.md</code> rule and the exact template
-comparison to today's audit.</p>
+adds the line budget and the <code>AGENTS.md</code> rule.</p>
 <ul>
 <li>the repo <code>CLAUDE.md</code> is at most 200 lines (a hard failure once the
   cleanup has landed fleet-wide);</li>
