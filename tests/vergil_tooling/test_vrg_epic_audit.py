@@ -6,7 +6,7 @@ import contextlib
 import json
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -768,8 +768,10 @@ _TRACKED = IssueRef("org", ".github", 10)
 _ADVISORIES = "repos/org/.github/security-advisories"
 
 
-def _security_issue(ref: IssueRef = _TRACKED, *, open_: bool = False) -> SecurityIssue:
-    return SecurityIssue(ref, open_, _GHSA)
+def _security_issue(
+    ref: IssueRef = _TRACKED, *, open_: bool = False, ghsa_ids: tuple[str, ...] = (_GHSA,)
+) -> SecurityIssue:
+    return SecurityIssue(ref, open_, ghsa_ids)
 
 
 def _advisory(
@@ -843,6 +845,26 @@ def test_security_pass_syncs_paired_advisory(capsys: pytest.CaptureFixture[str])
     write.assert_called_once_with("PATCH", f"{_ADVISORIES}/{_GHSA}", {"state": "closed"})
     assert (
         "Security records: 1 advisory state(s) synced, 0 broken pair(s)." in capsys.readouterr().out
+    )
+
+
+def test_sweep_closes_both_advisories_of_one_closed_issue(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    second = "GHSA-bbbb-bbbb-bbbb"
+    write = MagicMock()
+    rc = _run_close(
+        issues=[_security_issue(ghsa_ids=(_GHSA, second))],
+        advisories=[_advisory(), _advisory(second)],
+        write=write,
+    )
+    assert rc == 0
+    assert write.call_args_list == [
+        call("PATCH", f"{_ADVISORIES}/{_GHSA}", {"state": "closed"}),
+        call("PATCH", f"{_ADVISORIES}/{second}", {"state": "closed"}),
+    ]
+    assert (
+        "Security records: 2 advisory state(s) synced, 0 broken pair(s)." in capsys.readouterr().out
     )
 
 

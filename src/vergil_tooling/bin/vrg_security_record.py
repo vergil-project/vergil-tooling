@@ -368,7 +368,9 @@ def _show(args: argparse.Namespace) -> int:
         ghsa_id = ""
     with github.target_org(org):
         home = security_records.advisory_home(org)
-        if not ghsa_id:
+        if ghsa_id:
+            wanted: tuple[str, ...] = (ghsa_id,)
+        else:
             raw: Any = github.read_json(
                 "issue",
                 "view",
@@ -378,18 +380,23 @@ def _show(args: argparse.Namespace) -> int:
                 "--json",
                 "body",
             )
-            found = security_records.parse_advisory_ref(str(raw.get("body") or ""))
-            if found is None:
+            wanted = security_records.parse_advisory_refs(str(raw.get("body") or ""))
+            if not wanted:
                 raise _RefusedError(f"{ref.slug} has no Security advisory: line")
-            ghsa_id = found
-        match = [a for a in security_records.list_advisories(home) if a.ghsa_id == ghsa_id]
-        if not match:
-            raise _RefusedError(f"advisory {ghsa_id} does not exist in {home}")
-        summary, description = security_records.read_text(home, ghsa_id)
-    print(_record_line(match[0]))
-    print(f"summary: {summary}")
-    print("description:")
-    print(description)
+        # Check every named advisory exists before reading or printing any text,
+        # so a partly broken issue prints nothing rather than some of its pairs.
+        by_id = {a.ghsa_id: a for a in security_records.list_advisories(home)}
+        missing = [g for g in wanted if g not in by_id]
+        if missing:
+            raise _RefusedError(f"advisory(ies) {', '.join(missing)} do not exist in {home}")
+        pairs = [(by_id[g], *security_records.read_text(home, g)) for g in wanted]
+    for index, (advisory, summary, description) in enumerate(pairs):
+        if index:
+            print()
+        print(_record_line(advisory))
+        print(f"summary: {summary}")
+        print("description:")
+        print(description)
     return 0
 
 
@@ -452,7 +459,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--details", action="store_true", help="Also print each summary (interactive only)"
     )
 
-    show = sub.add_parser("show", help="Show one pair with its details")
+    show = sub.add_parser("show", help="Show a pair, or every pair an issue names, with details")
     show.add_argument("target", help="A GHSA ID or an issue ref (owner/repo#N)")
 
     retarget = sub.add_parser("retarget", help="Move an advisory's tracking to new issues")
