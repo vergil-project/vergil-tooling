@@ -13052,6 +13052,8 @@
       
         
       
+        
+      
     
     
     
@@ -13308,6 +13310,34 @@
     
   
     vrg-host
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/dev/security-record/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-security-record
   
 
     
@@ -16067,6 +16097,8 @@
       
         
       
+        
+      
     
     
     
@@ -16155,6 +16187,34 @@
     
   
     Epic Home Visibility Flips
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../security-records/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security Records
   
 
     
@@ -16791,7 +16851,7 @@ workflows use it for:</p>
   <code>package-released</code> to the org's <code>packages</code> repo after a packaged
   release.</li>
 </ul>
-<p>Two of the App's permissions matter to the tooling in this repo:</p>
+<p>Three of the App's permissions matter to the tooling in this repo:</p>
 <ul>
 <li><strong>Dependabot alerts: Read.</strong> <code>vrg-dependabot-audit</code> needs it to list
   a repo's open alerts (epic
@@ -16804,6 +16864,15 @@ workflows use it for:</p>
   tooling uses App credentials only when it finds an App key
   (<code>VRG_APP_ID</code> or <code>~/.config/vergil/app.pem</code>). Read-only is the
   correct least privilege.</li>
+<li><strong>Repository security advisories: Read and write.</strong> The scheduled
+  sweep (<code>vrg-epic-audit --close</code> in <code>ops-epic-sweep.yml</code>) lists the
+  draft advisories in the org's <code>.github</code> and closes or reopens each
+  one to follow its issues (see <a href="../security-records/">Security Records</a>,
+  epic
+  <a href="https://github.com/vergil-project/.github/issues/517">vergil-project/.github#517</a>).
+  The user App holds the same grant (see
+  <a href="../account-setup/#step-11-register-the-app">Account Setup</a>). Each
+  installation must accept the change before the grant takes effect.</li>
 </ul>
 <p>Release PRs are not opened by an App. <code>vrg-release</code> runs on the
 human's host under the human's own <code>gh</code> login.</p>

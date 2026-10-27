@@ -13052,6 +13052,8 @@
       
         
       
+        
+      
     
     
     
@@ -13308,6 +13310,34 @@
     
   
     vrg-host
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/dev/security-record/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-security-record
   
 
     
@@ -16083,6 +16113,8 @@
       
         
       
+        
+      
     
     
     
@@ -16171,6 +16203,34 @@
     
   
     Epic Home Visibility Flips
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../security-records/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security Records
   
 
     
@@ -16702,6 +16762,10 @@ the permission model — set the permissions exactly as documented.</p>
 <td>Read-only</td>
 </tr>
 <tr>
+<td><strong>Repository security advisories</strong></td>
+<td>Read and write</td>
+</tr>
+<tr>
 <td><strong>Metadata</strong></td>
 <td>Read-only (mandatory; usually auto-selected)</td>
 </tr>
@@ -16711,6 +16775,21 @@ the permission model — set the permissions exactly as documented.</p>
 </tr>
 </tbody>
 </table>
+<p>!!! note "Repository security advisories is for security records"
+       <code>vrg-security-record</code> creates, reads and updates the private
+       draft advisories in each org's <code>.github</code> that hold security
+       findings, and <code>vrg-intake-route</code> and <code>vrg-queue planning</code> read
+       and retarget them (see <a href="../security-records/">Security Records</a>).
+       Each org's automation App (<code>&lt;org&gt;-automation</code>, see
+       <a href="../identity-architecture/#the-org-automation-apps">Identity Architecture</a>)
+       needs the same <strong>Read and write</strong> grant for the scheduled sweep,
+       which closes and reopens advisories. The audit App does <strong>not</strong>
+       get it: it is not in use today, and the decision is deferred
+       until the audit identity is revived. Adding this permission to an
+       existing App changes its permission set, so <strong>each installation
+       must accept the change</strong> (the org or account owner approves it
+       from the installation's settings page) before the new grant takes
+       effect.</p>
 <p>!!! note "Actions, Checks and Commit statuses are for reading CI"
        <code>vrg-pr-await</code> and pr-watch read a PR's check runs, commit
        statuses and workflow runs. On a <strong>private</strong> repo, an App
@@ -16855,6 +16934,10 @@ code and writes PRs, the mirror of the user App).</p>
 <td>Read-only</td>
 </tr>
 <tr>
+<td><strong>Repository security advisories</strong></td>
+<td><strong>No access</strong> (deferred)</td>
+</tr>
+<tr>
 <td><strong>Metadata</strong></td>
 <td>Read-only (mandatory)</td>
 </tr>
@@ -16866,7 +16949,9 @@ code and writes PRs, the mirror of the user App).</p>
 </table>
 <p>Actions, Checks and Commit statuses are the same read-only CI
   grants as the user App (see the note in Step 1.1); they are not
-  inverted.</p>
+  inverted. Repository security advisories stays at No access: the
+  audit identity is not in use today, and whether it needs the grant
+  is decided when it is revived.</p>
 <p>Everything else (Webhook unchecked, <strong>Any account</strong>, the "Make
 public" warning) is identical to Step 1.1.</p>
 <h3 id="step-22-record-the-app-id-and-client-id">Step 2.2 — Record the App ID and Client ID<a class="headerlink" href="#step-22-record-the-app-id-and-client-id" title="Permanent link">&para;</a></h3>
@@ -16943,6 +17028,12 @@ VM. The dual-identity model uses one stanza per role.</p>
       (user: contents/issues write, PRs read; audit: contents/issues
       read, PRs write; both hold Actions, Checks and Commit statuses
       read-only; neither holds Workflows)</li>
+<li>[ ] The user App holds <strong>Repository security advisories: Read and
+      write</strong>, the audit App does not, and every installation has
+      accepted the change</li>
+<li>[ ] Each org's automation App (<code>&lt;org&gt;-automation</code>) holds
+      <strong>Repository security advisories: Read and write</strong>, and its
+      installation has accepted the change</li>
 <li>[ ] Both Apps are installed on every account that owns repos the
       agents will operate on</li>
 <li>[ ] The reserved <code>&lt;username&gt;-vergil-admin</code> App was <strong>not</strong> created</li>

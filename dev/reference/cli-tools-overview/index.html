@@ -12766,6 +12766,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-security-record" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-security-record
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-queue" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -13607,6 +13618,8 @@
       
         
       
+        
+      
     
     
     
@@ -13866,6 +13879,34 @@
     
   
     vrg-host
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/security-record/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-security-record
   
 
     
@@ -16401,6 +16442,8 @@
       
         
       
+        
+      
     
     
     
@@ -16489,6 +16532,34 @@
     
   
     Epic Home Visibility Flips
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/security-records/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security Records
   
 
     
@@ -16802,6 +16873,17 @@
     <span class="md-ellipsis">
       
         vrg-intake-route
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vrg-security-record" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-security-record
       
     </span>
   </a>
@@ -17762,13 +17844,61 @@ deferral — so no review skill hand-rolls them. Routes:</p>
 </tr>
 </tbody>
 </table>
+<p>A <code>security</code> item keeps its advisory link: a split or a recreate retargets
+the advisory before the original closes, and a transfer retargets it after
+the move (see <a href="../../guides/security-records/#when-the-issue-moves">Security Records</a>).</p>
+<h3 id="vrg-security-record">vrg-security-record<a class="headerlink" href="#vrg-security-record" title="Permanent link">&para;</a></h3>
+<p>Record a security finding as a private draft advisory in <code>&lt;org&gt;/.github</code>
+paired with a neutral <code>security</code>-labelled intake issue (epic
+vergil-project/.github#517). <code>create</code> makes the pair (or attaches an
+advisory to an existing issue, or resumes an unfinished pair), <code>list</code> and
+<code>show</code> read records, and <code>retarget</code> moves an advisory's tracking to new
+issues. Advisory text is printed only by <code>show</code> and <code>list --details</code>. See
+<a href="../dev/security-record/">vrg-security-record</a> and
+<a href="../../guides/security-records/">Security Records</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_security_record</code> (library: <code>lib/security_records.py</code>)</td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>create --repo --title --body-file --details-file --severity [--summary] [--issue] [--resume]</code>; <code>list [--repo] [--state draft\|closed\|all] [--details]</code>; <code>show GHSA-ID\|OWNER/REPO#N</code>; <code>retarget GHSA-ID --to REF [--to REF …]</code></td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>The org's <code>.github</code> is public; Repository security advisories: Read and write on the identity's App (or a human <code>gh</code> login with access)</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td>A partial pair exits 1 naming what exists and the exact <code>--resume</code> command that finishes it; a private <code>.github</code>, a duplicate draft, or <code>--details</code> under <code>VRG_EPIC_SWEEP</code> is refused</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 success, 1 refused or error, 2 bad arguments</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
 <h3 id="vrg-queue">vrg-queue<a class="headerlink" href="#vrg-queue" title="Permanent link">&para;</a></h3>
 <p>Read-only view of a standing queue. <code>vrg-queue intake</code> lists the open items
 under the intake epic, oldest first. <code>vrg-queue planning</code> lists the open items
 under the planning epic with their state: <strong>waiting</strong> (no <code>in-progress</code>
 label), <strong>in-progress</strong> (labelled, with its latest progress note), or
 <strong>ready-to-close</strong> (labelled, the <code>Epic:</code> / <code>Docs task:</code> / <code>Tasks filed: yes</code>
-markers present, and the docs task closed). <code>vrg-queue deferred</code> lists the
+markers present, and the docs task closed). A planning item whose security
+advisory still tracks it is held at <strong>in-progress</strong> with a <code>held:</code> note until
+the advisory is retargeted to the fix task(s). <code>vrg-queue deferred</code> lists the
 open items under the deferred epic, all <strong>waiting</strong>, least recently deferred
 first; each item's note is its latest deferral
 (<code>Deferred &lt;day&gt;: &lt;reason&gt; | Revisit when: &lt;conditions&gt;</code>), and an item with no
