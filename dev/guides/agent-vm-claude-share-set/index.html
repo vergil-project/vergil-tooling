@@ -16678,10 +16678,17 @@ model used for vergil-tooling. The host's materialized <code>~/.claude/plugins</
 checkout is never shared: doing so would cross the macOS/Linux boundary
 (fragile if any plugin ships a binary) and hit the same <code>EXDEV</code> write
 problem as the roster. Instead, <code>update_plugins</code> refreshes the marketplaces
-(<code>claude plugin marketplace update</code>) and then updates each <strong>enabled</strong> plugin to
-its latest version with the plugin's own scope (<code>claude plugin update &lt;id&gt;
---scope &lt;user|project&gt;</code> — there is no bulk-update form), all inside the VM.
-It is driven by <code>vrg-vm update</code> and a warn-mode stage on VM start/rebuild.</p>
+(<code>claude plugin marketplace update</code>) and then updates every <strong>install</strong> of an
+enabled plugin to its latest version, each at its own scope (<code>claude plugin
+update &lt;id&gt; --scope &lt;user|project&gt;</code> — there is no bulk-update form), all
+inside the VM. One plugin can be installed at user scope and again at project
+scope for each project; <code>claude plugin list --json</code> lists each install
+separately, and each one is updated. The CLI has no project flag, and takes
+the project from the working directory, so a project install is updated from
+inside its <code>projectPath</code>. If that directory no longer exists in the VM, the
+install is reported as a failure that names its scope and project. An enabled
+plugin with no install at any scope is installed at user scope. The refresh
+is driven by <code>vrg-vm update</code> and a warn-mode stage on VM start/rebuild.</p>
 <h2 id="cloud-vms-read-only-memory-projection">Cloud VMs: read-only memory projection<a class="headerlink" href="#cloud-vms-read-only-memory-projection" title="Permanent link">&para;</a></h2>
 <p>The share set above works because <strong>local (Lima) VMs</strong> path-preserve the
 project mount and symlink <code>~/.claude/{projects,skills}</code> onto the host's
