@@ -301,6 +301,30 @@ Which routes an item allows depends on the container epic it is in:
 | Exit codes | 0 routed, 1 refused or error, 2 bad arguments (including a missing `--revisit-when` or a malformed `--date`) |
 | Status | Active |
 
+A `security` item keeps its advisory link: a split or a recreate retargets
+the advisory before the original closes, and a transfer retargets it after
+the move (see [Security Records](../guides/security-records.md#when-the-issue-moves)).
+
+### vrg-security-record
+
+Record a security finding as a private draft advisory in `<org>/.github`
+paired with a neutral `security`-labelled intake issue (epic
+vergil-project/.github#517). `create` makes the pair (or attaches an
+advisory to an existing issue, or resumes an unfinished pair), `list` and
+`show` read records, and `retarget` moves an advisory's tracking to new
+issues. Advisory text is printed only by `show` and `list --details`. See
+[vrg-security-record](dev/security-record.md) and
+[Security Records](../guides/security-records.md).
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_security_record` (library: `lib/security_records.py`) |
+| Args | `create --repo --title --body-file --details-file --severity [--summary] [--issue] [--resume]`; `list [--repo] [--state draft\|closed\|all] [--details]`; `show GHSA-ID\|OWNER/REPO#N`; `retarget GHSA-ID --to REF [--to REF …]` |
+| Preconditions | The org's `.github` is public; Repository security advisories: Read and write on the identity's App (or a human `gh` login with access) |
+| Failure mode | A partial pair exits 1 naming what exists and the exact `--resume` command that finishes it; a private `.github`, a duplicate draft, or `--details` under `VRG_EPIC_SWEEP` is refused |
+| Exit codes | 0 success, 1 refused or error, 2 bad arguments |
+| Status | Active |
+
 ### vrg-queue
 
 Read-only view of a standing queue. `vrg-queue intake` lists the open items
@@ -308,7 +332,9 @@ under the intake epic, oldest first. `vrg-queue planning` lists the open items
 under the planning epic with their state: **waiting** (no `in-progress`
 label), **in-progress** (labelled, with its latest progress note), or
 **ready-to-close** (labelled, the `Epic:` / `Docs task:` / `Tasks filed: yes`
-markers present, and the docs task closed). `vrg-queue deferred` lists the
+markers present, and the docs task closed). A planning item whose security
+advisory still tracks it is held at **in-progress** with a `held:` note until
+the advisory is retargeted to the fix task(s). `vrg-queue deferred` lists the
 open items under the deferred epic, all **waiting**, least recently deferred
 first; each item's note is its latest deferral
 (`Deferred <day>: <reason> | Revisit when: <conditions>`), and an item with no

@@ -292,6 +292,7 @@ permissions, as listed in [Account Setup](account-setup.md):
 | Contents | **Read and write.** Can push branches and read all code in covered repos, private repos included. | **Read-only.** Can read all code in covered repos, private repos included. |
 | Issues | **Read and write.** Can create, edit, and comment on issues. | Read-only |
 | Pull requests | Read-only | **Read and write.** Can write PR reviews and comments. |
+| Repository security advisories | **Read and write.** Can read, create and edit the draft advisories in each covered org's `.github`, which hold security findings. | No access |
 | Workflows | No access. Cannot push under `.github/workflows/`. | No access. Cannot push under `.github/workflows/`. |
 | Merge | Cannot open, approve, or merge PRs. | Cannot merge, because merging needs `contents: write`. |
 
@@ -361,7 +362,10 @@ tables. Read the exact permissions from the App's settings page before
 you assess the impact. Its Administration permission is read-only, so
 the key cannot change repo settings or rulesets. With Dependabot
 alerts: Read, the key can read a repo's open alerts, including on a
-private repo.
+private repo. With Repository security advisories: Read and write, it
+can read and change the draft advisories in the org's `.github`, which
+hold the details of unfixed security findings (see
+[Security Records](security-records.md)).
 
 **Contain and restore.** Follow the same steps as for an agent App key:
 delete the key, suspend the installation if access must stop at once,

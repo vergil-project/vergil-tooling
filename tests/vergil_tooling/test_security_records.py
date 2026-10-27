@@ -393,8 +393,11 @@ class Issues:
         monkeypatch.setattr(labels, "ensure_labels", self.ensure_labels)
         monkeypatch.setattr(github, "read_json", self.read_json)
         monkeypatch.setattr(github, "write_json", self.write_json)
-        monkeypatch.setattr(github, "delete", self.delete)
+        # An unmark drops the label inside its one PATCH, never by a DELETE.
+        monkeypatch.setattr(github, "delete", MagicMock(side_effect=AssertionError("DELETE")))
         monkeypatch.setattr(github, "read_json_paginated", self.read_json_paginated)
+        monkeypatch.setattr(github, "list_org_repos", self.list_org_repos)
+        monkeypatch.setattr(epics, "is_managed_repo", lambda _repo: True)
 
     def add(self, ref: IssueRef, body: str = "", labels_: set[str] | None = None) -> None:
         self.labels[ref] = set(labels_ or set())
@@ -430,14 +433,23 @@ class Issues:
         elif endpoint.endswith("/comments"):
             self.comments[ref].append(str(body["body"]))
         else:
-            self.bodies[ref] = str(body["body"])
+            if "body" in body:
+                self.bodies[ref] = str(body["body"])
+            if "labels" in body:
+                self.labels[ref] = {str(name) for name in cast("list[object]", body["labels"])}
 
-    def delete(self, endpoint: str) -> None:
-        self._maybe_fail(f"DELETE {endpoint}")
-        self.writes.append(("DELETE", endpoint, {}))
-        self.labels[self._ref(endpoint)].discard(endpoint.rsplit("/", 1)[-1])
+    def list_org_repos(self, org: str) -> list[str]:
+        return sorted({ref.repo for ref in self.labels if ref.owner == org})
 
     def read_json_paginated(self, endpoint: str, key: str | None = None, **_: Any) -> list[object]:
+        if "?" in endpoint:
+            self._maybe_fail(f"GET {endpoint}")
+            owner, repo = endpoint.split("/")[1:3]
+            return [
+                {"number": ref.number, "state": "open", "body": self.bodies[ref]}
+                for ref in sorted(self.labels, key=lambda r: r.number)
+                if (ref.owner, ref.repo) == (owner, repo) and "security" in self.labels[ref]
+            ]
         return list(self.comments[self._ref(endpoint)])
 
     def patches(self) -> list[tuple[str, str, dict[str, object]]]:
@@ -471,7 +483,7 @@ def test_mark_issue_on_an_empty_body(issues: Issues) -> None:
 
 def test_unmark_issue_removes_label_line_and_comments(issues: Issues) -> None:
     issues.add(A, f"Neutral.\n\nSecurity advisory: org/.github {GHSA}\n\nMore.", {"security"})
-    unmark_issue(A, (B, C))
+    unmark_issue(A, GHSA, (B, C))
     assert issues.labels[A] == set()
     assert issues.bodies[A] == "Neutral.\n\nMore."
     assert issues.comments[A] == ["Security record moved to org/.github#11, org/tool#12"]
@@ -480,14 +492,39 @@ def test_unmark_issue_removes_label_line_and_comments(issues: Issues) -> None:
 def test_unmark_issue_is_idempotent(issues: Issues) -> None:
     issues.add(A, "Neutral.")
     issues.comments[A] = ["Security record moved to org/tool#12"]
-    unmark_issue(A, (C,))
+    unmark_issue(A, GHSA, (C,))
     assert issues.writes == []
+
+
+def test_unmark_issue_strips_only_this_advisorys_line(issues: Issues) -> None:
+    quoted = f"> {advisory_line(HOME, GHSA)}"
+    other = advisory_line(HOME, OTHER)
+    issues.add(A, f"Neutral.\n\n{advisory_line(HOME, GHSA)} \r\n\n{other}\n{quoted}", {"bug"})
+    unmark_issue(A, GHSA, (C,))
+    assert issues.bodies[A] == f"Neutral.\n\n{other}\n{quoted}"
+    assert issues.labels[A] == {"bug"}
+    assert issues.comments[A] == ["Security record moved to org/tool#12"]
+    assert [w[2].keys() for w in issues.writes if w[0] == "PATCH"] == [{"body"}]
+
+
+@pytest.mark.parametrize(
+    "body", ["Neutral.", f"Neutral.\n\n{advisory_line(HOME, OTHER)}\n{advisory_line(HOME, GHSA)}"]
+)
+def test_unmark_issue_leaves_an_issue_not_naming_this_advisory_untouched(
+    issues: Issues, body: str
+) -> None:
+    issues.add(A, body, {"security"})
+    unmark_issue(A, GHSA, (C,))
+    assert issues.writes == []
+    assert issues.bodies[A] == body
+    assert issues.labels[A] == {"security"}
+    assert issues.comments[A] == []
 
 
 def test_unmark_issue_requires_a_destination(issues: Issues) -> None:
     issues.add(A)
     with pytest.raises(ValueError, match="no issue the record moved to"):
-        unmark_issue(A, ())
+        unmark_issue(A, GHSA, ())
 
 
 # --- retarget -----------------------------------------------------------------
@@ -556,7 +593,12 @@ def test_retarget_requires_targets(issues: Issues) -> None:
     [
         (f"GET repos/org/.github/security-advisories/{GHSA}", "reading the tracking lines"),
         (f"PATCH repos/org/.github/security-advisories/{GHSA}", "rewriting the tracking lines"),
-        ("DELETE repos/org/.github/issues/10", "unmarking org/.github#10"),
+        (
+            "GET repos/org/.github/issues?state=all&labels=security",
+            "listing the security issues",
+        ),
+        ("POST repos/org/.github/issues/10/comments", "unmarking org/.github#10"),
+        ("PATCH repos/org/.github/issues/10", "unmarking org/.github#10"),
     ],
 )
 def test_retarget_names_the_failed_step(issues: Issues, fail_on: str, step: str) -> None:
@@ -576,6 +618,124 @@ def test_retarget_wraps_a_non_gh_failure(issues: Issues) -> None:
     with pytest.raises(RetargetError, match="marking org/tool#12 failed") as excinfo:
         retarget(HOME, GHSA, (C,))
     assert isinstance(excinfo.value.__cause__, labels.UnknownLabelError)
+
+
+# --- retarget: a re-run finishes an interrupted run (issue #3702) ---------------
+
+D = IssueRef("org", "tool", 13)
+MOVED = "Security record moved to org/tool#12"
+
+
+def _dropping_a(issues: Issues) -> None:
+    """A tracked and marked (alongside a label it keeps); C is the new target."""
+    issues.add(A, f"Neutral.\n\n{advisory_line(HOME, GHSA)}", {"security", "bug"})
+    issues.add(C, "New task.")
+
+
+def _assert_moved_a_to_c(issues: Issues) -> None:
+    assert issues.labels[A] == {"bug"}
+    assert issues.bodies[A] == "Neutral."
+    assert issues.comments[A] == [MOVED]
+    assert issues.labels[C] == {"security"}
+    assert issues.bodies[C] == f"New task.\n\n{advisory_line(HOME, GHSA)}"
+    assert issues.description == f"{SECRET}\n\nTracking issue: org/tool#12"
+
+
+@pytest.mark.parametrize(
+    "fail_on",
+    [
+        "POST repos/org/.github/issues/10/comments",  # before anything on A changed
+        "PATCH repos/org/.github/issues/10",  # after the comment was posted
+    ],
+)
+def test_retarget_rerun_after_unmark_failure_unmarks_once(issues: Issues, fail_on: str) -> None:
+    _dropping_a(issues)
+    issues.fail_on = fail_on
+    with pytest.raises(RetargetError, match="unmarking org/.github#10 failed"):
+        retarget(HOME, GHSA, (C,))
+    # The tracking lines already name only C, so only A itself still points here.
+    assert issues.description == f"{SECRET}\n\nTracking issue: org/tool#12"
+    assert issues.labels[A] == {"security", "bug"}
+    issues.fail_on = None
+    retarget(HOME, GHSA, (C,))
+    _assert_moved_a_to_c(issues)
+    assert len([w for w in issues.writes if w[1].endswith("/10/comments")]) == 1
+
+
+@pytest.mark.parametrize(
+    "fail_on",
+    [
+        "POST repos/org/tool/issues/12/labels",
+        "PATCH repos/org/tool/issues/12",
+        f"GET repos/org/.github/security-advisories/{GHSA}",
+        f"PATCH repos/org/.github/security-advisories/{GHSA}",
+        "GET repos/org/.github/issues?state=all&labels=security",
+    ],
+)
+def test_retarget_rerun_after_an_early_failure_completes(issues: Issues, fail_on: str) -> None:
+    _dropping_a(issues)
+    issues.fail_on = fail_on
+    with pytest.raises(RetargetError):
+        retarget(HOME, GHSA, (C,))
+    issues.fail_on = None
+    retarget(HOME, GHSA, (C,))
+    _assert_moved_a_to_c(issues)
+
+
+def test_retarget_rerun_after_success_changes_nothing(issues: Issues) -> None:
+    _dropping_a(issues)
+    retarget(HOME, GHSA, (C,))
+    writes = len(issues.writes)
+    retarget(HOME, GHSA, (C,))
+    # Only the idempotent advisory rewrite repeats; no issue is written again.
+    assert [w[1] for w in issues.writes[writes:]] == [
+        f"repos/org/.github/security-advisories/{GHSA}"
+    ]
+    _assert_moved_a_to_c(issues)
+
+
+def test_retarget_unmarks_an_untracked_issue_that_names_the_advisory(issues: Issues) -> None:
+    """The dropped set comes from the issues too, not only the old tracking lines."""
+    issues.description = SECRET
+    issues.add(D, f"Stray.\n\n{advisory_line(HOME, GHSA)}", {"security"})
+    issues.add(C, "")
+    retarget(HOME, GHSA, (C,))
+    assert issues.labels[D] == set()
+    assert issues.bodies[D] == "Stray."
+    assert issues.comments[D] == [MOVED]
+
+
+def test_retarget_never_unmarks_a_renamed_issue_that_carries_the_line(issues: Issues) -> None:
+    issues.add(A, advisory_line(HOME, GHSA), {"security"})
+    issues.add(C, advisory_line(HOME, GHSA), {"security"})
+    retarget(HOME, GHSA, (C,), renamed=(A,))
+    assert not [w for w in issues.writes if "/issues/10" in w[1]]
+    assert issues.labels[A] == {"security"}
+    assert issues.comments[A] == []
+
+
+def test_retarget_never_touches_an_issue_naming_another_advisory(issues: Issues) -> None:
+    issues.add(A, advisory_line(HOME, GHSA), {"security"})
+    issues.add(D, f"Other.\n\n{advisory_line(HOME, OTHER)}", {"security"})
+    issues.add(C, "")
+    retarget(HOME, GHSA, (C,))
+    assert not [w for w in issues.writes if "/issues/13" in w[1]]
+    assert issues.bodies[D] == f"Other.\n\n{advisory_line(HOME, OTHER)}"
+    assert issues.labels[D] == {"security"}
+    assert issues.comments[A] == [MOVED]
+
+
+def test_retarget_never_touches_a_tracked_issue_naming_another_advisory(issues: Issues) -> None:
+    """The old tracking lines name A, but A's body names a different advisory."""
+    other = f"Other.\n\n{advisory_line(HOME, OTHER)}"
+    issues.add(A, other, {"security"})
+    issues.add(C, "")
+    retarget(HOME, GHSA, (C,))
+    assert not [w for w in issues.writes if "/issues/10" in w[1]]
+    assert issues.bodies[A] == other
+    assert issues.labels[A] == {"security"}
+    assert issues.comments[A] == []
+    assert issues.description == f"{SECRET}\n\nTracking issue: org/tool#12"
 
 
 # --- security issues ------------------------------------------------------------
@@ -790,8 +950,7 @@ def test_retarget_issue_calls_in_order(issues: Issues) -> None:
         ("POST", "repos/org/tool/issues/12/labels"),
         ("PATCH", "repos/org/tool/issues/12"),
         ("PATCH", "advisory"),
-        ("PATCH", "repos/org/.github/issues/10"),
-        ("DELETE", "repos/org/.github/issues/10/labels/security"),
         ("POST", "repos/org/.github/issues/10/comments"),
+        ("PATCH", "repos/org/.github/issues/10"),
     ]
     assert call("org/tool", ["security"]) in issues.ensure_labels.call_args_list

@@ -83,8 +83,25 @@ the permission model — set the permissions exactly as documented.
    | **Actions** | Read-only |
    | **Checks** | Read-only |
    | **Commit statuses** | Read-only |
+   | **Repository security advisories** | Read and write |
    | **Metadata** | Read-only (mandatory; usually auto-selected) |
    | **Workflows** | **No access** — leave untouched |
+
+   !!! note "Repository security advisories is for security records"
+       `vrg-security-record` creates, reads and updates the private
+       draft advisories in each org's `.github` that hold security
+       findings, and `vrg-intake-route` and `vrg-queue planning` read
+       and retarget them (see [Security Records](security-records.md)).
+       Each org's automation App (`<org>-automation`, see
+       [Identity Architecture](identity-architecture.md#the-org-automation-apps))
+       needs the same **Read and write** grant for the scheduled sweep,
+       which closes and reopens advisories. The audit App does **not**
+       get it: it is not in use today, and the decision is deferred
+       until the audit identity is revived. Adding this permission to an
+       existing App changes its permission set, so **each installation
+       must accept the change** (the org or account owner approves it
+       from the installation's settings page) before the new grant takes
+       effect.
 
    !!! note "Actions, Checks and Commit statuses are for reading CI"
        `vrg-pr-await` and pr-watch read a PR's check runs, commit
@@ -215,12 +232,15 @@ Follow Step 1.1, changing:
   | **Actions** | Read-only |
   | **Checks** | Read-only |
   | **Commit statuses** | Read-only |
+  | **Repository security advisories** | **No access** (deferred) |
   | **Metadata** | Read-only (mandatory) |
   | **Workflows** | **No access** — leave untouched |
 
   Actions, Checks and Commit statuses are the same read-only CI
   grants as the user App (see the note in Step 1.1); they are not
-  inverted.
+  inverted. Repository security advisories stays at No access: the
+  audit identity is not in use today, and whether it needs the grant
+  is decided when it is revived.
 
 Everything else (Webhook unchecked, **Any account**, the "Make
 public" warning) is identical to Step 1.1.
@@ -311,6 +331,12 @@ After both Apps are registered, installed, and configured:
       (user: contents/issues write, PRs read; audit: contents/issues
       read, PRs write; both hold Actions, Checks and Commit statuses
       read-only; neither holds Workflows)
+- [ ] The user App holds **Repository security advisories: Read and
+      write**, the audit App does not, and every installation has
+      accepted the change
+- [ ] Each org's automation App (`<org>-automation`) holds
+      **Repository security advisories: Read and write**, and its
+      installation has accepted the change
 - [ ] Both Apps are installed on every account that owns repos the
       agents will operate on
 - [ ] The reserved `<username>-vergil-admin` App was **not** created
