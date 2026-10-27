@@ -17395,7 +17395,9 @@ They drive git, <code>gh</code>, SSH, and Docker operations. Installed via
 <p>Construct standards-compliant conventional commits (no AI co-author
 trailer; see #3200). Performs five branch/context checks before committing
 (detached HEAD, protected branch, branch prefix, issue number,
-worktree convention).</p>
+worktree convention).
+Local-settings guard: refuses an agent (warns a human) while a loadable
+<code>.claude/settings.local.json</code> is not absent or <code>{}</code> (epic vergil-project/.github#558).</p>
 <table>
 <thead>
 <tr>
@@ -17549,7 +17551,10 @@ cannot be unfrozen. <code>status</code> prints the current state. <code>report-r
 <code>vrg-submit-pr</code>) refuses an issue whose native parent is an intake, planning
 or deferred epic: a queue item is not buildable until intake review routes it,
 <code>epic-create</code> expands it, or deferred review revives it (epics
-vergil-project/.github#176 and #508).</p>
+vergil-project/.github#176 and #508).
+Local-settings guard: <code>report-ready</code> refuses an agent (warns a human), before
+pushing or recording anything, while a loadable <code>.claude/settings.local.json</code>
+is not absent or <code>{}</code> (epic vergil-project/.github#558).</p>
 <table>
 <thead>
 <tr>
@@ -18581,7 +18586,10 @@ drift verdict is exactly the change <code>--write</code> would make.</p>
 <h3 id="vrg-container-run">vrg-container-run<a class="headerlink" href="#vrg-container-run" title="Permanent link">&para;</a></h3>
 <p>Run arbitrary commands inside a dev container. Auto-detects the
 project language to select the Docker image; falls back to
-<code>dev-base:latest</code>. Uses <code>execvp</code> to replace the process.</p>
+<code>dev-base:latest</code>. Uses <code>execvp</code> to replace the process.
+Local-settings guard: on the host, before any container starts, it refuses an
+agent (warns a human) while a loadable <code>.claude/settings.local.json</code> is not
+absent or <code>{}</code> (epic vergil-project/.github#558).</p>
 <table>
 <thead>
 <tr>
