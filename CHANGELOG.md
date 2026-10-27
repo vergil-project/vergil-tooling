@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.276] - 2026-10-27
+
+### Bug fixes
+
+- update every plugin install, not one per plugin id (#3764) (#3768)
+
+### Chores
+
+- uv lock --upgrade
+
 ## [2.1.275] - 2026-10-27
 
 ### Bug fixes
