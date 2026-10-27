@@ -15,14 +15,6 @@
       }
     ]
   },
-  "extraKnownMarketplaces": {
-    "vergil-marketplace": {
-      "source": {
-        "source": "github",
-        "repo": "vergil-project/vergil-claude-plugin"
-      }
-    }
-  },
   "enabledPlugins": {
     "vergil@vergil-marketplace": true
   },

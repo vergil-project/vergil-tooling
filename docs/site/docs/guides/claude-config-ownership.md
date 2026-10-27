@@ -206,9 +206,11 @@ not a chokepoint: it runs inside a dev container, where it sees neither the
 main checkout's working tree nor the identity. The nightly config audit does
 not check this file either, because a CI checkout has no local file.
 
-The guard is being added under epic
-[vergil-project/.github#558](https://github.com/vergil-project/.github/issues/558);
-until it ships, the rule is stated in the `CLAUDE.md` template region only.
+The guard enforces the rule in `vrg-commit`, `vrg-pr-workflow report-ready`
+and `vrg-container-run` (epic
+[vergil-project/.github#558](https://github.com/vergil-project/.github/issues/558)),
+and the `CLAUDE.md` template region also states it, so agents know the rule
+before a tool refuses.
 
 **Known limit.** Claude Code keeps the local file with `.claude/settings.json`
 instead of at the main checkout's root when the repository root, or its
@@ -227,10 +229,12 @@ and what needs judgment.
 
 `vrg-github-repo-config audit` runs in each managed repo's scheduled
 `ops.yml` job (see [GitHub Config Audit](../reference/config-audit.md)).
-Under this model it checks the following. Epic
+Under this model it checks the following. The audit already compares
+`.claude/settings.json` and the template region with the template exactly
+(accepting the previous template, with a warning, until the fleet is
+swept); epic
 [vergil-project/.github#558](https://github.com/vergil-project/.github/issues/558)
-adds the line budget, the `AGENTS.md` rule and the exact template
-comparison to today's audit.
+adds the line budget and the `AGENTS.md` rule.
 
 - the repo `CLAUDE.md` is at most 200 lines (a hard failure once the
   cleanup has landed fleet-wide);
