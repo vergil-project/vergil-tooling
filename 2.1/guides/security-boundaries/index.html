@@ -1344,6 +1344,8 @@
       
         
       
+        
+      
     
     
     
@@ -1396,6 +1398,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.274/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.274
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15869,6 +15899,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Adding an entry">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#entries-and-security-records" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Entries and security records
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -16340,6 +16387,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Adding an entry">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#entries-and-security-records" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Entries and security records
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -16451,6 +16515,21 @@ the same fields:</p>
 <p>This page is ordinary documentation. Update it through a normal PR
 when a seam opens, changes or closes. It is not tracked as an open
 issue.</p>
+<h3 id="entries-and-security-records">Entries and security records<a class="headerlink" href="#entries-and-security-records" title="Permanent link">&para;</a></h3>
+<p>This page is public, so it follows the
+<a href="../security-records/">Security Records</a> policy:</p>
+<ul>
+<li><strong>A seam an attacker could use gets a security record while it is
+  open.</strong> Create one with <code>vrg-security-record create</code>. The details
+  live in its private advisory, not here.</li>
+<li><strong>Its entry here stays neutral.</strong> Name the seam and point to the
+  tracking issue, but give no detail of how to use the gap: no
+  triggering steps, command shapes or bypass. Fill in the full account
+  when the seam is resolved.</li>
+<li><strong>Platform limits that are already public stay as they are.</strong> A
+  documented limit of GitHub or the harness (such as entry 1) tells an
+  attacker nothing new, so its entry can describe it in full.</li>
+</ul>
 <h2 id="register">Register<a class="headerlink" href="#register" title="Permanent link">&para;</a></h2>
 <h3 id="1-github-permissions-are-coarser-than-the-agent-model">1. GitHub permissions are coarser than the agent model<a class="headerlink" href="#1-github-permissions-are-coarser-than-the-agent-model" title="Permanent link">&para;</a></h3>
 <p>GitHub's permission model cannot express exactly what an agent
@@ -16509,35 +16588,31 @@ the VM.</p>
 </ul>
 <h3 id="3-a-misfiring-commit-guard-pushes-agents-to-disable-the-sandbox">3. A misfiring commit guard pushes agents to disable the sandbox<a class="headerlink" href="#3-a-misfiring-commit-guard-pushes-agents-to-disable-the-sandbox" title="Permanent link">&para;</a></h3>
 <p>The vergil plugin's protected-branch hook
-(<code>block-protected-branch-work.sh</code>) decides which repo a command
-targets from the Bash tool's starting directory. The harness resets
-that directory to the session root before every call. The hook
-re-targets only a leading <code>cd &lt;dir&gt;</code> or <code>git -C</code>; any other command
-shape is judged against the session-root repo. A commit in a feature
-worktree is then denied as a commit to <code>develop</code>. Agents have worked
-around the false deny by running the command with the sandbox
-disabled, which removes the whole sandbox boundary for that call.</p>
+(<code>block-protected-branch-work.sh</code>) decided which repo a command
+targeted from the Bash tool's starting directory, which the harness
+resets to the session root before every call. A <code>vrg-commit</code> in a
+feature worktree could then be denied as a commit to <code>develop</code>.
+Agents worked around the false deny by running the command with the
+sandbox disabled, which removes the whole sandbox boundary for that
+call.</p>
 <ul>
 <li><strong>Seam:</strong> the harness's pre-execution hook, which sees the reset
   starting directory, and the command, which runs after its own <code>cd</code>.</li>
 <li><strong>Risk:</strong> agents learn to treat a safety guard as noise and switch
-  off the sandbox to get past it. The same move (disable the sandbox,
-  <code>cd</code> into a branch) would let an agent really commit to a protected
-  branch.</li>
-<li><strong>Current mitigation:</strong> <code>vrg-commit</code> checks the real current branch
-  when it runs and refuses commits to protected branches, so the
-  bypass does not let a <code>vrg-commit</code> land on <code>develop</code> or <code>main</code>.
-  <code>vrg-git</code> blocks branch switches in the main worktree. Neither stops
-  the sandbox bypass itself.</li>
-<li><strong>Desired fix (decided):</strong> have the plugin hook skip <code>vrg-commit</code>,
-  whose run-time branch check is the authoritative one, rather than
-  try to parse every shell command shape. Other git write paths stay
-  guarded as they are. Related latent assumption: <code>vrg-hook-guard</code>
-  also trusts <code>tool_input.cwd</code>. That is harmless today, since it only
-  blocks raw <code>git</code>/<code>gh</code>, but matters if a fix comes to rely on it.</li>
-<li><strong>Status:</strong> open.</li>
+  off the sandbox to get past it.</li>
+<li><strong>Mitigation before the fix:</strong> <code>vrg-commit</code> checks the real current
+  branch when it runs and refuses commits to protected branches, so
+  the bypass never let a <code>vrg-commit</code> land on <code>develop</code> or <code>main</code>.</li>
+<li><strong>Fix:</strong> the hook no longer matches <code>vrg-commit</code>. <code>vrg-commit</code>
+  already checks the real branch it commits to when it runs, so that
+  run-time check is the authoritative one, and the false deny that
+  pushed agents to disable the sandbox is gone. Raw <code>git commit</code> stays
+  guarded by the hook as before.</li>
+<li><strong>Status:</strong> resolved.</li>
 <li><strong>Tracking:</strong>
-  <a href="https://github.com/vergil-project/vergil-claude-plugin/issues/694">vergil-claude-plugin#694</a>.</li>
+  <a href="https://github.com/vergil-project/vergil-claude-plugin/issues/694">vergil-claude-plugin#694</a>
+  (fixed by
+  <a href="https://github.com/vergil-project/vergil-claude-plugin/pull/719">vergil-claude-plugin#719</a>).</li>
 </ul>
 <h2 id="related">Related<a class="headerlink" href="#related" title="Permanent link">&para;</a></h2>
 <ul>

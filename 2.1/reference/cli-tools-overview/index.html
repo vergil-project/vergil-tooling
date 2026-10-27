@@ -1344,6 +1344,8 @@
       
         
       
+        
+      
     
     
     
@@ -1396,6 +1398,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.274/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.274
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -12818,6 +12848,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-epic-audit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-epic-audit
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-worktree-status" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -16932,6 +16973,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-epic-audit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-epic-audit
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-worktree-status" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17357,8 +17409,8 @@ cloud→Mac handoff: each branch's ready-state comes from a local
 worktree's <code>pr-workflow.json</code> when present, else the relay ref
 <code>refs/vergil/pr-workflow/&lt;branch&gt;</code>; origin's tip is checked against the
 recorded <code>head_sha</code> and the PR opens with <code>--head</code> <strong>without pushing</strong>.
-It refuses an issue whose native parent is an intake or planning epic (see
-<a href="#vrg-pr-workflow"><code>vrg-pr-workflow</code></a>).</p>
+It refuses an issue whose native parent is an intake, planning or deferred
+epic (see <a href="#vrg-pr-workflow"><code>vrg-pr-workflow</code></a>).</p>
 <table>
 <thead>
 <tr>
@@ -17464,9 +17516,10 @@ advances, the branch (issue #3071). <code>unfreeze</code> is the only sanctioned
 reopen a still-unsubmitted branch — it drops the state back to
 <code>implementing</code> while keeping the metadata; an already-submitted branch
 cannot be unfrozen. <code>status</code> prints the current state. <code>report-ready</code> (like
-<code>vrg-submit-pr</code>) refuses an issue whose native parent is an intake or planning
-epic: a queue item is not buildable until intake review routes it, or
-<code>epic-create</code> expands it (epic vergil-project/.github#176).</p>
+<code>vrg-submit-pr</code>) refuses an issue whose native parent is an intake, planning
+or deferred epic: a queue item is not buildable until intake review routes it,
+<code>epic-create</code> expands it, or deferred review revives it (epics
+vergil-project/.github#176 and #508).</p>
 <table>
 <thead>
 <tr>
@@ -17737,7 +17790,7 @@ path. It carries no kind label. The intake epic is resolved (created if
 absent) <em>before</em> the issue is created; if linking the created issue fails, the
 tool exits 1 naming its URL and the <code>vrg-epic-move</code> command that links it. Used
 by the <code>intake-capture</code> skill. See
-<a href="../../standards/github-issues/#intake-and-planning-queues">Intake and planning queues</a>.</p>
+<a href="../../standards/github-issues/#intake-planning-and-deferred-queues">Intake, planning and deferred queues</a>.</p>
 <p><code>vrg-triage-create</code> is a <strong>deprecated alias</strong> kept for one release: it warns
 on stderr, ignores <code>--kind</code> (intake has no kind label), and forwards every
 other argument to <code>vrg-intake-create</code>.</p>
@@ -17874,9 +17927,16 @@ deferral — so no review skill hand-rolls them. Routes:</p>
 </tr>
 </tbody>
 </table>
-<p>A <code>security</code> item keeps its advisory link: a split or a recreate retargets
-the advisory before the original closes, and a transfer retargets it after
-the move (see <a href="../../guides/security-records/#when-the-issue-moves">Security Records</a>).</p>
+<p>A <code>security</code> item keeps its advisory links. A recreate retargets every
+advisory the item names before the original closes, and a transfer
+retargets every one after the move; on a failure, either names every
+advisory still not retargeted. A split retargets an item's one advisory
+before the original closes. A split of an item naming several advisories
+is refused before any change, because which advisory goes to which task
+can't be inferred:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>vrg-intake-route: &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt; names several advisories (&lt;GHSA-id&gt;, &lt;GHSA-id&gt;); retarget each by hand with vrg-security-record retarget, then split
+</code></pre></div>
+<p>See <a href="../../guides/security-records/#when-the-issue-moves">Security Records</a>.</p>
 <h3 id="vrg-security-record">vrg-security-record<a class="headerlink" href="#vrg-security-record" title="Permanent link">&para;</a></h3>
 <p>Record a security finding as a private draft advisory in <code>&lt;org&gt;/.github</code>
 paired with a neutral <code>security</code>-labelled intake issue (epic
@@ -17926,15 +17986,21 @@ under the intake epic, oldest first. <code>vrg-queue planning</code> lists the o
 under the planning epic with their state: <strong>waiting</strong> (no <code>in-progress</code>
 label), <strong>in-progress</strong> (labelled, with its latest progress note), or
 <strong>ready-to-close</strong> (labelled, the <code>Epic:</code> / <code>Docs task:</code> / <code>Tasks filed: yes</code>
-markers present, and the docs task closed). A planning item whose security
-advisory still tracks it is held at <strong>in-progress</strong> with a <code>held:</code> note until
-the advisory is retargeted to the fix task(s). <code>vrg-queue deferred</code> lists the
+markers present, and the docs task closed). A planning item that any security
+advisory it names still tracks is held at <strong>in-progress</strong> until every such
+advisory is retargeted to the task or tasks that fix it, with a note that
+counts them and names them by GHSA ID only (<code>held: &lt;k&gt; advisory still tracks
+this planning issue (&lt;GHSA-id&gt;) — …</code> for one, <code>held: &lt;k&gt; advisories still
+track this planning issue (&lt;GHSA-id&gt;, …) — …</code> for more; see
+<a href="../../guides/security-records/#security-items-in-planning">Security Records</a>).
+<code>vrg-queue deferred</code> lists the
 open items under the deferred epic, all <strong>waiting</strong>, least recently deferred
 first; each item's note is its latest deferral
 (<code>Deferred &lt;day&gt;: &lt;reason&gt; | Revisit when: &lt;conditions&gt;</code>), and an item with no
 deferral comment sorts first with an empty note. A bare <code>vrg-queue</code> lists all
-three queues in that order (intake, planning, deferred). Used by
-<code>intake-review</code>'s collect step and <code>epic-create</code>'s no-argument summary.</p>
+three queues in that order (intake, planning, deferred). Used by the
+collect step of the three review skills (<code>intake-review</code>, <code>planning-review</code>,
+<code>deferred-review</code>) and by <code>epic-create</code>'s no-argument summary.</p>
 <table>
 <thead>
 <tr>
@@ -17962,6 +18028,82 @@ three queues in that order (intake, planning, deferred). Used by
 <tr>
 <td>Exit codes</td>
 <td>0 success, 1 error, 2 bad arguments</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-epic-audit">vrg-epic-audit<a class="headerlink" href="#vrg-epic-audit" title="Permanent link">&para;</a></h3>
+<p>Report epic/task drift and invariant violations for an org, as Markdown on
+stdout. It is read-only by default. <strong>Drift</strong> is a task still open although
+the merged PR that <code>Ref</code>s it landed within the last <code>--window-days</code> days, and
+an open finite epic whose children are all closed. The <strong>invariant</strong> checks
+are the <a href="../../standards/github-issues/#compliance-invariants">compliance invariants</a>:
+epics outside <code>.github</code>, stray <code>.github</code> issues, a closed epic with an open
+child, orphans, retired kind labels, body-only <code>Parent:</code> links, self-homed
+queues in a now-public repo, and private work under a public epic. It also
+lists open epics with operational tasks still pending, and closed
+operational tasks with no <code>Outcome: SUCCESS</code>. The report previews, without
+writing, the ad-hoc and queue-epic drains and the security-records pass that
+<code>--close</code> would run.</p>
+<p>The org comes from the current repo's <code>origin</code> remote (there is no <code>--org</code>
+flag). <code>--repo OWNER/NAME</code> audits that repo's resolved epic home instead of
+the org's <code>.github</code>, so a private repo that self-homes its epics can be
+audited; the home-scoped checks (epic drift, stray issues, operation-pending
+epics, and the <code>--close</code> drift closes) then target it.
+<code>--epic REF</code> is a separate read-only mode: it prints one epic's children as
+JSON (<code>{"epic": &lt;slug&gt;, "children": [{repo, number, title, state}, …]}</code>) and
+skips the drift audit. A bare <code>#N</code> resolves against the current repo's epic
+home.</p>
+<p><code>--close</code> applies the fixes, in order:</p>
+<ol>
+<li>Close the drifted tasks and rolled-up epics, and reopen each epic closed
+   while a child was still open, with an explanatory comment on each.</li>
+<li>Drain the closed children of the ad-hoc, intake, planning and deferred
+   epics into per-quarter archives, and close past archives (see
+   <a href="../../standards/github-issues/#ad-hoc-epic-archiving">Ad-hoc epic archiving</a>).</li>
+<li>Run the <a href="../../standards/github-issues/#the-orphan-pass-auto-heal">orphan pass</a>:
+   nativize body-only <code>Parent:</code> links, strip the retired kind labels, move a
+   now-public repo's queue items under <code>.github</code>, and attach every orphan to
+   its home's intake epic.</li>
+<li>Run the security-records pass, even when the orphan pass failed: each
+   paired draft advisory in the org's <code>.github</code> is set to closed once every
+   issue it tracks is closed, and back to draft while any is open; broken
+   pairs are reported, not repaired. Its output names only GHSA IDs, issue
+   refs and states, never advisory text (see
+   <a href="../../guides/security-records/#managing-a-record-through-its-issue">Security Records</a>).</li>
+</ol>
+<p><code>--close</code> is a human action, or the scheduled <code>ops-epic-sweep</code> workflow,
+which sets <code>VRG_EPIC_SWEEP=1</code>. Other invariant violations stay report-only.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_epic_audit</code> (checks and passes: <code>lib/epic_audit.py</code>; security pass: <code>lib/security_records.py</code>)</td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>--window-days N</code> (positive; default 30), <code>--repo OWNER/NAME</code>, <code>--epic REF</code>, <code>--close</code></td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>Run inside a repo in the target org; GitHub App credentials for that org. <code>--close</code> needs a human identity or <code>VRG_EPIC_SWEEP=1</code>. The security-records pass needs Repository security advisories: Read and write</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td><code>--close</code> in an agent session is refused before any network call; a <code>--repo</code> without <code>/</code>, an org that cannot be detected, or an org with no <code>.github</code> home exits 1. A full intake epic stops the orphan pass, listing what it did not attach; a broken security pair or a failed security pass exits 1 after the rest of the run. With <code>--epic</code>, a ref that is not an epic exits 1</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 success (the read-only report exits 0 even when it finds drift), 1 refused, a pass failed, or error, 2 bad arguments</td>
 </tr>
 <tr>
 <td>Status</td>
@@ -18010,21 +18152,21 @@ merged verdict was withheld, issue #1719) is counted under
 behind a "0 cruft" message (issue #2347). A merged release or deps
 worktree shows as <code>merged</code> in its own section but is not counted as
 <code>vrg-finalize-pr</code> cruft.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>Main checkout (integration branch: develop)
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>CHECKOUT               BRANCH   DIRTY  LAST COMMIT  STATUS
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>mq-gateway-replay-lab  develop  -      23d ago      ok
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>
-<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>Development
-<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>WORKTREE                      BRANCH                          PR  STATE  WORKFLOW  AHEAD  DIRTY  LAST COMMIT  LAST MODIFIED
-<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>issue-315-deps-security-bump  feature/315-deps-security-bump  -   no-pr  ready     1      -      1h ago       1h ago
-<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>
-<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>Other / unknown
-<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>WORKTREE         BRANCH      PR  STATE     WORKFLOW  AHEAD  DIRTY  LAST COMMIT  LAST MODIFIED
-<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>tmp-wheel-build  (detached)  -   detached  -         0      -      82d ago      82d ago
-<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>  note: tmp-wheel-build (detached): detached HEAD — no branch checked out; check out a branch to resume work
-<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>
-<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>3 worktrees: main checkout (ok), 1 development, 0 release and dependency machinery, 1 other / unknown.
-<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a>Development: 0 active, 0 needs-attention, 1 stalled (no-pr), 0 cruft (removable). 1 PR prepared.
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>Main checkout (integration branch: develop)
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>CHECKOUT               BRANCH   DIRTY  LAST COMMIT  STATUS
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>mq-gateway-replay-lab  develop  -      23d ago      ok
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>Development
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>WORKTREE                      BRANCH                          PR  STATE  WORKFLOW  AHEAD  DIRTY  LAST COMMIT  LAST MODIFIED
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>issue-315-deps-security-bump  feature/315-deps-security-bump  -   no-pr  ready     1      -      1h ago       1h ago
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>Other / unknown
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>WORKTREE         BRANCH      PR  STATE     WORKFLOW  AHEAD  DIRTY  LAST COMMIT  LAST MODIFIED
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>tmp-wheel-build  (detached)  -   detached  -         0      -      82d ago      82d ago
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>  note: tmp-wheel-build (detached): detached HEAD — no branch checked out; check out a branch to resume work
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>3 worktrees: main checkout (ok), 1 development, 0 release and dependency machinery, 1 other / unknown.
+<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>Development: 0 active, 0 needs-attention, 1 stalled (no-pr), 0 cruft (removable). 1 PR prepared.
 </code></pre></div>
 <table>
 <thead>

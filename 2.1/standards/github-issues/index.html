@@ -1346,6 +1346,8 @@
       
         
       
+        
+      
     
     
     
@@ -1398,6 +1400,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.274/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.274
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -14138,6 +14168,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#the-security-records-pass" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The security-records pass
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -14149,15 +14190,15 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#intake-and-planning-queues" class="md-nav__link">
+  <a href="#intake-planning-and-deferred-queues" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Intake and planning queues
+        Intake, planning and deferred queues
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Intake and planning queues">
+    <nav class="md-nav" aria-label="Intake, planning and deferred queues">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -14183,10 +14224,21 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#intake-review-vrg-intake-route" class="md-nav__link">
+  <a href="#routing-vrg-intake-route" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Intake review: vrg-intake-route
+        Routing: vrg-intake-route
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-deferred-queue" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The deferred queue
       
     </span>
   </a>
@@ -16916,6 +16968,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#the-security-records-pass" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The security-records pass
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -16927,15 +16990,15 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#intake-and-planning-queues" class="md-nav__link">
+  <a href="#intake-planning-and-deferred-queues" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Intake and planning queues
+        Intake, planning and deferred queues
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Intake and planning queues">
+    <nav class="md-nav" aria-label="Intake, planning and deferred queues">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -16961,10 +17024,21 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#intake-review-vrg-intake-route" class="md-nav__link">
+  <a href="#routing-vrg-intake-route" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Intake review: vrg-intake-route
+        Routing: vrg-intake-route
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-deferred-queue" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The deferred queue
       
     </span>
   </a>
@@ -17078,16 +17152,19 @@ tracked, reviewable, and auditable.</p>
 <li>Intake item: An uncurated capture — a bug, an idea, an investigation, a
   one-line "don't forget X" — linked under its home's <strong>intake epic</strong> until
   intake review routes it. It carries no kind label: its parent <em>is</em> its state.
-  See <a href="#intake-and-planning-queues">Intake and planning queues</a>.</li>
+  See <a href="#intake-planning-and-deferred-queues">Intake, planning and deferred queues</a>.</li>
 <li>Planning item: A reviewed item judged to need a full epic, linked under its
   home's <strong>planning epic</strong> while it waits for (or undergoes) <code>epic-create</code>.</li>
+<li>Deferred item: An evaluated item that is not ready yet, parked under its
+  home's <strong>deferred epic</strong> with a dated record of why it waits and what to check
+  before it comes back. See <a href="#the-deferred-queue">The deferred queue</a>.</li>
 </ul>
 <h2 id="the-invariant-every-issue-belongs-to-an-epic">The invariant: every issue belongs to an epic<a class="headerlink" href="#the-invariant-every-issue-belongs-to-an-epic" title="Permanent link">&para;</a></h2>
 <p>In any repo with a <code>vergil.toml</code>, <strong>every issue is either a legitimate top-level
 kind or has an epic parent.</strong> The legitimate top-level kinds are:</p>
 <ul>
-<li><strong>epics</strong> (<code>epic</code> label), including the standing ad-hoc, intake, and planning
-  epics;</li>
+<li><strong>epics</strong> (<code>epic</code> label), including the standing ad-hoc, intake, planning,
+  and deferred epics;</li>
 <li><strong>archives</strong> (<code>archive</code> label) — the per-quarter buckets of closed standing-epic
   children;</li>
 <li><strong>release tracking issues</strong> (<code>release: X.Y.Z</code>), which <code>vrg-release</code> creates
@@ -17112,6 +17189,11 @@ it stands:</p>
 <tr>
 <td><strong>Planning</strong> — needs a full epic</td>
 <td>the planning epic</td>
+<td>no</td>
+</tr>
+<tr>
+<td><strong>Deferred</strong> — evaluated, waiting on a revival condition</td>
+<td>the deferred epic</td>
 <td>no</td>
 </tr>
 <tr>
@@ -17224,7 +17306,7 @@ cross-forge fallback.</p>
   <a href="#ad-hoc-epic-archiving">Ad-hoc epic archiving</a>.</li>
 </ul>
 <h3 id="standing-epics">Standing epics<a class="headerlink" href="#standing-epics" title="Permanent link">&para;</a></h3>
-<p>The ad-hoc epic is one of three kinds of <strong>standing epic</strong> — perpetual
+<p>The ad-hoc epic is one of four kinds of <strong>standing epic</strong> — perpetual
 umbrellas that are created and reused idempotently, never auto-close, and never
 gate rollup:</p>
 <table>
@@ -17259,15 +17341,25 @@ gate rollup:</p>
 <td>one per queue home</td>
 <td>items waiting for or undergoing <code>epic-create</code></td>
 </tr>
+<tr>
+<td>Deferred</td>
+<td><code>Epic (deferred): &lt;name&gt;</code></td>
+<td><code>epic</code> + <code>deferred</code></td>
+<td>one per queue home</td>
+<td>evaluated items parked until their revival conditions are met</td>
+</tr>
 </tbody>
 </table>
-<p>The intake and planning <strong>queue home</strong> follows the
-<a href="#epic-home-the-orggithub-rule">epic-home rule</a>: every public repo shares the
-org's pair in <code>&lt;org&gt;/.github</code> (<code>&lt;name&gt;</code> is the org), while a <strong>private</strong> repo
-self-homes its own pair (<code>&lt;name&gt;</code> is the repo), so private work never surfaces
-in a public issue. <code>vrg-issue-create --epic</code> accepts <code>adhoc</code>, <code>intake</code>, and
-<code>planning</code> as sentinels that resolve (creating if absent) the target repo's
-standing epic of that kind.</p>
+<p>Intake, planning and deferred are the three <strong>queue epics</strong>. Their <strong>queue
+home</strong> follows the <a href="#epic-home-the-orggithub-rule">epic-home rule</a>: every
+public repo shares the org's set in <code>&lt;org&gt;/.github</code> (<code>&lt;name&gt;</code> is the org),
+while a <strong>private</strong> repo self-homes its own set (<code>&lt;name&gt;</code> is the repo), so
+private work never surfaces in a public issue. <code>vrg-issue-create --epic</code>
+accepts <code>adhoc</code>, <code>intake</code>, and <code>planning</code> as sentinels that resolve (creating
+if absent) the target repo's standing epic of that kind. It refuses
+<code>deferred</code>, as does <code>vrg-epic-move</code>: an item enters and leaves the deferred
+queue only through <code>vrg-intake-route</code>, which records the deferral (see
+<a href="#the-deferred-queue">The deferred queue</a>).</p>
 <h3 id="ad-hoc-epic-archiving">Ad-hoc epic archiving<a class="headerlink" href="#ad-hoc-epic-archiving" title="Permanent link">&para;</a></h3>
 <p>A live ad-hoc epic accumulates closed children forever, so its "what's in
 flight" signal drowns in finished work. To keep the umbrella honest, closed
@@ -17305,10 +17397,12 @@ ad-hoc epic ends up holding only its still-open children.</p>
   children it moves, and if a duplicate archive ever exists the <strong>oldest is
   reused</strong> rather than the run failing on the ambiguity — so the drain is safe
   to re-run and self-heals.</li>
-<li><strong>Intake and planning drain the same way.</strong> Closed intake and planning items
-  (dropped, split, planned) move into <code>Archive (intake): &lt;name&gt; — &lt;YYYY&gt;-Q&lt;n&gt;</code>
-  and <code>Archive (planning): &lt;name&gt; — &lt;YYYY&gt;-Q&lt;n&gt;</code> buckets (labels <code>archive</code> +
-  <code>intake</code> / <code>planning</code>), so only open items count against GitHub's
+<li><strong>The queue epics drain the same way.</strong> Closed intake, planning and deferred
+  items (dropped, split, planned) move into
+  <code>Archive (intake): &lt;name&gt; — &lt;YYYY&gt;-Q&lt;n&gt;</code>,
+  <code>Archive (planning): &lt;name&gt; — &lt;YYYY&gt;-Q&lt;n&gt;</code> and
+  <code>Archive (deferred): &lt;name&gt; — &lt;YYYY&gt;-Q&lt;n&gt;</code> buckets (labels <code>archive</code> +
+  <code>intake</code> / <code>planning</code> / <code>deferred</code>), so only open items count against GitHub's
   100-sub-issue cap. An archive bucket holds at most 95 children; a full one
   rolls over to a new segment.</li>
 </ul>
@@ -17352,7 +17446,8 @@ hazard between the code landing and this sweep running.</p>
   <code>issues.closed</code> rollup path (<code>vrg-epic-rollup</code>) archives just that child into
   its close-quarter archive.</li>
 <li><strong>Backstop + backfill.</strong> The daily <code>vrg-epic-audit --close</code> sweep runs the
-  org-wide drain for every standing kind (ad-hoc, intake, planning): it
+  org-wide drain for every standing kind (ad-hoc, intake, planning,
+  deferred): it
   distributes any backlog the steady-state path missed and closes past-quarter
   archives. This is the same trusted sweep that closes other
   provably-complete drift, so it is allowed to mutate under the scheduled
@@ -17448,7 +17543,8 @@ relocating epics when a repo's visibility changes.</p>
   a <em>public</em> repo is a violation (a private repo self-homes legitimately).</li>
 <li><strong>No stray <code>.github</code> issues.</strong> The epic home holds only epics, the
   <code>archive</code>-labelled per-quarter buckets, and issues linked under an epic —
-  managed tasks and intake/planning items alike; any other open issue there is a
+  managed tasks and intake/planning/deferred items alike; any other open issue
+  there is a
   stray.</li>
 <li><strong>An epic is never closed while a child is open.</strong> A closed finite epic with an
   open child is a violation (perpetual standing epics are exempt — they never
@@ -17460,7 +17556,7 @@ relocating epics when a repo's visibility changes.</p>
   <code>vergil.toml</code>) that is not a legitimate top-level kind and has no epic parent —
   together with the intake epic it would be attached to. It also lists issues
   still carrying the retired <code>triage</code> / <code>idea</code> / <code>research</code> labels, issues
-  parented only by a body <code>Parent:</code> line, and self-homed intake/planning epics
+  parented only by a body <code>Parent:</code> line, and self-homed queue epics
   in a repo that has since become public.</li>
 <li><strong>No private work under public epics.</strong> An issue in a private repo parented
   under a public <code>.github</code> epic is reported as a likely unsupported
@@ -17477,7 +17573,8 @@ with an org-wide <strong>orphan pass</strong>, in order:</p>
    consumer reads the same parent.</li>
 <li><strong>Strip</strong> the retired <code>triage</code> / <code>idea</code> / <code>research</code> labels from every open
    issue (its parent is left alone).</li>
-<li><strong>Move</strong> a now-public repo's self-homed intake and planning items under the
+<li><strong>Move</strong> a now-public repo's self-homed intake, planning and deferred items
+   under the
    <code>.github</code> queues, then close the emptied self-homed epics — the only epics
    the pass ever closes.</li>
 <li><strong>Attach</strong> every orphan to its home's intake epic (creating it if absent).
@@ -17485,17 +17582,73 @@ with an org-wide <strong>orphan pass</strong>, in order:</p>
 </ol>
 <p>The pass is idempotent and never closes an item. Before each link it checks the
 target queue epic's open children against the cap (95, under GitHub's
-100-sub-issue limit); a full intake or planning epic <strong>stops the pass</strong> with
+100-sub-issue limit); a full queue epic <strong>stops the pass</strong> with
 exit 1, listing every item it did not link — never a silent skip. A full intake
 queue is a signal to run intake review. The same pass, dispatched once by hand
 through <code>ops-epic-sweep</code>'s <code>workflow_dispatch</code>, is the one-time migration of an
 org's existing backlog.</p>
-<h2 id="intake-and-planning-queues">Intake and planning queues<a class="headerlink" href="#intake-and-planning-queues" title="Permanent link">&para;</a></h2>
-<p>Not every capture is ready to be built. Work flows through two <strong>standing
-queues</strong> before it is ready — <strong>intake → planning → ready</strong> — and the queue an
-item sits in is simply its parent epic (see
-<a href="#standing-epics">Standing epics</a>). There are no kind labels and no fourth
-state.</p>
+<h4 id="the-security-records-pass">The security-records pass<a class="headerlink" href="#the-security-records-pass" title="Permanent link">&para;</a></h4>
+<p>After the orphan pass, <code>vrg-epic-audit --close</code> runs one pass over the draft
+advisories in the org's <code>.github</code> (see
+<a href="../../guides/security-records/#managing-a-record-through-its-issue">Security Records</a>).
+It runs even when the orphan pass failed, and the worse exit code wins.</p>
+<ul>
+<li><strong>State sync.</strong> Each paired advisory follows its <code>security</code> issues: closed
+  once every issue it tracks is closed, a draft while any is open. The pass
+  only moves an advisory between <code>draft</code> and <code>closed</code>, and never touches an
+  unpaired external report.</li>
+<li><strong>Consistency check.</strong> It reports broken pairs (a <code>security</code> issue with a
+  missing or wrong advisory reference, or an advisory whose tracking lines are
+  missing or do not point back) and does not repair them; any broken pair
+  makes the run exit 1.</li>
+</ul>
+<p>Its output goes to <code>.github</code>'s public Actions logs, so it names only GHSA IDs,
+issue refs, labels and states, never advisory text. The read-only
+<code>vrg-epic-audit</code> previews the same pass without changing any state. The sweep's
+org ops App needs Repository security advisories: Read and write (see
+<a href="../../guides/identity-architecture/">Identity architecture</a>).</p>
+<h2 id="intake-planning-and-deferred-queues">Intake, planning and deferred queues<a class="headerlink" href="#intake-planning-and-deferred-queues" title="Permanent link">&para;</a></h2>
+<p>Not every capture is ready to be built. Work flows through <strong>standing queues</strong>
+before it is ready — <strong>intake → planning → ready</strong> — and an evaluated item that
+is not ready yet waits in a third queue, <strong>deferred</strong>, until its revival
+conditions are met. The queue an item sits in is simply its parent epic (see
+<a href="#standing-epics">Standing epics</a>). There are no kind labels and no other
+states.</p>
+<table>
+<thead>
+<tr>
+<th>Queue</th>
+<th>Holds</th>
+<th>Reviewed by</th>
+<th>Leaves by</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Intake</strong></td>
+<td>captured, unreviewed items and every orphan the sweep finds</td>
+<td><code>intake-review</code></td>
+<td>drop, defer, one-off, split, or to planning</td>
+</tr>
+<tr>
+<td><strong>Planning</strong></td>
+<td>items that need a full epic</td>
+<td><code>planning-review</code> picks what to plan next; <code>epic-create</code> expands one item</td>
+<td>planned (closed as "planned as #N"), defer, or drop</td>
+</tr>
+<tr>
+<td><strong>Deferred</strong></td>
+<td>evaluated items parked until their <code>Revisit when:</code> conditions are met</td>
+<td><code>deferred-review</code></td>
+<td>revive (to intake, to planning, or one-off), drop, or split; a refresh re-defers in place</td>
+</tr>
+</tbody>
+</table>
+<p>Except for a planned item, which <code>epic-create</code> closes, every move out of a
+queue is applied with <a href="#routing-vrg-intake-route"><code>vrg-intake-route</code></a>; the
+review skills
+(<code>vergil-claude-plugin</code>) present items in small batches with a recommended
+route and take one human confirmation per batch.</p>
 <h3 id="capture-vrg-intake-create">Capture: <code>vrg-intake-create</code><a class="headerlink" href="#capture-vrg-intake-create" title="Permanent link">&para;</a></h3>
 <p>Capture has near-zero friction: a one-line "don't forget X" is a valid intake
 item, with no category to choose. Create one with the sanctioned tool (the
@@ -17516,11 +17669,12 @@ warns, ignores <code>--kind</code>, and forwards to <code>vrg-intake-create</cod
 <p>It defaults to the current org's <code>.github</code> queues; <code>--repo &lt;owner&gt;/&lt;repo&gt;</code>
 selects that repo's queue home (a self-homed private repo's own queues), and
 <code>--json</code> emits machine-readable output. It is read-only.</p>
-<h3 id="intake-review-vrg-intake-route">Intake review: <code>vrg-intake-route</code><a class="headerlink" href="#intake-review-vrg-intake-route" title="Permanent link">&para;</a></h3>
+<h3 id="routing-vrg-intake-route">Routing: <code>vrg-intake-route</code><a class="headerlink" href="#routing-vrg-intake-route" title="Permanent link">&para;</a></h3>
 <p>Intake is reviewed oldest first, in small batches (the <code>intake-review</code> skill).
 For each item the reviewer checks its current state and recommends a route; the
 human confirms the batch; the route is applied with <code>vrg-intake-route</code>, which
-owns the mechanics so nothing is hand-rolled:</p>
+owns the mechanics so nothing is hand-rolled. The same tool applies the
+planning and deferred reviews' decisions. From intake:</p>
 <table>
 <thead>
 <tr>
@@ -17564,6 +17718,81 @@ its new parent. A route is refused when the item's container epic does not allow
 it (see <a href="../../reference/cli-tools-overview/#vrg-intake-route"><code>vrg-intake-route</code></a>
 for the route table), for a cross-org target, and for a private item headed to a
 public repo or epic.</p>
+<p>A <code>security</code> item keeps its advisory link through every move: on a split or a
+recreate, the advisory is retargeted to the new issue(s) <strong>before</strong> the
+original closes (a failure stops the route and leaves the original open); on a
+transfer, it is retargeted after the move (see
+<a href="../../guides/security-records/#when-the-issue-moves">Security Records</a>).</p>
+<h3 id="the-deferred-queue">The deferred queue<a class="headerlink" href="#the-deferred-queue" title="Permanent link">&para;</a></h3>
+<p>Deferring parks an item that was evaluated but cannot move yet — it waits on
+an upstream release, another issue, a date, or capacity. It is a queue of its
+own, apart from intake and planning, so neither queue fills up with items
+nobody can act on, and so every parked item says what would bring it back.</p>
+<p><strong>Only container-epic items can be deferred.</strong> An item under an intake,
+planning or ad-hoc epic can be deferred (an already-deferred item can be
+refreshed). A task in a development (finite) epic cannot: deferring one task
+would in effect suspend its whole epic, so the tool refuses it, naming the
+parent. A planning item is refused once its <code>epic-create</code> session has recorded
+an <code>Epic:</code> marker (the development epic already exists), and an ad-hoc item is
+refused while an open PR would close it.</p>
+<p><strong>Every deferral records why, and what to check.</strong> <code>--reason</code> and
+<code>--revisit-when</code> are both required:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>vrg-intake-route<span class="w"> </span>&lt;ref&gt;<span class="w"> </span>defer<span class="w"> </span>--reason<span class="w"> </span><span class="s2">"&lt;why now is not the time&gt;"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span>--revisit-when<span class="w"> </span><span class="s2">"&lt;what to check to know it can come back&gt;"</span>
+</code></pre></div>
+<p>The tool moves the item under its queue home's deferred epic (removing a
+planning item's <code>in-progress</code> label) and posts the record:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>Deferred &lt;YYYY-MM-DD&gt;: &lt;reason&gt;
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>Revisit when: &lt;conditions&gt;
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>Deferred from: &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;
+</code></pre></div>
+<p><code>Deferred from:</code> names the container epic the item left. <code>Revisit when:</code> is free
+prose — a date, an event ("<code>&lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;</code> merges", "Zensical 1.0
+ships"), or both — written so a later review can actually check it. <code>--date
+YYYY-MM-DD</code> stamps an original deferral date instead of today. Running <code>defer</code>
+on an item already in the deferred queue is a <strong>refresh</strong>: a new dated record,
+no move, no <code>Deferred from:</code> line.</p>
+<p><strong>Bringing it back.</strong> The <code>deferred-review</code> skill lists the queue with
+<code>vrg-queue deferred</code> (least recently deferred first), checks each item's
+conditions against their real sources, and recommends one outcome:</p>
+<table>
+<thead>
+<tr>
+<th>Outcome</th>
+<th>Command</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Keep</td>
+<td>none — the conditions are not met yet</td>
+</tr>
+<tr>
+<td>Refresh</td>
+<td><code>vrg-intake-route &lt;ref&gt; defer --reason TEXT --revisit-when TEXT</code></td>
+</tr>
+<tr>
+<td>Revive to intake</td>
+<td><code>vrg-intake-route &lt;ref&gt; intake</code></td>
+</tr>
+<tr>
+<td>Revive to planning</td>
+<td><code>vrg-intake-route &lt;ref&gt; planning</code> (or <code>epic-create &lt;ref&gt;</code>, which does this first)</td>
+</tr>
+<tr>
+<td>Revive as a one-off</td>
+<td><code>vrg-intake-route &lt;ref&gt; one-off --repo OWNER/REPO [--epic REF]</code></td>
+</tr>
+<tr>
+<td>Drop</td>
+<td><code>vrg-intake-route &lt;ref&gt; drop --reason TEXT</code></td>
+</tr>
+</tbody>
+</table>
+<p>A deferred item can also be split (<code>split --into REF … --reason TEXT</code>). An
+item enters and leaves the deferred queue <strong>only</strong> through <code>vrg-intake-route</code>:
+<code>vrg-issue-create</code> and <code>vrg-epic-move</code> refuse the deferred epic, so no item is
+deferred without its record and none is revived silently.</p>
 <h3 id="planning">Planning<a class="headerlink" href="#planning" title="Permanent link">&para;</a></h3>
 <p>A planning item records its own epic-creation process: <code>epic-create</code> always
 works through one, and posts progress comments (what is done, what is blocked,
@@ -17595,12 +17824,21 @@ nothing more:</p>
 <code>Docs task: &lt;ref&gt;</code>, and <code>Tasks filed: yes</code> (the latest of each wins) — and the
 epic body gains a <code>Planning: &lt;ref&gt;</code> line. <code>vrg-queue planning</code> reports an item
 <strong>ready to close</strong> once it is <code>in-progress</code>, all three markers are present, and
-the docs task is closed (its spec + plan PR merged).</p>
+the docs task is closed (its spec + plan PR merged). A planning item that a
+security advisory still tracks is <strong>held</strong> at in-progress, with a <code>held:</code> note,
+until <code>epic-create</code> retargets the advisory to the fix task(s); closing it
+earlier would close the advisory with the fix unwritten (see
+<a href="../../guides/security-records/#security-items-in-planning">Security items in planning</a>).</p>
+<p>Which planning item to expand next is decided in the <code>planning-review</code> skill:
+the human ranks the queue by priority and importance and picks only what will be
+implemented soon, since a plan left sitting goes stale. Each item is picked
+(handed to <code>epic-create</code>), deferred, dropped, or left in the queue.</p>
 <h3 id="queue-items-are-not-buildable">Queue items are not buildable<a class="headerlink" href="#queue-items-are-not-buildable" title="Permanent link">&para;</a></h3>
-<p>An item parented under an intake or planning epic is not PR-workable:
-<code>vrg-pr-workflow report-ready</code> and <code>vrg-submit-pr</code> (and, upstream, the
-<code>issue-implement</code> skill) refuse it, naming the step to take first — route it
-with intake review, or expand it with <code>epic-create</code>. Routing it out of the queue
+<p>An item parented under an intake, planning or deferred epic is not
+PR-workable: <code>vrg-pr-workflow report-ready</code> and <code>vrg-submit-pr</code> (and, upstream,
+the <code>issue-implement</code> skill) refuse it, naming the step to take first — route
+it with intake review, expand it with <code>epic-create</code>, or revive it with
+deferred review. Routing it out of the queue
 is the only way to lift the refusal. The check reads the issue's native parent,
 not a label.</p>
 <h3 id="epics-and-archives-are-not-tasks">Epics and archives are not tasks<a class="headerlink" href="#epics-and-archives-are-not-tasks" title="Permanent link">&para;</a></h3>
@@ -17691,12 +17929,16 @@ up to date (see
 <td>Marks the standing planning epic (with <code>epic</code>) and its archives (with <code>archive</code>); never auto-closes</td>
 </tr>
 <tr>
+<td><code>deferred</code></td>
+<td>Marks the standing deferred epic (with <code>epic</code>) and its archives (with <code>archive</code>); never auto-closes</td>
+</tr>
+<tr>
 <td><code>in-progress</code></td>
 <td>Planning item whose <code>epic-create</code> session is underway</td>
 </tr>
 <tr>
 <td><code>archive</code></td>
-<td>Terminal per-quarter archive of closed standing-epic work (ad-hoc, intake, planning); historical record</td>
+<td>Terminal per-quarter archive of closed standing-epic work (ad-hoc, intake, planning, deferred); historical record</td>
 </tr>
 <tr>
 <td><code>hotfix</code></td>
@@ -17714,16 +17956,31 @@ up to date (see
 <td><code>retrospective</code></td>
 <td>Epic retrospective bookend; PR-workable, its docs PR publishes <code>retrospective.md</code></td>
 </tr>
+<tr>
+<td><code>security</code></td>
+<td>Has a private security record in the org's <code>.github</code> advisories (see <a href="../../guides/security-records/">Security Records</a>)</td>
+</tr>
+<tr>
+<td><code>security-disclosed</code></td>
+<td>Past issue that disclosed a security problem publicly; fixed, no private record</td>
+</tr>
 </tbody>
 </table>
-<p>The parent epic carries an issue's state, so no label restates it. <code>intake</code> and
-<code>planning</code> label only the standing epics (and their archives), the way <code>ad-hoc</code>
+<p>The parent epic carries an issue's state, so no label restates it. <code>intake</code>,
+<code>planning</code> and <code>deferred</code> label only the standing epics (and their archives),
+the way <code>ad-hoc</code>
 does, and <code>in-progress</code> is the single per-item label, used only on planning
 items. The former intake kind labels <code>triage</code>, <code>idea</code>, and <code>research</code> are
 <strong>retired</strong>: no tool or skill applies them, and the daily orphan pass strips
 them from every open issue. They are no longer in the registry, and a label
 sync (<code>vrg-ensure-label --sync</code>) deletes them from any repo that still has
 them, which also strips them from any issue still carrying them.</p>
+<p><code>security</code> goes only on an issue paired with a private draft advisory:
+<code>vrg-security-record</code> applies it when it creates or attaches a record, and
+removes it from an issue the advisory stops tracking. The sweep's consistency
+check applies only to <code>security</code>; <code>security-disclosed</code> marks a past public
+disclosure and is ignored by the check (see
+<a href="../../guides/security-records/#the-labels">Security Records</a>).</p>
 <p><code>dependency-update</code> goes on PRs, not issues: <code>vrg-update-deps</code> and the
 <code>vrg-release</code> <code>update-deps</code> stage put it on every dependency-update PR
 they open, and create the label first if the repo does not have it.</p>
@@ -17785,8 +18042,8 @@ validate</strong>, each <code>Blocked-by</code> the last.</p>
   dependency closed) is machine-derivable, not inferred from plan prose.</li>
 </ul>
 <p>Create one with the sanctioned path — never hand-roll the body:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>vrg-issue-create<span class="w"> </span>--epic<span class="w"> </span>&lt;org&gt;/.github#N<span class="w"> </span>--repo<span class="w"> </span>&lt;org&gt;/&lt;repo&gt;<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span>--kind<span class="w"> </span><span class="o">{</span>validation<span class="p">|</span>deployment<span class="o">}</span><span class="w"> </span>--title<span class="w"> </span><span class="s2">"&lt;what&gt;"</span><span class="w"> </span>--blocked-by<span class="w"> </span>&lt;org&gt;/&lt;repo&gt;#&lt;TASK&gt;
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>vrg-issue-create<span class="w"> </span>--epic<span class="w"> </span>&lt;org&gt;/.github#N<span class="w"> </span>--repo<span class="w"> </span>&lt;org&gt;/&lt;repo&gt;<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span>--kind<span class="w"> </span><span class="o">{</span>validation<span class="p">|</span>deployment<span class="o">}</span><span class="w"> </span>--title<span class="w"> </span><span class="s2">"&lt;what&gt;"</span><span class="w"> </span>--blocked-by<span class="w"> </span>&lt;org&gt;/&lt;repo&gt;#&lt;TASK&gt;
 </code></pre></div>
 <p>This stamps the kind's label and an executable scaffold: an author-defined
 <strong>precondition self-check</strong> (a machine probe or a human-attested statement — no
