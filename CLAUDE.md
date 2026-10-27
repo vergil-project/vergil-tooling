@@ -408,18 +408,22 @@ CLI tools installed as `vrg-*` console scripts:
   `--kind`
 - **`vrg-intake-route`** — Route one intake item (`drop`, `defer`, `one-off`,
   `planning`, `split`); owns transfer-or-recreate, reparent, re-link and
-  close-with-pointer for the `intake-review` skill
+  close-with-pointer for the `intake-review` skill; a `security` item's
+  advisory is retargeted on transfer, recreate and split
 - **`vrg-security-record`** — Record a security finding as a private draft
   advisory in `<org>/.github` paired with a neutral `security` intake issue
   (`create` with attach and resume, `list`, `show`, `retarget`); advisory text
   is printed only by `show` and `list --details` (epic vergil-project/.github#517)
 - **`vrg-queue`** — Read-only view of the `intake` queue (oldest first) or the
-  `planning` queue (waiting / in-progress / ready-to-close)
+  `planning` queue (waiting / in-progress / ready-to-close; a planning item
+  still tracked by a security advisory is held at in-progress)
 - **`vrg-epic-audit`** — Epic/task drift and invariant report (read-only);
   `--close` (human, or the scheduled `ops-epic-sweep` with `VRG_EPIC_SWEEP=1`)
   closes drift, drains standing-epic archives, then runs the orphan pass that
   attaches every unparented issue to its home's intake epic (epic
-  vergil-project/.github#176)
+  vergil-project/.github#176) and the security-records pass that syncs each
+  paired advisory's state to its issues and reports broken pairs (epic
+  vergil-project/.github#517)
 - **`vrg-validate`** — Unified validation driver (runs inside dev container)
 - **`vrg-ensure-label`** — Idempotent GitHub label creation
 - **`vrg-hook-guard`** — Claude Code PreToolUse hook guard (blocks raw git/gh)

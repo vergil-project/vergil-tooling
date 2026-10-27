@@ -436,6 +436,28 @@ queue is a signal to run intake review. The same pass, dispatched once by hand
 through `ops-epic-sweep`'s `workflow_dispatch`, is the one-time migration of an
 org's existing backlog.
 
+#### The security-records pass
+
+After the orphan pass, `vrg-epic-audit --close` runs one pass over the draft
+advisories in the org's `.github` (see
+[Security Records](../guides/security-records.md#managing-a-record-through-its-issue)).
+It runs even when the orphan pass failed, and the worse exit code wins.
+
+- **State sync.** Each paired advisory follows its `security` issues: closed
+  once every issue it tracks is closed, a draft while any is open. The pass
+  only moves an advisory between `draft` and `closed`, and never touches an
+  unpaired external report.
+- **Consistency check.** It reports broken pairs (a `security` issue with a
+  missing or wrong advisory reference, or an advisory whose tracking lines are
+  missing or do not point back) and does not repair them; any broken pair
+  makes the run exit 1.
+
+Its output goes to `.github`'s public Actions logs, so it names only GHSA IDs,
+issue refs, labels and states, never advisory text. The read-only
+`vrg-epic-audit` previews the same pass without changing any state. The sweep's
+org ops App needs Repository security advisories: Read and write (see
+[Identity architecture](../guides/identity-architecture.md)).
+
 ## Intake, planning and deferred queues
 
 Not every capture is ready to be built. Work flows through **standing queues**
@@ -509,6 +531,12 @@ its new parent. A route is refused when the item's container epic does not allow
 it (see [`vrg-intake-route`](../reference/cli-tools-overview.md#vrg-intake-route)
 for the route table), for a cross-org target, and for a private item headed to a
 public repo or epic.
+
+A `security` item keeps its advisory link through every move: on a split or a
+recreate, the advisory is retargeted to the new issue(s) **before** the
+original closes (a failure stops the route and leaves the original open); on a
+transfer, it is retargeted after the move (see
+[Security Records](../guides/security-records.md#when-the-issue-moves)).
 
 ### The deferred queue
 
@@ -584,7 +612,11 @@ Progress comments carry machine-readable marker lines — `Epic: <ref>`,
 `Docs task: <ref>`, and `Tasks filed: yes` (the latest of each wins) — and the
 epic body gains a `Planning: <ref>` line. `vrg-queue planning` reports an item
 **ready to close** once it is `in-progress`, all three markers are present, and
-the docs task is closed (its spec + plan PR merged).
+the docs task is closed (its spec + plan PR merged). A planning item that a
+security advisory still tracks is **held** at in-progress, with a `held:` note,
+until `epic-create` retargets the advisory to the fix task(s); closing it
+earlier would close the advisory with the fix unwritten (see
+[Security items in planning](../guides/security-records.md#security-items-in-planning)).
 
 Which planning item to expand next is decided in the `planning-review` skill:
 the human ranks the queue by priority and importance and picks only what will be
@@ -645,6 +677,8 @@ up to date (see
 | `validation` | Post-merge validation: run the checklist, record PASS/FAIL as a comment; never auto-closed |
 | `deployment` | Deployment task: install/sync merged changes so they are usable; never auto-closed |
 | `retrospective` | Epic retrospective bookend; PR-workable, its docs PR publishes `retrospective.md` |
+| `security` | Has a private security record in the org's `.github` advisories (see [Security Records](../guides/security-records.md)) |
+| `security-disclosed` | Past issue that disclosed a security problem publicly; fixed, no private record |
 
 The parent epic carries an issue's state, so no label restates it. `intake`,
 `planning` and `deferred` label only the standing epics (and their archives),
@@ -655,6 +689,13 @@ items. The former intake kind labels `triage`, `idea`, and `research` are
 them from every open issue. They are no longer in the registry, and a label
 sync (`vrg-ensure-label --sync`) deletes them from any repo that still has
 them, which also strips them from any issue still carrying them.
+
+`security` goes only on an issue paired with a private draft advisory:
+`vrg-security-record` applies it when it creates or attaches a record, and
+removes it from an issue the advisory stops tracking. The sweep's consistency
+check applies only to `security`; `security-disclosed` marks a past public
+disclosure and is ignored by the check (see
+[Security Records](../guides/security-records.md#the-labels)).
 
 `dependency-update` goes on PRs, not issues: `vrg-update-deps` and the
 `vrg-release` `update-deps` stage put it on every dependency-update PR
