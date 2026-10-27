@@ -113,9 +113,11 @@ Either way, the repository ends up with:
 | `.github/dependabot.yml` | The canonical report-only Dependabot config: every entry has `open-pull-requests-limit: 0`, so Dependabot never opens a PR |
 | `.github/workflows/` | `ci.yml`, `ops.yml` (nightly config audit, branch sweep and Dependabot alert audit), `epic-rollup.yml`, and `cd.yml` when the repo publishes releases or docs |
 
-`.claude/settings.json` is generated from the packaged template
+`.claude/settings.json` is the packaged template
 [`claude_settings.json`](https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/data/claude_settings.json),
-with the plugin marketplace pinned to `ref: "main"`. Its
+unchanged. It enables the plugin but does not define its marketplace,
+which lives in your user settings (see
+[Claude Config Ownership](guides/claude-config-ownership.md)). Its
 `attribution` block is what keeps Claude Code from adding an AI
 co-author trailer to commits and PRs; AI co-author attribution is not
 used (#3200):

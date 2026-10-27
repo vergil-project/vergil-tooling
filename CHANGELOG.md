@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.275] - 2026-10-27
+
+### Bug fixes
+
+- keep the marketplace ref when registering marketplaces (#3754)
+
+### Chores
+
+- uv lock --upgrade
+
+### Documentation
+
+- add the Claude config ownership model page (#3750)
+- replace the Local Settings section with the local-settings rule (#3759)
+
+### Features
+
+- guard the agent chokepoints against non-empty .claude/settings.local.json (#3752)
+- show the released version in the vrg-release summary (#3756)
+- new CLAUDE.md and settings templates with a bridged audit (#3757)
+
 ## [2.1.274] - 2026-10-27
 
 ### Bug fixes

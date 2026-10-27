@@ -47,7 +47,7 @@ def consumer_refresh(ctx: ReleaseContext) -> None:
         ctx.consumer_refresh_commands = None
     else:
         commands = template.replace("<VERSION>", ctx.version)
-        message = f"Consumer refresh commands:\n\n{commands}"
+        message = f"Consumer refresh commands for v{ctx.version}:\n\n{commands}"
         ctx.consumer_refresh_commands = commands
 
     ctx.consumer_refresh_message = message
@@ -55,8 +55,11 @@ def consumer_refresh(ctx: ReleaseContext) -> None:
     print(message)
 
 
-def run_consumer_refresh(commands: str) -> int:
+def run_consumer_refresh(commands: str, version: str) -> int:
     """Execute the version-expanded consumer-refresh *commands*, fail-fast.
+
+    *version* is the released version (``ctx.version``); the header names
+    its tag so the human sees which release is being installed (#3753).
 
     Drives the ``--install`` step of the release cascade (issue #1643): the
     same command block the human would otherwise copy/paste is run through a
@@ -70,7 +73,7 @@ def run_consumer_refresh(commands: str) -> int:
     renderer has already torn down, so there is no nesting (cf. issue #1470).
     """
     print()
-    print("--install: running consumer-refresh commands:")
+    print(f"--install: running consumer-refresh commands for v{version}:")
     print()
     print(commands)
     print()

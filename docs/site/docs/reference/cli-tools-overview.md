@@ -16,6 +16,8 @@ Construct standards-compliant conventional commits (no AI co-author
 trailer; see #3200). Performs five branch/context checks before committing
 (detached HEAD, protected branch, branch prefix, issue number,
 worktree convention).
+Local-settings guard: refuses an agent (warns a human) while a loadable
+`.claude/settings.local.json` is not absent or `{}` (epic vergil-project/.github#558).
 
 | Attribute | Value |
 |---|---|
@@ -101,6 +103,9 @@ cannot be unfrozen. `status` prints the current state. `report-ready` (like
 or deferred epic: a queue item is not buildable until intake review routes it,
 `epic-create` expands it, or deferred review revives it (epics
 vergil-project/.github#176 and #508).
+Local-settings guard: `report-ready` refuses an agent (warns a human), before
+pushing or recording anything, while a loadable `.claude/settings.local.json`
+is not absent or `{}` (epic vergil-project/.github#558).
 
 | Attribute | Value |
 |---|---|
@@ -686,6 +691,9 @@ drift verdict is exactly the change `--write` would make.
 Run arbitrary commands inside a dev container. Auto-detects the
 project language to select the Docker image; falls back to
 `dev-base:latest`. Uses `execvp` to replace the process.
+Local-settings guard: on the host, before any container starts, it refuses an
+agent (warns a human) while a loadable `.claude/settings.local.json` is not
+absent or `{}` (epic vergil-project/.github#558).
 
 | Attribute | Value |
 |---|---|

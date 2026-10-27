@@ -4,107 +4,66 @@ This file provides guidance to Claude Code (claude.ai/code) when working in
 this repository.
 
 <!-- vergil:template:claude-md:begin -->
-## Memory management
+## Memory
 
-Memory is allowed with human approval. The authoritative policy is in
-the user's global `~/.claude/CLAUDE.md` — agents must propose memory
-writes and suggest a destination (repo memory, global CLAUDE.md, or
-plugin/skill issue) before writing. See that file for the full
-workflow.
+Never write, edit or delete memory files without explicit human approval.
+Propose the entry and where it belongs first, then wait for the decision.
 
-Available skills:
-- `/vergil:memory-init` — set up or update the policy header
-  in a project's `MEMORY.md`.
-- `/vergil:memory-audit` — structured collaborative review
-  of memory files.
+## Worktrees
 
-## Parallel AI agent development
+- Sessions always start at the project root, never inside `.worktrees/`.
+- One worktree per issue: `.worktrees/issue-<N>-<slug>/` on branch
+  `feature/<N>-<slug>`. Remove it once its branch lands.
+- The main worktree is read-only; every edit goes through a worktree.
+- Read, Edit and Write use the worktree's absolute path. Bash commands `cd`
+  into the worktree first or use absolute paths.
+- The full convention: <https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/worktree-convention.md>.
+- Brief each parallel sub-agent with its [Agent prompt contract](https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/worktree-convention.md#agent-prompt-contract).
 
-This repository supports running multiple Claude Code agents in parallel via
-git worktrees. The convention keeps parallel agents' working trees isolated
-while preserving shared project memory (which Claude Code derives from the
-session's starting CWD).
+## Git and GitHub
 
-**Canonical spec:**
-[`vergil-tooling/docs/specs/worktree-convention.md`](https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/worktree-convention.md)
-— full rationale, trust model, failure modes, and memory-path implications.
-The canonical text lives in `vergil-tooling`; this section is the local
-on-ramp.
-
-### Structure
-
-```text
-<project-root>/                              ← sessions ALWAYS start here
-  .git/
-  CLAUDE.md, …                               ← main worktree (usually `develop`)
-  .worktrees/                                ← container for parallel worktrees
-    issue-<N>-<short-slug>/                  ← worktree on feature/<N>-<short-slug>
-    …
-```
-
-### Rules
-
-1. **Sessions always start at the project root.**
-   Never start Claude from inside `.worktrees/<name>/`. This keeps the
-   memory-path slug stable and shared.
-2. **Each parallel agent is assigned exactly one worktree.** The session
-   prompt names the worktree (see Agent prompt contract below).
-   - For Read / Edit / Write tools: use the worktree's absolute path.
-   - For Bash commands that touch files: `cd` into the worktree first,
-     or use absolute paths.
-3. **The main worktree is read-only.** All edits flow through a worktree
-   on a feature branch — the logical endpoint of the standing
-   "no direct commits to develop" policy.
-4. **One worktree per issue.** Don't stack in-flight issues. When a
-   branch lands, remove the worktree before starting the next.
-5. **Naming: `issue-<N>-<short-slug>`.** `<N>` is the GitHub issue
-   number; `<short-slug>` is 2–4 kebab-case tokens.
-
-### Agent prompt contract
-
-When launching a parallel-agent session, use this template (fill in the
-placeholders):
-
-```text
-You are working on issue #<N>: <issue title>.
-
-Your worktree is: <project-root>/.worktrees/issue-<N>-<slug>/
-Your branch is:   feature/<N>-<slug>
-
-Rules for this session:
-- Do all git operations from inside your worktree:
-    cd <absolute-worktree-path> && vrg-git <command>
-- For Read / Edit / Write tools, use the absolute worktree path.
-- For Bash commands that touch files, cd into the worktree first
-  or use absolute paths.
-- Do not edit files at the project root. The main worktree is
-  read-only — all changes flow through your worktree on your
-  feature branch.
-- When you need to run validation, run it from inside your worktree
-  (vrg-container-run mounts the current directory).
-```
-
-All fields are required.
-
-## Shell command policy
-
-Use `vrg-git` instead of `git` for all git operations. Use `vrg-gh`
-instead of `gh` for all GitHub CLI operations. These wrappers enforce
-subcommand allowlists, flag deny lists, and credential selection.
-
-Raw `git` and `gh` are denied by the permission model. If a command
-is not available through the wrappers, explain the situation to the
-human who can run it directly via `! <command>` in the prompt.
+Use `vrg-git` and `vrg-gh` only; the hook guard blocks raw `git` and `gh`. If a
+command is not available through the wrappers, explain why and ask the human to
+run it with `! <command>` in the prompt.
 
 ## Validation
 
-```bash
-vrg-container-run -- vrg-validate
-```
+`vrg-container-run -- vrg-validate` is the only validation command. Don't run
+linters, formatters or tests outside it; a tool it doesn't invoke is not part
+of the pipeline.
 
-This is the **only** validation command. Do not run individual linters,
-formatters, or other tools outside of `vrg-validate`. If a tool is not
-invoked by `vrg-validate`, it is not part of the validation pipeline.
+## PR handoff
+
+- Agents never run `vrg-submit-pr`. Submitting, merging and finalizing a PR are
+  human actions.
+- Hand off with `vrg-pr-workflow report-ready --issue <N> --title --summary
+  --notes`. It pushes the branch itself. Leave `--linkage` at its default (`Ref`).
+- A delta touching `.github/workflows/**` makes GitHub refuse the agent push.
+  That is expected: report-ready records the state anyway and the human's
+  `vrg-submit-pr` pushes the branch.
+- After report-ready the branch is frozen: no new commits and no push that
+  advances it; more work is a new follow-up issue. Re-running report-ready to
+  fix the prose is allowed. `vrg-pr-workflow unfreeze` is the only way to lift it.
+- The report-ready title, summary and notes are public (the relay ref is
+  world-readable): never put secrets in them.
+
+## Local settings
+
+`.claude/settings.local.json` must stay absent or exactly `{}`; the agent tools
+refuse otherwise. See the [ownership model](https://github.com/vergil-project/vergil-tooling/blob/develop/docs/site/docs/guides/claude-config-ownership.md).
+
+## Engineering principles
+
+- Correctness over cost over speed. Never ship known-broken code with a
+  follow-up fix; if something is wrong, fix it now.
+- No silent failures: no swallowed exceptions, no `except: return ""`, no
+  fallbacks that hide errors. A failure hidden in code becomes a hallucination
+  at the AI layer.
+
+## paad
+
+paad usage policy and deviations:
+<https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-policy.md>.
 <!-- vergil:template:claude-md:end -->
 
 > **Note:** The command above works as-is here, even though this repo
@@ -137,69 +96,12 @@ axis — `physical-host` / `local-vm` / `cloud-vm` — from empirical signals
 `physical-host`); `--explain` also cross-checks the platform against the
 identity and warns when the two disagree.
 
-**Agents must not run `vrg-submit-pr`.** PR submission, merge, and
-finalization are human actions. The PR handoff is:
-
-1. The agent records the PR metadata with `vrg-pr-workflow report-ready
-   --issue <N> --title --summary --notes` (optional `--linkage`), which pushes
-   the branch to origin (setting upstream) and then writes the metadata to
-   `.vergil/pr-workflow.json` — no separate push step. When the delta touches
-   `.github/workflows/**` GitHub refuses the agent push (expected):
-   `report-ready` says so and records the state anyway, and the human's
-   `vrg-submit-pr` pushes the branch instead. Any other push failure fails
-   `report-ready` with nothing recorded. `title`, `summary`, and `notes` are
-   required and non-empty. `linkage` defaults to `Ref`; leave it there.
-   `vrg-submit-pr` auto-selects the keyword at submit time — a **managed task**
-   (an issue with an `epic`-labeled parent) links with `Closes` so it
-   auto-closes on merge, and its parent epic rolls up via the `on: issues.closed`
-   Action; a legacy issue (no epic parent) keeps `Ref` and stays open for manual
-   close. `Fixes`/`Resolves` remain banned so `Closes` is the one close keyword.
-   This is safe because a task is exactly one PR: once it is in develop it is
-   done, and any later change is a new follow-up issue, never a reopening (epic
-   vergil-project/.github#75).
-2. The human runs `vrg-submit-pr` with no arguments, which reads the
-   state file, previews the PR, and submits after confirmation.
-3. The human merges and runs post-merge cleanup (`vrg-finalize-pr`).
-
-**Once you run `report-ready`, the branch is frozen.** `report-ready`
-records the branch as the single, finished deliverable for its issue, so
-until the human submits it must not change. Enforcement is at two
-chokepoints — `vrg-commit` refuses a further commit and the `vrg-git`
-push path refuses a further push — both printing an actionable refusal
-(and a loud DRIFT warning if HEAD has already advanced past the reported
-commit, the reused-branch straggler of epic #146 / issue #1719). The rule
-follows directly from "a task is exactly one PR": more work is a **new
-follow-up issue**, never a change to this branch. Three things stay allowed:
-
-- **Publishing the reported commit** — `report-ready` publishes the branch
-  itself, but an explicit `vrg-git push [-u] origin <branch>` is still
-  allowed while HEAD is exactly the recorded `head_sha` on that branch (it
-  cannot advance the branch past what was reported; issue #3071). A drifted
-  HEAD, a missing `head_sha`, or any other refspec/flag stays refused.
-
-- **Correcting the PR prose** — re-running `report-ready` overwrites the
-  recorded title/summary/notes. That is metadata, not code, so it is not
-  frozen; its branch push is a no-op at the reported commit, and it refuses
-  a HEAD that has drifted past that commit.
-- **Deliberately reopening the branch** — `vrg-pr-workflow unfreeze` drops
-  the workflow back to `implementing` (keeping the recorded metadata) so
-  commits/pushes are allowed again. This is the *only* sanctioned way to
-  lift the freeze; it is a distinct, explicit action precisely so
-  reopening a branch is never a silent side effect. An **already-submitted**
-  branch cannot be unfrozen — its PR exists, so further work is a new
-  follow-up issue, full stop.
-
-When the human finalizes, `vrg-finalize-pr` will not silently strand a
-merged worktree it cannot remove (dirty tree, or a reused branch name with
-unmerged commits): it surfaces every such worktree **prominently after the
-pipeline** with the reason. For the common Mac case — a merged worktree
-dirtied only by un-gitignored build/validation output — `--clean-dirty` is
-an opt-in that clears exactly that after showing the untracked paths and
-confirming; it never touches modified tracked files or a reused-branch
-straggler's unmerged commits. The cleaner fix is to gitignore that output
-in the first place, so the worktree is never dirtied and sweeps
-automatically — consuming repos should keep validation/build artifacts out
-of the tree.
+The PR handoff and the post-report-ready freeze are in the template region
+above. The full mechanics (linkage auto-selection, push outcomes, the
+explicit push at the recorded `head_sha`, `unfreeze` limits, and
+`vrg-finalize-pr --clean-dirty`) are in
+[Git Workflow](docs/site/docs/guides/git-workflow.md) and the
+[`vrg-pr-workflow` reference](docs/site/docs/reference/cli-tools-overview.md#vrg-pr-workflow).
 
 ### Cloud session prompt contract (off-platform VMs)
 

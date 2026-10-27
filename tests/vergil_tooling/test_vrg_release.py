@@ -173,7 +173,7 @@ def test_main_resume_no_target_returns_1(capsys: pytest.CaptureFixture[str]) -> 
 def test_main_prints_consumer_refresh_message_after_pipeline(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    message = "Consumer refresh commands:\n\nuv tool install pkg@v2.1.0"
+    message = "Consumer refresh commands for v2.1.0:\n\nuv tool install pkg@v2.1.0"
 
     def fake_pipeline(state: ReleaseState, *args: object, **kwargs: object) -> int:
         state.ctx = ReleaseContext(
@@ -191,7 +191,7 @@ def test_main_prints_consumer_refresh_message_after_pipeline(
     ):
         assert main([]) == 1
     captured = capsys.readouterr()
-    assert "Consumer refresh commands:" in captured.out
+    assert "Consumer refresh commands for v2.1.0:" in captured.out
     assert "uv tool install pkg@v2.1.0" in captured.out
 
 
@@ -220,6 +220,26 @@ def test_main_passes_version_override() -> None:
     assert kwargs["label"] == "vrg-release"
 
 
+def test_main_success_label_names_released_tag() -> None:
+    """The completion line names the cut tag, read from the release context."""
+    with (
+        patch(_MOD + ".git"),
+        patch(_MOD + ".progress.run_pipeline", return_value=0) as m_pipeline,
+    ):
+        main([])
+    state = m_pipeline.call_args.args[0]
+    success_label = m_pipeline.call_args.kwargs["success_label"]
+    # Before preflight has built the context there is no version to name.
+    assert success_label() is None
+    state.ctx = ReleaseContext(
+        repo="owner/repo",
+        version="2.1.44",
+        repo_root=Path("/tmp/repo"),  # noqa: S108
+        version_override=None,
+    )
+    assert success_label() == "vrg-release v2.1.44"
+
+
 # -- --install: run the consumer-refresh commands after release (issue #1643) --
 
 
@@ -240,7 +260,7 @@ def _pipeline_with_commands(commands: str | None, rc: int) -> Callable[..., int]
             version="2.1.0",
             repo_root=Path("/tmp/repo"),  # noqa: S108
             version_override=None,
-            consumer_refresh_message="Consumer refresh commands:\n\n<cmds>",
+            consumer_refresh_message="Consumer refresh commands for v2.1.0:\n\n<cmds>",
             consumer_refresh_commands=commands,
         )
         return rc
@@ -258,7 +278,7 @@ def test_main_install_runs_consumer_refresh_on_success() -> None:
         patch(_MOD + ".run_consumer_refresh", return_value=0) as m_run,
     ):
         assert main(["--install"]) == 0
-    m_run.assert_called_once_with("uv tool install pkg\nvrg-vm update --all")
+    m_run.assert_called_once_with("uv tool install pkg\nvrg-vm update --all", "2.1.0")
 
 
 def test_main_install_returns_consumer_refresh_exit_code() -> None:

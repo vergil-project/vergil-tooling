@@ -398,9 +398,12 @@ def _read_guest_settings(transport: Transport) -> dict[str, Any]:
 def _enabled_plugin_ids(settings: dict[str, Any]) -> set[str]:
     """Return the plugin ids ``enabledPlugins`` marks true.
 
-    Declarative desired set: since Claude Code v2.1.195 an enabled entry no
-    longer auto-installs, so this is the authoritative list of what *should* be
-    present, independent of what is installed.
+    Declarative desired set: the authoritative list of what *should* be
+    present, independent of what is installed. An enabled entry is not proof
+    of an install: the Claude Code v2.1.195 changelog says only that external
+    plugins enabled solely by a project ``.claude/settings.json`` need explicit
+    install consent. Whether user-enabled plugins install on their own is
+    still unverified (vergil-project/.github#578).
     """
     return {pid for pid, on in (settings.get("enabledPlugins") or {}).items() if on}
 
@@ -409,7 +412,7 @@ def _marketplace_sources(settings: dict[str, Any]) -> list[str]:
     """Return the ``marketplace add`` sources needed for the enabled plugins.
 
     Primarily the ``extraKnownMarketplaces`` entries (each ``source`` -> an
-    add-arg: ``owner/repo``, a URL, or a path). Headless ``claude plugin
+    add-arg: ``owner/repo[@ref]``, a URL ``[#ref]``, or a path). Headless ``claude plugin
     marketplace update``/``list`` do NOT register these on a fresh box (#2021) —
     only ``marketplace add <source>`` clones the catalog.
 
@@ -423,7 +426,18 @@ def _marketplace_sources(settings: dict[str, Any]) -> list[str]:
     sources: list[str] = []
     for spec in extra.values():
         src = spec.get("source") or {}
-        arg = src.get("repo") or src.get("url") or src.get("path")
+        # #3751: keep a declared `ref`. Claude Code refuses an add whose source
+        # does not match the extraKnownMarketplaces entry (failureCode
+        # "declared"). A github repo pins with `@ref` (the form `marketplace
+        # list` shows); a git URL pins with `#ref` (Claude Code docs, "Add a
+        # marketplace"). A path has no ref.
+        ref = src.get("ref")
+        if src.get("repo"):
+            arg = f"{src['repo']}@{ref}" if ref else src["repo"]
+        elif src.get("url"):
+            arg = f"{src['url']}#{ref}" if ref else src["url"]
+        else:
+            arg = src.get("path")
         if arg:
             sources.append(arg)
     for pid in _enabled_plugin_ids(settings):
@@ -445,9 +459,13 @@ def update_plugins(transport: Transport) -> None:
     (see docs/site/docs/guides/agent-vm-claude-share-set.md).
 
     Reconcile, not just refresh (#2006): the enabled set is declared by
-    ``enabledPlugins`` in the guest settings.json, but since Claude Code
-    v2.1.195 declaring a plugin there no longer auto-installs it — an
-    update-only pass leaves a fresh box with zero plugins. So install any
+    ``enabledPlugins`` in the guest settings.json, and an update-only pass can
+    leave a fresh box with zero plugins. The Claude Code v2.1.195 changelog
+    says only that external plugins enabled solely by a project
+    ``.claude/settings.json`` need explicit install consent; it does not say
+    that user-enabled plugins stopped installing on their own. This reconcile
+    step stays until vergil-project/.github#578 shows whether they do. So
+    install any
     enabled-but-missing plugin, then advance every enabled plugin to its latest
     version, mirroring how update_tooling advances vergil-tooling.
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
@@ -18,9 +18,6 @@ from vergil_tooling.lib.update_deps.updaters.vergil_eco import (
     set_source_version,
 )
 from vergil_tooling.lib.update_deps.vergil_index import ServedRuntime
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 _DRIFT = "    - uses: vergil-project/vergil-actions/actions/y@v2.0\n"
 _RUNTIME_TOML = '[package.python]\n# comment\nruntime = "3.14.8"\n'
@@ -181,6 +178,23 @@ def test_normalize_claude_ref_missing_marketplace_entry(tmp_path: Path) -> None:
     claude.mkdir()
     (claude / "settings.json").write_text(json.dumps({"extraKnownMarketplaces": {}}))
     assert normalize_claude_ref(tmp_path, "v2.0") is None
+
+
+def test_normalize_claude_ref_noop_without_marketplace(tmp_path: Path) -> None:
+    # The current settings template has no marketplace entry (epic
+    # vergil-project/.github#558): normalizing must leave it byte-identical.
+    template = (
+        Path(__file__).resolve().parents[2]
+        / "src"
+        / "vergil_tooling"
+        / "data"
+        / "claude_settings.json"
+    ).read_bytes()
+    claude = tmp_path / ".claude"
+    claude.mkdir()
+    (claude / "settings.json").write_bytes(template)
+    assert normalize_claude_ref(tmp_path, "main") is None
+    assert (claude / "settings.json").read_bytes() == template
 
 
 def test_normalize_claude_ref_non_dict_source(tmp_path: Path) -> None:

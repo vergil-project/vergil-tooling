@@ -232,17 +232,16 @@ branch prefix, issue number) live in `vrg-commit` itself. See the
 
 ### `.claude/settings.json`
 
-`vrg-github-repo-init` writes `.claude/settings.json` from the
-packaged template
-[`claude_settings.json`](https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/data/claude_settings.json)
-and pins the plugin marketplace to `ref: "main"`, the plugin's single
-released channel. It has four parts:
+`vrg-github-repo-init` writes `.claude/settings.json` as the packaged
+template
+[`claude_settings.json`](https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/data/claude_settings.json),
+unchanged. It has four parts:
 
 | Key | Purpose |
 |---|---|
 | `permissions.allow` | Allows `Bash(vrg-*)`, so the `vrg-*` tools run without a permission prompt. |
 | `hooks.PreToolUse` | Runs `${CLAUDE_PROJECT_DIR}/.claude/hooks/guard.sh` on every `Bash` tool call. |
-| `extraKnownMarketplaces` / `enabledPlugins` | Declares the `vergil-marketplace` marketplace (`vergil-project/vergil-claude-plugin`, `ref: "main"`) and enables `vergil@vergil-marketplace`. |
+| `enabledPlugins` | Enables `vergil@vergil-marketplace`. The `vergil-marketplace` definition (`vergil-project/vergil-claude-plugin`, `ref: "main"`) lives only in the user settings: a second definition in the repo file would replace the user's whole entry. |
 | `attribution` | Turns off Claude Code's AI co-author trailer on commits and PRs. |
 
 AI co-author attribution is not used (#3200). The `attribution` block
@@ -257,8 +256,11 @@ uses empty strings, which work on every Claude Code version:
 
 Commit the file. Any Claude Code session opened in the repo then
 loads the hook guard and the plugin. `vrg-github-repo-config audit`
-checks the marketplace entry, its `ref`, the enabled plugin and the
-`attribution` block against the template.
+requires the file to equal the template after JSON parsing (see
+[GitHub Config Audit](../reference/config-audit.md)).
+For which file owns each
+Claude Code setting, see
+[Claude Config Ownership](claude-config-ownership.md).
 
 The plugin adds these hooks:
 

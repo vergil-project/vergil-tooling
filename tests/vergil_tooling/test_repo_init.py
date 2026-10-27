@@ -420,8 +420,8 @@ class TestRenderClaudeMd:
     def test_contains_consumer_template(self) -> None:
         ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
         content = render_claude_md(ctx)
-        assert "## Memory management" in content
-        assert "## Shell command policy" in content
+        assert "## Memory" in content
+        assert "## Git and GitHub" in content
         assert "## Validation" in content
 
     def test_wraps_consumer_template_in_markers(self) -> None:
@@ -431,7 +431,7 @@ class TestRenderClaudeMd:
         end = "<!-- vergil:template:claude-md:end -->"
         assert content.count(begin) == 1
         assert content.count(end) == 1
-        assert content.index(begin) < content.index("## Memory management")
+        assert content.index(begin) < content.index("## Memory")
         assert content.rstrip().endswith(end)
 
 
@@ -2343,12 +2343,45 @@ class TestRunWizard:
             run_wizard(ctx)
 
 
-def test_render_claude_settings_seeds_main() -> None:
+def test_render_claude_settings_equals_template() -> None:
+    # The template is the whole file: no marketplace entry and no seeded ref
+    # (epic vergil-project/.github#558).
     text = render_claude_settings()
-    data = json.loads(text)
-    src = data["extraKnownMarketplaces"]["vergil-marketplace"]["source"]
-    assert src["ref"] == "main"
+    template = (
+        Path(__file__).resolve().parents[2]
+        / "src"
+        / "vergil_tooling"
+        / "data"
+        / "claude_settings.json"
+    ).read_text(encoding="utf-8")
+    assert json.loads(text) == json.loads(template)
+    assert "extraKnownMarketplaces" not in json.loads(text)
     assert text.endswith("\n")
+
+
+def test_render_claude_md_has_no_body_validation_section() -> None:
+    # The template region states the validation command; the header no longer
+    # adds a second ``## Validation`` section outside the markers.
+    content = render_claude_md(RepoInitContext(org="vergil-project", name="demo"))
+    begin = content.index("<!-- vergil:template:claude-md:begin -->")
+    assert "## Validation" not in content[:begin]
+    assert content.count("## Validation") == 1
+
+
+def test_repo_init_output_audits_clean(tmp_path: Path) -> None:
+    from vergil_tooling.lib import repo_config
+
+    (tmp_path / "CLAUDE.md").write_text(
+        render_claude_md(RepoInitContext(org="vergil-project", name="demo"))
+    )
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "settings.json").write_text(render_claude_settings())
+    items: list = []
+    warnings: list[str] = []
+    repo_config._check_claude_md(tmp_path, items, warnings)
+    repo_config._check_claude_settings(tmp_path, items, warnings)
+    assert items == []
+    assert warnings == []
 
 
 def test_render_claude_settings_turns_off_attribution() -> None:

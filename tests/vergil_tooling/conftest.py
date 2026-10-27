@@ -27,7 +27,7 @@ from pathlib import Path
 
 import pytest
 
-from vergil_tooling.lib import conan_token, github, host_pins, identity_mode
+from vergil_tooling.lib import conan_token, github, host_pins, identity_mode, local_settings
 from vergil_tooling.lib.versions import window
 from vergil_tooling.lib.versions.resolve import Resolution
 
@@ -89,6 +89,35 @@ def _hermetic_version_window(monkeypatch: pytest.MonkeyPatch) -> None:
     v2.1. Tests of the fetch path pass their own ``env`` and ``fetch``.
     """
     monkeypatch.setenv(window.WINDOW_ENV, str(FIXTURE_WINDOW))
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_local_settings(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep the local-settings guard off the developer's real checkout.
+
+    ``vrg-commit``, ``report-ready`` and ``vrg-container-run`` call
+    ``local_settings.enforce(Path.cwd())`` (epic vergil-project/.github#558).
+    Under pytest the CWD is this repo, so a stray ``.claude/settings.local.json``
+    in the developer's checkout would change unrelated tests' outcomes. Treat
+    every repo as out of scope; ``test_local_settings`` tests the real check,
+    and each caller's guard test opts back in with
+    :func:`local_settings_violation`.
+    """
+    if request.module.__name__.rsplit(".", 1)[-1] == "test_local_settings":
+        return
+    monkeypatch.setattr(local_settings, "in_scope", lambda _cwd: False)
+
+
+def local_settings_violation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Make the guard see one non-empty local-settings copy; return its path."""
+    path = tmp_path / "main-checkout" / ".claude" / "settings.local.json"
+    path.parent.mkdir(parents=True)
+    path.write_text('{"permissions": {"allow": ["Bash(rm *)"]}}\n')
+    monkeypatch.setattr(local_settings, "in_scope", lambda _cwd: True)
+    monkeypatch.setattr(local_settings, "local_settings_paths", lambda _cwd: ([path], []))
+    return path
 
 
 def window_default_resolution(_repo_root: Path, lang: str) -> Resolution | None:

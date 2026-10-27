@@ -55,36 +55,64 @@ divergence:
 |---|---|
 | `_check_vergil_toml` | `vergil.toml` present and parseable |
 | `_check_hook_guard_shim` | `.claude/hooks/guard.sh` present |
-| `_check_claude_md` | `CLAUDE.md` carries the canonical consumer template verbatim |
-| `_check_claude_settings` | `.claude/settings.json` marketplace, `enabledPlugins` and `attribution` match the template |
+| `_check_claude_md` | `CLAUDE.md`'s marked template region (or, in the legacy no-marker form, the file) carries the canonical consumer template verbatim; the previous template passes with a warning during the [bridge](#the-template-bridge) |
+| `_check_claude_settings` | `.claude/settings.json` equals the template after JSON parsing; the previous template passes with a warning during the [bridge](#the-template-bridge) |
 | `_check_workflow_refs` | every `vergil-*` reusable-workflow pin matches the `vergil.toml` version |
 | `_check_gitignore` | `.gitignore` carries the correct `base + <language>` vergil-managed fence **(#311, #325)** |
 | `_check_dependabot_yml` | `.github/dependabot.yml` is the canonical report-only render for the repo's language **(.github#420)** |
 | `_check_required_workflows` | `ops.yml` is present, wires the audit, and is scheduled **(new, #311)** |
 
-### `_check_claude_settings` — attribution
+### `_check_claude_settings` — the whole file
 
-`.claude/settings.json` must carry exactly:
+`.claude/settings.json` must equal the packaged template,
+[`claude_settings.json`](https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/data/claude_settings.json),
+after JSON parsing: key order and whitespace don't matter, but every key
+and value does, and no other key may appear. The template holds the guard
+`PreToolUse` hook, `permissions.allow: ["Bash(vrg-*)"]`,
+`enabledPlugins: {"vergil@vergil-marketplace": true}` and
+`attribution: {"commit": "", "pr": ""}`. It holds no
+`extraKnownMarketplaces`: the marketplace is defined only in the user
+settings (see the
+[ownership model](../guides/claude-config-ownership.md)).
 
-```json
-"attribution": { "commit": "", "pr": "" }
+`attribution` turns off Claude Code's AI `Co-Authored-By` trailer
+([#3200](https://github.com/vergil-project/vergil-tooling/issues/3200)).
+Its empty-string form is required: `attribution: false` needs a newer
+Claude Code and makes older versions skip the whole settings file.
+
+Any other content is one
+`DiffItem(field="local.claude_settings", ...)` whose actual value names
+each top-level key that is missing, unexpected or different. Fix it by
+copying the template into the repo.
+
+### The template bridge
+
+The `CLAUDE.md` template region and `.claude/settings.json` changed shape
+under epic
+[vergil-project/.github#558](https://github.com/vergil-project/.github/issues/558).
+A release does not rewrite any repo's files, so until the bridge-removal
+PR ([#3728](https://github.com/vergil-project/vergil-tooling/issues/3728))
+merges, both checks accept three shapes:
+
+| Shape | Result |
+|---|---|
+| the current template | compliant, no warning |
+| the previous template (`claude_md_consumer_previous.md`, `claude_settings_previous.json`) | compliant, with a deprecation warning |
+| anything else | one `DiffItem`, reported against the current template |
+
+The `CLAUDE.md` rule applies both to the marked region and to the legacy
+no-marker form, which must contain one of the templates verbatim. The
+previous settings template is the old file with the marketplace `ref`
+seeded at `main`, as every swept repo carries it. The warnings read:
+
+```text
+.claude/settings.json matches the previous template; replace it with the current template (epic vergil-project/.github#558).
+CLAUDE.md template region matches the previous template; replace it with the current template (epic vergil-project/.github#558).
 ```
 
-This turns off Claude Code's AI `Co-Authored-By` trailer on commits and
-PRs; AI co-author attribution is not used
-([#3200](https://github.com/vergil-project/vergil-tooling/issues/3200)).
-The empty-string form is required: `attribution: false` needs a newer
-Claude Code and makes older versions skip the whole settings file. A
-missing or different value is a hard failure,
-`DiffItem(field="local.claude_settings.attribution", ...)`, whose
-expected value names the key and #3200. Fix it by adding the block above
-to the repo's checked-in `.claude/settings.json`.
-
-The check was warning-only while the fleet was swept and became strict
-in [#3361](https://github.com/vergil-project/vergil-tooling/issues/3361).
-There is no exemption for dormant repos: a dormant repo whose nightly
-audit still runs fails until the key is added. Each dormant repo carries
-a backlog issue to add the key when it is revived.
+Each repo's sweep replaces both files with the current template. The
+bridge-removal PR then deletes the previous templates and the legacy
+no-marker path, and the warning becomes a `DiffItem`.
 
 ### `_check_gitignore` — managed fence
 
@@ -347,3 +375,6 @@ undeclared parameter. It is reported as `.rules` value drift.
   — how the audit gates required-check drift and `vrg-release`
 - [CLI Tools Overview](cli-tools-overview.md#vrg-github-repo-config) —
   runtime preconditions and failure modes
+- [Claude Config Ownership](../guides/claude-config-ownership.md) — the
+  ownership model the `CLAUDE.md` and `.claude/settings.json` checks
+  enforce
