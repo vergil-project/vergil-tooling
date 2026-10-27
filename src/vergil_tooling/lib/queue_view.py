@@ -19,9 +19,10 @@ Its note is the latest deferral comment (``Deferred <day>: <reason>`` with its
 refreshed item sinks to the bottom. An item with no deferral comment (moved by
 hand, or legacy) has an empty note and sorts first.
 
-A ``security`` planning issue whose advisory still tracks it is never
-``ready-to-close``: it stays ``in-progress``, with a note saying to retarget the
-advisory to the fix task(s) first. Advisories are read only when some item's
+A ``security`` planning issue is never ``ready-to-close`` while any advisory
+its body names still tracks it: it stays ``in-progress``, with a note naming
+those advisories (by GHSA ID only) and saying to retarget each to the fix
+task(s) first. Advisories are listed once per view, and only when some item's
 body carries a ``Security advisory:`` line.
 
 Nothing here mutates GitHub: the queue epic is looked up with
@@ -208,10 +209,11 @@ def _planning_state(
     return "ready-to-close", False
 
 
-def _held_note(ghsa_id: str) -> str:
+def _held_note(ghsa_ids: tuple[str, ...]) -> str:
     return (
-        f"held: advisory {ghsa_id} still tracks this planning issue — retarget it "
-        "to the fix task(s) with vrg-security-record retarget"
+        f"held: {len(ghsa_ids)} advisory(ies) still track this planning issue "
+        f"({', '.join(ghsa_ids)}) — retarget each to its fix task(s) with "
+        "vrg-security-record retarget"
     )
 
 
@@ -234,32 +236,33 @@ def _tracked_by(home: str, named: set[str]) -> dict[str, tuple[IssueRef, ...]]:
 def planning_items(home: str, name: str) -> list[QueueItem]:
     """The open planning items under *home*'s planning epic for *name*, oldest first.
 
-    An item whose body names an advisory that still tracks it is held back
-    from ``ready-to-close`` (spec 4.4b of epic vergil-project/.github#517).
+    An item is held back from ``ready-to-close`` while any advisory its body
+    names still tracks it (spec 4.4b of epic vergil-project/.github#517, spec
+    4.2 of #573).
     """
     views = [
         (ref, _view(ref, "title,createdAt,labels,comments,body"))
         for ref in _open_children(epics.PLANNING, home, name)
     ]
     ghsa_ids = {
-        ref: security_records.parse_advisory_ref(str(view.get("body") or "")) for ref, view in views
+        ref: security_records.parse_advisory_refs(str(view.get("body") or ""))
+        for ref, view in views
     }
-    tracked = _tracked_by(home, {ghsa for ghsa in ghsa_ids.values() if ghsa is not None})
+    tracked = _tracked_by(home, {ghsa for named in ghsa_ids.values() for ghsa in named})
     items: list[QueueItem] = []
     for ref, view in views:
         comments = _comment_bodies(view)
         markers = parse_planning_markers(comments)
         labels = {str(lbl.get("name") or "") for lbl in view.get("labels") or []}
-        ghsa = ghsa_ids[ref]
-        held = ghsa is not None and ref in tracked.get(ghsa, ())
-        state, demoted = _planning_state(labels, markers, advisory_held=held)
+        holding = tuple(ghsa for ghsa in ghsa_ids[ref] if ref in tracked.get(ghsa, ()))
+        state, demoted = _planning_state(labels, markers, advisory_held=bool(holding))
         items.append(
             QueueItem(
                 ref=ref,
                 title=str(view.get("title") or ""),
                 created_at=str(view.get("createdAt") or ""),
                 state=state,
-                note=_held_note(str(ghsa)) if demoted else _latest_note(comments),
+                note=_held_note(holding) if demoted else _latest_note(comments),
                 epic=markers.epic,
             )
         )

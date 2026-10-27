@@ -174,16 +174,6 @@ def parse_advisory_refs(issue_body: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(match.group(2) for match in _ADVISORY_RE.finditer(issue_body)))
 
 
-def parse_advisory_ref(issue_body: str) -> str | None:
-    """The GHSA ID the first exact ``Security advisory:`` line names, or None.
-
-    Kept only for the intake-routing and planning-hold callers until they move
-    to :func:`parse_advisory_refs` (epic vergil-project/.github#573, Task 2).
-    """
-    refs = parse_advisory_refs(issue_body)
-    return refs[0] if refs else None
-
-
 def parse_tracking(description: str) -> tuple[IssueRef, ...]:
     """Every issue the exact ``Tracking issue:`` lines name, in order, without repeats."""
     refs = (

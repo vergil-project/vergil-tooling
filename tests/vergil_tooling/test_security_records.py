@@ -26,7 +26,6 @@ from vergil_tooling.lib.security_records import (
     find_duplicate,
     list_advisories,
     mark_issue,
-    parse_advisory_ref,
     parse_advisory_refs,
     parse_tracking,
     pending_syncs,
@@ -96,16 +95,6 @@ def test_reference_lines_are_exact() -> None:
     assert tracking_line(C) == "Tracking issue: org/tool#12"
 
 
-def test_parse_advisory_ref_reads_the_exact_line() -> None:
-    body = f"Neutral text.\r\n\r\nSecurity advisory: org/.github {GHSA}  \r\n"
-    assert parse_advisory_ref(body) == GHSA
-
-
-def test_parse_advisory_ref_returns_the_first_of_several() -> None:
-    body = f"{advisory_line(HOME, OTHER)}\n{advisory_line(HOME, GHSA)}"
-    assert parse_advisory_ref(body) == OTHER
-
-
 def test_parse_advisory_refs_reads_every_line_in_order() -> None:
     first, second = "GHSA-aaaa-aaaa-aaaa", "GHSA-bbbb-bbbb-bbbb"
     body = (
@@ -128,11 +117,6 @@ _LOOKALIKES = [
     f"security advisory: org/.github {GHSA}",
     f"Security advisory: org/.githubx {GHSA}",
 ]
-
-
-@pytest.mark.parametrize("body", _LOOKALIKES)
-def test_parse_advisory_ref_ignores_lookalike_text(body: str) -> None:
-    assert parse_advisory_ref(body) is None
 
 
 @pytest.mark.parametrize("body", _LOOKALIKES)

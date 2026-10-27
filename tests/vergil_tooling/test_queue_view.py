@@ -409,9 +409,10 @@ _ADVISORY_BODY = f"Neutral planning body.\n\nSecurity advisory: org/.github {_GH
 _PLAN = IssueRef("org", ".github", 5)
 _FIX = IssueRef("org", "tool", 60)
 _HELD_NOTE = (
-    f"held: advisory {_GHSA} still tracks this planning issue — retarget it "
-    "to the fix task(s) with vrg-security-record retarget"
+    f"held: 1 advisory(ies) still track this planning issue ({_GHSA}) — retarget "
+    "each to its fix task(s) with vrg-security-record retarget"
 )
+_TWO_ADVISORY_BODY = f"{_ADVISORY_BODY}\nSecurity advisory: org/.github {_OTHER_GHSA}"
 
 
 def _advisory(ghsa_id: str, *tracking: IssueRef) -> Advisory:
@@ -457,6 +458,37 @@ def test_planning_state_not_held_when_named_advisory_is_absent() -> None:
         {5: _ready_view()}, [_advisory(_OTHER_GHSA, _PLAN)]
     )
     assert item.state == "ready-to-close"
+
+
+def test_planning_held_while_any_named_advisory_tracks_it() -> None:
+    # The issue names A and B; A was handed off to its fix task, B still tracks it.
+    advisories = [_advisory(_GHSA, _FIX), _advisory(_OTHER_GHSA, _PLAN)]
+    [item], home, listing = _security_planning({5: _ready_view(_TWO_ADVISORY_BODY)}, advisories)
+    assert item.state == "in-progress"
+    assert item.note == (
+        f"held: 1 advisory(ies) still track this planning issue ({_OTHER_GHSA}) — retarget "
+        "each to its fix task(s) with vrg-security-record retarget"
+    )
+    home.assert_called_once_with("org")
+    listing.assert_called_once_with("org/.github")
+
+
+def test_planning_held_note_names_every_advisory_still_tracking() -> None:
+    advisories = [_advisory(_GHSA, _PLAN), _advisory(_OTHER_GHSA, _PLAN)]
+    [item], _home, _listing = _security_planning({5: _ready_view(_TWO_ADVISORY_BODY)}, advisories)
+    assert item.state == "in-progress"
+    assert item.note == (
+        f"held: 2 advisory(ies) still track this planning issue ({_GHSA}, {_OTHER_GHSA}) — "
+        "retarget each to its fix task(s) with vrg-security-record retarget"
+    )
+
+
+def test_planning_ready_after_every_advisory_retargeted() -> None:
+    advisories = [_advisory(_GHSA, _FIX), _advisory(_OTHER_GHSA, IssueRef("org", "lib", 61))]
+    [item], _home, listing = _security_planning({5: _ready_view(_TWO_ADVISORY_BODY)}, advisories)
+    assert item.state == "ready-to-close"
+    assert item.note == "Docs task: org/.github#51"
+    listing.assert_called_once_with("org/.github")
 
 
 def test_planning_held_item_not_otherwise_ready_keeps_its_note() -> None:
