@@ -498,7 +498,7 @@ def test_show_issue_without_advisory_line(
 
 def test_show_missing_advisory(env: MagicMock, capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["show", GHSA]) == 1
-    assert f"advisory(ies) {GHSA} do not exist in {HOME}" in capsys.readouterr().err
+    assert f"advisory {GHSA} does not exist in {HOME}" in capsys.readouterr().err
     env.read_text.assert_not_called()
 
 
@@ -534,8 +534,27 @@ def test_show_issue_refuses_when_a_named_advisory_is_missing(
     assert main(["show", ISSUE.slug]) == 1
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert f"advisory(ies) {missing} do not exist in {HOME}" in captured.err
+    assert f"advisory {missing} does not exist in {HOME}" in captured.err
     assert GHSA not in captured.err
+    env.read_text.assert_not_called()
+
+
+def test_show_issue_refuses_naming_every_missing_advisory(
+    env: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    first, second = "GHSA-mmmm-mmmm-mmmm", "GHSA-nnnn-nnnn-nnnn"
+    env.list_advisories.return_value = _ADVISORIES
+    env.read_json.return_value = {
+        "body": (
+            f"Security advisory: {HOME} {first}\n"
+            f"Security advisory: {HOME} {GHSA}\n"
+            f"Security advisory: {HOME} {second}"
+        )
+    }
+    assert main(["show", ISSUE.slug]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert f"advisories {first}, {second} do not exist in {HOME}" in captured.err
     env.read_text.assert_not_called()
 
 

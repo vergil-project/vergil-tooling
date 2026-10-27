@@ -409,7 +409,7 @@ _ADVISORY_BODY = f"Neutral planning body.\n\nSecurity advisory: org/.github {_GH
 _PLAN = IssueRef("org", ".github", 5)
 _FIX = IssueRef("org", "tool", 60)
 _HELD_NOTE = (
-    f"held: 1 advisory(ies) still track this planning issue ({_GHSA}) — retarget "
+    f"held: 1 advisory still tracks this planning issue ({_GHSA}) — retarget "
     "each to its fix task(s) with vrg-security-record retarget"
 )
 _TWO_ADVISORY_BODY = f"{_ADVISORY_BODY}\nSecurity advisory: org/.github {_OTHER_GHSA}"
@@ -466,7 +466,7 @@ def test_planning_held_while_any_named_advisory_tracks_it() -> None:
     [item], home, listing = _security_planning({5: _ready_view(_TWO_ADVISORY_BODY)}, advisories)
     assert item.state == "in-progress"
     assert item.note == (
-        f"held: 1 advisory(ies) still track this planning issue ({_OTHER_GHSA}) — retarget "
+        f"held: 1 advisory still tracks this planning issue ({_OTHER_GHSA}) — retarget "
         "each to its fix task(s) with vrg-security-record retarget"
     )
     home.assert_called_once_with("org")
@@ -478,7 +478,7 @@ def test_planning_held_note_names_every_advisory_still_tracking() -> None:
     [item], _home, _listing = _security_planning({5: _ready_view(_TWO_ADVISORY_BODY)}, advisories)
     assert item.state == "in-progress"
     assert item.note == (
-        f"held: 2 advisory(ies) still track this planning issue ({_GHSA}, {_OTHER_GHSA}) — "
+        f"held: 2 advisories still track this planning issue ({_GHSA}, {_OTHER_GHSA}) — "
         "retarget each to its fix task(s) with vrg-security-record retarget"
     )
 

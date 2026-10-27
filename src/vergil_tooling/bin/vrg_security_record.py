@@ -388,7 +388,8 @@ def _show(args: argparse.Namespace) -> int:
         by_id = {a.ghsa_id: a for a in security_records.list_advisories(home)}
         missing = [g for g in wanted if g not in by_id]
         if missing:
-            raise _RefusedError(f"advisory(ies) {', '.join(missing)} do not exist in {home}")
+            noun, verb = ("advisory", "does") if len(missing) == 1 else ("advisories", "do")
+            raise _RefusedError(f"{noun} {', '.join(missing)} {verb} not exist in {home}")
         pairs = [(by_id[g], *security_records.read_text(home, g)) for g in wanted]
     for index, (advisory, summary, description) in enumerate(pairs):
         if index:
