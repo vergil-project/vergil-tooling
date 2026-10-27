@@ -502,6 +502,62 @@ def test_show_missing_advisory(env: MagicMock, capsys: pytest.CaptureFixture[str
     env.read_text.assert_not_called()
 
 
+def test_show_issue_prints_every_pair(env: MagicMock, capsys: pytest.CaptureFixture[str]) -> None:
+    env.list_advisories.return_value = _ADVISORIES
+    env.read_json.return_value = {
+        "body": f"Neutral.\n\nSecurity advisory: {HOME} {OTHER}\nSecurity advisory: {HOME} {GHSA}"
+    }
+    env.read_text.side_effect = lambda _home, ghsa: (f"summary of {ghsa}", f"details of {ghsa}")
+    assert main(["show", ISSUE.slug]) == 0
+    assert env.list_advisories.call_count == 1
+    assert capsys.readouterr().out == (
+        f"{OTHER}  closed  (no affected repo)  tracks: (no tracking issue)  [external report]\n"
+        f"summary: summary of {OTHER}\n"
+        "description:\n"
+        f"details of {OTHER}\n"
+        "\n"
+        f"{GHSA}  draft  tool  tracks: {ISSUE.slug}\n"
+        f"summary: summary of {GHSA}\n"
+        "description:\n"
+        f"details of {GHSA}\n"
+    )
+
+
+def test_show_issue_refuses_when_a_named_advisory_is_missing(
+    env: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    missing = "GHSA-mmmm-mmmm-mmmm"
+    env.list_advisories.return_value = _ADVISORIES
+    env.read_json.return_value = {
+        "body": f"Security advisory: {HOME} {GHSA}\nSecurity advisory: {HOME} {missing}"
+    }
+    assert main(["show", ISSUE.slug]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert f"advisory {missing} does not exist in {HOME}" in captured.err
+    assert GHSA not in captured.err
+    env.read_text.assert_not_called()
+
+
+def test_show_issue_refuses_naming_every_missing_advisory(
+    env: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    first, second = "GHSA-mmmm-mmmm-mmmm", "GHSA-nnnn-nnnn-nnnn"
+    env.list_advisories.return_value = _ADVISORIES
+    env.read_json.return_value = {
+        "body": (
+            f"Security advisory: {HOME} {first}\n"
+            f"Security advisory: {HOME} {GHSA}\n"
+            f"Security advisory: {HOME} {second}"
+        )
+    }
+    assert main(["show", ISSUE.slug]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert f"advisories {first}, {second} do not exist in {HOME}" in captured.err
+    env.read_text.assert_not_called()
+
+
 # --- retarget ---------------------------------------------------------------
 
 

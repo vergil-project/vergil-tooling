@@ -408,18 +408,22 @@ CLI tools installed as `vrg-*` console scripts:
   `--kind`
 - **`vrg-intake-route`** — Route one intake item (`drop`, `defer`, `one-off`,
   `planning`, `split`); owns transfer-or-recreate, reparent, re-link and
-  close-with-pointer for the `intake-review` skill
+  close-with-pointer for the `intake-review` skill; a `security` item's
+  advisory is retargeted on transfer, recreate and split
 - **`vrg-security-record`** — Record a security finding as a private draft
   advisory in `<org>/.github` paired with a neutral `security` intake issue
   (`create` with attach and resume, `list`, `show`, `retarget`); advisory text
   is printed only by `show` and `list --details` (epic vergil-project/.github#517)
 - **`vrg-queue`** — Read-only view of the `intake` queue (oldest first) or the
-  `planning` queue (waiting / in-progress / ready-to-close)
+  `planning` queue (waiting / in-progress / ready-to-close; a planning item
+  still tracked by a security advisory is held at in-progress)
 - **`vrg-epic-audit`** — Epic/task drift and invariant report (read-only);
   `--close` (human, or the scheduled `ops-epic-sweep` with `VRG_EPIC_SWEEP=1`)
   closes drift, drains standing-epic archives, then runs the orphan pass that
   attaches every unparented issue to its home's intake epic (epic
-  vergil-project/.github#176)
+  vergil-project/.github#176) and the security-records pass that syncs each
+  paired advisory's state to its issues and reports broken pairs (epic
+  vergil-project/.github#517)
 - **`vrg-validate`** — Unified validation driver (runs inside dev container)
 - **`vrg-ensure-label`** — Idempotent GitHub label creation
 - **`vrg-hook-guard`** — Claude Code PreToolUse hook guard (blocks raw git/gh)
@@ -455,10 +459,10 @@ Shared libraries under `src/vergil_tooling/lib/`:
 - **`github.py`** — gh CLI subprocess wrappers
 - **`config.py`** — Parse `vergil.toml`
 - **`epics.py`** — Epic/task model: the `StandingKind` table (ad-hoc, intake,
-  planning standing epics and their per-quarter archives), epic and queue
-  homes, sub-issue linking, rollup, and the parent-based queue-item check
-  that `report-ready` / `vrg-submit-pr` use to refuse intake and planning
-  items; `epic_audit.py` (drift report and orphan pass), `intake_route.py`,
+  planning and deferred standing epics and their per-quarter archives), epic
+  and queue homes, sub-issue linking, rollup, and the parent-based queue-item
+  check that `report-ready` / `vrg-submit-pr` use to refuse intake, planning
+  and deferred items; `epic_audit.py` (drift report and orphan pass), `intake_route.py`,
   and `queue_view.py` build on it
 - **`release/`** — Mechanized release workflow (preflight, prepare, merge,
   bump, confirm, finalize, handoff, orchestrator, package-index wait, and

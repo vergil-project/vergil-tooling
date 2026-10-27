@@ -8,6 +8,10 @@ Every security finding gets one **pair** (epic vergil-project/.github#517):
 - a neutral ``security``-labelled **issue** carrying the line
   ``Security advisory: <org>/.github <GHSA-id>``.
 
+One issue may name several advisories, one line each (epic
+vergil-project/.github#573); it keeps the ``security`` label while any line
+remains.
+
 This module owns the advisories REST API, the two reference lines, pair
 classification and :func:`retarget`, the one way a link moves.
 
@@ -89,11 +93,14 @@ class Advisory:
 
 @dataclass(frozen=True)
 class SecurityIssue:
-    """One ``security``-labelled issue, open or closed, and the advisory it names."""
+    """One ``security``-labelled issue, open or closed, and every advisory it names.
+
+    ``ghsa_ids`` is in body order and empty when the body has no line.
+    """
 
     ref: IssueRef
     open: bool
-    ghsa_id: str | None
+    ghsa_ids: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -162,10 +169,9 @@ def tracking_line(ref: IssueRef) -> str:
     return f"Tracking issue: {ref.slug}"
 
 
-def parse_advisory_ref(issue_body: str) -> str | None:
-    """The GHSA ID the first exact ``Security advisory:`` line names, or None."""
-    match = _ADVISORY_RE.search(issue_body)
-    return match.group(2) if match else None
+def parse_advisory_refs(issue_body: str) -> tuple[str, ...]:
+    """Every GHSA ID the exact ``Security advisory:`` lines name, in order, without repeats."""
+    return tuple(dict.fromkeys(match.group(2) for match in _ADVISORY_RE.finditer(issue_body)))
 
 
 def parse_tracking(description: str) -> tuple[IssueRef, ...]:
@@ -305,12 +311,13 @@ def _moved_comment(moved_to: Sequence[IssueRef]) -> str:
 
 
 def unmark_issue(ref: IssueRef, ghsa_id: str, moved_to: Sequence[IssueRef]) -> None:
-    """Drop *ref*'s line naming *ghsa_id* and its ``security`` label; say where it moved.
+    """Drop *ref*'s line naming *ghsa_id*; say where it moved.
 
-    An issue names one advisory (:func:`parse_advisory_ref`). If *ref*'s body
-    does not name *ghsa_id* — it names another advisory, or none — the issue
-    is left untouched: no body edit, no label change, no comment. Otherwise
-    only the line naming *ghsa_id* is removed.
+    An issue may name several advisories (:func:`parse_advisory_refs`). If no
+    line of *ref*'s body names *ghsa_id* — it names only others, or none — the
+    issue is left untouched: no body edit, no label change, no comment.
+    Otherwise only the line naming *ghsa_id* is removed, and the ``security``
+    label goes too only when no advisory line is left after the removal.
 
     The comment goes first and the line and label then go in **one** PATCH, so
     an interrupted unmark never leaves the issue with only one of the two: it
@@ -323,7 +330,7 @@ def unmark_issue(ref: IssueRef, ghsa_id: str, moved_to: Sequence[IssueRef]) -> N
         raise ValueError(f"unmark {ref.slug}: no issue the record moved to")
     endpoint = _issue_endpoint(ref)
     present, body = _issue_labels_body(ref)
-    if parse_advisory_ref(body) != ghsa_id:
+    if ghsa_id not in parse_advisory_refs(body):
         return
     comment = _moved_comment(moved_to)
     existing = github.read_json_paginated(f"{endpoint}/comments", jq="[.[] | .body]")
@@ -332,10 +339,9 @@ def unmark_issue(ref: IssueRef, ghsa_id: str, moved_to: Sequence[IssueRef]) -> N
     this_line = re.compile(
         rf"^Security advisory: {_NAME}/\.github {re.escape(ghsa_id)}[ \t]*\r?$", re.M
     )
-    update: dict[str, object] = {
-        "body": re.sub(r"\n{3,}", "\n\n", this_line.sub("", body)).rstrip()
-    }
-    if SECURITY_LABEL in present:
+    remaining = re.sub(r"\n{3,}", "\n\n", this_line.sub("", body)).rstrip()
+    update: dict[str, object] = {"body": remaining}
+    if SECURITY_LABEL in present and not parse_advisory_refs(remaining):
         update["labels"] = sorted(present - {SECURITY_LABEL})
     github.write_json("PATCH", endpoint, update)
 
@@ -385,8 +391,9 @@ def retarget(
     is what makes a re-run with the same arguments finish an interrupted run:
     once the tracking lines are rewritten they no longer name the dropped
     issue, but the issue itself still does until it is unmarked. A dropped
-    issue whose body does not name *ghsa_id* (it names another advisory, or
-    none) is never touched (:func:`unmark_issue`).
+    issue whose body has no line naming *ghsa_id* (it names only other
+    advisories, or none) is never touched (:func:`unmark_issue`); one that also
+    names other advisories loses only this line and keeps its label.
 
     *renamed* names old numbers of issues that are themselves a target (a
     transferred issue): their tracking line is replaced but they are never
@@ -407,7 +414,7 @@ def retarget(
         marked = [
             issue.ref
             for issue in security_issues(home.split("/", 1)[0])
-            if issue.ghsa_id == ghsa_id
+            if ghsa_id in issue.ghsa_ids
         ]
     for ref in dict.fromkeys((*previous, *marked)):
         if ref not in wanted and ref not in renamed:
@@ -436,7 +443,7 @@ def security_issues(org: str) -> list[SecurityIssue]:
                 SecurityIssue(
                     ref=IssueRef(org, bare, int(item["number"])),
                     open=str(item["state"]).lower() == "open",
-                    ghsa_id=parse_advisory_ref(str(item.get("body") or "")),
+                    ghsa_ids=parse_advisory_refs(str(item.get("body") or "")),
                 )
             )
     return found
@@ -452,20 +459,23 @@ def _tracking_problems(advisory: Advisory, by_ref: dict[IssueRef, SecurityIssue]
             problems.append(
                 f"{advisory.ghsa_id}: tracks {ref.slug}, which is not a security-labelled issue"
             )
-        elif issue.ghsa_id != advisory.ghsa_id:
+        elif advisory.ghsa_id not in issue.ghsa_ids:
             problems.append(f"{advisory.ghsa_id}: tracks {ref.slug}, which does not point back")
     return problems
 
 
-def _issue_problem(issue: SecurityIssue, by_id: dict[str, Advisory]) -> str | None:
-    if issue.ghsa_id is None:
-        return f"{issue.ref.slug}: security label but no Security advisory: line"
-    advisory = by_id.get(issue.ghsa_id)
-    if advisory is None:
-        return f"{issue.ref.slug}: names {issue.ghsa_id}, which does not exist"
-    if issue.ref not in advisory.tracking:
-        return f"{issue.ref.slug}: names {issue.ghsa_id}, which does not track it"
-    return None
+def _issue_problems(issue: SecurityIssue, by_id: dict[str, Advisory]) -> list[str]:
+    """One broken line per wrong advisory line of *issue* (or one for having none)."""
+    if not issue.ghsa_ids:
+        return [f"{issue.ref.slug}: security label but no Security advisory: line"]
+    problems: list[str] = []
+    for ghsa_id in issue.ghsa_ids:
+        advisory = by_id.get(ghsa_id)
+        if advisory is None:
+            problems.append(f"{issue.ref.slug}: names {ghsa_id}, which does not exist")
+        elif issue.ref not in advisory.tracking:
+            problems.append(f"{issue.ref.slug}: names {ghsa_id}, which does not track it")
+    return problems
 
 
 def classify(advisories: Sequence[Advisory], issues: Sequence[SecurityIssue]) -> Classification:
@@ -477,15 +487,16 @@ def classify(advisories: Sequence[Advisory], issues: Sequence[SecurityIssue]) ->
     - An advisory no issue names is an **external** report when it came from
       private vulnerability reporting (``triage`` state or a submission), and
       **broken** otherwise.
-    - A ``security`` issue is **broken** when it has no advisory line, or names
-      an advisory that does not exist or does not track it.
+    - A ``security`` issue is **broken** when it has no advisory line; each of
+      its lines naming an advisory that does not exist or does not track it is
+      a broken line of its own.
 
     An issue :func:`retarget` unmarked has no ``security`` label, so it is not
     among *issues* and is never reported.
     """
     by_id = {advisory.ghsa_id: advisory for advisory in advisories}
     by_ref = {issue.ref: issue for issue in issues}
-    named = {issue.ghsa_id for issue in issues if issue.ghsa_id is not None}
+    named = {ghsa_id for issue in issues for ghsa_id in issue.ghsa_ids}
     paired: list[Advisory] = []
     external: list[Advisory] = []
     broken: list[str] = []
@@ -502,9 +513,7 @@ def classify(advisories: Sequence[Advisory], issues: Sequence[SecurityIssue]) ->
         else:
             paired.append(advisory)
     for issue in sorted(issues, key=lambda i: i.ref.slug):
-        problem = _issue_problem(issue, by_id)
-        if problem is not None:
-            broken.append(problem)
+        broken += _issue_problems(issue, by_id)
     return Classification(paired=paired, external=external, broken=broken)
 
 

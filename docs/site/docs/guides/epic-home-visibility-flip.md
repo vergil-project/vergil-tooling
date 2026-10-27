@@ -28,10 +28,11 @@ Visibility changes are supported in **one direction only**:
   in the destination repo.
 - **Tasks do not move.** A task always lives in its member repo (1:1 with
   its PR), independent of visibility. Only the epic issue relocates.
-- **Intake and planning queues move themselves.** A private repo self-homes
-  its own `Epic (intake): <repo>` and `Epic (planning): <repo>`. Once the
-  repo is public, the daily `vrg-epic-audit --close` sweep re-links every
-  open item under the org's `.github` intake and planning epics (the items
+- **The intake, planning and deferred queues move themselves.** A private
+  repo self-homes its own `Epic (intake): <repo>`, `Epic (planning): <repo>`
+  and `Epic (deferred): <repo>`. Once the repo is public, the daily
+  `vrg-epic-audit --close` sweep re-links every open item under the org's
+  `.github` queue epic of the same kind (the items
   stay in their repo) and closes the emptied self-homed queue epics. No
   manual step is needed; a read-only `vrg-epic-audit` lists the queue epics
   it will move.
@@ -85,7 +86,7 @@ creation whether something is private; if it is public, it stays public.
 
 **To take public work private, create a new repository that starts life
 private and migrate the code into it.** The new repo self-homes its epics
-and its intake and planning queues from day one; the public original is
+and its intake, planning and deferred queues from day one; the public original is
 left as it was (archived if appropriate).
 
 If a repo is flipped to private anyway, `vrg-epic-audit` reports every

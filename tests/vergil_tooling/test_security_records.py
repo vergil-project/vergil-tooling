@@ -26,7 +26,7 @@ from vergil_tooling.lib.security_records import (
     find_duplicate,
     list_advisories,
     mark_issue,
-    parse_advisory_ref,
+    parse_advisory_refs,
     parse_tracking,
     pending_syncs,
     read_text,
@@ -95,27 +95,33 @@ def test_reference_lines_are_exact() -> None:
     assert tracking_line(C) == "Tracking issue: org/tool#12"
 
 
-def test_parse_advisory_ref_reads_the_exact_line() -> None:
-    body = f"Neutral text.\r\n\r\nSecurity advisory: org/.github {GHSA}  \r\n"
-    assert parse_advisory_ref(body) == GHSA
+def test_parse_advisory_refs_reads_every_line_in_order() -> None:
+    first, second = "GHSA-aaaa-aaaa-aaaa", "GHSA-bbbb-bbbb-bbbb"
+    body = (
+        f"Neutral.\r\n\r\nSecurity advisory: org/.github {first}  \r\n"
+        f"> Security advisory: org/.github {OTHER}\n"
+        f"Security advisory: org/.github {second}\n"
+        f"Security advisory: org/.github {first}\n"
+    )
+    assert parse_advisory_refs(body) == (first, second)
 
 
-@pytest.mark.parametrize(
-    "body",
-    [
-        "",
-        f"See Security advisory: org/.github {GHSA} for more",
-        f"> Security advisory: org/.github {GHSA}",
-        f"  Security advisory: org/.github {GHSA}",
-        f"Security advisory: org/tool {GHSA}",
-        f"Security advisory: org/.github {GHSA} and more",
-        "Security advisory: org/.github GHSA-1234",
-        f"security advisory: org/.github {GHSA}",
-        f"Security advisory: org/.githubx {GHSA}",
-    ],
-)
-def test_parse_advisory_ref_ignores_lookalike_text(body: str) -> None:
-    assert parse_advisory_ref(body) is None
+_LOOKALIKES = [
+    "",
+    f"See Security advisory: org/.github {GHSA} for more",
+    f"> Security advisory: org/.github {GHSA}",
+    f"  Security advisory: org/.github {GHSA}",
+    f"Security advisory: org/tool {GHSA}",
+    f"Security advisory: org/.github {GHSA} and more",
+    "Security advisory: org/.github GHSA-1234",
+    f"security advisory: org/.github {GHSA}",
+    f"Security advisory: org/.githubx {GHSA}",
+]
+
+
+@pytest.mark.parametrize("body", _LOOKALIKES)
+def test_parse_advisory_refs_ignores_lookalike_text(body: str) -> None:
+    assert parse_advisory_refs(body) == ()
 
 
 def test_parse_tracking_multiple_lines() -> None:
@@ -387,6 +393,9 @@ class Issues:
         self.bodies: dict[IssueRef, str] = {}
         self.comments: dict[IssueRef, list[str]] = {}
         self.description = f"{SECRET}\n\nTracking issue: org/.github#10"
+        # Per-advisory descriptions, for tests with several advisories; any
+        # GHSA ID not listed here shares ``description``.
+        self.descriptions: dict[str, str] = {}
         self.writes: list[tuple[str, str, dict[str, object]]] = []
         self.fail_on: str | None = None
         self.ensure_labels = MagicMock()
@@ -417,7 +426,9 @@ class Issues:
         endpoint = args[1]
         self._maybe_fail(f"GET {endpoint}")
         if "security-advisories" in endpoint:
-            return {"summary": SECRET, "description": self.description}
+            ghsa_id = endpoint.rsplit("/", 1)[1]
+            description = self.descriptions.get(ghsa_id, self.description)
+            return {"summary": SECRET, "description": description}
         ref = self._ref(endpoint)
         return {"labels": sorted(self.labels[ref]), "body": self.bodies[ref]}
 
@@ -425,7 +436,11 @@ class Issues:
         self._maybe_fail(f"{method} {endpoint}")
         self.writes.append((method, endpoint, body))
         if "security-advisories" in endpoint:
-            self.description = str(body["description"])
+            ghsa_id = endpoint.rsplit("/", 1)[1]
+            if ghsa_id in self.descriptions:
+                self.descriptions[ghsa_id] = str(body["description"])
+            else:
+                self.description = str(body["description"])
             return
         ref = self._ref(endpoint)
         if endpoint.endswith("/labels"):
@@ -475,6 +490,16 @@ def test_mark_issue_is_idempotent(issues: Issues) -> None:
     assert issues.writes == []
 
 
+def test_mark_issue_adds_a_second_advisory_line_and_keeps_the_first(issues: Issues) -> None:
+    issues.add(C, f"Neutral.\n\n{advisory_line(HOME, GHSA)}", {"security"})
+    mark_issue(C, HOME, OTHER)
+    assert issues.bodies[C] == (
+        f"Neutral.\n\n{advisory_line(HOME, GHSA)}\n\n{advisory_line(HOME, OTHER)}"
+    )
+    assert issues.labels[C] == {"security"}
+    assert parse_advisory_refs(issues.bodies[C]) == (GHSA, OTHER)
+
+
 def test_mark_issue_on_an_empty_body(issues: Issues) -> None:
     issues.add(C, "")
     mark_issue(C, HOME, GHSA)
@@ -507,8 +532,49 @@ def test_unmark_issue_strips_only_this_advisorys_line(issues: Issues) -> None:
     assert [w[2].keys() for w in issues.writes if w[0] == "PATCH"] == [{"body"}]
 
 
+def test_unmark_issue_keeps_label_while_another_advisory_remains(issues: Issues) -> None:
+    other = advisory_line(HOME, OTHER)
+    issues.add(A, f"Neutral.\n\n{advisory_line(HOME, GHSA)}\n{other}", {"security", "bug"})
+    unmark_issue(A, GHSA, (C,))
+    assert issues.bodies[A] == f"Neutral.\n\n{other}"
+    assert issues.labels[A] == {"security", "bug"}
+    assert issues.comments[A] == ["Security record moved to org/tool#12"]
+    # Comment first, then one PATCH carrying the body only (the label stays).
+    assert [(w[0], w[1].rsplit("/", 1)[1]) for w in issues.writes] == [
+        ("POST", "comments"),
+        ("PATCH", "10"),
+    ]
+    assert issues.writes[1][2].keys() == {"body"}
+
+
+def test_unmark_issue_acts_on_a_later_line(issues: Issues) -> None:
+    other = advisory_line(HOME, OTHER)
+    issues.add(A, f"Neutral.\n\n{other}\n{advisory_line(HOME, GHSA)}", {"security"})
+    unmark_issue(A, GHSA, (C,))
+    assert issues.bodies[A] == f"Neutral.\n\n{other}"
+    assert issues.labels[A] == {"security"}
+    assert issues.comments[A] == ["Security record moved to org/tool#12"]
+
+
+def test_unmark_issue_drops_label_with_the_last_line(issues: Issues) -> None:
+    other = advisory_line(HOME, OTHER)
+    issues.add(A, f"Neutral.\n\n{advisory_line(HOME, GHSA)}\n{other}", {"security", "bug"})
+    unmark_issue(A, GHSA, (C,))
+    unmark_issue(A, OTHER, (C,))
+    assert issues.bodies[A] == "Neutral."
+    assert issues.labels[A] == {"bug"}
+    assert issues.comments[A] == ["Security record moved to org/tool#12"]
+    patches = [w[2] for w in issues.writes if w[0] == "PATCH"]
+    assert [p.keys() for p in patches] == [{"body"}, {"body", "labels"}]
+
+
 @pytest.mark.parametrize(
-    "body", ["Neutral.", f"Neutral.\n\n{advisory_line(HOME, OTHER)}\n{advisory_line(HOME, GHSA)}"]
+    "body",
+    [
+        "Neutral.",
+        f"Neutral.\n\n{advisory_line(HOME, OTHER)}",
+        f"Neutral.\n\n> {advisory_line(HOME, GHSA)}\n{advisory_line(HOME, OTHER)}",
+    ],
 )
 def test_unmark_issue_leaves_an_issue_not_naming_this_advisory_untouched(
     issues: Issues, body: str
@@ -725,6 +791,35 @@ def test_retarget_never_touches_an_issue_naming_another_advisory(issues: Issues)
     assert issues.comments[A] == [MOVED]
 
 
+@pytest.mark.parametrize("order", [(GHSA, OTHER), (OTHER, GHSA)])
+def test_retarget_two_advisories_off_one_issue_in_either_order(
+    issues: Issues, order: tuple[str, str]
+) -> None:
+    both = f"Neutral.\n\n{advisory_line(HOME, GHSA)}\n{advisory_line(HOME, OTHER)}"
+    issues.add(A, both, {"security", "bug"})
+    issues.add(C, "New task.")
+    issues.descriptions = {
+        GHSA: f"{SECRET}\n\nTracking issue: org/.github#10",
+        OTHER: f"{SECRET}\n\nTracking issue: org/.github#10",
+    }
+    first, second = order
+    retarget(HOME, first, (C,))
+    # After the first: A keeps the other advisory's line and the label.
+    assert parse_advisory_refs(issues.bodies[A]) == (second,)
+    assert issues.labels[A] == {"security", "bug"}
+    retarget(HOME, second, (C,))
+    assert parse_advisory_refs(issues.bodies[A]) == ()
+    assert issues.bodies[A] == "Neutral."
+    assert issues.labels[A] == {"bug"}
+    assert issues.comments[A] == [MOVED]
+    assert issues.labels[C] == {"security"}
+    assert parse_advisory_refs(issues.bodies[C]) == order
+    assert issues.descriptions == {
+        GHSA: f"{SECRET}\n\nTracking issue: org/tool#12",
+        OTHER: f"{SECRET}\n\nTracking issue: org/tool#12",
+    }
+
+
 def test_retarget_never_touches_a_tracked_issue_naming_another_advisory(issues: Issues) -> None:
     """The old tracking lines name A, but A's body names a different advisory."""
     other = f"Other.\n\n{advisory_line(HOME, OTHER)}"
@@ -763,14 +858,26 @@ def test_security_issues_reads_every_managed_repo_in_every_state(
 
     monkeypatch.setattr(github, "read_json_paginated", read)
     assert security_issues("org") == [
-        SecurityIssue(A, open=True, ghsa_id=GHSA),
-        SecurityIssue(B, open=False, ghsa_id=None),
-        SecurityIssue(C, open=True, ghsa_id=None),
+        SecurityIssue(A, open=True, ghsa_ids=(GHSA,)),
+        SecurityIssue(B, open=False, ghsa_ids=()),
+        SecurityIssue(C, open=True, ghsa_ids=()),
     ]
     assert endpoints == [
         "repos/org/.github/issues?state=all&labels=security",
         "repos/org/tool/issues?state=all&labels=security",
     ]
+
+
+def test_security_issues_returns_every_ghsa_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(github, "list_org_repos", lambda _org: ["tool"])
+    monkeypatch.setattr(epics, "is_managed_repo", lambda _repo: True)
+    body = f"x\n{advisory_line(HOME, OTHER)}\n\n{advisory_line(HOME, GHSA)}"
+    monkeypatch.setattr(
+        github,
+        "read_json_paginated",
+        lambda *_a, **_k: [{"number": 12, "state": "open", "body": body}],
+    )
+    assert security_issues("org") == [SecurityIssue(C, open=True, ghsa_ids=(OTHER, GHSA))]
 
 
 # --- classification -------------------------------------------------------------
@@ -782,8 +889,11 @@ def _adv(
     return Advisory(ghsa, state, "tool", tracking, external=kw.get("external", False))
 
 
-def _iss(ref: IssueRef = A, ghsa: str | None = GHSA, *, open_: bool = True) -> SecurityIssue:
-    return SecurityIssue(ref, open_, ghsa)
+def _iss(
+    ref: IssueRef = A, ghsa: str | tuple[str, ...] | None = GHSA, *, open_: bool = True
+) -> SecurityIssue:
+    ghsa_ids = () if ghsa is None else (ghsa,) if isinstance(ghsa, str) else ghsa
+    return SecurityIssue(ref, open_, ghsa_ids)
 
 
 class TestClassifyPairedExternalBroken:
@@ -838,6 +948,28 @@ class TestClassifyPairedExternalBroken:
         advisory = _adv(tracking=(C,))
         result = classify([advisory], [_iss(C)])
         assert result == Classification(paired=[advisory], external=[], broken=[])
+
+    def test_issue_naming_two_paired_advisories(self) -> None:
+        first, second = _adv(tracking=(A,)), _adv(OTHER, tracking=(A,))
+        result = classify([first, second], [_iss(A, (GHSA, OTHER))])
+        assert result == Classification(paired=[first, second], external=[], broken=[])
+
+    def test_second_line_names_missing_advisory(self) -> None:
+        advisory = _adv(tracking=(A,))
+        result = classify([advisory], [_iss(A, (GHSA, OTHER))])
+        assert result.broken == [f"org/.github#10: names {OTHER}, which does not exist"]
+        assert result.paired == [advisory]
+
+    def test_second_line_names_advisory_not_tracking_it(self) -> None:
+        advisory, other = _adv(tracking=(A,)), _adv(OTHER, tracking=(C,))
+        result = classify([advisory, other], [_iss(A, (GHSA, OTHER)), _iss(C, OTHER)])
+        assert result.broken == [f"org/.github#10: names {OTHER}, which does not track it"]
+
+    def test_tracked_issue_pointing_back_on_its_second_line(self) -> None:
+        advisory = _adv(OTHER, tracking=(A, C))
+        first = _adv(tracking=(A,))
+        result = classify([first, advisory], [_iss(A, (GHSA, OTHER)), _iss(C, OTHER)])
+        assert result == Classification(paired=[first, advisory], external=[], broken=[])
 
     def test_broken_lines_name_only_ids_and_refs(self) -> None:
         result = classify(

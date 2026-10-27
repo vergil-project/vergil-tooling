@@ -35,6 +35,22 @@ This page is ordinary documentation. Update it through a normal PR
 when a seam opens, changes or closes. It is not tracked as an open
 issue.
 
+### Entries and security records
+
+This page is public, so it follows the
+[Security Records](security-records.md) policy:
+
+- **A seam an attacker could use gets a security record while it is
+  open.** Create one with `vrg-security-record create`. The details
+  live in its private advisory, not here.
+- **Its entry here stays neutral.** Name the seam and point to the
+  tracking issue, but give no detail of how to use the gap: no
+  triggering steps, command shapes or bypass. Fill in the full account
+  when the seam is resolved.
+- **Platform limits that are already public stay as they are.** A
+  documented limit of GitHub or the harness (such as entry 1) tells an
+  attacker nothing new, so its entry can describe it in full.
+
 ## Register
 
 ### 1. GitHub permissions are coarser than the agent model
@@ -97,35 +113,31 @@ the VM.
 ### 3. A misfiring commit guard pushes agents to disable the sandbox
 
 The vergil plugin's protected-branch hook
-(`block-protected-branch-work.sh`) decides which repo a command
-targets from the Bash tool's starting directory. The harness resets
-that directory to the session root before every call. The hook
-re-targets only a leading `cd <dir>` or `git -C`; any other command
-shape is judged against the session-root repo. A commit in a feature
-worktree is then denied as a commit to `develop`. Agents have worked
-around the false deny by running the command with the sandbox
-disabled, which removes the whole sandbox boundary for that call.
+(`block-protected-branch-work.sh`) decided which repo a command
+targeted from the Bash tool's starting directory, which the harness
+resets to the session root before every call. A `vrg-commit` in a
+feature worktree could then be denied as a commit to `develop`.
+Agents worked around the false deny by running the command with the
+sandbox disabled, which removes the whole sandbox boundary for that
+call.
 
 - **Seam:** the harness's pre-execution hook, which sees the reset
   starting directory, and the command, which runs after its own `cd`.
 - **Risk:** agents learn to treat a safety guard as noise and switch
-  off the sandbox to get past it. The same move (disable the sandbox,
-  `cd` into a branch) would let an agent really commit to a protected
-  branch.
-- **Current mitigation:** `vrg-commit` checks the real current branch
-  when it runs and refuses commits to protected branches, so the
-  bypass does not let a `vrg-commit` land on `develop` or `main`.
-  `vrg-git` blocks branch switches in the main worktree. Neither stops
-  the sandbox bypass itself.
-- **Desired fix (decided):** have the plugin hook skip `vrg-commit`,
-  whose run-time branch check is the authoritative one, rather than
-  try to parse every shell command shape. Other git write paths stay
-  guarded as they are. Related latent assumption: `vrg-hook-guard`
-  also trusts `tool_input.cwd`. That is harmless today, since it only
-  blocks raw `git`/`gh`, but matters if a fix comes to rely on it.
-- **Status:** open.
+  off the sandbox to get past it.
+- **Mitigation before the fix:** `vrg-commit` checks the real current
+  branch when it runs and refuses commits to protected branches, so
+  the bypass never let a `vrg-commit` land on `develop` or `main`.
+- **Fix:** the hook no longer matches `vrg-commit`. `vrg-commit`
+  already checks the real branch it commits to when it runs, so that
+  run-time check is the authoritative one, and the false deny that
+  pushed agents to disable the sandbox is gone. Raw `git commit` stays
+  guarded by the hook as before.
+- **Status:** resolved.
 - **Tracking:**
-  [vergil-claude-plugin#694](https://github.com/vergil-project/vergil-claude-plugin/issues/694).
+  [vergil-claude-plugin#694](https://github.com/vergil-project/vergil-claude-plugin/issues/694)
+  (fixed by
+  [vergil-claude-plugin#719](https://github.com/vergil-project/vergil-claude-plugin/pull/719)).
 
 ## Related
 

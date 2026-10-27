@@ -36,8 +36,8 @@ cloud→Mac handoff: each branch's ready-state comes from a local
 worktree's `pr-workflow.json` when present, else the relay ref
 `refs/vergil/pr-workflow/<branch>`; origin's tip is checked against the
 recorded `head_sha` and the PR opens with `--head` **without pushing**.
-It refuses an issue whose native parent is an intake or planning epic (see
-[`vrg-pr-workflow`](#vrg-pr-workflow)).
+It refuses an issue whose native parent is an intake, planning or deferred
+epic (see [`vrg-pr-workflow`](#vrg-pr-workflow)).
 
 | Attribute | Value |
 |---|---|
@@ -97,9 +97,10 @@ advances, the branch (issue #3071). `unfreeze` is the only sanctioned way to
 reopen a still-unsubmitted branch — it drops the state back to
 `implementing` while keeping the metadata; an already-submitted branch
 cannot be unfrozen. `status` prints the current state. `report-ready` (like
-`vrg-submit-pr`) refuses an issue whose native parent is an intake or planning
-epic: a queue item is not buildable until intake review routes it, or
-`epic-create` expands it (epic vergil-project/.github#176).
+`vrg-submit-pr`) refuses an issue whose native parent is an intake, planning
+or deferred epic: a queue item is not buildable until intake review routes it,
+`epic-create` expands it, or deferred review revives it (epics
+vergil-project/.github#176 and #508).
 
 | Attribute | Value |
 |---|---|
@@ -232,7 +233,7 @@ path. It carries no kind label. The intake epic is resolved (created if
 absent) *before* the issue is created; if linking the created issue fails, the
 tool exits 1 naming its URL and the `vrg-epic-move` command that links it. Used
 by the `intake-capture` skill. See
-[Intake and planning queues](../standards/github-issues.md#intake-and-planning-queues).
+[Intake, planning and deferred queues](../standards/github-issues.md#intake-planning-and-deferred-queues).
 
 `vrg-triage-create` is a **deprecated alias** kept for one release: it warns
 on stderr, ignores `--kind` (intake has no kind label), and forwards every
@@ -301,9 +302,19 @@ Which routes an item allows depends on the container epic it is in:
 | Exit codes | 0 routed, 1 refused or error, 2 bad arguments (including a missing `--revisit-when` or a malformed `--date`) |
 | Status | Active |
 
-A `security` item keeps its advisory link: a split or a recreate retargets
-the advisory before the original closes, and a transfer retargets it after
-the move (see [Security Records](../guides/security-records.md#when-the-issue-moves)).
+A `security` item keeps its advisory links. A recreate retargets every
+advisory the item names before the original closes, and a transfer
+retargets every one after the move; on a failure, either names every
+advisory still not retargeted. A split retargets an item's one advisory
+before the original closes. A split of an item naming several advisories
+is refused before any change, because which advisory goes to which task
+can't be inferred:
+
+```text
+vrg-intake-route: <owner>/<repo>#<N> names several advisories (<GHSA-id>, <GHSA-id>); retarget each by hand with vrg-security-record retarget, then split
+```
+
+See [Security Records](../guides/security-records.md#when-the-issue-moves).
 
 ### vrg-security-record
 
@@ -332,15 +343,21 @@ under the intake epic, oldest first. `vrg-queue planning` lists the open items
 under the planning epic with their state: **waiting** (no `in-progress`
 label), **in-progress** (labelled, with its latest progress note), or
 **ready-to-close** (labelled, the `Epic:` / `Docs task:` / `Tasks filed: yes`
-markers present, and the docs task closed). A planning item whose security
-advisory still tracks it is held at **in-progress** with a `held:` note until
-the advisory is retargeted to the fix task(s). `vrg-queue deferred` lists the
+markers present, and the docs task closed). A planning item that any security
+advisory it names still tracks is held at **in-progress** until every such
+advisory is retargeted to the task or tasks that fix it, with a note that
+counts them and names them by GHSA ID only (`held: <k> advisory still tracks
+this planning issue (<GHSA-id>) — …` for one, `held: <k> advisories still
+track this planning issue (<GHSA-id>, …) — …` for more; see
+[Security Records](../guides/security-records.md#security-items-in-planning)).
+`vrg-queue deferred` lists the
 open items under the deferred epic, all **waiting**, least recently deferred
 first; each item's note is its latest deferral
 (`Deferred <day>: <reason> | Revisit when: <conditions>`), and an item with no
 deferral comment sorts first with an empty note. A bare `vrg-queue` lists all
-three queues in that order (intake, planning, deferred). Used by
-`intake-review`'s collect step and `epic-create`'s no-argument summary.
+three queues in that order (intake, planning, deferred). Used by the
+collect step of the three review skills (`intake-review`, `planning-review`,
+`deferred-review`) and by `epic-create`'s no-argument summary.
 
 | Attribute | Value |
 |---|---|
@@ -349,6 +366,61 @@ three queues in that order (intake, planning, deferred). Used by
 | Preconditions | GitHub App credentials for the target org |
 | Failure mode | A named queue whose home has no live queue epic exits 1 naming the missing epic; with no queue named, a missing queue prints `<queue> queue for <name> in <home>: no queue yet` and the run exits 0. Nothing is created |
 | Exit codes | 0 success, 1 error, 2 bad arguments |
+| Status | Active |
+
+### vrg-epic-audit
+
+Report epic/task drift and invariant violations for an org, as Markdown on
+stdout. It is read-only by default. **Drift** is a task still open although
+the merged PR that `Ref`s it landed within the last `--window-days` days, and
+an open finite epic whose children are all closed. The **invariant** checks
+are the [compliance invariants](../standards/github-issues.md#compliance-invariants):
+epics outside `.github`, stray `.github` issues, a closed epic with an open
+child, orphans, retired kind labels, body-only `Parent:` links, self-homed
+queues in a now-public repo, and private work under a public epic. It also
+lists open epics with operational tasks still pending, and closed
+operational tasks with no `Outcome: SUCCESS`. The report previews, without
+writing, the ad-hoc and queue-epic drains and the security-records pass that
+`--close` would run.
+
+The org comes from the current repo's `origin` remote (there is no `--org`
+flag). `--repo OWNER/NAME` audits that repo's resolved epic home instead of
+the org's `.github`, so a private repo that self-homes its epics can be
+audited; the home-scoped checks (epic drift, stray issues, operation-pending
+epics, and the `--close` drift closes) then target it.
+`--epic REF` is a separate read-only mode: it prints one epic's children as
+JSON (`{"epic": <slug>, "children": [{repo, number, title, state}, …]}`) and
+skips the drift audit. A bare `#N` resolves against the current repo's epic
+home.
+
+`--close` applies the fixes, in order:
+
+1. Close the drifted tasks and rolled-up epics, and reopen each epic closed
+   while a child was still open, with an explanatory comment on each.
+2. Drain the closed children of the ad-hoc, intake, planning and deferred
+   epics into per-quarter archives, and close past archives (see
+   [Ad-hoc epic archiving](../standards/github-issues.md#ad-hoc-epic-archiving)).
+3. Run the [orphan pass](../standards/github-issues.md#the-orphan-pass-auto-heal):
+   nativize body-only `Parent:` links, strip the retired kind labels, move a
+   now-public repo's queue items under `.github`, and attach every orphan to
+   its home's intake epic.
+4. Run the security-records pass, even when the orphan pass failed: each
+   paired draft advisory in the org's `.github` is set to closed once every
+   issue it tracks is closed, and back to draft while any is open; broken
+   pairs are reported, not repaired. Its output names only GHSA IDs, issue
+   refs and states, never advisory text (see
+   [Security Records](../guides/security-records.md#managing-a-record-through-its-issue)).
+
+`--close` is a human action, or the scheduled `ops-epic-sweep` workflow,
+which sets `VRG_EPIC_SWEEP=1`. Other invariant violations stay report-only.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_epic_audit` (checks and passes: `lib/epic_audit.py`; security pass: `lib/security_records.py`) |
+| Args | `--window-days N` (positive; default 30), `--repo OWNER/NAME`, `--epic REF`, `--close` |
+| Preconditions | Run inside a repo in the target org; GitHub App credentials for that org. `--close` needs a human identity or `VRG_EPIC_SWEEP=1`. The security-records pass needs Repository security advisories: Read and write |
+| Failure mode | `--close` in an agent session is refused before any network call; a `--repo` without `/`, an org that cannot be detected, or an org with no `.github` home exits 1. A full intake epic stops the orphan pass, listing what it did not attach; a broken security pair or a failed security pass exits 1 after the rest of the run. With `--epic`, a ref that is not an epic exits 1 |
+| Exit codes | 0 success (the read-only report exits 0 even when it finds drift), 1 refused, a pass failed, or error, 2 bad arguments |
 | Status | Active |
 
 ### vrg-worktree-status

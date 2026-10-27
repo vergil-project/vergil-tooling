@@ -22,17 +22,20 @@ Applies to all repositories that use GitHub issues and pull requests.
 - Intake item: An uncurated capture — a bug, an idea, an investigation, a
   one-line "don't forget X" — linked under its home's **intake epic** until
   intake review routes it. It carries no kind label: its parent *is* its state.
-  See [Intake and planning queues](#intake-and-planning-queues).
+  See [Intake, planning and deferred queues](#intake-planning-and-deferred-queues).
 - Planning item: A reviewed item judged to need a full epic, linked under its
   home's **planning epic** while it waits for (or undergoes) `epic-create`.
+- Deferred item: An evaluated item that is not ready yet, parked under its
+  home's **deferred epic** with a dated record of why it waits and what to check
+  before it comes back. See [The deferred queue](#the-deferred-queue).
 
 ## The invariant: every issue belongs to an epic
 
 In any repo with a `vergil.toml`, **every issue is either a legitimate top-level
 kind or has an epic parent.** The legitimate top-level kinds are:
 
-- **epics** (`epic` label), including the standing ad-hoc, intake, and planning
-  epics;
+- **epics** (`epic` label), including the standing ad-hoc, intake, planning,
+  and deferred epics;
 - **archives** (`archive` label) — the per-quarter buckets of closed standing-epic
   children;
 - **release tracking issues** (`release: X.Y.Z`), which `vrg-release` creates
@@ -45,6 +48,7 @@ it stands:
 |---|---|---|
 | **Intake** — captured, not reviewed | the intake epic | no |
 | **Planning** — needs a full epic | the planning epic | no |
+| **Deferred** — evaluated, waiting on a revival condition | the deferred epic | no |
 | **Ready** — a one-off, or part of a planned initiative | a repo's ad-hoc epic, or a finite epic | yes |
 
 The sanctioned tools create every issue already linked (`vrg-issue-create`
@@ -163,7 +167,7 @@ cross-forge fallback.
 
 ### Standing epics
 
-The ad-hoc epic is one of three kinds of **standing epic** — perpetual
+The ad-hoc epic is one of four kinds of **standing epic** — perpetual
 umbrellas that are created and reused idempotently, never auto-close, and never
 gate rollup:
 
@@ -172,14 +176,18 @@ gate rollup:
 | Ad hoc | `Epic (ad hoc): <repo>` | `epic` + `ad-hoc` | one per repo, in the repo's epic home | ready one-off work |
 | Intake | `Epic (intake): <name>` | `epic` + `intake` | one per queue home | captured, unreviewed items and every orphan the sweep finds |
 | Planning | `Epic (planning): <name>` | `epic` + `planning` | one per queue home | items waiting for or undergoing `epic-create` |
+| Deferred | `Epic (deferred): <name>` | `epic` + `deferred` | one per queue home | evaluated items parked until their revival conditions are met |
 
-The intake and planning **queue home** follows the
-[epic-home rule](#epic-home-the-orggithub-rule): every public repo shares the
-org's pair in `<org>/.github` (`<name>` is the org), while a **private** repo
-self-homes its own pair (`<name>` is the repo), so private work never surfaces
-in a public issue. `vrg-issue-create --epic` accepts `adhoc`, `intake`, and
-`planning` as sentinels that resolve (creating if absent) the target repo's
-standing epic of that kind.
+Intake, planning and deferred are the three **queue epics**. Their **queue
+home** follows the [epic-home rule](#epic-home-the-orggithub-rule): every
+public repo shares the org's set in `<org>/.github` (`<name>` is the org),
+while a **private** repo self-homes its own set (`<name>` is the repo), so
+private work never surfaces in a public issue. `vrg-issue-create --epic`
+accepts `adhoc`, `intake`, and `planning` as sentinels that resolve (creating
+if absent) the target repo's standing epic of that kind. It refuses
+`deferred`, as does `vrg-epic-move`: an item enters and leaves the deferred
+queue only through `vrg-intake-route`, which records the deferral (see
+[The deferred queue](#the-deferred-queue)).
 
 ### Ad-hoc epic archiving
 
@@ -219,10 +227,12 @@ ad-hoc epic ends up holding only its still-open children.
   children it moves, and if a duplicate archive ever exists the **oldest is
   reused** rather than the run failing on the ambiguity — so the drain is safe
   to re-run and self-heals.
-- **Intake and planning drain the same way.** Closed intake and planning items
-  (dropped, split, planned) move into `Archive (intake): <name> — <YYYY>-Q<n>`
-  and `Archive (planning): <name> — <YYYY>-Q<n>` buckets (labels `archive` +
-  `intake` / `planning`), so only open items count against GitHub's
+- **The queue epics drain the same way.** Closed intake, planning and deferred
+  items (dropped, split, planned) move into
+  `Archive (intake): <name> — <YYYY>-Q<n>`,
+  `Archive (planning): <name> — <YYYY>-Q<n>` and
+  `Archive (deferred): <name> — <YYYY>-Q<n>` buckets (labels `archive` +
+  `intake` / `planning` / `deferred`), so only open items count against GitHub's
   100-sub-issue cap. An archive bucket holds at most 95 children; a full one
   rolls over to a new segment.
 
@@ -276,7 +286,8 @@ Two existing call sites keep archives current with no dedicated cron:
   `issues.closed` rollup path (`vrg-epic-rollup`) archives just that child into
   its close-quarter archive.
 - **Backstop + backfill.** The daily `vrg-epic-audit --close` sweep runs the
-  org-wide drain for every standing kind (ad-hoc, intake, planning): it
+  org-wide drain for every standing kind (ad-hoc, intake, planning,
+  deferred): it
   distributes any backlog the steady-state path missed and closes past-quarter
   archives. This is the same trusted sweep that closes other
   provably-complete drift, so it is allowed to mutate under the scheduled
@@ -379,7 +390,8 @@ relocating epics when a repo's visibility changes.
   a *public* repo is a violation (a private repo self-homes legitimately).
 - **No stray `.github` issues.** The epic home holds only epics, the
   `archive`-labelled per-quarter buckets, and issues linked under an epic —
-  managed tasks and intake/planning items alike; any other open issue there is a
+  managed tasks and intake/planning/deferred items alike; any other open issue
+  there is a
   stray.
 - **An epic is never closed while a child is open.** A closed finite epic with an
   open child is a violation (perpetual standing epics are exempt — they never
@@ -391,7 +403,7 @@ relocating epics when a repo's visibility changes.
   `vergil.toml`) that is not a legitimate top-level kind and has no epic parent —
   together with the intake epic it would be attached to. It also lists issues
   still carrying the retired `triage` / `idea` / `research` labels, issues
-  parented only by a body `Parent:` line, and self-homed intake/planning epics
+  parented only by a body `Parent:` line, and self-homed queue epics
   in a repo that has since become public.
 - **No private work under public epics.** An issue in a private repo parented
   under a public `.github` epic is reported as a likely unsupported
@@ -409,7 +421,8 @@ with an org-wide **orphan pass**, in order:
    consumer reads the same parent.
 2. **Strip** the retired `triage` / `idea` / `research` labels from every open
    issue (its parent is left alone).
-3. **Move** a now-public repo's self-homed intake and planning items under the
+3. **Move** a now-public repo's self-homed intake, planning and deferred items
+   under the
    `.github` queues, then close the emptied self-homed epics — the only epics
    the pass ever closes.
 4. **Attach** every orphan to its home's intake epic (creating it if absent).
@@ -417,19 +430,54 @@ with an org-wide **orphan pass**, in order:
 
 The pass is idempotent and never closes an item. Before each link it checks the
 target queue epic's open children against the cap (95, under GitHub's
-100-sub-issue limit); a full intake or planning epic **stops the pass** with
+100-sub-issue limit); a full queue epic **stops the pass** with
 exit 1, listing every item it did not link — never a silent skip. A full intake
 queue is a signal to run intake review. The same pass, dispatched once by hand
 through `ops-epic-sweep`'s `workflow_dispatch`, is the one-time migration of an
 org's existing backlog.
 
-## Intake and planning queues
+#### The security-records pass
 
-Not every capture is ready to be built. Work flows through two **standing
-queues** before it is ready — **intake → planning → ready** — and the queue an
-item sits in is simply its parent epic (see
-[Standing epics](#standing-epics)). There are no kind labels and no fourth
-state.
+After the orphan pass, `vrg-epic-audit --close` runs one pass over the draft
+advisories in the org's `.github` (see
+[Security Records](../guides/security-records.md#managing-a-record-through-its-issue)).
+It runs even when the orphan pass failed, and the worse exit code wins.
+
+- **State sync.** Each paired advisory follows its `security` issues: closed
+  once every issue it tracks is closed, a draft while any is open. The pass
+  only moves an advisory between `draft` and `closed`, and never touches an
+  unpaired external report.
+- **Consistency check.** It reports broken pairs (a `security` issue with a
+  missing or wrong advisory reference, or an advisory whose tracking lines are
+  missing or do not point back) and does not repair them; any broken pair
+  makes the run exit 1.
+
+Its output goes to `.github`'s public Actions logs, so it names only GHSA IDs,
+issue refs, labels and states, never advisory text. The read-only
+`vrg-epic-audit` previews the same pass without changing any state. The sweep's
+org ops App needs Repository security advisories: Read and write (see
+[Identity architecture](../guides/identity-architecture.md)).
+
+## Intake, planning and deferred queues
+
+Not every capture is ready to be built. Work flows through **standing queues**
+before it is ready — **intake → planning → ready** — and an evaluated item that
+is not ready yet waits in a third queue, **deferred**, until its revival
+conditions are met. The queue an item sits in is simply its parent epic (see
+[Standing epics](#standing-epics)). There are no kind labels and no other
+states.
+
+| Queue | Holds | Reviewed by | Leaves by |
+|---|---|---|---|
+| **Intake** | captured, unreviewed items and every orphan the sweep finds | `intake-review` | drop, defer, one-off, split, or to planning |
+| **Planning** | items that need a full epic | `planning-review` picks what to plan next; `epic-create` expands one item | planned (closed as "planned as #N"), defer, or drop |
+| **Deferred** | evaluated items parked until their `Revisit when:` conditions are met | `deferred-review` | revive (to intake, to planning, or one-off), drop, or split; a refresh re-defers in place |
+
+Except for a planned item, which `epic-create` closes, every move out of a
+queue is applied with [`vrg-intake-route`](#routing-vrg-intake-route); the
+review skills
+(`vergil-claude-plugin`) present items in small batches with a recommended
+route and take one human confirmation per batch.
 
 ### Capture: `vrg-intake-create`
 
@@ -460,12 +508,13 @@ It defaults to the current org's `.github` queues; `--repo <owner>/<repo>`
 selects that repo's queue home (a self-homed private repo's own queues), and
 `--json` emits machine-readable output. It is read-only.
 
-### Intake review: `vrg-intake-route`
+### Routing: `vrg-intake-route`
 
 Intake is reviewed oldest first, in small batches (the `intake-review` skill).
 For each item the reviewer checks its current state and recommends a route; the
 human confirms the batch; the route is applied with `vrg-intake-route`, which
-owns the mechanics so nothing is hand-rolled:
+owns the mechanics so nothing is hand-rolled. The same tool applies the
+planning and deferred reviews' decisions. From intake:
 
 | Route | Command | Effect |
 |---|---|---|
@@ -482,6 +531,69 @@ its new parent. A route is refused when the item's container epic does not allow
 it (see [`vrg-intake-route`](../reference/cli-tools-overview.md#vrg-intake-route)
 for the route table), for a cross-org target, and for a private item headed to a
 public repo or epic.
+
+A `security` item keeps its advisory link through every move: on a split or a
+recreate, the advisory is retargeted to the new issue(s) **before** the
+original closes (a failure stops the route and leaves the original open); on a
+transfer, it is retargeted after the move (see
+[Security Records](../guides/security-records.md#when-the-issue-moves)).
+
+### The deferred queue
+
+Deferring parks an item that was evaluated but cannot move yet — it waits on
+an upstream release, another issue, a date, or capacity. It is a queue of its
+own, apart from intake and planning, so neither queue fills up with items
+nobody can act on, and so every parked item says what would bring it back.
+
+**Only container-epic items can be deferred.** An item under an intake,
+planning or ad-hoc epic can be deferred (an already-deferred item can be
+refreshed). A task in a development (finite) epic cannot: deferring one task
+would in effect suspend its whole epic, so the tool refuses it, naming the
+parent. A planning item is refused once its `epic-create` session has recorded
+an `Epic:` marker (the development epic already exists), and an ad-hoc item is
+refused while an open PR would close it.
+
+**Every deferral records why, and what to check.** `--reason` and
+`--revisit-when` are both required:
+
+```bash
+vrg-intake-route <ref> defer --reason "<why now is not the time>" \
+  --revisit-when "<what to check to know it can come back>"
+```
+
+The tool moves the item under its queue home's deferred epic (removing a
+planning item's `in-progress` label) and posts the record:
+
+```text
+Deferred <YYYY-MM-DD>: <reason>
+Revisit when: <conditions>
+Deferred from: <owner>/<repo>#<N>
+```
+
+`Deferred from:` names the container epic the item left. `Revisit when:` is free
+prose — a date, an event ("`<owner>/<repo>#<N>` merges", "Zensical 1.0
+ships"), or both — written so a later review can actually check it. `--date
+YYYY-MM-DD` stamps an original deferral date instead of today. Running `defer`
+on an item already in the deferred queue is a **refresh**: a new dated record,
+no move, no `Deferred from:` line.
+
+**Bringing it back.** The `deferred-review` skill lists the queue with
+`vrg-queue deferred` (least recently deferred first), checks each item's
+conditions against their real sources, and recommends one outcome:
+
+| Outcome | Command |
+|---|---|
+| Keep | none — the conditions are not met yet |
+| Refresh | `vrg-intake-route <ref> defer --reason TEXT --revisit-when TEXT` |
+| Revive to intake | `vrg-intake-route <ref> intake` |
+| Revive to planning | `vrg-intake-route <ref> planning` (or `epic-create <ref>`, which does this first) |
+| Revive as a one-off | `vrg-intake-route <ref> one-off --repo OWNER/REPO [--epic REF]` |
+| Drop | `vrg-intake-route <ref> drop --reason TEXT` |
+
+A deferred item can also be split (`split --into REF … --reason TEXT`). An
+item enters and leaves the deferred queue **only** through `vrg-intake-route`:
+`vrg-issue-create` and `vrg-epic-move` refuse the deferred epic, so no item is
+deferred without its record and none is revived silently.
 
 ### Planning
 
@@ -500,14 +612,24 @@ Progress comments carry machine-readable marker lines — `Epic: <ref>`,
 `Docs task: <ref>`, and `Tasks filed: yes` (the latest of each wins) — and the
 epic body gains a `Planning: <ref>` line. `vrg-queue planning` reports an item
 **ready to close** once it is `in-progress`, all three markers are present, and
-the docs task is closed (its spec + plan PR merged).
+the docs task is closed (its spec + plan PR merged). A planning item that a
+security advisory still tracks is **held** at in-progress, with a `held:` note,
+until `epic-create` retargets the advisory to the fix task(s); closing it
+earlier would close the advisory with the fix unwritten (see
+[Security items in planning](../guides/security-records.md#security-items-in-planning)).
+
+Which planning item to expand next is decided in the `planning-review` skill:
+the human ranks the queue by priority and importance and picks only what will be
+implemented soon, since a plan left sitting goes stale. Each item is picked
+(handed to `epic-create`), deferred, dropped, or left in the queue.
 
 ### Queue items are not buildable
 
-An item parented under an intake or planning epic is not PR-workable:
-`vrg-pr-workflow report-ready` and `vrg-submit-pr` (and, upstream, the
-`issue-implement` skill) refuse it, naming the step to take first — route it
-with intake review, or expand it with `epic-create`. Routing it out of the queue
+An item parented under an intake, planning or deferred epic is not
+PR-workable: `vrg-pr-workflow report-ready` and `vrg-submit-pr` (and, upstream,
+the `issue-implement` skill) refuse it, naming the step to take first — route
+it with intake review, expand it with `epic-create`, or revive it with
+deferred review. Routing it out of the queue
 is the only way to lift the refusal. The check reads the issue's native parent,
 not a label.
 
@@ -548,21 +670,32 @@ up to date (see
 | `ad-hoc` | Perpetual umbrella for ad-hoc work; never auto-closes |
 | `intake` | Marks the standing intake epic (with `epic`) and its archives (with `archive`); never auto-closes |
 | `planning` | Marks the standing planning epic (with `epic`) and its archives (with `archive`); never auto-closes |
+| `deferred` | Marks the standing deferred epic (with `epic`) and its archives (with `archive`); never auto-closes |
 | `in-progress` | Planning item whose `epic-create` session is underway |
-| `archive` | Terminal per-quarter archive of closed standing-epic work (ad-hoc, intake, planning); historical record |
+| `archive` | Terminal per-quarter archive of closed standing-epic work (ad-hoc, intake, planning, deferred); historical record |
 | `hotfix` | Emergency fix that skipped formal planning; flagged for retroactive review |
 | `validation` | Post-merge validation: run the checklist, record PASS/FAIL as a comment; never auto-closed |
 | `deployment` | Deployment task: install/sync merged changes so they are usable; never auto-closed |
 | `retrospective` | Epic retrospective bookend; PR-workable, its docs PR publishes `retrospective.md` |
+| `security` | Has a private security record in the org's `.github` advisories (see [Security Records](../guides/security-records.md)) |
+| `security-disclosed` | Past issue that disclosed a security problem publicly; fixed, no private record |
 
-The parent epic carries an issue's state, so no label restates it. `intake` and
-`planning` label only the standing epics (and their archives), the way `ad-hoc`
+The parent epic carries an issue's state, so no label restates it. `intake`,
+`planning` and `deferred` label only the standing epics (and their archives),
+the way `ad-hoc`
 does, and `in-progress` is the single per-item label, used only on planning
 items. The former intake kind labels `triage`, `idea`, and `research` are
 **retired**: no tool or skill applies them, and the daily orphan pass strips
 them from every open issue. They are no longer in the registry, and a label
 sync (`vrg-ensure-label --sync`) deletes them from any repo that still has
 them, which also strips them from any issue still carrying them.
+
+`security` goes only on an issue paired with a private draft advisory:
+`vrg-security-record` applies it when it creates or attaches a record, and
+removes it from an issue the advisory stops tracking. The sweep's consistency
+check applies only to `security`; `security-disclosed` marks a past public
+disclosure and is ignored by the check (see
+[Security Records](../guides/security-records.md#the-labels)).
 
 `dependency-update` goes on PRs, not issues: `vrg-update-deps` and the
 `vrg-release` `update-deps` stage put it on every dependency-update PR
