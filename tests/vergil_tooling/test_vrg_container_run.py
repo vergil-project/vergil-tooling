@@ -10,9 +10,13 @@ from unittest.mock import patch
 
 import pytest
 
-from tests.vergil_tooling.conftest import FIXTURE_WINDOW, window_default_resolution
+from tests.vergil_tooling.conftest import (
+    FIXTURE_WINDOW,
+    local_settings_violation,
+    window_default_resolution,
+)
 from vergil_tooling.bin.vrg_container_run import _test_context, _test_tuning_env, main
-from vergil_tooling.lib import container
+from vergil_tooling.lib import container, local_settings
 from vergil_tooling.lib.container import VERSION_WINDOW_MOUNT
 from vergil_tooling.lib.platform_env import Platform
 from vergil_tooling.lib.versions.window import WINDOW_ENV
@@ -947,3 +951,41 @@ def test_version_window_missing_file_fails_on_host(
     err = capsys.readouterr().err
     assert str(missing.resolve()) in err
     assert WINDOW_ENV in err
+
+
+# -- local-settings guard (epic vergil-project/.github#558) -------------------
+
+
+def test_vrg_container_run_refuses_for_agent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = local_settings_violation(tmp_path, monkeypatch)
+    with (
+        patch("vergil_tooling.bin.vrg_container_run.detect_runtime") as mock_runtime,
+        patch("vergil_tooling.bin.vrg_container_run.os.execvp") as mock_exec,
+        patch.dict("os.environ", {"VRG_IDENTITY_MODE": "user"}, clear=True),
+    ):
+        assert main(["--", "vrg-validate"]) == 1
+    mock_runtime.assert_not_called()
+    mock_exec.assert_not_called()
+    lines = capsys.readouterr().err.splitlines()
+    assert lines[0] == local_settings.REFUSAL_TEMPLATE.format(path=path)
+    assert lines[1] == local_settings.AGENT_LINE
+
+
+def test_vrg_container_run_warns_for_human(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = local_settings_violation(tmp_path, monkeypatch)
+    (tmp_path / "pyproject.toml").write_text("[project]\n")
+    with (
+        patch("vergil_tooling.bin.vrg_container_run.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_run.assert_runtime_available"),
+        patch("vergil_tooling.bin.vrg_container_run.ensure_cached_image", return_value="img:1"),
+        patch("vergil_tooling.bin.vrg_container_run.detect_runtime", return_value="docker"),
+        patch("vergil_tooling.bin.vrg_container_run.os.execvp") as mock_exec,
+        patch.dict("os.environ", {}, clear=True),
+    ):
+        main(["--", "true"])
+    mock_exec.assert_called_once()
+    assert local_settings.WARNING_TEMPLATE.format(path=path) in capsys.readouterr().err.splitlines()
