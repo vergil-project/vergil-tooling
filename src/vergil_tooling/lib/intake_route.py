@@ -28,12 +28,16 @@ routes each container allows:
 - **split** — the replacement tasks already exist (made with
   ``vrg-issue-create``); comment the links and the reason, then close.
 
-A **security** item (the ``security`` label and a ``Security advisory:``
-line, epic vergil-project/.github#517) keeps its advisory link: a split or a
-recreate retargets the advisory to the new issue(s) *before* the original
-closes, and stops with the original open if that fails; a transfer retargets
-it after the move and, if that fails, reports the moved-but-not-retargeted
-state with the exact recovery command. The planning route leaves it alone.
+A **security** item (the ``security`` label and at least one ``Security
+advisory:`` line, epics vergil-project/.github#517 and #573) keeps its advisory
+links: a split or a recreate retargets the advisory (a recreate: every
+advisory, in body order) to the new issue(s) *before* the original closes, and
+stops with the original open if that fails; a transfer retargets every
+advisory after the move and, if one fails, reports the moved-but-not-retargeted
+state with the exact recovery command for each advisory still pending. A split
+of an item naming several advisories is refused before any change, since which
+advisory goes to which task cannot be inferred. The planning route leaves the
+advisories alone.
 
 A task in a development epic, an epic, and an unparented issue are refused
 (``planning`` alone accepts an unparented issue: the ``epic-create`` free-text
@@ -172,8 +176,15 @@ def _route(ref: IssueRef, action: RouteAction, today: date) -> RouteResult:
         if not action.into:
             raise RouteRefusedError("split needs at least one --into task")
         refs = ", ".join(task.slug for task in action.into)
-        ghsa = _item_advisory(ref)
-        if ghsa is not None:
+        ghsas = _item_advisories(ref)
+        if len(ghsas) > 1:
+            # Which advisory goes to which task cannot be inferred: refuse before any change.
+            raise RouteRefusedError(
+                f"{ref.slug} names several advisories ({', '.join(ghsas)}); retarget each "
+                "by hand with vrg-security-record retarget, then split"
+            )
+        if ghsas:
+            [ghsa] = ghsas
             try:
                 _retarget(ref, ghsa, action.into)
             except _RETARGET_ERRORS as exc:
@@ -348,13 +359,13 @@ def _one_off(ref: IssueRef, action: OneOff) -> RouteResult:
         _link(epic, ref)
         return RouteResult(final=ref, moved_by="none")
     # Read before the move: a transfer drops labels the target repo lacks.
-    ghsa = _item_advisory(ref)
+    ghsas = _item_advisories(ref)
     try:
         output = github.read_output("issue", "transfer", str(ref.number), dest, "--repo", source)
     except github.MissingGitHubTokenError:
         raise
     except subprocess.CalledProcessError as exc:
-        new = _recreate(ref, dest, exc, ghsa)
+        new = _recreate(ref, dest, exc, ghsas)
         # A recreated issue has no parent to carry over: link it, then check.
         _link(epic, new)
         current = epics.native_parent_of(new)
@@ -362,24 +373,41 @@ def _one_off(ref: IssueRef, action: OneOff) -> RouteResult:
             raise _parent_mismatch(epic, new, current) from None
         return RouteResult(final=new, moved_by="recreate")
     final = _transferred_ref(ref, dest, epic, output)
-    if ghsa is None:
+    if not ghsas:
         _settle_parent(epic, final)
         return RouteResult(final=final, moved_by="transfer")
-    recovery = (
-        f"advisory {ghsa} was not retargeted; "
-        f"run: vrg-security-record retarget {ghsa} --to {final.slug}"
-    )
     try:
         _settle_parent(epic, final)
     except RuntimeError as exc:
-        raise RuntimeError(f"{exc}; also, {recovery}") from exc
-    try:
-        # The old number is the same issue: rewrite its tracking line, never unmark it.
-        _retarget(ref, ghsa, (final,), renamed=(ref,))
-    except _RETARGET_ERRORS as exc:
-        # The move already happened, so this is not a refusal: report what is left.
-        raise RuntimeError(f"{ref.slug} moved to {final.slug}, but {recovery}") from exc
+        raise RuntimeError(f"{exc}; also, {_transfer_recovery(ghsas, final)}") from exc
+    for index, ghsa in enumerate(ghsas):
+        try:
+            # The old number is the same issue: rewrite its tracking line, never unmark it.
+            _retarget(ref, ghsa, (final,), renamed=(ref,))
+        except _RETARGET_ERRORS as exc:
+            # The move already happened, so this is not a refusal: report what is left.
+            pending = _transfer_recovery(ghsas[index:], final)
+            raise RuntimeError(f"{ref.slug} moved to {final.slug}, but {pending}") from exc
     return RouteResult(final=final, moved_by="transfer")
+
+
+def _not_retargeted(ghsas: tuple[str, ...]) -> str:
+    """``advisory A was`` / ``advisories A, B were``: the advisories left behind."""
+    if len(ghsas) == 1:
+        return f"advisory {ghsas[0]} was"
+    return f"advisories {', '.join(ghsas)} were"
+
+
+def _retarget_commands(ghsas: tuple[str, ...], target: IssueRef) -> str:
+    """One ``vrg-security-record retarget`` recovery command per advisory, in order."""
+    return ", then ".join(
+        f"vrg-security-record retarget {ghsa} --to {target.slug}" for ghsa in ghsas
+    )
+
+
+def _transfer_recovery(ghsas: tuple[str, ...], final: IssueRef) -> str:
+    """What is left after a transfer: every advisory *ghsas* names, with its command."""
+    return f"{_not_retargeted(ghsas)} not retargeted; run: {_retarget_commands(ghsas, final)}"
 
 
 # The failures that leave an advisory not retargeted: the retarget itself, or
@@ -391,18 +419,19 @@ _RETARGET_ERRORS = (
 )
 
 
-def _security_ghsa(ref: IssueRef, labels: set[str], body: str) -> str | None:
-    """The advisory *ref* tracks, given its *labels* and *body*; None if it has none.
+def _security_ghsas(ref: IssueRef, labels: set[str], body: str) -> tuple[str, ...]:
+    """Every advisory *ref* tracks, in body order, given its *labels* and *body*.
 
-    An item is a security item only with both the ``security`` label and an
-    advisory line; one without the other is a broken pair, warned about here
-    (the scheduled sweep reports it too) and left for a human to repair.
+    An item is a security item only with both the ``security`` label and at
+    least one advisory line; one without the other is a broken pair, warned
+    about here (the scheduled sweep reports it too) and left for a human to
+    repair. Empty when *ref* is not a security item.
     """
-    ghsa = security_records.parse_advisory_ref(body)
+    ghsas = security_records.parse_advisory_refs(body)
     labelled = security_records.SECURITY_LABEL in labels
-    if labelled and ghsa is not None:
-        return ghsa
-    if labelled or ghsa is not None:
+    if labelled and ghsas:
+        return ghsas
+    if labelled or ghsas:
         has, lacks = (
             ("the security label", "a Security advisory: line")
             if labelled
@@ -413,16 +442,16 @@ def _security_ghsa(ref: IssueRef, labels: set[str], body: str) -> str | None:
             "no advisory retargeted (a broken security pair)",
             file=sys.stderr,
         )
-    return None
+    return ()
 
 
-def _item_advisory(ref: IssueRef) -> str | None:
-    """Read *ref*'s labels and body; return the advisory it tracks, if any."""
+def _item_advisories(ref: IssueRef) -> tuple[str, ...]:
+    """Read *ref*'s labels and body; return every advisory it tracks, in body order."""
     raw: Any = github.read_json(
         "issue", "view", str(ref.number), "--repo", _repo_of(ref), "--json", "labels,body"
     )
     names = {str(label.get("name", "")) for label in raw.get("labels") or []}
-    return _security_ghsa(ref, names, str(raw.get("body") or ""))
+    return _security_ghsas(ref, names, str(raw.get("body") or ""))
 
 
 def _retarget(
@@ -488,12 +517,13 @@ def _transferred_ref(ref: IssueRef, dest: str, epic: IssueRef, output: str) -> I
 
 
 def _recreate(
-    ref: IssueRef, dest: str, exc: subprocess.CalledProcessError, ghsa: str | None
+    ref: IssueRef, dest: str, exc: subprocess.CalledProcessError, ghsas: tuple[str, ...]
 ) -> IssueRef:
     """Copy *ref* into *dest* with a link back, then close the original with a pointer.
 
-    A security item's advisory *ghsa* is retargeted to the copy before the
-    original closes; if that fails the original stays open and the route stops.
+    Every advisory a security item names (*ghsas*, in body order) is retargeted
+    to the copy before the original closes; if any retarget fails the original
+    stays open and the route stops, naming every advisory not yet retargeted.
     """
     source = _repo_of(ref)
     raw: Any = github.read_json(
@@ -518,14 +548,15 @@ def _recreate(
     new = _issue_ref_from_url(
         new_url, failure=f"recreated {ref.slug} in {dest} (original left open)"
     )
-    if ghsa is not None:
+    for index, ghsa in enumerate(ghsas):
         try:
             _retarget(ref, ghsa, (new,))
         except _RETARGET_ERRORS as err:
+            pending = ghsas[index:]
             raise RouteRefusedError(
-                f"recreated {ref.slug} as {new.slug}, but advisory {ghsa} was not retargeted "
-                f"({err}); {ref.slug} is left open and {new.slug} unlinked. Finish by hand: "
-                f"vrg-security-record retarget {ghsa} --to {new.slug}, then close "
+                f"recreated {ref.slug} as {new.slug}, but {_not_retargeted(pending)} not "
+                f"retargeted ({err}); {ref.slug} is left open and {new.slug} unlinked. "
+                f"Finish by hand: {_retarget_commands(pending, new)}, then close "
                 f"{ref.slug} with a pointer and link {new.slug} under its epic"
             ) from err
     _close(ref, MOVED_TO_COMMENT.format(url=new_url), reason="not planned")
