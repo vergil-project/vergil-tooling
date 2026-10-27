@@ -302,9 +302,19 @@ Which routes an item allows depends on the container epic it is in:
 | Exit codes | 0 routed, 1 refused or error, 2 bad arguments (including a missing `--revisit-when` or a malformed `--date`) |
 | Status | Active |
 
-A `security` item keeps its advisory link: a split or a recreate retargets
-the advisory before the original closes, and a transfer retargets it after
-the move (see [Security Records](../guides/security-records.md#when-the-issue-moves)).
+A `security` item keeps its advisory links. A recreate retargets every
+advisory the item names before the original closes, and a transfer
+retargets every one after the move; on a failure, either names every
+advisory still not retargeted. A split retargets an item's one advisory
+before the original closes. A split of an item naming several advisories
+is refused before any change, because which advisory goes to which task
+can't be inferred:
+
+```text
+vrg-intake-route: <owner>/<repo>#<N> names several advisories (<GHSA-id>, <GHSA-id>); retarget each by hand with vrg-security-record retarget, then split
+```
+
+See [Security Records](../guides/security-records.md#when-the-issue-moves).
 
 ### vrg-security-record
 
@@ -333,9 +343,14 @@ under the intake epic, oldest first. `vrg-queue planning` lists the open items
 under the planning epic with their state: **waiting** (no `in-progress`
 label), **in-progress** (labelled, with its latest progress note), or
 **ready-to-close** (labelled, the `Epic:` / `Docs task:` / `Tasks filed: yes`
-markers present, and the docs task closed). A planning item whose security
-advisory still tracks it is held at **in-progress** with a `held:` note until
-the advisory is retargeted to the fix task(s). `vrg-queue deferred` lists the
+markers present, and the docs task closed). A planning item that any security
+advisory it names still tracks is held at **in-progress** until every such
+advisory is retargeted to the task or tasks that fix it, with a note that
+counts them and names them by GHSA ID only (`held: <k> advisory still tracks
+this planning issue (<GHSA-id>) — …` for one, `held: <k> advisories still
+track this planning issue (<GHSA-id>, …) — …` for more; see
+[Security Records](../guides/security-records.md#security-items-in-planning)).
+`vrg-queue deferred` lists the
 open items under the deferred epic, all **waiting**, least recently deferred
 first; each item's note is its latest deferral
 (`Deferred <day>: <reason> | Revisit when: <conditions>`), and an item with no

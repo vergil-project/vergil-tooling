@@ -6,11 +6,15 @@ paired with a neutral issue that drives the work. This guide covers the
 policy and how to work with a record. The command is
 [`vrg-security-record`](../reference/dev/security-record.md). The design
 is epic
-[vergil-project/.github#517](https://github.com/vergil-project/.github/issues/517).
+[vergil-project/.github#517](https://github.com/vergil-project/.github/issues/517),
+extended to several advisories per issue by epic
+[vergil-project/.github#573](https://github.com/vergil-project/.github/issues/573).
 
 ## The policy
 
-- **Every security finding gets one record.** A record is one pair:
+- **Every security finding gets one record.** A record is one pair
+  (an issue may name several advisories, one per finding; see
+  [The two reference lines](#the-two-reference-lines)):
   - a **draft repository security advisory** in `<org>/.github`, which
     holds the details;
   - a neutral **`security`-labelled issue** in the intake queue, which
@@ -72,10 +76,16 @@ repos owned by a user account rather than an org, are not supported.
 Each half of a pair names the other with an exact line, alone on its
 line:
 
-- the issue body ends with
+- the issue body has one line per advisory it names:
   `Security advisory: <org>/.github <GHSA-id>`;
 - the advisory description has one line per issue it tracks:
   `Tracking issue: <owner>/<repo>#<N>`.
+
+So the link is many-to-many. One advisory can track several issues (a
+finding fixed by more than one task), and one issue can name several
+advisories (one task that fixes more than one finding, or a planning issue
+that collected several). An issue keeps the `security` label while **any**
+of its advisory lines remains; the label goes only with the last one.
 
 The GHSA ID reveals only that a record exists. Don't edit these lines by
 hand; `vrg-security-record` writes and moves them.
@@ -177,8 +187,8 @@ It never touches an advisory in any other state (published, withdrawn, or
 Each run also checks every pair and reports the broken ones, by GHSA ID
 and issue ref only. A pair is broken when:
 
-- a `security` issue has no `Security advisory:` line, or names an
-  advisory that does not exist or does not track it;
+- a `security` issue has no `Security advisory:` line, or any of its
+  lines names an advisory that does not exist or does not track it;
 - an advisory has no `Tracking issue:` lines, or tracks an issue that is
   not a `security`-labelled issue, or one that does not point back;
 - an advisory is not named by any `security` issue and is not an
@@ -204,46 +214,146 @@ names only GHSA IDs, issue refs, labels and states, never advisory text.
 A record's link moves only through `vrg-security-record retarget`, and
 `vrg-intake-route` calls it for you:
 
-- **transfer** (`one-off` into another repo): after the move, the
-  advisory's tracking line is rewritten to the issue's new number. If
-  that fails, the move stands and the error prints the `retarget` command
-  to run;
-- **recreate** (when GitHub refuses the transfer): the advisory is
-  retargeted to the copy **before** the original closes. If that fails,
-  the original stays open and the error says how to finish;
-- **split**: the advisory is retargeted to every task in `--into`
-  **before** the original closes. If that fails, the route stops and the
-  original stays open. The advisory then closes only once every task is
-  closed.
+- **transfer** (`one-off` into another repo): after the move, **every**
+  advisory the issue names is retargeted, in body order, so each tracking
+  line is rewritten to the issue's new number. If one fails, the move
+  stands and the error names every advisory still not retargeted, with
+  one `retarget` command for each, to run in order;
+- **recreate** (when GitHub refuses the transfer): **every** advisory the
+  issue names is retargeted to the copy, in body order, **before** the
+  original closes. If one fails, the original stays open, the copy stays
+  unlinked, and the error names every advisory still not retargeted and
+  how to finish;
+- **split**: an item naming **one** advisory has it retargeted to every
+  task in `--into` **before** the original closes. If that fails, the
+  route stops and the original stays open. The advisory then closes only
+  once every task is closed.
 
-An issue the advisory stops tracking loses its `security` label and
-advisory line, and gets the neutral comment
-`Security record moved to <refs>`.
+  An item naming **several** advisories is refused before anything
+  changes, because which advisory goes to which task can't be inferred:
+
+  ```text
+  vrg-intake-route: <owner>/<repo>#<N> names several advisories (<GHSA-id>, <GHSA-id>); retarget each by hand with vrg-security-record retarget, then split
+  ```
+
+  Retarget each advisory to the task or tasks that fix it, one at a time.
+  The last retarget leaves the item with no advisory line and no
+  `security` label, so the split that follows is an ordinary one.
+
+An issue an advisory stops tracking loses that advisory's line, and gets
+the neutral comment `Security record moved to <refs>`. It loses its
+`security` label only when that was its last advisory line; while it
+still names another advisory, the label and the other lines stay.
 
 ## Security items in planning
 
 A security item can go through planning like any other. Planning
 discusses the problem in general terms; the details stay in the advisory.
-The planning issue keeps tracking the advisory until the plan exists.
+A planning issue may name several advisories, and it keeps tracking each
+of them until the plan exists.
 
-- **Hand the advisory to the fix.** When `epic-create` files the tasks
-  (its step 9), retarget the advisory from the planning issue to the
-  task or tasks that fix the problem, then post `Tasks filed: yes`:
+- **Hand each advisory to its fix.** When `epic-create` files the tasks
+  (its step 9), retarget **each** advisory the planning issue names from
+  the planning issue to the task or tasks that fix it. Run one
+  `retarget` per advisory, **one after another, never in parallel**: each
+  retarget rewrites the planning issue's body, so two at once can write
+  back a line the other removed. Post `Tasks filed: yes` only after every
+  retarget has succeeded:
 
   ```bash
   vrg-security-record retarget GHSA-xxxx-xxxx-xxxx \
     --to vergil-project/vergil-tooling#101 \
     --to vergil-project/vergil-tooling#102
+  vrg-security-record retarget GHSA-yyyy-yyyy-yyyy \
+    --to vergil-project/vergil-tooling#103
   ```
 
-  From then on, the PRs that close those tasks are what close the
+  From then on, the PRs that close those tasks are what close each
   advisory.
+- **A finding the design itself resolves.** A finding that the revised
+  design resolves on its own, with no task implementing it (for example,
+  the spec now removes the mechanism it was about), is retargeted to the
+  epic's **documentation task**, whose PR publishes the revised spec. Do
+  this **only** when the weakness exists only in the design and no
+  shipped code has it. A finding about shipped behaviour always goes to a
+  fix task that changes the code.
 - **The guard.** `vrg-queue planning` never shows a planning issue as
-  `ready-to-close` while an advisory still tracks it. It shows it as
-  `in-progress` with the note `held: advisory <GHSA-id> still tracks this
-  planning issue — retarget it to the fix task(s) with vrg-security-record
-  retarget`. Don't close the planning issue by hand before the retarget:
-  that would close the advisory with the fix unwritten.
+  `ready-to-close` while **any** advisory it names still tracks it. It
+  shows it as `in-progress` with a note that counts the advisories still
+  tracking it and names them by GHSA ID only:
+
+  ```text
+  held: 1 advisory still tracks this planning issue (GHSA-xxxx-xxxx-xxxx) — retarget each to the task or tasks that fix it with vrg-security-record retarget
+  held: 2 advisories still track this planning issue (GHSA-xxxx-xxxx-xxxx, GHSA-yyyy-yyyy-yyyy) — retarget each to the task or tasks that fix it with vrg-security-record retarget
+  ```
+
+  After one of two retargets, the planning issue stays held by the other.
+  Don't close the planning issue by hand before every retarget: that
+  would close the remaining advisories with the fix unwritten.
+
+## Recording findings from a review
+
+A review can raise security findings while the work is still being
+designed or built. Two recipes cover the reviews that run inside the
+epic/task framework. Both use only `create`, `retarget` and
+`vrg-intake-route`. As everywhere on this page, the refs and GHSA IDs
+are placeholders, not a real finding.
+
+**Design review, during `epic-create`.** The review runs against the
+spec while a planning issue tracks the work:
+
+- an **accepted** finding (the design will change, or a task will fix it)
+  is recorded on the planning issue with attach mode,
+  `vrg-security-record create --issue <planning issue> …`. Step 9 then
+  hands it off to its fix like any other advisory the planning issue
+  names (see [Security items in planning](#security-items-in-planning));
+- a **rejected** or **dropped** finding is recorded with plain `create`,
+  which gives it its own intake issue, so intake review decides what
+  becomes of it.
+
+**Agentic review, during `issue-implement`.** This review records each
+finding as it is collected, before anyone knows whether the branch will
+fix it:
+
+- at collection, record each `new` or `repair` security finding with
+  plain `create`, which gives it its own intake issue (its *record*). A
+  `known` finding already has a record, made in an earlier round of the
+  same task, so it is not recorded again;
+- a finding **fixed on the branch** is handed to the task by splitting
+  its record into it:
+
+  ```bash
+  vrg-intake-route <record> split --into <task> \
+    --reason "Fixed on the task's branch"
+  ```
+
+  The split retargets the advisory to the task and closes the record, so
+  the advisory closes when the task does. A `known` finding's record is
+  split when the finding is fixed, unless an earlier round already split
+  it;
+- a finding **not fixed** needs nothing more. Its record stays an
+  ordinary intake item, with no pointer to the task.
+
+Agentic review does **not** attach a finding to the task at collection,
+which is why it records with plain `create`. If it did, handing an
+unfixed finding off later would make `retarget` post the public comment
+`Security record moved to <record>` on the task, pointing from the
+shipped diff to the open record.
+
+## Checking existing records after the several-advisories change
+
+An issue naming one advisory is a valid case of the several-advisories
+form, so existing records need no converting and there is no migration
+code. To confirm an org's live records are consistent, check them by
+hand:
+
+- `vrg-security-record list` shows every advisory and the issues it
+  tracks;
+- `vrg-epic-audit` (read-only) prints the sweep's pass as a preview,
+  including its broken-pair report.
+
+The sweep reports a broken pair and never repairs it, so a human repairs
+each one it reports, by hand.
 
 ## Before a private repo goes public
 
