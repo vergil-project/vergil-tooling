@@ -17673,32 +17673,17 @@ so the agent boots straight into bypass inside the sandbox. The mode is
 independent of the deny rules: raw <code>git</code>/<code>gh</code> are blocked regardless,
 because the hook guard hard-blocks them even under bypass.</p>
 <h3 id="local-settings-claudesettingslocaljson">Local Settings (<code>.claude/settings.local.json</code>)<a class="headerlink" href="#local-settings-claudesettingslocaljson" title="Permanent link">&para;</a></h3>
-<p>Gitignored, per-developer. Houses temporary read-only bash
-exceptions:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="p">{</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">"permissions"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span><span class="nt">"allow"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">      </span><span class="s2">"Bash(grep *)"</span><span class="p">,</span>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">      </span><span class="s2">"Bash(find *)"</span><span class="p">,</span>
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">      </span><span class="s2">"Bash(ls *)"</span><span class="p">,</span>
-<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">      </span><span class="s2">"Bash(diff *)"</span><span class="p">,</span>
-<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">      </span><span class="s2">"Bash(cat *)"</span><span class="p">,</span>
-<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="w">      </span><span class="s2">"Bash(head *)"</span><span class="p">,</span>
-<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="w">      </span><span class="s2">"Bash(tail *)"</span><span class="p">,</span>
-<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="w">      </span><span class="s2">"Bash(wc *)"</span><span class="p">,</span>
-<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="w">      </span><span class="s2">"Bash(which *)"</span><span class="p">,</span>
-<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="w">      </span><span class="s2">"Bash(sort *)"</span><span class="p">,</span>
-<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="w">      </span><span class="s2">"Bash(uniq *)"</span><span class="p">,</span>
-<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a><span class="w">      </span><span class="s2">"Bash(stat *)"</span><span class="p">,</span>
-<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a><span class="w">      </span><span class="s2">"Bash(du *)"</span><span class="p">,</span>
-<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a><span class="w">      </span><span class="s2">"Bash(file *)"</span>
-<a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a><span class="w">    </span><span class="p">]</span>
-<a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a><span class="w">  </span><span class="p">}</span>
-<a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a><span class="p">}</span>
-</code></pre></div>
-<p>These are documented as candidates for removal as alternatives
-are found (Explore subagent, native Read tool, future
-<code>vrg-search</code>).</p>
+<p>Gitignored, and holds nothing. In a managed repo, every copy of this
+file that Claude Code may load must be absent or exactly <code>{}</code>. The file
+outranks the project settings, so any rule in it would silently
+override the managed template for that checkout. A rule you need
+belongs in the repo template or in your user settings instead.</p>
+<p>The agent chokepoints <code>vrg-commit</code>, <code>vrg-pr-workflow report-ready</code> and
+<code>vrg-container-run</code> check this. An agent identity is refused; a human
+gets the same message as a warning, and the tool proceeds. See
+<a href="../claude-config-ownership/#local-settings">Local settings</a> in the
+Claude Config Ownership Model for which copies are checked, why the
+check is not a Claude Code hook, and its known limit.</p>
 <h3 id="what-this-means-in-practice">What This Means in Practice<a class="headerlink" href="#what-this-means-in-practice" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
@@ -17718,7 +17703,7 @@ are found (Explore subagent, native Read tool, future
 </tr>
 <tr>
 <td><code>grep -r "foo" src/</code></td>
-<td>No prompt (local allow)</td>
+<td>Runs (bypass)</td>
 </tr>
 <tr>
 <td><code>git push</code></td>
