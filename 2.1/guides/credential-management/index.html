@@ -1342,6 +1342,8 @@
       
         
       
+        
+      
     
     
     
@@ -1394,6 +1396,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.273/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.273
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13052,6 +13082,8 @@
       
         
       
+        
+      
     
     
     
@@ -13308,6 +13340,34 @@
     
   
     vrg-host
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/dev/security-record/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-security-record
   
 
     
@@ -16111,6 +16171,8 @@
       
         
       
+        
+      
     
     
     
@@ -16199,6 +16261,34 @@
     
   
     Epic Home Visibility Flips
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../security-records/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security Records
   
 
     
@@ -16905,6 +16995,11 @@ permissions, as listed in <a href="../account-setup/">Account Setup</a>:</p>
 <td><strong>Read and write.</strong> Can write PR reviews and comments.</td>
 </tr>
 <tr>
+<td>Repository security advisories</td>
+<td><strong>Read and write.</strong> Can read, create and edit the draft advisories in each covered org's <code>.github</code>, which hold security findings.</td>
+<td>No access</td>
+</tr>
+<tr>
 <td>Workflows</td>
 <td>No access. Cannot push under <code>.github/workflows/</code>.</td>
 <td>No access. Cannot push under <code>.github/workflows/</code>.</td>
@@ -16975,7 +17070,10 @@ tables. Read the exact permissions from the App's settings page before
 you assess the impact. Its Administration permission is read-only, so
 the key cannot change repo settings or rulesets. With Dependabot
 alerts: Read, the key can read a repo's open alerts, including on a
-private repo.</p>
+private repo. With Repository security advisories: Read and write, it
+can read and change the draft advisories in the org's <code>.github</code>, which
+hold the details of unfixed security findings (see
+<a href="../security-records/">Security Records</a>).</p>
 <p><strong>Contain and restore.</strong> Follow the same steps as for an agent App key:
 delete the key, suspend the installation if access must stop at once,
 and generate a new key. Then update the <code>APP_PRIVATE_KEY</code> secret

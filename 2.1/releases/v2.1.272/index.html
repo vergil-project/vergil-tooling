@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.273/">
       
       
         <link rel="next" href="../v2.1.271/">
@@ -1349,6 +1349,8 @@
       
         
       
+        
+      
     
     
     
@@ -1404,6 +1406,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.273/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.273
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13120,6 +13150,8 @@
       
         
       
+        
+      
     
     
     
@@ -13376,6 +13408,34 @@
     
   
     vrg-host
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/dev/security-record/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-security-record
   
 
     
@@ -15911,6 +15971,8 @@
       
         
       
+        
+      
     
     
     
@@ -15999,6 +16061,34 @@
     
   
     Epic Home Visibility Flips
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/security-records/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security Records
   
 
     
@@ -16219,6 +16309,7 @@
 <li><strong>wait for a newly created standing epic to be listed before returning (#3701)</strong>
 ensure_standing_epic is find-or-create over an eventually consistent gh issue list, so two back-to-back calls could each miss the other's new epic and create a duplicate (vergil-project/.github#531/#532). After creating the epic it now polls _find_epic_by_title with retry.compute_delay backoff until the lookup returns exactly the created issue, within the 60 s known-resource budget, and raises StandingEpicNotVisibleError naming the created ref and what was seen if it never does. sleep and clock are injectable for tests. Refs #3695.</li>
 </ul>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.272/v2.1.272-ci-evidence.tar.gz">Download →</a></p>
 
 
 
