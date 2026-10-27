@@ -347,3 +347,6 @@ undeclared parameter. It is reported as `.rules` value drift.
   — how the audit gates required-check drift and `vrg-release`
 - [CLI Tools Overview](cli-tools-overview.md#vrg-github-repo-config) —
   runtime preconditions and failure modes
+- [Claude Config Ownership](../guides/claude-config-ownership.md) — the
+  ownership model the `CLAUDE.md` and `.claude/settings.json` checks
+  enforce

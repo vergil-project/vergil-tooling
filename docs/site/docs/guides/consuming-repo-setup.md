@@ -258,7 +258,9 @@ uses empty strings, which work on every Claude Code version:
 Commit the file. Any Claude Code session opened in the repo then
 loads the hook guard and the plugin. `vrg-github-repo-config audit`
 checks the marketplace entry, its `ref`, the enabled plugin and the
-`attribution` block against the template.
+`attribution` block against the template. For which file owns each
+Claude Code setting, see
+[Claude Config Ownership](claude-config-ownership.md).
 
 The plugin adds these hooks:
 

@@ -510,6 +510,8 @@ historical context; it does not describe the model in use.
   accounts
 - [Security Boundaries](security-boundaries.md) — register of
   known cross-system seams and their mitigations
+- [Claude Config Ownership](claude-config-ownership.md) — which
+  settings or instruction file owns each Claude Code setting
 - [Permission model design spec][perm-spec] — full decision
   rationale and alternatives considered
 
