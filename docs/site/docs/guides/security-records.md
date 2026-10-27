@@ -305,5 +305,5 @@ The audit App does not get it; see
 - [Account Setup](account-setup.md): App permissions
 - [Identity Architecture](identity-architecture.md#the-org-automation-apps):
   the org automation Apps
-- [GitHub Issues](../standards/github-issues.md#intake-and-planning-queues):
-  the intake and planning queues
+- [GitHub Issues](../standards/github-issues.md#intake-planning-and-deferred-queues):
+  the intake, planning and deferred queues

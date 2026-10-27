@@ -455,10 +455,10 @@ Shared libraries under `src/vergil_tooling/lib/`:
 - **`github.py`** — gh CLI subprocess wrappers
 - **`config.py`** — Parse `vergil.toml`
 - **`epics.py`** — Epic/task model: the `StandingKind` table (ad-hoc, intake,
-  planning standing epics and their per-quarter archives), epic and queue
-  homes, sub-issue linking, rollup, and the parent-based queue-item check
-  that `report-ready` / `vrg-submit-pr` use to refuse intake and planning
-  items; `epic_audit.py` (drift report and orphan pass), `intake_route.py`,
+  planning and deferred standing epics and their per-quarter archives), epic
+  and queue homes, sub-issue linking, rollup, and the parent-based queue-item
+  check that `report-ready` / `vrg-submit-pr` use to refuse intake, planning
+  and deferred items; `epic_audit.py` (drift report and orphan pass), `intake_route.py`,
   and `queue_view.py` build on it
 - **`release/`** — Mechanized release workflow (preflight, prepare, merge,
   bump, confirm, finalize, handoff, orchestrator, package-index wait, and

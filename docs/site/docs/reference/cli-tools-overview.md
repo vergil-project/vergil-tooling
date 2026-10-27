@@ -36,8 +36,8 @@ cloud→Mac handoff: each branch's ready-state comes from a local
 worktree's `pr-workflow.json` when present, else the relay ref
 `refs/vergil/pr-workflow/<branch>`; origin's tip is checked against the
 recorded `head_sha` and the PR opens with `--head` **without pushing**.
-It refuses an issue whose native parent is an intake or planning epic (see
-[`vrg-pr-workflow`](#vrg-pr-workflow)).
+It refuses an issue whose native parent is an intake, planning or deferred
+epic (see [`vrg-pr-workflow`](#vrg-pr-workflow)).
 
 | Attribute | Value |
 |---|---|
@@ -97,9 +97,10 @@ advances, the branch (issue #3071). `unfreeze` is the only sanctioned way to
 reopen a still-unsubmitted branch — it drops the state back to
 `implementing` while keeping the metadata; an already-submitted branch
 cannot be unfrozen. `status` prints the current state. `report-ready` (like
-`vrg-submit-pr`) refuses an issue whose native parent is an intake or planning
-epic: a queue item is not buildable until intake review routes it, or
-`epic-create` expands it (epic vergil-project/.github#176).
+`vrg-submit-pr`) refuses an issue whose native parent is an intake, planning
+or deferred epic: a queue item is not buildable until intake review routes it,
+`epic-create` expands it, or deferred review revives it (epics
+vergil-project/.github#176 and #508).
 
 | Attribute | Value |
 |---|---|
@@ -232,7 +233,7 @@ path. It carries no kind label. The intake epic is resolved (created if
 absent) *before* the issue is created; if linking the created issue fails, the
 tool exits 1 naming its URL and the `vrg-epic-move` command that links it. Used
 by the `intake-capture` skill. See
-[Intake and planning queues](../standards/github-issues.md#intake-and-planning-queues).
+[Intake, planning and deferred queues](../standards/github-issues.md#intake-planning-and-deferred-queues).
 
 `vrg-triage-create` is a **deprecated alias** kept for one release: it warns
 on stderr, ignores `--kind` (intake has no kind label), and forwards every
@@ -339,8 +340,9 @@ open items under the deferred epic, all **waiting**, least recently deferred
 first; each item's note is its latest deferral
 (`Deferred <day>: <reason> | Revisit when: <conditions>`), and an item with no
 deferral comment sorts first with an empty note. A bare `vrg-queue` lists all
-three queues in that order (intake, planning, deferred). Used by
-`intake-review`'s collect step and `epic-create`'s no-argument summary.
+three queues in that order (intake, planning, deferred). Used by the
+collect step of the three review skills (`intake-review`, `planning-review`,
+`deferred-review`) and by `epic-create`'s no-argument summary.
 
 | Attribute | Value |
 |---|---|
