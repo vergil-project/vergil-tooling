@@ -142,15 +142,25 @@ With no match it prints `No security records in <org>/.github match.`
 
 ## show
 
-Prints one pair with its details, to the terminal: the `list` line, then
-`summary:` and `description:` with the advisory's text.
+Prints pairs with their details, to the terminal: for each, the `list`
+line, then `summary:` and `description:` with the advisory's text.
 
-- `show GHSA-ID` takes the org from the current repo's `origin` remote.
-- `show OWNER/REPO#N` reads that issue's `Security advisory:` line and
-  uses the issue's owner as the org. An issue with no such line is
-  refused.
+- `show GHSA-ID` prints that one pair. It takes the org from the current
+  repo's `origin` remote.
+- `show OWNER/REPO#N` reads **every** `Security advisory:` line in that
+  issue's body and prints one pair per advisory, in body order, separated
+  by a blank line. It uses the issue's owner as the org. An issue with no
+  such line is refused with `<owner>/<repo>#<N> has no Security advisory:
+  line`.
 
-An advisory that does not exist in `<org>/.github` is refused.
+If any advisory to print does not exist in `<org>/.github`, `show`
+refuses and prints no pair at all, not even the ones that exist. The
+refusal names every missing advisory:
+
+```text
+vrg-security-record: advisory GHSA-xxxx-xxxx-xxxx does not exist in vergil-project/.github
+vrg-security-record: advisories GHSA-xxxx-xxxx-xxxx, GHSA-yyyy-yyyy-yyyy do not exist in vergil-project/.github
+```
 
 ## retarget
 
@@ -177,9 +187,15 @@ before it succeeded:
    `security`-labelled issue in the org whose `Security advisory:` line
    names this GHSA ID (found by REST listing, never by search). Each one
    gets the comment `Security record moved to <refs>` (posted once, even on
-   a re-run). Then this advisory's line and the `security` label are
-   removed in one edit. An issue whose line names a different advisory is
-   never touched.
+   a re-run). Then this advisory's line is removed, together with the
+   `security` label when no other advisory line remains, in one edit. An
+   issue that also names other advisories keeps their lines and the
+   label. An issue that names only other advisories is never touched.
+
+An issue naming several advisories needs one `retarget` per advisory.
+Run them one after another, never in parallel: each rewrites the issue's
+body, so two at once can write back a line the other removed. They can
+run in either order; the label goes only with the last line.
 
 A failure at any step exits 1 with a message naming the advisory and the
 step. Because a later step never runs before an earlier one succeeds, an
@@ -212,14 +228,27 @@ These commands read or move records as part of their own work:
   `Security records: none.` The read-only `vrg-epic-audit` prints the same
   pass as a `(preview)` with `would sync`, makes no change, and does not
   fail on a broken pair.
-- **`vrg-intake-route`** retargets a security item's advisory on a
-  transfer, a recreate or a split. A split or recreate retargets before
-  the original closes and stops with the original open on failure; a
-  transfer retargets after the move and, on failure, prints the
-  `retarget` command to run. An item with the `security` label but no
-  advisory line, or the reverse, gets a warning and no retarget.
-- **`vrg-queue planning`** keeps a planning issue at `in-progress`, with a
-  `held: advisory <GHSA-id> …` note, while an advisory still tracks it.
+- **`vrg-intake-route`** retargets a security item's advisories on a
+  transfer, a recreate or a split. A transfer or recreate retargets
+  **every** advisory the item names, in body order. A recreate retargets
+  before the original closes and stops with the original open on
+  failure; a transfer retargets after the move and, on failure, names
+  every advisory still not retargeted with the `retarget` command for
+  each. A split retargets the item's one advisory before the original
+  closes and stops with the original open on failure; a split of an item
+  naming several advisories is refused before any change, naming their
+  GHSA IDs, since which advisory goes to which task can't be inferred.
+  An item with the `security` label but no advisory line, or the
+  reverse, gets a warning and no retarget.
+- **`vrg-queue planning`** keeps a planning issue at `in-progress` while
+  **any** advisory it names still tracks it, with a note that counts
+  them and names them by GHSA ID only (`advisory still tracks` for one,
+  `advisories still track` for more):
+
+  ```text
+  held: <k> advisories still track this planning issue (<GHSA-id>[, …]) — retarget each to the task or tasks that fix it with vrg-security-record retarget
+  ```
+
   It reads the advisories only when some planning item names one.
 
 ## Exit codes
