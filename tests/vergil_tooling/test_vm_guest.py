@@ -811,8 +811,10 @@ class TestUpdatePlugins:
     def test_installs_enabled_plugins_not_yet_installed(self) -> None:
         # #2006 (Fix C): a plugin enabled in the guest settings.json but absent from
         # `claude plugin list` (never installed) must be INSTALLED, not skipped.
-        # Post-v2.1.195 `enabledPlugins` no longer auto-installs, so an update-only
-        # pass leaves a fresh box with zero plugins.
+        # An update-only pass can leave a fresh box with zero plugins. Changelog
+        # v2.1.195 says only that project-only enabled plugins need explicit
+        # install consent; the reconcile stays until vergil-project/.github#578
+        # shows whether user-enabled plugins install on their own.
         settings = json.dumps({"enabledPlugins": {"superpowers@official": True, "paad@paad": True}})
         # superpowers is enabled-but-not-installed; paad is already installed.
         listing = json.dumps([{"id": "paad@paad", "scope": "user", "enabled": True}])
