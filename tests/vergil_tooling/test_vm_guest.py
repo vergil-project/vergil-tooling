@@ -759,7 +759,13 @@ class TestUpdatePlugins:
         [
             {"id": "paad@paad", "scope": "user", "enabled": True},
             {"id": "frontend-design@official", "scope": "user", "enabled": False},
-            {"id": "vergil@vergil-marketplace", "scope": "project", "enabled": True},
+            # A real project-scope entry always carries its projectPath (#3764).
+            {
+                "id": "vergil@vergil-marketplace",
+                "scope": "project",
+                "enabled": True,
+                "projectPath": "/p/tooling",
+            },
         ]
     )
 
@@ -792,6 +798,123 @@ class TestUpdatePlugins:
         for c in transport.run.call_args_list:
             assert c.args[:2] == ("bash", "-c")
             assert "export PATH=" in c.args[-1]
+
+    @staticmethod
+    def _listing_transport(listing: str, settings: str = "{}", fail_on: str = "") -> MagicMock:
+        def side_effect(*args: str, **_kw: object) -> MagicMock:
+            cmd = args[-1]
+            if fail_on and fail_on in cmd:
+                raise subprocess.CalledProcessError(1, "bash")
+            if "cat ~/.claude/settings.json" in cmd:
+                out = settings
+            elif "plugin list --json" in cmd:
+                out = listing
+            else:
+                out = ""
+            return MagicMock(stdout=out, returncode=0)
+
+        transport = MagicMock()
+        transport.run.side_effect = side_effect
+        return transport
+
+    def test_updates_every_install_entry_at_its_own_scope_and_project(self) -> None:
+        # #3764: `claude plugin list --json` has one entry PER INSTALL — the same
+        # id at user scope and again at project scope for each project. Keying
+        # by id kept only the last entry, so only one install was ever updated.
+        # Every entry is updated at its own scope; a project-scope update has no
+        # project flag (`claude plugin update --help` offers only --scope), the
+        # CLI takes the project from the working directory, so it runs from
+        # inside that entry's projectPath (shell-quoted).
+        pid = "vergil@vergil-marketplace"
+        listing = json.dumps(
+            [
+                {"id": pid, "scope": "user", "enabled": True},
+                {"id": pid, "scope": "project", "enabled": True, "projectPath": "/p/tooling"},
+                {"id": pid, "scope": "project", "enabled": True, "projectPath": "/p/my proj"},
+            ]
+        )
+        transport = self._listing_transport(listing)
+        update_plugins(transport)
+        cmds = [c.args[-1] for c in transport.run.call_args_list]
+        updates = [c for c in cmds if f"claude plugin update {pid}" in c]
+        assert len(updates) == 3
+        user = [c for c in updates if "--scope user" in c]
+        assert len(user) == 1
+        assert " cd " not in user[0]
+        assert any(
+            f"cd /p/tooling && claude plugin update {pid} --scope project" in c for c in updates
+        )
+        quoted = shlex.quote("/p/my proj")
+        assert any(
+            f"cd {quoted} && claude plugin update {pid} --scope project" in c for c in updates
+        )
+        # Already installed (at some scope), so never installed afresh.
+        assert not any("claude plugin install" in c for c in cmds)
+
+    def test_missing_project_dir_fails_that_entry_naming_scope_and_project(self) -> None:
+        # #3764: a projectPath that no longer exists in the guest makes `cd` fail.
+        # That entry is a per-entry failure naming its scope and project — never
+        # skipped silently — and the other entries are still attempted.
+        pid = "vergil@vergil-marketplace"
+        listing = json.dumps(
+            [
+                {"id": pid, "scope": "user", "enabled": True},
+                {"id": pid, "scope": "project", "enabled": True, "projectPath": "/p/gone"},
+                {"id": pid, "scope": "project", "enabled": True, "projectPath": "/p/here"},
+            ]
+        )
+        transport = self._listing_transport(listing, fail_on="cd /p/gone")
+        with pytest.raises(RuntimeError) as excinfo:
+            update_plugins(transport)
+        assert f"{pid} (project: /p/gone)" in str(excinfo.value)
+        assert "/p/here" not in str(excinfo.value)
+        cmds = [c.args[-1] for c in transport.run.call_args_list]
+        assert any("cd /p/here && claude plugin update" in c for c in cmds)
+        assert any(f"claude plugin update {pid} --scope user" in c for c in cmds)
+
+    def test_project_entry_without_project_path_is_a_failure(self) -> None:
+        # #3764: a project-scope entry with no projectPath cannot be targeted.
+        # Running it from the home directory would update the wrong project (or
+        # none), so it is recorded as a failure instead of being run or skipped.
+        pid = "vergil@vergil-marketplace"
+        listing = json.dumps(
+            [
+                {"id": "paad@paad", "scope": "user", "enabled": True},
+                {"id": pid, "scope": "project", "enabled": True},
+            ]
+        )
+        transport = self._listing_transport(listing)
+        with pytest.raises(RuntimeError, match=r"vergil@vergil-marketplace \(project: "):
+            update_plugins(transport)
+        cmds = [c.args[-1] for c in transport.run.call_args_list]
+        assert not any(f"claude plugin update {pid}" in c for c in cmds)
+        assert any("claude plugin update paad@paad --scope user" in c for c in cmds)
+
+    def test_id_installed_only_at_project_scope_is_not_reinstalled(self) -> None:
+        # #3764: an id counts as installed if ANY entry has it, so an enabled id
+        # present only at project scope is updated there, not installed at user.
+        pid = "vergil@vergil-marketplace"
+        settings = json.dumps({"enabledPlugins": {pid: True}})
+        listing = json.dumps(
+            [{"id": pid, "scope": "project", "enabled": True, "projectPath": "/p/tooling"}]
+        )
+        transport = self._listing_transport(listing, settings=settings)
+        update_plugins(transport)
+        cmds = [c.args[-1] for c in transport.run.call_args_list]
+        assert not any("claude plugin install" in c for c in cmds)
+        assert any(
+            f"cd /p/tooling && claude plugin update {pid} --scope project" in c for c in cmds
+        )
+
+    def test_install_failure_is_surfaced_with_its_scope(self) -> None:
+        # An enabled-but-missing id that fails to install is collected (labelled
+        # with the user scope it was installed at) and raised, never swallowed.
+        settings = json.dumps({"enabledPlugins": {"superpowers@official": True}})
+        transport = self._listing_transport(
+            "[]", settings=settings, fail_on="claude plugin install superpowers@official"
+        )
+        with pytest.raises(RuntimeError, match=r"superpowers@official \(user\)"):
+            update_plugins(transport)
 
     def test_raises_after_attempting_all_when_a_plugin_fails(self) -> None:
         def side_effect(*args: str, **_kw: object) -> MagicMock:

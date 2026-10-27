@@ -58,10 +58,17 @@ model used for vergil-tooling. The host's materialized `~/.claude/plugins`
 checkout is never shared: doing so would cross the macOS/Linux boundary
 (fragile if any plugin ships a binary) and hit the same `EXDEV` write
 problem as the roster. Instead, `update_plugins` refreshes the marketplaces
-(`claude plugin marketplace update`) and then updates each **enabled** plugin to
-its latest version with the plugin's own scope (`claude plugin update <id>
---scope <user|project>` — there is no bulk-update form), all inside the VM.
-It is driven by `vrg-vm update` and a warn-mode stage on VM start/rebuild.
+(`claude plugin marketplace update`) and then updates every **install** of an
+enabled plugin to its latest version, each at its own scope (`claude plugin
+update <id> --scope <user|project>` — there is no bulk-update form), all
+inside the VM. One plugin can be installed at user scope and again at project
+scope for each project; `claude plugin list --json` lists each install
+separately, and each one is updated. The CLI has no project flag, and takes
+the project from the working directory, so a project install is updated from
+inside its `projectPath`. If that directory no longer exists in the VM, the
+install is reported as a failure that names its scope and project. An enabled
+plugin with no install at any scope is installed at user scope. The refresh
+is driven by `vrg-vm update` and a warn-mode stage on VM start/rebuild.
 
 ## Cloud VMs: read-only memory projection
 

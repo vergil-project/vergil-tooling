@@ -451,6 +451,49 @@ def _marketplace_sources(settings: dict[str, Any]) -> list[str]:
     return sources
 
 
+# Scopes whose install belongs to one project. `claude plugin update` has no
+# project flag (only `--scope`); the CLI takes the project from the working
+# directory, so these are updated from inside the entry's projectPath (#3764).
+_PROJECT_SCOPES = frozenset({"project", "local"})
+
+
+def _plugin_entry_label(entry: dict[str, Any]) -> str:
+    """Name one install entry by id, scope and (for a project install) project."""
+    scope = entry.get("scope", "user")
+    if scope in _PROJECT_SCOPES:
+        project = entry.get("projectPath") or "<no projectPath>"
+        return f"{entry['id']} ({scope}: {project})"
+    return f"{entry['id']} ({scope})"
+
+
+def _update_plugin_entry(transport: Transport, entry: dict[str, Any]) -> str | None:
+    """Update one install entry at its own scope; return a failure label or None.
+
+    A project-scoped entry runs from inside its projectPath. If that directory
+    no longer exists in the guest, ``cd`` fails and the entry is reported as a
+    failure naming its scope and project — never skipped. A project-scoped
+    entry with no projectPath cannot be targeted at all (running it from the
+    home directory would update the wrong project), so it is reported as a
+    failure without running anything.
+    """
+    pid = entry["id"]
+    scope = entry.get("scope", "user")
+    label = _plugin_entry_label(entry)
+    print(f"    update {label}...")
+    update = f"claude plugin update {shlex.quote(pid)} --scope {shlex.quote(scope)}"
+    if scope in _PROJECT_SCOPES:
+        project = entry.get("projectPath")
+        if not project:
+            print(f"ERROR: {label}: no projectPath to update it in", file=sys.stderr)
+            return label
+        update = f"cd {shlex.quote(project)} && {update}"
+    try:
+        transport.run("bash", "-c", f"{_PLUGIN_PATH_EXPORT} && {update}")
+    except subprocess.CalledProcessError:
+        return label
+    return None
+
+
 def update_plugins(transport: Transport) -> None:
     """Reconcile enabled Claude Code plugins inside the guest.
 
@@ -474,13 +517,19 @@ def update_plugins(transport: Transport) -> None:
     ``update`` reaches the plugins over IAP without a rebuild.
 
     `claude plugin install`/`update` have no bulk form: each takes a specific
-    id and honours a scope. Enabled-but-uninstalled ids are installed at user
-    scope (they come from the user settings.json); already-installed ids are
-    updated at their existing scope (from `claude plugin list --json`). Updates
-    apply on the next Claude restart, which every new session triggers.
+    id and honours a scope. `claude plugin list --json` has one entry per
+    install, so one id can appear at user scope and again at project scope for
+    each project (#3764). Every install entry is updated at its own scope; a
+    project-scope entry is updated from inside its ``projectPath``, because the
+    CLI has no project flag and takes the project from the working directory.
+    An enabled id with no install entry at any scope is installed at user scope
+    (it comes from the user settings.json). Updates apply on the next Claude
+    restart, which every new session triggers.
 
-    Best-effort across the set: one plugin failing does not block the others;
-    failures are collected and surfaced by raising afterwards (never swallowed).
+    Best-effort across the set: one install failing does not block the others;
+    failures are collected per entry, naming the scope and project, and surfaced
+    by raising afterwards (never swallowed). A project install whose directory
+    no longer exists in the guest is one such failure.
     """
     print("  Refreshing Claude plugins...")
     failures: list[str] = []
@@ -510,28 +559,28 @@ def update_plugins(transport: Transport) -> None:
         "-c",
         f"{_PLUGIN_PATH_EXPORT} && claude plugin list --json",
     )
-    installed = {plugin["id"]: plugin for plugin in json.loads(listing.stdout)}
+    # One entry per INSTALL, not per id (#3764): the same id can be installed at
+    # user scope and again at project scope for each project. Never key by id.
+    entries: list[dict[str, Any]] = json.loads(listing.stdout)
+    installed_ids = {entry["id"] for entry in entries}
 
-    # Reconcile the declared-enabled set with what is installed, while still
-    # refreshing anything already installed-and-enabled (the pre-#2006 behaviour).
-    targets = desired | {pid for pid, plugin in installed.items() if plugin.get("enabled")}
+    # Refresh every install of a declared-enabled id, plus any install that is
+    # itself enabled (the pre-#2006 behaviour), each at its own scope/project.
+    updates = [e for e in entries if e["id"] in desired or e.get("enabled")]
+    for entry in sorted(updates, key=_plugin_entry_label):
+        failure = _update_plugin_entry(transport, entry)
+        if failure:
+            failures.append(failure)
 
-    for pid in sorted(targets):
-        if pid in installed:
-            action = "update"
-            scope = installed[pid].get("scope", "user")
-        else:
-            action = "install"
-            scope = "user"
-        print(f"    {action} {pid} ({scope})...")
-        cmd = (
-            f"{_PLUGIN_PATH_EXPORT} && claude plugin {action} "
-            f"{shlex.quote(pid)} --scope {shlex.quote(scope)}"
-        )
+    # Install an enabled id that no entry has, at user scope (it comes from the
+    # user settings.json). An id installed at any scope is not reinstalled.
+    for pid in sorted(desired - installed_ids):
+        print(f"    install {pid} (user)...")
+        cmd = f"{_PLUGIN_PATH_EXPORT} && claude plugin install {shlex.quote(pid)} --scope user"
         try:
             transport.run("bash", "-c", cmd)
         except subprocess.CalledProcessError:
-            failures.append(pid)
+            failures.append(f"{pid} (user)")
 
     if failures:
         joined = ", ".join(failures)
