@@ -12325,7 +12325,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../releases/v1.2.1/" class="md-nav__link">
+      <a href="../../releases/v1.2.0/" class="md-nav__link">
         
   
   
@@ -12353,7 +12353,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../releases/v1.2.0/" class="md-nav__link">
+      <a href="../../releases/v1.2.1/" class="md-nav__link">
         
   
   
@@ -16211,6 +16211,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#recording-findings-from-a-review" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recording findings from a review
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#checking-existing-records-after-the-several-advisories-change" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Checking existing records after the several-advisories change
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#before-a-private-repo-goes-public" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -16570,6 +16592,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#recording-findings-from-a-review" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recording findings from a review
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#checking-existing-records-after-the-several-advisories-change" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Checking existing records after the several-advisories change
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#before-a-private-repo-goes-public" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -16637,10 +16681,14 @@ paired with a neutral issue that drives the work. This guide covers the
 policy and how to work with a record. The command is
 <a href="../../reference/dev/security-record/"><code>vrg-security-record</code></a>. The design
 is epic
-<a href="https://github.com/vergil-project/.github/issues/517">vergil-project/.github#517</a>.</p>
+<a href="https://github.com/vergil-project/.github/issues/517">vergil-project/.github#517</a>,
+extended to several advisories per issue by epic
+<a href="https://github.com/vergil-project/.github/issues/573">vergil-project/.github#573</a>.</p>
 <h2 id="the-policy">The policy<a class="headerlink" href="#the-policy" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Every security finding gets one record.</strong> A record is one pair:</li>
+<li><strong>Every security finding gets one record.</strong> A record is one pair
+  (an issue may name several advisories, one per finding; see
+  <a href="#the-two-reference-lines">The two reference lines</a>):</li>
 <li>a <strong>draft repository security advisory</strong> in <code>&lt;org&gt;/.github</code>, which
     holds the details;</li>
 <li>a neutral <strong><code>security</code>-labelled issue</strong> in the intake queue, which
@@ -16696,11 +16744,16 @@ repos owned by a user account rather than an org, are not supported.</p>
 <p>Each half of a pair names the other with an exact line, alone on its
 line:</p>
 <ul>
-<li>the issue body ends with
+<li>the issue body has one line per advisory it names:
   <code>Security advisory: &lt;org&gt;/.github &lt;GHSA-id&gt;</code>;</li>
 <li>the advisory description has one line per issue it tracks:
   <code>Tracking issue: &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;</code>.</li>
 </ul>
+<p>So the link is many-to-many. One advisory can track several issues (a
+finding fixed by more than one task), and one issue can name several
+advisories (one task that fixes more than one finding, or a planning issue
+that collected several). An issue keeps the <code>security</code> label while <strong>any</strong>
+of its advisory lines remains; the label goes only with the last one.</p>
 <p>The GHSA ID reveals only that a record exists. Don't edit these lines by
 hand; <code>vrg-security-record</code> writes and moves them.</p>
 <h3 id="the-labels">The labels<a class="headerlink" href="#the-labels" title="Permanent link">&para;</a></h3>
@@ -16825,8 +16878,8 @@ It never touches an advisory in any other state (published, withdrawn, or
 <p>Each run also checks every pair and reports the broken ones, by GHSA ID
 and issue ref only. A pair is broken when:</p>
 <ul>
-<li>a <code>security</code> issue has no <code>Security advisory:</code> line, or names an
-  advisory that does not exist or does not track it;</li>
+<li>a <code>security</code> issue has no <code>Security advisory:</code> line, or any of its
+  lines names an advisory that does not exist or does not track it;</li>
 <li>an advisory has no <code>Tracking issue:</code> lines, or tracks an issue that is
   not a <code>security</code>-labelled issue, or one that does not point back;</li>
 <li>an advisory is not named by any <code>security</code> issue and is not an
@@ -16848,42 +16901,127 @@ names only GHSA IDs, issue refs, labels and states, never advisory text.</p>
 <p>A record's link moves only through <code>vrg-security-record retarget</code>, and
 <code>vrg-intake-route</code> calls it for you:</p>
 <ul>
-<li><strong>transfer</strong> (<code>one-off</code> into another repo): after the move, the
-  advisory's tracking line is rewritten to the issue's new number. If
-  that fails, the move stands and the error prints the <code>retarget</code> command
-  to run;</li>
-<li><strong>recreate</strong> (when GitHub refuses the transfer): the advisory is
-  retargeted to the copy <strong>before</strong> the original closes. If that fails,
-  the original stays open and the error says how to finish;</li>
-<li><strong>split</strong>: the advisory is retargeted to every task in <code>--into</code>
-  <strong>before</strong> the original closes. If that fails, the route stops and the
-  original stays open. The advisory then closes only once every task is
-  closed.</li>
+<li><strong>transfer</strong> (<code>one-off</code> into another repo): after the move, <strong>every</strong>
+  advisory the issue names is retargeted, in body order, so each tracking
+  line is rewritten to the issue's new number. If one fails, the move
+  stands and the error names every advisory still not retargeted, with
+  one <code>retarget</code> command for each, to run in order;</li>
+<li><strong>recreate</strong> (when GitHub refuses the transfer): <strong>every</strong> advisory the
+  issue names is retargeted to the copy, in body order, <strong>before</strong> the
+  original closes. If one fails, the original stays open, the copy stays
+  unlinked, and the error names every advisory still not retargeted and
+  how to finish;</li>
+<li><strong>split</strong>: an item naming <strong>one</strong> advisory has it retargeted to every
+  task in <code>--into</code> <strong>before</strong> the original closes. If that fails, the
+  route stops and the original stays open. The advisory then closes only
+  once every task is closed.</li>
 </ul>
-<p>An issue the advisory stops tracking loses its <code>security</code> label and
-advisory line, and gets the neutral comment
-<code>Security record moved to &lt;refs&gt;</code>.</p>
+<p>An item naming <strong>several</strong> advisories is refused before anything
+  changes, because which advisory goes to which task can't be inferred:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>vrg-intake-route: &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt; names several advisories (&lt;GHSA-id&gt;, &lt;GHSA-id&gt;); retarget each by hand with vrg-security-record retarget, then split
+</code></pre></div>
+<p>Retarget each advisory to the task or tasks that fix it, one at a time.
+  The last retarget leaves the item with no advisory line and no
+  <code>security</code> label, so the split that follows is an ordinary one.</p>
+<p>An issue an advisory stops tracking loses that advisory's line, and gets
+the neutral comment <code>Security record moved to &lt;refs&gt;</code>. It loses its
+<code>security</code> label only when that was its last advisory line; while it
+still names another advisory, the label and the other lines stay.</p>
 <h2 id="security-items-in-planning">Security items in planning<a class="headerlink" href="#security-items-in-planning" title="Permanent link">&para;</a></h2>
 <p>A security item can go through planning like any other. Planning
 discusses the problem in general terms; the details stay in the advisory.
-The planning issue keeps tracking the advisory until the plan exists.</p>
+A planning issue may name several advisories, and it keeps tracking each
+of them until the plan exists.</p>
 <ul>
-<li><strong>Hand the advisory to the fix.</strong> When <code>epic-create</code> files the tasks
-  (its step 9), retarget the advisory from the planning issue to the
-  task or tasks that fix the problem, then post <code>Tasks filed: yes</code>:</li>
+<li><strong>Hand each advisory to its fix.</strong> When <code>epic-create</code> files the tasks
+  (its step 9), retarget <strong>each</strong> advisory the planning issue names from
+  the planning issue to the task or tasks that fix it. Run one
+  <code>retarget</code> per advisory, <strong>one after another, never in parallel</strong>: each
+  retarget rewrites the planning issue's body, so two at once can write
+  back a line the other removed. Post <code>Tasks filed: yes</code> only after every
+  retarget has succeeded:</li>
 </ul>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>vrg-security-record<span class="w"> </span>retarget<span class="w"> </span>GHSA-xxxx-xxxx-xxxx<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>--to<span class="w"> </span>vergil-project/vergil-tooling#101<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span>--to<span class="w"> </span>vergil-project/vergil-tooling#102
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>vrg-security-record<span class="w"> </span>retarget<span class="w"> </span>GHSA-xxxx-xxxx-xxxx<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>--to<span class="w"> </span>vergil-project/vergil-tooling#101<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>--to<span class="w"> </span>vergil-project/vergil-tooling#102
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>vrg-security-record<span class="w"> </span>retarget<span class="w"> </span>GHSA-yyyy-yyyy-yyyy<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span>--to<span class="w"> </span>vergil-project/vergil-tooling#103
 </code></pre></div>
-<p>From then on, the PRs that close those tasks are what close the
+<p>From then on, the PRs that close those tasks are what close each
   advisory.
+- <strong>A finding the design itself resolves.</strong> A finding that the revised
+  design resolves on its own, with no task implementing it (for example,
+  the spec now removes the mechanism it was about), is retargeted to the
+  epic's <strong>documentation task</strong>, whose PR publishes the revised spec. Do
+  this <strong>only</strong> when the weakness exists only in the design and no
+  shipped code has it. A finding about shipped behaviour always goes to a
+  fix task that changes the code.
 - <strong>The guard.</strong> <code>vrg-queue planning</code> never shows a planning issue as
-  <code>ready-to-close</code> while an advisory still tracks it. It shows it as
-  <code>in-progress</code> with the note <code>held: advisory &lt;GHSA-id&gt; still tracks this
-  planning issue — retarget it to the fix task(s) with vrg-security-record
-  retarget</code>. Don't close the planning issue by hand before the retarget:
-  that would close the advisory with the fix unwritten.</p>
+  <code>ready-to-close</code> while <strong>any</strong> advisory it names still tracks it. It
+  shows it as <code>in-progress</code> with a note that counts the advisories still
+  tracking it and names them by GHSA ID only:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>held: 1 advisory still tracks this planning issue (GHSA-xxxx-xxxx-xxxx) — retarget each to the task or tasks that fix it with vrg-security-record retarget
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>held: 2 advisories still track this planning issue (GHSA-xxxx-xxxx-xxxx, GHSA-yyyy-yyyy-yyyy) — retarget each to the task or tasks that fix it with vrg-security-record retarget
+</code></pre></div>
+<p>After one of two retargets, the planning issue stays held by the other.
+  Don't close the planning issue by hand before every retarget: that
+  would close the remaining advisories with the fix unwritten.</p>
+<h2 id="recording-findings-from-a-review">Recording findings from a review<a class="headerlink" href="#recording-findings-from-a-review" title="Permanent link">&para;</a></h2>
+<p>A review can raise security findings while the work is still being
+designed or built. Two recipes cover the reviews that run inside the
+epic/task framework. Both use only <code>create</code>, <code>retarget</code> and
+<code>vrg-intake-route</code>. As everywhere on this page, the refs and GHSA IDs
+are placeholders, not a real finding.</p>
+<p><strong>Design review, during <code>epic-create</code>.</strong> The review runs against the
+spec while a planning issue tracks the work:</p>
+<ul>
+<li>an <strong>accepted</strong> finding (the design will change, or a task will fix it)
+  is recorded on the planning issue with attach mode,
+  <code>vrg-security-record create --issue &lt;planning issue&gt; …</code>. Step 9 then
+  hands it off to its fix like any other advisory the planning issue
+  names (see <a href="#security-items-in-planning">Security items in planning</a>);</li>
+<li>a <strong>rejected</strong> or <strong>dropped</strong> finding is recorded with plain <code>create</code>,
+  which gives it its own intake issue, so intake review decides what
+  becomes of it.</li>
+</ul>
+<p><strong>Agentic review, during <code>issue-implement</code>.</strong> This review records each
+finding as it is collected, before anyone knows whether the branch will
+fix it:</p>
+<ul>
+<li>at collection, record each <code>new</code> or <code>repair</code> security finding with
+  plain <code>create</code>, which gives it its own intake issue (its <em>record</em>). A
+  <code>known</code> finding already has a record, made in an earlier round of the
+  same task, so it is not recorded again;</li>
+<li>a finding <strong>fixed on the branch</strong> is handed to the task by splitting
+  its record into it:</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>vrg-intake-route<span class="w"> </span>&lt;record&gt;<span class="w"> </span>split<span class="w"> </span>--into<span class="w"> </span>&lt;task&gt;<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span>--reason<span class="w"> </span><span class="s2">"Fixed on the task's branch"</span>
+</code></pre></div>
+<p>The split retargets the advisory to the task and closes the record, so
+  the advisory closes when the task does. A <code>known</code> finding's record is
+  split when the finding is fixed, unless an earlier round already split
+  it;
+- a finding <strong>not fixed</strong> needs nothing more. Its record stays an
+  ordinary intake item, with no pointer to the task.</p>
+<p>Agentic review does <strong>not</strong> attach a finding to the task at collection,
+which is why it records with plain <code>create</code>. If it did, handing an
+unfixed finding off later would make <code>retarget</code> post the public comment
+<code>Security record moved to &lt;record&gt;</code> on the task, pointing from the
+shipped diff to the open record.</p>
+<h2 id="checking-existing-records-after-the-several-advisories-change">Checking existing records after the several-advisories change<a class="headerlink" href="#checking-existing-records-after-the-several-advisories-change" title="Permanent link">&para;</a></h2>
+<p>An issue naming one advisory is a valid case of the several-advisories
+form, so existing records need no converting and there is no migration
+code. To confirm an org's live records are consistent, check them by
+hand:</p>
+<ul>
+<li><code>vrg-security-record list</code> shows every advisory and the issues it
+  tracks;</li>
+<li><code>vrg-epic-audit</code> (read-only) prints the sweep's pass as a preview,
+  including its broken-pair report.</li>
+</ul>
+<p>The sweep reports a broken pair and never repairs it, so a human repairs
+each one it reports, by hand.</p>
 <h2 id="before-a-private-repo-goes-public">Before a private repo goes public<a class="headerlink" href="#before-a-private-repo-goes-public" title="Permanent link">&para;</a></h2>
 <p>Because issues are neutral everywhere, a private repo's issues hold no
 security details, and nothing needs converting. Some places are outside

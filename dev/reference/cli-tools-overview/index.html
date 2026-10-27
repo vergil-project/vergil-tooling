@@ -12325,7 +12325,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../releases/v1.2.1/" class="md-nav__link">
+      <a href="../../releases/v1.2.0/" class="md-nav__link">
         
   
   
@@ -12353,7 +12353,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../releases/v1.2.0/" class="md-nav__link">
+      <a href="../../releases/v1.2.1/" class="md-nav__link">
         
   
   
@@ -17897,9 +17897,16 @@ deferral — so no review skill hand-rolls them. Routes:</p>
 </tr>
 </tbody>
 </table>
-<p>A <code>security</code> item keeps its advisory link: a split or a recreate retargets
-the advisory before the original closes, and a transfer retargets it after
-the move (see <a href="../../guides/security-records/#when-the-issue-moves">Security Records</a>).</p>
+<p>A <code>security</code> item keeps its advisory links. A recreate retargets every
+advisory the item names before the original closes, and a transfer
+retargets every one after the move; on a failure, either names every
+advisory still not retargeted. A split retargets an item's one advisory
+before the original closes. A split of an item naming several advisories
+is refused before any change, because which advisory goes to which task
+can't be inferred:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>vrg-intake-route: &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt; names several advisories (&lt;GHSA-id&gt;, &lt;GHSA-id&gt;); retarget each by hand with vrg-security-record retarget, then split
+</code></pre></div>
+<p>See <a href="../../guides/security-records/#when-the-issue-moves">Security Records</a>.</p>
 <h3 id="vrg-security-record">vrg-security-record<a class="headerlink" href="#vrg-security-record" title="Permanent link">&para;</a></h3>
 <p>Record a security finding as a private draft advisory in <code>&lt;org&gt;/.github</code>
 paired with a neutral <code>security</code>-labelled intake issue (epic
@@ -17949,9 +17956,14 @@ under the intake epic, oldest first. <code>vrg-queue planning</code> lists the o
 under the planning epic with their state: <strong>waiting</strong> (no <code>in-progress</code>
 label), <strong>in-progress</strong> (labelled, with its latest progress note), or
 <strong>ready-to-close</strong> (labelled, the <code>Epic:</code> / <code>Docs task:</code> / <code>Tasks filed: yes</code>
-markers present, and the docs task closed). A planning item whose security
-advisory still tracks it is held at <strong>in-progress</strong> with a <code>held:</code> note until
-the advisory is retargeted to the fix task(s). <code>vrg-queue deferred</code> lists the
+markers present, and the docs task closed). A planning item that any security
+advisory it names still tracks is held at <strong>in-progress</strong> until every such
+advisory is retargeted to the task or tasks that fix it, with a note that
+counts them and names them by GHSA ID only (<code>held: &lt;k&gt; advisory still tracks
+this planning issue (&lt;GHSA-id&gt;) — …</code> for one, <code>held: &lt;k&gt; advisories still
+track this planning issue (&lt;GHSA-id&gt;, …) — …</code> for more; see
+<a href="../../guides/security-records/#security-items-in-planning">Security Records</a>).
+<code>vrg-queue deferred</code> lists the
 open items under the deferred epic, all <strong>waiting</strong>, least recently deferred
 first; each item's note is its latest deferral
 (<code>Deferred &lt;day&gt;: &lt;reason&gt; | Revisit when: &lt;conditions&gt;</code>), and an item with no
@@ -18110,21 +18122,21 @@ merged verdict was withheld, issue #1719) is counted under
 behind a "0 cruft" message (issue #2347). A merged release or deps
 worktree shows as <code>merged</code> in its own section but is not counted as
 <code>vrg-finalize-pr</code> cruft.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>Main checkout (integration branch: develop)
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>CHECKOUT               BRANCH   DIRTY  LAST COMMIT  STATUS
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>mq-gateway-replay-lab  develop  -      23d ago      ok
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>
-<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>Development
-<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>WORKTREE                      BRANCH                          PR  STATE  WORKFLOW  AHEAD  DIRTY  LAST COMMIT  LAST MODIFIED
-<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>issue-315-deps-security-bump  feature/315-deps-security-bump  -   no-pr  ready     1      -      1h ago       1h ago
-<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>
-<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>Other / unknown
-<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>WORKTREE         BRANCH      PR  STATE     WORKFLOW  AHEAD  DIRTY  LAST COMMIT  LAST MODIFIED
-<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>tmp-wheel-build  (detached)  -   detached  -         0      -      82d ago      82d ago
-<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>  note: tmp-wheel-build (detached): detached HEAD — no branch checked out; check out a branch to resume work
-<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>
-<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>3 worktrees: main checkout (ok), 1 development, 0 release and dependency machinery, 1 other / unknown.
-<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a>Development: 0 active, 0 needs-attention, 1 stalled (no-pr), 0 cruft (removable). 1 PR prepared.
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>Main checkout (integration branch: develop)
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>CHECKOUT               BRANCH   DIRTY  LAST COMMIT  STATUS
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>mq-gateway-replay-lab  develop  -      23d ago      ok
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>Development
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>WORKTREE                      BRANCH                          PR  STATE  WORKFLOW  AHEAD  DIRTY  LAST COMMIT  LAST MODIFIED
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>issue-315-deps-security-bump  feature/315-deps-security-bump  -   no-pr  ready     1      -      1h ago       1h ago
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>Other / unknown
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>WORKTREE         BRANCH      PR  STATE     WORKFLOW  AHEAD  DIRTY  LAST COMMIT  LAST MODIFIED
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>tmp-wheel-build  (detached)  -   detached  -         0      -      82d ago      82d ago
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>  note: tmp-wheel-build (detached): detached HEAD — no branch checked out; check out a branch to resume work
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>3 worktrees: main checkout (ok), 1 development, 0 release and dependency machinery, 1 other / unknown.
+<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>Development: 0 active, 0 needs-attention, 1 stalled (no-pr), 0 cruft (removable). 1 PR prepared.
 </code></pre></div>
 <table>
 <thead>

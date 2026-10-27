@@ -12325,7 +12325,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../releases/v1.2.1/" class="md-nav__link">
+      <a href="../../../releases/v1.2.0/" class="md-nav__link">
         
   
   
@@ -12353,7 +12353,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../releases/v1.2.0/" class="md-nav__link">
+      <a href="../../../releases/v1.2.1/" class="md-nav__link">
         
   
   
@@ -16652,21 +16652,29 @@ state or a submission).</p>
 </table>
 <p>With no match it prints <code>No security records in &lt;org&gt;/.github match.</code></p>
 <h2 id="show">show<a class="headerlink" href="#show" title="Permanent link">&para;</a></h2>
-<p>Prints one pair with its details, to the terminal: the <code>list</code> line, then
-<code>summary:</code> and <code>description:</code> with the advisory's text.</p>
+<p>Prints pairs with their details, to the terminal: for each, the <code>list</code>
+line, then <code>summary:</code> and <code>description:</code> with the advisory's text.</p>
 <ul>
-<li><code>show GHSA-ID</code> takes the org from the current repo's <code>origin</code> remote.</li>
-<li><code>show OWNER/REPO#N</code> reads that issue's <code>Security advisory:</code> line and
-  uses the issue's owner as the org. An issue with no such line is
-  refused.</li>
+<li><code>show GHSA-ID</code> prints that one pair. It takes the org from the current
+  repo's <code>origin</code> remote.</li>
+<li><code>show OWNER/REPO#N</code> reads <strong>every</strong> <code>Security advisory:</code> line in that
+  issue's body and prints one pair per advisory, in body order, separated
+  by a blank line. It uses the issue's owner as the org. An issue with no
+  such line is refused with <code>&lt;owner&gt;/&lt;repo&gt;#&lt;N&gt; has no Security advisory:
+  line</code>.</li>
 </ul>
-<p>An advisory that does not exist in <code>&lt;org&gt;/.github</code> is refused.</p>
+<p>If any advisory to print does not exist in <code>&lt;org&gt;/.github</code>, <code>show</code>
+refuses and prints no pair at all, not even the ones that exist. The
+refusal names every missing advisory:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>vrg-security-record: advisory GHSA-xxxx-xxxx-xxxx does not exist in vergil-project/.github
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>vrg-security-record: advisories GHSA-xxxx-xxxx-xxxx, GHSA-yyyy-yyyy-yyyy do not exist in vergil-project/.github
+</code></pre></div>
 <h2 id="retarget">retarget<a class="headerlink" href="#retarget" title="Permanent link">&para;</a></h2>
 <p>Moves an advisory's tracking to new issues. It is the one way a link
 moves; <code>vrg-intake-route</code> and the <code>epic-create</code> planning handoff both use
 it.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>vrg-security-record<span class="w"> </span>retarget<span class="w"> </span>GHSA-xxxx-xxxx-xxxx<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>--to<span class="w"> </span>vergil-project/vergil-tooling#101<span class="w"> </span>--to<span class="w"> </span>vergil-project/vergil-tooling#102
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>vrg-security-record<span class="w"> </span>retarget<span class="w"> </span>GHSA-xxxx-xxxx-xxxx<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span>--to<span class="w"> </span>vergil-project/vergil-tooling#101<span class="w"> </span>--to<span class="w"> </span>vergil-project/vergil-tooling#102
 </code></pre></div>
 <p>Every <code>--to</code> must be a full <code>owner/repo#N</code> ref, and all of them must be
 in one org. The steps run in order, and each starts only once the one
@@ -16682,10 +16690,15 @@ before it succeeded:</p>
    <code>security</code>-labelled issue in the org whose <code>Security advisory:</code> line
    names this GHSA ID (found by REST listing, never by search). Each one
    gets the comment <code>Security record moved to &lt;refs&gt;</code> (posted once, even on
-   a re-run). Then this advisory's line and the <code>security</code> label are
-   removed in one edit. An issue whose line names a different advisory is
-   never touched.</li>
+   a re-run). Then this advisory's line is removed, together with the
+   <code>security</code> label when no other advisory line remains, in one edit. An
+   issue that also names other advisories keeps their lines and the
+   label. An issue that names only other advisories is never touched.</li>
 </ol>
+<p>An issue naming several advisories needs one <code>retarget</code> per advisory.
+Run them one after another, never in parallel: each rewrites the issue's
+body, so two at once can write back a line the other removed. They can
+run in either order; the label goes only with the last line.</p>
 <p>A failure at any step exits 1 with a message naming the advisory and the
 step. Because a later step never runs before an earlier one succeeds, an
 advisory never ends up tracking an issue that lacks the label and line.
@@ -16714,16 +16727,26 @@ because the old number now leads to the moved issue itself.</p>
   <code>Security records: none.</code> The read-only <code>vrg-epic-audit</code> prints the same
   pass as a <code>(preview)</code> with <code>would sync</code>, makes no change, and does not
   fail on a broken pair.</li>
-<li><strong><code>vrg-intake-route</code></strong> retargets a security item's advisory on a
-  transfer, a recreate or a split. A split or recreate retargets before
-  the original closes and stops with the original open on failure; a
-  transfer retargets after the move and, on failure, prints the
-  <code>retarget</code> command to run. An item with the <code>security</code> label but no
-  advisory line, or the reverse, gets a warning and no retarget.</li>
-<li><strong><code>vrg-queue planning</code></strong> keeps a planning issue at <code>in-progress</code>, with a
-  <code>held: advisory &lt;GHSA-id&gt; …</code> note, while an advisory still tracks it.
-  It reads the advisories only when some planning item names one.</li>
+<li><strong><code>vrg-intake-route</code></strong> retargets a security item's advisories on a
+  transfer, a recreate or a split. A transfer or recreate retargets
+  <strong>every</strong> advisory the item names, in body order. A recreate retargets
+  before the original closes and stops with the original open on
+  failure; a transfer retargets after the move and, on failure, names
+  every advisory still not retargeted with the <code>retarget</code> command for
+  each. A split retargets the item's one advisory before the original
+  closes and stops with the original open on failure; a split of an item
+  naming several advisories is refused before any change, naming their
+  GHSA IDs, since which advisory goes to which task can't be inferred.
+  An item with the <code>security</code> label but no advisory line, or the
+  reverse, gets a warning and no retarget.</li>
+<li><strong><code>vrg-queue planning</code></strong> keeps a planning issue at <code>in-progress</code> while
+  <strong>any</strong> advisory it names still tracks it, with a note that counts
+  them and names them by GHSA ID only (<code>advisory still tracks</code> for one,
+  <code>advisories still track</code> for more):</li>
 </ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>held: &lt;k&gt; advisories still track this planning issue (&lt;GHSA-id&gt;[, …]) — retarget each to the task or tasks that fix it with vrg-security-record retarget
+</code></pre></div>
+<p>It reads the advisories only when some planning item names one.</p>
 <h2 id="exit-codes">Exit codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
