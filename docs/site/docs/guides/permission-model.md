@@ -281,35 +281,18 @@ because the hook guard hard-blocks them even under bypass.
 
 ### Local Settings (`.claude/settings.local.json`)
 
-Gitignored, per-developer. Houses temporary read-only bash
-exceptions:
+Gitignored, and holds nothing. In a managed repo, every copy of this
+file that Claude Code may load must be absent or exactly `{}`. The file
+outranks the project settings, so any rule in it would silently
+override the managed template for that checkout. A rule you need
+belongs in the repo template or in your user settings instead.
 
-```json
-{
-  "permissions": {
-    "allow": [
-      "Bash(grep *)",
-      "Bash(find *)",
-      "Bash(ls *)",
-      "Bash(diff *)",
-      "Bash(cat *)",
-      "Bash(head *)",
-      "Bash(tail *)",
-      "Bash(wc *)",
-      "Bash(which *)",
-      "Bash(sort *)",
-      "Bash(uniq *)",
-      "Bash(stat *)",
-      "Bash(du *)",
-      "Bash(file *)"
-    ]
-  }
-}
-```
-
-These are documented as candidates for removal as alternatives
-are found (Explore subagent, native Read tool, future
-`vrg-search`).
+The agent chokepoints `vrg-commit`, `vrg-pr-workflow report-ready` and
+`vrg-container-run` check this. An agent identity is refused; a human
+gets the same message as a warning, and the tool proceeds. See
+[Local settings](claude-config-ownership.md#local-settings) in the
+Claude Config Ownership Model for which copies are checked, why the
+check is not a Claude Code hook, and its known limit.
 
 ### What This Means in Practice
 
@@ -317,7 +300,7 @@ are found (Explore subagent, native Read tool, future
 |---|---|
 | `vrg-commit` | No prompt (project allow) |
 | `vrg-git status` | No prompt (project allow) |
-| `grep -r "foo" src/` | No prompt (local allow) |
+| `grep -r "foo" src/` | Runs (bypass) |
 | `git push` | Blocked (hook guard) |
 | `curl https://...` | Runs (bypass; contained to the sandbox VM) |
 | `rm -rf .` | Runs (bypass; the disposable VM is the containment) |
