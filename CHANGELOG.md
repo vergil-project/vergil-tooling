@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.273] - 2026-10-27
+
+### Bug fixes
+
+- retarget finishes an interrupted run when re-run (#3708)
+
+### Documentation
+
+- list paad/security/ in the managed base and link the paad usage policy (#3706)
+- document security records, vrg-security-record and the advisories permission (#3707)
+
 ## [2.1.272] - 2026-10-26
 
 ### Bug fixes
