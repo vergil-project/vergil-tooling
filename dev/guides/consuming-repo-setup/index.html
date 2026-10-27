@@ -15690,6 +15690,8 @@
       
         
       
+        
+      
     
     
     
@@ -15806,6 +15808,34 @@
     
   
     Permission Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../claude-config-ownership/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Claude Config Ownership
   
 
     
@@ -17045,7 +17075,9 @@ uses empty strings, which work on every Claude Code version:</p>
 <p>Commit the file. Any Claude Code session opened in the repo then
 loads the hook guard and the plugin. <code>vrg-github-repo-config audit</code>
 checks the marketplace entry, its <code>ref</code>, the enabled plugin and the
-<code>attribution</code> block against the template.</p>
+<code>attribution</code> block against the template. For which file owns each
+Claude Code setting, see
+<a href="../claude-config-ownership/">Claude Config Ownership</a>.</p>
 <p>The plugin adds these hooks:</p>
 <ul>
 <li><strong>PreToolUse on <code>Bash</code></strong> — blocks raw <code>git commit</code>, raw
