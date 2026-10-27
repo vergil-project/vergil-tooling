@@ -165,16 +165,17 @@ class TestClaudeMdMarkers:
         assert _claude_md_items(tmp_path) == []
 
     def test_divergent_line_reports_both_line_numbers(self, tmp_path: Path) -> None:
-        mutated = _TEMPLATE_TEXT.replace("## Memory management", "## Memory mismanagement", 1)
+        first_line = _TEMPLATE_TEXT.splitlines()[0]
+        mutated = _TEMPLATE_TEXT.replace(first_line, first_line + " (edited)", 1)
         # _BEGIN is line 1, so template line 1 lands on CLAUDE.md line 2.
         content = f"{_BEGIN}\n{mutated}{_END}\n"
         (tmp_path / "CLAUDE.md").write_text(content)
         items = _claude_md_items(tmp_path)
         assert len(items) == 1
         assert "template line 1" in str(items[0].expected)
-        assert "## Memory management" in str(items[0].expected)
+        assert first_line in str(items[0].expected)
         assert "line 2" in str(items[0].actual)
-        assert "## Memory mismanagement" in str(items[0].actual)
+        assert f"{first_line} (edited)" in str(items[0].actual)
 
     def test_truncated_region_reports_missing_template_line(self, tmp_path: Path) -> None:
         template_lines = _TEMPLATE_TEXT.splitlines()
@@ -240,44 +241,129 @@ class TestClaudeMdMarkers:
         assert len(items) == 1
 
 
-_MINIMAL_SETTINGS = {
-    "extraKnownMarketplaces": {
-        "vergil-marketplace": {
-            "source": {
-                "source": "github",
-                "repo": "vergil-project/vergil-claude-plugin",
-                # single-channel model (#1974): a compliant repo pins main
-                "ref": "main",
+_PREVIOUS_TEMPLATE_TEXT = (_TEMPLATE_PATH.parent / "claude_md_consumer_previous.md").read_text(
+    encoding="utf-8"
+)
+
+
+class TestClaudeMdBridge:
+    """The marked region and the legacy form accept the previous template with
+    a warning until the bridge-removal PR (epic vergil-project/.github#558)."""
+
+    @staticmethod
+    def _audit(tmp_path: Path, content: str) -> ConfigDiff:
+        (tmp_path / "CLAUDE.md").write_text(content)
+        return audit_local_config(tmp_path)
+
+    @staticmethod
+    def _md_items(diff: ConfigDiff) -> list[DiffItem]:
+        return [i for i in diff.items if i.field == "local.claude_md"]
+
+    def test_templates_differ(self) -> None:
+        assert _TEMPLATE_TEXT != _PREVIOUS_TEMPLATE_TEXT
+
+    def test_template_within_line_budget(self) -> None:
+        assert len(_TEMPLATE_TEXT.splitlines()) <= 60
+
+    def test_claude_md_region_current_clean(self, tmp_path: Path) -> None:
+        diff = self._audit(tmp_path, f"# CLAUDE.md\n\n{_BEGIN}\n{_TEMPLATE_TEXT}{_END}\n")
+        assert self._md_items(diff) == []
+        assert diff.warnings == []
+
+    def test_claude_md_region_previous_warns(self, tmp_path: Path) -> None:
+        content = f"# CLAUDE.md\n\n{_BEGIN}\n\n{_PREVIOUS_TEMPLATE_TEXT}\n{_END}\n\n## Body\n"
+        diff = self._audit(tmp_path, content)
+        assert self._md_items(diff) == []
+        assert diff.warnings == [_CLAUDE_MD_WARNING]
+
+    def test_claude_md_legacy_previous_warns(self, tmp_path: Path) -> None:
+        content = f"# CLAUDE.md\n\nIntro.\n\n{_PREVIOUS_TEMPLATE_TEXT}\n## Project Overview\n"
+        diff = self._audit(tmp_path, content)
+        assert self._md_items(diff) == []
+        assert diff.warnings == [_CLAUDE_MD_WARNING]
+
+    def test_claude_md_legacy_current_clean(self, tmp_path: Path) -> None:
+        diff = self._audit(tmp_path, f"# CLAUDE.md\n\n{_TEMPLATE_TEXT}\n## Project Overview\n")
+        assert self._md_items(diff) == []
+        assert diff.warnings == []
+
+    def test_claude_md_region_other_fails_against_current(self, tmp_path: Path) -> None:
+        mutated = _PREVIOUS_TEMPLATE_TEXT.replace("vrg-git", "vrg-Git", 1)
+        diff = self._audit(tmp_path, f"{_BEGIN}\n{mutated}{_END}\n")
+        [item] = self._md_items(diff)
+        first_line = _TEMPLATE_TEXT.splitlines()[0]
+        assert f"template line 1: {first_line}" in str(item.expected)
+        assert diff.warnings == []
+
+    def test_claude_md_legacy_other_fails(self, tmp_path: Path) -> None:
+        mutated = _PREVIOUS_TEMPLATE_TEXT.replace("vrg-git", "vrg-Git", 1)
+        diff = self._audit(tmp_path, mutated)
+        [item] = self._md_items(diff)
+        assert item.actual == "template not found"
+        assert diff.warnings == []
+
+
+_DATA_DIR = Path(__file__).resolve().parents[2] / "src" / "vergil_tooling" / "data"
+_SETTINGS_TEMPLATE = json.loads((_DATA_DIR / "claude_settings.json").read_text(encoding="utf-8"))
+_SETTINGS_PREVIOUS = json.loads(
+    (_DATA_DIR / "claude_settings_previous.json").read_text(encoding="utf-8")
+)
+
+#: The exact settings shape pinned by epic vergil-project/.github#558's plan.
+_PINNED_SETTINGS = {
+    "permissions": {"allow": ["Bash(vrg-*)"]},
+    "hooks": {
+        "PreToolUse": [
+            {
+                "matcher": "Bash",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/guard.sh",
+                    }
+                ],
             }
-        }
+        ]
     },
-    "enabledPlugins": {
-        "vergil@vergil-marketplace": True,
-    },
+    "enabledPlugins": {"vergil@vergil-marketplace": True},
     "attribution": {"commit": "", "pr": ""},
 }
 
-
-def _template_marketplaces_with_main() -> dict:
-    """The packaged (ref-less) template marketplaces with ``ref: main`` seeded.
-
-    The shipped template carries no ref; repo_init seeds it. A repo is only
-    compliant once the ref is pinned, so compliant-settings tests add it here.
-    """
-    market = json.loads(json.dumps(_SETTINGS_TEMPLATE["extraKnownMarketplaces"]))
-    market["vergil-marketplace"]["source"]["ref"] = "main"
-    return market
-
-
-_SETTINGS_TEMPLATE_PATH = (
-    Path(__file__).resolve().parents[2] / "src" / "vergil_tooling" / "data" / "claude_settings.json"
+_SETTINGS_WARNING = (
+    ".claude/settings.json matches the previous template; replace it with the "
+    "current template (epic vergil-project/.github#558)."
 )
-_SETTINGS_TEMPLATE = json.loads(_SETTINGS_TEMPLATE_PATH.read_text(encoding="utf-8"))
+_CLAUDE_MD_WARNING = (
+    "CLAUDE.md template region matches the previous template; replace it with the "
+    "current template (epic vergil-project/.github#558)."
+)
 
 
-def _write_settings(tmp_path: Path, settings: dict) -> None:
+def _write_settings(tmp_path: Path, settings: object, *, indent: int | None = None) -> None:
     (tmp_path / ".claude").mkdir(exist_ok=True)
-    (tmp_path / ".claude" / "settings.json").write_text(json.dumps(settings))
+    (tmp_path / ".claude" / "settings.json").write_text(json.dumps(settings, indent=indent))
+
+
+def _settings_items(diff: ConfigDiff) -> list[DiffItem]:
+    return [i for i in diff.items if i.field.startswith("local.claude_settings")]
+
+
+class TestSettingsTemplates:
+    def test_current_template_is_the_pinned_shape(self) -> None:
+        assert _SETTINGS_TEMPLATE == _PINNED_SETTINGS
+        assert "extraKnownMarketplaces" not in _SETTINGS_TEMPLATE
+
+    def test_previous_template_is_the_old_shape_with_main_seeded(self) -> None:
+        source = _SETTINGS_PREVIOUS["extraKnownMarketplaces"]["vergil-marketplace"]["source"]
+        assert source == {
+            "source": "github",
+            "repo": "vergil-project/vergil-claude-plugin",
+            "ref": "main",
+        }
+        without_market = {
+            k: v for k, v in _SETTINGS_PREVIOUS.items() if k != "extraKnownMarketplaces"
+        }
+        assert without_market == _SETTINGS_TEMPLATE
 
 
 class TestClaudeSettings:
@@ -302,140 +388,86 @@ class TestClaudeSettings:
         assert len(matches) == 1
         assert "JSON object" in str(matches[0].expected)
 
-    def test_missing_marketplace(self, tmp_path: Path) -> None:
-        settings = {"enabledPlugins": {"vergil@vergil-marketplace": True}}
-        _write_settings(tmp_path, settings)
+    def test_settings_current_template_passes_clean(self, tmp_path: Path) -> None:
+        _write_settings(tmp_path, _SETTINGS_TEMPLATE, indent=2)
         diff = audit_local_config(tmp_path)
-        fields = {i.field for i in diff.items}
-        assert "local.claude_settings.marketplace" in fields
+        assert _settings_items(diff) == []
+        assert diff.warnings == []
 
-    def test_wrong_marketplace_repo(self, tmp_path: Path) -> None:
-        settings = {
-            "extraKnownMarketplaces": {
-                "vergil-marketplace": {"source": {"source": "github", "repo": "wrong/repo"}}
-            },
-            "enabledPlugins": {"vergil@vergil-marketplace": True},
-        }
-        _write_settings(tmp_path, settings)
+    def test_settings_key_order_irrelevant(self, tmp_path: Path) -> None:
+        reordered = dict(reversed(list(_SETTINGS_TEMPLATE.items())))
+        reordered["attribution"] = {"pr": "", "commit": ""}
+        assert list(reordered) != list(_SETTINGS_TEMPLATE)
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".claude" / "settings.json").write_text(
+            json.dumps(reordered, separators=(",", ":"))
+        )
         diff = audit_local_config(tmp_path)
-        fields = {i.field for i in diff.items}
-        assert "local.claude_settings.marketplace" in fields
+        assert _settings_items(diff) == []
+        assert diff.warnings == []
 
-    def test_marketplace_source_drift(self, tmp_path: Path) -> None:
-        settings = {
-            "extraKnownMarketplaces": {
-                "vergil-marketplace": {
-                    "source": {"source": "git", "repo": "vergil-project/vergil-claude-plugin"}
-                }
-            },
-            "enabledPlugins": {"vergil@vergil-marketplace": True},
-        }
-        _write_settings(tmp_path, settings)
+    def test_settings_previous_template_warns(self, tmp_path: Path) -> None:
+        _write_settings(tmp_path, _SETTINGS_PREVIOUS, indent=4)
         diff = audit_local_config(tmp_path)
-        fields = {i.field for i in diff.items}
-        assert "local.claude_settings.marketplace" in fields
+        assert _settings_items(diff) == []
+        assert diff.warnings == [_SETTINGS_WARNING]
 
-    def test_plugin_truthy_but_not_true(self, tmp_path: Path) -> None:
-        settings = {
-            **_MINIMAL_SETTINGS,
-            "enabledPlugins": {"vergil@vergil-marketplace": "yes"},
-        }
-        _write_settings(tmp_path, settings)
-        diff = audit_local_config(tmp_path)
-        fields = {i.field for i in diff.items}
-        assert "local.claude_settings.plugin" in fields
-
-    def test_plugin_manager_clobber_detected(self, tmp_path: Path) -> None:
-        # Regression for issue #1427: Claude Code's plugin manager
-        # rewrote a checked-in settings.json, emptying both keys.
-        settings = {
-            "permissions": {"allow": ["Bash(vrg-*)"]},
-            "extraKnownMarketplaces": {},
-            "enabledPlugins": {},
-        }
-        _write_settings(tmp_path, settings)
-        diff = audit_local_config(tmp_path)
-        fields = {i.field for i in diff.items}
-        assert "local.claude_settings.marketplace" in fields
-        assert "local.claude_settings.plugin" in fields
-
-    def test_canonical_template_sections_compliant(self, tmp_path: Path) -> None:
-        settings = {
-            "extraKnownMarketplaces": _template_marketplaces_with_main(),
-            "enabledPlugins": _SETTINGS_TEMPLATE["enabledPlugins"],
-            "attribution": _SETTINGS_TEMPLATE["attribution"],
-        }
-        _write_settings(tmp_path, settings)
-        diff = audit_local_config(tmp_path)
-        settings_fields = {
-            i.field for i in diff.items if i.field.startswith("local.claude_settings")
-        }
-        assert not settings_fields
-
-    def test_extra_entries_allowed(self, tmp_path: Path) -> None:
-        settings = {
-            "extraKnownMarketplaces": {
-                **_template_marketplaces_with_main(),
-                "other-marketplace": {"source": {"source": "github", "repo": "other/repo"}},
-            },
-            "enabledPlugins": {
-                **_SETTINGS_TEMPLATE["enabledPlugins"],
-                "other@other-marketplace": True,
-            },
-            "attribution": _SETTINGS_TEMPLATE["attribution"],
-        }
-        _write_settings(tmp_path, settings)
-        diff = audit_local_config(tmp_path)
-        settings_fields = {
-            i.field for i in diff.items if i.field.startswith("local.claude_settings")
-        }
-        assert not settings_fields
-
-    def test_plugin_not_enabled(self, tmp_path: Path) -> None:
-        settings = {
+    def test_settings_other_shape_fails(self, tmp_path: Path) -> None:
+        # The current template plus a marketplace entry. With the seeded
+        # ``ref: main`` that would be exactly the previous template, so this
+        # uses the old packaged (ref-less) entry, which matches neither.
+        other = {
+            **_SETTINGS_TEMPLATE,
             "extraKnownMarketplaces": {
                 "vergil-marketplace": {
                     "source": {"source": "github", "repo": "vergil-project/vergil-claude-plugin"}
                 }
             },
-            "enabledPlugins": {},
         }
-        _write_settings(tmp_path, settings)
+        _write_settings(tmp_path, other)
         diff = audit_local_config(tmp_path)
-        fields = {i.field for i in diff.items}
-        assert "local.claude_settings.plugin" in fields
+        [item] = _settings_items(diff)
+        assert item.field == "local.claude_settings"
+        assert "unexpected key: extraKnownMarketplaces" in str(item.actual)
+        assert "claude_settings.json" in str(item.expected)
+        assert diff.warnings == []
 
-    def test_marketplace_not_an_object(self, tmp_path: Path) -> None:
-        settings = {**_MINIMAL_SETTINGS, "extraKnownMarketplaces": "wrong type"}
-        _write_settings(tmp_path, settings)
+    def test_previous_template_with_old_ref_fails(self, tmp_path: Path) -> None:
+        stale = json.loads(json.dumps(_SETTINGS_PREVIOUS))
+        stale["extraKnownMarketplaces"]["vergil-marketplace"]["source"]["ref"] = "develop"
+        _write_settings(tmp_path, stale)
         diff = audit_local_config(tmp_path)
-        fields = {i.field for i in diff.items}
-        assert "local.claude_settings.marketplace" in fields
+        [item] = _settings_items(diff)
+        assert item.actual == "unexpected key: extraKnownMarketplaces"
+        assert diff.warnings == []
 
-    def test_marketplace_source_not_an_object(self, tmp_path: Path) -> None:
-        settings = {
-            **_MINIMAL_SETTINGS,
-            "extraKnownMarketplaces": {"vergil-marketplace": {"source": "bad"}},
-        }
-        _write_settings(tmp_path, settings)
-        diff = audit_local_config(tmp_path)
-        fields = {i.field for i in diff.items}
-        assert "local.claude_settings.marketplace" in fields
+    def test_missing_key_named(self, tmp_path: Path) -> None:
+        partial = {k: v for k, v in _SETTINGS_TEMPLATE.items() if k != "attribution"}
+        _write_settings(tmp_path, partial)
+        [item] = _settings_items(audit_local_config(tmp_path))
+        assert item.actual == "missing key: attribution"
 
-    def test_plugins_not_an_object(self, tmp_path: Path) -> None:
-        settings = {**_MINIMAL_SETTINGS, "enabledPlugins": "wrong type"}
-        _write_settings(tmp_path, settings)
-        diff = audit_local_config(tmp_path)
-        fields = {i.field for i in diff.items}
-        assert "local.claude_settings.plugin" in fields
+    def test_attribution_false_fails(self, tmp_path: Path) -> None:
+        # ``attribution: false`` needs a newer Claude Code and makes older
+        # versions skip the whole file, so the empty-string form is required.
+        _write_settings(tmp_path, {**_SETTINGS_TEMPLATE, "attribution": False})
+        [item] = _settings_items(audit_local_config(tmp_path))
+        assert item.actual == "differs: attribution"
 
-    def test_compliant_settings(self, tmp_path: Path) -> None:
-        _write_settings(tmp_path, _MINIMAL_SETTINGS)
-        diff = audit_local_config(tmp_path)
-        settings_fields = {
-            i.field for i in diff.items if i.field.startswith("local.claude_settings")
-        }
-        assert not settings_fields
+    def test_plugin_manager_clobber_detected(self, tmp_path: Path) -> None:
+        # Regression for issue #1427: Claude Code's plugin manager rewrote a
+        # checked-in settings.json, emptying enabledPlugins.
+        _write_settings(tmp_path, {**_SETTINGS_TEMPLATE, "enabledPlugins": {}})
+        [item] = _settings_items(audit_local_config(tmp_path))
+        assert item.actual == "differs: enabledPlugins"
+
+    def test_several_differences_listed_together(self, tmp_path: Path) -> None:
+        settings = {k: v for k, v in _SETTINGS_TEMPLATE.items() if k != "hooks"}
+        settings["permissions"] = {"allow": []}
+        settings["env"] = {}
+        _write_settings(tmp_path, settings)
+        [item] = _settings_items(audit_local_config(tmp_path))
+        assert item.actual == "missing key: hooks; unexpected key: env; differs: permissions"
 
 
 def _write_compliant_repo(root: Path) -> None:
@@ -445,21 +477,7 @@ def _write_compliant_repo(root: Path) -> None:
     hooks_dir.mkdir(parents=True)
     (hooks_dir / "guard.sh").write_text("#!/usr/bin/env bash\nexec vrg-hook-guard\n")
     (root / "CLAUDE.md").write_text("# CLAUDE.md\n\n" + _TEMPLATE_TEXT + "\n")
-    compliant_settings = {
-        "extraKnownMarketplaces": {
-            "vergil-marketplace": {
-                "source": {
-                    "source": "github",
-                    "repo": "vergil-project/vergil-claude-plugin",
-                    # single-channel model (#1974): every repo pins main
-                    "ref": "main",
-                }
-            }
-        },
-        "enabledPlugins": {"vergil@vergil-marketplace": True},
-        "attribution": {"commit": "", "pr": ""},
-    }
-    (root / ".claude" / "settings.json").write_text(json.dumps(compliant_settings))
+    (root / ".claude" / "settings.json").write_text(json.dumps(_SETTINGS_TEMPLATE))
     # A fully compliant repo carries the fenced managed .gitignore for its
     # declared language (python) and a wired, scheduled ops.yml (epic
     # vergil-project/.github#311, #325). The ops.yml ref is pinned to the repo's
@@ -486,204 +504,17 @@ class TestIntegration:
         _write_compliant_repo(tmp_path)
         diff = audit_local_config(tmp_path)
         assert diff.is_compliant(), [f"{i.field}: {i.actual}" for i in diff.items]
+        assert diff.warnings == []
 
-    def test_unreadable_config_fails_gitignore_explicitly(self, tmp_path: Path) -> None:
-        # #3451: the aggregate audit names the config failure on the gitignore
-        # row too, rather than judging the fence against a silent base-only.
+    def test_previous_shapes_keep_repo_compliant_with_both_warnings(self, tmp_path: Path) -> None:
+        # The point of the bridge: a repo not yet swept still passes the
+        # nightly audit, with one deprecation warning per previous-shape file.
         _write_compliant_repo(tmp_path)
-        (tmp_path / "vergil.toml").write_text("not = [valid toml")
-        diff = audit_local_config(tmp_path)
-        assert not diff.is_compliant()
-        rows = [i for i in diff.items if i.field == "local.gitignore"]
-        assert len(rows) == 1
-        assert "cannot resolve the fence language" in str(rows[0].actual)
-
-    def test_unreadable_config_fails_dependabot_explicitly(self, tmp_path: Path) -> None:
-        # #3451: the dependabot row names the config failure too, rather than
-        # comparing against a silent actions-only render.
-        _write_compliant_repo(tmp_path)
-        (tmp_path / "vergil.toml").write_text("not = [valid toml")
-        diff = audit_local_config(tmp_path)
-        rows = [i for i in diff.items if i.field == "local.dependabot"]
-        assert len(rows) == 1
-        assert "cannot resolve the dependabot language" in str(rows[0].actual)
-
-    def test_missing_dependabot_makes_repo_non_compliant(self, tmp_path: Path) -> None:
-        _write_compliant_repo(tmp_path)
-        (tmp_path / dependabot.DEPENDABOT_PATH).unlink()
-        diff = audit_local_config(tmp_path)
-        assert not diff.is_compliant()
-        rows = [i for i in diff.items if i.field == "local.dependabot"]
-        assert [i.actual for i in rows] == ["missing .github/dependabot.yml"]
-
-    def test_missing_ops_yml_makes_repo_non_compliant(self, tmp_path: Path) -> None:
-        # Fleet-visible signal (epic #338, Task 12): a missing ops.yml is a
-        # first-class non-compliance surfaced by the top-level audit the fleet
-        # runs — not only by the private helper. Start from an otherwise
-        # compliant repo and delete ops.yml so nothing else fails.
-        _write_compliant_repo(tmp_path)
-        (tmp_path / ".github" / "workflows" / "ops.yml").unlink()
-        diff = audit_local_config(tmp_path)
-        assert not diff.is_compliant()
-        ops = [i for i in diff.items if i.field == "local.ops_workflow"]
-        assert len(ops) == 1
-        assert ops[0].actual == "missing"
-
-    def test_cronless_ops_yml_makes_repo_non_compliant(self, tmp_path: Path) -> None:
-        # A present, wired, but un-scheduled ops.yml never runs nightly, so it is
-        # a first-class non-compliance in the aggregate audit too (epic #338).
-        _write_compliant_repo(tmp_path)
-        (tmp_path / ".github" / "workflows" / "ops.yml").write_text(
-            "on:\n  workflow_dispatch:\n\njobs:\n" + _WIRED, encoding="utf-8"
-        )
-        diff = audit_local_config(tmp_path)
-        assert not diff.is_compliant()
-        ops = [i for i in diff.items if i.field == "local.ops_workflow"]
-        assert any("no schedule" in str(i.actual) for i in ops)
-
-
-class TestMarketplaceRef:
-    def _write(
-        self,
-        base: Path,
-        *,
-        ref: str | None,
-        self_repo: bool = False,
-    ) -> None:
-        (base / "vergil.toml").write_text(_MINIMAL_VERGIL_TOML_VER.format(version="v2.1"))
-        if self_repo:
-            (base / ".claude-plugin").mkdir()
-            (base / ".claude-plugin" / "marketplace.json").write_text("{}")
-        src = {"source": "github", "repo": "vergil-project/vergil-claude-plugin"}
-        if ref is not None:
-            src["ref"] = ref
-        settings = {
-            "extraKnownMarketplaces": {"vergil-marketplace": {"source": src}},
-            "enabledPlugins": {"vergil@vergil-marketplace": True},
-            "attribution": {"commit": "", "pr": ""},
-        }
-        claude = base / ".claude"
-        claude.mkdir(parents=True, exist_ok=True)
-        (claude / "settings.json").write_text(json.dumps(settings))
-        (claude / "hooks").mkdir(parents=True, exist_ok=True)
-        (claude / "hooks" / "guard.sh").write_text("#!/bin/sh\n")
-
-    @staticmethod
-    def _ref_items(diff: ConfigDiff) -> list:
-        return [i for i in diff.items if i.field == "local.claude_settings.marketplace_ref"]
-
-    def test_main_is_compliant(self, tmp_path: Path) -> None:
-        self._write(tmp_path, ref="main")
-        diff = audit_local_config(tmp_path)
-        assert not self._ref_items(diff)
-        assert not diff.warnings
-
-    def test_deprecated_develop_warns(self, tmp_path: Path) -> None:
-        self._write(tmp_path, ref="develop")
-        diff = audit_local_config(tmp_path)
-        assert not self._ref_items(diff)
-        assert any("develop" in w for w in diff.warnings)
-
-    def test_deprecated_version_warns(self, tmp_path: Path) -> None:
-        self._write(tmp_path, ref="v2.0")
-        diff = audit_local_config(tmp_path)
-        assert not self._ref_items(diff)
-        assert any("v2.0" in w for w in diff.warnings)
-
-    def test_deprecated_ref_keeps_repo_compliant(self, tmp_path: Path) -> None:
-        # The whole point of the bridge: an otherwise-compliant repo that has
-        # not yet migrated its marketplace ref still passes (warning only).
-        _write_compliant_repo(tmp_path)
-        settings_path = tmp_path / ".claude" / "settings.json"
-        settings = json.loads(settings_path.read_text())
-        settings["extraKnownMarketplaces"]["vergil-marketplace"]["source"]["ref"] = "develop"
-        settings_path.write_text(json.dumps(settings))
+        (tmp_path / "CLAUDE.md").write_text("# CLAUDE.md\n\n" + _PREVIOUS_TEMPLATE_TEXT + "\n")
+        (tmp_path / ".claude" / "settings.json").write_text(json.dumps(_SETTINGS_PREVIOUS))
         diff = audit_local_config(tmp_path)
         assert diff.is_compliant(), [f"{i.field}: {i.actual}" for i in diff.items]
-        assert any("develop" in w for w in diff.warnings)
-
-    def test_missing_ref_flagged(self, tmp_path: Path) -> None:
-        self._write(tmp_path, ref=None)
-        diff = audit_local_config(tmp_path)
-        flagged = self._ref_items(diff)
-        assert len(flagged) == 1
-        assert "main" in str(flagged[0].expected)
-        assert not diff.warnings
-
-    def test_unknown_ref_flagged(self, tmp_path: Path) -> None:
-        self._write(tmp_path, ref="some-feature-branch")
-        diff = audit_local_config(tmp_path)
-        assert self._ref_items(diff)
-        assert not diff.warnings
-
-    def test_self_repo_main_is_compliant(self, tmp_path: Path) -> None:
-        # No source-repo exemption anymore: the plugin repo also pins main.
-        self._write(tmp_path, ref="main", self_repo=True)
-        diff = audit_local_config(tmp_path)
-        assert not self._ref_items(diff)
-        assert not diff.warnings
-
-    def test_self_repo_develop_warns(self, tmp_path: Path) -> None:
-        self._write(tmp_path, ref="develop", self_repo=True)
-        diff = audit_local_config(tmp_path)
-        assert not self._ref_items(diff)
-        assert any("develop" in w for w in diff.warnings)
-
-
-class TestAttribution:
-    """``attribution`` must turn off Claude Code's AI co-author trailer (#3200).
-
-    Strict since the fleet sweep landed (#3361): a missing or different value
-    is a ``local.claude_settings.attribution`` DiffItem, never just a warning.
-    """
-
-    @staticmethod
-    def _attr_items(diff: ConfigDiff) -> list[DiffItem]:
-        return [i for i in diff.items if i.field == "local.claude_settings.attribution"]
-
-    @staticmethod
-    def _audit(tmp_path: Path, attribution: object, *, present: bool = True) -> ConfigDiff:
-        _write_compliant_repo(tmp_path)
-        settings_path = tmp_path / ".claude" / "settings.json"
-        settings = json.loads(settings_path.read_text())
-        if present:
-            settings["attribution"] = attribution
-        else:
-            del settings["attribution"]
-        settings_path.write_text(json.dumps(settings))
-        return audit_local_config(tmp_path)
-
-    def test_template_value_is_compliant(self, tmp_path: Path) -> None:
-        assert _SETTINGS_TEMPLATE["attribution"] == {"commit": "", "pr": ""}
-        diff = self._audit(tmp_path, {"commit": "", "pr": ""})
-        assert diff.is_compliant(), [f"{i.field}: {i.actual}" for i in diff.items]
-        assert not diff.warnings
-
-    def test_missing_fails(self, tmp_path: Path) -> None:
-        diff = self._audit(tmp_path, None, present=False)
-        assert not diff.is_compliant()
-        assert not diff.warnings
-        [item] = self._attr_items(diff)
-        assert item.actual == "missing"
-        assert '"attribution": {"commit": "", "pr": ""}' in str(item.expected)
-        assert ".claude/settings.json" in str(item.expected)
-        assert "#3200" in str(item.expected)
-
-    def test_wrong_value_fails(self, tmp_path: Path) -> None:
-        diff = self._audit(tmp_path, {"commit": "Co-Authored-By: x", "pr": ""})
-        assert not diff.is_compliant()
-        assert not diff.warnings
-        [item] = self._attr_items(diff)
-        assert "Co-Authored-By: x" in str(item.actual)
-        assert "#3200" in str(item.expected)
-
-    def test_boolean_false_fails(self, tmp_path: Path) -> None:
-        # ``attribution: false`` needs a newer Claude Code and makes older
-        # versions skip the whole file, so the empty-string form is required.
-        diff = self._audit(tmp_path, False)
-        assert not diff.is_compliant()
-        [item] = self._attr_items(diff)
-        assert item.actual == '"attribution": false'
+        assert diff.warnings == [_CLAUDE_MD_WARNING, _SETTINGS_WARNING]
 
 
 class TestWorkflowRefs:

@@ -304,9 +304,10 @@ inside the worktree. The session's initial CWD determines the memory
 slug; starting inside a worktree creates a separate memory silo and
 loses shared project context.
 
-Then give the agent the canonical prompt. The template lives in each
-repo's CLAUDE.md under "Parallel AI agent development → Agent prompt
-contract"; filled in, it reads:
+Then give the agent the canonical prompt. The template is the
+[Agent prompt contract](https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/worktree-convention.md#agent-prompt-contract)
+in the worktree convention, which each repo's CLAUDE.md links to;
+filled in, it reads:
 
 ```text
 You are working on issue #42: Add LRU cache to pipeline.

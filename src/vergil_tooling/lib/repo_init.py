@@ -23,7 +23,6 @@ if TYPE_CHECKING:
 from vergil_tooling.lib import dependabot, git, github, gitignore, lang_scaffold, repo_config
 from vergil_tooling.lib.config import _ENUMS
 from vergil_tooling.lib.labels import sync_labels
-from vergil_tooling.lib.vergil_refs import EXPECTED_MARKETPLACE_REF
 
 _CHECKPOINT_RE = re.compile(r"chore\(init\): step (\d+) -")
 
@@ -320,15 +319,13 @@ def _load_data_file(filename: str) -> str:
 
 
 def render_claude_settings() -> str:
-    """Return the .claude/settings.json text with the marketplace ref seeded.
+    """Return the .claude/settings.json text: the packaged template.
 
-    The packaged template is ref-less; under the single-channel model (#1974)
-    every repo pins the marketplace at ``main``, the plugin's one released
-    channel.
+    The audit requires the repo file to equal the template after JSON
+    parsing. The marketplace definition lives only in the user settings, so
+    nothing is seeded (epic vergil-project/.github#558).
     """
     data = json.loads(_load_data_file("claude_settings.json"))
-    market = data["extraKnownMarketplaces"]["vergil-marketplace"]
-    market["source"]["ref"] = EXPECTED_MARKETPLACE_REF
     return json.dumps(data, indent=2) + "\n"
 
 
@@ -429,12 +426,6 @@ def render_claude_md(ctx: RepoInitContext) -> str:
         "This file provides guidance to Claude Code when working in this repository.\n"
         "\n"
         f"**Project name**: {ctx.name}\n"
-        "\n"
-        "## Validation\n"
-        "\n"
-        "```bash\n"
-        "vrg-container-run -- vrg-validate\n"
-        "```\n"
         "\n"
     )
     return (
@@ -1282,7 +1273,7 @@ def step_scaffold_config_files(ctx: RepoInitContext) -> None:
     # .claude/settings.json
     claude_dir = wd / ".claude"
     claude_dir.mkdir(exist_ok=True)
-    # marketplace ref seeded at the single released channel (main)
+    # exactly the packaged template (epic vergil-project/.github#558)
     (claude_dir / "settings.json").write_text(render_claude_settings())
 
     # .claude/hooks/guard.sh
