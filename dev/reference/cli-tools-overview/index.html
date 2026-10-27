@@ -12325,7 +12325,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../releases/v1.2.0/" class="md-nav__link">
+      <a href="../../releases/v1.2.1/" class="md-nav__link">
         
   
   
@@ -12353,7 +12353,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../releases/v1.2.1/" class="md-nav__link">
+      <a href="../../releases/v1.2.0/" class="md-nav__link">
         
   
   
@@ -12811,6 +12811,17 @@
     <span class="md-ellipsis">
       
         vrg-queue
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vrg-epic-audit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-epic-audit
       
     </span>
   </a>
@@ -16932,6 +16943,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-epic-audit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-epic-audit
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-worktree-status" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17964,6 +17986,82 @@ collect step of the three review skills (<code>intake-review</code>, <code>plann
 <tr>
 <td>Exit codes</td>
 <td>0 success, 1 error, 2 bad arguments</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-epic-audit">vrg-epic-audit<a class="headerlink" href="#vrg-epic-audit" title="Permanent link">&para;</a></h3>
+<p>Report epic/task drift and invariant violations for an org, as Markdown on
+stdout. It is read-only by default. <strong>Drift</strong> is a task still open although
+the merged PR that <code>Ref</code>s it landed within the last <code>--window-days</code> days, and
+an open finite epic whose children are all closed. The <strong>invariant</strong> checks
+are the <a href="../../standards/github-issues/#compliance-invariants">compliance invariants</a>:
+epics outside <code>.github</code>, stray <code>.github</code> issues, a closed epic with an open
+child, orphans, retired kind labels, body-only <code>Parent:</code> links, self-homed
+queues in a now-public repo, and private work under a public epic. It also
+lists open epics with operational tasks still pending, and closed
+operational tasks with no <code>Outcome: SUCCESS</code>. The report previews, without
+writing, the ad-hoc and queue-epic drains and the security-records pass that
+<code>--close</code> would run.</p>
+<p>The org comes from the current repo's <code>origin</code> remote (there is no <code>--org</code>
+flag). <code>--repo OWNER/NAME</code> audits that repo's resolved epic home instead of
+the org's <code>.github</code>, so a private repo that self-homes its epics can be
+audited; the home-scoped checks (epic drift, stray issues, operation-pending
+epics, and the <code>--close</code> drift closes) then target it.
+<code>--epic REF</code> is a separate read-only mode: it prints one epic's children as
+JSON (<code>{"epic": &lt;slug&gt;, "children": [{repo, number, title, state}, …]}</code>) and
+skips the drift audit. A bare <code>#N</code> resolves against the current repo's epic
+home.</p>
+<p><code>--close</code> applies the fixes, in order:</p>
+<ol>
+<li>Close the drifted tasks and rolled-up epics, and reopen each epic closed
+   while a child was still open, with an explanatory comment on each.</li>
+<li>Drain the closed children of the ad-hoc, intake, planning and deferred
+   epics into per-quarter archives, and close past archives (see
+   <a href="../../standards/github-issues/#ad-hoc-epic-archiving">Ad-hoc epic archiving</a>).</li>
+<li>Run the <a href="../../standards/github-issues/#the-orphan-pass-auto-heal">orphan pass</a>:
+   nativize body-only <code>Parent:</code> links, strip the retired kind labels, move a
+   now-public repo's queue items under <code>.github</code>, and attach every orphan to
+   its home's intake epic.</li>
+<li>Run the security-records pass, even when the orphan pass failed: each
+   paired draft advisory in the org's <code>.github</code> is set to closed once every
+   issue it tracks is closed, and back to draft while any is open; broken
+   pairs are reported, not repaired. Its output names only GHSA IDs, issue
+   refs and states, never advisory text (see
+   <a href="../../guides/security-records/#managing-a-record-through-its-issue">Security Records</a>).</li>
+</ol>
+<p><code>--close</code> is a human action, or the scheduled <code>ops-epic-sweep</code> workflow,
+which sets <code>VRG_EPIC_SWEEP=1</code>. Other invariant violations stay report-only.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_epic_audit</code> (checks and passes: <code>lib/epic_audit.py</code>; security pass: <code>lib/security_records.py</code>)</td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>--window-days N</code> (positive; default 30), <code>--repo OWNER/NAME</code>, <code>--epic REF</code>, <code>--close</code></td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>Run inside a repo in the target org; GitHub App credentials for that org. <code>--close</code> needs a human identity or <code>VRG_EPIC_SWEEP=1</code>. The security-records pass needs Repository security advisories: Read and write</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td><code>--close</code> in an agent session is refused before any network call; a <code>--repo</code> without <code>/</code>, an org that cannot be detected, or an org with no <code>.github</code> home exits 1. A full intake epic stops the orphan pass, listing what it did not attach; a broken security pair or a failed security pass exits 1 after the rest of the run. With <code>--epic</code>, a ref that is not an epic exits 1</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 success (the read-only report exits 0 even when it finds drift), 1 refused, a pass failed, or error, 2 bad arguments</td>
 </tr>
 <tr>
 <td>Status</td>
