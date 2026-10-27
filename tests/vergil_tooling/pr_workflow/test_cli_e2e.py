@@ -10,7 +10,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.vergil_tooling.conftest import local_settings_violation
 from vergil_tooling.bin import vrg_pr_workflow
+from vergil_tooling.lib import local_settings
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
@@ -990,3 +992,35 @@ def test_report_ready_refuses_state_recorded_for_another_branch(
     assert _run_report_ready() == 1
     assert "records branch feature/42-x" in capsys.readouterr().err
     assert _rev(_origin(in_git_repo), "refs/heads/feature/42-y") == ""
+
+
+# -- local-settings guard (epic vergil-project/.github#558) -------------------
+
+
+def test_report_ready_refuses_for_agent(
+    in_git_repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    path = local_settings_violation(tmp_path, monkeypatch)
+    monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
+    assert _run_report_ready() == 1
+    lines = capsys.readouterr().err.splitlines()
+    assert lines[0] == local_settings.REFUSAL_TEMPLATE.format(path=path)
+    assert lines[1] == local_settings.AGENT_LINE
+    # Refused before anything is pushed or recorded.
+    assert not (in_git_repo / ".vergil" / "pr-workflow.json").exists()
+    assert _rev(_origin(in_git_repo), "refs/heads/feature/42-x") == ""
+
+
+def test_report_ready_warns_for_human(
+    in_git_repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    path = local_settings_violation(tmp_path, monkeypatch)
+    assert _run_report_ready() == 0
+    assert local_settings.WARNING_TEMPLATE.format(path=path) in capsys.readouterr().err.splitlines()
+    assert (in_git_repo / ".vergil" / "pr-workflow.json").exists()

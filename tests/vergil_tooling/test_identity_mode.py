@@ -14,6 +14,7 @@ from vergil_tooling.lib.identity_mode import (
     Resolution,
     Signal,
     SignalReading,
+    any_agent_signal,
     current_mode,
     is_agent,
     is_human,
@@ -219,3 +220,44 @@ class TestResolveDisagreement:
     def test_single_signal_does_not_disagree(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
         assert resolve().disagreement is False
+
+
+class TestAnyAgentSignal:
+    """Any one agent signal makes the session an agent (epic vergil-project/.github#558)."""
+
+    def test_any_agent_signal_none(self) -> None:
+        assert any_agent_signal() is False
+
+    @pytest.mark.parametrize("mode", ["user", "audit"])
+    def test_any_agent_signal_env_var(self, monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", mode)
+        assert any_agent_signal() is True
+
+    def test_any_agent_signal_env_human_alone(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "human")
+        assert any_agent_signal() is False
+
+    @pytest.mark.parametrize("mode", ["user", "audit"])
+    def test_any_agent_signal_mode_file(self, tmp_path: Path, mode: str) -> None:
+        _write_mode_file(tmp_path, f"{mode}\n")
+        assert any_agent_signal() is True
+
+    def test_any_agent_signal_mode_file_human(self, tmp_path: Path) -> None:
+        _write_mode_file(tmp_path, "human\n")
+        assert any_agent_signal() is False
+
+    def test_any_agent_signal_app_key(self, tmp_path: Path) -> None:
+        _write_app_key(tmp_path)
+        assert any_agent_signal() is True
+
+    def test_any_agent_signal_app_id(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("VRG_APP_ID", "12345")
+        assert any_agent_signal() is True
+
+    def test_any_agent_signal_env_human_cannot_override(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _write_mode_file(tmp_path, "user\n")
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "human")
+        assert resolve().mode == IdentityMode.HUMAN  # resolve() itself is unchanged
+        assert any_agent_signal() is True

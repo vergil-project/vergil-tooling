@@ -12,7 +12,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from vergil_tooling.lib import branch_names, config, git
+from vergil_tooling.lib import branch_names, config, git, local_settings
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.commit_message import (
     ALLOWED_TYPES,
@@ -44,6 +44,10 @@ _WORKTREES_DIRNAME = ".worktrees"
 @cli_main
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    # Local-settings guard (epic vergil-project/.github#558): refuse an agent,
+    # warn a human, while a loadable .claude/settings.local.json is not {}.
+    if local_settings.enforce(Path.cwd()) != 0:
+        return 1
     root = git.repo_root()
 
     try:

@@ -10,7 +10,9 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.vergil_tooling.conftest import local_settings_violation
 from vergil_tooling.bin.vrg_commit import _validate_commit_context, main, parse_args
+from vergil_tooling.lib.local_settings import AGENT_LINE, REFUSAL_TEMPLATE, WARNING_TEMPLATE
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -525,3 +527,39 @@ def test_main_warns_but_proceeds_on_freeze_read_error(
         result = main(["--type", "feat", "--scope", "core", "--message", "add feature"])
     assert result == 0
     assert "could not read PR-workflow state" in capsys.readouterr().err
+
+
+# --------------------------------------------------------------------------
+# Local-settings guard (epic vergil-project/.github#558)
+# --------------------------------------------------------------------------
+
+
+def test_vrg_commit_refuses_for_agent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = local_settings_violation(tmp_path, monkeypatch)
+    monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
+    with (
+        _commit_environment(tmp_path),
+        patch("vergil_tooling.bin.vrg_commit.git.run") as mock_run,
+    ):
+        result = main(_DEFAULT_ARGS)
+    assert result == 1
+    mock_run.assert_not_called()
+    lines = capsys.readouterr().err.splitlines()
+    assert lines[0] == REFUSAL_TEMPLATE.format(path=path)
+    assert lines[1] == AGENT_LINE
+
+
+def test_vrg_commit_warns_for_human(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = local_settings_violation(tmp_path, monkeypatch)
+    with (
+        _commit_environment(tmp_path),
+        patch("vergil_tooling.bin.vrg_commit.git.run") as mock_run,
+    ):
+        result = main(_DEFAULT_ARGS)
+    assert result == 0
+    mock_run.assert_called_once()
+    assert WARNING_TEMPLATE.format(path=path) in capsys.readouterr().err.splitlines()

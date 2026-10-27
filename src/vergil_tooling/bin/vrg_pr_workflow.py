@@ -23,9 +23,10 @@ import json
 import subprocess
 import sys
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import epics, git, github
+from vergil_tooling.lib import epics, git, github, local_settings
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.linkage import (
     find_linkage_keyword,
@@ -272,6 +273,10 @@ def _push_relay_ref(state: WorkflowState, base: str) -> None:
 
 
 def cmd_report_ready(args: argparse.Namespace, transport: LocalFileTransport) -> int:
+    # Local-settings guard (epic vergil-project/.github#558), before anything is
+    # pushed or recorded: refuse an agent, warn a human.
+    if local_settings.enforce(Path.cwd()) != 0:
+        return 1
     # Resolve --issue to a canonical ref (bare number -> '#N') before the guards,
     # mirroring vrg-submit-pr. The guards call epics.parse_issue_ref, which rejects
     # a bare number (no '#') and would silently return False — letting a

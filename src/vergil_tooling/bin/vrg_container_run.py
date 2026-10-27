@@ -11,9 +11,10 @@ from __future__ import annotations
 import os
 import shlex
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import conan_token, git, platform_env
+from vergil_tooling.lib import conan_token, git, local_settings, platform_env
 from vergil_tooling.lib.cache_space import CacheSpaceError
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.config import (
@@ -38,8 +39,6 @@ from vergil_tooling.lib.versions import VersionsError
 from vergil_tooling.lib.versions.extensions import container_env
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from vergil_tooling.lib.versions.resolve import Resolution
 
 _VALID_PREFIXES = {"dev", "prod"}
@@ -122,6 +121,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if not command:
         print("error: no command specified", file=sys.stderr)
+        return 1
+
+    # Local-settings guard (epic vergil-project/.github#558), on the host before
+    # any container starts: inside one, the main checkout's working tree and the
+    # identity signals are invisible, so this covers every containerised run.
+    if local_settings.enforce(Path.cwd()) != 0:
         return 1
 
     runtime = detect_runtime()

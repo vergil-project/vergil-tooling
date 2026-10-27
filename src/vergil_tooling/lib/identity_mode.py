@@ -186,6 +186,19 @@ def is_agent() -> bool:
     return current_mode() in _AGENT_MODES
 
 
+def any_agent_signal() -> bool:
+    """Return True when **any** resolution signal implies an agent identity.
+
+    Unlike :func:`resolve`, where the first present signal wins, this is the
+    fail-closed reading for guards that must not be talked out of their
+    refusal: a ``VRG_IDENTITY_MODE=human`` value cannot override a provisioned
+    agent signal (the mode file, ``app.pem`` or ``VRG_APP_ID``). Used by the
+    local-settings guard (epic vergil-project/.github#558); the wider resolver
+    question is vergil-project/.github#593.
+    """
+    return any(reading.present and reading.implied in _AGENT_MODES for reading in _read_signals())
+
+
 def is_human() -> bool:
     """Return True if running as the human (Chief Steward)."""
     return current_mode() == IdentityMode.HUMAN
