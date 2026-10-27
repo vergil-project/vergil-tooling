@@ -16416,10 +16416,11 @@ Visibility changes are supported in <strong>one direction only</strong>:</p>
   in the destination repo.</li>
 <li><strong>Tasks do not move.</strong> A task always lives in its member repo (1:1 with
   its PR), independent of visibility. Only the epic issue relocates.</li>
-<li><strong>Intake and planning queues move themselves.</strong> A private repo self-homes
-  its own <code>Epic (intake): &lt;repo&gt;</code> and <code>Epic (planning): &lt;repo&gt;</code>. Once the
-  repo is public, the daily <code>vrg-epic-audit --close</code> sweep re-links every
-  open item under the org's <code>.github</code> intake and planning epics (the items
+<li><strong>The intake, planning and deferred queues move themselves.</strong> A private
+  repo self-homes its own <code>Epic (intake): &lt;repo&gt;</code>, <code>Epic (planning): &lt;repo&gt;</code>
+  and <code>Epic (deferred): &lt;repo&gt;</code>. Once the repo is public, the daily
+  <code>vrg-epic-audit --close</code> sweep re-links every open item under the org's
+  <code>.github</code> queue epic of the same kind (the items
   stay in their repo) and closes the emptied self-homed queue epics. No
   manual step is needed; a read-only <code>vrg-epic-audit</code> lists the queue epics
   it will move.</li>
@@ -16469,7 +16470,7 @@ relocating its epics would only give false assurance. So decide at repo
 creation whether something is private; if it is public, it stays public.</p>
 <p><strong>To take public work private, create a new repository that starts life
 private and migrate the code into it.</strong> The new repo self-homes its epics
-and its intake and planning queues from day one; the public original is
+and its intake, planning and deferred queues from day one; the public original is
 left as it was (archived if appropriate).</p>
 <p>If a repo is flipped to private anyway, <code>vrg-epic-audit</code> reports every
 issue in a private repo that is parented under a public <code>.github</code> epic as a

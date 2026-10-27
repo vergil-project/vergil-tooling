@@ -17357,8 +17357,8 @@ cloud→Mac handoff: each branch's ready-state comes from a local
 worktree's <code>pr-workflow.json</code> when present, else the relay ref
 <code>refs/vergil/pr-workflow/&lt;branch&gt;</code>; origin's tip is checked against the
 recorded <code>head_sha</code> and the PR opens with <code>--head</code> <strong>without pushing</strong>.
-It refuses an issue whose native parent is an intake or planning epic (see
-<a href="#vrg-pr-workflow"><code>vrg-pr-workflow</code></a>).</p>
+It refuses an issue whose native parent is an intake, planning or deferred
+epic (see <a href="#vrg-pr-workflow"><code>vrg-pr-workflow</code></a>).</p>
 <table>
 <thead>
 <tr>
@@ -17464,9 +17464,10 @@ advances, the branch (issue #3071). <code>unfreeze</code> is the only sanctioned
 reopen a still-unsubmitted branch — it drops the state back to
 <code>implementing</code> while keeping the metadata; an already-submitted branch
 cannot be unfrozen. <code>status</code> prints the current state. <code>report-ready</code> (like
-<code>vrg-submit-pr</code>) refuses an issue whose native parent is an intake or planning
-epic: a queue item is not buildable until intake review routes it, or
-<code>epic-create</code> expands it (epic vergil-project/.github#176).</p>
+<code>vrg-submit-pr</code>) refuses an issue whose native parent is an intake, planning
+or deferred epic: a queue item is not buildable until intake review routes it,
+<code>epic-create</code> expands it, or deferred review revives it (epics
+vergil-project/.github#176 and #508).</p>
 <table>
 <thead>
 <tr>
@@ -17737,7 +17738,7 @@ path. It carries no kind label. The intake epic is resolved (created if
 absent) <em>before</em> the issue is created; if linking the created issue fails, the
 tool exits 1 naming its URL and the <code>vrg-epic-move</code> command that links it. Used
 by the <code>intake-capture</code> skill. See
-<a href="../../standards/github-issues/#intake-and-planning-queues">Intake and planning queues</a>.</p>
+<a href="../../standards/github-issues/#intake-planning-and-deferred-queues">Intake, planning and deferred queues</a>.</p>
 <p><code>vrg-triage-create</code> is a <strong>deprecated alias</strong> kept for one release: it warns
 on stderr, ignores <code>--kind</code> (intake has no kind label), and forwards every
 other argument to <code>vrg-intake-create</code>.</p>
@@ -17933,8 +17934,9 @@ open items under the deferred epic, all <strong>waiting</strong>, least recently
 first; each item's note is its latest deferral
 (<code>Deferred &lt;day&gt;: &lt;reason&gt; | Revisit when: &lt;conditions&gt;</code>), and an item with no
 deferral comment sorts first with an empty note. A bare <code>vrg-queue</code> lists all
-three queues in that order (intake, planning, deferred). Used by
-<code>intake-review</code>'s collect step and <code>epic-create</code>'s no-argument summary.</p>
+three queues in that order (intake, planning, deferred). Used by the
+collect step of the three review skills (<code>intake-review</code>, <code>planning-review</code>,
+<code>deferred-review</code>) and by <code>epic-create</code>'s no-argument summary.</p>
 <table>
 <thead>
 <tr>
