@@ -12327,7 +12327,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../releases/v1.2.1/" class="md-nav__link">
+      <a href="../../releases/v1.2.0/" class="md-nav__link">
         
   
   
@@ -12355,7 +12355,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../releases/v1.2.0/" class="md-nav__link">
+      <a href="../../releases/v1.2.1/" class="md-nav__link">
         
   
   
@@ -14132,6 +14132,17 @@
     <span class="md-ellipsis">
       
         The orphan pass (auto-heal)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-security-records-pass" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The security-records pass
       
     </span>
   </a>
@@ -16927,6 +16938,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#the-security-records-pass" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The security-records pass
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -17535,6 +17557,26 @@ exit 1, listing every item it did not link — never a silent skip. A full intak
 queue is a signal to run intake review. The same pass, dispatched once by hand
 through <code>ops-epic-sweep</code>'s <code>workflow_dispatch</code>, is the one-time migration of an
 org's existing backlog.</p>
+<h4 id="the-security-records-pass">The security-records pass<a class="headerlink" href="#the-security-records-pass" title="Permanent link">&para;</a></h4>
+<p>After the orphan pass, <code>vrg-epic-audit --close</code> runs one pass over the draft
+advisories in the org's <code>.github</code> (see
+<a href="../../guides/security-records/#managing-a-record-through-its-issue">Security Records</a>).
+It runs even when the orphan pass failed, and the worse exit code wins.</p>
+<ul>
+<li><strong>State sync.</strong> Each paired advisory follows its <code>security</code> issues: closed
+  once every issue it tracks is closed, a draft while any is open. The pass
+  only moves an advisory between <code>draft</code> and <code>closed</code>, and never touches an
+  unpaired external report.</li>
+<li><strong>Consistency check.</strong> It reports broken pairs (a <code>security</code> issue with a
+  missing or wrong advisory reference, or an advisory whose tracking lines are
+  missing or do not point back) and does not repair them; any broken pair
+  makes the run exit 1.</li>
+</ul>
+<p>Its output goes to <code>.github</code>'s public Actions logs, so it names only GHSA IDs,
+issue refs, labels and states, never advisory text. The read-only
+<code>vrg-epic-audit</code> previews the same pass without changing any state. The sweep's
+org ops App needs Repository security advisories: Read and write (see
+<a href="../../guides/identity-architecture/">Identity architecture</a>).</p>
 <h2 id="intake-planning-and-deferred-queues">Intake, planning and deferred queues<a class="headerlink" href="#intake-planning-and-deferred-queues" title="Permanent link">&para;</a></h2>
 <p>Not every capture is ready to be built. Work flows through <strong>standing queues</strong>
 before it is ready — <strong>intake → planning → ready</strong> — and an evaluated item that
@@ -17646,6 +17688,11 @@ its new parent. A route is refused when the item's container epic does not allow
 it (see <a href="../../reference/cli-tools-overview/#vrg-intake-route"><code>vrg-intake-route</code></a>
 for the route table), for a cross-org target, and for a private item headed to a
 public repo or epic.</p>
+<p>A <code>security</code> item keeps its advisory link through every move: on a split or a
+recreate, the advisory is retargeted to the new issue(s) <strong>before</strong> the
+original closes (a failure stops the route and leaves the original open); on a
+transfer, it is retargeted after the move (see
+<a href="../../guides/security-records/#when-the-issue-moves">Security Records</a>).</p>
 <h3 id="the-deferred-queue">The deferred queue<a class="headerlink" href="#the-deferred-queue" title="Permanent link">&para;</a></h3>
 <p>Deferring parks an item that was evaluated but cannot move yet — it waits on
 an upstream release, another issue, a date, or capacity. It is a queue of its
@@ -17747,7 +17794,11 @@ nothing more:</p>
 <code>Docs task: &lt;ref&gt;</code>, and <code>Tasks filed: yes</code> (the latest of each wins) — and the
 epic body gains a <code>Planning: &lt;ref&gt;</code> line. <code>vrg-queue planning</code> reports an item
 <strong>ready to close</strong> once it is <code>in-progress</code>, all three markers are present, and
-the docs task is closed (its spec + plan PR merged).</p>
+the docs task is closed (its spec + plan PR merged). A planning item that a
+security advisory still tracks is <strong>held</strong> at in-progress, with a <code>held:</code> note,
+until <code>epic-create</code> retargets the advisory to the fix task(s); closing it
+earlier would close the advisory with the fix unwritten (see
+<a href="../../guides/security-records/#security-items-in-planning">Security items in planning</a>).</p>
 <p>Which planning item to expand next is decided in the <code>planning-review</code> skill:
 the human ranks the queue by priority and importance and picks only what will be
 implemented soon, since a plan left sitting goes stale. Each item is picked
@@ -17875,6 +17926,14 @@ up to date (see
 <td><code>retrospective</code></td>
 <td>Epic retrospective bookend; PR-workable, its docs PR publishes <code>retrospective.md</code></td>
 </tr>
+<tr>
+<td><code>security</code></td>
+<td>Has a private security record in the org's <code>.github</code> advisories (see <a href="../../guides/security-records/">Security Records</a>)</td>
+</tr>
+<tr>
+<td><code>security-disclosed</code></td>
+<td>Past issue that disclosed a security problem publicly; fixed, no private record</td>
+</tr>
 </tbody>
 </table>
 <p>The parent epic carries an issue's state, so no label restates it. <code>intake</code>,
@@ -17886,6 +17945,12 @@ items. The former intake kind labels <code>triage</code>, <code>idea</code>, and
 them from every open issue. They are no longer in the registry, and a label
 sync (<code>vrg-ensure-label --sync</code>) deletes them from any repo that still has
 them, which also strips them from any issue still carrying them.</p>
+<p><code>security</code> goes only on an issue paired with a private draft advisory:
+<code>vrg-security-record</code> applies it when it creates or attaches a record, and
+removes it from an issue the advisory stops tracking. The sweep's consistency
+check applies only to <code>security</code>; <code>security-disclosed</code> marks a past public
+disclosure and is ignored by the check (see
+<a href="../../guides/security-records/#the-labels">Security Records</a>).</p>
 <p><code>dependency-update</code> goes on PRs, not issues: <code>vrg-update-deps</code> and the
 <code>vrg-release</code> <code>update-deps</code> stage put it on every dependency-update PR
 they open, and create the label first if the repo does not have it.</p>
