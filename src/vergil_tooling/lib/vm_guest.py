@@ -412,7 +412,7 @@ def _marketplace_sources(settings: dict[str, Any]) -> list[str]:
     """Return the ``marketplace add`` sources needed for the enabled plugins.
 
     Primarily the ``extraKnownMarketplaces`` entries (each ``source`` -> an
-    add-arg: ``owner/repo``, a URL, or a path). Headless ``claude plugin
+    add-arg: ``owner/repo[@ref]``, a URL ``[#ref]``, or a path). Headless ``claude plugin
     marketplace update``/``list`` do NOT register these on a fresh box (#2021) —
     only ``marketplace add <source>`` clones the catalog.
 
@@ -426,7 +426,18 @@ def _marketplace_sources(settings: dict[str, Any]) -> list[str]:
     sources: list[str] = []
     for spec in extra.values():
         src = spec.get("source") or {}
-        arg = src.get("repo") or src.get("url") or src.get("path")
+        # #3751: keep a declared `ref`. Claude Code refuses an add whose source
+        # does not match the extraKnownMarketplaces entry (failureCode
+        # "declared"). A github repo pins with `@ref` (the form `marketplace
+        # list` shows); a git URL pins with `#ref` (Claude Code docs, "Add a
+        # marketplace"). A path has no ref.
+        ref = src.get("ref")
+        if src.get("repo"):
+            arg = f"{src['repo']}@{ref}" if ref else src["repo"]
+        elif src.get("url"):
+            arg = f"{src['url']}#{ref}" if ref else src["url"]
+        else:
+            arg = src.get("path")
         if arg:
             sources.append(arg)
     for pid in _enabled_plugin_ids(settings):

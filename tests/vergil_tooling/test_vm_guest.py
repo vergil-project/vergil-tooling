@@ -14,6 +14,7 @@ from vergil_tooling.lib.vm_guest import (
     _PRUNE_PROBE,
     VmUnreachableError,
     _inject_host_git_identity,
+    _marketplace_sources,
     _read_host_git_config,
     copy_claude_config,
     get_tooling_version,
@@ -922,6 +923,51 @@ class TestUpdatePlugins:
         assert find("marketplace add vergil-project/vergil-claude-plugin") < find(
             "plugin install vergil@vergil-marketplace"
         )
+
+    def test_marketplace_sources_keeps_github_ref(self) -> None:
+        # #3751: Claude Code refuses an add whose source does not match the
+        # declared extraKnownMarketplaces entry, so a github entry's `ref` must
+        # be kept (`<repo>@<ref>`); an entry with no ref stays the bare repo.
+        settings = {
+            "extraKnownMarketplaces": {
+                "vergil-marketplace": {
+                    "source": {
+                        "source": "github",
+                        "repo": "vergil-project/vergil-claude-plugin",
+                        "ref": "main",
+                    }
+                },
+                "paad": {"source": {"source": "github", "repo": "Ovid/paad"}},
+            },
+            "enabledPlugins": {},
+        }
+        assert _marketplace_sources(settings) == [
+            "vergil-project/vergil-claude-plugin@main",
+            "Ovid/paad",
+        ]
+
+    def test_marketplace_sources_keeps_git_url_ref(self) -> None:
+        # #3751: a git URL source pins its ref with `#ref` (Claude Code docs,
+        # "Add a marketplace"); without a ref the URL is passed unchanged.
+        settings = {
+            "extraKnownMarketplaces": {
+                "pinned": {
+                    "source": {
+                        "source": "git",
+                        "url": "https://example.com/y.git",
+                        "ref": "v1.0.0",
+                    }
+                },
+                "bare": {"source": {"source": "git", "url": "https://example.com/z.git"}},
+                "p": {"source": {"path": "./local-mp"}},
+            },
+            "enabledPlugins": {},
+        }
+        assert _marketplace_sources(settings) == [
+            "https://example.com/y.git#v1.0.0",
+            "https://example.com/z.git",
+            "./local-mp",
+        ]
 
     def test_marketplace_sources_handles_url_and_path_and_skips_sourceless(self) -> None:
         # #2021: non-github sources (url, path) are registered; entries with no
