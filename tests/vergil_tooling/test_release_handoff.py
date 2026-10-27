@@ -46,7 +46,7 @@ def test_consumer_refresh_stores_message_on_ctx() -> None:
         mock_config.return_value.publish.consumer_refresh = "uv tool install pkg@v<VERSION>"
         consumer_refresh(ctx)
     assert ctx.consumer_refresh_message is not None
-    assert "Consumer refresh commands:" in ctx.consumer_refresh_message
+    assert "Consumer refresh commands for v2.1.0:" in ctx.consumer_refresh_message
     assert "uv tool install pkg@v2.1.0" in ctx.consumer_refresh_message
 
 
@@ -87,7 +87,7 @@ def test_consumer_refresh_none_stores_no_commands() -> None:
 def test_run_consumer_refresh_executes_via_bash_failfast() -> None:
     with patch(_MOD + ".subprocess.run") as mock_run:
         mock_run.return_value.returncode = 0
-        rc = run_consumer_refresh("uv tool install pkg\nvrg-vm update --all")
+        rc = run_consumer_refresh("uv tool install pkg\nvrg-vm update --all", "2.1.0")
     assert rc == 0
     cmd = mock_run.call_args.args[0]
     assert cmd[0] == "bash"
@@ -103,12 +103,22 @@ def test_run_consumer_refresh_returns_failure_code(
 ) -> None:
     with patch(_MOD + ".subprocess.run") as mock_run:
         mock_run.return_value.returncode = 3
-        rc = run_consumer_refresh("false")
+        rc = run_consumer_refresh("false", "2.1.0")
     assert rc == 3
     err = capsys.readouterr().err
     assert "install commands failed" in err
     # The release itself is not implicated by a failed local refresh.
     assert "release itself completed" in err
+
+
+def test_run_consumer_refresh_header_names_version(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with patch(_MOD + ".subprocess.run") as mock_run:
+        mock_run.return_value.returncode = 0
+        run_consumer_refresh("uv tool install pkg", "2.1.44")
+    out = capsys.readouterr().out
+    assert "--install: running consumer-refresh commands for v2.1.44:" in out
 
 
 # -- consumer_refresh holds when publish is deferred (issue #1853) --
