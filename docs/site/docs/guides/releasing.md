@@ -92,6 +92,9 @@ adding new public surface. Versions: `v1.3.0` → `v1.3.1`.
      [package config reference](../reference/package-config.md#cd).
 4. Act on the consumer-refresh commands `vrg-release` prints at the end
    (or pass `--install` to have it run them after a clean release).
+   A clean run names the released tag in its completion line
+   (`✓  vrg-release v1.3.1 complete`) and in the
+   `Consumer refresh commands for v1.3.1:` header.
 5. Check the end of the run for the `update-deps` result. A failed
    dependency update does not fail the release, but it leaves an open
    PR that blocks the next one; see

@@ -62,11 +62,21 @@ def main(argv: list[str] | None = None) -> int:
         resume_version=resume_version,
         resume_issue_number=resume_issue_number,
     )
+
+    def success_label() -> str | None:
+        # Name the cut tag in the completion line (issue #3753). The version
+        # comes from the release context preflight built; before that there
+        # is no version, so keep the plain label rather than guess.
+        if state.ctx is None:
+            return None
+        return f"vrg-release v{state.ctx.version}"
+
     rc = progress.run_pipeline(
         state,
         build_stages(),
         command="vrg-release",
         label="vrg-release",
+        success_label=success_label,
         args=args,
         repo_root=repo_root,
     )
@@ -82,15 +92,16 @@ def main(argv: list[str] | None = None) -> int:
     # a failed pipeline must not trigger an install — and only after the
     # message above has been printed, so the human sees what is about to run.
     if args.install and rc == 0:
-        commands = state.ctx.consumer_refresh_commands if state.ctx is not None else None
-        if not commands:
+        ctx = state.ctx
+        commands = ctx.consumer_refresh_commands if ctx is not None else None
+        if ctx is None or not commands:
             print(
                 "vrg-release: --install was given but no [publish].consumer-refresh "
                 "is configured; nothing to run.",
                 file=sys.stderr,
             )
             return 1
-        return run_consumer_refresh(commands)
+        return run_consumer_refresh(commands, ctx.version)
     return rc
 
 

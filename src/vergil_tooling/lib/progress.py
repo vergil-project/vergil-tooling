@@ -150,8 +150,16 @@ def build_summary(
     results: Sequence[StageResult],
     total_elapsed: float,
     log_path: Path,
+    *,
+    success_label: str | None = None,
 ) -> str:
-    """Build the plain-text final summary shared by all renderers."""
+    """Build the plain-text final summary shared by all renderers.
+
+    *success_label*, when given, replaces *label* in the clean-completion
+    line only (e.g. ``vrg-release v2.1.44``); the with-errors line always
+    uses the plain *label* so a failed run never names what it did not
+    finish (issue #3753).
+    """
     warnings = [r for r in results if r.status in ("warn", "skipped")]
     failures = [r for r in results if r.status in ("failed", "interrupted")]
     lines = [_RULE]
@@ -166,7 +174,8 @@ def build_summary(
         lines.append(f"{label} completed with errors  (total: {format_total(total_elapsed)})")
         lines.append(f"PipelineError: {PipelineError(failures)} · exit 1")
     else:
-        lines.append(f"✓  {label} complete  (total: {format_total(total_elapsed)})")
+        done = success_label or label
+        lines.append(f"✓  {done} complete  (total: {format_total(total_elapsed)})")
     lines.append(f"   full log → {log_path}")
     return "\n".join(lines)
 
@@ -507,8 +516,13 @@ def run_pipeline(
     label: str,
     args: argparse.Namespace,
     repo_root: Path,
+    success_label: Callable[[], str | None] | None = None,
 ) -> int:
     """Run *stages* in order with progress rendering and full logging.
+
+    *success_label* is called once, after the stages finish, to supply the
+    clean-completion label from state a stage produced (e.g. the version
+    vrg-release cut). Returning ``None`` keeps the plain *label*.
 
     Returns 0 on success, 1 if any fail_defer/fail_fast stage failed,
     130 on KeyboardInterrupt.
@@ -584,7 +598,13 @@ def run_pipeline(
                 results.append(result)
     finally:
         _session = None
-        text = build_summary(label, results, time.monotonic() - start_total, log.path)
+        text = build_summary(
+            label,
+            results,
+            time.monotonic() - start_total,
+            log.path,
+            success_label=success_label() if success_label is not None else None,
+        )
         renderer.summary(text)
         renderer.close()
         log.write(text)

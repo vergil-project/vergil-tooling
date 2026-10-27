@@ -144,6 +144,30 @@ def test_build_summary_success(tmp_path: Path) -> None:
     assert "PipelineError" not in text
 
 
+def test_build_summary_success_label_overrides_completion_line(tmp_path: Path) -> None:
+    text = progress.build_summary(
+        "vrg-release",
+        [StageResult("changelog", "ok", 3.2)],
+        58.0,
+        tmp_path / "x.log",
+        success_label="vrg-release v2.1.44",
+    )
+    assert "✓  vrg-release v2.1.44 complete  (total: 00:58)" in text
+
+
+def test_build_summary_success_label_not_used_on_failure(tmp_path: Path) -> None:
+    """A failed run never claims the version was released."""
+    text = progress.build_summary(
+        "vrg-release",
+        _results_mixed(),
+        61.0,
+        tmp_path / "x.log",
+        success_label="vrg-release v2.1.44",
+    )
+    assert "vrg-release completed with errors  (total: 01:01)" in text
+    assert "v2.1.44" not in text
+
+
 def test_plain_renderer_lifecycle() -> None:
     out = io.StringIO()
     r = progress.PlainRenderer(out)
@@ -478,6 +502,42 @@ def test_pipeline_fail_fast_stops(tmp_path: Path) -> None:
     ]
     assert _pipeline(tmp_path, stages, _args()) == 1
     assert calls == []
+
+
+def test_pipeline_success_label_resolved_after_stages(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The success label is read at summary time, so a stage can supply it."""
+    state: dict[str, str] = {}
+    stages = [Stage("one", lambda ctx: state.update(v="2.1.44"), mode="fail_fast")]
+    rc = progress.run_pipeline(
+        None,
+        stages,
+        command="test-cmd",
+        label="test",
+        success_label=lambda: f"test v{state['v']}" if "v" in state else None,
+        args=_args(),
+        repo_root=tmp_path,
+    )
+    assert rc == 0
+    assert "✓  test v2.1.44 complete" in capsys.readouterr().out
+
+
+def test_pipeline_success_label_none_keeps_plain_label(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    stages = [Stage("one", lambda ctx: None, mode="fail_fast")]
+    rc = progress.run_pipeline(
+        None,
+        stages,
+        command="test-cmd",
+        label="test",
+        success_label=lambda: None,
+        args=_args(),
+        repo_root=tmp_path,
+    )
+    assert rc == 0
+    assert "✓  test complete" in capsys.readouterr().out
 
 
 def test_pipeline_warn_does_not_affect_exit(
