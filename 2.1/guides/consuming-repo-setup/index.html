@@ -1346,6 +1346,8 @@
       
         
       
+        
+      
     
     
     
@@ -1398,6 +1400,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.275/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.275
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15690,6 +15720,8 @@
       
         
       
+        
+      
     
     
     
@@ -15806,6 +15838,34 @@
     
   
     Permission Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../claude-config-ownership/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Claude Config Ownership
   
 
     
@@ -17004,11 +17064,10 @@ No per-clone configuration is required.</p>
 branch prefix, issue number) live in <code>vrg-commit</code> itself. See the
 <a href="../../reference/hooks/pre-commit/">Claude Code Hook Guard reference</a>.</p>
 <h3 id="claudesettingsjson"><code>.claude/settings.json</code><a class="headerlink" href="#claudesettingsjson" title="Permanent link">&para;</a></h3>
-<p><code>vrg-github-repo-init</code> writes <code>.claude/settings.json</code> from the
-packaged template
-<a href="https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/data/claude_settings.json"><code>claude_settings.json</code></a>
-and pins the plugin marketplace to <code>ref: "main"</code>, the plugin's single
-released channel. It has four parts:</p>
+<p><code>vrg-github-repo-init</code> writes <code>.claude/settings.json</code> as the packaged
+template
+<a href="https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/data/claude_settings.json"><code>claude_settings.json</code></a>,
+unchanged. It has four parts:</p>
 <table>
 <thead>
 <tr>
@@ -17026,8 +17085,8 @@ released channel. It has four parts:</p>
 <td>Runs <code>${CLAUDE_PROJECT_DIR}/.claude/hooks/guard.sh</code> on every <code>Bash</code> tool call.</td>
 </tr>
 <tr>
-<td><code>extraKnownMarketplaces</code> / <code>enabledPlugins</code></td>
-<td>Declares the <code>vergil-marketplace</code> marketplace (<code>vergil-project/vergil-claude-plugin</code>, <code>ref: "main"</code>) and enables <code>vergil@vergil-marketplace</code>.</td>
+<td><code>enabledPlugins</code></td>
+<td>Enables <code>vergil@vergil-marketplace</code>. The <code>vergil-marketplace</code> definition (<code>vergil-project/vergil-claude-plugin</code>, <code>ref: "main"</code>) lives only in the user settings: a second definition in the repo file would replace the user's whole entry.</td>
 </tr>
 <tr>
 <td><code>attribution</code></td>
@@ -17044,8 +17103,11 @@ uses empty strings, which work on every Claude Code version:</p>
 </code></pre></div>
 <p>Commit the file. Any Claude Code session opened in the repo then
 loads the hook guard and the plugin. <code>vrg-github-repo-config audit</code>
-checks the marketplace entry, its <code>ref</code>, the enabled plugin and the
-<code>attribution</code> block against the template.</p>
+requires the file to equal the template after JSON parsing (see
+<a href="../../reference/config-audit/">GitHub Config Audit</a>).
+For which file owns each
+Claude Code setting, see
+<a href="../claude-config-ownership/">Claude Config Ownership</a>.</p>
 <p>The plugin adds these hooks:</p>
 <ul>
 <li><strong>PreToolUse on <code>Bash</code></strong> — blocks raw <code>git commit</code>, raw

@@ -1346,6 +1346,8 @@
       
         
       
+        
+      
     
     
     
@@ -1398,6 +1400,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.275/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.275
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -12761,10 +12791,21 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#_check_claude_settings-attribution" class="md-nav__link">
+  <a href="#_check_claude_settings-the-whole-file" class="md-nav__link">
     <span class="md-ellipsis">
       
-        _check_claude_settings — attribution
+        _check_claude_settings — the whole file
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-template-bridge" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The template bridge
       
     </span>
   </a>
@@ -15923,6 +15964,8 @@
       
         
       
+        
+      
     
     
     
@@ -16039,6 +16082,34 @@
     
   
     Permission Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/claude-config-ownership/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Claude Config Ownership
   
 
     
@@ -16511,10 +16582,21 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#_check_claude_settings-attribution" class="md-nav__link">
+  <a href="#_check_claude_settings-the-whole-file" class="md-nav__link">
     <span class="md-ellipsis">
       
-        _check_claude_settings — attribution
+        _check_claude_settings — the whole file
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-template-bridge" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The template bridge
       
     </span>
   </a>
@@ -16745,11 +16827,11 @@ divergence:</p>
 </tr>
 <tr>
 <td><code>_check_claude_md</code></td>
-<td><code>CLAUDE.md</code> carries the canonical consumer template verbatim</td>
+<td><code>CLAUDE.md</code>'s marked template region (or, in the legacy no-marker form, the file) carries the canonical consumer template verbatim; the previous template passes with a warning during the <a href="#the-template-bridge">bridge</a></td>
 </tr>
 <tr>
 <td><code>_check_claude_settings</code></td>
-<td><code>.claude/settings.json</code> marketplace, <code>enabledPlugins</code> and <code>attribution</code> match the template</td>
+<td><code>.claude/settings.json</code> equals the template after JSON parsing; the previous template passes with a warning during the <a href="#the-template-bridge">bridge</a></td>
 </tr>
 <tr>
 <td><code>_check_workflow_refs</code></td>
@@ -16769,24 +16851,64 @@ divergence:</p>
 </tr>
 </tbody>
 </table>
-<h3 id="_check_claude_settings-attribution"><code>_check_claude_settings</code> — attribution<a class="headerlink" href="#_check_claude_settings-attribution" title="Permanent link">&para;</a></h3>
-<p><code>.claude/settings.json</code> must carry exactly:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">"attribution"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">"commit"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span><span class="p">,</span><span class="w"> </span><span class="nt">"pr"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span><span class="w"> </span><span class="p">}</span>
-</code></pre></div>
-<p>This turns off Claude Code's AI <code>Co-Authored-By</code> trailer on commits and
-PRs; AI co-author attribution is not used
+<h3 id="_check_claude_settings-the-whole-file"><code>_check_claude_settings</code> — the whole file<a class="headerlink" href="#_check_claude_settings-the-whole-file" title="Permanent link">&para;</a></h3>
+<p><code>.claude/settings.json</code> must equal the packaged template,
+<a href="https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/data/claude_settings.json"><code>claude_settings.json</code></a>,
+after JSON parsing: key order and whitespace don't matter, but every key
+and value does, and no other key may appear. The template holds the guard
+<code>PreToolUse</code> hook, <code>permissions.allow: ["Bash(vrg-*)"]</code>,
+<code>enabledPlugins: {"vergil@vergil-marketplace": true}</code> and
+<code>attribution: {"commit": "", "pr": ""}</code>. It holds no
+<code>extraKnownMarketplaces</code>: the marketplace is defined only in the user
+settings (see the
+<a href="../../guides/claude-config-ownership/">ownership model</a>).</p>
+<p><code>attribution</code> turns off Claude Code's AI <code>Co-Authored-By</code> trailer
 (<a href="https://github.com/vergil-project/vergil-tooling/issues/3200">#3200</a>).
-The empty-string form is required: <code>attribution: false</code> needs a newer
-Claude Code and makes older versions skip the whole settings file. A
-missing or different value is a hard failure,
-<code>DiffItem(field="local.claude_settings.attribution", ...)</code>, whose
-expected value names the key and #3200. Fix it by adding the block above
-to the repo's checked-in <code>.claude/settings.json</code>.</p>
-<p>The check was warning-only while the fleet was swept and became strict
-in <a href="https://github.com/vergil-project/vergil-tooling/issues/3361">#3361</a>.
-There is no exemption for dormant repos: a dormant repo whose nightly
-audit still runs fails until the key is added. Each dormant repo carries
-a backlog issue to add the key when it is revived.</p>
+Its empty-string form is required: <code>attribution: false</code> needs a newer
+Claude Code and makes older versions skip the whole settings file.</p>
+<p>Any other content is one
+<code>DiffItem(field="local.claude_settings", ...)</code> whose actual value names
+each top-level key that is missing, unexpected or different. Fix it by
+copying the template into the repo.</p>
+<h3 id="the-template-bridge">The template bridge<a class="headerlink" href="#the-template-bridge" title="Permanent link">&para;</a></h3>
+<p>The <code>CLAUDE.md</code> template region and <code>.claude/settings.json</code> changed shape
+under epic
+<a href="https://github.com/vergil-project/.github/issues/558">vergil-project/.github#558</a>.
+A release does not rewrite any repo's files, so until the bridge-removal
+PR (<a href="https://github.com/vergil-project/vergil-tooling/issues/3728">#3728</a>)
+merges, both checks accept three shapes:</p>
+<table>
+<thead>
+<tr>
+<th>Shape</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>the current template</td>
+<td>compliant, no warning</td>
+</tr>
+<tr>
+<td>the previous template (<code>claude_md_consumer_previous.md</code>, <code>claude_settings_previous.json</code>)</td>
+<td>compliant, with a deprecation warning</td>
+</tr>
+<tr>
+<td>anything else</td>
+<td>one <code>DiffItem</code>, reported against the current template</td>
+</tr>
+</tbody>
+</table>
+<p>The <code>CLAUDE.md</code> rule applies both to the marked region and to the legacy
+no-marker form, which must contain one of the templates verbatim. The
+previous settings template is the old file with the marketplace <code>ref</code>
+seeded at <code>main</code>, as every swept repo carries it. The warnings read:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>.claude/settings.json matches the previous template; replace it with the current template (epic vergil-project/.github#558).
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>CLAUDE.md template region matches the previous template; replace it with the current template (epic vergil-project/.github#558).
+</code></pre></div>
+<p>Each repo's sweep replaces both files with the current template. The
+bridge-removal PR then deletes the previous templates and the legacy
+no-marker path, and the warning becomes a <code>DiffItem</code>.</p>
 <h3 id="_check_gitignore-managed-fence"><code>_check_gitignore</code> — managed fence<a class="headerlink" href="#_check_gitignore-managed-fence" title="Permanent link">&para;</a></h3>
 <p>The repo's <code>.gitignore</code> must carry the vergil-managed fence for its
 resolved language (see
@@ -17043,6 +17165,9 @@ undeclared parameter. It is reported as <code>.rules</code> value drift.</p>
   — how the audit gates required-check drift and <code>vrg-release</code></li>
 <li><a href="../cli-tools-overview/#vrg-github-repo-config">CLI Tools Overview</a> —
   runtime preconditions and failure modes</li>
+<li><a href="../../guides/claude-config-ownership/">Claude Config Ownership</a> — the
+  ownership model the <code>CLAUDE.md</code> and <code>.claude/settings.json</code> checks
+  enforce</li>
 </ul>
 
 

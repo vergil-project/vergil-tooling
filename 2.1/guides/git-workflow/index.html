@@ -1346,6 +1346,8 @@
       
         
       
+        
+      
     
     
     
@@ -1398,6 +1400,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.275/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.275
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15690,6 +15720,8 @@
       
         
       
+        
+      
     
     
     
@@ -15806,6 +15838,34 @@
     
   
     Permission Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../claude-config-ownership/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Claude Config Ownership
   
 
     
@@ -17065,9 +17125,10 @@ block, so worktrees never show up as untracked files.</p>
 inside the worktree. The session's initial CWD determines the memory
 slug; starting inside a worktree creates a separate memory silo and
 loses shared project context.</p>
-<p>Then give the agent the canonical prompt. The template lives in each
-repo's CLAUDE.md under "Parallel AI agent development → Agent prompt
-contract"; filled in, it reads:</p>
+<p>Then give the agent the canonical prompt. The template is the
+<a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/worktree-convention.md#agent-prompt-contract">Agent prompt contract</a>
+in the worktree convention, which each repo's CLAUDE.md links to;
+filled in, it reads:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>You are working on issue #42: Add LRU cache to pipeline.
 <a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>
 <a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>Your worktree is: &lt;project-root&gt;/.worktrees/issue-42-add-caching/

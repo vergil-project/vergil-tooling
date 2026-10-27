@@ -1346,6 +1346,8 @@
       
         
       
+        
+      
     
     
     
@@ -1398,6 +1400,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../releases/v2.1.275/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.275
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15792,6 +15822,8 @@
       
         
       
+        
+      
     
     
     
@@ -15908,6 +15940,34 @@
     
   
     Permission Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/claude-config-ownership/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Claude Config Ownership
   
 
     
@@ -16527,9 +16587,11 @@ resulting commits and land them through a PR.</p>
 </tr>
 </tbody>
 </table>
-<p><code>.claude/settings.json</code> is generated from the packaged template
+<p><code>.claude/settings.json</code> is the packaged template
 <a href="https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/data/claude_settings.json"><code>claude_settings.json</code></a>,
-with the plugin marketplace pinned to <code>ref: "main"</code>. Its
+unchanged. It enables the plugin but does not define its marketplace,
+which lives in your user settings (see
+<a href="../guides/claude-config-ownership/">Claude Config Ownership</a>). Its
 <code>attribution</code> block is what keeps Claude Code from adding an AI
 co-author trailer to commits and PRs; AI co-author attribution is not
 used (#3200):</p>
