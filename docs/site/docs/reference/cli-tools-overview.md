@@ -51,6 +51,10 @@ their committer (the author is kept), so the tool first prints a note on
 stderr naming the affected commits. A body carrying a GitHub auto-close keyword is refused,
 as in `vrg-commit`.
 
+It also refuses a branch that has been reported ready, because that branch is
+frozen; `vrg-pr-workflow unfreeze` is the way back (see the freeze in
+[`vrg-pr-workflow`](#vrg-pr-workflow)).
+
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_reword` |
@@ -944,13 +948,17 @@ vergil-tooling is installed and otherwise falls back to a `jq`-based hard
 deny; and the vergil-claude-plugin provides the same guard through its
 own hooks. See [Claude Code Hook Guard](hooks/pre-commit.md).
 
+Inside a managed repository it fails closed: a call whose hook input it cannot
+parse or check is refused (see
+[Malformed input fails closed](hooks/pre-commit.md#malformed-input-fails-closed)).
+
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_hook_guard` |
 | Args | None (hook JSON on stdin) |
 | Preconditions | Run by Claude Code as a `PreToolUse` hook |
-| Failure mode | A deny decision as JSON on stdout; anything else allows the command |
-| Exit codes | 0 |
+| Failure mode | A deny decision as JSON on stdout for raw `git`/`gh`; in a managed repository, malformed input is refused with a message on stderr; anything else allows the command |
+| Exit codes | 0 allow or deny decision, 2 malformed input refused (fails closed) |
 | Status | Active |
 
 ### vrg-ensure-label
