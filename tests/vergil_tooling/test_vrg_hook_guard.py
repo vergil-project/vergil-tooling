@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
@@ -353,46 +355,244 @@ class TestNonGitCommands:
 # -- edge cases and error handling --------------------------------------------
 
 
-class TestEdgeCases:
-    def test_missing_tool_input(self) -> None:
-        hook_input = json.dumps({"cwd": "/repo", "hook_event_name": "PreToolUse"})
-        toml_path = Path("/repo/vergil.toml")
-        with (
-            patch("sys.stdin", StringIO(hook_input)),
-            patch("vergil_tooling.bin.vrg_hook_guard._find_vergil_toml", return_value=toml_path),
-        ):
-            buf = StringIO()
-            with patch("sys.stdout", buf):
-                rc = main()
-        assert rc == 0
-        assert buf.getvalue() == ""
+def _run_raw(raw: str, *, managed: bool = True) -> tuple[int, str, str, list[Path]]:
+    """Run the guard on raw stdin; return rc, stdout, stderr and scope dirs probed."""
+    probed: list[Path] = []
 
-    def test_missing_command_in_tool_input(self) -> None:
-        hook_input = json.dumps(
-            {
-                "cwd": "/repo",
-                "hook_event_name": "PreToolUse",
-                "tool_input": {},
-            }
+    def fake_find(start: Path) -> Path | None:
+        probed.append(start)
+        return start / "vergil.toml" if managed else None
+
+    out, err = StringIO(), StringIO()
+    with (
+        patch("sys.stdin", StringIO(raw)),
+        patch("vergil_tooling.bin.vrg_hook_guard._find_vergil_toml", side_effect=fake_find),
+        patch("sys.stdout", out),
+        patch("sys.stderr", err),
+    ):
+        rc = main()
+    return rc, out.getvalue(), err.getvalue(), probed
+
+
+def _assert_fail_closed(rc: int, out: str, err: str, problem: str) -> None:
+    # Exit 2 is Claude Code's blocking exit code for a PreToolUse hook: the
+    # tool call is refused and stderr is fed back to the agent.
+    assert rc == 2
+    assert out == ""
+    assert err.startswith("vrg-hook-guard: ")
+    assert problem in err
+    assert "fail" in err  # names the fail-closed behaviour
+
+
+class TestFailClosedOnMalformedInput:
+    def test_malformed_json_denied(self) -> None:
+        rc, out, err, _ = _run_raw("not json")
+        _assert_fail_closed(rc, out, err, "not valid JSON")
+
+    def test_truncated_json_denied(self) -> None:
+        rc, out, err, _ = _run_raw('{"tool_input": {"command": "git sta')
+        _assert_fail_closed(rc, out, err, "not valid JSON")
+
+    def test_empty_stdin_denied(self) -> None:
+        rc, out, err, _ = _run_raw("")
+        _assert_fail_closed(rc, out, err, "empty")
+
+    def test_whitespace_only_stdin_denied(self) -> None:
+        rc, out, err, _ = _run_raw("  \n\t ")
+        _assert_fail_closed(rc, out, err, "empty")
+
+    def test_non_object_json_denied(self) -> None:
+        rc, out, err, _ = _run_raw('["git", "status"]')
+        _assert_fail_closed(rc, out, err, "not a JSON object")
+
+    def test_missing_tool_input_denied(self) -> None:
+        raw = json.dumps({"cwd": "/repo", "hook_event_name": "PreToolUse", "tool_name": "Bash"})
+        rc, out, err, _ = _run_raw(raw)
+        _assert_fail_closed(rc, out, err, "tool_input")
+
+    def test_non_object_tool_input_denied(self) -> None:
+        raw = json.dumps({"cwd": "/repo", "tool_name": "Bash", "tool_input": "git status"})
+        rc, out, err, _ = _run_raw(raw)
+        _assert_fail_closed(rc, out, err, "tool_input")
+
+    def test_missing_command_denied(self) -> None:
+        raw = json.dumps({"cwd": "/repo", "tool_name": "Bash", "tool_input": {}})
+        rc, out, err, _ = _run_raw(raw)
+        _assert_fail_closed(rc, out, err, "tool_input.command")
+
+    def test_null_command_denied(self) -> None:
+        raw = json.dumps({"cwd": "/repo", "tool_name": "Bash", "tool_input": {"command": None}})
+        rc, out, err, _ = _run_raw(raw)
+        _assert_fail_closed(rc, out, err, "tool_input.command")
+
+    def test_non_string_command_denied(self) -> None:
+        raw = json.dumps({"cwd": "/repo", "tool_name": "Bash", "tool_input": {"command": ["git"]}})
+        rc, out, err, _ = _run_raw(raw)
+        _assert_fail_closed(rc, out, err, "tool_input.command")
+
+    def test_unreadable_stdin_denied(self) -> None:
+        class _Broken(StringIO):
+            def read(self, size: int | None = -1) -> str:
+                raise OSError("stdin closed")
+
+        err = StringIO()
+        with (
+            patch("sys.stdin", _Broken()),
+            patch(
+                "vergil_tooling.bin.vrg_hook_guard._find_vergil_toml",
+                return_value=Path("/repo/vergil.toml"),
+            ),
+            patch("sys.stdout", StringIO()) as out,
+            patch("sys.stderr", err),
+        ):
+            rc = main()
+        _assert_fail_closed(rc, out.getvalue(), err.getvalue(), "could not read")
+
+    def test_non_utf8_stdin_denied(self) -> None:
+        class _BadBytes(StringIO):
+            def read(self, size: int | None = -1) -> str:
+                raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+        err = StringIO()
+        with (
+            patch("sys.stdin", _BadBytes()),
+            patch(
+                "vergil_tooling.bin.vrg_hook_guard._find_vergil_toml",
+                return_value=Path("/repo/vergil.toml"),
+            ),
+            patch("sys.stdout", StringIO()) as out,
+            patch("sys.stderr", err),
+        ):
+            rc = main()
+        _assert_fail_closed(rc, out.getvalue(), err.getvalue(), "could not read")
+
+
+class TestMalformedInputScope:
+    """Out-of-scope pass-through is unchanged: no vergil.toml, no denial."""
+
+    def test_malformed_json_outside_managed_repo_allowed(self) -> None:
+        rc, out, err, probed = _run_raw("not json", managed=False)
+        assert (rc, out, err) == (0, "", "")
+        # Unparseable input names no cwd, so scope falls back to the
+        # hook process's own working directory (the session cwd).
+        assert probed == [Path()]
+
+    def test_empty_stdin_outside_managed_repo_allowed(self) -> None:
+        rc, out, err, _ = _run_raw("", managed=False)
+        assert (rc, out, err) == (0, "", "")
+
+    def test_missing_command_outside_managed_repo_allowed(self) -> None:
+        raw = json.dumps({"cwd": "/elsewhere", "tool_name": "Bash", "tool_input": {}})
+        rc, out, err, probed = _run_raw(raw, managed=False)
+        assert (rc, out, err) == (0, "", "")
+        assert probed == [Path("/elsewhere")]
+
+    def test_scope_uses_payload_cwd_when_tool_input_malformed(self) -> None:
+        raw = json.dumps({"cwd": "/repo", "tool_name": "Bash", "tool_input": "x"})
+        _, _, _, probed = _run_raw(raw)
+        assert probed == [Path("/repo")]
+
+    def test_scope_prefers_tool_input_cwd(self) -> None:
+        raw = json.dumps(
+            {"cwd": "/outer", "tool_name": "Bash", "tool_input": {"cwd": "/inner", "command": "ls"}}
         )
-        toml_path = Path("/repo/vergil.toml")
-        with (
-            patch("sys.stdin", StringIO(hook_input)),
-            patch("vergil_tooling.bin.vrg_hook_guard._find_vergil_toml", return_value=toml_path),
-        ):
-            buf = StringIO()
-            with patch("sys.stdout", buf):
-                rc = main()
-        assert rc == 0
-        assert buf.getvalue() == ""
+        rc, out, err, probed = _run_raw(raw)
+        assert (rc, out, err) == (0, "", "")
+        assert probed == [Path("/inner")]
 
-    def test_invalid_json_exits_zero(self) -> None:
-        with patch("sys.stdin", StringIO("not json")):
-            buf = StringIO()
-            with patch("sys.stdout", buf):
-                rc = main()
+    def test_non_string_cwd_falls_back_to_process_cwd(self) -> None:
+        raw = json.dumps({"cwd": 7, "tool_name": "Bash", "tool_input": {"command": "ls"}})
+        rc, out, err, probed = _run_raw(raw)
+        assert (rc, out, err) == (0, "", "")
+        assert probed == [Path()]
+
+    def test_missing_cwd_falls_back_to_process_cwd(self) -> None:
+        raw = json.dumps({"tool_name": "Bash", "tool_input": {"command": "git status"}})
+        rc, out, _, probed = _run_raw(raw)
         assert rc == 0
-        assert buf.getvalue() == ""
+        assert json.loads(out)["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert probed == [Path()]
+
+
+class TestWellFormedInputUnchanged:
+    def test_empty_command_string_allowed(self) -> None:
+        raw = json.dumps({"cwd": "/repo", "tool_name": "Bash", "tool_input": {"command": ""}})
+        assert _run_raw(raw)[:3] == (0, "", "")
+
+    def test_non_bash_tool_passes_through(self) -> None:
+        # The guard governs Bash only; a well-formed payload for another tool
+        # (a misconfigured matcher) carries no command and is not malformed.
+        raw = json.dumps({"cwd": "/repo", "tool_name": "Read", "tool_input": {"file_path": "/x"}})
+        assert _run_raw(raw)[:3] == (0, "", "")
+
+    def test_payload_without_tool_name_still_checked(self) -> None:
+        raw = json.dumps({"cwd": "/repo", "tool_input": {"command": "gh pr list"}})
+        rc, out, err, _ = _run_raw(raw)
+        assert rc == 0
+        assert err == ""
+        assert json.loads(out)["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    def test_well_formed_allow_has_no_stderr(self) -> None:
+        raw = _make_hook_input("vrg-git status")
+        assert _run_raw(raw)[:3] == (0, "", "")
+
+
+# -- end to end: a real process, a real vergil.toml, no mocks -----------------
+
+_ENTRY = "import sys; from vergil_tooling.bin.vrg_hook_guard import main; sys.exit(main())"
+
+
+def _spawn(raw: str, cwd: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(  # noqa: S603 - fixed interpreter and argv
+        [sys.executable, "-c", _ENTRY],
+        input=raw,
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+class TestEndToEnd:
+    @pytest.fixture
+    def managed(self, tmp_path: Path) -> Path:
+        (tmp_path / "vergil.toml").write_text("[project]\n")
+        return tmp_path
+
+    @pytest.fixture
+    def unmanaged(self, tmp_path: Path) -> Path:
+        path = tmp_path / "plain"
+        path.mkdir()
+        return path
+
+    @pytest.mark.parametrize("raw", ["not json", "", '{"tool_name": "Bash", "tool_input": {}}'])
+    def test_malformed_input_blocks_in_managed_repo(self, managed: Path, raw: str) -> None:
+        proc = _spawn(raw, managed)
+        assert proc.returncode == 2
+        assert proc.stdout == ""
+        assert proc.stderr.startswith("vrg-hook-guard: blocked: ")
+
+    @pytest.mark.parametrize("raw", ["not json", "", '{"tool_name": "Bash", "tool_input": {}}'])
+    def test_malformed_input_passes_outside_managed_repo(self, unmanaged: Path, raw: str) -> None:
+        assert _find_vergil_toml(unmanaged) is None, "tmp_path sits under a vergil.toml"
+        proc = _spawn(raw, unmanaged)
+        assert (proc.returncode, proc.stdout, proc.stderr) == (0, "", "")
+
+    def test_raw_git_denied_via_json(self, managed: Path) -> None:
+        proc = _spawn(_make_hook_input("git status", cwd=str(managed)), managed)
+        assert proc.returncode == 0
+        assert proc.stderr == ""
+        decision = json.loads(proc.stdout)["hookSpecificOutput"]["permissionDecision"]
+        assert decision == "deny"
+
+    def test_wrapper_allowed(self, managed: Path) -> None:
+        proc = _spawn(_make_hook_input("vrg-git status", cwd=str(managed)), managed)
+        assert (proc.returncode, proc.stdout, proc.stderr) == (0, "", "")
+
+    def test_raw_git_allowed_outside_managed_repo(self, unmanaged: Path) -> None:
+        assert _find_vergil_toml(unmanaged) is None, "tmp_path sits under a vergil.toml"
+        proc = _spawn(_make_hook_input("git status", cwd=str(unmanaged)), unmanaged)
+        assert (proc.returncode, proc.stdout, proc.stderr) == (0, "", "")
 
 
 # -- _find_vergil_toml --------------------------------------------------------

@@ -7,6 +7,33 @@ The hook guard is a Claude Code `PreToolUse` hook that blocks raw
 `vrg-hook-guard` (when vergil-tooling is installed) or falls back
 to a `jq`-based hard deny.
 
+## Malformed input fails closed
+
+Inside a repository with a `vergil.toml`, the guard refuses any tool
+call it cannot check instead of letting it through. That covers
+unreadable or empty stdin, input that is not valid JSON or is not a
+JSON object, and a `Bash` payload with no `tool_input.command`
+string. The guard exits with code 2, the `PreToolUse` blocking exit
+code, so Claude Code refuses the call and shows the agent a stderr
+message that names the problem:
+
+```text
+vrg-hook-guard: blocked: the hook input is not valid JSON (...). The guard cannot check this call for raw git/gh, so it fails closed and refuses it. ...
+```
+
+A raw `git` or `gh` command in well-formed input is denied as before,
+with a JSON `permissionDecision: "deny"` on stdout and exit 0.
+Behaviour on well-formed input is unchanged. That includes an empty
+command string, which is allowed, and a payload for a tool other than
+`Bash`, which passes through. Outside a managed repository the guard
+still allows everything, malformed input included. When the input
+names no usable `cwd`, the managed-repo check uses the hook process's
+own working directory.
+
+The shim's `jq` fallback behaves the same way. It also refuses every
+call, with exit code 2, when neither `vrg-hook-guard` nor `jq` is
+installed.
+
 The five branch/context checks below live in `vrg-commit` itself and
 run before `git commit` is invoked:
 
