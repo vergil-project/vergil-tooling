@@ -221,8 +221,9 @@ These commands read or move records as part of their own work:
   an advisory between `draft` and `closed`: it never changes a
   `published`, `withdrawn` or `triage` advisory, or an unpaired external
   report, which it lists as `unpaired external report (left untouched)`.
-  Its summary line is `Security records: <n> advisory state(s) synced, <m>
-  broken pair(s).` It exits 1 when any pair is broken (after syncing the
+  Its summary line is `Security records: <n> advisory states synced, <m>
+  broken pairs.` Each noun agrees with its count, so a count of 1 reads
+  `1 advisory state synced` or `1 broken pair`. It exits 1 when any pair is broken (after syncing the
   rest), or when the pass fails, including when the org's `.github` is
   private. An org with no `security` issues and no `.github` repo prints
   `Security records: none.` The read-only `vrg-epic-audit` prints the same
