@@ -13,7 +13,9 @@ an agent identity's push; that is expected — report-ready says so and records
 the state anyway, and the human's ``vrg-submit-pr`` pushes the branch instead.
 Any other push failure fails report-ready with nothing recorded and no relay ref
 written. A re-run on a frozen branch whose HEAD has drifted past the reported
-commit is refused before anything is pushed.
+commit is refused before anything is pushed. A re-run after a deliberate
+``unfreeze`` pushes with a lease on the recorded head, so a rebased branch
+replaces the reported commit but an unexpectedly moved origin is refused (#3783).
 """
 
 from __future__ import annotations
@@ -195,7 +197,24 @@ def _reject_queue_issue(issue_ref: str) -> None:
         raise WorkflowError(epics.queue_refusal_message(issue_ref, kind))
 
 
-def _push_branch(branch: str) -> None:
+def _lease_sha(state: WorkflowState) -> str | None:
+    """Return the recorded head to lease the push against, or None for a plain push.
+
+    Only the deliberate unfreeze -> rebase -> re-report path leases (#3783): a
+    state that is neither frozen nor submitted but already records a reported
+    ``head_sha``. Origin should still be at that commit, so a rebased branch is
+    pushed over it with ``--force-with-lease`` — accepted only while origin is
+    exactly there, refused if it moved unexpectedly. A frozen re-run keeps the
+    plain push: its HEAD is the recorded commit (drift is refused before this),
+    so a lease could only turn a legitimate publish into a refusal.
+    """
+    if freeze.is_frozen(state) or state.submitted is not None:
+        return None
+    recorded = state.git.get("head_sha")
+    return str(recorded) if recorded else None
+
+
+def _push_branch(branch: str, *, lease_sha: str | None = None) -> None:
     """Publish *branch* at the reported commit to origin, setting its upstream.
 
     Runs before anything is recorded (#3602), so a failure leaves no ready state
@@ -210,9 +229,18 @@ def _push_branch(branch: str) -> None:
     where a diff of the delta would only predict it (a human identity's push of
     the same delta succeeds). That case is expected: it is reported and the state
     is still recorded, since the human's ``vrg-submit-pr`` pushes the branch.
+
+    With *lease_sha* (see :func:`_lease_sha`) and the branch on origin, the push
+    carries ``--force-with-lease=refs/heads/<branch>:<lease_sha>`` so a rebase
+    after an unfreeze replaces the reported commit without a manual force-push
+    (#3783). A branch absent from origin (its first push was the expected
+    workflow-file refusal) has nothing to overwrite, so it gets the plain push.
     """
+    ref = f"refs/heads/{branch}"
+    lease = lease_sha is not None and branch in git.remote_branches("origin")
+    lease_args = (f"--force-with-lease={ref}:{lease_sha}",) if lease else ()
     try:
-        git.read_output("push", "-u", "origin", f"refs/heads/{branch}:refs/heads/{branch}")
+        git.read_output("push", "-u", *lease_args, "origin", f"{ref}:{ref}")
     except subprocess.CalledProcessError as exc:
         if git.is_workflow_push_refusal(exc.stderr):
             print(
@@ -223,6 +251,14 @@ def _push_branch(branch: str) -> None:
                 file=sys.stderr,
             )
             return
+        if lease:
+            raise WorkflowError(
+                f"report-ready: could not push {branch} to origin "
+                f"({error_text(exc, output=False)}); nothing was recorded. "
+                f"origin/{branch} is not at the recorded head {lease_sha} that "
+                "report-ready may overwrite — it moved unexpectedly. Inspect it "
+                "before re-running report-ready."
+            ) from exc
         raise WorkflowError(
             f"report-ready: could not push {branch} to origin "
             f"({error_text(exc, output=False)}); nothing was recorded. Fix the push "
@@ -305,6 +341,7 @@ def cmd_report_ready(args: argparse.Namespace, transport: LocalFileTransport) ->
         raise WorkflowError("report-ready: HEAD is detached; check out the feature branch first.")
     head_sha = transport.head_sha()
     state = transport.read()
+    lease_sha: str | None = None
     if state is None:
         state = engine.init_state(
             issue=args.issue,
@@ -326,6 +363,8 @@ def cmd_report_ready(args: argparse.Namespace, transport: LocalFileTransport) ->
         )
     else:
         _refuse_drifted_rerun(state, head_sha)
+        # Read before apply_report_ready overwrites the recorded head_sha.
+        lease_sha = _lease_sha(state)
     engine.apply_report_ready(
         state,
         title=args.title,
@@ -335,7 +374,7 @@ def cmd_report_ready(args: argparse.Namespace, transport: LocalFileTransport) ->
         head_sha=head_sha,
         now=_now(),
     )
-    _push_branch(branch)
+    _push_branch(branch, lease_sha=lease_sha)
     transport.write(state)
     _push_relay_ref(state, args.base)
     response: dict[str, object] = {"ok": True, "status": state.status}
