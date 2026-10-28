@@ -843,9 +843,7 @@ def test_security_pass_syncs_paired_advisory(capsys: pytest.CaptureFixture[str])
     rc = _run_close(issues=[_security_issue()], advisories=[_advisory()], write=write)
     assert rc == 0
     write.assert_called_once_with("PATCH", f"{_ADVISORIES}/{_GHSA}", {"state": "closed"})
-    assert (
-        "Security records: 1 advisory state(s) synced, 0 broken pair(s)." in capsys.readouterr().out
-    )
+    assert "Security records: 1 advisory state synced, 0 broken pairs." in capsys.readouterr().out
 
 
 def test_sweep_closes_both_advisories_of_one_closed_issue(
@@ -863,9 +861,7 @@ def test_sweep_closes_both_advisories_of_one_closed_issue(
         call("PATCH", f"{_ADVISORIES}/{_GHSA}", {"state": "closed"}),
         call("PATCH", f"{_ADVISORIES}/{second}", {"state": "closed"}),
     ]
-    assert (
-        "Security records: 2 advisory state(s) synced, 0 broken pair(s)." in capsys.readouterr().out
-    )
+    assert "Security records: 2 advisory states synced, 0 broken pairs." in capsys.readouterr().out
 
 
 def test_security_pass_exits_1_on_broken_pairs(capsys: pytest.CaptureFixture[str]) -> None:
@@ -879,7 +875,7 @@ def test_security_pass_exits_1_on_broken_pairs(capsys: pytest.CaptureFixture[str
     # The consistent pair is still synced before the pass fails.
     write.assert_called_once_with("PATCH", f"{_ADVISORIES}/{_GHSA}", {"state": "closed"})
     out = capsys.readouterr().out
-    assert "Security records: 1 advisory state(s) synced, 1 broken pair(s)." in out
+    assert "Security records: 1 advisory state synced, 1 broken pair." in out
     assert f"- broken: {_BROKEN_GHSA}: no security issue names this advisory" in out
 
 
@@ -892,7 +888,7 @@ def test_security_pass_lists_external_reports_untouched(
     assert rc == 0
     write.assert_not_called()
     out = capsys.readouterr().out
-    assert "Security records: 0 advisory state(s) synced, 0 broken pair(s)." in out
+    assert "Security records: 0 advisory states synced, 0 broken pairs." in out
     assert f"- unpaired external report (left untouched): {_EXTERNAL_GHSA}" in out
 
 
@@ -929,7 +925,7 @@ def test_security_pass_output_names_only_ids_and_states(
         assert "security records pass failed" in captured.err
         assert "HTTP 403: Forbidden" in captured.err
     else:
-        assert "1 advisory state(s) synced, 1 broken pair(s)." in captured.out
+        assert "1 advisory state synced, 1 broken pair." in captured.out
         assert _BROKEN_GHSA in captured.out
 
 
@@ -945,8 +941,20 @@ def test_report_only_mode_previews_without_writes(capsys: pytest.CaptureFixture[
     assert rc == 0
     write.assert_not_called()
     out = capsys.readouterr().out
-    assert "Security records (preview): 1 advisory state(s) would sync, 1 broken pair(s)." in out
+    assert "Security records (preview): 1 advisory state would sync, 1 broken pair." in out
     assert f"- broken: {_BROKEN_GHSA}" in out
+
+
+def test_summary_line_pluralizes_two_broken_pairs(capsys: pytest.CaptureFixture[str]) -> None:
+    second = "GHSA-cccc-cccc-cccc"
+    rc = _run_report(
+        issues=[],
+        advisories=[_advisory(_BROKEN_GHSA, tracking=()), _advisory(second, tracking=())],
+        write=MagicMock(),
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Security records (preview): 0 advisory states would sync, 2 broken pairs." in out
 
 
 def test_report_only_mode_fails_loud_when_the_read_fails(
@@ -977,7 +985,7 @@ def test_close_runs_security_pass_after_failed_orphan_pass(
     write.assert_called_once_with("PATCH", f"{_ADVISORIES}/{_GHSA}", {"state": "closed"})
     captured = capsys.readouterr()
     assert "intake epic org/.github#100 is full" in captured.err
-    assert "Security records: 1 advisory state(s) synced, 0 broken pair(s)." in captured.out
+    assert "Security records: 1 advisory state synced, 0 broken pairs." in captured.out
 
 
 def test_org_without_security_items_skips_home_lookup(
