@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.278] - 2026-10-28
+
+### Chores
+
+- uv lock --upgrade
+
+### Documentation
+
+- add freeze and fail-closed notes to the vrg-reword and vrg-hook-guard entries (#3798)
+
+### Features
+
+- remove the bridge; enforce the CLAUDE.md line budget and the AGENTS.md rule (#3797)
+
 ## [2.1.277] - 2026-10-28
 
 ### Bug fixes
