@@ -208,10 +208,10 @@ def _security_pass(org: str, *, apply: bool) -> int:
         print(f"vrg-epic-audit: security records pass failed: {exc}", file=sys.stderr)
         return 1
     verb = "synced" if apply else "would sync"
-    print(
-        f"Security records{mode}: {synced} advisory state(s) {verb}, "
-        f"{len(result.broken)} broken pair(s)."
-    )
+    states = "advisory state" if synced == 1 else "advisory states"
+    broken = len(result.broken)
+    pairs = "broken pair" if broken == 1 else "broken pairs"
+    print(f"Security records{mode}: {synced} {states} {verb}, {broken} {pairs}.")
     for line in result.broken:
         print(f"- broken: {line}")
     for advisory in result.external:

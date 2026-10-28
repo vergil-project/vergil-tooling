@@ -83,6 +83,7 @@ shell expansion, no pipes, no redirection.
 | `shortlog` | — | Read-only — summarized log |
 | `show-branch` | — | Read-only — compare branches |
 | `show-ref` | — | Read-only — list refs |
+| `symbolic-ref` | `<name> <ref>`, `-d`/`--delete`, `-m` | Read form only — one ref, optionally `-q`/`--quiet`/`--short` |
 | `var` | — | Read-only — logical git variables |
 | `verify-commit` | — | Read-only — signature verification |
 | `verify-tag` | — | Read-only — signature verification |

@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, cast
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from vergil_tooling.lib.trusted_authors import TrustedAuthors
     from vergil_tooling.lib.vm_backend import Backend
     from vergil_tooling.lib.vm_cloud import OffPlatformBackend
     from vergil_tooling.lib.vm_transport import Transport
@@ -68,6 +69,7 @@ from vergil_tooling.lib.vm_guest import (
     copy_claude_config,
     get_tooling_version,
     inject_credentials,
+    inject_trusted_authors,
     install_tooling,
     link_claude_dirs,
     prune_cache_images,
@@ -948,6 +950,7 @@ def _st_link_config(state: _LifecycleState) -> None:
 def _st_credentials(state: _LifecycleState) -> None:
     transport = state.target.backend.transport(state.target.instance)
     inject_credentials(transport, state.target.identity)
+    inject_trusted_authors(transport, state.target.config.trusted_authors)
 
 
 def _st_install_tooling(state: _LifecycleState) -> None:
@@ -1252,7 +1255,9 @@ def _cs_await_readiness(state: _CloudState) -> None:
 
 
 def _cs_credentials(state: _CloudState) -> None:
-    inject_credentials(_require_transport(state), state.target.identity)
+    transport = _require_transport(state)
+    inject_credentials(transport, state.target.identity)
+    inject_trusted_authors(transport, state.target.config.trusted_authors)
 
 
 def _cs_tooling(state: _CloudState) -> None:
@@ -1501,14 +1506,16 @@ def _cmd_stop(args: argparse.Namespace) -> int:
 def _cmd_restart(args: argparse.Namespace) -> int:
     if _reject_if_off_platform(args):
         return 1
-    name, identity, _config, instance = _resolve_instance(args)
+    name, identity, config, instance = _resolve_instance(args)
 
     print(f"Restarting VM '{instance}' (identity: {name})...")
     stop_vm(instance)
     start_vm(instance)
 
     print("Injecting credentials...")
-    inject_credentials(LimaTransport(instance), identity)
+    transport = LimaTransport(instance)
+    inject_credentials(transport, identity)
+    inject_trusted_authors(transport, config.trusted_authors)
 
     print(f"VM '{instance}' is running.")
     return 0
@@ -1520,6 +1527,7 @@ def _update_over_transport(
     tag: str | None,
     fallback: str,
     *,
+    trusted_authors: TrustedAuthors | None,
     prune: bool = True,
     prune_roots: list[str] | None = None,
 ) -> None:
@@ -1532,7 +1540,12 @@ def _update_over_transport(
     With *prune*, the freshly installed tooling then removes the box's cached
     images of finished branches against *prune_roots* (#3604). The prune is
     best-effort: it reports its own failure and never fails the update.
+
+    The host's *trusted_authors* are re-delivered (or the VM file removed when
+    the host has none), so an update alone keeps the VM's list current.
     """
+    inject_trusted_authors(transport, trusted_authors)
+
     print(f"Updating vergil-tooling in {label}...")
 
     before = get_tooling_version(transport)
@@ -1555,7 +1568,14 @@ def _update_over_transport(
 
 
 def _update_instance(
-    instance: str, name: str, identity: Identity, tag: str | None, fallback: str, *, prune: bool
+    instance: str,
+    name: str,
+    identity: Identity,
+    tag: str | None,
+    fallback: str,
+    *,
+    trusted_authors: TrustedAuthors | None,
+    prune: bool,
 ) -> None:
     """Update tooling and plugins in one running Lima VM over its limactl transport.
 
@@ -1569,6 +1589,7 @@ def _update_instance(
         f"VM '{instance}' (identity: {name})",
         tag,
         fallback,
+        trusted_authors=trusted_authors,
         prune=prune,
         prune_roots=[identity.projects_dir] if identity.projects_dir else None,
     )
@@ -1600,7 +1621,14 @@ def _cmd_update_off_platform(target: Target, args: argparse.Namespace) -> int:
     tag = args.tag if args.tag else None
     fallback = resolve_vergil_version(target.config, target.identity)
     label = f"off-platform box '{backend.name}' (identity: {target.identity_name})"
-    _update_over_transport(backend.transport(), label, tag, fallback, prune=args.prune)
+    _update_over_transport(
+        backend.transport(),
+        label,
+        tag,
+        fallback,
+        trusted_authors=target.config.trusted_authors,
+        prune=args.prune,
+    )
 
     print("Update complete.")
     return 0
@@ -1629,7 +1657,15 @@ def _cmd_update(args: argparse.Namespace) -> int:
 
     tag = args.tag if args.tag else None
     fallback = resolve_vergil_version(config, identity)
-    _update_instance(instance, name, identity, tag, fallback, prune=args.prune)
+    _update_instance(
+        instance,
+        name,
+        identity,
+        tag,
+        fallback,
+        trusted_authors=config.trusted_authors,
+        prune=args.prune,
+    )
 
     print("Update complete.")
     return 0
@@ -1716,7 +1752,15 @@ def _cmd_update_all(args: argparse.Namespace) -> int:
             continue
         try:
             fallback = resolve_vergil_version(config, identity)
-            _update_instance(instance, id_name, identity, tag, fallback, prune=args.prune)
+            _update_instance(
+                instance,
+                id_name,
+                identity,
+                tag,
+                fallback,
+                trusted_authors=config.trusted_authors,
+                prune=args.prune,
+            )
             updated.append(instance)
         except subprocess.CalledProcessError as exc:
             reason = f"exit status {exc.returncode}"
@@ -1738,7 +1782,14 @@ def _cmd_update_all(args: argparse.Namespace) -> int:
         try:
             fallback = _off_platform_fallback(config, vm)
             transport = vm_cloud.off_platform_transport(vm.cloud_name, vm.state_dir, vm.provider)
-            _update_over_transport(transport, box, tag, fallback, prune=args.prune)
+            _update_over_transport(
+                transport,
+                box,
+                tag,
+                fallback,
+                trusted_authors=config.trusted_authors,
+                prune=args.prune,
+            )
             updated.append(vm.label)
         except subprocess.CalledProcessError as exc:
             reason = f"exit status {exc.returncode}"

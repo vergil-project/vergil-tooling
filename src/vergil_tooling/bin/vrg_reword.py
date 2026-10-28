@@ -20,6 +20,10 @@ It is a deliberate relaxation of a tight restriction, so it is bounded:
 - **Force-with-lease** — when the branch is already on the remote, the
   rewrite is pushed with ``--force-with-lease`` (never bare ``--force``);
   safe on an unmerged feature branch (the #1557 pattern).
+- **Not on a frozen branch** — refuses once the branch was reported ready
+  (``vrg-pr-workflow report-ready``), with the same freeze check and wording
+  as ``vrg-commit`` and the ``vrg-git`` push path (#3772); the deliberate
+  ``vrg-pr-workflow unfreeze`` is the only way to reopen it.
 
 Rewording a *mid-chain* commit re-applies the commits after it, which
 changes their **committer** (the author is preserved). In an
@@ -49,6 +53,7 @@ from vergil_tooling.lib.commit_message import (
     build_commit_message,
     contains_autoclose,
 )
+from vergil_tooling.lib.pr_workflow import freeze
 
 _PROTECTED_BRANCHES = {"develop", "main"}
 _PROTECTED_PREFIXES = ("release/",)
@@ -82,6 +87,21 @@ def main(argv: list[str] | None = None) -> int:
             "'vrg-pr-workflow report-ready' / 'vrg-submit-pr'), not in the commit "
             "body. Issues stay open until post-merge workflows succeed.",
         )
+
+    # Freeze gate (#3772): once this branch was reported ready, rewriting a
+    # commit moves its tip off the recorded head_sha and the force-push below
+    # bypasses the vrg-git push gate — the same straggler vrg-commit refuses
+    # (issue #1719). Reopening requires the deliberate `vrg-pr-workflow unfreeze`.
+    freeze_check = freeze.check_worktree(git.repo_root(), action="reword a commit")
+    if freeze_check.read_error is not None:
+        print(
+            f"WARNING: could not read PR-workflow state ({freeze_check.read_error}); "
+            "proceeding without a freeze check.",
+            file=sys.stderr,
+        )
+    if freeze_check.frozen:
+        print(freeze_check.message, file=sys.stderr)
+        return 1
 
     rc, target_sha, branch = _validate(args)
     if rc != 0:

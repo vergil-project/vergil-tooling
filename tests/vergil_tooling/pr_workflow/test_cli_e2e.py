@@ -972,6 +972,120 @@ def test_report_ready_after_unfreeze_pushes_new_commits(
     assert _rev(_origin(in_git_repo), "refs/heads/feature/42-x") == _rev(in_git_repo, "HEAD")
 
 
+# --- a rebase after unfreeze is pushed with a lease on the recorded head (#3783) --
+
+
+def _rewrite_head(repo: Path, message: str = "feature work, rebased") -> str:
+    """Rewrite the branch tip (a stand-in for a rebase) and return the new HEAD."""
+    _git(repo, "commit", "--amend", "-m", message)
+    return _rev(repo, "HEAD")
+
+
+def _move_origin_branch(repo: Path) -> str:
+    """Point origin's feature branch at an unrelated commit, as another pusher would."""
+    _git(repo, "commit", "--allow-empty", "-m", "someone else's push")
+    foreign = _rev(repo, "HEAD")
+    _git(repo, "push", "--force", "origin", "HEAD:refs/heads/feature/42-x")
+    _git(repo, "reset", "--hard", "HEAD~1")
+    return foreign
+
+
+def test_report_ready_after_unfreeze_force_pushes_rebased_branch(
+    in_git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The unfreeze -> rebase -> re-report recovery: origin is still at the
+    # recorded head, so the rewritten branch is pushed over it under a lease.
+    reported = _rev(in_git_repo, "HEAD")
+    assert _run_report_ready(title="t1") == 0
+    assert vrg_pr_workflow.main(["--base", "develop", "unfreeze"]) == 0
+    rebased = _rewrite_head(in_git_repo)
+    assert rebased != reported
+    capsys.readouterr()
+
+    rc = _run_report_ready(title="t2")
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert json.loads(captured.out) == {"ok": True, "status": "ready"}
+    assert "pushed feature/42-x to origin" in captured.err
+    assert _rev(_origin(in_git_repo), "refs/heads/feature/42-x") == rebased
+    state = json.loads((in_git_repo / ".vergil" / "pr-workflow.json").read_text())
+    assert state["status"] == "ready"
+    assert state["git"]["head_sha"] == rebased
+    assert state["pr_metadata"]["title"] == "t2"
+
+
+def test_report_ready_after_unfreeze_refuses_unexpectedly_moved_origin(
+    in_git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The lease is on the recorded head: if origin moved somewhere else in the
+    # meantime, the rewritten branch must not clobber it, and nothing is recorded.
+    reported = _rev(in_git_repo, "HEAD")
+    assert _run_report_ready(title="t1") == 0
+    assert vrg_pr_workflow.main(["--base", "develop", "unfreeze"]) == 0
+    foreign = _move_origin_branch(in_git_repo)
+    _rewrite_head(in_git_repo)
+    capsys.readouterr()
+
+    with patch("vergil_tooling.bin.vrg_pr_workflow.GitHubTransport") as mock_transport:
+        rc = _run_report_ready(title="t2")
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    assert "is not at the recorded head" in captured.err
+    assert reported[:12] in captured.err
+    assert "nothing was recorded" in captured.err
+    assert _rev(_origin(in_git_repo), "refs/heads/feature/42-x") == foreign
+    state = json.loads((in_git_repo / ".vergil" / "pr-workflow.json").read_text())
+    assert state["status"] == "implementing"
+    assert state["git"]["head_sha"] == reported
+    assert state["pr_metadata"]["title"] == "t1"
+    mock_transport.return_value.write.assert_not_called()
+
+
+def test_report_ready_after_unfreeze_pushes_rebase_when_branch_never_reached_origin(
+    in_git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The first report's push was the expected workflow-file refusal, so the
+    # recorded head never reached origin. There is nothing to lease against:
+    # the rebased branch is pushed as a new branch, as before.
+    hook = _origin(in_git_repo) / "hooks" / "pre-receive"
+    _install_pre_receive(
+        _origin(in_git_repo),
+        'echo "refusing to allow a GitHub App to create or update workflow '
+        "'.github/workflows/ci.yml' without 'workflows' permission\" >&2\nexit 1",
+    )
+    with patch("vergil_tooling.bin.vrg_pr_workflow.GitHubTransport"):
+        assert _run_report_ready(title="t1") == 0
+    hook.unlink()
+    assert vrg_pr_workflow.main(["--base", "develop", "unfreeze"]) == 0
+    rebased = _rewrite_head(in_git_repo)
+    capsys.readouterr()
+
+    assert _run_report_ready(title="t2") == 0
+    assert _rev(_origin(in_git_repo), "refs/heads/feature/42-x") == rebased
+
+
+def test_first_report_ready_does_not_force_over_diverged_origin(
+    in_git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # With no recorded head there is no lease: a first report is a plain push,
+    # so a diverged origin branch is still refused and nothing is recorded.
+    foreign = _move_origin_branch(in_git_repo)
+    capsys.readouterr()
+
+    with patch("vergil_tooling.bin.vrg_pr_workflow.GitHubTransport"):
+        rc = _run_report_ready()
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "could not push feature/42-x to origin" in captured.err
+    assert "nothing was recorded" in captured.err
+    assert _rev(_origin(in_git_repo), "refs/heads/feature/42-x") == foreign
+    assert not (in_git_repo / ".vergil" / "pr-workflow.json").exists()
+
+
 def test_report_ready_refuses_detached_head(
     in_git_repo: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

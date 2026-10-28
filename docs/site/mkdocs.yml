@@ -65,6 +65,7 @@ nav:
   - Script Reference:
       - Overview: reference/index.md
       - CLI Tools Overview: reference/cli-tools-overview.md
+      - Package Architecture: reference/package-architecture.md
       - GitHub Config Audit: reference/config-audit.md
       - Dependabot Alert Audit: reference/dependabot-audit.md
       - VM Spec ([vm]): reference/vm-spec.md

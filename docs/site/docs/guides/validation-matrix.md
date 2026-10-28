@@ -101,6 +101,16 @@ banned. There is no separate CI check for it.
 **Trigger:** `vrg-container-run -- vrg-validate` locally, and the
 reusable CI workflows on every pull request.
 
+Docker is the only host prerequisite, and a local run uses exactly one
+container. The outer layer, `vrg-container-run`, launches the dev
+container once and runs `vrg-validate` inside it. The inner layer,
+`vrg-validate`, reads `[project].primary-language` from `vergil.toml` and
+runs the common checks, then the language's checks from the built-in
+command registry, then the repository's custom validator, as below. The
+dev images come from
+[vergil-containers](https://github.com/vergil-project/vergil-containers)
+(see [Dev container images](ci-architecture.md#dev-container-images)).
+
 ### Common checks
 
 `vrg-validate --check common` runs, in order:

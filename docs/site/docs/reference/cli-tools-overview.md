@@ -28,6 +28,77 @@ Local-settings guard: refuses an agent (warns a human) while a loadable
 | Exit codes | 0 success, 1 rejection or error |
 | Status | Active |
 
+### vrg-reword
+
+Reword a branch-local commit's message through a scripted, non-interactive
+rebase, re-stamping the new message through the same standards path as
+`vrg-commit`. It is the agent-safe way to correct a commit message on the
+current branch: `vrg-git commit` is denied, `vrg-commit` only creates new
+commits, and raw interactive rebase is blocked repo-wide. It is bounded:
+
+- **Branch-local only**: it refuses a commit already reachable from the
+  base branch (`origin/develop`, or `origin/main` for a `release/*` branch)
+  and refuses to run on `develop`, `main` or a `release/*` branch, so it
+  never rewrites shared or merged history.
+- **Own identity only**: it refuses a commit whose author email differs
+  from the current git identity unless `--allow-foreign-author` is passed.
+- **Force-with-lease**: when the branch is already on origin, the rewrite is
+  pushed with `--force-with-lease`, never a bare `--force`. `--no-push`
+  skips the push and prints the command to run.
+
+Rewording a mid-chain commit re-applies the commits after it, which changes
+their committer (the author is kept), so the tool first prints a note on
+stderr naming the affected commits. A body carrying a GitHub auto-close keyword is refused,
+as in `vrg-commit`.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_reword` |
+| Args | `sha` (positional, required), `--type` (required), `--scope` (required), `--message` (required), `--body`, `--allow-foreign-author`, `--no-push` |
+| Preconditions | Git repo on a feature branch, clean working tree, the base branch resolvable, `user.email` set (unless `--allow-foreign-author`) |
+| Failure mode | Each refusal prints the reason and a hint on stderr; a rebase that does not complete says to run `git rebase --abort`; a refused lease push says to fetch and review before retrying |
+| Exit codes | 0 success, 1 refusal or error; otherwise the rebase's exit code |
+| Status | Active |
+
+### vrg-git
+
+A safe git wrapper for agent sessions. It forwards to `git` only after
+enforcing policy: a subcommand allowlist, read-only forms of `reflog` and
+`symbolic-ref`, denied subcommands (`commit`, `config`, `reset`, `clean` and
+others; use `vrg-commit` for commits), a flag deny-list (`push --force`,
+`branch -D`, `rebase -i`), the worktree convention, the
+`<type>/<N>-<slug>` branch form for an open, non-epic issue, and the
+report-ready freeze. Remote operations run with the GitHub App installation
+token for the resolved identity (see [`vrg-whoami`](#vrg-whoami)). It is not
+a drop-in replacement for `git`; `vrg-git --help` lists the full policy.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_git` |
+| Args | `<subcommand> [args...]`, forwarded to `git` |
+| Preconditions | Git on PATH |
+| Failure mode | A refused command prints the reason on stderr |
+| Exit codes | 0 success; 1 refusal; 2 no subcommand; otherwise git's exit code |
+| Status | Active |
+
+### vrg-gh
+
+A safe, identity-aware `gh` wrapper for agent sessions. It forwards to `gh`
+only after enforcing a per-identity subcommand allowlist, injecting the GitHub
+App installation token for the target owner. Raw `gh issue create`, `gh auth`,
+`pr close`, `repo edit/create/delete` and `workflow run` are denied outright;
+`gh api` is full for a human, read-only `GET` for the audit identity, and
+denied for the user identity. `vrg-gh --help` lists the allowlist.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_gh` |
+| Args | `<subcommand> <action> [args...]`, forwarded to `gh` |
+| Preconditions | `gh` on PATH; identity resolved via `vrg-whoami` |
+| Failure mode | A refused command prints the reason on stderr |
+| Exit codes | 0 success; 1 refusal; 2 no subcommand; otherwise gh's exit code |
+| Status | Active |
+
 ### vrg-submit-pr
 
 Create standards-compliant pull requests. Template mode pushes the
@@ -39,7 +110,9 @@ worktree's `pr-workflow.json` when present, else the relay ref
 `refs/vergil/pr-workflow/<branch>`; origin's tip is checked against the
 recorded `head_sha` and the PR opens with `--head` **without pushing**.
 It refuses an issue whose native parent is an intake, planning or deferred
-epic (see [`vrg-pr-workflow`](#vrg-pr-workflow)).
+epic (see [`vrg-pr-workflow`](#vrg-pr-workflow)). Human-run: agent
+identities are refused, and agents hand off with
+`vrg-pr-workflow report-ready` instead. PRs merge manually.
 
 | Attribute | Value |
 |---|---|
@@ -83,8 +156,8 @@ advances the branch, so it stays **freeze-neutral**. A push failure is
 loud on stderr but never rolls back the durable local file. Because the
 ref is world-readable on a public repo, keep secrets out of
 `--title/--summary/--notes`. Reaching **ready** *freezes* the branch:
-`vrg-commit` and the `vrg-git` push path then refuse further
-commits/pushes, because a task is exactly one PR and more work is a new
+`vrg-commit`, `vrg-reword` and the `vrg-git` push path then refuse further
+commits, commit rewrites and pushes, because a task is exactly one PR and more work is a new
 follow-up issue (epic #146). `report-ready` pushes the branch itself, to
 `origin/<branch>` with upstream set, **before** recording anything (#3602),
 so no separate push is needed; a branch already on origin at that commit is a
@@ -93,7 +166,12 @@ agent push: `report-ready` reports that as expected, records the state anyway,
 and the human's `vrg-submit-pr` pushes the branch. Any other push failure
 fails `report-ready` with no local state and no relay ref written. A re-run on
 a frozen branch whose HEAD has drifted past the reported commit is refused
-before any push. An explicit `vrg-git push [-u] origin <branch>` also stays
+before any push. After a deliberate `unfreeze`, a re-run pushes with
+`--force-with-lease=refs/heads/<branch>:<recorded head_sha>`, so a rebased
+branch replaces the reported commit with no manual force-push, while an origin
+branch that moved anywhere else is refused with nothing recorded (#3783); a
+first report, a frozen re-run, or a branch not yet on origin keeps the plain
+push. An explicit `vrg-git push [-u] origin <branch>` also stays
 allowed while HEAD is exactly the reported commit — it publishes, not
 advances, the branch (issue #3071). `unfreeze` is the only sanctioned way to
 reopen a still-unsubmitted branch — it drops the state back to
@@ -116,6 +194,71 @@ is not absent or `{}` (epic vergil-project/.github#558).
 | Exit codes | 0 success, 1 error |
 | Status | Active |
 
+### vrg-pr-await
+
+Block until a pull request settles, then print its state as JSON. It settles
+when every check reaches a terminal conclusion, the head SHA moves, a new
+review appears, or the PR is wedged by an orphaned check-run (grace period
+`$VRG_ORPHAN_GRACE`, default 300s). `--since-sha` and `--since-reviews` carry
+the caller's last-seen baseline. Used by the `pr-watch` skill; it blocks
+indefinitely by design.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_pr_await` |
+| Args | `pr` (positional, URL or number), `--since-sha`, `--since-reviews` |
+| Preconditions | GitHub App credentials for the PR's org |
+| Failure mode | Exits 1 with an error if the PR is already merged or the PR cannot be read |
+| Exit codes | 0 settled, 1 error |
+| Status | Active |
+
+### vrg-wait-until-green
+
+Block until a PR's required checks pass and its branch is up to date. When
+the branch is behind its base it updates it and re-polls CI. The wait is
+bounded by `$VRG_CHECKS_TIMEOUT` (default 1800s).
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_wait_until_green` |
+| Args | `pr` (positional, URL or number) |
+| Preconditions | GitHub App credentials for the PR's org |
+| Failure mode | Exits 1 on merge conflicts, failed checks (named on stderr), a branch still behind after repeated updates, or a merge state other than `CLEAN` |
+| Exit codes | 0 every check passed and the PR is mergeable, 1 otherwise |
+| Status | Active |
+
+### vrg-await
+
+Block until a `.vergil/` channel file appears or changes, then print its
+SHA-256. Without `--since` it waits for the file to exist; with `--since` it
+waits until the file's digest differs from the given one. It blocks
+indefinitely by design.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_await` |
+| Args | `path` (positional), `--since SHA256` |
+| Preconditions | None |
+| Failure mode | None; it waits until the condition holds |
+| Exit codes | 0 |
+| Status | Active |
+
+### vrg-audit-approve
+
+Post the `vergil-audit/approved` check-run on a PR's head commit, the check
+that branch protection requires before a merge. Run by the audit identity;
+it refuses the user identity. A new push invalidates the check until it is
+posted again.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_audit_approve` |
+| Args | `pr` (positional, URL or number), `--conclusion {success,failure,action_required,neutral}` (default `success`), `--summary` |
+| Preconditions | Run in the PR's repo as the audit identity, with the audit App's credentials |
+| Failure mode | Refuses (exit 1) under the user identity |
+| Exit codes | 0 posted, 1 refused or error |
+| Status | Active |
+
 ### vrg-release
 
 Run the full release workflow from `develop` to `main`: tracking issue,
@@ -134,6 +277,68 @@ and the [Releasing guide](../guides/releasing.md).
 | Preconditions | Human identity; on `develop`, clean working tree, local develop matches `origin/develop`; `gh` authenticated and `git-cliff` on PATH |
 | Failure mode | Fail-fast stages stop the run; deferred stages (including `update-deps`) record the failure, let later stages run, and are summarized at the end |
 | Exit codes | 0 success, 1 any failure or refusal, 130 interrupted |
+| Status | Active |
+
+### vrg-changelog
+
+Generate `CHANGELOG.md` and the release notes (`releases/vX.Y.Z.md`) for the
+version in `VERSION`, using `git-cliff`.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_changelog` |
+| Args | `--changelog-only` or `--notes-only` (default: both) |
+| Preconditions | Run from the repo root; a `VERSION` file; `git-cliff` on PATH |
+| Failure mode | Exits 1 when no `VERSION` file is found |
+| Exit codes | 0 success, 1 error |
+| Status | Active |
+
+### vrg-promote
+
+Force-update the rolling `vX.Y` tag to point at release `vX.Y.Z`.
+`--dry-run` prints what it would do.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_promote` |
+| Args | `version` (positional, default: the `VERSION` file), `--dry-run` |
+| Preconditions | Git repo with the release tag; push access to origin |
+| Failure mode | `Error:` on stderr when there is no version or the tag update fails |
+| Exit codes | 0 success, 1 error |
+| Status | Active |
+
+### vrg-version
+
+Print or bump the repo's version. `show` prints the current version
+(`--major-minor` for `X.Y` only, `--ref` to read it from a git ref); `bump`
+increments `patch` (default), `minor` or `major` and prints the new version.
+Used by the CD workflows to read the release version.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_version` |
+| Args | `show [--major-minor] [--ref REF]`, `bump [{patch,minor,major}]` |
+| Preconditions | Run from the repo root |
+| Failure mode | An unreadable version raises an uncaught error |
+| Exit codes | 0 success, 1 error |
+| Status | Active |
+
+### vrg-resolve-tracking-issue
+
+Print the tracking issue number of the PR that produced a commit, read
+from the PR body's `Ref #N` linkage. The PR is found from the commit
+subject (the merge-commit `Merge pull request #N from …` pattern, then the
+squash-merge `… (#N)` pattern), then from the GitHub API's
+commit-to-pulls lookup; `--pr` skips the lookup. Used by the
+`version-bump-pr` composite action in vergil-actions.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_resolve_tracking_issue` (patterns: `lib/linkage.py`) |
+| Args | `--commit` (default: HEAD), `--pr N` |
+| Preconditions | Git repo; `gh` authenticated for the current repo |
+| Failure mode | `ERROR:` on stderr naming what was tried; a PR with no body or no `Ref #N` linkage is an error |
+| Exit codes | 0 success (issue number on stdout), 1 no PR found or no linkage, 2 git or GitHub API failure |
 | Status | Active |
 
 ### vrg-update-deps
@@ -165,7 +370,8 @@ base branch, then open, refresh or close the single `upstream-refresh`
 PR. A no-change run closes any stale refresh PR, or exits quietly when
 there is none. It never merges, and never runs dependency updaters,
 validation or a release. It runs from the scheduled
-`ops-upstream-refresh` workflow, or by hand as a human. See the
+`ops-upstream-refresh` workflow under the App token, or by hand as a
+human; it refuses agent identities. See the
 [upstream-refresh reference](upstream-refresh-config.md).
 
 | Attribute | Value |
@@ -227,6 +433,137 @@ ruleset rule), a branch with no PR, or a branch whose name was reused
 | Exit codes | 0 success, 1 any branch error, listing failure or auth failure, 2 bad arguments |
 | Status | Active |
 
+### vrg-issue-create
+
+Create an issue and link it under an epic (a native sub-issue) in one step.
+It is the sanctioned issue-creation path: `vrg-gh` denies raw
+`gh issue create`. `--epic` takes `adhoc`, `intake`, `planning`, `#N` (read
+against the target repo's epic home) or `owner/repo#N`. `--kind` stamps an
+operational (`validation`, `deployment`) or `retrospective` label and body
+scaffold, and `--blocked-by` stamps a `Blocked-by:` reference. If the link
+fails after creation, the created issue's URL is reported for recovery with
+`vrg-epic-move`.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_issue_create` |
+| Args | `--epic` (required), `--title` (required), `--body` / `--body-file`, `--label` (repeatable), `--assignee` (repeatable), `--repo OWNER/NAME`, `--kind {task,validation,deployment,retrospective}`, `--blocked-by REF` (repeatable) |
+| Preconditions | GitHub App credentials for the target org |
+| Failure mode | Refusals and a failed link are reported on stderr; a failed link names the created issue |
+| Exit codes | 0 created and linked, 1 error |
+| Status | Active |
+
+### vrg-epic-create
+
+Create a top-level epic (labelled `epic`, no parent) in its home repo:
+`<org>/.github` for a public target, the target repo itself when private.
+The sanctioned path for creating epics, used by the `epic-create` and
+`migrate-repo` skills.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_epic_create` |
+| Args | `--title` (required), `--body` / `--body-file`, `--repo OWNER/NAME`, `--label` (repeatable), `--assignee` (repeatable) |
+| Preconditions | GitHub App credentials for the target org |
+| Failure mode | Error on stderr |
+| Exit codes | 0 created, 1 error |
+| Status | Active |
+
+### vrg-epic-link
+
+Link a task under an epic as a native GitHub sub-issue, reopening a closed
+epic first. Used when creating a task under an epic and to backfill
+reflink-only children. A bare `#N` epic ref resolves to the task's epic home.
+A public task may not link under a private epic.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_epic_link` |
+| Args | `--epic` (required), `--task` (required) |
+| Preconditions | GitHub App credentials for the target org |
+| Failure mode | Refusals and API errors on stderr |
+| Exit codes | 0 linked, 1 error |
+| Status | Active |
+
+### vrg-epic-move
+
+Move a task under a different epic (unlink, then link). `--epic` accepts
+`adhoc`, `intake`, `planning`, `#N` or `owner/repo#N`, read against the
+task's repo. Moving a task already under the target is a no-op. The deferred
+queue is entered and left only through `vrg-intake-route`, so this refuses
+it.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_epic_move` |
+| Args | `--task` (required), `--epic` (required) |
+| Preconditions | GitHub App credentials for the target org |
+| Failure mode | Every refusal runs before any write and is reported on stderr |
+| Exit codes | 0 moved or already there, 1 error |
+| Status | Active |
+
+### vrg-epic-unlink
+
+Remove a task's native sub-issue link to its epic. A task with no parent is
+a no-op.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_epic_unlink` |
+| Args | `--task` (required) |
+| Preconditions | GitHub App credentials for the target org |
+| Failure mode | Error on stderr |
+| Exit codes | 0 unlinked or no parent, 1 error |
+| Status | Active |
+
+### vrg-epic-rollup
+
+Close a just-closed task's parent epic when the epic is finite and all its
+tasks are closed. A no-op for any other issue (an `ad-hoc` epic never
+auto-closes), so it is safe on every issue close. Run by the `epic-rollup`
+workflow on `issues.closed`.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_epic_rollup` |
+| Args | `--task` (required) |
+| Preconditions | GitHub App credentials for the target org |
+| Failure mode | Error on stderr |
+| Exit codes | 0 success or no-op, 1 error |
+| Status | Active |
+
+### vrg-adhoc-epic
+
+Manage a repo's ad-hoc epic, `Epic (ad hoc): <repo>`. `ensure` creates it if
+missing (idempotent). `archive` drains closed children into per-quarter
+`Archive (ad hoc): <repo> — YYYY-Qn` issues, and `normalize` converts legacy
+quarter-named epics to that form; both are dry runs unless `--apply`.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_adhoc_epic` |
+| Args | `ensure [--repo]`; `archive --repo` or `archive --all-in ORG`, each with optional `--apply`; `normalize --all-in ORG [--apply]` |
+| Preconditions | GitHub App credentials for the target org |
+| Failure mode | Error on stderr |
+| Exit codes | 0 success, 1 error |
+| Status | Active |
+
+### vrg-adhoc-migrate
+
+One-shot migration (epic vergil-project/.github#85): relocate per-repo
+standing epics into the org `.github` ad-hoc model, re-linking their open
+children and closing the old epic. A dry run by default; `--apply` is a
+human action, refused in agent sessions.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_adhoc_migrate` |
+| Args | `--apply` |
+| Preconditions | Run in a repo whose `origin` names the org; GitHub App credentials |
+| Failure mode | Refuses `--apply` in agent sessions; errors on stderr |
+| Exit codes | 0 success, 1 refusal or error |
+| Status | Active (one-shot migration) |
+
 ### vrg-intake-create
 
 Capture an uncurated item — a bug, an idea, an investigation, a one-line
@@ -240,18 +577,31 @@ tool exits 1 naming its URL and the `vrg-epic-move` command that links it. Used
 by the `intake-capture` skill. See
 [Intake, planning and deferred queues](../standards/github-issues.md#intake-planning-and-deferred-queues).
 
-`vrg-triage-create` is a **deprecated alias** kept for one release: it warns
-on stderr, ignores `--kind` (intake has no kind label), and forwards every
-other argument to `vrg-intake-create`.
+[`vrg-triage-create`](#vrg-triage-create) is a deprecated alias.
 
 | Attribute | Value |
 |---|---|
-| Source | `vergil_tooling.bin.vrg_intake_create` (alias: `vergil_tooling.bin.vrg_triage_create`) |
+| Source | `vergil_tooling.bin.vrg_intake_create` |
 | Args | `--title` (required), `--body` / `--body-file`, `--label` (repeatable), `--assignee` (repeatable), `--repo OWNER/NAME` (default: the current repo's queue home) |
 | Preconditions | Run inside a repo in the target org, or pass `--repo`; GitHub App credentials for that org |
 | Failure mode | An extra `--label` missing from the registry is refused before anything is created; a failed link after creation exits 1 naming the created issue |
 | Exit codes | 0 created and linked, 1 error |
 | Status | Active |
+
+### vrg-triage-create
+
+Deprecated alias for [`vrg-intake-create`](#vrg-intake-create), kept for one
+release. It warns on stderr, ignores `--kind` (intake has no kind label), and
+forwards every other argument to `vrg-intake-create`.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_triage_create` |
+| Args | As `vrg-intake-create` |
+| Preconditions | As `vrg-intake-create` |
+| Failure mode | As `vrg-intake-create` |
+| Exit codes | As `vrg-intake-create` |
+| Status | Deprecated |
 
 ### vrg-intake-route
 
@@ -371,6 +721,56 @@ collect step of the three review skills (`intake-review`, `planning-review`,
 | Preconditions | GitHub App credentials for the target org |
 | Failure mode | A named queue whose home has no live queue epic exits 1 naming the missing epic; with no queue named, a missing queue prints `<queue> queue for <name> in <home>: no queue yet` and the run exits 0. Nothing is created |
 | Exit codes | 0 success, 1 error, 2 bad arguments |
+| Status | Active |
+
+### vrg-roadmap
+
+Print the generated project roadmap: the open epics in a repo's resolved
+epic home. The docs-refresh workflow publishes the same rendering.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_roadmap` |
+| Args | `--org ORG` or `--repo OWNER/NAME` (default: the current repo's owner) |
+| Preconditions | GitHub App credentials for the target org |
+| Failure mode | Error on stderr |
+| Exit codes | 0 success, 1 error |
+| Status | Active |
+
+### vrg-activity-log
+
+Print the project activity log: issues closed across the org in the last 30
+days. `--repo` narrows it to one repo; `--out-dir` instead writes the
+multi-page form for a docs site (`index.md`, `days/<date>.md`,
+`repos/<name>.md`). The docs-refresh workflow publishes it.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_activity_log` |
+| Args | `--org ORG`, then `--repo REPO` or `--out-dir DIR` |
+| Preconditions | GitHub App credentials for the target org |
+| Failure mode | Exits 1 when no App installation covers the org |
+| Exit codes | 0 success, 1 error |
+| Status | Active |
+
+### vrg-trusted-authors
+
+The one accessor for the trusted-authors configuration: the GitHub logins
+whose issues and comments automation may trust. It reads
+`~/.config/vergil/trusted-authors.toml` (delivered into agent VMs by `vrg-vm`)
+if it exists, else the `[trusted_authors]` stanza of
+`~/.config/vergil/identities.toml`, and prints `human: <login>` and
+`agent: <login>`, one per line. Skills and doctrine name this command, never
+the logins. See
+[Trusted authors](../guides/account-setup.md#trusted-authors).
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_trusted_authors` (config: `lib/trusted_authors.py`) |
+| Args | `--json` (prints `{"human": [...], "agents": [...]}`) |
+| Preconditions | The VM file or the host stanza exists |
+| Failure mode | Nothing configured, or an invalid configuration, prints the error on stderr and exits 1; it never prints a default |
+| Exit codes | 0 success, 1 not configured or invalid, 2 bad arguments |
 | Status | Active |
 
 ### vrg-epic-audit
@@ -497,6 +897,60 @@ Development: 0 active, 0 needs-attention, 1 stalled (no-pr), 0 cruft (removable)
 | Preconditions | Git repo; `gh` CLI on PATH for PR state |
 | Failure mode | None for classification — a failed PR lookup is reported as an `unknown` row and a failed branch-gone check as a note, never a crash. A malformed `vergil.toml` exits 1 with the reason |
 | Exit codes | 0 success, 1 malformed `vergil.toml` |
+| Status | Active |
+
+### vrg-whoami
+
+Print the resolved Vergil identity role, from the authoritative resolver
+in `lib/identity_mode.py`. Ask `vrg-whoami`; never infer identity from
+`VRG_IDENTITY_MODE` alone. That variable is only the first of five
+fallback signals (environment variable, mode file, App key, App ID, then
+the `human` default), and an unset value means "fall through", not
+"human". See [Account setup](../guides/account-setup.md).
+
+- `vrg-whoami` / `--mode`: the role as one token (`human`, `user` or
+  `audit`), for scripting, for example
+  `export VRG_IDENTITY_MODE="$(vrg-whoami --mode)"`.
+- `--platform`: the platform as one token (`physical-host`, `local-vm` or
+  `cloud-vm`), a second axis independent of the role, resolved from
+  empirical signals in `lib/platform_env.py`. It fails closed: an
+  unconfirmed VM resolves to `cloud-vm`, never `physical-host`.
+- `--explain`: the role, the signal it resolved from and every signal's
+  state, then the platform and its signals. It warns on stderr when the
+  identity signals disagree, and when the platform and the identity
+  correlate poorly (expected: host with human, VM with an agent).
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_whoami` |
+| Args | `--mode`, `--platform`, `--explain` (mutually exclusive) |
+| Preconditions | None |
+| Failure mode | Disagreement is a warning on stderr, never an error |
+| Exit codes | 0 |
+| Status | Active |
+
+### vrg-hook-guard
+
+The Claude Code `PreToolUse` hook that blocks raw `git` and `gh` in agent
+sessions and points the agent at `vrg-git` and `vrg-gh`. It reads the hook
+JSON on stdin and prints a deny decision when a command invokes `git` or
+`gh` at command position. Quoted spans are stripped before matching, and
+the quoted argument of `bash -c` / `sh -c` is checked too. It is a no-op
+outside a repo with a `vergil.toml`.
+
+Two layers call it: each repo's `.claude/settings.json` wires
+`.claude/hooks/guard.sh`, a shim that runs `vrg-hook-guard` when
+vergil-tooling is installed and otherwise falls back to a `jq`-based hard
+deny; and the vergil-claude-plugin provides the same guard through its
+own hooks. See [Claude Code Hook Guard](hooks/pre-commit.md).
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_hook_guard` |
+| Args | None (hook JSON on stdin) |
+| Preconditions | Run by Claude Code as a `PreToolUse` hook |
+| Failure mode | A deny decision as JSON on stdout; anything else allows the command |
+| Exit codes | 0 |
 | Status | Active |
 
 ### vrg-ensure-label
@@ -686,6 +1140,41 @@ drift verdict is exactly the change `--write` would make.
 | Exit codes | 0 all repos ok, 1 one or more repos errored |
 | Status | Active |
 
+### vrg-ci-sync
+
+Fleet sweep that strips the retired `versions:` / `container-tag:` inputs
+from each repo's `.github/workflows/ci.yml`, opening one PR per repo whose
+file drifts. It stops at `report-ready` and never submits or merges.
+`--dry-run` reports each repo's verdict without opening anything. A repo
+whose `ci.yml` cannot be understood is left unchanged and listed in the
+report.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_ci_sync` |
+| Args | `--repos PATH...` (required, local clones), `--dry-run` |
+| Preconditions | Local clones of the target repos; GitHub App credentials |
+| Failure mode | Per-repo errors are reported in the summary |
+| Exit codes | 0 success, 1 any repo errored |
+| Status | Active |
+
+### vrg-xdist-sync
+
+Fleet sweep that adds `pytest-xdist` to each Python repo's dev dependencies,
+opening one PR per repo that needs it. It stops at `report-ready` and never
+submits or merges. A repo it cannot safely change is reported and gets a
+follow-up issue; a non-Python repo is skipped. `--dry-run` reports each
+repo's verdict without opening anything.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_xdist_sync` |
+| Args | `--repos PATH...` (required, local clones), `--dry-run` |
+| Preconditions | Local clones of the target repos; `uv` on PATH; GitHub App credentials |
+| Failure mode | Per-repo errors are reported in the summary |
+| Exit codes | 0 success, 1 any repo errored |
+| Status | Active |
+
 ### vrg-container-run
 
 Run arbitrary commands inside a dev container. Auto-detects the
@@ -706,8 +1195,19 @@ absent or `{}` (epic vergil-project/.github#558).
 
 ### vrg-container-test
 
-Run a repository's test suite inside a dev container. Auto-detects
-language and selects appropriate image and test command.
+Run a repository's test suite inside a dev container. The language comes
+from `[project].primary-language` in `vergil.toml`, falling back to
+package-manager markers (`pyproject.toml`, `go.mod`, `Cargo.toml`,
+`pom.xml`/`mvnw`, …) when the repo asserts none; it selects the image and
+the test command. Consuming repos call it directly. Environment overrides:
+
+- `DOCKER_DEV_IMAGE`: the container image.
+- `DOCKER_TEST_CMD`: the test command.
+- `DOCKER_NETWORK`: a Docker network to join, for example for
+  integration tests.
+
+Env-var passthrough is set per repo with `[container].env-prefixes`; see
+[Container Config](container-config.md).
 
 | Attribute | Value |
 |---|---|
@@ -859,6 +1359,61 @@ sweep or removal is a finalize warning, never a failure (issue #3566).
 | Exit codes | 0 success (including a `prune` dry run); 1 no subcommand, no runtime, a failed removal, or a `prune` refusal; non-zero on build failure |
 | Status | Active |
 
+### vrg-scorecard
+
+Run OpenSSF Scorecard inside a dev container with a GitHub App token
+injected as `GH_TOKEN`. Every argument except `--prefix` is passed through
+to `scorecard`.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_scorecard` |
+| Args | `--prefix {dev,prod}` (default `prod`), then `scorecard` arguments |
+| Preconditions | Git repo; a container runtime; GitHub App credentials |
+| Failure mode | Error on stderr for a bad `--prefix` or missing credentials |
+| Exit codes | 1 on those errors; otherwise `scorecard`'s exit code |
+| Status | Active |
+
+### vrg-vm
+
+Create, start, stop, update, rebuild and enter the identity agent VMs,
+Lima on the Mac or off-platform (cloud). Subcommands: `create`, `start`,
+`stop`, `restart`, `update`, `destroy`, `destroy-volume`, `rebuild`,
+`list`, `volumes`, `session` (launch a Claude session in the VM) and `cp`
+(copy files between the host and a VM). `vrg-vm update` reinstalls
+vergil-tooling and refreshes the plugins in a running VM in place; `--all`
+updates every configured identity's boxes. VMs install vergil-tooling as
+the signed package; `vrg-vm update --tag <ref>` with a non-release ref
+installs a dev copy instead and flags it with a `DEV tooling` banner, and
+a plain `vrg-vm update` returns the VM to the package. See
+[VM Spec](vm-spec.md#vergil-tooling-inside-the-vm).
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_vm` |
+| Args | Global `--identity` (default: the configured default identity), `--config` (path to `identities.toml`); then a subcommand with its own flags (`vrg-vm <subcommand> --help`) |
+| Preconditions | Host with Lima (local VMs) or the off-platform backend configured; `identities.toml` |
+| Failure mode | Error on stderr; `update --all` attempts every box and reports each failure |
+| Exit codes | 0 success, non-zero on failure |
+| Status | Active |
+
+### vrg-vm-resolve-session
+
+The in-VM half of `vrg-vm session`. It runs inside the identity VM, reads
+the VM-local session roster and transcripts, picks the session slot for an
+identity and workspace path, and execs Claude Code. With `--list-json` it
+prints every named session's state for `vrg-vm list --sessions`. Not run by
+hand.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_vm_resolve_session` |
+| Args | `--identity`, `--path`, `--fresh`, `--resume-name`, `--label`, `--instance`, `--list-json`, then extra arguments |
+| Preconditions | Inside an identity VM with vergil-tooling installed |
+| Failure mode | Error on stderr |
+| Exit codes | 1 on error; otherwise it execs Claude Code |
+| Status | Active |
+
 ### vrg-host
 
 Observe and manage the Vergil-critical macOS host dependencies (`uv`,
@@ -929,9 +1484,10 @@ for every check and where it runs.
 | Exit codes | 0 all passed, 1 a stage failed or the config is invalid, 2 usage error (for example `--check custom --all-versions`) |
 | Status | Active |
 
-### vrg-validate-common
+### validate_common (internal)
 
-Shared validation checks for all repos: repository profile
+Not a command on `PATH`: the module `vrg-validate` runs as its common
+stage. Shared validation checks for all repos: repository profile
 validation, markdownlint on published markdown (`docs/site/**/*.md`
 and `README.md`) using the bundled canonical config, shellcheck on
 `scripts/`, yamllint on `.github/` and `docs/` YAML files, the
@@ -1063,6 +1619,169 @@ original. See
 | Args | `INPUT` `OUTPUT` (positional; may be the same path) |
 | Preconditions | `INPUT` is a readable SARIF file |
 | Failure mode | Error on stderr when the input cannot be read or the output cannot be written |
+| Exit codes | 0 success, 1 error |
+| Status | Active |
+
+### vrg-sarif-evaluate
+
+Evaluate a SARIF file, or a directory of `.sarif` files, and report every
+finding at the chosen severities as an error annotation.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_sarif_evaluate` |
+| Args | `path` (positional), `--severity LEVEL...` (default `warning error`) |
+| Preconditions | None |
+| Failure mode | Exit 2 when the path does not exist |
+| Exit codes | 0 no findings, 1 findings, 2 path not found |
+| Status | Active |
+
+### vrg-semgrep-scan
+
+Run a semgrep scan with rulesets resolved for the language (plus Dockerfile
+and workflow rulesets on request), write SARIF, and report findings. Used by
+the CI security workflow.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_semgrep_scan` |
+| Args | `--language` (required), `--target-dir`, `--output`, `--extra-config`, `--exclude-rule` (repeatable), `--has-dockerfiles`, `--has-workflows` |
+| Preconditions | `semgrep` on PATH |
+| Failure mode | Exit 2 when semgrep itself fails |
+| Exit codes | 0 no findings, 1 findings, 2 scan failed |
+| Status | Active |
+
+### vrg-trivy-scan
+
+Run a Trivy vulnerability scan of a filesystem or image, writing SARIF and
+table output, report findings, and optionally write a CycloneDX SBOM.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_trivy_scan` |
+| Args | `--type {filesystem,image}` (required), `--target` (required), `--output-dir` (required), `--trivyignore`, `--sbom`, `--severity` (default `MEDIUM,HIGH,CRITICAL`) |
+| Preconditions | `trivy` on PATH |
+| Failure mode | Exit 2 when trivy itself fails |
+| Exit codes | 0 no findings, 1 findings, 2 scan failed |
+| Status | Active |
+
+### vrg-ecosystem-resolve
+
+Resolve a language's package build command, publish command and credential
+secret name. In CI it writes them as step outputs; otherwise it prints them.
+Used by the registry-publish action.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_ecosystem_resolve` |
+| Args | `language` (positional) |
+| Preconditions | None |
+| Failure mode | Exit 1 for an unsupported language, naming the supported ones |
+| Exit codes | 0 success, 1 error |
+| Status | Active |
+
+### vrg-resolve-tooling-version
+
+Resolve the vergil-tooling install tag from `vergil.toml` and write it as
+the `vergil_version` output.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_resolve_tooling_version` |
+| Args | `--repo-root PATH` (default: the current directory) |
+| Preconditions | `vergil.toml` in the repo root |
+| Failure mode | Exit 1 for a missing or invalid `vergil.toml` |
+| Exit codes | 0 success, 1 error |
+| Status | Active |
+
+### vrg-release-validate-inputs
+
+Validate release workflow inputs: the language is supported,
+`--registry-publish` is compatible with it, and `--container-tag` has an
+image tag's shape. Used by the release validate-inputs action.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_release_validate_inputs` |
+| Args | `--language`, `--container-tag`, `--registry-publish` |
+| Preconditions | None |
+| Failure mode | Each invalid input is reported as an error |
+| Exit codes | 0 valid, 1 invalid |
+| Status | Active |
+
+### vrg-version-divergence
+
+Compare the head branch's version with the main branch's and fail when it
+was not bumped. Writes `status`, `head_version` and `main_version` outputs.
+Omit the main version for a first release.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_version_divergence` |
+| Args | `head_version` (positional), `main_version` (positional, optional) |
+| Preconditions | None |
+| Failure mode | Exit 1 when the versions are equal, 2 when the head version is empty |
+| Exit codes | 0 bumped, 1 not bumped, 2 empty head version |
+| Status | Active |
+
+### vrg-freeze-refs
+
+Rewrite internal action references in workflow YAML to a release tag, then
+fail on any reference left unfrozen. Run at release time to pin internal
+references to the release tag.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_freeze_refs` |
+| Args | `--owner-repo` (required), `--tag` (required), `--scan-dirs DIR...` (default `.github/workflows actions`) |
+| Preconditions | None |
+| Failure mode | Each unfrozen reference is reported as an error |
+| Exit codes | 0 success, 1 unfrozen references remain |
+| Status | Active |
+
+### vrg-ci-evidence
+
+Harvest and bundle a release's CI evidence. `harvest` finds the CI run for
+the release merge commit, downloads and validates its evidence into a
+staging directory; `assemble` builds the manifest and tarball from that
+staging directory with no network access; `bundle` does both. Used by the
+release workflow.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_ci_evidence` |
+| Args | `harvest --repo --merge-sha --out-dir [--run-grace-secs]`; `assemble --staging --version --generated-at --out-dir [--sbom-file]`; `bundle --repo --version --merge-sha --out-dir [--sbom-file]` |
+| Preconditions | GitHub App credentials for the target org (`harvest`, `bundle`) |
+| Failure mode | A single-line error on stderr, never a traceback |
+| Exit codes | 0 success, 1 error |
+| Status | Active |
+
+### vrg-docs-stage
+
+Stage the changelog and release notes into the docs build directory,
+linking each release page to its CI-evidence bundle. Used by the docs-stage
+action.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_docs_stage` |
+| Args | `--docs-dir` (required), `--releases-dir`, `--changelog`, `--repo OWNER/NAME` |
+| Preconditions | The docs directory exists; GitHub credentials for evidence linking |
+| Failure mode | Exit 1 when the docs directory is missing or `gh` is not authenticated |
+| Exit codes | 0 success, 1 error |
+| Status | Active |
+
+### vrg-docs-patch-nav
+
+Add the release version pages to the `mkdocs.yml` nav. Used by the
+docs-stage action.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_docs_patch_nav` |
+| Args | `--mkdocs-yml` (required), `--releases-dir` (required) |
+| Preconditions | `mkdocs.yml` and the releases directory exist |
+| Failure mode | Exit 1 when either path is missing |
 | Exit codes | 0 success, 1 error |
 | Status | Active |
 

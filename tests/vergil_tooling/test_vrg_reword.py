@@ -18,6 +18,9 @@ from vergil_tooling.bin.vrg_reword import (
     main,
     parse_args,
 )
+from vergil_tooling.lib.pr_workflow import engine
+from vergil_tooling.lib.pr_workflow.freeze import FreezeCheck
+from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
 
 if TYPE_CHECKING:
     import argparse
@@ -360,6 +363,8 @@ def test_run_reword_rebase_reports_failure() -> None:
 
 def test_main_returns_rebase_failure_before_push() -> None:
     with (
+        patch(f"{_MOD}.git.repo_root"),
+        patch(f"{_MOD}.freeze.check_worktree", return_value=FreezeCheck(frozen=False)),
         patch(f"{_MOD}._validate", return_value=(0, "fullsha", "feature/1-x")),
         patch(f"{_MOD}._later_commits", return_value=[]),
         patch(f"{_MOD}._run_reword_rebase", return_value=1),
@@ -520,3 +525,108 @@ def test_reword_refuses_shared_history_end_to_end(
     assert rc == 1
     # develop's tip is untouched.
     assert _git(repo, "rev-parse", "develop") == base_sha
+
+
+# --------------------------------------------------------------------------
+# post-report-ready freeze (#3772): the same gate vrg-commit and the vrg-git
+# push path enforce — a frozen branch is never rewritten or pushed.
+# --------------------------------------------------------------------------
+
+
+def _record_workflow(repo: Path, *, ready: bool) -> None:
+    """Write the worktree's PR-workflow state, reported ready or implementing."""
+    head = _git(repo, "rev-parse", "HEAD")
+    state = engine.init_state(
+        issue="1",
+        branch="feature/1-x",
+        base="origin/develop",
+        head_sha=head,
+        base_sha=_git(repo, "rev-parse", "develop"),
+        now="2026-10-28T00:00:00Z",
+    )
+    if ready:
+        state = engine.apply_report_ready(
+            state,
+            title="t",
+            summary="s",
+            notes="n",
+            linkage="Ref",
+            head_sha=head,
+            now="2026-10-28T01:00:00Z",
+        )
+    LocalFileTransport(repo).write(state)
+    # The state file is local bookkeeping, never part of the tree.
+    (repo / ".git" / "info" / "exclude").write_text(".vergil/\n")
+
+
+def _publish(repo: Path, tmp_path: Path) -> Path:
+    """Give the repo a bare origin carrying develop and the feature branch."""
+    origin = tmp_path / "origin.git"
+    _git(tmp_path, "init", "-q", "--bare", str(origin))
+    _git(repo, "remote", "add", "origin", str(origin))
+    _git(repo, "push", "-q", "origin", "develop", "feature/1-x")
+    _git(repo, "fetch", "-q", "origin")
+    return origin
+
+
+def test_reword_refuses_frozen_branch_end_to_end(
+    reword_repo: tuple[Path, str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, sha_b = reword_repo
+    origin = _publish(repo, tmp_path)
+    _record_workflow(repo, ready=True)
+    monkeypatch.chdir(repo)
+    head_before = _git(repo, "rev-parse", "HEAD")
+    origin_before = _git(origin, "rev-parse", "feature/1-x")
+
+    rc = main([sha_b, "--type", "feat", "--scope", "core", "--message", "good B message"])
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "refusing to reword a commit" in err
+    assert "FROZEN" in err
+    assert "vrg-pr-workflow unfreeze" in err
+    # Nothing rewritten locally, nothing pushed.
+    assert _git(repo, "rev-parse", "HEAD") == head_before
+    assert _git(origin, "rev-parse", "feature/1-x") == origin_before
+
+
+def test_reword_works_on_implementing_branch_end_to_end(
+    reword_repo: tuple[Path, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, sha_b = reword_repo
+    origin = _publish(repo, tmp_path)
+    _record_workflow(repo, ready=False)
+    monkeypatch.chdir(repo)
+    origin_before = _git(origin, "rev-parse", "feature/1-x")
+
+    rc = main([sha_b, "--type", "feat", "--scope", "core", "--message", "good B message"])
+
+    assert rc == 0
+    assert _git(repo, "log", "--format=%s", "-1", "HEAD~1") == "feat(core): good B message"
+    # The rewrite was pushed with --force-with-lease.
+    origin_after = _git(origin, "rev-parse", "feature/1-x")
+    assert origin_after != origin_before
+    assert origin_after == _git(repo, "rev-parse", "HEAD")
+
+
+def test_main_warns_but_proceeds_on_freeze_read_error(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with (
+        patch(f"{_MOD}.git.repo_root"),
+        patch(
+            f"{_MOD}.freeze.check_worktree",
+            return_value=FreezeCheck(frozen=False, read_error="bad json"),
+        ),
+        patch(f"{_MOD}._validate", return_value=(1, "", "")) as validate,
+    ):
+        rc = main(["fullsha", "--type", "feat", "--scope", "core", "--message", "x"])
+    assert rc == 1
+    validate.assert_called_once()
+    err = capsys.readouterr().err
+    assert "could not read PR-workflow state (bad json)" in err
+    assert "proceeding without a freeze check" in err

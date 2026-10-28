@@ -532,10 +532,13 @@ it (see [`vrg-intake-route`](../reference/cli-tools-overview.md#vrg-intake-route
 for the route table), for a cross-org target, and for a private item headed to a
 public repo or epic.
 
-A `security` item keeps its advisory link through every move: on a split or a
-recreate, the advisory is retargeted to the new issue(s) **before** the
+A `security` item keeps its advisory links through every move. On a recreate,
+every advisory the item names is retargeted to the copy **before** the
 original closes (a failure stops the route and leaves the original open); on a
-transfer, it is retargeted after the move (see
+transfer, every advisory is retargeted after the move. A split retargets an
+item's one advisory to the new tasks **before** the original closes; a split
+of an item naming several advisories is refused before any change, since which
+advisory goes to which task can't be inferred (see
 [Security Records](../guides/security-records.md#when-the-issue-moves)).
 
 ### The deferred queue
@@ -612,10 +615,11 @@ Progress comments carry machine-readable marker lines — `Epic: <ref>`,
 `Docs task: <ref>`, and `Tasks filed: yes` (the latest of each wins) — and the
 epic body gains a `Planning: <ref>` line. `vrg-queue planning` reports an item
 **ready to close** once it is `in-progress`, all three markers are present, and
-the docs task is closed (its spec + plan PR merged). A planning item that a
+the docs task is closed (its spec + plan PR merged). A planning item that any
 security advisory still tracks is **held** at in-progress, with a `held:` note,
-until `epic-create` retargets the advisory to the fix task(s); closing it
-earlier would close the advisory with the fix unwritten (see
+until `epic-create` retargets each advisory it names to the task or tasks that
+fix it; closing it earlier would close those advisories with the fix unwritten
+(see
 [Security items in planning](../guides/security-records.md#security-items-in-planning)).
 
 Which planning item to expand next is decided in the `planning-review` skill:
@@ -692,8 +696,8 @@ them, which also strips them from any issue still carrying them.
 
 `security` goes only on an issue paired with a private draft advisory:
 `vrg-security-record` applies it when it creates or attaches a record, and
-removes it from an issue the advisory stops tracking. The sweep's consistency
-check applies only to `security`; `security-disclosed` marks a past public
+removes it when the last advisory an issue names stops tracking it. The sweep's
+consistency check applies only to `security`; `security-disclosed` marks a past public
 disclosure and is ignored by the check (see
 [Security Records](../guides/security-records.md#the-labels)).
 

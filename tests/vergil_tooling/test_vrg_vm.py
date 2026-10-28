@@ -50,6 +50,7 @@ from vergil_tooling.bin.vrg_vm import (
 )
 from vergil_tooling.lib import vm_cloud, vm_memory
 from vergil_tooling.lib.identity import Identity, IdentityConfig
+from vergil_tooling.lib.trusted_authors import TrustedAuthors
 from vergil_tooling.lib.vm_backend import select_backend
 from vergil_tooling.lib.vm_spec import ComposedSpec, SpecError
 from vergil_tooling.lib.vm_transport import LimaTransport
@@ -94,6 +95,7 @@ def _stub_guest_transport() -> Iterator[None]:
         patch(mod + "link_claude_dirs"),
         patch(mod + "copy_claude_config"),
         patch(mod + "inject_credentials"),
+        patch(mod + "inject_trusted_authors"),
         patch(mod + "install_tooling"),
         patch(mod + "update_tooling"),
         patch(mod + "update_plugins"),
@@ -723,6 +725,180 @@ class TestRestart:
         mock_stop.assert_called_once()
         mock_start.assert_called_once()
         mock_inject.assert_called_once()
+
+
+# Invented logins only — never a real one in a fixture (spec 4.4).
+_TRUSTED = TrustedAuthors(human=("example-human",), agents=("example-agent",))
+
+
+@pytest.fixture()
+def trusted_config_file(tmp_path: Path) -> Path:
+    p = tmp_path / "identities-trusted.toml"
+    p.write_text(
+        textwrap.dedent("""\
+        default_identity = "vergil"
+        vergil = "v2.0"
+
+        [trusted_authors]
+        human = ["example-human"]
+        agents = ["example-agent"]
+
+        [identities.vergil]
+        vm_instance = "vergil-agent"
+        auth_type = "app"
+        app_id = 12345
+        private_key_path = "~/.config/vergil/keys/vergil-agent.pem"
+        projects_dir = "/home/user/projects"
+    """)
+    )
+    return p
+
+
+class TestTrustedAuthorsDelivery:
+    """Every vrg-vm path that writes vergil config delivers the trusted authors (spec 4.4)."""
+
+    @pytest.fixture(autouse=True)
+    def mock_trusted(self) -> Iterator[MagicMock]:
+        with patch("vergil_tooling.bin.vrg_vm.inject_trusted_authors") as m:
+            yield m
+
+    @staticmethod
+    def _assert_delivered(mock: MagicMock, instance: str, authors: TrustedAuthors | None) -> None:
+        mock.assert_called_once()
+        _assert_transport(mock, instance)
+        assert mock.call_args.args[1] == authors
+
+    @patch("vergil_tooling.bin.vrg_vm.start_vm")
+    @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=1.0)
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Stopped")
+    def test_start_delivers_trusted_authors(
+        self,
+        _status: MagicMock,
+        _age: MagicMock,
+        _start: MagicMock,
+        mock_trusted: MagicMock,
+        trusted_config_file: Path,
+    ) -> None:
+        assert main(["start", "--config", str(trusted_config_file)]) == 0
+        self._assert_delivered(mock_trusted, "vergil-agent", _TRUSTED)
+
+    @patch("vergil_tooling.bin.vrg_vm.start_vm")
+    @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=1.0)
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Stopped")
+    def test_start_removes_trusted_authors_when_host_has_none(
+        self,
+        _status: MagicMock,
+        _age: MagicMock,
+        _start: MagicMock,
+        mock_trusted: MagicMock,
+        config_file: Path,
+    ) -> None:
+        assert main(["start", "--config", str(config_file)]) == 0
+        self._assert_delivered(mock_trusted, "vergil-agent", None)
+
+    @patch("vergil_tooling.bin.vrg_vm.stop_vm")
+    @patch("vergil_tooling.bin.vrg_vm.start_vm")
+    @patch("vergil_tooling.bin.vrg_vm.create_vm")
+    @patch("vergil_tooling.bin.vrg_vm.fetch_template")
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="")
+    def test_create_delivers_trusted_authors(
+        self,
+        _status: MagicMock,
+        mock_fetch: MagicMock,
+        _create: MagicMock,
+        _start: MagicMock,
+        _stop: MagicMock,
+        mock_trusted: MagicMock,
+        trusted_config_file: Path,
+        tmp_path: Path,
+    ) -> None:
+        template = tmp_path / "template.yaml"
+        template.write_text("cpus: 4")
+        mock_fetch.return_value = template
+        assert main(["create", "--config", str(trusted_config_file)]) == 0
+        self._assert_delivered(mock_trusted, "vergil-agent", _TRUSTED)
+
+    @patch("vergil_tooling.bin.vrg_vm.stop_vm")
+    @patch("vergil_tooling.bin.vrg_vm.start_vm")
+    @patch("vergil_tooling.bin.vrg_vm.create_vm")
+    @patch("vergil_tooling.bin.vrg_vm.fetch_template")
+    @patch("vergil_tooling.bin.vrg_vm.delete_vm")
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
+    def test_rebuild_delivers_trusted_authors(
+        self,
+        _status: MagicMock,
+        _delete: MagicMock,
+        mock_fetch: MagicMock,
+        _create: MagicMock,
+        _start: MagicMock,
+        _stop: MagicMock,
+        mock_trusted: MagicMock,
+        trusted_config_file: Path,
+        tmp_path: Path,
+    ) -> None:
+        template = tmp_path / "template.yaml"
+        template.write_text("cpus: 4")
+        mock_fetch.return_value = template
+        assert main(["rebuild", "--config", str(trusted_config_file)]) == 0
+        self._assert_delivered(mock_trusted, "vergil-agent", _TRUSTED)
+
+    @patch("vergil_tooling.bin.vrg_vm.start_vm")
+    @patch("vergil_tooling.bin.vrg_vm.stop_vm")
+    def test_restart_delivers_trusted_authors(
+        self,
+        _stop: MagicMock,
+        _start: MagicMock,
+        mock_trusted: MagicMock,
+        trusted_config_file: Path,
+    ) -> None:
+        assert main(["restart", "--config", str(trusted_config_file)]) == 0
+        self._assert_delivered(mock_trusted, "vergil-agent", _TRUSTED)
+
+    @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
+    def test_update_delivers_trusted_authors(
+        self,
+        _status: MagicMock,
+        _ver: MagicMock,
+        mock_trusted: MagicMock,
+        trusted_config_file: Path,
+    ) -> None:
+        assert main(["update", "--config", str(trusted_config_file)]) == 0
+        self._assert_delivered(mock_trusted, "vergil-agent", _TRUSTED)
+
+    @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
+    def test_update_removes_trusted_authors_when_host_has_none(
+        self,
+        _status: MagicMock,
+        _ver: MagicMock,
+        mock_trusted: MagicMock,
+        config_file: Path,
+    ) -> None:
+        assert main(["update", "--config", str(config_file)]) == 0
+        self._assert_delivered(mock_trusted, "vergil-agent", None)
+
+    @patch("vergil_tooling.bin.vrg_vm._off_platform_vms", return_value=[])
+    @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
+    @patch("vergil_tooling.bin.vrg_vm.list_vms")
+    def test_update_all_delivers_trusted_authors(
+        self,
+        mock_list: MagicMock,
+        _ver: MagicMock,
+        _off: MagicMock,
+        mock_trusted: MagicMock,
+        trusted_config_file: Path,
+    ) -> None:
+        mock_list.return_value = [
+            {"name": "vergil-agent", "status": "Running"},
+            {"name": "vergil.acme.widgets", "status": "Running"},
+        ]
+        assert main(["update", "--all", "--config", str(trusted_config_file)]) == 0
+        assert [c.args[1] for c in mock_trusted.call_args_list] == [_TRUSTED, _TRUSTED]
+        assert [c.args[0].instance for c in mock_trusted.call_args_list] == [
+            "vergil-agent",
+            "vergil.acme.widgets",
+        ]
 
 
 class TestDestroy:
@@ -1495,6 +1671,7 @@ class TestUpdate:
                 Identity(vm_instance="vergil-agent"),
                 None,
                 "v2.0",
+                trusted_authors=None,
                 prune=True,
             )
         prune.assert_called_once_with(ANY, None)
@@ -4041,6 +4218,18 @@ class TestCloudStageGuards:
         with pytest.raises(RuntimeError, match="tofu-vm did not run"):
             _cs_credentials(self._state(tmp_path))
 
+    @pytest.mark.parametrize("authors", [_TRUSTED, None])
+    def test_credentials_stage_delivers_trusted_authors(
+        self, tmp_path: Path, authors: TrustedAuthors | None
+    ) -> None:
+        state = self._state(tmp_path)
+        state.target.config.trusted_authors = authors
+        transport = MagicMock()
+        state.transport = transport
+        with patch("vergil_tooling.bin.vrg_vm.inject_trusted_authors") as mock_trusted:
+            _cs_credentials(state)
+        mock_trusted.assert_called_once_with(transport, authors)
+
 
 class TestTeardownSshMaster:
     def test_closes_the_shared_master(self) -> None:
@@ -4513,6 +4702,19 @@ class TestCloudUpdate:
         # No rebuild: the disposable VM is never destroyed or re-applied.
         m["destroy_vm"].assert_not_called()
         m["apply_vm"].assert_not_called()
+
+    def test_cloud_update_delivers_trusted_authors(self, _cloud_repo: Path, tmp_path: Path) -> None:
+        # The host has no [trusted_authors] stanza, so the update removes the VM file.
+        transport = MagicMock()
+        with (
+            _CloudPatches(tmp_path / "state", status="Running") as m,
+            patch("vergil_tooling.bin.vrg_vm.inject_trusted_authors") as mock_trusted,
+            patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None),
+        ):
+            m["transport"].return_value = transport
+            result = main(["update", "lmf/cloud", "--config", str(_cloud_repo)])
+        assert result == 0
+        mock_trusted.assert_called_once_with(transport, None)
 
     def test_cloud_update_refuses_when_not_running(
         self, _cloud_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -5907,7 +6109,7 @@ class _FakeIdentity:
 
 
 class _FakeConfig:
-    pass
+    trusted_authors = None
 
 
 def _destroy_args(
@@ -6621,7 +6823,9 @@ class TestDevToolingBanner:
 
         transport = MagicMock()
         with patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None):
-            vrg_vm._update_over_transport(transport, "VM 'x'", "develop", "v2.1")
+            vrg_vm._update_over_transport(
+                transport, "VM 'x'", "develop", "v2.1", trusted_authors=None
+            )
         assert self._BANNER in capsys.readouterr().out
         dev_ref.assert_called_once_with(transport)
 
@@ -6631,7 +6835,7 @@ class TestDevToolingBanner:
         from vergil_tooling.bin import vrg_vm  # noqa: PLC0415
 
         with patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value="2.1.240-1"):
-            vrg_vm._update_over_transport(MagicMock(), "VM 'x'", None, "v2.1")
+            vrg_vm._update_over_transport(MagicMock(), "VM 'x'", None, "v2.1", trusted_authors=None)
         out = capsys.readouterr().out
         assert "DEV tooling" not in out
         assert "vergil-tooling: 2.1.240-1 (already up to date)" in out
@@ -6653,7 +6857,7 @@ class TestDevToolingBanner:
             ),
             patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None),
         ):
-            vrg_vm._update_over_transport(MagicMock(), "VM 'x'", None, "v2.1")
+            vrg_vm._update_over_transport(MagicMock(), "VM 'x'", None, "v2.1", trusted_authors=None)
         assert order == ["update", "dev_ref"]
         assert "DEV tooling" not in capsys.readouterr().out
 

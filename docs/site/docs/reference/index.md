@@ -3,7 +3,8 @@
 Vergil-tooling provides Python CLI tools installed as `vrg-*` console
 scripts, plus git hooks. For the full audit of every tool's runtime
 preconditions, host-vs-container classification, and failure modes,
-see the [CLI Tools Overview](cli-tools-overview.md).
+see the [CLI Tools Overview](cli-tools-overview.md). For how the
+package itself is laid out, see [Package Architecture](package-architecture.md).
 
 ## Host tools
 
@@ -13,6 +14,11 @@ the dev-tree override venv.
 | Tool | Purpose |
 | ---- | ------- |
 | [vrg-commit](dev/commit.md) | Standards-compliant commit wrapper |
+| [vrg-reword](cli-tools-overview.md#vrg-reword) | Reword a branch-local commit message (agent-safe) |
+| [vrg-whoami](cli-tools-overview.md#vrg-whoami) | Print the resolved identity role or platform |
+| [vrg-hook-guard](cli-tools-overview.md#vrg-hook-guard) | Claude Code hook that blocks raw `git` and `gh` |
+| [vrg-resolve-tracking-issue](cli-tools-overview.md#vrg-resolve-tracking-issue) | Print a merge commit's tracking issue |
+| [vrg-vm](cli-tools-overview.md#vrg-vm) | Manage the identity agent VMs |
 | [vrg-submit-pr](dev/submit-pr.md) | Standards-compliant PR submission wrapper |
 | [vrg-release](dev/release.md) | Run the full release workflow, ending with the dependency update |
 | [vrg-update-deps](dev/update-deps.md) | Update dependencies within their declared bounds and merge the result |

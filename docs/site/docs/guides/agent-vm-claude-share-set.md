@@ -57,8 +57,12 @@ on first launch and keeps them current with an in-VM refresh — the same
 model used for vergil-tooling. The host's materialized `~/.claude/plugins`
 checkout is never shared: doing so would cross the macOS/Linux boundary
 (fragile if any plugin ships a binary) and hit the same `EXDEV` write
-problem as the roster. Instead, `update_plugins` refreshes the marketplaces
-(`claude plugin marketplace update`) and then updates every **install** of an
+problem as the roster. Instead, `update_plugins` first registers each
+`extraKnownMarketplaces` entry with `claude plugin marketplace add`, keeping
+any `ref` the entry declares (`owner/repo@ref` for a GitHub source,
+`url#ref` for a git URL): Claude Code refuses an add whose source does not
+match the declared entry. It then refreshes the marketplaces
+(`claude plugin marketplace update`) and updates every **install** of an
 enabled plugin to its latest version, each at its own scope (`claude plugin
 update <id> --scope <user|project>` — there is no bulk-update form), all
 inside the VM. One plugin can be installed at user scope and again at project

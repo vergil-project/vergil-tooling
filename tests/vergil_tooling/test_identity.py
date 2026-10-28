@@ -19,6 +19,7 @@ from vergil_tooling.lib.identity import (
     resolve_vm_tag,
     resolve_workspace,
 )
+from vergil_tooling.lib.trusted_authors import TrustedAuthors
 
 
 @pytest.fixture()
@@ -172,6 +173,58 @@ def test_load_config_rejects_unknown_auth_type(tmp_path: Path) -> None:
     )
     with pytest.raises(SystemExit):
         load_config(p)
+
+
+def test_identity_config_parses_trusted_authors_stanza(tmp_path: Path) -> None:
+    p = tmp_path / "identities.toml"
+    p.write_text(
+        textwrap.dedent("""\
+        [trusted_authors]
+        human = ["example-human"]
+        agents = ["example-agent"]
+
+        [identities.vergil-user]
+        vm_instance = "vergil-user"
+    """)
+    )
+    cfg = load_config(p)
+    assert cfg.trusted_authors == TrustedAuthors(
+        human=("example-human",), agents=("example-agent",)
+    )
+    assert set(cfg.identities) == {"vergil-user"}
+
+
+def test_identity_config_trusted_authors_absent_is_none(config_file: Path) -> None:
+    assert load_config(config_file).trusted_authors is None
+
+
+def test_identity_config_rejects_invalid_trusted_authors_stanza(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    p = tmp_path / "identities.toml"
+    p.write_text(
+        textwrap.dedent("""\
+        [trusted_authors]
+        human = ["example-human"]
+        agents = ["example-human"]
+
+        [identities.vergil-user]
+        vm_instance = "vergil-user"
+    """)
+    )
+    with pytest.raises(SystemExit):
+        load_config(p)
+    assert "both 'human' and 'agents'" in capsys.readouterr().err
+
+
+def test_identity_config_rejects_non_table_trusted_authors(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    p = tmp_path / "identities.toml"
+    p.write_text('trusted_authors = ["example-human"]\n')
+    with pytest.raises(SystemExit):
+        load_config(p)
+    assert "[trusted_authors] must be a table" in capsys.readouterr().err
 
 
 def test_missing_config_file(tmp_path: Path) -> None:

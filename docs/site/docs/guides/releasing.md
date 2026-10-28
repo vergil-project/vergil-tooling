@@ -4,14 +4,29 @@ This guide covers the release workflow for `vergil-tooling`,
 including how patch, minor, and major versions affect both the
 release author (producer) and downstream consumers.
 
-The model: `vergil-tooling` is distributed as a host-level
-developer tool plus a dev-container pre-bake (see
-[host-level-tool spec][hlt]). Three deployment targets — developer
-host, Python project `.venv`, and dev container image — each track
-the **rolling minor tag** (e.g. `v1.3`), which is force-updated by
-`tag-and-release` on every patch release. The dev container images
-rebuild automatically on each `vergil-tooling` release via a
-`repository_dispatch` trigger.
+## Deployment targets
+
+A release reaches three coordinated deployment targets (the original
+design is the historical [host-level-tool spec][hlt], written under the
+old `standard-tooling`/`st-*` naming):
+
+| Target | Install mechanism | Who uses it |
+|---|---|---|
+| **Developer host** (macOS) | `uv tool install` from the git URL, pinned to the rolling minor tag | Host-side commands: `vrg-container-run`, `vrg-commit`, `vrg-submit-pr`, `vrg-release`, `vrg-finalize-pr`, `vrg-host` |
+| **Container runtime** (all languages) | `vrg-container-run` cache-first install of the version `vergil.toml` names, in a per-branch cached image | `vrg-*` inside the dev container, locally and in CI, for every consumer |
+| **Agent VM** (Lima/cloud) | Signed `vergil-tooling` package via `apt` from <https://vergil-project.github.io/packages>, pinned to the identity's release line or version | Agent sessions inside the VM |
+
+The canonical host install (see [Getting Started](../getting-started.md)):
+
+```bash
+uv tool install --python 3.14 'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.1'
+```
+
+On an agent VM, a dev ref (`vrg-vm update --tag develop`, or any non-release
+ref) is an explicit `uv tool install` from git that shadows the packaged copy,
+and every `vrg-vm` command that touches the VM prints a `DEV tooling` banner
+while it is in place. A plain `vrg-vm update` returns the VM to the package.
+See [vergil-tooling inside the VM](../reference/vm-spec.md#vergil-tooling-inside-the-vm).
 
 [hlt]: https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/host-level-tool.md
 
