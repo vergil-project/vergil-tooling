@@ -18,10 +18,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from vergil_tooling.lib import vm_packages
+from vergil_tooling.lib.trusted_authors import VM_FILE_NAME, render_vm_file
 from vergil_tooling.lib.vm_transport import TransportTimeoutError
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.identity import Identity
+    from vergil_tooling.lib.trusted_authors import TrustedAuthors
     from vergil_tooling.lib.vm_transport import Transport
 
 _TOOLING_TAG_FILE = "~/.config/vergil/tooling-tag"
@@ -171,6 +173,29 @@ def _inject_claude_token(transport: Transport, token_path: str) -> None:
     transport.pipe(
         "cat > ~/.claude.json",
         onboarding + "\n",
+    )
+
+
+_TRUSTED_AUTHORS_FILE = f"~/.config/vergil/{VM_FILE_NAME}"
+
+
+def inject_trusted_authors(transport: Transport, authors: TrustedAuthors | None) -> None:
+    """Deliver the host's ``[trusted_authors]`` stanza into the VM, or remove it.
+
+    Writes ``~/.config/vergil/trusted-authors.toml`` (mode 600) when *authors* is
+    set. When the host has no stanza (*authors* is ``None``) the VM file is
+    **deleted**, so ``vrg-trusted-authors`` in the VM fails loudly instead of
+    trusting a stale list from an earlier delivery.
+    """
+    if authors is None:
+        print("  Removing trusted-authors file (host has no [trusted_authors] stanza)...")
+        transport.run("bash", "-c", f"rm -f {_TRUSTED_AUTHORS_FILE}")
+        return
+    print("  Injecting trusted authors...")
+    transport.run("bash", "-c", "mkdir -p ~/.config/vergil")
+    transport.pipe(
+        f"(umask 077 && cat > {_TRUSTED_AUTHORS_FILE}) && chmod 600 {_TRUSTED_AUTHORS_FILE}",
+        render_vm_file(authors),
     )
 
 

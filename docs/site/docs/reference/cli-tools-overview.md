@@ -426,6 +426,26 @@ collect step of the three review skills (`intake-review`, `planning-review`,
 | Exit codes | 0 success, 1 error, 2 bad arguments |
 | Status | Active |
 
+### vrg-trusted-authors
+
+The one accessor for the trusted-authors configuration: the GitHub logins
+whose issues and comments automation may trust. It reads
+`~/.config/vergil/trusted-authors.toml` (delivered into agent VMs by `vrg-vm`)
+if it exists, else the `[trusted_authors]` stanza of
+`~/.config/vergil/identities.toml`, and prints `human: <login>` and
+`agent: <login>`, one per line. Skills and doctrine name this command, never
+the logins. See
+[Trusted authors](../guides/account-setup.md#trusted-authors).
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_trusted_authors` (config: `lib/trusted_authors.py`) |
+| Args | `--json` (prints `{"human": [...], "agents": [...]}`) |
+| Preconditions | The VM file or the host stanza exists |
+| Failure mode | Nothing configured, or an invalid configuration, prints the error on stderr and exits 1; it never prints a default |
+| Exit codes | 0 success, 1 not configured or invalid, 2 bad arguments |
+| Status | Active |
+
 ### vrg-epic-audit
 
 Report epic/task drift and invariant violations for an org, as Markdown on

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shlex
 import subprocess
+import tomllib
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
@@ -10,6 +11,7 @@ import pytest
 
 from vergil_tooling.lib import vm_packages
 from vergil_tooling.lib.identity import Identity
+from vergil_tooling.lib.trusted_authors import TrustedAuthors, parse_trusted_authors
 from vergil_tooling.lib.vm_guest import (
     _PRUNE_PROBE,
     VmUnreachableError,
@@ -19,6 +21,7 @@ from vergil_tooling.lib.vm_guest import (
     copy_claude_config,
     get_tooling_version,
     inject_credentials,
+    inject_trusted_authors,
     install_tooling,
     link_claude_dirs,
     prune_cache_images,
@@ -322,6 +325,31 @@ class TestInjectCredentials:
         transport.run.assert_not_called()
         transport.pipe.assert_not_called()
         mock_id.assert_not_called()
+
+
+class TestInjectTrustedAuthors:
+    def test_inject_trusted_authors_writes_vm_file(self) -> None:
+        transport = _transport()
+        authors = TrustedAuthors(human=("example-human",), agents=("example-agent",))
+
+        inject_trusted_authors(transport, authors)
+
+        transport.pipe.assert_called_once()
+        cmd, content = transport.pipe.call_args.args
+        assert "cat > ~/.config/vergil/trusted-authors.toml" in cmd
+        assert "chmod 600 ~/.config/vergil/trusted-authors.toml" in cmd
+        assert parse_trusted_authors(tomllib.loads(content)) == authors
+        transport.run.assert_called_once_with("bash", "-c", "mkdir -p ~/.config/vergil")
+
+    def test_inject_trusted_authors_removes_vm_file_when_host_has_none(self) -> None:
+        transport = _transport()
+
+        inject_trusted_authors(transport, None)
+
+        transport.pipe.assert_not_called()
+        transport.run.assert_called_once_with(
+            "bash", "-c", "rm -f ~/.config/vergil/trusted-authors.toml"
+        )
 
 
 class TestReadHostGitConfig:
