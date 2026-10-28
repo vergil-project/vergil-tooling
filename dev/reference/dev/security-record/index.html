@@ -12415,7 +12415,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../releases/v1.2.0/" class="md-nav__link">
+      <a href="../../../releases/v1.2.1/" class="md-nav__link">
         
   
   
@@ -12443,7 +12443,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../releases/v1.2.1/" class="md-nav__link">
+      <a href="../../../releases/v1.2.0/" class="md-nav__link">
         
   
   
@@ -16870,8 +16870,9 @@ because the old number now leads to the moved issue itself.</p>
   an advisory between <code>draft</code> and <code>closed</code>: it never changes a
   <code>published</code>, <code>withdrawn</code> or <code>triage</code> advisory, or an unpaired external
   report, which it lists as <code>unpaired external report (left untouched)</code>.
-  Its summary line is <code>Security records: &lt;n&gt; advisory state(s) synced, &lt;m&gt;
-  broken pair(s).</code> It exits 1 when any pair is broken (after syncing the
+  Its summary line is <code>Security records: &lt;n&gt; advisory states synced, &lt;m&gt;
+  broken pairs.</code> Each noun agrees with its count, so a count of 1 reads
+  <code>1 advisory state synced</code> or <code>1 broken pair</code>. It exits 1 when any pair is broken (after syncing the
   rest), or when the pass fails, including when the org's <code>.github</code> is
   private. An org with no <code>security</code> issues and no <code>.github</code> repo prints
   <code>Security records: none.</code> The read-only <code>vrg-epic-audit</code> prints the same
