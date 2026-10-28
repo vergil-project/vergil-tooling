@@ -311,7 +311,8 @@ CLI tools installed as `vrg-*` console scripts:
 - **`vrg-intake-route`** — Route one intake item (`drop`, `defer`, `one-off`,
   `planning`, `split`); owns transfer-or-recreate, reparent, re-link and
   close-with-pointer for the `intake-review` skill; a `security` item's
-  advisory is retargeted on transfer, recreate and split
+  advisories are retargeted on transfer, recreate and split (a split of an
+  item naming several advisories is refused)
 - **`vrg-security-record`** — Record a security finding as a private draft
   advisory in `<org>/.github` paired with a neutral `security` intake issue
   (`create` with attach and resume, `list`, `show`, `retarget`); advisory text
