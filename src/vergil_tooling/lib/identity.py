@@ -181,7 +181,7 @@ def _load_trusted_authors_stanza(path: Path, raw: dict[str, object]) -> TrustedA
     if stanza is None:
         return None
     if not isinstance(stanza, dict):
-        print(f"ERROR: {path}: [{_TRUSTED_AUTHORS_STANZA}] must be a table", file=sys.stderr)
+        print(f"ERROR: {path}: [trusted_authors] must be a table", file=sys.stderr)
         raise SystemExit(1)
     try:
         return parse_trusted_authors(stanza)
