@@ -12415,7 +12415,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../releases/v1.2.0/" class="md-nav__link">
+      <a href="../../releases/v1.2.1/" class="md-nav__link">
         
   
   
@@ -12443,7 +12443,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../releases/v1.2.1/" class="md-nav__link">
+      <a href="../../releases/v1.2.0/" class="md-nav__link">
         
   
   
@@ -17069,6 +17069,12 @@ once the whole fleet was fenced.)</p>
 <em>outside</em> the fence and are never asserted against; a repo freely adds
 its own entries below the managed block (<code>--write</code> moves any above it to
 below it, in order).</p>
+<p><strong>Editing a fragment in vergil-tooling itself.</strong> The installed
+<code>vrg-gitignore-sync</code> composes from the installed package's data, so after
+a fragment edit it reports "already in sync" and leaves this repo's own
+fence stale (<code>vrg-validate</code> fails on it). Resync from the worktree's
+source with
+<code>PYTHONPATH=src python3 -m vergil_tooling.bin.vrg_gitignore_sync --write</code>.</p>
 <h3 id="propagation-the-rolling-vxy-pin">Propagation — the rolling <code>vX.Y</code> pin<a class="headerlink" href="#propagation-the-rolling-vxy-pin" title="Permanent link">&para;</a></h3>
 <p>Every managed repo pins <code>vergil-tooling</code> to the <strong>rolling major-minor
 tag</strong> <code>vX.Y</code>, never a specific patch. The nightly <code>ops.yml</code> job installs
