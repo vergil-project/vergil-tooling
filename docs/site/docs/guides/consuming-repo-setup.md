@@ -295,9 +295,12 @@ site docs rather than copying it in.
 The nightly config audit requires the region to match the template
 verbatim and the whole file to stay at or under **200 lines**. The repo
 has no `AGENTS.md`: `CLAUDE.md` is the one instruction file. Keep
-`.claude/settings.local.json` absent or exactly `{}`: the agent tools
-refuse to run otherwise (see
-[Local settings](claude-config-ownership.md#local-settings)).
+`.claude/settings.local.json` absent or exactly `{}`. In repos in the
+in-scope orgs, `vrg-commit`, `vrg-pr-workflow report-ready` and
+`vrg-container-run` refuse an agent and warn a human while it holds
+anything else; elsewhere nothing checks it. See
+[Local settings](claude-config-ownership.md#local-settings) for which
+copies are checked and the known limit.
 
 ### Worktree convention
 
