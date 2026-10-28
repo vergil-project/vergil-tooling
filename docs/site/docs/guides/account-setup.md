@@ -319,6 +319,43 @@ Notes:
   `vrg-whoami --explain` reports which signal resolved and warns when
   signals disagree.
 
+### Trusted authors
+
+An optional top-level `[trusted_authors]` stanza lists the GitHub logins
+whose issues and comments automation may trust: your own login, and the
+logins of your agent identities (the Apps' bot accounts).
+
+```toml
+[trusted_authors]
+human = ["<your-login>"]
+agents = ["<user-app-bot-login>", "<audit-app-bot-login>"]
+```
+
+- **Both lists are required and non-empty**, every entry is a non-empty
+  string, and no login may appear in both lists.
+- **Store the bare login.** GitHub reports an issue opened by an App as
+  `app/<login>` but that App's comments as `<login>`; an `app/`-prefixed
+  entry is rejected, and consumers strip a leading `app/` before comparing.
+- **Delivery into VMs.** `vrg-vm` writes the stanza into every agent VM as
+  `~/.config/vergil/trusted-authors.toml` (mode 600) on every path that
+  writes vergil config: `create`, `start`, `restart`, `rebuild`, the cloud
+  credentials stage, and `update`. When the host has no stanza, `vrg-vm`
+  **removes** that file, so a VM never trusts a stale list.
+- **Read it through `vrg-trusted-authors`, never by hand.** It reads the VM
+  file if present, else the host stanza, and prints `human: <login>` and
+  `agent: <login>` lines (`--json` prints
+  `{"human": [...], "agents": [...]}`). With nothing configured it exits 1
+  with an error naming both paths; it never prints a default. Skills and
+  doctrine name only this command, never the logins themselves.
+- An invalid stanza makes every `vrg-vm` command fail loudly when it loads
+  `identities.toml`.
+
+The stanza is used first by the agentic review gate in `issue-implement`,
+which trusts an issue's title and body only when a trusted author opened it.
+It seeds the system-wide rule for every tool and skill that reads issues,
+planned in
+[vergil-project/.github#579](https://github.com/vergil-project/.github/issues/579).
+
 ## Verification checklist
 
 After both Apps are registered, installed, and configured:

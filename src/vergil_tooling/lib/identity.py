@@ -9,6 +9,9 @@ from dataclasses import dataclass
 from dataclasses import field as dc_field
 from pathlib import Path
 
+from vergil_tooling.lib.trusted_authors import STANZA as _TRUSTED_AUTHORS_STANZA
+from vergil_tooling.lib.trusted_authors import TrustedAuthors, parse_trusted_authors
+
 _SIZE_PATTERN = re.compile(r"^\d+GiB$")
 
 _DEFAULT_SESSION_RECENT_DAYS = 7
@@ -42,6 +45,8 @@ class IdentityConfig:
     vergil_vm: str = ""
     model: str = ""
     session_recent_days: int = 7
+    # The optional [trusted_authors] stanza; None when the host has none.
+    trusted_authors: TrustedAuthors | None = None
 
 
 def _validate_session_recent_days(name: str, identity: Identity, cfg_recent: int) -> None:
@@ -117,6 +122,8 @@ def load_config(path: Path) -> IdentityConfig:
     model = raw.get("model", "")
     session_recent_days = raw.get("session_recent_days", _DEFAULT_SESSION_RECENT_DAYS)
 
+    trusted_authors = _load_trusted_authors_stanza(path, raw)
+
     identities: dict[str, Identity] = {}
     for name, data in raw.get("identities", {}).items():
         # Nested [identities.<id>.<org>.<repo>] tables appear as dict-of-dict values in
@@ -164,7 +171,23 @@ def load_config(path: Path) -> IdentityConfig:
         vergil_vm=vergil_vm,
         model=model,
         session_recent_days=session_recent_days,
+        trusted_authors=trusted_authors,
     )
+
+
+def _load_trusted_authors_stanza(path: Path, raw: dict[str, object]) -> TrustedAuthors | None:
+    """Parse the optional [trusted_authors] stanza; exit loudly when it is invalid."""
+    stanza = raw.get(_TRUSTED_AUTHORS_STANZA)
+    if stanza is None:
+        return None
+    if not isinstance(stanza, dict):
+        print(f"ERROR: {path}: [trusted_authors] must be a table", file=sys.stderr)
+        raise SystemExit(1)
+    try:
+        return parse_trusted_authors(stanza)
+    except ValueError as exc:
+        print(f"ERROR: {path}: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
 
 
 def default_config_path() -> Path:
