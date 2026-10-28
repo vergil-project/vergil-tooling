@@ -12415,7 +12415,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../releases/v1.2.1/" class="md-nav__link">
+      <a href="../../releases/v1.2.0/" class="md-nav__link">
         
   
   
@@ -12443,7 +12443,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../releases/v1.2.0/" class="md-nav__link">
+      <a href="../../releases/v1.2.1/" class="md-nav__link">
         
   
   
@@ -12925,6 +12925,17 @@
     <span class="md-ellipsis">
       
         vrg-queue
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vrg-trusted-authors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-trusted-authors
       
     </span>
   </a>
@@ -17170,6 +17181,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-trusted-authors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-trusted-authors
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-epic-audit" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18362,6 +18384,49 @@ collect step of the three review skills (<code>intake-review</code>, <code>plann
 <tr>
 <td>Exit codes</td>
 <td>0 success, 1 error, 2 bad arguments</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-trusted-authors">vrg-trusted-authors<a class="headerlink" href="#vrg-trusted-authors" title="Permanent link">&para;</a></h3>
+<p>The one accessor for the trusted-authors configuration: the GitHub logins
+whose issues and comments automation may trust. It reads
+<code>~/.config/vergil/trusted-authors.toml</code> (delivered into agent VMs by <code>vrg-vm</code>)
+if it exists, else the <code>[trusted_authors]</code> stanza of
+<code>~/.config/vergil/identities.toml</code>, and prints <code>human: &lt;login&gt;</code> and
+<code>agent: &lt;login&gt;</code>, one per line. Skills and doctrine name this command, never
+the logins. See
+<a href="../../guides/account-setup/#trusted-authors">Trusted authors</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_trusted_authors</code> (config: <code>lib/trusted_authors.py</code>)</td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>--json</code> (prints <code>{"human": [...], "agents": [...]}</code>)</td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>The VM file or the host stanza exists</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td>Nothing configured, or an invalid configuration, prints the error on stderr and exits 1; it never prints a default</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 success, 1 not configured or invalid, 2 bad arguments</td>
 </tr>
 <tr>
 <td>Status</td>
