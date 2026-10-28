@@ -137,13 +137,8 @@ Each fact below is what the cited page said on 2026-10-27.
 8. **Changelog 2.1.195** reads: "Fixed external plugins enabled only by
    project `.claude/settings.json` not requiring explicit install consent
    on every loader path". It does not say that user-enabled plugins stopped
-   installing on their own. On a cold-rebuilt agent VM
-   ([vergil-project/.github#578](https://github.com/vergil-project/.github/issues/578),
-   2026-10-28), settings alone brought all three plugins back without
-   `vm_guest`'s reconcile step, but `vergil` came back at project scope
-   rather than user scope. The reconcile step stays until that difference
-   is understood
-   ([vergil-project/.github#675](https://github.com/vergil-project/.github/issues/675)).
+   installing on their own (see the
+   [observation below](#observed-on-an-agent-vm)).
    ([CHANGELOG.md](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md))
 9. **`CLAUDE.md`.**
    ([memory.md](https://code.claude.com/docs/en/memory.md))
@@ -169,6 +164,17 @@ Each fact below is what the cited page said on 2026-10-27.
     at the start of every interactive session. Committed settings files must
     therefore hold only valid keys.
     ([settings.md, "Fix a broken settings file"](https://code.claude.com/docs/en/settings.md#fix-a-broken-settings-file))
+
+### Observed on an agent VM
+
+This is a Vergil test result, not a platform fact: the recurring review
+cannot re-verify it against the Claude Code docs. On a cold-rebuilt agent
+VM on 2026-10-28
+([vergil-project/.github#578](https://github.com/vergil-project/.github/issues/578)),
+settings alone brought all three plugins back without `vm_guest`'s
+reconcile step, but `vergil` came back at project scope rather than user
+scope. The reconcile step stays until that difference is understood
+([vergil-project/.github#675](https://github.com/vergil-project/.github/issues/675)).
 
 ## Unused scopes
 
