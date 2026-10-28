@@ -55,8 +55,10 @@ divergence:
 |---|---|
 | `_check_vergil_toml` | `vergil.toml` present and parseable |
 | `_check_hook_guard_shim` | `.claude/hooks/guard.sh` present |
-| `_check_claude_md` | `CLAUDE.md`'s marked template region (or, in the legacy no-marker form, the file) carries the canonical consumer template verbatim; the previous template passes with a warning during the [bridge](#the-template-bridge) |
-| `_check_claude_settings` | `.claude/settings.json` equals the template after JSON parsing; the previous template passes with a warning during the [bridge](#the-template-bridge) |
+| `_check_claude_md` | `CLAUDE.md` has one pair of template markers, and the marked region carries the canonical consumer template verbatim |
+| `_check_claude_md_length` | `CLAUDE.md` is at most 200 lines, template region included **(.github#558)** |
+| `_check_agents_md` | no `AGENTS.md` exists **(.github#558)** |
+| `_check_claude_settings` | `.claude/settings.json` equals the template after JSON parsing |
 | `_check_workflow_refs` | every `vergil-*` reusable-workflow pin matches the `vergil.toml` version |
 | `_check_gitignore` | `.gitignore` carries the correct `base + <language>` vergil-managed fence **(#311, #325)** |
 | `_check_dependabot_yml` | `.github/dependabot.yml` is the canonical report-only render for the repo's language **(.github#420)** |
@@ -85,34 +87,36 @@ Any other content is one
 each top-level key that is missing, unexpected or different. Fix it by
 copying the template into the repo.
 
-### The template bridge
+### `CLAUDE.md` and `AGENTS.md` — the instruction file
 
-The `CLAUDE.md` template region and `.claude/settings.json` changed shape
-under epic
-[vergil-project/.github#558](https://github.com/vergil-project/.github/issues/558).
-A release does not rewrite any repo's files, so until the bridge-removal
-PR ([#3728](https://github.com/vergil-project/vergil-tooling/issues/3728))
-merges, both checks accept three shapes:
+`CLAUDE.md` must hold exactly one pair of template markers,
+`<!-- vergil:template:claude-md:begin -->` and
+`<!-- vergil:template:claude-md:end -->`. The lines between them, ignoring
+leading and trailing blank lines, must equal the packaged template,
+[`claude_md_consumer.md`](https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/data/claude_md_consumer.md),
+verbatim. Content outside the markers belongs to the repo and is never
+compared. A file with no markers fails with
+`DiffItem(field="local.claude_md", expected="well-formed template markers",
+actual="no template markers")`; a region that differs names the first
+divergent template line and `CLAUDE.md` line.
 
-| Shape | Result |
-|---|---|
-| the current template | compliant, no warning |
-| the previous template (`claude_md_consumer_previous.md`, `claude_settings_previous.json`) | compliant, with a deprecation warning |
-| anything else | one `DiffItem`, reported against the current template |
+`CLAUDE.md` is held to a line budget of **200 lines**, counted as
+`len(text.splitlines())` over the whole file, template region included: a
+file of exactly 200 lines passes, 201 fails, and a trailing newline is not
+an extra line. Over the budget is
+`DiffItem(field="local.claude_md_length", expected="at most 200 lines",
+actual="<N> lines")`. Don't meet it by moving content into `@imports`; see
+the [ownership model](../guides/claude-config-ownership.md).
 
-The `CLAUDE.md` rule applies both to the marked region and to the legacy
-no-marker form, which must contain one of the templates verbatim. The
-previous settings template is the old file with the marketplace `ref`
-seeded at `main`, as every swept repo carries it. The warnings read:
+`AGENTS.md` must not exist: `CLAUDE.md` is the one instruction file. Any
+`AGENTS.md`, a symlink included, is
+`DiffItem(field="local.agents_md", expected="absent", actual="present")`.
 
-```text
-.claude/settings.json matches the previous template; replace it with the current template (epic vergil-project/.github#558).
-CLAUDE.md template region matches the previous template; replace it with the current template (epic vergil-project/.github#558).
-```
-
-Each repo's sweep replaces both files with the current template. The
-bridge-removal PR then deletes the previous templates and the legacy
-no-marker path, and the warning becomes a `DiffItem`.
+These rules, and the settings check above, became hard failures with no
+transition window once every managed repo had been swept under epic
+[vergil-project/.github#558](https://github.com/vergil-project/.github/issues/558)
+([#3728](https://github.com/vergil-project/vergil-tooling/issues/3728)).
+The previous templates and the legacy no-marker form are gone.
 
 ### `_check_gitignore` — managed fence
 

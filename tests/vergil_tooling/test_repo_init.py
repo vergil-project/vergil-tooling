@@ -2394,11 +2394,11 @@ def test_repo_init_output_audits_clean(tmp_path: Path) -> None:
     (tmp_path / ".claude").mkdir()
     (tmp_path / ".claude" / "settings.json").write_text(render_claude_settings())
     items: list = []
-    warnings: list[str] = []
-    repo_config._check_claude_md(tmp_path, items, warnings)
-    repo_config._check_claude_settings(tmp_path, items, warnings)
+    repo_config._check_claude_md(tmp_path, items)
+    repo_config._check_claude_md_length(tmp_path, items)
+    repo_config._check_agents_md(tmp_path, items)
+    repo_config._check_claude_settings(tmp_path, items)
     assert items == []
-    assert warnings == []
 
 
 def test_render_claude_settings_turns_off_attribution() -> None:

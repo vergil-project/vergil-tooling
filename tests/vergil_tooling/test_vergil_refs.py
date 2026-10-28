@@ -6,10 +6,7 @@ import pytest
 
 from vergil_tooling.lib.update_deps.context import UpdateDepsError
 from vergil_tooling.lib.vergil_refs import (
-    EXPECTED_MARKETPLACE_REF,
-    MARKETPLACE_NAME,
     format_version,
-    is_deprecated_marketplace_ref,
     iter_workflow_refs,
     read_source_version,
 )
@@ -20,10 +17,6 @@ if TYPE_CHECKING:
 
 def _seed_toml(base: Path, version: str) -> None:
     (base / "vergil.toml").write_text(f'[dependencies]\nvergil = "{version}"\n')
-
-
-def test_marketplace_name_constant() -> None:
-    assert MARKETPLACE_NAME == "vergil-marketplace"
 
 
 def test_format_version_normalizes() -> None:
@@ -45,24 +38,6 @@ def test_read_source_version_missing_key(tmp_path: Path) -> None:
     (tmp_path / "vergil.toml").write_text("[project]\n")
     with pytest.raises(UpdateDepsError, match="not found"):
         read_source_version(tmp_path)
-
-
-def test_expected_marketplace_ref_constant() -> None:
-    assert EXPECTED_MARKETPLACE_REF == "main"
-
-
-def test_is_deprecated_marketplace_ref_develop() -> None:
-    assert is_deprecated_marketplace_ref("develop") is True
-
-
-@pytest.mark.parametrize("ref", ["2.1", "v2.1", "2.0.7", "v2.0.7"])
-def test_is_deprecated_marketplace_ref_versions(ref: str) -> None:
-    assert is_deprecated_marketplace_ref(ref) is True
-
-
-@pytest.mark.parametrize("ref", ["main", "feature/x", "", "v2", "latest"])
-def test_is_deprecated_marketplace_ref_other(ref: str) -> None:
-    assert is_deprecated_marketplace_ref(ref) is False
 
 
 def test_iter_workflow_refs(tmp_path: Path) -> None:
