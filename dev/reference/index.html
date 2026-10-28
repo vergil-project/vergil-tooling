@@ -12629,6 +12629,8 @@
       
         
       
+        
+      
     
     
     
@@ -12701,6 +12703,34 @@
     
   
     CLI Tools Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="package-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Package Architecture
   
 
     
@@ -12965,10 +12995,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_11" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_12" >
         
           
-          <label class="md-nav__link" for="__nav_4_11" id="__nav_4_11_label" tabindex="">
+          <label class="md-nav__link" for="__nav_4_12" id="__nav_4_12_label" tabindex="">
             
   
   
@@ -12986,8 +13016,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_11_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_11">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_12_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_12">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -13062,10 +13092,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_12" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_13" >
         
           
-          <label class="md-nav__link" for="__nav_4_12" id="__nav_4_12_label" tabindex="">
+          <label class="md-nav__link" for="__nav_4_13" id="__nav_4_13_label" tabindex="">
             
   
   
@@ -13083,8 +13113,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_12_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_12">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_13_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_13">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -13201,10 +13231,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_13" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_14" >
         
           
-          <label class="md-nav__link" for="__nav_4_13" id="__nav_4_13_label" tabindex="">
+          <label class="md-nav__link" for="__nav_4_14" id="__nav_4_14_label" tabindex="">
             
   
   
@@ -13222,8 +13252,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_13_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_13">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_14_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_14">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -16395,7 +16425,8 @@
 <p>Vergil-tooling provides Python CLI tools installed as <code>vrg-*</code> console
 scripts, plus git hooks. For the full audit of every tool's runtime
 preconditions, host-vs-container classification, and failure modes,
-see the <a href="cli-tools-overview/">CLI Tools Overview</a>.</p>
+see the <a href="cli-tools-overview/">CLI Tools Overview</a>. For how the
+package itself is laid out, see <a href="package-architecture/">Package Architecture</a>.</p>
 <h2 id="host-tools">Host tools<a class="headerlink" href="#host-tools" title="Permanent link">&para;</a></h2>
 <p>Run on the developer's machine. Installed via <code>uv tool install</code> or
 the dev-tree override venv.</p>
@@ -16410,6 +16441,26 @@ the dev-tree override venv.</p>
 <tr>
 <td><a href="dev/commit/">vrg-commit</a></td>
 <td>Standards-compliant commit wrapper</td>
+</tr>
+<tr>
+<td><a href="cli-tools-overview/#vrg-reword">vrg-reword</a></td>
+<td>Reword a branch-local commit message (agent-safe)</td>
+</tr>
+<tr>
+<td><a href="cli-tools-overview/#vrg-whoami">vrg-whoami</a></td>
+<td>Print the resolved identity role or platform</td>
+</tr>
+<tr>
+<td><a href="cli-tools-overview/#vrg-hook-guard">vrg-hook-guard</a></td>
+<td>Claude Code hook that blocks raw <code>git</code> and <code>gh</code></td>
+</tr>
+<tr>
+<td><a href="cli-tools-overview/#vrg-resolve-tracking-issue">vrg-resolve-tracking-issue</a></td>
+<td>Print a merge commit's tracking issue</td>
+</tr>
+<tr>
+<td><a href="cli-tools-overview/#vrg-vm">vrg-vm</a></td>
+<td>Manage the identity agent VMs</td>
 </tr>
 <tr>
 <td><a href="dev/submit-pr/">vrg-submit-pr</a></td>
