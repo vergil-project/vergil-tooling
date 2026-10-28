@@ -1352,6 +1352,8 @@
       
         
       
+        
+      
     
     
     
@@ -1404,6 +1406,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.278/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.278
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -16949,15 +16979,10 @@ and what needs judgment.</p>
 <h3 id="mechanical-the-nightly-config-audit">Mechanical: the nightly config audit<a class="headerlink" href="#mechanical-the-nightly-config-audit" title="Permanent link">&para;</a></h3>
 <p><code>vrg-github-repo-config audit</code> runs in each managed repo's scheduled
 <code>ops.yml</code> job (see <a href="../../reference/config-audit/">GitHub Config Audit</a>).
-Under this model it checks the following. The audit already compares
-<code>.claude/settings.json</code> and the template region with the template exactly
-(accepting the previous template, with a warning, until the fleet is
-swept); epic
-<a href="https://github.com/vergil-project/.github/issues/558">vergil-project/.github#558</a>
-adds the line budget and the <code>AGENTS.md</code> rule.</p>
+Under this model it checks the following, each a hard failure (epic
+<a href="https://github.com/vergil-project/.github/issues/558">vergil-project/.github#558</a>):</p>
 <ul>
-<li>the repo <code>CLAUDE.md</code> is at most 200 lines (a hard failure once the
-  cleanup has landed fleet-wide);</li>
+<li>the repo <code>CLAUDE.md</code> is at most 200 lines;</li>
 <li>the template markers are present;</li>
 <li>no <code>AGENTS.md</code> exists;</li>
 <li><code>.claude/settings.json</code> equals the template after JSON parsing;</li>

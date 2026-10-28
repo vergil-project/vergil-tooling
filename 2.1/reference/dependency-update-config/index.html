@@ -1352,6 +1352,8 @@
       
         
       
+        
+      
     
     
     
@@ -1404,6 +1406,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.278/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.278
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -16732,9 +16762,8 @@ packages are never reported.</p>
 <ul>
 <li>Rewrites drifting <code>uses: vergil-*/…@vX.Y</code> refs in
   <code>.github/workflows/</code> and in every <code>action.yml</code>/<code>action.yaml</code> in the
-  repo.</li>
-<li>Sets the vergil marketplace <code>source.ref</code> in <code>.claude/settings.json</code>
-  to <code>main</code>.</li>
+  repo. It never touches <code>.claude/settings.json</code>, which carries no
+  marketplace entry.</li>
 <li>With <a href="../dev/update-deps/"><code>vrg-update-deps --vergil X.Y</code></a>, first
   sets <code>[dependencies].vergil</code> to <code>vX.Y</code>, then rewrites the refs to
   match.</li>
