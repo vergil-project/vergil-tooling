@@ -117,8 +117,8 @@ advances the branch, so it stays **freeze-neutral**. A push failure is
 loud on stderr but never rolls back the durable local file. Because the
 ref is world-readable on a public repo, keep secrets out of
 `--title/--summary/--notes`. Reaching **ready** *freezes* the branch:
-`vrg-commit` and the `vrg-git` push path then refuse further
-commits/pushes, because a task is exactly one PR and more work is a new
+`vrg-commit`, `vrg-reword` and the `vrg-git` push path then refuse further
+commits, commit rewrites and pushes, because a task is exactly one PR and more work is a new
 follow-up issue (epic #146). `report-ready` pushes the branch itself, to
 `origin/<branch>` with upstream set, **before** recording anything (#3602),
 so no separate push is needed; a branch already on origin at that commit is a
