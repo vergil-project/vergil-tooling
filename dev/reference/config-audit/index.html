@@ -12892,10 +12892,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#the-template-bridge" class="md-nav__link">
+  <a href="#claudemd-and-agentsmd-the-instruction-file" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The template bridge
+        CLAUDE.md and AGENTS.md — the instruction file
       
     </span>
   </a>
@@ -16683,10 +16683,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#the-template-bridge" class="md-nav__link">
+  <a href="#claudemd-and-agentsmd-the-instruction-file" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The template bridge
+        CLAUDE.md and AGENTS.md — the instruction file
       
     </span>
   </a>
@@ -16917,11 +16917,19 @@ divergence:</p>
 </tr>
 <tr>
 <td><code>_check_claude_md</code></td>
-<td><code>CLAUDE.md</code>'s marked template region (or, in the legacy no-marker form, the file) carries the canonical consumer template verbatim; the previous template passes with a warning during the <a href="#the-template-bridge">bridge</a></td>
+<td><code>CLAUDE.md</code> has one pair of template markers, and the marked region carries the canonical consumer template verbatim</td>
+</tr>
+<tr>
+<td><code>_check_claude_md_length</code></td>
+<td><code>CLAUDE.md</code> is at most 200 lines, template region included <strong>(.github#558)</strong></td>
+</tr>
+<tr>
+<td><code>_check_agents_md</code></td>
+<td>no <code>AGENTS.md</code> exists <strong>(.github#558)</strong></td>
 </tr>
 <tr>
 <td><code>_check_claude_settings</code></td>
-<td><code>.claude/settings.json</code> equals the template after JSON parsing; the previous template passes with a warning during the <a href="#the-template-bridge">bridge</a></td>
+<td><code>.claude/settings.json</code> equals the template after JSON parsing</td>
 </tr>
 <tr>
 <td><code>_check_workflow_refs</code></td>
@@ -16960,45 +16968,32 @@ Claude Code and makes older versions skip the whole settings file.</p>
 <code>DiffItem(field="local.claude_settings", ...)</code> whose actual value names
 each top-level key that is missing, unexpected or different. Fix it by
 copying the template into the repo.</p>
-<h3 id="the-template-bridge">The template bridge<a class="headerlink" href="#the-template-bridge" title="Permanent link">&para;</a></h3>
-<p>The <code>CLAUDE.md</code> template region and <code>.claude/settings.json</code> changed shape
-under epic
-<a href="https://github.com/vergil-project/.github/issues/558">vergil-project/.github#558</a>.
-A release does not rewrite any repo's files, so until the bridge-removal
-PR (<a href="https://github.com/vergil-project/vergil-tooling/issues/3728">#3728</a>)
-merges, both checks accept three shapes:</p>
-<table>
-<thead>
-<tr>
-<th>Shape</th>
-<th>Result</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>the current template</td>
-<td>compliant, no warning</td>
-</tr>
-<tr>
-<td>the previous template (<code>claude_md_consumer_previous.md</code>, <code>claude_settings_previous.json</code>)</td>
-<td>compliant, with a deprecation warning</td>
-</tr>
-<tr>
-<td>anything else</td>
-<td>one <code>DiffItem</code>, reported against the current template</td>
-</tr>
-</tbody>
-</table>
-<p>The <code>CLAUDE.md</code> rule applies both to the marked region and to the legacy
-no-marker form, which must contain one of the templates verbatim. The
-previous settings template is the old file with the marketplace <code>ref</code>
-seeded at <code>main</code>, as every swept repo carries it. The warnings read:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>.claude/settings.json matches the previous template; replace it with the current template (epic vergil-project/.github#558).
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>CLAUDE.md template region matches the previous template; replace it with the current template (epic vergil-project/.github#558).
-</code></pre></div>
-<p>Each repo's sweep replaces both files with the current template. The
-bridge-removal PR then deletes the previous templates and the legacy
-no-marker path, and the warning becomes a <code>DiffItem</code>.</p>
+<h3 id="claudemd-and-agentsmd-the-instruction-file"><code>CLAUDE.md</code> and <code>AGENTS.md</code> — the instruction file<a class="headerlink" href="#claudemd-and-agentsmd-the-instruction-file" title="Permanent link">&para;</a></h3>
+<p><code>CLAUDE.md</code> must hold exactly one pair of template markers,
+<code>&lt;!-- vergil:template:claude-md:begin --&gt;</code> and
+<code>&lt;!-- vergil:template:claude-md:end --&gt;</code>. The lines between them, ignoring
+leading and trailing blank lines, must equal the packaged template,
+<a href="https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/data/claude_md_consumer.md"><code>claude_md_consumer.md</code></a>,
+verbatim. Content outside the markers belongs to the repo and is never
+compared. A file with no markers fails with
+<code>DiffItem(field="local.claude_md", expected="well-formed template markers",
+actual="no template markers")</code>; a region that differs names the first
+divergent template line and <code>CLAUDE.md</code> line.</p>
+<p><code>CLAUDE.md</code> is held to a line budget of <strong>200 lines</strong>, counted as
+<code>len(text.splitlines())</code> over the whole file, template region included: a
+file of exactly 200 lines passes, 201 fails, and a trailing newline is not
+an extra line. Over the budget is
+<code>DiffItem(field="local.claude_md_length", expected="at most 200 lines",
+actual="&lt;N&gt; lines")</code>. Don't meet it by moving content into <code>@imports</code>; see
+the <a href="../../guides/claude-config-ownership/">ownership model</a>.</p>
+<p><code>AGENTS.md</code> must not exist: <code>CLAUDE.md</code> is the one instruction file. Any
+<code>AGENTS.md</code>, a symlink included, is
+<code>DiffItem(field="local.agents_md", expected="absent", actual="present")</code>.</p>
+<p>These rules, and the settings check above, became hard failures with no
+transition window once every managed repo had been swept under epic
+<a href="https://github.com/vergil-project/.github/issues/558">vergil-project/.github#558</a>
+(<a href="https://github.com/vergil-project/vergil-tooling/issues/3728">#3728</a>).
+The previous templates and the legacy no-marker form are gone.</p>
 <h3 id="_check_gitignore-managed-fence"><code>_check_gitignore</code> — managed fence<a class="headerlink" href="#_check_gitignore-managed-fence" title="Permanent link">&para;</a></h3>
 <p>The repo's <code>.gitignore</code> must carry the vergil-managed fence for its
 resolved language (see
@@ -17062,8 +17057,8 @@ repos) and the one-time rollout (existing repos).</p>
 <h2 id="the-composed-managed-fence">The composed managed fence<a class="headerlink" href="#the-composed-managed-fence" title="Permanent link">&para;</a></h2>
 <p>The source of truth for the fleet's ignore vocabulary is a set of
 packaged data-asset <strong>fragments</strong>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>src/vergil_tooling/data/gitignore/base        # language-agnostic
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>src/vergil_tooling/data/gitignore/&lt;language&gt;  # one per managed language
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>src/vergil_tooling/data/gitignore/base        # language-agnostic
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>src/vergil_tooling/data/gitignore/&lt;language&gt;  # one per managed language
 </code></pre></div>
 <p>They are loaded at runtime via <code>importlib.resources</code> — the same idiom
 used for the <code>CLAUDE.md</code> and <code>.claude/settings.json</code> templates — and
@@ -17235,8 +17230,8 @@ rule (#2860). When a live rule carries a parameter key that the desired
 rule of the same <code>type</code> does not declare, the audit reports it as an
 <strong>undeclared parameter</strong>, separately from value mismatches. The message
 names the ruleset, the rule type, the key, and the live value:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>UNDECLARED PARAMETER: rulesets.Branch protection rule 'pull_request' has
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>'require_extra_approval_for_unattributed_changes' = True live, ...
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>UNDECLARED PARAMETER: rulesets.Branch protection rule 'pull_request' has
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>'require_extra_approval_for_unattributed_changes' = True live, ...
 </code></pre></div>
 <ul>
 <li><strong>It is non-compliant.</strong> The live ruleset enforces a setting the spec
