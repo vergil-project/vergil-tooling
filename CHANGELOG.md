@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.277] - 2026-10-28
+
+### Bug fixes
+
+- refuse a frozen (reported-ready) branch (#3784)
+- fail closed on malformed hook input (#3785)
+- count-aware plurals in the security-records summary line (#3789)
+
+### Documentation
+
+- reflect several advisories per issue in the closing docs review (#3778)
+- steering and settings sweep (epic 558) (#3781)
+- document every console script on the CLI Tools Overview (#3788)
+
+### Features
+
+- allow the read-only symbolic-ref form (#3777)
+- ignore paad/code-reviews/ in the managed base (#3780)
+- add the [trusted_authors] configuration and vrg-trusted-authors (#3782)
+- push a rebased branch with a lease on the recorded head after unfreeze (#3790)
+
+### Testing
+
+- make the self-fence drift guard say how to resync from source (#3787)
+
 ## [2.1.276] - 2026-10-27
 
 ### Bug fixes
