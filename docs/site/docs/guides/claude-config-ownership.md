@@ -5,11 +5,11 @@ a Vergil-managed repository. It is **the ownership model**: the reference
 that the config audit, the `steering-audit` skill and the per-repo steering
 sweeps check against.
 
-It is the target state of epic
-[vergil-project/.github#558](https://github.com/vergil-project/.github/issues/558).
-Until that epic's cleanup and audit changes land, some managed repos still
-differ from it. For example, the repo settings files still declare
-`extraKnownMarketplaces`.
+Epic
+[vergil-project/.github#558](https://github.com/vergil-project/.github/issues/558)
+brought every managed repo in line with it. The nightly config audit and the
+agent chokepoints now enforce its mechanical rules, and the
+[recurring review](#recurring-review) keeps the rest current.
 
 **Platform facts verified:** 2026-10-27, against these Claude Code pages:
 
@@ -137,10 +137,13 @@ Each fact below is what the cited page said on 2026-10-27.
 8. **Changelog 2.1.195** reads: "Fixed external plugins enabled only by
    project `.claude/settings.json` not requiring explicit install consent
    on every loader path". It does not say that user-enabled plugins stopped
-   installing on their own. Whether a fresh agent VM installs them without
-   `vm_guest`'s reconcile step is still to be verified
-   ([vergil-project/.github#578](https://github.com/vergil-project/.github/issues/578)),
-   so that step stays.
+   installing on their own. On a cold-rebuilt agent VM
+   ([vergil-project/.github#578](https://github.com/vergil-project/.github/issues/578),
+   2026-10-28), settings alone brought all three plugins back without
+   `vm_guest`'s reconcile step, but `vergil` came back at project scope
+   rather than user scope. The reconcile step stays until that difference
+   is understood
+   ([vergil-project/.github#675](https://github.com/vergil-project/.github/issues/675)).
    ([CHANGELOG.md](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md))
 9. **`CLAUDE.md`.**
    ([memory.md](https://code.claude.com/docs/en/memory.md))
@@ -206,11 +209,10 @@ not a chokepoint: it runs inside a dev container, where it sees neither the
 main checkout's working tree nor the identity. The nightly config audit does
 not check this file either, because a CI checkout has no local file.
 
-The guard enforces the rule in `vrg-commit`, `vrg-pr-workflow report-ready`
-and `vrg-container-run` (epic
-[vergil-project/.github#558](https://github.com/vergil-project/.github/issues/558)),
-and the `CLAUDE.md` template region also states it, so agents know the rule
-before a tool refuses.
+The `CLAUDE.md` template region also states the rule, so agents know it
+before a tool refuses. Each tool's entry in the
+[CLI Tools Overview](../reference/cli-tools-overview.md#vrg-commit) notes
+the guard.
 
 **Known limit.** Claude Code keeps the local file with `.claude/settings.json`
 instead of at the main checkout's root when the repository root, or its
@@ -229,8 +231,7 @@ and what needs judgment.
 
 `vrg-github-repo-config audit` runs in each managed repo's scheduled
 `ops.yml` job (see [GitHub Config Audit](../reference/config-audit.md)).
-Under this model it checks the following, each a hard failure (epic
-[vergil-project/.github#558](https://github.com/vergil-project/.github/issues/558)):
+It checks the following, each a hard failure with no transition window:
 
 - the repo `CLAUDE.md` is at most 200 lines;
 - the template markers are present;
@@ -241,15 +242,18 @@ Under this model it checks the following, each a hard failure (epic
 
 ### Judgment: `steering-audit`
 
-The `steering-audit` skill in vergil-claude-plugin (being added under the
-same epic) reviews the steering and settings files against this page. For
+The `steering-audit` skill in vergil-claude-plugin
+([skills reference](https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/site/docs/skills/index.md#steering-audit))
+reviews the steering and settings files against this page. For
 each finding it verifies, suggests a disposition, and waits for the human's
 decision. It re-verifies the
 [platform facts](#platform-facts) against the docs at the time of the run.
 It has two scopes:
 
-- **repo** (the default): that repo's `CLAUDE.md`, `.claude/rules/` and
-  `.claude/settings.json`. Each finding is fixed, filed to intake, or
+- **repo** (the default): that repo's `CLAUDE.md`, `.claude/rules/`,
+  `.claude/settings.json`, any `AGENTS.md`, and the
+  `.claude/settings.local.json` copies Claude Code may load. Edits go
+  through the normal worktree and PR flow. Each finding is fixed, filed to intake, or
   dropped by the human with a reason.
 - **user** (`steering-audit user`): the global `~/.claude/CLAUDE.md` and
   `~/.claude/settings.json`, reviewed once per cycle, not once per repo.

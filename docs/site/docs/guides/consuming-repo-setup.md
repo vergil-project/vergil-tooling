@@ -279,6 +279,26 @@ See the plugin's own
 [Hooks reference](https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/site/docs/hooks/index.md)
 for the details.
 
+### `CLAUDE.md`
+
+`vrg-github-repo-init` writes `CLAUDE.md` with the packaged template
+[`claude_md_consumer.md`](https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/data/claude_md_consumer.md)
+between the markers `<!-- vergil:template:claude-md:begin -->` and
+`<!-- vergil:template:claude-md:end -->`. The template region holds the
+fleet-wide agent policy: worktrees, `vrg-git`/`vrg-gh`, the validation
+command, the PR handoff and freeze, the memory rule, the local-settings
+rule, the engineering principles and the paad policy pointer. Don't edit
+it by hand. Add what an agent needs for your repo (overview, commands,
+constraints) after the end marker, and link reference material from your
+site docs rather than copying it in.
+
+The nightly config audit requires the region to match the template
+verbatim and the whole file to stay at or under **200 lines**. The repo
+has no `AGENTS.md`: `CLAUDE.md` is the one instruction file. Keep
+`.claude/settings.local.json` absent or exactly `{}`: the agent tools
+refuse to run otherwise (see
+[Local settings](claude-config-ownership.md#local-settings)).
+
 ### Worktree convention
 
 Every managed repo adopts the worktree convention so multiple Claude
@@ -288,8 +308,8 @@ files already carry both halves:
 - `.worktrees/` is in the `base` fragment of the managed `.gitignore`
   block (see Step 7). The plugin's worktree hooks activate on that
   line.
-- The `CLAUDE.md` consumer section includes "Parallel AI agent
-  development", the local on-ramp to the canonical
+- The `CLAUDE.md` template region includes "Worktrees", the local
+  on-ramp to the canonical
   [worktree convention spec][worktree-spec].
 
 !!! tip "The managed block already ignores your validation/build output"
