@@ -229,15 +229,10 @@ and what needs judgment.
 
 `vrg-github-repo-config audit` runs in each managed repo's scheduled
 `ops.yml` job (see [GitHub Config Audit](../reference/config-audit.md)).
-Under this model it checks the following. The audit already compares
-`.claude/settings.json` and the template region with the template exactly
-(accepting the previous template, with a warning, until the fleet is
-swept); epic
-[vergil-project/.github#558](https://github.com/vergil-project/.github/issues/558)
-adds the line budget and the `AGENTS.md` rule.
+Under this model it checks the following, each a hard failure (epic
+[vergil-project/.github#558](https://github.com/vergil-project/.github/issues/558)):
 
-- the repo `CLAUDE.md` is at most 200 lines (a hard failure once the
-  cleanup has landed fleet-wide);
+- the repo `CLAUDE.md` is at most 200 lines;
 - the template markers are present;
 - no `AGENTS.md` exists;
 - `.claude/settings.json` equals the template after JSON parsing;
