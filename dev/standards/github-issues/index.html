@@ -17808,10 +17808,13 @@ its new parent. A route is refused when the item's container epic does not allow
 it (see <a href="../../reference/cli-tools-overview/#vrg-intake-route"><code>vrg-intake-route</code></a>
 for the route table), for a cross-org target, and for a private item headed to a
 public repo or epic.</p>
-<p>A <code>security</code> item keeps its advisory link through every move: on a split or a
-recreate, the advisory is retargeted to the new issue(s) <strong>before</strong> the
+<p>A <code>security</code> item keeps its advisory links through every move. On a recreate,
+every advisory the item names is retargeted to the copy <strong>before</strong> the
 original closes (a failure stops the route and leaves the original open); on a
-transfer, it is retargeted after the move (see
+transfer, every advisory is retargeted after the move. A split retargets an
+item's one advisory to the new tasks <strong>before</strong> the original closes; a split
+of an item naming several advisories is refused before any change, since which
+advisory goes to which task can't be inferred (see
 <a href="../../guides/security-records/#when-the-issue-moves">Security Records</a>).</p>
 <h3 id="the-deferred-queue">The deferred queue<a class="headerlink" href="#the-deferred-queue" title="Permanent link">&para;</a></h3>
 <p>Deferring parks an item that was evaluated but cannot move yet — it waits on
@@ -17914,10 +17917,11 @@ nothing more:</p>
 <code>Docs task: &lt;ref&gt;</code>, and <code>Tasks filed: yes</code> (the latest of each wins) — and the
 epic body gains a <code>Planning: &lt;ref&gt;</code> line. <code>vrg-queue planning</code> reports an item
 <strong>ready to close</strong> once it is <code>in-progress</code>, all three markers are present, and
-the docs task is closed (its spec + plan PR merged). A planning item that a
+the docs task is closed (its spec + plan PR merged). A planning item that any
 security advisory still tracks is <strong>held</strong> at in-progress, with a <code>held:</code> note,
-until <code>epic-create</code> retargets the advisory to the fix task(s); closing it
-earlier would close the advisory with the fix unwritten (see
+until <code>epic-create</code> retargets each advisory it names to the task or tasks that
+fix it; closing it earlier would close those advisories with the fix unwritten
+(see
 <a href="../../guides/security-records/#security-items-in-planning">Security items in planning</a>).</p>
 <p>Which planning item to expand next is decided in the <code>planning-review</code> skill:
 the human ranks the queue by priority and importance and picks only what will be
@@ -18067,8 +18071,8 @@ sync (<code>vrg-ensure-label --sync</code>) deletes them from any repo that stil
 them, which also strips them from any issue still carrying them.</p>
 <p><code>security</code> goes only on an issue paired with a private draft advisory:
 <code>vrg-security-record</code> applies it when it creates or attaches a record, and
-removes it from an issue the advisory stops tracking. The sweep's consistency
-check applies only to <code>security</code>; <code>security-disclosed</code> marks a past public
+removes it when the last advisory an issue names stops tracking it. The sweep's
+consistency check applies only to <code>security</code>; <code>security-disclosed</code> marks a past public
 disclosure and is ignored by the check (see
 <a href="../../guides/security-records/#the-labels">Security Records</a>).</p>
 <p><code>dependency-update</code> goes on PRs, not issues: <code>vrg-update-deps</code> and the
