@@ -524,10 +524,27 @@ class TestRenderGitignore:
         epic vergil-project/.github#325). Its ``.gitignore`` managed block must be
         exactly ``gitignore.render_block("python")`` — the composed base + python
         fence — so the flagship never drifts from the source of truth it ships.
+
+        This is the only gate on the self-hosting case: after a fragment edit the
+        installed ``vrg-gitignore-sync`` composes from the *installed* package's
+        data, reports "already in sync", and leaves this fence stale (#3774). So
+        the comparison must be against this worktree's ``src/`` data, and the
+        failure says how to resync from it.
         """
-        flagship = Path(__file__).resolve().parents[2] / ".gitignore"
-        _repo_local, fence = gitignore.parse(flagship.read_text(encoding="utf-8"))
-        assert fence == gitignore.render_block("python")
+        repo_root = Path(__file__).resolve().parents[2]
+        module_path = Path(gitignore.__file__).resolve()
+        assert module_path.is_relative_to(repo_root / "src"), (
+            f"vergil_tooling.lib.gitignore was imported from {module_path}, not "
+            "this worktree's src/; the drift guard would compare the wrong data"
+        )
+        _repo_local, fence = gitignore.parse((repo_root / ".gitignore").read_text(encoding="utf-8"))
+        assert fence == gitignore.render_block("python"), (
+            "This repo's .gitignore managed fence does not match what "
+            "src/vergil_tooling/data/gitignore/ composes. The installed "
+            "vrg-gitignore-sync uses the installed package's data and reports "
+            "'already in sync'; resync from this worktree's source instead:\n"
+            "    PYTHONPATH=src python3 -m vergil_tooling.bin.vrg_gitignore_sync --write"
+        )
 
     def test_render_gitignore_returns_render_block(self) -> None:
         rendered = render_gitignore("python")

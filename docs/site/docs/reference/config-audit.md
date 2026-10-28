@@ -230,6 +230,13 @@ once the whole fleet was fenced.)
 its own entries below the managed block (`--write` moves any above it to
 below it, in order).
 
+**Editing a fragment in vergil-tooling itself.** The installed
+`vrg-gitignore-sync` composes from the installed package's data, so after
+a fragment edit it reports "already in sync" and leaves this repo's own
+fence stale (`vrg-validate` fails on it). Resync from the worktree's
+source with
+`PYTHONPATH=src python3 -m vergil_tooling.bin.vrg_gitignore_sync --write`.
+
 ### Propagation — the rolling `vX.Y` pin
 
 Every managed repo pins `vergil-tooling` to the **rolling major-minor
