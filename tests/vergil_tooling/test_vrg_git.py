@@ -230,6 +230,61 @@ def test_reflog_flag_before_subcommand_allowed() -> None:
     assert rc == 0
 
 
+# -- symbolic-ref: read form allowed, write/delete forms refused (#3722) -----
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [[], ["-q"], ["--quiet"], ["--short"], ["-q", "--short"]],
+)
+def test_symbolic_ref_read_is_allowed(flags: list[str]) -> None:
+    argv = ["symbolic-ref", *flags, "refs/remotes/origin/HEAD"]
+    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
+        mock_run.return_value.returncode = 0
+        rc = main(argv)
+    assert rc == 0
+    assert mock_run.call_args[0][0] == ["git", *argv]
+
+
+def test_symbolic_ref_read_passes_through_git_exit_status() -> None:
+    """A non-symbolic ref makes git exit non-zero; the wrapper must not mask it."""
+    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
+        mock_run.return_value.returncode = 1
+        rc = main(["symbolic-ref", "-q", "refs/remotes/origin/HEAD"])
+    assert rc == 1
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["HEAD", "refs/heads/main"],
+        ["-d", "refs/remotes/origin/HEAD"],
+        ["--delete", "refs/remotes/origin/HEAD"],
+        ["-m", "reason", "HEAD", "refs/heads/main"],
+        ["-m", "reason", "HEAD"],
+        ["-q", "HEAD", "refs/heads/main"],
+        [],
+        ["-q"],
+        ["--recurse", "HEAD"],
+    ],
+)
+def test_symbolic_ref_write_and_delete_are_refused(
+    args: list[str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
+        rc = main(["symbolic-ref", *args])
+    assert rc != 0
+    mock_run.assert_not_called()
+    err = capsys.readouterr().err
+    assert "symbolic-ref" in err
+    assert "denied" in err.lower()
+
+
+def test_help_lists_symbolic_ref_read_form(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["--help"]) == 0
+    assert "symbolic-ref" in capsys.readouterr().out
+
+
 # -- helper: _is_protected_branch --------------------------------------------
 
 
