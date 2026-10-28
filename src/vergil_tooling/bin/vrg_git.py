@@ -82,6 +82,12 @@ _READONLY_WITH_DENIED_SUBS: dict[str, set[str]] = {
     "reflog": {"expire", "delete"},
 }
 
+# symbolic-ref reads a symbolic ref with one positional argument and writes or
+# deletes one otherwise (`<name> <ref>`, -d/--delete, -m). Only the read form,
+# with these flags, is allowed: agentic-review resolves the default branch
+# with `git symbolic-ref refs/remotes/origin/HEAD` (#3722).
+_SYMBOLIC_REF_READ_FLAGS: frozenset[str] = frozenset({"-q", "--quiet", "--short"})
+
 _DENIED: dict[str, str] = {
     "commit": "Use vrg-commit instead of git commit.",
     "reset": "git reset is denied by vrg-git.",
@@ -142,6 +148,14 @@ def main(argv: list[str] | None = None) -> int:
         result = subprocess.run(["git", *argv], check=False)  # noqa: S603, S607
         return result.returncode
 
+    if subcmd == "symbolic-ref":
+        symref_err = _check_symbolic_ref_read(argv[1:])
+        if symref_err:
+            print(f"vrg-git: {symref_err}", file=sys.stderr)
+            return 1
+        result = subprocess.run(["git", *argv], check=False)  # noqa: S603, S607
+        return result.returncode
+
     if subcmd in _ALLOWED_COMPOUND:
         allowed_subs = _ALLOWED_COMPOUND[subcmd]
         if len(argv) < 2 or argv[1] not in allowed_subs:
@@ -168,7 +182,12 @@ def main(argv: list[str] | None = None) -> int:
         return result.returncode
 
     if subcmd not in _ALLOWED_SIMPLE:
-        allowed = _ALLOWED_SIMPLE | set(_ALLOWED_COMPOUND) | set(_READONLY_WITH_DENIED_SUBS)
+        allowed = (
+            _ALLOWED_SIMPLE
+            | set(_ALLOWED_COMPOUND)
+            | set(_READONLY_WITH_DENIED_SUBS)
+            | {"symbolic-ref"}
+        )
         print(
             f"vrg-git: {subcmd} is not recognized. Allowed: {', '.join(sorted(allowed))}",
             file=sys.stderr,
@@ -234,6 +253,19 @@ def main(argv: list[str] | None = None) -> int:
 
     result = subprocess.run(["git", *argv], check=False, env=env)  # noqa: S603, S607
     return result.returncode
+
+
+def _check_symbolic_ref_read(args: list[str]) -> str | None:
+    """Refuse every symbolic-ref form except the read: one ref, optional read flags."""
+    flags = [a for a in args if a.startswith("-")]
+    positionals = [a for a in args if not a.startswith("-")]
+    bad_flags = [f for f in flags if f not in _SYMBOLIC_REF_READ_FLAGS]
+    if bad_flags or len(positionals) != 1:
+        return (
+            "symbolic-ref is denied except its read form: "
+            "symbolic-ref [-q|--quiet] [--short] <name>."
+        )
+    return None
 
 
 def _org_from_clone_url(args: list[str]) -> str | None:
@@ -867,6 +899,9 @@ def _print_help() -> None:
         "  - Subcommand allowlist: read-only inspection commands plus a vetted\n"
         "    set of mutating ones (add, push, fetch, pull, clone, checkout,\n"
         "    switch, stash, merge, cherry-pick, rebase, worktree add/list/remove).\n"
+        "  - Read-only forms only: reflog (expire/delete denied) and\n"
+        "    symbolic-ref [-q|--quiet] [--short] <name> (setting a ref,\n"
+        "    -d/--delete and -m are denied).\n"
         f"  - Denied subcommands: {denied} (use vrg-commit for commits).\n"
         "  - Flag deny-list: push -f/--force, branch -D/--force, rebase -i,\n"
         "    checkout -- . ; --force-with-lease is blocked on protected branches\n"
