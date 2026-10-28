@@ -12415,7 +12415,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../releases/v1.2.0/" class="md-nav__link">
+      <a href="../../releases/v1.2.1/" class="md-nav__link">
         
   
   
@@ -12443,7 +12443,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../releases/v1.2.1/" class="md-nav__link">
+      <a href="../../releases/v1.2.0/" class="md-nav__link">
         
   
   
@@ -17811,8 +17811,8 @@ advances the branch, so it stays <strong>freeze-neutral</strong>. A push failure
 loud on stderr but never rolls back the durable local file. Because the
 ref is world-readable on a public repo, keep secrets out of
 <code>--title/--summary/--notes</code>. Reaching <strong>ready</strong> <em>freezes</em> the branch:
-<code>vrg-commit</code> and the <code>vrg-git</code> push path then refuse further
-commits/pushes, because a task is exactly one PR and more work is a new
+<code>vrg-commit</code>, <code>vrg-reword</code> and the <code>vrg-git</code> push path then refuse further
+commits, commit rewrites and pushes, because a task is exactly one PR and more work is a new
 follow-up issue (epic #146). <code>report-ready</code> pushes the branch itself, to
 <code>origin/&lt;branch&gt;</code> with upstream set, <strong>before</strong> recording anything (#3602),
 so no separate push is needed; a branch already on origin at that commit is a
