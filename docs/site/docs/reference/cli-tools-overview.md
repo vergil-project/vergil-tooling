@@ -28,6 +28,38 @@ Local-settings guard: refuses an agent (warns a human) while a loadable
 | Exit codes | 0 success, 1 rejection or error |
 | Status | Active |
 
+### vrg-reword
+
+Reword a branch-local commit's message through a scripted, non-interactive
+rebase, re-stamping the new message through the same standards path as
+`vrg-commit`. It is the agent-safe way to correct a commit message on the
+current branch: `vrg-git commit` is denied, `vrg-commit` only creates new
+commits, and raw interactive rebase is blocked repo-wide. It is bounded:
+
+- **Branch-local only**: it refuses a commit already reachable from the
+  base branch (`origin/develop`, or `origin/main` for a `release/*` branch)
+  and refuses to run on `develop`, `main` or a `release/*` branch, so it
+  never rewrites shared or merged history.
+- **Own identity only**: it refuses a commit whose author email differs
+  from the current git identity unless `--allow-foreign-author` is passed.
+- **Force-with-lease**: when the branch is already on origin, the rewrite is
+  pushed with `--force-with-lease`, never a bare `--force`. `--no-push`
+  skips the push and prints the command to run.
+
+Rewording a mid-chain commit re-applies the commits after it, which changes
+their committer (the author is kept), so the tool first prints a note on
+stderr naming the affected commits. A body carrying a GitHub auto-close keyword is refused,
+as in `vrg-commit`.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_reword` |
+| Args | `sha` (positional, required), `--type` (required), `--scope` (required), `--message` (required), `--body`, `--allow-foreign-author`, `--no-push` |
+| Preconditions | Git repo on a feature branch, clean working tree, the base branch resolvable, `user.email` set (unless `--allow-foreign-author`) |
+| Failure mode | Each refusal prints the reason and a hint on stderr; a rebase that does not complete says to run `git rebase --abort`; a refused lease push says to fetch and review before retrying |
+| Exit codes | 0 success, 1 refusal or error; otherwise the rebase's exit code |
+| Status | Active |
+
 ### vrg-submit-pr
 
 Create standards-compliant pull requests. Template mode pushes the
@@ -39,7 +71,9 @@ worktree's `pr-workflow.json` when present, else the relay ref
 `refs/vergil/pr-workflow/<branch>`; origin's tip is checked against the
 recorded `head_sha` and the PR opens with `--head` **without pushing**.
 It refuses an issue whose native parent is an intake, planning or deferred
-epic (see [`vrg-pr-workflow`](#vrg-pr-workflow)).
+epic (see [`vrg-pr-workflow`](#vrg-pr-workflow)). Human-run: agent
+identities are refused, and agents hand off with
+`vrg-pr-workflow report-ready` instead. PRs merge manually.
 
 | Attribute | Value |
 |---|---|
@@ -136,6 +170,24 @@ and the [Releasing guide](../guides/releasing.md).
 | Exit codes | 0 success, 1 any failure or refusal, 130 interrupted |
 | Status | Active |
 
+### vrg-resolve-tracking-issue
+
+Print the tracking issue number of the PR that produced a commit, read
+from the PR body's `Ref #N` linkage. The PR is found from the commit
+subject (the merge-commit `Merge pull request #N from …` pattern, then the
+squash-merge `… (#N)` pattern), then from the GitHub API's
+commit-to-pulls lookup; `--pr` skips the lookup. Used by the
+`version-bump-pr` composite action in vergil-actions.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_resolve_tracking_issue` (patterns: `lib/linkage.py`) |
+| Args | `--commit` (default: HEAD), `--pr N` |
+| Preconditions | Git repo; `gh` authenticated for the current repo |
+| Failure mode | `ERROR:` on stderr naming what was tried; a PR with no body or no `Ref #N` linkage is an error |
+| Exit codes | 0 success (issue number on stdout), 1 no PR found or no linkage, 2 git or GitHub API failure |
+| Status | Active |
+
 ### vrg-update-deps
 
 Update the repo's dependencies to the newest versions their declared
@@ -165,7 +217,8 @@ base branch, then open, refresh or close the single `upstream-refresh`
 PR. A no-change run closes any stale refresh PR, or exits quietly when
 there is none. It never merges, and never runs dependency updaters,
 validation or a release. It runs from the scheduled
-`ops-upstream-refresh` workflow, or by hand as a human. See the
+`ops-upstream-refresh` workflow under the App token, or by hand as a
+human; it refuses agent identities. See the
 [upstream-refresh reference](upstream-refresh-config.md).
 
 | Attribute | Value |
@@ -499,6 +552,60 @@ Development: 0 active, 0 needs-attention, 1 stalled (no-pr), 0 cruft (removable)
 | Exit codes | 0 success, 1 malformed `vergil.toml` |
 | Status | Active |
 
+### vrg-whoami
+
+Print the resolved Vergil identity role, from the authoritative resolver
+in `lib/identity_mode.py`. Ask `vrg-whoami`; never infer identity from
+`VRG_IDENTITY_MODE` alone. That variable is only the first of five
+fallback signals (environment variable, mode file, App key, App ID, then
+the `human` default), and an unset value means "fall through", not
+"human". See [Account setup](../guides/account-setup.md).
+
+- `vrg-whoami` / `--mode`: the role as one token (`human`, `user` or
+  `audit`), for scripting, for example
+  `export VRG_IDENTITY_MODE="$(vrg-whoami --mode)"`.
+- `--platform`: the platform as one token (`physical-host`, `local-vm` or
+  `cloud-vm`), a second axis independent of the role, resolved from
+  empirical signals in `lib/platform_env.py`. It fails closed: an
+  unconfirmed VM resolves to `cloud-vm`, never `physical-host`.
+- `--explain`: the role, the signal it resolved from and every signal's
+  state, then the platform and its signals. It warns on stderr when the
+  identity signals disagree, and when the platform and the identity
+  correlate poorly (expected: host with human, VM with an agent).
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_whoami` |
+| Args | `--mode`, `--platform`, `--explain` (mutually exclusive) |
+| Preconditions | None |
+| Failure mode | Disagreement is a warning on stderr, never an error |
+| Exit codes | 0 |
+| Status | Active |
+
+### vrg-hook-guard
+
+The Claude Code `PreToolUse` hook that blocks raw `git` and `gh` in agent
+sessions and points the agent at `vrg-git` and `vrg-gh`. It reads the hook
+JSON on stdin and prints a deny decision when a command invokes `git` or
+`gh` at command position. Quoted spans are stripped before matching, and
+the quoted argument of `bash -c` / `sh -c` is checked too. It is a no-op
+outside a repo with a `vergil.toml`.
+
+Two layers call it: each repo's `.claude/settings.json` wires
+`.claude/hooks/guard.sh`, a shim that runs `vrg-hook-guard` when
+vergil-tooling is installed and otherwise falls back to a `jq`-based hard
+deny; and the vergil-claude-plugin provides the same guard through its
+own hooks. See [Claude Code Hook Guard](hooks/pre-commit.md).
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_hook_guard` |
+| Args | None (hook JSON on stdin) |
+| Preconditions | Run by Claude Code as a `PreToolUse` hook |
+| Failure mode | A deny decision as JSON on stdout; anything else allows the command |
+| Exit codes | 0 |
+| Status | Active |
+
 ### vrg-ensure-label
 
 Ensure GitHub labels exist. Three modes: single-label (create/update
@@ -706,8 +813,19 @@ absent or `{}` (epic vergil-project/.github#558).
 
 ### vrg-container-test
 
-Run a repository's test suite inside a dev container. Auto-detects
-language and selects appropriate image and test command.
+Run a repository's test suite inside a dev container. The language comes
+from `[project].primary-language` in `vergil.toml`, falling back to
+package-manager markers (`pyproject.toml`, `go.mod`, `Cargo.toml`,
+`pom.xml`/`mvnw`, …) when the repo asserts none; it selects the image and
+the test command. Consuming repos call it directly. Environment overrides:
+
+- `DOCKER_DEV_IMAGE`: the container image.
+- `DOCKER_TEST_CMD`: the test command.
+- `DOCKER_NETWORK`: a Docker network to join, for example for
+  integration tests.
+
+Env-var passthrough is set per repo with `[container].env-prefixes`; see
+[Container Config](container-config.md).
 
 | Attribute | Value |
 |---|---|
@@ -857,6 +975,29 @@ sweep or removal is a finalize warning, never a failure (issue #3566).
 | Preconditions | A container runtime (`nerdctl` or `docker`) on PATH for every subcommand; a git repo for `build`/`clean`/`status`; for `prune`, a repo set (`--root DIR` on the physical host) |
 | Failure mode | Runtime-unavailable error; propagates the runtime's build failures; every failed image removal is reported with the runtime's error while the rest still run. `prune` refuses, before removing anything, a missing or empty repo set, or images, containers or branches it cannot read |
 | Exit codes | 0 success (including a `prune` dry run); 1 no subcommand, no runtime, a failed removal, or a `prune` refusal; non-zero on build failure |
+| Status | Active |
+
+### vrg-vm
+
+Create, start, stop, update, rebuild and enter the identity agent VMs,
+Lima on the Mac or off-platform (cloud). Subcommands: `create`, `start`,
+`stop`, `restart`, `update`, `destroy`, `destroy-volume`, `rebuild`,
+`list`, `volumes`, `session` (launch a Claude session in the VM) and `cp`
+(copy files between the host and a VM). `vrg-vm update` reinstalls
+vergil-tooling and refreshes the plugins in a running VM in place; `--all`
+updates every configured identity's boxes. VMs install vergil-tooling as
+the signed package; `vrg-vm update --tag <ref>` with a non-release ref
+installs a dev copy instead and flags it with a `DEV tooling` banner, and
+a plain `vrg-vm update` returns the VM to the package. See
+[VM Spec](vm-spec.md#vergil-tooling-inside-the-vm).
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_vm` |
+| Args | Global `--identity` (default: the configured default identity), `--config` (path to `identities.toml`); then a subcommand with its own flags (`vrg-vm <subcommand> --help`) |
+| Preconditions | Host with Lima (local VMs) or the off-platform backend configured; `identities.toml` |
+| Failure mode | Error on stderr; `update --all` attempts every box and reports each failure |
+| Exit codes | 0 success, non-zero on failure |
 | Status | Active |
 
 ### vrg-host
