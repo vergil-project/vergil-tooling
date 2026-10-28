@@ -106,7 +106,7 @@ Either way, the repository ends up with:
 | Path | What it is |
 |---|---|
 | `vergil.toml` | The repository profile and tooling config |
-| `CLAUDE.md` | Agent guidance: the canonical template region between its markers (worktrees, `vrg-git`/`vrg-gh`, validation, the PR handoff, local settings, engineering principles), then your repo's own notes; at most 200 lines in all |
+| `CLAUDE.md` | Agent guidance: a short header, the canonical template region between its `vergil:template:claude-md` markers (fleet-wide agent policy such as worktrees, `vrg-git`/`vrg-gh`, validation and the PR handoff), then your repo's own notes; at most 200 lines in all (see [Consuming Repo Setup](guides/consuming-repo-setup.md#claudemd)) |
 | `.claude/settings.json` | Wires the hook guard, enables the Vergil Claude Code plugin, and turns off Claude Code's AI co-author attribution |
 | `.claude/hooks/guard.sh` | Hook-guard shim that blocks raw `git`/`gh` in agent sessions |
 | `.gitignore` | The vergil-managed ignore block for your language, including `.worktrees/` |
