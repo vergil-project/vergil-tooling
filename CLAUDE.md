@@ -119,7 +119,8 @@ every version in the window, and coverage can differ between versions. Run
 ### Correcting a commit message
 
 Interactive rebase is blocked. Reword a branch-local commit with
-[`vrg-reword`](docs/site/docs/reference/cli-tools-overview.md#vrg-reword).
+[`vrg-reword`](docs/site/docs/reference/cli-tools-overview.md#vrg-reword),
+only before report-ready (a reported-ready branch is frozen).
 
 ## Reference
 
