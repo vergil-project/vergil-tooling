@@ -18475,6 +18475,9 @@ commits, and raw interactive rebase is blocked repo-wide. It is bounded:</p>
 their committer (the author is kept), so the tool first prints a note on
 stderr naming the affected commits. A body carrying a GitHub auto-close keyword is refused,
 as in <code>vrg-commit</code>.</p>
+<p>It also refuses a branch that has been reported ready, because that branch is
+frozen; <code>vrg-pr-workflow unfreeze</code> is the way back (see the freeze in
+<a href="#vrg-pr-workflow"><code>vrg-pr-workflow</code></a>).</p>
 <table>
 <thead>
 <tr>
@@ -20254,6 +20257,9 @@ outside a repo with a <code>vergil.toml</code>.</p>
 vergil-tooling is installed and otherwise falls back to a <code>jq</code>-based hard
 deny; and the vergil-claude-plugin provides the same guard through its
 own hooks. See <a href="../hooks/pre-commit/">Claude Code Hook Guard</a>.</p>
+<p>Inside a managed repository it fails closed: a call whose hook input it cannot
+parse or check is refused (see
+<a href="../hooks/pre-commit/#malformed-input-fails-closed">Malformed input fails closed</a>).</p>
 <table>
 <thead>
 <tr>
@@ -20276,11 +20282,11 @@ own hooks. See <a href="../hooks/pre-commit/">Claude Code Hook Guard</a>.</p>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>A deny decision as JSON on stdout; anything else allows the command</td>
+<td>A deny decision as JSON on stdout for raw <code>git</code>/<code>gh</code>; in a managed repository, malformed input is refused with a message on stderr; anything else allows the command</td>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0</td>
+<td>0 allow or deny decision, 2 malformed input refused (fails closed)</td>
 </tr>
 <tr>
 <td>Status</td>
