@@ -114,25 +114,23 @@ class TestClaudeMd:
         fields = {i.field for i in diff.items}
         assert "local.claude_md" in fields
 
-    def test_with_template(self, tmp_path: Path) -> None:
+    def test_claude_md_legacy_form_fails(self, tmp_path: Path) -> None:
+        # The legacy no-marker form (the template verbatim, unmarked) was
+        # retired with the bridge (epic vergil-project/.github#558).
         content = "# CLAUDE.md\n\n" + _TEMPLATE_TEXT + "\n## Project Overview\n"
         (tmp_path / "CLAUDE.md").write_text(content)
         diff = audit_local_config(tmp_path)
-        fields = {i.field for i in diff.items}
-        assert "local.claude_md" not in fields
+        [item] = [i for i in diff.items if i.field == "local.claude_md"]
+        assert item.expected == "well-formed template markers"
+        assert item.actual == "no template markers"
+        assert diff.warnings == []
 
     def test_single_char_difference_fails(self, tmp_path: Path) -> None:
         modified = _TEMPLATE_TEXT.replace("vrg-git", "vrg-Git", 1)
-        (tmp_path / "CLAUDE.md").write_text(modified)
+        (tmp_path / "CLAUDE.md").write_text(f"{_BEGIN}\n{modified}{_END}\n")
         diff = audit_local_config(tmp_path)
         fields = {i.field for i in diff.items}
         assert "local.claude_md" in fields
-
-    def test_template_alone_is_compliant(self, tmp_path: Path) -> None:
-        (tmp_path / "CLAUDE.md").write_text(_TEMPLATE_TEXT)
-        diff = audit_local_config(tmp_path)
-        fields = {i.field for i in diff.items}
-        assert "local.claude_md" not in fields
 
 
 _BEGIN = "<!-- vergil:template:claude-md:begin -->"
@@ -230,26 +228,23 @@ class TestClaudeMdMarkers:
         assert len(items) == 1
         assert "before begin marker" in str(items[0].actual)
 
-    def test_markers_take_precedence_over_legacy_substring(self, tmp_path: Path) -> None:
+    def test_verbatim_template_outside_markers_does_not_help(self, tmp_path: Path) -> None:
         mutated = _TEMPLATE_TEXT.replace("vrg-git", "vrg-Git", 1)
         # The verbatim template appears outside the marked region, but the
-        # marked region itself diverges — markers must win over the legacy
-        # contiguous-substring fallback.
+        # marked region itself diverges — only the marked region counts.
         content = f"{_TEMPLATE_TEXT}\n{_BEGIN}\n{mutated}{_END}\n"
         (tmp_path / "CLAUDE.md").write_text(content)
         items = _claude_md_items(tmp_path)
         assert len(items) == 1
 
 
-_PREVIOUS_TEMPLATE_TEXT = (_TEMPLATE_PATH.parent / "claude_md_consumer_previous.md").read_text(
-    encoding="utf-8"
-)
+#: The template region as it stood before epic vergil-project/.github#558
+#: started (its first line). The bridge that accepted it is gone, so a region
+#: that still opens with it fails against the current template.
+_OLD_TEMPLATE_FIRST_LINE = "## Memory management"
 
 
-class TestClaudeMdBridge:
-    """The marked region and the legacy form accept the previous template with
-    a warning until the bridge-removal PR (epic vergil-project/.github#558)."""
-
+class TestClaudeMdTemplate:
     @staticmethod
     def _audit(tmp_path: Path, content: str) -> ConfigDiff:
         (tmp_path / "CLAUDE.md").write_text(content)
@@ -259,55 +254,108 @@ class TestClaudeMdBridge:
     def _md_items(diff: ConfigDiff) -> list[DiffItem]:
         return [i for i in diff.items if i.field == "local.claude_md"]
 
-    def test_templates_differ(self) -> None:
-        assert _TEMPLATE_TEXT != _PREVIOUS_TEMPLATE_TEXT
-
     def test_template_within_line_budget(self) -> None:
         assert len(_TEMPLATE_TEXT.splitlines()) <= 60
+
+    def test_previous_template_files_are_gone(self) -> None:
+        assert not (_TEMPLATE_PATH.parent / "claude_md_consumer_previous.md").exists()
+        assert not (_TEMPLATE_PATH.parent / "claude_settings_previous.json").exists()
 
     def test_claude_md_region_current_clean(self, tmp_path: Path) -> None:
         diff = self._audit(tmp_path, f"# CLAUDE.md\n\n{_BEGIN}\n{_TEMPLATE_TEXT}{_END}\n")
         assert self._md_items(diff) == []
         assert diff.warnings == []
 
-    def test_claude_md_region_previous_warns(self, tmp_path: Path) -> None:
-        content = f"# CLAUDE.md\n\n{_BEGIN}\n\n{_PREVIOUS_TEMPLATE_TEXT}\n{_END}\n\n## Body\n"
-        diff = self._audit(tmp_path, content)
-        assert self._md_items(diff) == []
-        assert diff.warnings == [_CLAUDE_MD_WARNING]
-
-    def test_claude_md_legacy_previous_warns(self, tmp_path: Path) -> None:
-        content = f"# CLAUDE.md\n\nIntro.\n\n{_PREVIOUS_TEMPLATE_TEXT}\n## Project Overview\n"
-        diff = self._audit(tmp_path, content)
-        assert self._md_items(diff) == []
-        assert diff.warnings == [_CLAUDE_MD_WARNING]
-
-    def test_claude_md_legacy_current_clean(self, tmp_path: Path) -> None:
-        diff = self._audit(tmp_path, f"# CLAUDE.md\n\n{_TEMPLATE_TEXT}\n## Project Overview\n")
-        assert self._md_items(diff) == []
-        assert diff.warnings == []
-
     def test_claude_md_region_other_fails_against_current(self, tmp_path: Path) -> None:
-        mutated = _PREVIOUS_TEMPLATE_TEXT.replace("vrg-git", "vrg-Git", 1)
-        diff = self._audit(tmp_path, f"{_BEGIN}\n{mutated}{_END}\n")
+        diff = self._audit(tmp_path, f"{_BEGIN}\n{_OLD_TEMPLATE_FIRST_LINE}\n{_END}\n")
         [item] = self._md_items(diff)
         first_line = _TEMPLATE_TEXT.splitlines()[0]
         assert f"template line 1: {first_line}" in str(item.expected)
         assert diff.warnings == []
 
-    def test_claude_md_legacy_other_fails(self, tmp_path: Path) -> None:
-        mutated = _PREVIOUS_TEMPLATE_TEXT.replace("vrg-git", "vrg-Git", 1)
-        diff = self._audit(tmp_path, mutated)
-        [item] = self._md_items(diff)
-        assert item.actual == "template not found"
-        assert diff.warnings == []
+
+def _write_lines(tmp_path: Path, count: int, *, trailing_newline: bool = True) -> None:
+    """Write a CLAUDE.md of exactly ``count`` lines: the marked template, then filler."""
+    head = f"{_BEGIN}\n{_TEMPLATE_TEXT}{_END}\n"
+    filler = count - len(head.splitlines())
+    assert filler >= 0
+    text = head + "".join(f"line {i}\n" for i in range(filler))
+    if not trailing_newline:
+        text = text.removesuffix("\n")
+    (tmp_path / "CLAUDE.md").write_text(text)
+    assert len(text.splitlines()) == count
+
+
+def _length_items(tmp_path: Path) -> list[DiffItem]:
+    return [i for i in audit_local_config(tmp_path).items if i.field == "local.claude_md_length"]
+
+
+class TestClaudeMdLength:
+    def test_claude_md_200_lines_passes(self, tmp_path: Path) -> None:
+        _write_lines(tmp_path, 200)
+        assert _length_items(tmp_path) == []
+        assert _claude_md_items(tmp_path) == []
+
+    def test_claude_md_201_lines_fails(self, tmp_path: Path) -> None:
+        _write_lines(tmp_path, 201)
+        [item] = _length_items(tmp_path)
+        assert item.expected == "at most 200 lines"
+        assert item.actual == "201 lines"
+
+    def test_claude_md_trailing_newline_not_counted(self, tmp_path: Path) -> None:
+        _write_lines(tmp_path, 200, trailing_newline=True)
+        assert _length_items(tmp_path) == []
+        _write_lines(tmp_path, 200, trailing_newline=False)
+        assert _length_items(tmp_path) == []
+
+    def test_max_lines_constant(self) -> None:
+        assert repo_config.CLAUDE_MD_MAX_LINES == 200
+
+    def test_missing_claude_md_reports_only_presence(self, tmp_path: Path) -> None:
+        assert _length_items(tmp_path) == []
+        assert len(_claude_md_items(tmp_path)) == 1
+
+
+class TestAgentsMd:
+    @staticmethod
+    def _agents_items(tmp_path: Path) -> list[DiffItem]:
+        return [i for i in audit_local_config(tmp_path).items if i.field == "local.agents_md"]
+
+    def test_agents_md_absent_passes(self, tmp_path: Path) -> None:
+        assert self._agents_items(tmp_path) == []
+
+    def test_agents_md_present_fails(self, tmp_path: Path) -> None:
+        (tmp_path / "AGENTS.md").write_text("# AGENTS.md\n")
+        [item] = self._agents_items(tmp_path)
+        assert item.expected == "absent"
+        assert item.actual == "present"
+
+    def test_agents_md_symlink_fails(self, tmp_path: Path) -> None:
+        (tmp_path / "CLAUDE.md").write_text("# CLAUDE.md\n")
+        (tmp_path / "AGENTS.md").symlink_to("CLAUDE.md")
+        assert len(self._agents_items(tmp_path)) == 1
+
+    def test_agents_md_dangling_symlink_fails(self, tmp_path: Path) -> None:
+        (tmp_path / "AGENTS.md").symlink_to("nowhere.md")
+        assert len(self._agents_items(tmp_path)) == 1
 
 
 _DATA_DIR = Path(__file__).resolve().parents[2] / "src" / "vergil_tooling" / "data"
 _SETTINGS_TEMPLATE = json.loads((_DATA_DIR / "claude_settings.json").read_text(encoding="utf-8"))
-_SETTINGS_PREVIOUS = json.loads(
-    (_DATA_DIR / "claude_settings_previous.json").read_text(encoding="utf-8")
-)
+#: The settings shape before epic vergil-project/.github#558: the current
+#: template plus the marketplace entry seeded at ``ref: main``.
+_SETTINGS_PREVIOUS = {
+    **_SETTINGS_TEMPLATE,
+    "extraKnownMarketplaces": {
+        "vergil-marketplace": {
+            "source": {
+                "source": "github",
+                "repo": "vergil-project/vergil-claude-plugin",
+                "ref": "main",
+            }
+        }
+    },
+}
 
 #: The exact settings shape pinned by epic vergil-project/.github#558's plan.
 _PINNED_SETTINGS = {
@@ -329,15 +377,6 @@ _PINNED_SETTINGS = {
     "attribution": {"commit": "", "pr": ""},
 }
 
-_SETTINGS_WARNING = (
-    ".claude/settings.json matches the previous template; replace it with the "
-    "current template (epic vergil-project/.github#558)."
-)
-_CLAUDE_MD_WARNING = (
-    "CLAUDE.md template region matches the previous template; replace it with the "
-    "current template (epic vergil-project/.github#558)."
-)
-
 
 def _write_settings(tmp_path: Path, settings: object, *, indent: int | None = None) -> None:
     (tmp_path / ".claude").mkdir(exist_ok=True)
@@ -352,18 +391,6 @@ class TestSettingsTemplates:
     def test_current_template_is_the_pinned_shape(self) -> None:
         assert _SETTINGS_TEMPLATE == _PINNED_SETTINGS
         assert "extraKnownMarketplaces" not in _SETTINGS_TEMPLATE
-
-    def test_previous_template_is_the_old_shape_with_main_seeded(self) -> None:
-        source = _SETTINGS_PREVIOUS["extraKnownMarketplaces"]["vergil-marketplace"]["source"]
-        assert source == {
-            "source": "github",
-            "repo": "vergil-project/vergil-claude-plugin",
-            "ref": "main",
-        }
-        without_market = {
-            k: v for k, v in _SETTINGS_PREVIOUS.items() if k != "extraKnownMarketplaces"
-        }
-        assert without_market == _SETTINGS_TEMPLATE
 
 
 class TestClaudeSettings:
@@ -406,16 +433,17 @@ class TestClaudeSettings:
         assert _settings_items(diff) == []
         assert diff.warnings == []
 
-    def test_settings_previous_template_warns(self, tmp_path: Path) -> None:
+    def test_settings_previous_template_now_fails(self, tmp_path: Path) -> None:
+        # The bridge is gone: the previous shape is one DiffItem, no warning.
         _write_settings(tmp_path, _SETTINGS_PREVIOUS, indent=4)
         diff = audit_local_config(tmp_path)
-        assert _settings_items(diff) == []
-        assert diff.warnings == [_SETTINGS_WARNING]
+        [item] = _settings_items(diff)
+        assert item.field == "local.claude_settings"
+        assert item.actual == "unexpected key: extraKnownMarketplaces"
+        assert diff.warnings == []
 
     def test_settings_other_shape_fails(self, tmp_path: Path) -> None:
-        # The current template plus a marketplace entry. With the seeded
-        # ``ref: main`` that would be exactly the previous template, so this
-        # uses the old packaged (ref-less) entry, which matches neither.
+        # The current template plus the old packaged (ref-less) marketplace entry.
         other = {
             **_SETTINGS_TEMPLATE,
             "extraKnownMarketplaces": {
@@ -430,15 +458,6 @@ class TestClaudeSettings:
         assert item.field == "local.claude_settings"
         assert "unexpected key: extraKnownMarketplaces" in str(item.actual)
         assert "claude_settings.json" in str(item.expected)
-        assert diff.warnings == []
-
-    def test_previous_template_with_old_ref_fails(self, tmp_path: Path) -> None:
-        stale = json.loads(json.dumps(_SETTINGS_PREVIOUS))
-        stale["extraKnownMarketplaces"]["vergil-marketplace"]["source"]["ref"] = "develop"
-        _write_settings(tmp_path, stale)
-        diff = audit_local_config(tmp_path)
-        [item] = _settings_items(diff)
-        assert item.actual == "unexpected key: extraKnownMarketplaces"
         assert diff.warnings == []
 
     def test_missing_key_named(self, tmp_path: Path) -> None:
@@ -476,7 +495,7 @@ def _write_compliant_repo(root: Path) -> None:
     hooks_dir = root / ".claude" / "hooks"
     hooks_dir.mkdir(parents=True)
     (hooks_dir / "guard.sh").write_text("#!/usr/bin/env bash\nexec vrg-hook-guard\n")
-    (root / "CLAUDE.md").write_text("# CLAUDE.md\n\n" + _TEMPLATE_TEXT + "\n")
+    (root / "CLAUDE.md").write_text(f"# CLAUDE.md\n\n{_BEGIN}\n{_TEMPLATE_TEXT}{_END}\n")
     (root / ".claude" / "settings.json").write_text(json.dumps(_SETTINGS_TEMPLATE))
     # A fully compliant repo carries the fenced managed .gitignore for its
     # declared language (python) and a wired, scheduled ops.yml (epic
@@ -506,15 +525,36 @@ class TestIntegration:
         assert diff.is_compliant(), [f"{i.field}: {i.actual}" for i in diff.items]
         assert diff.warnings == []
 
-    def test_previous_shapes_keep_repo_compliant_with_both_warnings(self, tmp_path: Path) -> None:
-        # The point of the bridge: a repo not yet swept still passes the
-        # nightly audit, with one deprecation warning per previous-shape file.
+    def test_unswept_repo_is_not_compliant(self, tmp_path: Path) -> None:
+        # With the bridge removed, a repo still carrying the legacy no-marker
+        # CLAUDE.md and the previous settings shape fails, without warnings.
         _write_compliant_repo(tmp_path)
-        (tmp_path / "CLAUDE.md").write_text("# CLAUDE.md\n\n" + _PREVIOUS_TEMPLATE_TEXT + "\n")
+        (tmp_path / "CLAUDE.md").write_text("# CLAUDE.md\n\n" + _TEMPLATE_TEXT + "\n")
         (tmp_path / ".claude" / "settings.json").write_text(json.dumps(_SETTINGS_PREVIOUS))
         diff = audit_local_config(tmp_path)
-        assert diff.is_compliant(), [f"{i.field}: {i.actual}" for i in diff.items]
-        assert diff.warnings == [_CLAUDE_MD_WARNING, _SETTINGS_WARNING]
+        assert {i.field for i in diff.items} == {"local.claude_md", "local.claude_settings"}
+        assert diff.warnings == []
+
+    def test_this_repo_steering_files_pass_from_source(self) -> None:
+        # vergil-tooling audits from source: its own CLAUDE.md and settings must
+        # pass the checks this package ships (epic vergil-project/.github#558).
+        root = Path(__file__).resolve().parents[2]
+        diff = audit_local_config(root)
+        steering = {
+            "local.claude_md",
+            "local.claude_md_length",
+            "local.agents_md",
+            "local.claude_settings",
+        }
+        assert [i for i in diff.items if i.field in steering] == []
+        assert diff.warnings == []
+
+    def test_oversized_claude_md_and_agents_md_fail(self, tmp_path: Path) -> None:
+        _write_compliant_repo(tmp_path)
+        _write_lines(tmp_path, repo_config.CLAUDE_MD_MAX_LINES + 1)
+        (tmp_path / "AGENTS.md").write_text("# AGENTS.md\n")
+        diff = audit_local_config(tmp_path)
+        assert {i.field for i in diff.items} == {"local.claude_md_length", "local.agents_md"}
 
 
 class TestWorkflowRefs:

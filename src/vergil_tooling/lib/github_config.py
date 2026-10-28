@@ -1276,8 +1276,7 @@ class ConfigDiff:
     undeclared: list[UndeclaredParam] = field(default_factory=list)
 
     def is_compliant(self) -> bool:
-        # Warnings are advisory (e.g. a deprecated-but-tolerated marketplace
-        # ref mid-migration, #1974) and deliberately do not affect compliance.
+        # Warnings are advisory and deliberately do not affect compliance.
         # An undeclared parameter does: the live ruleset enforces a knob the
         # spec never chose (#3548).
         return len(self.items) == 0 and len(self.undeclared) == 0

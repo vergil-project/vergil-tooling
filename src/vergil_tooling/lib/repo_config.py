@@ -18,28 +18,16 @@ from vergil_tooling.lib.update_deps.context import UpdateDepsError
 from vergil_tooling.lib.vergil_refs import iter_workflow_refs, read_source_version
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
     from pathlib import Path
 
 
-#: Packaged template files and their previous shapes. The previous shapes are
-#: the bridge of epic vergil-project/.github#558: until the bridge-removal PR
-#: merges, a repo still carrying one passes the audit with a deprecation
-#: warning instead of a DiffItem, so no managed repo's nightly run goes red
-#: while the fleet is swept.
+#: Packaged template files.
 CLAUDE_MD_TEMPLATE = "claude_md_consumer.md"
-CLAUDE_MD_TEMPLATE_PREVIOUS = "claude_md_consumer_previous.md"
 SETTINGS_TEMPLATE = "claude_settings.json"
-SETTINGS_TEMPLATE_PREVIOUS = "claude_settings_previous.json"
 
-SETTINGS_BRIDGE_WARNING = (
-    ".claude/settings.json matches the previous template; replace it with the "
-    "current template (epic vergil-project/.github#558)."
-)
-CLAUDE_MD_BRIDGE_WARNING = (
-    "CLAUDE.md template region matches the previous template; replace it with the "
-    "current template (epic vergil-project/.github#558)."
-)
+#: The CLAUDE.md line budget (epic vergil-project/.github#558), counted as
+#: ``len(text.splitlines())`` so a trailing newline is not an extra line.
+CLAUDE_MD_MAX_LINES = 200
 
 
 def _read_data_file(name: str) -> str:
@@ -48,38 +36,16 @@ def _read_data_file(name: str) -> str:
     )
 
 
-def _load_template(previous: bool = False) -> str:
-    return _read_data_file(CLAUDE_MD_TEMPLATE_PREVIOUS if previous else CLAUDE_MD_TEMPLATE)
+def _load_template() -> str:
+    return _read_data_file(CLAUDE_MD_TEMPLATE)
 
 
-def _load_settings_template(previous: bool = False) -> dict[str, Any]:
-    name = SETTINGS_TEMPLATE_PREVIOUS if previous else SETTINGS_TEMPLATE
-    template = json.loads(_read_data_file(name))
+def _load_settings_template() -> dict[str, Any]:
+    template = json.loads(_read_data_file(SETTINGS_TEMPLATE))
     if not isinstance(template, dict):  # pragma: no cover - packaging error
-        msg = f"{name} template is not a JSON object"
+        msg = f"{SETTINGS_TEMPLATE} template is not a JSON object"
         raise TypeError(msg)
     return template
-
-
-def _bridged[T](
-    matches: Callable[[T], bool],
-    current: T,
-    previous: T,
-    warning: str,
-    warnings: list[str],
-) -> bool:
-    """Accept the current template cleanly and the previous one with a warning.
-
-    Returns True when either template matches (appending ``warning`` for the
-    previous one) and False when neither does; the caller then records one
-    DiffItem against the current template.
-    """
-    if matches(current):
-        return True
-    if matches(previous):
-        warnings.append(warning)
-        return True
-    return False
 
 
 def _gitignore_language(repo_root: Path) -> str | None:
@@ -220,16 +186,17 @@ def _check_required_workflows(repo_root: Path, items: list[DiffItem]) -> None:
 def audit_local_config(repo_root: Path) -> ConfigDiff:
     """Run all local config checks against a repo root directory."""
     items: list[DiffItem] = []
-    warnings: list[str] = []
     _check_vergil_toml(repo_root, items)
     _check_hook_guard_shim(repo_root, items)
-    _check_claude_md(repo_root, items, warnings)
-    _check_claude_settings(repo_root, items, warnings)
+    _check_claude_md(repo_root, items)
+    _check_claude_md_length(repo_root, items)
+    _check_agents_md(repo_root, items)
+    _check_claude_settings(repo_root, items)
     _check_workflow_refs(repo_root, items)
     _check_gitignore(repo_root, items)
     _check_dependabot_yml(repo_root, items)
     _check_required_workflows(repo_root, items)
-    return ConfigDiff(items=items, warnings=warnings)
+    return ConfigDiff(items=items)
 
 
 def _check_vergil_toml(repo_root: Path, items: list[DiffItem]) -> None:
@@ -264,7 +231,7 @@ CLAUDE_MD_MARKER_BEGIN = "<!-- vergil:template:claude-md:begin -->"
 CLAUDE_MD_MARKER_END = "<!-- vergil:template:claude-md:end -->"
 
 
-def _check_claude_md(repo_root: Path, items: list[DiffItem], warnings: list[str]) -> None:
+def _check_claude_md(repo_root: Path, items: list[DiffItem]) -> None:
     claude_md = repo_root / "CLAUDE.md"
     if not claude_md.is_file():
         items.append(
@@ -278,25 +245,9 @@ def _check_claude_md(repo_root: Path, items: list[DiffItem], warnings: list[str]
 
     content = claude_md.read_text(encoding="utf-8")
     template = _load_template()
-    previous = _load_template(previous=True)
     lines = content.splitlines()
     begins = [i for i, line in enumerate(lines) if line.strip() == CLAUDE_MD_MARKER_BEGIN]
     ends = [i for i, line in enumerate(lines) if line.strip() == CLAUDE_MD_MARKER_END]
-
-    if not begins and not ends:
-        # Legacy form (transition window): no markers, require a template as
-        # a contiguous verbatim substring.
-        if not _bridged(
-            lambda t: t in content, template, previous, CLAUDE_MD_BRIDGE_WARNING, warnings
-        ):
-            items.append(
-                DiffItem(
-                    field="local.claude_md",
-                    expected="template present",
-                    actual="template not found",
-                )
-            )
-        return
 
     malformed = _marker_structure_error(begins, ends)
     if malformed is not None:
@@ -311,15 +262,43 @@ def _check_claude_md(repo_root: Path, items: list[DiffItem], warnings: list[str]
 
     start, stop = _region_bounds(lines, begins[0], ends[0])
     region = lines[start:stop]
-    if _bridged(
-        lambda t: region == t.splitlines(), template, previous, CLAUDE_MD_BRIDGE_WARNING, warnings
-    ):
+    if region != template.splitlines():
+        items.append(_first_divergence(region, start, stop, template.splitlines()))
+
+
+def _check_claude_md_length(repo_root: Path, items: list[DiffItem]) -> None:
+    """Hold CLAUDE.md to the line budget, template region included.
+
+    A missing CLAUDE.md is reported by :func:`_check_claude_md`, not here.
+    """
+    claude_md = repo_root / "CLAUDE.md"
+    if not claude_md.is_file():
         return
-    items.append(_first_divergence(region, start, stop, template.splitlines()))
+    count = len(claude_md.read_text(encoding="utf-8").splitlines())
+    if count > CLAUDE_MD_MAX_LINES:
+        items.append(
+            DiffItem(
+                field="local.claude_md_length",
+                expected=f"at most {CLAUDE_MD_MAX_LINES} lines",
+                actual=f"{count} lines",
+            )
+        )
+
+
+def _check_agents_md(repo_root: Path, items: list[DiffItem]) -> None:
+    """Fail whenever AGENTS.md exists: CLAUDE.md is the one instruction file.
+
+    A symlink counts, dangling or not.
+    """
+    agents_md = repo_root / "AGENTS.md"
+    if agents_md.exists() or agents_md.is_symlink():
+        items.append(DiffItem(field="local.agents_md", expected="absent", actual="present"))
 
 
 def _marker_structure_error(begins: list[int], ends: list[int]) -> str | None:
     """Return a diagnostic for malformed markers, or None if well-formed."""
+    if not begins and not ends:
+        return "no template markers"
     if len(begins) > 1:
         return "multiple begin markers"
     if len(ends) > 1:
@@ -387,7 +366,7 @@ def _check_hook_guard_shim(repo_root: Path, items: list[DiffItem]) -> None:
         )
 
 
-def _check_claude_settings(repo_root: Path, items: list[DiffItem], warnings: list[str]) -> None:
+def _check_claude_settings(repo_root: Path, items: list[DiffItem]) -> None:
     settings_path = repo_root / ".claude" / "settings.json"
     if not settings_path.is_file():
         items.append(
@@ -422,13 +401,7 @@ def _check_claude_settings(repo_root: Path, items: list[DiffItem], warnings: lis
         return
 
     template = _load_settings_template()
-    if _bridged(
-        lambda t: raw == t,
-        template,
-        _load_settings_template(previous=True),
-        SETTINGS_BRIDGE_WARNING,
-        warnings,
-    ):
+    if raw == template:
         return
     items.append(
         DiffItem(

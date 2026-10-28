@@ -51,9 +51,8 @@ Keeps the vergil ecosystem references consistent with
 
 - Rewrites drifting `uses: vergil-*/…@vX.Y` refs in
   `.github/workflows/` and in every `action.yml`/`action.yaml` in the
-  repo.
-- Sets the vergil marketplace `source.ref` in `.claude/settings.json`
-  to `main`.
+  repo. It never touches `.claude/settings.json`, which carries no
+  marketplace entry.
 - With [`vrg-update-deps --vergil X.Y`](dev/update-deps.md), first
   sets `[dependencies].vergil` to `vX.Y`, then rewrites the refs to
   match.

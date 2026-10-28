@@ -2,11 +2,10 @@
 
 The source of truth is ``[dependencies].vergil`` in ``vergil.toml`` (see
 ``vergil_tooling.lib.vergil_refs``). Workflow pins (``uses: vergil-*/...@vX.Y``)
-must match it. The Claude marketplace ref is decoupled: under the single-channel
-model (#1974) it is always ``main``, the plugin's one released channel, never a
-version. ``normalize`` rewrites drifting refs; ``bump`` first rewrites the
-source of truth, then normalizes. Refs are normalized in workflows and in every
-composite ``action.yml``/``action.yaml``.
+must match it. ``normalize`` rewrites drifting refs; ``bump`` first rewrites
+the source of truth, then normalizes. Refs are normalized in workflows and in
+every composite ``action.yml``/``action.yaml``. ``.claude/settings.json`` is
+never touched: it carries no marketplace entry (epic vergil-project/.github#558).
 
 Either way, a ``[package.python] runtime`` pin (``x.y.z``) is bumped to the
 CPython patch its per-series ``vergil-python<x.y>`` package serves on every
@@ -18,7 +17,6 @@ reported until they agree.
 
 from __future__ import annotations
 
-import json
 import re
 import tomllib
 from typing import TYPE_CHECKING, Any
@@ -31,8 +29,6 @@ from vergil_tooling.lib.update_deps.updater import UpdateResult
 from vergil_tooling.lib.vergil_refs import (
     _REF_RE,
     _SOURCE_RE,
-    EXPECTED_MARKETPLACE_REF,
-    MARKETPLACE_NAME,
     format_version,
     read_source_version,
 )
@@ -193,30 +189,6 @@ def bump_runtime(base: Path, served: ServedRuntime) -> tuple[str | None, list[He
     return patch, held
 
 
-def normalize_claude_ref(base: Path, target: str) -> Path | None:
-    """Set the marketplace ``source.ref`` in ``.claude/settings.json`` to *target*.
-
-    *target* is the single released channel ``main`` (#1974). The
-    file is edited structurally (parsed JSON, re-dumped at indent 2) because the
-    ref may need to be *inserted* where none exists — a regex cannot do that
-    safely. Returns the path if changed, else ``None``. A missing file or
-    missing marketplace entry is a clean no-op.
-    """
-    settings_path = base / ".claude" / "settings.json"
-    if not settings_path.is_file():
-        return None
-    data = json.loads(settings_path.read_text(encoding="utf-8"))
-    try:
-        source = data["extraKnownMarketplaces"][MARKETPLACE_NAME]["source"]
-    except (KeyError, TypeError):
-        return None
-    if not isinstance(source, dict) or source.get("ref") == target:
-        return None
-    source["ref"] = target
-    settings_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-    return settings_path
-
-
 def _base(ctx: UpdateDepsContext) -> Path:
     """The directory updaters operate on — the worktree once preflight made it."""
     return ctx.worktree_path if ctx.worktree_path is not None else ctx.repo_root
@@ -248,22 +220,20 @@ class VergilUpdater:
             target = format_version(ctx.vergil_bump)
             bumped = set_source_version(base, target)
             normalized = normalize_refs(base, target)
-            claude = normalize_claude_ref(base, EXPECTED_MARKETPLACE_REF)
             runtime, held = self._runtime(base)
             parts = [f"bump vergil to {target}"]
             if runtime is not None:
                 parts.append(f"vergil-python runtime {runtime}")
             return UpdateResult(
                 updater=self.name,
-                changed=bumped or bool(normalized) or claude is not None or runtime is not None,
+                changed=bumped or bool(normalized) or runtime is not None,
                 summary="; ".join(parts),
                 commit_message="chore(deps): " + "; ".join(parts),
                 held_back=held,
             )
         target = read_source_version(base)
         normalized = normalize_refs(base, target)
-        claude = normalize_claude_ref(base, EXPECTED_MARKETPLACE_REF)
-        refs_changed = bool(normalized) or claude is not None
+        refs_changed = bool(normalized)
         runtime, held = self._runtime(base)
         parts = [f"normalize vergil refs to {target}"] if refs_changed else []
         if runtime is not None:

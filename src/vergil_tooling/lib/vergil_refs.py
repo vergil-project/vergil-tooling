@@ -1,13 +1,9 @@
 """Shared derivation of vergil-ecosystem version references.
 
 The source of truth is ``[dependencies].vergil`` in ``vergil.toml``. The
-reusable-workflow pins must equal the version computed from it. The Claude
-plugin marketplace ref is the exception: under the single-channel distribution
-model (epic vergil-project/.github#45) the plugin has exactly one released
-channel on ``main``, so *every* repo — consumers and the plugin source repo
-alike — pins the marketplace at ``main``. The old model (source repo on
-``develop``, consumers on the version tag) is deprecated; a repo still carrying
-one of those refs warns-then-enforces toward ``main`` (#1974).
+reusable-workflow pins must equal the version computed from it. Repos pin no
+Claude plugin marketplace ref: the marketplace lives only in the user settings
+(epic vergil-project/.github#558).
 
 This module holds the pure derivation and read helpers shared by the
 update_deps writer (``vergil_eco``) and the repo_config auditor, so the two can
@@ -36,28 +32,6 @@ _REF_RE = re.compile(r"(uses:\s*vergil-[\w.-]+/[^@\s]+@)(v\d+\.\d+)")
 _SOURCE_RE = re.compile(r'(?m)^(vergil\s*=\s*)"[^"]*"')
 
 _VERSION_RE = re.compile(r"^v?(\d+)\.(\d+)$")
-
-#: The marketplace name keyed under ``extraKnownMarketplaces``.
-MARKETPLACE_NAME = "vergil-marketplace"
-
-#: The single released channel every repo pins the marketplace at. Under the
-#: single-channel model (#1974) there is no per-repo or source-repo variation.
-EXPECTED_MARKETPLACE_REF = "main"
-
-#: A pre-single-channel marketplace ref: a bare version (``2.1``, ``2.0.7``) or
-#: a ``vX.Y[.Z]`` tag. ``develop`` is handled separately in
-#: ``is_deprecated_marketplace_ref``.
-_VERSION_REF_RE = re.compile(r"^v?\d+\.\d+(?:\.\d+)?$")
-
-
-def is_deprecated_marketplace_ref(ref: str) -> bool:
-    """True if *ref* is a pre-single-channel marketplace ref.
-
-    The old model pinned the source repo at ``develop`` and consumers at the
-    version tag. Either earns a deprecation warning (not a hard failure) during
-    the bridge period while repos migrate to ``main`` (#1974).
-    """
-    return ref == "develop" or bool(_VERSION_REF_RE.match(ref))
 
 
 def format_version(raw: str) -> str:
