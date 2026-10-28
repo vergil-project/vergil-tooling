@@ -382,7 +382,7 @@ undeclared parameter. It is reported as `.rules` value drift.
 
 - [Consuming Repo Setup](../guides/consuming-repo-setup.md) — the
   consuming-repo managed `.gitignore` fence + `ops.yml` contract
-- [CI Architecture](../guides/ci-architecture.md#every-gate-is-required-there-are-no-optional-pr-gates)
+- [CI Architecture](../guides/ci-architecture.md#every-check-that-runs-is-a-gate)
   — how the audit gates required-check drift and `vrg-release`
 - [CLI Tools Overview](cli-tools-overview.md#vrg-github-repo-config) —
   runtime preconditions and failure modes
