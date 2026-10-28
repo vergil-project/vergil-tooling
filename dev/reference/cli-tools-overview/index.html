@@ -18676,7 +18676,12 @@ agent push: <code>report-ready</code> reports that as expected, records the stat
 and the human's <code>vrg-submit-pr</code> pushes the branch. Any other push failure
 fails <code>report-ready</code> with no local state and no relay ref written. A re-run on
 a frozen branch whose HEAD has drifted past the reported commit is refused
-before any push. An explicit <code>vrg-git push [-u] origin &lt;branch&gt;</code> also stays
+before any push. After a deliberate <code>unfreeze</code>, a re-run pushes with
+<code>--force-with-lease=refs/heads/&lt;branch&gt;:&lt;recorded head_sha&gt;</code>, so a rebased
+branch replaces the reported commit with no manual force-push, while an origin
+branch that moved anywhere else is refused with nothing recorded (#3783); a
+first report, a frozen re-run, or a branch not yet on origin keeps the plain
+push. An explicit <code>vrg-git push [-u] origin &lt;branch&gt;</code> also stays
 allowed while HEAD is exactly the reported commit — it publishes, not
 advances, the branch (issue #3071). <code>unfreeze</code> is the only sanctioned way to
 reopen a still-unsubmitted branch — it drops the state back to
