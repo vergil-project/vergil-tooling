@@ -330,7 +330,8 @@ every place it deviates from the paad authors' recommendations, is recorded in
 the [paad usage policy](https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-policy.md).
 
 Each implementation task then runs through the `issue-implement` skill, which
-passes an advisory **agentic-review gate** before it hands the PR off; the rules
+runs an **agentic-review gate** before it hands the PR off. The gate is advisory:
+when it pauses, the human can accept the branch as it stands. The rules
 are in the [paad review doctrine](https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-review-doctrine.md#3-mode-2-agentic-review-in-issue-implement).
 
 ### The bookend convention

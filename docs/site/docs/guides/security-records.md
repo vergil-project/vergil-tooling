@@ -12,9 +12,11 @@ extended to several advisories per issue by epic
 
 ## The policy
 
-- **Every security finding gets one record.** A record is one pair
-  (an issue may name several advisories, one per finding; see
-  [The two reference lines](#the-two-reference-lines)):
+- **Every security finding gets one record**, except a finding that an
+  agentic review raises and the same branch fixes (see
+  [Recording findings from a review](#recording-findings-from-a-review)).
+  A record is one pair (an issue may name several advisories, one per
+  finding; see [The two reference lines](#the-two-reference-lines)):
   - a **draft repository security advisory** in `<org>/.github`, which
     holds the details;
   - a neutral **`security`-labelled issue** in the intake queue, which
@@ -295,8 +297,8 @@ of them until the plan exists.
 
 A review can raise security findings while the work is still being
 designed or built. Two recipes cover the reviews that run inside the
-epic/task framework. Both use only `create`, `retarget` and
-`vrg-intake-route`. As everywhere on this page, the refs and GHSA IDs
+epic/task framework. Both use `create`; design review also uses
+`retarget`, through `epic-create`'s step 9. As everywhere on this page, the refs and GHSA IDs
 are placeholders, not a real finding.
 
 **Design review, during `epic-create`.** The review runs against the
