@@ -137,14 +137,10 @@ Probe for epic #517. Not a vulnerability.
 ## Severity
 
 An advisory's severity uses GitHub's terms: `critical`, `high`, `medium`
-or `low`. Map a paad severity to it with this table:
-
-| GitHub severity | agentic-review | agentic-owasp | pushback, agentic-architecture |
-|---|---|---|---|
-| `critical` | Critical | Critical | n/a |
-| `high` | Important | High | High |
-| `medium` | Suggestion | Medium | Medium |
-| `low` | n/a | Low | Low |
+or `low`. Map a paad severity to it with the table in the
+[paad review doctrine §1.3](https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-review-doctrine.md#13-severity),
+which covers every paad review skill. That table is the only copy, so
+this guide links to it rather than repeating it.
 
 A finding with no paad severity (one an agent or a human found directly)
 is given a severity by whoever records it.
@@ -301,17 +297,29 @@ epic/task framework. Both use `create`; design review also uses
 `retarget`, through `epic-create`'s step 9. As everywhere on this page, the refs and GHSA IDs
 are placeholders, not a real finding.
 
-**Design review, during `epic-create`.** The review runs against the
-spec while a planning issue tracks the work:
+**Design review, during `epic-create`.** The review runs in rounds
+against the spec and the plan while a planning issue tracks the work.
+Each finding is recorded once the human has decided it. Only a finding
+that is new, or that repairs an earlier round's change, is recorded: one
+an earlier round already decided has its record. How it is recorded
+depends on the decision:
 
-- an **accepted** finding (the design will change, or a task will fix it)
+- an **accepted** finding (the spec or plan now states the requirement)
   is recorded on the planning issue with attach mode,
   `vrg-security-record create --issue <planning issue> …`. Step 9 then
   hands it off to its fix like any other advisory the planning issue
   names (see [Security items in planning](#security-items-in-planning));
-- a **rejected** or **dropped** finding is recorded with plain `create`,
-  which gives it its own intake issue, so intake review decides what
-  becomes of it.
+- a **rejected** finding (the human decided it is not a problem) is
+  recorded with plain `create`, and the intake issue it creates is then
+  closed as "not planned", so the sweep closes the advisory. The human's
+  reason goes into the advisory's details, never into a public record;
+- a **dropped** finding is recorded with plain `create`, and its intake
+  issue stays open, so intake review decides what becomes of it.
+
+The round's comment on the planning issue gives only the count of
+security findings, how many were accepted, and the GHSA IDs the round
+created. The rules are in the
+[paad review doctrine §2.7](https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-review-doctrine.md#27-security-findings).
 
 **Agentic review, during `issue-implement`.** This review records a
 finding only once the round has decided what to do with it, at the end

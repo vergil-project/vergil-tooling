@@ -310,22 +310,34 @@ defined handoffs:
 2. Initialize the epic in its [home](#epic-home-the-orggithub-rule) and seed the
    bookend tasks — the docs-first opening task, the documentation-review sweep,
    and the terminal **retrospective** (see the bookend convention below).
-3. Write `spec.md`, then `paad:pushback` on it (**interactive**).
-4. Human review.
-5. `superpowers:writing-plans` → `plan.md` (**automated** — no gating).
-6. `paad:alignment` — reconcile the plan against the spec (**interactive**).
-7. One docs PR (spec + plan) that closes the docs-first task.
-8. File the implementation tasks and link them under the epic.
+3. Write `spec.md` and commit it.
+4. **Spec pushback rounds**: `paad:pushback` on the spec (**human-gated
+   rounds**).
+5. Human review of the spec.
+6. `superpowers:writing-plans` → `plan.md` (**automated**: one pass, no
+   gating).
+7. **Plan pushback rounds** (`paad:pushback` on the plan, with the spec as
+   context), then **alignment rounds** (`paad:alignment` on the spec and the
+   plan, which may change either). Both are **human-gated rounds**.
+8. One docs PR (spec + plan) that closes the docs-first task.
+9. File the implementation tasks and link them under the epic.
 
-The **four-stage interaction doctrine** governs the pipeline: `brainstorming`,
-`pushback`, and `alignment` are interactive while `writing-plans` is automated,
-and every interactive stage gates **only** on judgment calls that materially
-affect the outcome — minor, obvious corrections are batched into a single
-end-of-stage "correct me if I'm wrong" review rather than gating each one. The
-goal is to front-load analysis so implementation runs near-automated. If the
-design collapses to a single-PR change, it drops onto the target repo's ad-hoc
-epic instead of minting a finite epic. The full doctrine lives in the
-`epic-create` skill (`vergil-claude-plugin`). How the workflow uses paad, and
+The **interaction doctrine** governs the pipeline: `brainstorming` is
+interactive, `writing-plans` is automated, and design review (steps 4 and 7)
+runs in **human-gated rounds**. Each round is a fresh, review-only subagent
+that reviews the whole document. The main session walks the human through the
+round's findings one at a time, records the round as a comment on the planning
+item, and the human decides every finding and whether to run another round.
+Brainstorming gates **only** on judgment calls that materially affect the
+outcome; minor, obvious corrections are batched into a single end-of-stage
+"correct me if I'm wrong" review rather than gating each one. The goal is to
+front-load analysis so implementation runs near-automated. If the design
+collapses to a single-PR change, it drops onto the target repo's ad-hoc epic
+instead of minting a finite epic. The full doctrine lives in the `epic-create`
+skill (`vergil-claude-plugin`), and the rules for the design-review rounds are
+mode 1 of the
+[paad review doctrine](https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-review-doctrine.md#2-mode-1-human-gated-design-review).
+How the workflow uses paad, and
 every place it deviates from the paad authors' recommendations, is recorded in
 the [paad usage policy](https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-policy.md).
 
