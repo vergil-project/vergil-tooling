@@ -21117,6 +21117,33 @@ the signed package; <code>vrg-vm update --tag &lt;ref&gt;</code> with a non-rele
 installs a dev copy instead and flags it with a <code>DEV tooling</code> banner, and
 a plain <code>vrg-vm update</code> returns the VM to the package. See
 <a href="../vm-spec/#vergil-tooling-inside-the-vm">VM Spec</a>.</p>
+<p><strong>The <code>--plugin-dir</code> override.</strong> <code>vrg-vm session</code> can launch Claude with
+plugin trees loaded from disk instead of the installed plugins, for running
+unreleased plugin work (for example a paad checkout's <code>preview/paad</code>) across
+the fleet. List the trees in <code>~/.config/vergil/plugin-dirs.toml</code> on the host,
+a personal file you create by hand:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">plugin_dirs</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"/Users/me/dev/projects/me/paad-fleet/preview/paad"</span><span class="p">]</span>
+</code></pre></div>
+<p><code>plugin_dirs</code> is the only key, and each entry must be an absolute path. For
+each entry the session adds <code>--plugin-dir &lt;path&gt;</code> to the <code>claude</code> launch,
+after <code>--model</code> and before any <code>-- claude …</code> arguments; a raw <code>-- &lt;command&gt;</code>
+override is unaffected. The file is read when every session starts, so a
+change applies to the next session.</p>
+<ul>
+<li><strong>Lima only.</strong> A Lima VM sees the Mac's projects tree at the same path, so
+  the path is checked inside the guest: a directory missing there fails the
+  launch with <code>ERROR: plugin directory not found in the guest: &lt;path&gt;</code>.
+  Listing sessions (<code>vrg-vm session &lt;repo&gt;</code> with no <code>--label</code>, <code>--resume</code>
+  or <code>--fresh</code>) starts no Claude, so it skips the check. A cloud box has
+  no host mount, so a cloud session launches with the installed plugins and
+  prints a notice that the override is Lima only.</li>
+<li><strong>Loud on error.</strong> An unreadable or malformed file (not UTF-8, invalid
+  TOML, an unknown key, a value that is not a list of strings, or a
+  relative entry) fails every session
+  launch, Lima or cloud, with an error naming the file.</li>
+<li><strong>Turning it off.</strong> Delete the file, or set <code>plugin_dirs = []</code>; sessions
+  then use the installed plugins again.</li>
+</ul>
 <table>
 <thead>
 <tr>
