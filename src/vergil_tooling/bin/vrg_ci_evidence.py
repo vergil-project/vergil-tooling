@@ -43,6 +43,7 @@ from vergil_tooling.lib.ci_evidence import (
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.output import emit_error
 from vergil_tooling.lib.remote_config import RemoteConfigError
+from vergil_tooling.lib.versions import VersionsError
 
 
 @cli_main
@@ -57,6 +58,7 @@ def main(argv: list[str] | None = None) -> int:
         NoQualifyingRunError,
         ReleasePrUnresolvedError,
         RemoteConfigError,
+        VersionsError,
     ) as exc:
         emit_error(str(exc))
         return 1

@@ -38,6 +38,7 @@ from vergil_tooling.lib.github_config import (
     DiffItem,
     UndeclaredParam,
 )
+from vergil_tooling.lib.versions import ResolutionError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -1128,6 +1129,57 @@ def test_config_resolution_api_error_exits_two(capsys: pytest.CaptureFixture[str
     assert "Could not resolve vergil.toml for o/r" in err
     assert "HTTP 500" in err
     assert "Traceback" not in err
+
+
+_WINDOW_ERROR = (
+    "[ci].versions pins 1.25, which is not in the go window (1.27, 1.26). "
+    "Fix: remove it from [ci].versions or update the pin to a window version"
+)
+
+
+@pytest.mark.parametrize("command", ["audit", "diff", "apply"])
+def test_version_window_error_in_audit_exits_two_on_one_line(
+    command: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A [ci].versions pin outside the window is one ERROR line and exit 2 (#3670)."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    config = _make_config()
+    # Integration tests on: the desired CI-gates ruleset resolves the versions.
+    config.ci.integration_tests = True
+    with (
+        patch(f"{_MODULE}._cwd_matches_repo", return_value=False),
+        patch(f"{_MODULE}._resolve_config", return_value=config),
+        patch(f"{_MODULE}.fetch_actual_state"),
+        patch(
+            "vergil_tooling.lib.versions.resolve.resolve_config",
+            side_effect=ResolutionError(_WINDOW_ERROR),
+        ),
+        patch(f"{_MODULE}._apply_repo") as mock_apply,
+    ):
+        result = main([command, "--repo", "o/r"])
+    assert result == 2
+    mock_apply.assert_not_called()
+    err = capsys.readouterr().err
+    assert err.count("\n") == 1
+    assert err.startswith(f"ERROR: Could not resolve the CI versions for o/r: {_WINDOW_ERROR}")
+
+
+def test_version_window_error_in_apply_exits_two_on_one_line(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The same failure raised while applying is reported the same way (#3670)."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    with (
+        patch(f"{_MODULE}._cwd_matches_repo", return_value=False),
+        patch(f"{_MODULE}._resolve_config", return_value=_make_config()),
+        patch(f"{_MODULE}._audit_repo", return_value=_mock_github_noncompliant()),
+        patch(f"{_MODULE}._apply_repo", side_effect=ResolutionError(_WINDOW_ERROR)),
+    ):
+        result = main(["apply", "--repo", "o/r"])
+    assert result == 2
+    err = capsys.readouterr().err
+    assert err.count("\n") == 1
+    assert err.startswith(f"ERROR: Could not resolve the CI versions for o/r: {_WINDOW_ERROR}")
 
 
 # -- Undeclared ruleset parameters (#3548) ------------------------------------

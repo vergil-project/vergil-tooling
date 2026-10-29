@@ -25,6 +25,7 @@ from vergil_tooling.lib import ci_evidence, git, github
 from vergil_tooling.lib.ci_evidence import NoQualifyingRunError
 from vergil_tooling.lib.github import GitHubAPIError
 from vergil_tooling.lib.github_config import EvidenceGate
+from vergil_tooling.lib.versions import ResolutionError
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -201,6 +202,38 @@ def test_bundle_no_qualifying_run_errors(
     err = capsys.readouterr().err
     assert "no completed+success CI run" in err
     assert not (out_dir / "v2.1.129-ci-evidence.tar.gz").exists()
+
+
+@pytest.mark.parametrize("command", ["harvest", "bundle"])
+def test_version_window_error_is_one_line_exit_one(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    command: str,
+) -> None:
+    """A [ci].versions pin outside the window is one ERROR line, not a traceback (#3670)."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    _wire_github_stages(
+        monkeypatch,
+        required=(),
+        conclusions={},
+        download=_full_download(()),
+    )
+    message = "[ci].versions pins 3.11, which is not in the python window (3.14, 3.13)"
+
+    def _raise(_repo: str, _ref: str) -> Any:
+        raise ResolutionError(message)
+
+    monkeypatch.setattr(ci_evidence, "resolve_required_gates", _raise)
+    out_dir = tmp_path / "out"
+    argv = _harvest_argv(out_dir) if command == "harvest" else _argv(out_dir)
+
+    rc = main(argv)
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert err == f"ERROR: {message}\n"
+    assert not out_dir.exists() or not any(out_dir.iterdir())
 
 
 def test_bundle_expired_evidence_artifact_errors(
