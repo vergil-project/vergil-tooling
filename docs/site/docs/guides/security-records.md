@@ -311,34 +311,23 @@ spec while a planning issue tracks the work:
   which gives it its own intake issue, so intake review decides what
   becomes of it.
 
-**Agentic review, during `issue-implement`.** This review records each
-finding as it is collected, before anyone knows whether the branch will
-fix it:
+**Agentic review, during `issue-implement`.** This review records a
+finding only once the round has decided what to do with it, at the end
+of the round:
 
-- at collection, record each `new` or `repair` security finding with
-  plain `create`, which gives it its own intake issue (its *record*). A
-  `known` finding already has a record, made in an earlier round of the
-  same task, so it is not recorded again;
-- a finding **fixed on the branch** is handed to the task by splitting
-  its record into it:
+- a finding **not fixed** on the branch (out of scope, dismissed,
+  deferred, pending the human, or a removed addition) is recorded with
+  plain `create`, which gives it its own intake issue. A finding already
+  recorded in an earlier round of the same task is not recorded again;
+- a finding **fixed on the branch** is not recorded at all. The weakness
+  never reached `develop`, so it needs no advisory, and the task's
+  records give it only as a count.
 
-  ```bash
-  vrg-intake-route <record> split --into <task> \
-    --reason "Fixed on the task's branch"
-  ```
-
-  The split retargets the advisory to the task and closes the record, so
-  the advisory closes when the task does. A `known` finding's record is
-  split when the finding is fixed, unless an earlier round already split
-  it;
-- a finding **not fixed** needs nothing more. Its record stays an
-  ordinary intake item, with no pointer to the task.
-
-Agentic review does **not** attach a finding to the task at collection,
-which is why it records with plain `create`. If it did, handing an
-unfixed finding off later would make `retarget` post the public comment
-`Security record moved to <record>` on the task, pointing from the
-shipped diff to the open record.
+Agentic review never attaches a finding to the task, which is why it
+records with plain `create` and no `--issue`: a record on the task would
+mark the task publicly, pointing from the shipped diff to the open
+record. The rules are in the
+[paad review doctrine §3.6](https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-review-doctrine.md#36-security-findings).
 
 ## Checking existing records after the several-advisories change
 
