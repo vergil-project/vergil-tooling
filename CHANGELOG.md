@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.279] - 2026-10-29
+
+### Documentation
+
+- bring the site docs in line with the final steering and settings model (#3804)
+- describe the agentic-review gate and fix the security-records recipe (#3808)
+- describe human-gated design-review rounds in the epic-create pipeline (#3811)
+
+### Features
+
+- add a --plugin-dir override read from ~/.config/vergil/plugin-dirs.toml (#3843)
+
 ## [2.1.278] - 2026-10-28
 
 ### Chores
