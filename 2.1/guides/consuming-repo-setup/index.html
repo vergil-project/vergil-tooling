@@ -1354,6 +1354,8 @@
       
         
       
+        
+      
     
     
     
@@ -1406,6 +1408,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.279/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.279
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -16433,6 +16463,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#claudemd" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CLAUDE.md
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#worktree-convention" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -16807,6 +16848,17 @@
     <span class="md-ellipsis">
       
         .claude/settings.json
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#claudemd" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CLAUDE.md
       
     </span>
   </a>
@@ -17244,6 +17296,26 @@ Claude Code setting, see
 <p>See the plugin's own
 <a href="https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/site/docs/hooks/index.md">Hooks reference</a>
 for the details.</p>
+<h3 id="claudemd"><code>CLAUDE.md</code><a class="headerlink" href="#claudemd" title="Permanent link">&para;</a></h3>
+<p><code>vrg-github-repo-init</code> writes <code>CLAUDE.md</code> with the packaged template
+<a href="https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/data/claude_md_consumer.md"><code>claude_md_consumer.md</code></a>
+between the markers <code>&lt;!-- vergil:template:claude-md:begin --&gt;</code> and
+<code>&lt;!-- vergil:template:claude-md:end --&gt;</code>. The template region holds the
+fleet-wide agent policy: worktrees, <code>vrg-git</code>/<code>vrg-gh</code>, the validation
+command, the PR handoff and freeze, the memory rule, the local-settings
+rule, the engineering principles and the paad policy pointer. Don't edit
+it by hand. Add what an agent needs for your repo (overview, commands,
+constraints) after the end marker, and link reference material from your
+site docs rather than copying it in.</p>
+<p>The nightly config audit requires the region to match the template
+verbatim and the whole file to stay at or under <strong>200 lines</strong>. The repo
+has no <code>AGENTS.md</code>: <code>CLAUDE.md</code> is the one instruction file. Keep
+<code>.claude/settings.local.json</code> absent or exactly <code>{}</code>. In repos in the
+in-scope orgs, <code>vrg-commit</code>, <code>vrg-pr-workflow report-ready</code> and
+<code>vrg-container-run</code> refuse an agent and warn a human while it holds
+anything else; elsewhere nothing checks it. See
+<a href="../claude-config-ownership/#local-settings">Local settings</a> for which
+copies are checked and the known limit.</p>
 <h3 id="worktree-convention">Worktree convention<a class="headerlink" href="#worktree-convention" title="Permanent link">&para;</a></h3>
 <p>Every managed repo adopts the worktree convention so multiple Claude
 Code agents can work in parallel without colliding. The generated
@@ -17252,8 +17324,8 @@ files already carry both halves:</p>
 <li><code>.worktrees/</code> is in the <code>base</code> fragment of the managed <code>.gitignore</code>
   block (see Step 7). The plugin's worktree hooks activate on that
   line.</li>
-<li>The <code>CLAUDE.md</code> consumer section includes "Parallel AI agent
-  development", the local on-ramp to the canonical
+<li>The <code>CLAUDE.md</code> template region includes "Worktrees", the local
+  on-ramp to the canonical
   <a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/worktree-convention.md">worktree convention spec</a>.</li>
 </ul>
 <div class="admonition tip">

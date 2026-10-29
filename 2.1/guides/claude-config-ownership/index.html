@@ -1354,6 +1354,8 @@
       
         
       
+        
+      
     
     
     
@@ -1406,6 +1408,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.279/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.279
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -16073,6 +16103,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Platform facts">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#observed-on-an-agent-vm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Observed on an agent VM
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -16616,6 +16663,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Platform facts">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#observed-on-an-agent-vm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Observed on an agent VM
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -16723,11 +16787,11 @@
 a Vergil-managed repository. It is <strong>the ownership model</strong>: the reference
 that the config audit, the <code>steering-audit</code> skill and the per-repo steering
 sweeps check against.</p>
-<p>It is the target state of epic
-<a href="https://github.com/vergil-project/.github/issues/558">vergil-project/.github#558</a>.
-Until that epic's cleanup and audit changes land, some managed repos still
-differ from it. For example, the repo settings files still declare
-<code>extraKnownMarketplaces</code>.</p>
+<p>Epic
+<a href="https://github.com/vergil-project/.github/issues/558">vergil-project/.github#558</a>
+brought every managed repo in line with it. The nightly config audit and the
+agent chokepoints now enforce its mechanical rules, and the
+<a href="#recurring-review">recurring review</a> keeps the rest current.</p>
 <p><strong>Platform facts verified:</strong> 2026-10-27, against these Claude Code pages:</p>
 <ul>
 <li><a href="https://code.claude.com/docs/en/settings.md">Settings files and precedence</a></li>
@@ -16896,10 +16960,8 @@ review treats it as correct.</p>
 <li><strong>Changelog 2.1.195</strong> reads: "Fixed external plugins enabled only by
    project <code>.claude/settings.json</code> not requiring explicit install consent
    on every loader path". It does not say that user-enabled plugins stopped
-   installing on their own. Whether a fresh agent VM installs them without
-   <code>vm_guest</code>'s reconcile step is still to be verified
-   (<a href="https://github.com/vergil-project/.github/issues/578">vergil-project/.github#578</a>),
-   so that step stays.
+   installing on their own (see the
+   <a href="#observed-on-an-agent-vm">observation below</a>).
    (<a href="https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md">CHANGELOG.md</a>)</li>
 <li><strong><code>CLAUDE.md</code>.</strong>
    (<a href="https://code.claude.com/docs/en/memory.md">memory.md</a>)</li>
@@ -16928,6 +16990,15 @@ review treats it as correct.</p>
     therefore hold only valid keys.
     (<a href="https://code.claude.com/docs/en/settings.md#fix-a-broken-settings-file">settings.md, "Fix a broken settings file"</a>)</li>
 </ol>
+<h3 id="observed-on-an-agent-vm">Observed on an agent VM<a class="headerlink" href="#observed-on-an-agent-vm" title="Permanent link">&para;</a></h3>
+<p>This is a Vergil test result, not a platform fact: the recurring review
+cannot re-verify it against the Claude Code docs. On a cold-rebuilt agent
+VM on 2026-10-28
+(<a href="https://github.com/vergil-project/.github/issues/578">vergil-project/.github#578</a>),
+settings alone brought all three plugins back without <code>vm_guest</code>'s
+reconcile step, but <code>vergil</code> came back at project scope rather than user
+scope. The reconcile step stays until that difference is understood
+(<a href="https://github.com/vergil-project/.github/issues/675">vergil-project/.github#675</a>).</p>
 <h2 id="unused-scopes">Unused scopes<a class="headerlink" href="#unused-scopes" title="Permanent link">&para;</a></h2>
 <p><strong>Managed settings are unused, deliberately.</strong> They are the only scope a
 repo-local file cannot override, but nothing needs them yet, and they raise
@@ -16961,11 +17032,10 @@ that disables hooks would disable a hook-based check too. <code>vrg-validate</co
 not a chokepoint: it runs inside a dev container, where it sees neither the
 main checkout's working tree nor the identity. The nightly config audit does
 not check this file either, because a CI checkout has no local file.</p>
-<p>The guard enforces the rule in <code>vrg-commit</code>, <code>vrg-pr-workflow report-ready</code>
-and <code>vrg-container-run</code> (epic
-<a href="https://github.com/vergil-project/.github/issues/558">vergil-project/.github#558</a>),
-and the <code>CLAUDE.md</code> template region also states it, so agents know the rule
-before a tool refuses.</p>
+<p>The <code>CLAUDE.md</code> template region also states the rule, so agents know it
+before a tool refuses. Each tool's entry in the
+<a href="../../reference/cli-tools-overview/#vrg-commit">CLI Tools Overview</a> notes
+the guard.</p>
 <p><strong>Known limit.</strong> Claude Code keeps the local file with <code>.claude/settings.json</code>
 instead of at the main checkout's root when the repository root, or its
 <code>.git</code> or <code>.claude</code> entry, isn't owned by the user (and in a few other
@@ -16979,8 +17049,7 @@ and what needs judgment.</p>
 <h3 id="mechanical-the-nightly-config-audit">Mechanical: the nightly config audit<a class="headerlink" href="#mechanical-the-nightly-config-audit" title="Permanent link">&para;</a></h3>
 <p><code>vrg-github-repo-config audit</code> runs in each managed repo's scheduled
 <code>ops.yml</code> job (see <a href="../../reference/config-audit/">GitHub Config Audit</a>).
-Under this model it checks the following, each a hard failure (epic
-<a href="https://github.com/vergil-project/.github/issues/558">vergil-project/.github#558</a>):</p>
+It checks the following, each a hard failure with no transition window:</p>
 <ul>
 <li>the repo <code>CLAUDE.md</code> is at most 200 lines;</li>
 <li>the template markers are present;</li>
@@ -16990,15 +17059,18 @@ Under this model it checks the following, each a hard failure (epic
   the template check covers it).</li>
 </ul>
 <h3 id="judgment-steering-audit">Judgment: <code>steering-audit</code><a class="headerlink" href="#judgment-steering-audit" title="Permanent link">&para;</a></h3>
-<p>The <code>steering-audit</code> skill in vergil-claude-plugin (being added under the
-same epic) reviews the steering and settings files against this page. For
+<p>The <code>steering-audit</code> skill in vergil-claude-plugin
+(<a href="https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/site/docs/skills/index.md#steering-audit">skills reference</a>)
+reviews the steering and settings files against this page. For
 each finding it verifies, suggests a disposition, and waits for the human's
 decision. It re-verifies the
 <a href="#platform-facts">platform facts</a> against the docs at the time of the run.
 It has two scopes:</p>
 <ul>
-<li><strong>repo</strong> (the default): that repo's <code>CLAUDE.md</code>, <code>.claude/rules/</code> and
-  <code>.claude/settings.json</code>. Each finding is fixed, filed to intake, or
+<li><strong>repo</strong> (the default): that repo's <code>CLAUDE.md</code>, <code>.claude/rules/</code>,
+  <code>.claude/settings.json</code>, any <code>AGENTS.md</code>, and the
+  <code>.claude/settings.local.json</code> copies Claude Code may load. Edits go
+  through the normal worktree and PR flow. Each finding is fixed, filed to intake, or
   dropped by the human with a reason.</li>
 <li><strong>user</strong> (<code>steering-audit user</code>): the global <code>~/.claude/CLAUDE.md</code> and
   <code>~/.claude/settings.json</code>, reviewed once per cycle, not once per repo.

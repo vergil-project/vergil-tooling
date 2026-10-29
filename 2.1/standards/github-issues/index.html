@@ -1356,6 +1356,8 @@
       
         
       
+        
+      
     
     
     
@@ -1408,6 +1410,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.279/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.279
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17649,24 +17679,40 @@ defined handoffs:</p>
 <li>Initialize the epic in its <a href="#epic-home-the-orggithub-rule">home</a> and seed the
    bookend tasks — the docs-first opening task, the documentation-review sweep,
    and the terminal <strong>retrospective</strong> (see the bookend convention below).</li>
-<li>Write <code>spec.md</code>, then <code>paad:pushback</code> on it (<strong>interactive</strong>).</li>
-<li>Human review.</li>
-<li><code>superpowers:writing-plans</code> → <code>plan.md</code> (<strong>automated</strong> — no gating).</li>
-<li><code>paad:alignment</code> — reconcile the plan against the spec (<strong>interactive</strong>).</li>
+<li>Write <code>spec.md</code> and commit it.</li>
+<li><strong>Spec pushback rounds</strong>: <code>paad:pushback</code> on the spec (<strong>human-gated
+   rounds</strong>).</li>
+<li>Human review of the spec.</li>
+<li><code>superpowers:writing-plans</code> → <code>plan.md</code> (<strong>automated</strong>: one pass, no
+   gating).</li>
+<li><strong>Plan pushback rounds</strong> (<code>paad:pushback</code> on the plan, with the spec as
+   context), then <strong>alignment rounds</strong> (<code>paad:alignment</code> on the spec and the
+   plan, which may change either). Both are <strong>human-gated rounds</strong>.</li>
 <li>One docs PR (spec + plan) that closes the docs-first task.</li>
 <li>File the implementation tasks and link them under the epic.</li>
 </ol>
-<p>The <strong>four-stage interaction doctrine</strong> governs the pipeline: <code>brainstorming</code>,
-<code>pushback</code>, and <code>alignment</code> are interactive while <code>writing-plans</code> is automated,
-and every interactive stage gates <strong>only</strong> on judgment calls that materially
-affect the outcome — minor, obvious corrections are batched into a single
-end-of-stage "correct me if I'm wrong" review rather than gating each one. The
-goal is to front-load analysis so implementation runs near-automated. If the
-design collapses to a single-PR change, it drops onto the target repo's ad-hoc
-epic instead of minting a finite epic. The full doctrine lives in the
-<code>epic-create</code> skill (<code>vergil-claude-plugin</code>). How the workflow uses paad, and
+<p>The <strong>interaction doctrine</strong> governs the pipeline: <code>brainstorming</code> is
+interactive, <code>writing-plans</code> is automated, and design review (steps 4 and 7)
+runs in <strong>human-gated rounds</strong>. Each round is a fresh, review-only subagent
+that reviews the whole document. The main session walks the human through the
+round's findings one at a time, records the round as a comment on the planning
+item, and the human decides every finding and whether to run another round.
+Brainstorming gates <strong>only</strong> on judgment calls that materially affect the
+outcome; minor, obvious corrections are batched into a single end-of-stage
+"correct me if I'm wrong" review rather than gating each one. The goal is to
+front-load analysis so implementation runs near-automated. If the design
+collapses to a single-PR change, it drops onto the target repo's ad-hoc epic
+instead of minting a finite epic. The full doctrine lives in the <code>epic-create</code>
+skill (<code>vergil-claude-plugin</code>), and the rules for the design-review rounds are
+mode 1 of the
+<a href="https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-review-doctrine.md#2-mode-1-human-gated-design-review">paad review doctrine</a>.
+How the workflow uses paad, and
 every place it deviates from the paad authors' recommendations, is recorded in
 the <a href="https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-policy.md">paad usage policy</a>.</p>
+<p>Each implementation task then runs through the <code>issue-implement</code> skill, which
+runs an <strong>agentic-review gate</strong> before it hands the PR off. The gate is advisory:
+when it pauses, the human can accept the branch as it stands. The rules
+are in the <a href="https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-review-doctrine.md#3-mode-2-agentic-review-in-issue-implement">paad review doctrine</a>.</p>
 <h3 id="the-bookend-convention">The bookend convention<a class="headerlink" href="#the-bookend-convention" title="Permanent link">&para;</a></h3>
 <p><strong>An epic is never closed until you have decided what comes next AND confirmed
 the docs reflect what changed.</strong> Almost no real problem is fully resolved by one
