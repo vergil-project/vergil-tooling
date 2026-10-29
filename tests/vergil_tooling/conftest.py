@@ -27,7 +27,14 @@ from pathlib import Path
 
 import pytest
 
-from vergil_tooling.lib import conan_token, github, host_pins, identity_mode, local_settings
+from vergil_tooling.lib import (
+    conan_token,
+    github,
+    host_pins,
+    identity_mode,
+    local_settings,
+    plugin_dirs,
+)
 from vergil_tooling.lib.versions import window
 from vergil_tooling.lib.versions.resolve import Resolution
 
@@ -58,6 +65,22 @@ def _hermetic_host_pins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     """
     monkeypatch.setattr(
         host_pins, "default_pins_path", lambda: tmp_path / "vergil-config" / "host-pins.toml"
+    )
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_plugin_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point the vrg-vm session ``--plugin-dir`` override file at a per-test path.
+
+    ``plugin_dirs.default_plugin_dirs_path()`` resolves under the real
+    ``~/.config``; no test may pick up a developer's actual override.
+    ``test_plugin_dirs`` captures the real locator at import, before this
+    fixture patches the module.
+    """
+    monkeypatch.setattr(
+        plugin_dirs,
+        "default_plugin_dirs_path",
+        lambda: tmp_path / "vergil-config" / "plugin-dirs.toml",
     )
 
 
