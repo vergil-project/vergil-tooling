@@ -17,10 +17,10 @@ Invariants:
 - **Absolute paths only.** A Lima VM sees the Mac's projects tree at the same
   path, so an absolute host path is also the guest path; a relative one has no
   defined meaning in the guest and is refused.
-- **No silent failure.** A missing file means "no override". Invalid TOML, an
-  unknown key, a non-list value, a non-string entry or a relative entry is a
-  loud :class:`PluginDirsError`; the session never starts without a tree the
-  file asked for.
+- **No silent failure.** A missing file means "no override". An unreadable
+  or non-UTF-8 file, invalid TOML, an unknown key, a non-list value, a
+  non-string entry or a relative entry is a loud :class:`PluginDirsError`;
+  the session never starts without a tree the file asked for.
 """
 
 from __future__ import annotations
@@ -44,15 +44,17 @@ def load_plugin_dirs(path: Path | None = None) -> tuple[str, ...]:
     """Read and validate the override file; a missing file means no override.
 
     Raises:
-        PluginDirsError: the file is not valid TOML, carries a key other than
-            ``plugin_dirs``, its value is not a list of strings, or an entry is
-            not an absolute path.
+        PluginDirsError: the file cannot be read as UTF-8 text, is not valid
+            TOML, carries a key other than ``plugin_dirs``, its value is not a
+            list of strings, or an entry is not an absolute path.
     """
     path = path or default_plugin_dirs_path()
     try:
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
         return ()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise PluginDirsError(f"{path}: cannot read: {exc}") from exc
     try:
         data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:

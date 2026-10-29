@@ -2873,8 +2873,9 @@ def _session_inner(
 
     *plugin_dirs* (the host's ``--plugin-dir`` override, Lima only) adds one
     ``--plugin-dir`` per entry to the ``claude`` launch, and a guard that fails
-    the launch loudly when an entry is not a directory in the guest. A raw
-    (non-claude) override ignores it.
+    the launch loudly when an entry is not a directory in the guest. Listing
+    sessions launches no ``claude``, so it skips the guard. A raw (non-claude)
+    override ignores it.
     """
     source = ". ~/.config/vergil/claude.env 2>/dev/null; . ~/.config/vergil/conan.env 2>/dev/null;"
 
@@ -2889,12 +2890,18 @@ def _session_inner(
     # The resolved model is applied first, then the plugin-dir override; an
     # explicit `-- claude --model X` passthrough comes after, so Claude's last
     # --model wins.
+    # The guest checks guard a claude launch only: listing sessions starts no
+    # claude, so a missing tree must not block it.
+    check_dirs = not _lists_sessions_only(args)
     plugin_flags: list[str] = []
     checks = ""
     for path in plugin_dirs:
         plugin_flags += ["--plugin-dir", path]
-        message = f"ERROR: plugin directory not found in the guest: {path}"
-        checks += f"[ -d {shlex.quote(path)} ] || {{ echo {shlex.quote(message)} >&2; exit 1; }}; "
+        if check_dirs:
+            message = f"ERROR: plugin directory not found in the guest: {path}"
+            checks += (
+                f"[ -d {shlex.quote(path)} ] || {{ echo {shlex.quote(message)} >&2; exit 1; }}; "
+            )
     extra = (["--model", model] if model else []) + plugin_flags + passthrough
     resolve_cmd = [
         "vrg-vm-resolve-session",

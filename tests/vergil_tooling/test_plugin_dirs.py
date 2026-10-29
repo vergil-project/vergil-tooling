@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -74,6 +75,18 @@ def test_load_plugin_dirs_rejects_relative(cfg: Path) -> None:
 def test_load_plugin_dirs_rejects_malformed(cfg: Path, body: str, match: str) -> None:
     cfg.write_text(body, encoding="utf-8")
     with pytest.raises(PluginDirsError, match=match):
+        load_plugin_dirs(cfg)
+
+
+def test_load_plugin_dirs_rejects_non_utf8(cfg: Path) -> None:
+    cfg.write_bytes(b'plugin_dirs = ["/\xff"]\n')
+    with pytest.raises(PluginDirsError, match=rf"{re.escape(str(cfg))}: cannot read"):
+        load_plugin_dirs(cfg)
+
+
+def test_load_plugin_dirs_rejects_unreadable(cfg: Path) -> None:
+    cfg.mkdir()  # a directory where the file should be: reading it is an OSError
+    with pytest.raises(PluginDirsError, match=rf"{re.escape(str(cfg))}: cannot read"):
         load_plugin_dirs(cfg)
 
 

@@ -1414,11 +1414,14 @@ change applies to the next session.
 
 - **Lima only.** A Lima VM sees the Mac's projects tree at the same path, so
   the path is checked inside the guest: a directory missing there fails the
-  launch with `ERROR: plugin directory not found in the guest: <path>`. A
-  cloud box has no host mount, so a cloud session launches with the installed
-  plugins and prints a notice that the override is Lima only.
-- **Loud on error.** A malformed file (invalid TOML, an unknown key, a value
-  that is not a list of strings, or a relative entry) fails every session
+  launch with `ERROR: plugin directory not found in the guest: <path>`.
+  Listing sessions (`vrg-vm session <repo>` with no `--label`, `--resume`
+  or `--fresh`) starts no Claude, so it skips the check. A cloud box has
+  no host mount, so a cloud session launches with the installed plugins and
+  prints a notice that the override is Lima only.
+- **Loud on error.** An unreadable or malformed file (not UTF-8, invalid
+  TOML, an unknown key, a value that is not a list of strings, or a
+  relative entry) fails every session
   launch, Lima or cloud, with an error naming the file.
 - **Turning it off.** Delete the file, or set `plugin_dirs = []`; sessions
   then use the installed plugins again.

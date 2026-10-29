@@ -2598,7 +2598,7 @@ class TestSession:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         _write_plugin_dirs('plugin_dirs = ["/a/preview/paad"]\n')
-        main(["session", "--config", str(config_file), "vergil-tooling"])
+        main(["session", "--config", str(config_file), "--fresh", "vergil-tooling"])
         inner = self._inner(mock_exec)
         assert "--plugin-dir /a/preview/paad" in inner
         assert "[ -d /a/preview/paad ]" in inner
@@ -2772,7 +2772,7 @@ def test_session_inner_no_plugin_dirs_by_default() -> None:
 def test_session_inner_checks_plugin_dirs_in_guest(tmp_path: Path) -> None:
     from vergil_tooling.bin.vrg_vm import _session_inner
 
-    ns = argparse.Namespace(cmd=[], fresh=False, resume=None)
+    ns = argparse.Namespace(cmd=[], fresh=True, resume=None)
     inner = _session_inner(ns, "vergil", "p", "", plugin_dirs=("/a",))
     check = (
         "[ -d /a ] || { echo 'ERROR: plugin directory not found in the guest: /a' >&2; exit 1; }"
@@ -2793,6 +2793,17 @@ def test_session_inner_checks_plugin_dirs_in_guest(tmp_path: Path) -> None:
     )
     assert result.returncode == 1
     assert result.stderr == f"ERROR: plugin directory not found in the guest: {missing}\n"
+
+
+def test_session_inner_list_only_skips_plugin_dir_checks() -> None:
+    from vergil_tooling.bin.vrg_vm import _session_inner
+
+    # No --label/--resume/--fresh: the resolver only lists sessions and starts
+    # no claude, so a missing tree must not block the listing.
+    ns = argparse.Namespace(cmd=[], fresh=False, resume=None)
+    inner = _session_inner(ns, "vergil", "p", "", plugin_dirs=("/a",))
+    assert "[ -d" not in inner
+    assert "--plugin-dir /a" in inner
 
 
 def test_session_inner_raw_override_ignores_plugin_dirs() -> None:
