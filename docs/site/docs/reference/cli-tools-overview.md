@@ -581,8 +581,6 @@ tool exits 1 naming its URL and the `vrg-epic-move` command that links it. Used
 by the `intake-capture` skill. See
 [Intake, planning and deferred queues](../standards/github-issues.md#intake-planning-and-deferred-queues).
 
-[`vrg-triage-create`](#vrg-triage-create) is a deprecated alias.
-
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_intake_create` |
@@ -591,21 +589,6 @@ by the `intake-capture` skill. See
 | Failure mode | An extra `--label` missing from the registry is refused before anything is created; a failed link after creation exits 1 naming the created issue |
 | Exit codes | 0 created and linked, 1 error |
 | Status | Active |
-
-### vrg-triage-create
-
-Deprecated alias for [`vrg-intake-create`](#vrg-intake-create), kept for one
-release. It warns on stderr, ignores `--kind` (intake has no kind label), and
-forwards every other argument to `vrg-intake-create`.
-
-| Attribute | Value |
-|---|---|
-| Source | `vergil_tooling.bin.vrg_triage_create` |
-| Args | As `vrg-intake-create` |
-| Preconditions | As `vrg-intake-create` |
-| Failure mode | As `vrg-intake-create` |
-| Exit codes | As `vrg-intake-create` |
-| Status | Deprecated |
 
 ### vrg-intake-route
 
