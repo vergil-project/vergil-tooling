@@ -329,6 +329,14 @@ epic instead of minting a finite epic. The full doctrine lives in the
 every place it deviates from the paad authors' recommendations, is recorded in
 the [paad usage policy](https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-policy.md).
 
+Each implementation task then runs through the `issue-implement` skill, which
+passes an **agentic-review gate** before it hands the PR off. Fresh review-only
+subagents run `paad:agentic-review` on the branch, for up to three rounds; the
+agent fixes what they find, records every round on the task issue, and routes
+security findings to private advisories. The gate is advisory: when a round
+pauses, the human rules, and can accept the branch as it stands. The rules are
+in the [paad review doctrine](https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-review-doctrine.md#3-mode-2-agentic-review-in-issue-implement).
+
 ### The bookend convention
 
 **An epic is never closed until you have decided what comes next AND confirmed
