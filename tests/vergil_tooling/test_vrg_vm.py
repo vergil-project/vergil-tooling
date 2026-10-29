@@ -2588,6 +2588,40 @@ class TestSession:
         main(["session", "--config", str(config_file_top_model), "vergil-tooling"])
         assert "--model opus" in self._inner(mock_exec)
 
+    def test_cmd_session_loads_plugin_dirs(
+        self,
+        _age: MagicMock,
+        _copy: MagicMock,
+        _link: MagicMock,
+        mock_exec: MagicMock,
+        config_file: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _write_plugin_dirs('plugin_dirs = ["/a/preview/paad"]\n')
+        main(["session", "--config", str(config_file), "--fresh", "vergil-tooling"])
+        inner = self._inner(mock_exec)
+        assert "--plugin-dir /a/preview/paad" in inner
+        assert "[ -d /a/preview/paad ]" in inner
+        assert "NOTE:" not in capsys.readouterr().err
+
+    def test_cmd_session_plugin_dirs_error_fails_launch(
+        self,
+        _age: MagicMock,
+        _copy: MagicMock,
+        _link: MagicMock,
+        mock_exec: MagicMock,
+        config_file: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _write_plugin_dirs('plugin_dirs = ["/a"]\nunknown = 1\n')
+        assert main(["session", "--config", str(config_file), "vergil-tooling"]) == 1
+        mock_exec.assert_not_called()
+        from vergil_tooling.lib import plugin_dirs
+
+        path = plugin_dirs.default_plugin_dirs_path()
+        err = capsys.readouterr().err
+        assert f"ERROR: {path}: unknown key(s) unknown (only plugin_dirs)\n" in err
+
 
 def test_session_inner_strips_leading_double_dash() -> None:
     import argparse
@@ -2698,6 +2732,88 @@ def test_session_inner_omits_instance_for_default() -> None:
     ns = argparse.Namespace(cmd=[], fresh=False, resume=None, label="epic-1", name=None)
     inner = _session_inner(ns, "vergil", "o/r", "")
     assert "--instance" not in inner
+
+
+# --- the --plugin-dir override (epic .github#699, spec 4.7) ---------------------
+
+_PLUGIN_DIRS_CLOUD_NOTICE = (
+    "NOTE: the --plugin-dir override is supported only on macOS with Lima VMs; "
+    "this cloud session runs the installed plugins."
+)
+
+
+def _write_plugin_dirs(body: str) -> None:
+    """Write the (conftest-patched, per-test) plugin-dirs override file."""
+    from vergil_tooling.lib import plugin_dirs
+
+    path = plugin_dirs.default_plugin_dirs_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
+
+
+def test_session_inner_adds_plugin_dirs() -> None:
+    from vergil_tooling.bin.vrg_vm import _session_inner
+
+    ns = argparse.Namespace(cmd=["--", "claude", "--verbose"], fresh=False, resume=None)
+    inner = _session_inner(ns, "vergil", "p", "opus", plugin_dirs=("/a", "/b c"))
+    # After the resolved --model, before an explicit passthrough (which wins).
+    assert "-- --model opus --plugin-dir /a --plugin-dir '/b c' --verbose" in inner
+
+
+def test_session_inner_no_plugin_dirs_by_default() -> None:
+    from vergil_tooling.bin.vrg_vm import _session_inner
+
+    ns = argparse.Namespace(cmd=[], fresh=False, resume=None)
+    inner = _session_inner(ns, "vergil", "p", "")
+    assert "--plugin-dir" not in inner
+    assert "[ -d" not in inner
+
+
+def test_session_inner_checks_plugin_dirs_in_guest(tmp_path: Path) -> None:
+    from vergil_tooling.bin.vrg_vm import _session_inner
+
+    ns = argparse.Namespace(cmd=[], fresh=True, resume=None)
+    inner = _session_inner(ns, "vergil", "p", "", plugin_dirs=("/a",))
+    check = (
+        "[ -d /a ] || { echo 'ERROR: plugin directory not found in the guest: /a' >&2; exit 1; }"
+    )
+    assert check in inner
+    # Every check runs before anything is sourced or exec'd.
+    assert inner.index(check) < inner.index(". ~/.config/vergil/claude.env")
+    assert inner.index(check) < inner.index("exec ")
+
+    # Run for real: a directory missing in the guest stops the launch, loudly.
+    missing = str(tmp_path / "no such dir")
+    inner = _session_inner(ns, "vergil", "p", "", plugin_dirs=(missing,))
+    result = subprocess.run(  # noqa: S603 - fixed argv, test-built command
+        [shutil.which("bash") or "bash", "-c", inner],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert result.stderr == f"ERROR: plugin directory not found in the guest: {missing}\n"
+
+
+def test_session_inner_list_only_skips_plugin_dir_checks() -> None:
+    from vergil_tooling.bin.vrg_vm import _session_inner
+
+    # No --label/--resume/--fresh: the resolver only lists sessions and starts
+    # no claude, so a missing tree must not block the listing.
+    ns = argparse.Namespace(cmd=[], fresh=False, resume=None)
+    inner = _session_inner(ns, "vergil", "p", "", plugin_dirs=("/a",))
+    assert "[ -d" not in inner
+    assert "--plugin-dir /a" in inner
+
+
+def test_session_inner_raw_override_ignores_plugin_dirs() -> None:
+    from vergil_tooling.bin.vrg_vm import _session_inner
+
+    ns = argparse.Namespace(cmd=["--", "bash"], fresh=False, resume=None)
+    inner = _session_inner(ns, "vergil", "p", "", plugin_dirs=("/a",))
+    assert "exec bash" in inner
+    assert "--plugin-dir" not in inner
+    assert "[ -d" not in inner
 
 
 def test_cmd_session_rejects_label_with_resume() -> None:
@@ -4620,6 +4736,45 @@ class TestCloudSession:
         order = [name for name, _, _ in manager.mock_calls]
         assert order.index("copy") < order.index("exec")
         assert order.index("link") < order.index("exec")
+
+    def test_cloud_session_skips_plugin_dirs_with_notice(
+        self, _cloud_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # Epic .github#699 (spec 4.7): the override is Lima only. A cloud box has no
+        # host mount, so the session launches with the installed plugins and says so.
+        _write_plugin_dirs('plugin_dirs = ["/a/preview/paad"]\n')
+        transport = MagicMock()
+        with _CloudPatches(tmp_path / "state") as m:
+            m["transport"].return_value = transport
+            assert main(["session", "lmf/cloud", "--config", str(_cloud_repo)]) == 0
+        inner = transport.exec_session.call_args.kwargs["inner"]
+        assert "--plugin-dir" not in inner
+        assert "[ -d" not in inner
+        assert _PLUGIN_DIRS_CLOUD_NOTICE in capsys.readouterr().err
+
+    def test_cloud_session_without_plugin_dirs_prints_no_notice(
+        self, _cloud_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        transport = MagicMock()
+        with _CloudPatches(tmp_path / "state") as m:
+            m["transport"].return_value = transport
+            assert main(["session", "lmf/cloud", "--config", str(_cloud_repo)]) == 0
+        transport.exec_session.assert_called_once()
+        assert "--plugin-dir" not in capsys.readouterr().err
+
+    def test_cloud_session_rejects_malformed_plugin_dirs(
+        self, _cloud_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # A malformed file fails the launch loudly on cloud too, as on Lima.
+        _write_plugin_dirs('plugin_dirs = ["preview/paad"]\n')
+        transport = MagicMock()
+        with _CloudPatches(tmp_path / "state") as m:
+            m["transport"].return_value = transport
+            assert main(["session", "lmf/cloud", "--config", str(_cloud_repo)]) == 1
+        transport.exec_session.assert_not_called()
+        err = capsys.readouterr().err
+        assert "'preview/paad' is not an absolute path" in err
+        assert _PLUGIN_DIRS_CLOUD_NOTICE not in err
 
 
 class TestCloudBorrowSession:
