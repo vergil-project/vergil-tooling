@@ -281,15 +281,18 @@ def test_run_completed_true_when_status_completed(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(
         github, "read_json", lambda *a, **k: {"status": "completed", "conclusion": "success"}
     )
-    assert github.run_completed("31101639453") is True
+    assert github.run_completed("o/r", "31101639453") is True
 
 
 def test_run_completed_false_when_in_progress(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(github, "read_json", lambda *a, **k: {"status": "in_progress"})
-    assert github.run_completed("31101639453") is False
+    assert github.run_completed("o/r", "31101639453") is False
 
 
-def test_run_completed_queries_run_status(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_completed_queries_run_status_in_the_given_repo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The run is looked up in its own repo, never the cwd's (#3829)."""
     calls: list[tuple[str, ...]] = []
 
     def fake_read_json(*args: str) -> dict[str, object]:
@@ -297,8 +300,64 @@ def test_run_completed_queries_run_status(monkeypatch: pytest.MonkeyPatch) -> No
         return {"status": "completed"}
 
     monkeypatch.setattr(github, "read_json", fake_read_json)
-    github.run_completed("999")
-    assert calls == [("run", "view", "999", "--json", "status")]
+    github.run_completed("vergil-project/vergil-tooling", "999")
+    assert calls == [
+        ("run", "view", "999", "--repo", "vergil-project/vergil-tooling", "--json", "status")
+    ]
+
+
+def test_actions_run_of_reads_repo_and_run_id() -> None:
+    link = "https://github.com/vergil-project/vergil-tooling/actions/runs/40694126522/job/7"
+    assert github.actions_run_of(link) == ("vergil-project/vergil-tooling", "40694126522")
+
+
+def test_actions_run_of_none_for_a_non_actions_link() -> None:
+    assert github.actions_run_of("https://github.com/o/r/runs/5") is None
+    assert github.actions_run_of("") is None
+
+
+def test_actions_run_of_rejects_an_actions_link_without_a_repo() -> None:
+    with pytest.raises(ValueError, match="cannot read the repository"):
+        github.actions_run_of("/actions/runs/999/job/1")
+
+
+def test_orphaned_check_names_probes_the_run_in_the_links_repo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A PR in another repo has its runs probed there, not in the cwd's repo (#3829)."""
+    calls: list[tuple[str, ...]] = []
+    monkeypatch.setattr(
+        github,
+        "pr_checks",
+        lambda pr: [
+            {
+                "name": "docs / docs",
+                "bucket": "pending",
+                "state": "IN_PROGRESS",
+                "link": "https://github.com/vergil-project/vergil-tooling/actions/runs/40694126522/job/7",
+            },
+        ],
+    )
+
+    def fake_read_json(*args: str) -> dict[str, object]:
+        calls.append(args)
+        return {"status": "completed"}
+
+    monkeypatch.setattr(github, "read_json", fake_read_json)
+    assert github.orphaned_check_names(
+        "https://github.com/vergil-project/vergil-tooling/pull/3782"
+    ) == ["docs / docs"]
+    assert calls == [
+        (
+            "run",
+            "view",
+            "40694126522",
+            "--repo",
+            "vergil-project/vergil-tooling",
+            "--json",
+            "status",
+        )
+    ]
 
 
 def test_orphaned_check_names_flags_completed_run(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -320,7 +379,7 @@ def test_orphaned_check_names_flags_completed_run(monkeypatch: pytest.MonkeyPatc
             },
         ],
     )
-    monkeypatch.setattr(github, "run_completed", lambda rid: True)
+    monkeypatch.setattr(github, "run_completed", lambda repo, rid: True)
     assert github.orphaned_check_names("934") == ["docs / docs"]
 
 
@@ -345,7 +404,7 @@ def test_orphaned_check_names_ignores_running_and_app_status(
             },
         ],
     )
-    monkeypatch.setattr(github, "run_completed", lambda rid: False)
+    monkeypatch.setattr(github, "run_completed", lambda repo, rid: False)
     assert github.orphaned_check_names("934") == []
 
 
@@ -363,7 +422,7 @@ def test_orphaned_check_names_parses_run_id_from_link(monkeypatch: pytest.Monkey
             },
         ],
     )
-    monkeypatch.setattr(github, "run_completed", lambda rid: bool(seen.append(rid)) or True)
+    monkeypatch.setattr(github, "run_completed", lambda repo, rid: bool(seen.append(rid)) or True)
     github.orphaned_check_names("934")
     assert seen == ["31101639453"]
 
