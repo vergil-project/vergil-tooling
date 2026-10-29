@@ -17018,43 +17018,10 @@ advisory summary unless <code>--summary</code> is given:</p>
 </code></pre></div>
 <h2 id="severity">Severity<a class="headerlink" href="#severity" title="Permanent link">&para;</a></h2>
 <p>An advisory's severity uses GitHub's terms: <code>critical</code>, <code>high</code>, <code>medium</code>
-or <code>low</code>. Map a paad severity to it with this table:</p>
-<table>
-<thead>
-<tr>
-<th>GitHub severity</th>
-<th>agentic-review</th>
-<th>agentic-owasp</th>
-<th>pushback, agentic-architecture</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>critical</code></td>
-<td>Critical</td>
-<td>Critical</td>
-<td>n/a</td>
-</tr>
-<tr>
-<td><code>high</code></td>
-<td>Important</td>
-<td>High</td>
-<td>High</td>
-</tr>
-<tr>
-<td><code>medium</code></td>
-<td>Suggestion</td>
-<td>Medium</td>
-<td>Medium</td>
-</tr>
-<tr>
-<td><code>low</code></td>
-<td>n/a</td>
-<td>Low</td>
-<td>Low</td>
-</tr>
-</tbody>
-</table>
+or <code>low</code>. Map a paad severity to it with the table in the
+<a href="https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-review-doctrine.md#13-severity">paad review doctrine §1.3</a>,
+which covers every paad review skill. That table is the only copy, so
+this guide links to it rather than repeating it.</p>
 <p>A finding with no paad severity (one an agent or a human found directly)
 is given a severity by whoever records it.</p>
 <h2 id="recording-a-finding">Recording a finding<a class="headerlink" href="#recording-a-finding" title="Permanent link">&para;</a></h2>
@@ -17184,18 +17151,29 @@ designed or built. Two recipes cover the reviews that run inside the
 epic/task framework. Both use <code>create</code>; design review also uses
 <code>retarget</code>, through <code>epic-create</code>'s step 9. As everywhere on this page, the refs and GHSA IDs
 are placeholders, not a real finding.</p>
-<p><strong>Design review, during <code>epic-create</code>.</strong> The review runs against the
-spec while a planning issue tracks the work:</p>
+<p><strong>Design review, during <code>epic-create</code>.</strong> The review runs in rounds
+against the spec and the plan while a planning issue tracks the work.
+Each finding is recorded once the human has decided it. Only a finding
+that is new, or that repairs an earlier round's change, is recorded: one
+an earlier round already decided has its record. How it is recorded
+depends on the decision:</p>
 <ul>
-<li>an <strong>accepted</strong> finding (the design will change, or a task will fix it)
+<li>an <strong>accepted</strong> finding (the spec or plan now states the requirement)
   is recorded on the planning issue with attach mode,
   <code>vrg-security-record create --issue &lt;planning issue&gt; …</code>. Step 9 then
   hands it off to its fix like any other advisory the planning issue
   names (see <a href="#security-items-in-planning">Security items in planning</a>);</li>
-<li>a <strong>rejected</strong> or <strong>dropped</strong> finding is recorded with plain <code>create</code>,
-  which gives it its own intake issue, so intake review decides what
-  becomes of it.</li>
+<li>a <strong>rejected</strong> finding (the human decided it is not a problem) is
+  recorded with plain <code>create</code>, and the intake issue it creates is then
+  closed as "not planned", so the sweep closes the advisory. The human's
+  reason goes into the advisory's details, never into a public record;</li>
+<li>a <strong>dropped</strong> finding is recorded with plain <code>create</code>, and its intake
+  issue stays open, so intake review decides what becomes of it.</li>
 </ul>
+<p>The round's comment on the planning issue gives only the count of
+security findings, how many were accepted, and the GHSA IDs the round
+created. The rules are in the
+<a href="https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-review-doctrine.md#27-security-findings">paad review doctrine §2.7</a>.</p>
 <p><strong>Agentic review, during <code>issue-implement</code>.</strong> This review records a
 finding only once the round has decided what to do with it, at the end
 of the round:</p>
