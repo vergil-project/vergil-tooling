@@ -372,19 +372,37 @@ def test_stale_checks_are_all_named_in_one_error(
     assert "docs / docs" in str(excinfo.value)
 
 
-def test_stale_check_with_unparseable_job_link_fails_after_grace(
+def test_stale_check_with_unparseable_job_link_fails_loud(
     monkeypatch: pytest.MonkeyPatch, clock: _Clock
 ) -> None:
-    # A job link whose repo cannot be parsed has no readable job: an orphan.
+    # A job link whose repo cannot be parsed names no repo to look the run up
+    # in, so it fails loud rather than being probed in some other repo (#3829).
     link = "https://ghe.example/o/r/actions/runs/7/job/8"
     _stub(
         monkeypatch,
-        run_completed=lambda repo, rid: True,
+        run_completed=lambda repo, rid: pytest.fail("no repo to query"),
         job_conclusion=lambda r, j: pytest.fail("no repo to query"),
         pending=((_MATRIX, link),),
     )
-    with pytest.raises(github.OrphanedCheckError, match="could not be read"):
+    with pytest.raises(ValueError, match="cannot read the repository"):
         github.wait_for_checks("1", poll_interval=5, poll_timeout=1800, required=())
+    del clock
+
+
+def test_stale_check_with_unrecognised_job_id_fails_after_grace(
+    monkeypatch: pytest.MonkeyPatch, clock: _Clock
+) -> None:
+    # The run's repo is readable but the job id is not: no job to read, an orphan.
+    link = "https://github.com/o/r/actions/runs/7/job/not-a-number"
+    _stub(
+        monkeypatch,
+        run_completed=lambda repo, rid: True,
+        job_conclusion=lambda r, j: pytest.fail("no job to query"),
+        pending=((_MATRIX, link),),
+    )
+    with pytest.raises(github.OrphanedCheckError, match="unrecognised job link"):
+        github.wait_for_checks("1", poll_interval=5, poll_timeout=1800, required=())
+    del clock
 
 
 # --- wait_for_checks: genuinely running checks --------------------------------

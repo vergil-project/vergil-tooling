@@ -321,6 +321,12 @@ def test_actions_run_of_rejects_an_actions_link_without_a_repo() -> None:
         github.actions_run_of("/actions/runs/999/job/1")
 
 
+def test_actions_run_of_rejects_an_actions_link_on_another_host() -> None:
+    """A run on a host other than github.com is never looked up on github.com."""
+    with pytest.raises(ValueError, match="cannot read the repository"):
+        github.actions_run_of("https://ghe.example.com/o/r/actions/runs/999/job/1")
+
+
 def test_orphaned_check_names_probes_the_run_in_the_links_repo(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

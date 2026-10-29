@@ -1125,7 +1125,7 @@ def _reconcile_stale_checks(pr: str, checks: list[dict[str, str]]) -> list[dict[
 # with no run id to probe, so they never match.
 _ACTIONS_RUN_LINK_RE = re.compile(r"/actions/runs/(\d+)/job/")
 # The ``owner/repo`` that owns an Actions job link's run.
-_ACTIONS_RUN_REPO_LINK_RE = re.compile(r"://[^/]+/([^/]+/[^/]+)/actions/runs/(\d+)/job/")
+_ACTIONS_RUN_REPO_LINK_RE = re.compile(r"github\.com/([^/]+/[^/]+)/actions/runs/(\d+)/job/")
 
 
 def actions_run_of(link: str) -> tuple[str, str] | None:
