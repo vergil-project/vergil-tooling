@@ -16896,9 +16896,11 @@ extended to several advisories per issue by epic
 <a href="https://github.com/vergil-project/.github/issues/573">vergil-project/.github#573</a>.</p>
 <h2 id="the-policy">The policy<a class="headerlink" href="#the-policy" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Every security finding gets one record.</strong> A record is one pair
-  (an issue may name several advisories, one per finding; see
-  <a href="#the-two-reference-lines">The two reference lines</a>):</li>
+<li><strong>Every security finding gets one record</strong>, except a finding that an
+  agentic review raises and the same branch fixes (see
+  <a href="#recording-findings-from-a-review">Recording findings from a review</a>).
+  A record is one pair (an issue may name several advisories, one per
+  finding; see <a href="#the-two-reference-lines">The two reference lines</a>):</li>
 <li>a <strong>draft repository security advisory</strong> in <code>&lt;org&gt;/.github</code>, which
     holds the details;</li>
 <li>a neutral <strong><code>security</code>-labelled issue</strong> in the intake queue, which
@@ -17179,8 +17181,8 @@ of them until the plan exists.</p>
 <h2 id="recording-findings-from-a-review">Recording findings from a review<a class="headerlink" href="#recording-findings-from-a-review" title="Permanent link">&para;</a></h2>
 <p>A review can raise security findings while the work is still being
 designed or built. Two recipes cover the reviews that run inside the
-epic/task framework. Both use only <code>create</code>, <code>retarget</code> and
-<code>vrg-intake-route</code>. As everywhere on this page, the refs and GHSA IDs
+epic/task framework. Both use <code>create</code>; design review also uses
+<code>retarget</code>, through <code>epic-create</code>'s step 9. As everywhere on this page, the refs and GHSA IDs
 are placeholders, not a real finding.</p>
 <p><strong>Design review, during <code>epic-create</code>.</strong> The review runs against the
 spec while a planning issue tracks the work:</p>
@@ -17194,31 +17196,23 @@ spec while a planning issue tracks the work:</p>
   which gives it its own intake issue, so intake review decides what
   becomes of it.</li>
 </ul>
-<p><strong>Agentic review, during <code>issue-implement</code>.</strong> This review records each
-finding as it is collected, before anyone knows whether the branch will
-fix it:</p>
+<p><strong>Agentic review, during <code>issue-implement</code>.</strong> This review records a
+finding only once the round has decided what to do with it, at the end
+of the round:</p>
 <ul>
-<li>at collection, record each <code>new</code> or <code>repair</code> security finding with
-  plain <code>create</code>, which gives it its own intake issue (its <em>record</em>). A
-  <code>known</code> finding already has a record, made in an earlier round of the
-  same task, so it is not recorded again;</li>
-<li>a finding <strong>fixed on the branch</strong> is handed to the task by splitting
-  its record into it:</li>
+<li>a finding <strong>not fixed</strong> on the branch (out of scope, dismissed,
+  deferred, pending the human, or a removed addition) is recorded with
+  plain <code>create</code>, which gives it its own intake issue. A finding already
+  recorded in an earlier round of the same task is not recorded again;</li>
+<li>a finding <strong>fixed on the branch</strong> is not recorded at all. The weakness
+  never reached <code>develop</code>, so it needs no advisory, and the task's
+  records give it only as a count.</li>
 </ul>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>vrg-intake-route<span class="w"> </span>&lt;record&gt;<span class="w"> </span>split<span class="w"> </span>--into<span class="w"> </span>&lt;task&gt;<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span>--reason<span class="w"> </span><span class="s2">"Fixed on the task's branch"</span>
-</code></pre></div>
-<p>The split retargets the advisory to the task and closes the record, so
-  the advisory closes when the task does. A <code>known</code> finding's record is
-  split when the finding is fixed, unless an earlier round already split
-  it;
-- a finding <strong>not fixed</strong> needs nothing more. Its record stays an
-  ordinary intake item, with no pointer to the task.</p>
-<p>Agentic review does <strong>not</strong> attach a finding to the task at collection,
-which is why it records with plain <code>create</code>. If it did, handing an
-unfixed finding off later would make <code>retarget</code> post the public comment
-<code>Security record moved to &lt;record&gt;</code> on the task, pointing from the
-shipped diff to the open record.</p>
+<p>Agentic review never attaches a finding to the task, which is why it
+records with plain <code>create</code> and no <code>--issue</code>: a record on the task would
+mark the task publicly, pointing from the shipped diff to the open
+record. The rules are in the
+<a href="https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-review-doctrine.md#36-security-findings">paad review doctrine §3.6</a>.</p>
 <h2 id="checking-existing-records-after-the-several-advisories-change">Checking existing records after the several-advisories change<a class="headerlink" href="#checking-existing-records-after-the-several-advisories-change" title="Permanent link">&para;</a></h2>
 <p>An issue naming one advisory is a valid case of the several-advisories
 form, so existing records need no converting and there is no migration

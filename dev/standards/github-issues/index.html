@@ -17667,6 +17667,10 @@ epic instead of minting a finite epic. The full doctrine lives in the
 <code>epic-create</code> skill (<code>vergil-claude-plugin</code>). How the workflow uses paad, and
 every place it deviates from the paad authors' recommendations, is recorded in
 the <a href="https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-policy.md">paad usage policy</a>.</p>
+<p>Each implementation task then runs through the <code>issue-implement</code> skill, which
+runs an <strong>agentic-review gate</strong> before it hands the PR off. The gate is advisory:
+when it pauses, the human can accept the branch as it stands. The rules
+are in the <a href="https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-review-doctrine.md#3-mode-2-agentic-review-in-issue-implement">paad review doctrine</a>.</p>
 <h3 id="the-bookend-convention">The bookend convention<a class="headerlink" href="#the-bookend-convention" title="Permanent link">&para;</a></h3>
 <p><strong>An epic is never closed until you have decided what comes next AND confirmed
 the docs reflect what changed.</strong> Almost no real problem is fully resolved by one
