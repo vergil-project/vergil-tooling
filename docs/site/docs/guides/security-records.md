@@ -12,9 +12,11 @@ extended to several advisories per issue by epic
 
 ## The policy
 
-- **Every security finding gets one record.** A record is one pair
-  (an issue may name several advisories, one per finding; see
-  [The two reference lines](#the-two-reference-lines)):
+- **Every security finding gets one record**, except a finding that an
+  agentic review raises and the same branch fixes (see
+  [Recording findings from a review](#recording-findings-from-a-review)).
+  A record is one pair (an issue may name several advisories, one per
+  finding; see [The two reference lines](#the-two-reference-lines)):
   - a **draft repository security advisory** in `<org>/.github`, which
     holds the details;
   - a neutral **`security`-labelled issue** in the intake queue, which
@@ -295,8 +297,8 @@ of them until the plan exists.
 
 A review can raise security findings while the work is still being
 designed or built. Two recipes cover the reviews that run inside the
-epic/task framework. Both use only `create`, `retarget` and
-`vrg-intake-route`. As everywhere on this page, the refs and GHSA IDs
+epic/task framework. Both use `create`; design review also uses
+`retarget`, through `epic-create`'s step 9. As everywhere on this page, the refs and GHSA IDs
 are placeholders, not a real finding.
 
 **Design review, during `epic-create`.** The review runs against the
@@ -311,34 +313,23 @@ spec while a planning issue tracks the work:
   which gives it its own intake issue, so intake review decides what
   becomes of it.
 
-**Agentic review, during `issue-implement`.** This review records each
-finding as it is collected, before anyone knows whether the branch will
-fix it:
+**Agentic review, during `issue-implement`.** This review records a
+finding only once the round has decided what to do with it, at the end
+of the round:
 
-- at collection, record each `new` or `repair` security finding with
-  plain `create`, which gives it its own intake issue (its *record*). A
-  `known` finding already has a record, made in an earlier round of the
-  same task, so it is not recorded again;
-- a finding **fixed on the branch** is handed to the task by splitting
-  its record into it:
+- a finding **not fixed** on the branch (out of scope, dismissed,
+  deferred, pending the human, or a removed addition) is recorded with
+  plain `create`, which gives it its own intake issue. A finding already
+  recorded in an earlier round of the same task is not recorded again;
+- a finding **fixed on the branch** is not recorded at all. The weakness
+  never reached `develop`, so it needs no advisory, and the task's
+  records give it only as a count.
 
-  ```bash
-  vrg-intake-route <record> split --into <task> \
-    --reason "Fixed on the task's branch"
-  ```
-
-  The split retargets the advisory to the task and closes the record, so
-  the advisory closes when the task does. A `known` finding's record is
-  split when the finding is fixed, unless an earlier round already split
-  it;
-- a finding **not fixed** needs nothing more. Its record stays an
-  ordinary intake item, with no pointer to the task.
-
-Agentic review does **not** attach a finding to the task at collection,
-which is why it records with plain `create`. If it did, handing an
-unfixed finding off later would make `retarget` post the public comment
-`Security record moved to <record>` on the task, pointing from the
-shipped diff to the open record.
+Agentic review never attaches a finding to the task, which is why it
+records with plain `create` and no `--issue`: a record on the task would
+mark the task publicly, pointing from the shipped diff to the open
+record. The rules are in the
+[paad review doctrine §3.6](https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-review-doctrine.md#36-security-findings).
 
 ## Checking existing records after the several-advisories change
 
