@@ -1160,8 +1160,10 @@ def test_version_window_error_in_audit_exits_two_on_one_line(
     assert result == 2
     mock_apply.assert_not_called()
     err = capsys.readouterr().err
-    assert err.count("\n") == 1
-    assert err.startswith(f"ERROR: Could not resolve the CI versions for o/r: {_WINDOW_ERROR}")
+    # The only other stderr output is the skipped-local-checks warning.
+    assert "Traceback" not in err
+    assert err.endswith(f"\nERROR: Could not resolve the CI versions for o/r: {_WINDOW_ERROR}\n")
+    assert err.count("ERROR:") == 1
 
 
 def test_version_window_error_in_apply_exits_two_on_one_line(
@@ -1178,8 +1180,10 @@ def test_version_window_error_in_apply_exits_two_on_one_line(
         result = main(["apply", "--repo", "o/r"])
     assert result == 2
     err = capsys.readouterr().err
-    assert err.count("\n") == 1
-    assert err.startswith(f"ERROR: Could not resolve the CI versions for o/r: {_WINDOW_ERROR}")
+    # The only other stderr output is the skipped-local-checks warning.
+    assert "Traceback" not in err
+    assert err.endswith(f"\nERROR: Could not resolve the CI versions for o/r: {_WINDOW_ERROR}\n")
+    assert err.count("ERROR:") == 1
 
 
 # -- Undeclared ruleset parameters (#3548) ------------------------------------

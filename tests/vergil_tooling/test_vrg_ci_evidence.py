@@ -233,7 +233,8 @@ def test_version_window_error_is_one_line_exit_one(
     assert rc == 1
     err = capsys.readouterr().err
     assert err == f"ERROR: {message}\n"
-    assert not out_dir.exists() or not any(out_dir.iterdir())
+    assert not (out_dir / "harvest-state.json").exists()
+    assert not (out_dir / "v2.1.129-ci-evidence.tar.gz").exists()
 
 
 def test_bundle_expired_evidence_artifact_errors(

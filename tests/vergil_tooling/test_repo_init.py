@@ -13,7 +13,6 @@ import yaml
 from vergil_tooling.lib import dependabot, gitignore, repo_init
 from vergil_tooling.lib.config import CiConfig, ProjectConfig, _parse_raw_config
 from vergil_tooling.lib.github_config import ClassicProtectionReport
-from vergil_tooling.lib.versions import ResolutionError
 from vergil_tooling.lib.repo_init import (
     RepoInitContext,
     _assert_ci_gates_producible,
@@ -54,6 +53,7 @@ from vergil_tooling.lib.repo_init import (
     step_scaffold_config_files,
     step_scaffold_language,
 )
+from vergil_tooling.lib.versions import ResolutionError
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.versions.resolve import Resolution
