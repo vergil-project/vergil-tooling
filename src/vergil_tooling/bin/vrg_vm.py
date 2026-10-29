@@ -31,6 +31,7 @@ from vergil_tooling.bin.vrg_vm_resolve_session import (
     name_by_session,
     projects_glob,
 )
+from vergil_tooling.lib import plugin_dirs as plugin_dirs_lib
 from vergil_tooling.lib import progress, vm_cloud, vm_memory, vm_packages
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.config import ConfigError, VmStanza, read_config
@@ -2847,6 +2848,12 @@ def _list_sessions(config: IdentityConfig, args: argparse.Namespace) -> int:
     return 0
 
 
+_PLUGIN_DIRS_CLOUD_NOTICE = (
+    "NOTE: the --plugin-dir override is supported only on macOS with Lima VMs; "
+    "this cloud session runs the installed plugins."
+)
+
+
 def _command_override(args: argparse.Namespace) -> list[str]:
     """The session's command override, without a leading ``--`` separator."""
     override = list(args.cmd)
@@ -2860,8 +2867,15 @@ def _session_inner(
     identity_name: str,
     rel_path: str,
     model: str,
+    plugin_dirs: tuple[str, ...] = (),
 ) -> str:
-    """Build the in-VM command: a raw override, or the session resolver."""
+    """Build the in-VM command: a raw override, or the session resolver.
+
+    *plugin_dirs* (the host's ``--plugin-dir`` override, Lima only) adds one
+    ``--plugin-dir`` per entry to the ``claude`` launch, and a guard that fails
+    the launch loudly when an entry is not a directory in the guest. A raw
+    (non-claude) override ignores it.
+    """
     source = ". ~/.config/vergil/claude.env 2>/dev/null; . ~/.config/vergil/conan.env 2>/dev/null;"
 
     override = _command_override(args)
@@ -2872,9 +2886,16 @@ def _session_inner(
         return f"{source} exec {shlex.join(override)}"
 
     passthrough = override[1:] if override[:1] == ["claude"] else []
-    # The resolved model is applied first; an explicit `-- claude --model X`
-    # passthrough comes after, so Claude's last --model wins.
-    extra = (["--model", model] if model else []) + passthrough
+    # The resolved model is applied first, then the plugin-dir override; an
+    # explicit `-- claude --model X` passthrough comes after, so Claude's last
+    # --model wins.
+    plugin_flags: list[str] = []
+    checks = ""
+    for path in plugin_dirs:
+        plugin_flags += ["--plugin-dir", path]
+        message = f"ERROR: plugin directory not found in the guest: {path}"
+        checks += f"[ -d {shlex.quote(path)} ] || {{ echo {shlex.quote(message)} >&2; exit 1; }}; "
+    extra = (["--model", model] if model else []) + plugin_flags + passthrough
     resolve_cmd = [
         "vrg-vm-resolve-session",
         "--identity",
@@ -2895,7 +2916,7 @@ def _session_inner(
         resolve_cmd += ["--fresh"]
     if extra:
         resolve_cmd += ["--", *extra]
-    return f"{source} exec {shlex.join(resolve_cmd)}"
+    return f"{checks}{source} exec {shlex.join(resolve_cmd)}"
 
 
 def _lists_sessions_only(args: argparse.Namespace) -> bool:
@@ -2911,12 +2932,17 @@ def _lists_sessions_only(args: argparse.Namespace) -> bool:
     return getattr(args, "label", None) is None and args.resume is None and not args.fresh
 
 
-def _cloud_session(target: Target, args: argparse.Namespace) -> int:
+def _cloud_session(
+    target: Target, args: argparse.Namespace, plugin_dirs: tuple[str, ...] = ()
+) -> int:
     """Launch a Claude session on the off-platform (cloud) box over the IAP transport.
 
     Reuses the exact inner resolver/override command the Lima path builds; only the
     transport differs. Cloud boxes are ephemeral, so the Lima preflight and the
     staleness gate (both Lima-specific) do not apply here.
+
+    The ``--plugin-dir`` override is Lima only (a cloud box has no host mount): a
+    configured *plugin_dirs* is not applied, and the session says so.
     """
     name, identity, config = target.identity_name, target.identity, target.config
     backend = _cloud_backend(target)
@@ -2975,6 +3001,8 @@ def _cloud_session(target: Target, args: argparse.Namespace) -> int:
         vm_memory.verify_projection(
             transport, host_workdir=workdir, slug=vm_memory.host_slug(workdir)
         )
+    if plugin_dirs:
+        print(_PLUGIN_DIRS_CLOUD_NOTICE, file=sys.stderr, flush=True)
     print("  -> opening the session", file=sys.stderr, flush=True)
     workspace_abs = os.path.normpath(resolve_workspace(args.workspace, identity.projects_dir))
     rel_path = os.path.relpath(workspace_abs, identity.projects_dir)
@@ -3005,11 +3033,18 @@ def _cmd_session(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
+    # The host's --plugin-dir override is read once, for both paths: a malformed
+    # file fails every launch loudly, even a cloud one that will not apply it.
+    try:
+        plugin_dirs = plugin_dirs_lib.load_plugin_dirs()
+    except plugin_dirs_lib.PluginDirsError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
     target = _resolve_target(args, borrow_allowed=True)
     name, identity, config = target.identity_name, target.identity, target.config
 
     if target.spec.off_platform:
-        return _cloud_session(target, args)
+        return _cloud_session(target, args, plugin_dirs)
 
     if _preflight_target(target) != 0:
         return 1
@@ -3048,6 +3083,7 @@ def _cmd_session(args: argparse.Namespace) -> int:
         name,
         rel_path,
         resolve_model(config, identity, args.model),
+        plugin_dirs,
     )
     cmd = [
         "limactl",

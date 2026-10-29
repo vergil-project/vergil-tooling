@@ -1396,6 +1396,33 @@ installs a dev copy instead and flags it with a `DEV tooling` banner, and
 a plain `vrg-vm update` returns the VM to the package. See
 [VM Spec](vm-spec.md#vergil-tooling-inside-the-vm).
 
+**The `--plugin-dir` override.** `vrg-vm session` can launch Claude with
+plugin trees loaded from disk instead of the installed plugins, for running
+unreleased plugin work (for example a paad checkout's `preview/paad`) across
+the fleet. List the trees in `~/.config/vergil/plugin-dirs.toml` on the host,
+a personal file you create by hand:
+
+```toml
+plugin_dirs = ["/Users/me/dev/projects/me/paad-fleet/preview/paad"]
+```
+
+`plugin_dirs` is the only key, and each entry must be an absolute path. For
+each entry the session adds `--plugin-dir <path>` to the `claude` launch,
+after `--model` and before any `-- claude …` arguments; a raw `-- <command>`
+override is unaffected. The file is read when every session starts, so a
+change applies to the next session.
+
+- **Lima only.** A Lima VM sees the Mac's projects tree at the same path, so
+  the path is checked inside the guest: a directory missing there fails the
+  launch with `ERROR: plugin directory not found in the guest: <path>`. A
+  cloud box has no host mount, so a cloud session launches with the installed
+  plugins and prints a notice that the override is Lima only.
+- **Loud on error.** A malformed file (invalid TOML, an unknown key, a value
+  that is not a list of strings, or a relative entry) fails every session
+  launch, Lima or cloud, with an error naming the file.
+- **Turning it off.** Delete the file, or set `plugin_dirs = []`; sessions
+  then use the installed plugins again.
+
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_vm` |
