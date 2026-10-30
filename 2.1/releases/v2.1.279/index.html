@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.280/">
       
       
         <link rel="next" href="../v2.1.278/">
@@ -1363,6 +1363,8 @@
       
         
       
+        
+      
     
     
     
@@ -1418,6 +1420,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.280/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.280
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -16610,6 +16640,7 @@ The issues standard now lists the spec pushback, plan pushback and alignment rou
 <li>fix(vrg-vm): skip plugin-dir guest checks when listing sessions; report an unreadable override file</li>
 </ul>
 <p>Listing sessions (no --label, --resume or --fresh) starts no claude, so a plugin directory missing in the guest no longer blocks it; the guard still fails every claude launch. An unreadable, directory-typed or non-UTF-8 plugin-dirs.toml now raises PluginDirsError naming the file instead of escaping as a traceback. Docs and tests updated.</p>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.279/v2.1.279-ci-evidence.tar.gz">Download →</a></p>
 
 
 
