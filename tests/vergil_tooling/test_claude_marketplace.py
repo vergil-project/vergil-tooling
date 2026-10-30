@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import shlex
 import subprocess
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -169,8 +170,64 @@ class TestRefresh:
             "marketplace:vergil-marketplace",
         ]
         err = capsys.readouterr().err
-        # Each failed step prints its own error output.
-        assert "boom" in err
+        # Each failed step is named with its exit status. Its stderr is the
+        # Run's to echo, so it is not printed a second time here.
+        assert "ERROR: marketplace update failed (exit status 1)" in err
+        assert "boom" not in err
+
+    def test_refresh_adds_marketplaces_before_installing(self) -> None:
+        # #2021: only `marketplace add` registers a declared marketplace on a
+        # fresh box, so every add runs before an enabled-but-missing install.
+        run = FakeRun(plugin_list="[]")
+        assert refresh(run, SETTINGS_V21, "") == []
+        add = run.cmds.index(
+            "claude plugin marketplace add vergil-project/vergil-claude-plugin@v2.1"
+        )
+        install = run.cmds.index("claude plugin install vergil@vergil-marketplace --scope user")
+        assert add < install
+
+    def test_refresh_derives_and_installs_the_official_marketplace(self) -> None:
+        # #2029: an enabled plugin of the undeclared official marketplace gets
+        # that marketplace added, then the plugin installed.
+        settings = {"enabledPlugins": {"superpowers@claude-plugins-official": True}}
+        run = FakeRun(plugin_list="[]")
+        assert refresh(run, settings, "") == []
+        assert run.cmds[:2] == [
+            "claude plugin marketplace add anthropics/claude-plugins-official",
+            "claude plugin marketplace update",
+        ]
+        assert "claude plugin install superpowers@claude-plugins-official --scope user" in run.cmds
+
+    @pytest.mark.parametrize(
+        "settings",
+        [
+            {"extraKnownMarketplaces": []},
+            {"extraKnownMarketplaces": {"m": "o/r"}},
+            {"extraKnownMarketplaces": {"m": {"source": "o/r"}}},
+            {"extraKnownMarketplaces": {"m": {"source": {"repo": ["o/r"]}}}},
+            {"extraKnownMarketplaces": {"m": {"source": {"repo": "o/r", "ref": 2}}}},
+            {"enabledPlugins": ["vergil@vergil-marketplace"]},
+        ],
+    )
+    def test_refresh_rejects_misshapen_settings(self, settings: dict[str, Any]) -> None:
+        run = FakeRun()
+        with pytest.raises(MarketplaceError, match=r"settings\.json "):
+            refresh(run, settings, "")
+        assert run.calls == []
+
+    def test_empty_ref_reads_as_no_ref_on_add_and_verify(self) -> None:
+        settings = _settings_with_ref("")
+        run = _registered(
+            [{"name": "vergil-marketplace", "repo": "vergil-project/vergil-claude-plugin"}]
+        )
+        run.plugin_list = "[]"
+        assert refresh(run, settings, "") == []
+        assert "claude plugin marketplace add vergil-project/vergil-claude-plugin" in run.cmds
+
+    def test_null_entries_read_as_empty(self) -> None:
+        settings = {"extraKnownMarketplaces": {"a": None, "b": {"source": None}}}
+        assert _marketplace_sources(settings) == []
+        assert declared_marketplaces(settings) == []
 
     def test_refresh_raises_on_malformed_listing(self) -> None:
         with pytest.raises(MarketplaceError):
@@ -275,10 +332,19 @@ class TestShell:
             "export PATH=x && claude plugin list --json",
         ]
 
-    def test_local_run_runs_and_raises(self) -> None:
-        assert local_run("true").returncode == 0
+    def test_local_run_runs_from_home(self) -> None:
+        result = local_run("pwd")
+        assert result.stdout.strip() == str(Path.home())
+
+    def test_local_run_echoes_stderr_and_raises(self, capsys: pytest.CaptureFixture[str]) -> None:
+        with pytest.raises(subprocess.CalledProcessError):
+            local_run("bash", "-c", "echo oops >&2; exit 3")
+        assert capsys.readouterr().err == "oops\n"
+
+    def test_local_run_failure_without_stderr(self, capsys: pytest.CaptureFixture[str]) -> None:
         with pytest.raises(subprocess.CalledProcessError):
             local_run("false")
+        assert capsys.readouterr().err == ""
 
 
 class TestMarketplaceSources:

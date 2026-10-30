@@ -48,7 +48,7 @@ from vergil_tooling.bin.vrg_vm import (
     resolve_borrow,
     warn_if_off_host,
 )
-from vergil_tooling.lib import vm_cloud, vm_memory
+from vergil_tooling.lib import identity_mode, vm_cloud, vm_memory
 from vergil_tooling.lib.identity import Identity, IdentityConfig
 from vergil_tooling.lib.trusted_authors import TrustedAuthors
 from vergil_tooling.lib.vm_backend import select_backend
@@ -1649,9 +1649,38 @@ class TestUpdate:
         ):
             assert main(["update", "--config", str(config_file)]) == 0
         assert [name for name, _, _ in manager.mock_calls] == ["copy", "plugins"]
-        manager.copy.assert_called_once_with(ANY, Path.home() / ".claude")
+        manager.copy.assert_called_once_with(ANY, Path.home() / ".claude", require_settings=True)
         assert manager.copy.call_args.args[0] is manager.plugins.call_args.args[0]
         _assert_transport(manager.copy, "vergil-agent")
+
+    @pytest.mark.parametrize("flags", [[], ["--all"]])
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
+    @patch("vergil_tooling.bin.vrg_vm.list_vms")
+    def test_update_refuses_agent(
+        self,
+        mock_list: MagicMock,
+        _status: MagicMock,
+        flags: list[str],
+        monkeypatch: pytest.MonkeyPatch,
+        config_file: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
+        with patch("vergil_tooling.bin.vrg_vm.update_tooling") as mock_update:
+            assert main(["update", *flags, "--config", str(config_file)]) == 1
+        mock_update.assert_not_called()
+        mock_list.assert_not_called()
+        assert "Agents cannot run vrg-vm update" in capsys.readouterr().err
+
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
+    def test_update_refuses_mixed_signals(
+        self, _status: MagicMock, monkeypatch: pytest.MonkeyPatch, config_file: Path
+    ) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "human")
+        monkeypatch.setattr(identity_mode, "any_agent_signal", lambda: True)
+        with patch("vergil_tooling.bin.vrg_vm.update_tooling") as mock_update:
+            assert main(["update", "--config", str(config_file)]) == 1
+        mock_update.assert_not_called()
 
     @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")

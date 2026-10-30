@@ -632,8 +632,47 @@ class TestCopyClaudeConfig:
         transport = _transport()
         copy_claude_config(transport, claude_dir)
 
-        transport.run.assert_called_once()
+        # Nothing is piped; a guest CLAUDE.md the host does not have is removed,
+        # and a guest settings.json is left alone.
+        cmds = [c.args[-1] for c in transport.run.call_args_list]
+        assert cmds == ["mkdir -p ~/.claude", "rm -f ~/.claude/CLAUDE.md"]
         transport.pipe.assert_not_called()
+
+    def test_require_settings_fails_naming_the_host_file(self, tmp_path: Path) -> None:
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        (claude_dir / "CLAUDE.md").write_text("# prefs\n")
+
+        transport = _transport()
+        with pytest.raises(RuntimeError, match=r"host .*\.claude/settings\.json is missing"):
+            copy_claude_config(transport, claude_dir, require_settings=True)
+        transport.run.assert_not_called()
+        transport.pipe.assert_not_called()
+
+    def test_require_settings_fails_without_a_host_claude_dir(self, tmp_path: Path) -> None:
+        transport = _transport()
+        with pytest.raises(RuntimeError, match="settings.json is missing"):
+            copy_claude_config(transport, tmp_path / ".claude", require_settings=True)
+        transport.run.assert_not_called()
+
+    def test_require_settings_copies_when_present(self, tmp_path: Path) -> None:
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        (claude_dir / "settings.json").write_text("{}\n")
+
+        transport = _transport()
+        copy_claude_config(transport, claude_dir, require_settings=True)
+        piped = [c.args[0] for c in transport.pipe.call_args_list]
+        assert any("cat > ~/.claude/settings.json" in cmd for cmd in piped)
+
+    def test_unreadable_host_file_is_a_named_error(self, tmp_path: Path) -> None:
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        # A directory where the file should be: read_text raises an OSError.
+        (claude_dir / "CLAUDE.md").mkdir()
+
+        with pytest.raises(RuntimeError, match=r"cannot read the host .*CLAUDE\.md"):
+            copy_claude_config(_transport(), claude_dir)
 
     def test_skips_if_claude_dir_missing(self, tmp_path: Path) -> None:
         claude_dir = tmp_path / ".claude"

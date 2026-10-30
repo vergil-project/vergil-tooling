@@ -31,8 +31,8 @@ from vergil_tooling.bin.vrg_vm_resolve_session import (
     name_by_session,
     projects_glob,
 )
+from vergil_tooling.lib import identity_mode, progress, vm_cloud, vm_memory, vm_packages
 from vergil_tooling.lib import plugin_dirs as plugin_dirs_lib
-from vergil_tooling.lib import progress, vm_cloud, vm_memory, vm_packages
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.config import ConfigError, VmStanza, read_config
 from vergil_tooling.lib.identity import (
@@ -1571,7 +1571,7 @@ def _update_over_transport(
     # Deliver the host's current settings.json (and the read-only CLAUDE.md)
     # before the refresh, so a running VM follows a changed marketplace ref
     # without a restart (epic vergil-project/.github#760, spec §6).
-    copy_claude_config(transport, Path.home() / ".claude")
+    copy_claude_config(transport, Path.home() / ".claude", require_settings=True)
     update_plugins(transport)
 
 
@@ -1643,6 +1643,15 @@ def _cmd_update_off_platform(target: Target, args: argparse.Namespace) -> int:
 
 
 def _cmd_update(args: argparse.Namespace) -> int:
+    # Epic vergil-project/.github#760, spec §6: the update refreshes the VMs'
+    # plugins from the host settings, which is run by the human. It refuses an
+    # agent with the fail-closed check, before any work.
+    if identity_mode.is_agent() or identity_mode.any_agent_signal():
+        print(
+            "ERROR: vrg-vm update is a human action. Agents cannot run vrg-vm update.",
+            file=sys.stderr,
+        )
+        return 1
     if args.all:
         return _cmd_update_all(args)
 

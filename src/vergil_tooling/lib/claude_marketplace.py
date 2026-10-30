@@ -33,6 +33,7 @@ import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 # The shape of ``Transport.run(*argv)``: run a command, raise on a nonzero exit.
@@ -61,8 +62,22 @@ class Declared:
 
 
 def local_run(*argv: str) -> subprocess.CompletedProcess[str]:
-    """Run *argv* on this machine, raising on a nonzero exit (the host's ``Run``)."""
-    return subprocess.run(argv, check=True, capture_output=True, text=True)  # noqa: S603
+    """Run *argv* on this machine, raising on a nonzero exit (the host's ``Run``).
+
+    Runs from the home directory, so a project ``.claude/settings.json`` in the
+    caller's working directory never changes what the Claude CLI sees (the VM
+    transport likewise runs from a neutral directory). On a failure the
+    child's stderr is echoed before the error is raised, as ``Transport.run``
+    does, so the cause is never lost.
+    """
+    try:
+        return subprocess.run(  # noqa: S603
+            argv, check=True, capture_output=True, text=True, cwd=Path.home()
+        )
+    except subprocess.CalledProcessError as exc:
+        if exc.stderr:
+            print(exc.stderr, end="", file=sys.stderr)
+        raise
 
 
 def shell(prefix: str, command: str) -> list[str]:
@@ -71,10 +86,61 @@ def shell(prefix: str, command: str) -> list[str]:
 
 
 def _report(label: str, exc: subprocess.CalledProcessError) -> None:
-    """Print a failed step's own error output and exit status."""
-    detail = (exc.stderr or "").strip() if isinstance(exc.stderr, str) else ""
-    suffix = f": {detail}" if detail else ""
-    print(f"ERROR: {label} failed (exit status {exc.returncode}){suffix}", file=sys.stderr)
+    """Print which step failed and its exit status.
+
+    The step's own stderr has already been echoed by the ``Run`` (``local_run``
+    or ``Transport.run``), so it is not printed again here.
+    """
+    print(f"ERROR: {label} failed (exit status {exc.returncode})", file=sys.stderr)
+
+
+def _section(settings: dict[str, Any], key: str) -> dict[str, Any]:
+    """Return the settings object *key*, or ``{}`` when it is absent.
+
+    Raises:
+        MarketplaceError: the value is present but not a JSON object.
+    """
+    value = settings.get(key)
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        msg = f"settings.json {key} is not a JSON object"
+        raise MarketplaceError(msg)
+    return value
+
+
+_SOURCE_STRINGS = ("source", "repo", "url", "path", "ref")
+
+
+def _declared_sources(settings: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """Return each ``extraKnownMarketplaces`` entry's name and ``source`` object.
+
+    An entry with no ``source`` yields ``{}``. An empty ``ref`` reads as no ref.
+
+    Raises:
+        MarketplaceError: an entry, its ``source``, or one of the source's
+            string fields has the wrong JSON type.
+    """
+    entries: list[tuple[str, dict[str, Any]]] = []
+    for name, spec in _section(settings, "extraKnownMarketplaces").items():
+        where = f"settings.json extraKnownMarketplaces.{name}"
+        if spec is None:
+            spec = {}
+        if not isinstance(spec, dict):
+            msg = f"{where} is not a JSON object"
+            raise MarketplaceError(msg)
+        src = spec.get("source")
+        if src is None:
+            src = {}
+        if not isinstance(src, dict):
+            msg = f"{where}.source is not a JSON object"
+            raise MarketplaceError(msg)
+        for field in _SOURCE_STRINGS:
+            if src.get(field) is not None and not isinstance(src[field], str):
+                msg = f"{where}.source.{field} is not a string"
+                raise MarketplaceError(msg)
+        entries.append((name, {**src, "ref": src.get("ref") or None}))
+    return entries
 
 
 def declared_marketplaces(settings: dict[str, Any]) -> list[Declared]:
@@ -82,14 +148,17 @@ def declared_marketplaces(settings: dict[str, Any]) -> list[Declared]:
 
     Only a ``github`` source with a ``repo`` is returned: that is the source
     shape whose registration ``marketplace list --json`` reports as a repo and
-    ref, so it is the one the refresh can verify.
+    ref, so it is the one the refresh can verify. An empty ``ref`` reads as no
+    ref, as it does for the add.
+
+    Raises:
+        MarketplaceError: ``extraKnownMarketplaces`` has the wrong shape.
     """
     declared: list[Declared] = []
-    for name, spec in (settings.get("extraKnownMarketplaces") or {}).items():
-        src = (spec or {}).get("source") or {}
+    for name, src in _declared_sources(settings):
         if src.get("source") != "github" or not src.get("repo"):
             continue
-        declared.append(Declared(name, src["repo"], src.get("ref")))
+        declared.append(Declared(name, src["repo"], src["ref"]))
     return declared
 
 
@@ -102,8 +171,11 @@ def _enabled_plugin_ids(settings: dict[str, Any]) -> set[str]:
     plugins enabled solely by a project ``.claude/settings.json`` need explicit
     install consent. Whether user-enabled plugins install on their own is
     still unverified (vergil-project/.github#578).
+
+    Raises:
+        MarketplaceError: ``enabledPlugins`` is not a JSON object.
     """
-    return {pid for pid, on in (settings.get("enabledPlugins") or {}).items() if on}
+    return {pid for pid, on in _section(settings, "enabledPlugins").items() if on}
 
 
 def _marketplace_sources(settings: dict[str, Any]) -> list[str]:
@@ -123,16 +195,16 @@ def _marketplace_sources(settings: dict[str, Any]) -> list[str]:
     undecidable third-party marketplace has no derivable source and is left
     for the install to surface, never invented.
     """
-    extra = settings.get("extraKnownMarketplaces") or {}
+    declared = _declared_sources(settings)
+    extra = {name for name, _ in declared}
     sources: list[str] = []
-    for spec in extra.values():
-        src = (spec or {}).get("source") or {}
+    for _, src in declared:
         # #3751: keep a declared `ref`. Claude Code refuses an add whose source
         # does not match the extraKnownMarketplaces entry (failureCode
         # "declared"). A github repo pins with `@ref` (the form `marketplace
         # list` shows); a git URL pins with `#ref` (Claude Code docs, "Add a
         # marketplace"). A path has no ref.
-        ref = src.get("ref")
+        ref = src["ref"]
         if src.get("repo"):
             base, sep = src["repo"], "@"
         elif src.get("url"):

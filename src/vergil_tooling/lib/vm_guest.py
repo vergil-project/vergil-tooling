@@ -465,31 +465,58 @@ def update_plugins(transport: Transport) -> None:
 _CLAUDE_CONFIG_FILES = (("CLAUDE.md", True), ("settings.json", False))
 
 
-def copy_claude_config(transport: Transport, claude_dir: Path) -> None:
+def copy_claude_config(
+    transport: Transport, claude_dir: Path, *, require_settings: bool = False
+) -> None:
     """Copy CLAUDE.md and settings.json from host into the VM.
 
     The sole owner of the guest ``~/.claude/CLAUDE.md`` file mode: after
     writing it, the copy runs ``chmod a-w`` on it, on Lima as well as cloud,
-    so every path that copies it (start, rebuild, session, create, update)
-    leaves it read-only.
+    so every path that copies it (start, rebuild, session, cloud create,
+    update) leaves it read-only. When the host has no ``CLAUDE.md``, any guest
+    copy is removed, so the guest never keeps one the host does not have. The
+    mode is a guard that makes an accidental write fail loudly; it is not a
+    security boundary, since the guest user owns the file.
 
     Each target is made writable (``chmod u+w``) before the overwrite, so a
     copy locked by an earlier run does not fail the ``cat >`` with "permission
     denied" (#2436). The ``chmod u+w`` is a harmless no-op on a fresh file
     (guarded with ``2>/dev/null``).
+
+    With *require_settings* (the update path, which refreshes plugins from the
+    copied file right after), a missing host ``settings.json`` is an error
+    naming the host file, not a skip.
+
+    Raises:
+        RuntimeError: *require_settings* is set and the host settings.json is
+            missing, or a host file cannot be read.
     """
+    settings = claude_dir / "settings.json"
+    if require_settings and not settings.is_file():
+        msg = (
+            f"the host {settings} is missing; it is required, because the plugin "
+            "refresh reads the copy of it in the VM"
+        )
+        raise RuntimeError(msg)
     if not claude_dir.is_dir():
         return
     transport.run("bash", "-c", "mkdir -p ~/.claude")
     for filename, locked in _CLAUDE_CONFIG_FILES:
         source = claude_dir / filename
-        if source.exists():
-            content = source.read_text()
-            dest = f"~/.claude/{filename}"
-            cmd = f"chmod u+w {dest} 2>/dev/null; cat > {dest}"
+        dest = f"~/.claude/{filename}"
+        if not source.exists():
             if locked:
-                cmd += f" && chmod a-w {dest}"
-            transport.pipe(cmd, content)
+                transport.run("bash", "-c", f"rm -f {dest}")
+            continue
+        try:
+            content = source.read_text()
+        except (OSError, UnicodeDecodeError) as exc:
+            msg = f"cannot read the host {source}: {exc}"
+            raise RuntimeError(msg) from exc
+        cmd = f"chmod u+w {dest} 2>/dev/null; cat > {dest}"
+        if locked:
+            cmd += f" && chmod a-w {dest}"
+        transport.pipe(cmd, content)
 
 
 # The agent-VM ~/.claude share set. See

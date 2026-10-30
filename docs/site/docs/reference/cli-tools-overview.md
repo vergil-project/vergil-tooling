@@ -1417,8 +1417,10 @@ Lima on the Mac or off-platform (cloud). Subcommands: `create`, `start`,
 `stop`, `restart`, `update`, `destroy`, `destroy-volume`, `rebuild`,
 `list`, `volumes`, `session` (launch a Claude session in the VM) and `cp`
 (copy files between the host and a VM). `vrg-vm update` reinstalls
-vergil-tooling and refreshes the plugins in a running VM in place; `--all`
-updates every configured identity's boxes. VMs install vergil-tooling as
+vergil-tooling, copies the host's `~/.claude` config in and refreshes and
+verifies the plugins in a running VM in place; `--all` updates every
+configured identity's boxes, and one box's failure does not stop the rest.
+`vrg-vm update` is a human command and refuses an agent identity. VMs install vergil-tooling as
 the signed package; `vrg-vm update --tag <ref>` with a non-release ref
 installs a dev copy instead and flags it with a `DEV tooling` banner, and
 a plain `vrg-vm update` returns the VM to the package. See
