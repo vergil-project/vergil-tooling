@@ -303,6 +303,10 @@ Move the rolling `vX.Y` tag to release `vX.Y.Z`. It is human-only: it
 refuses any agent identity, failing closed on any agent signal
 (`is_agent() or any_agent_signal()`), before any output or git call.
 `vrg-release`'s promote stage uses the same library and the same refusal.
+The refusal stops an agent from running it by mistake; it is not a security
+boundary, because the identity signals come from the caller's environment.
+The rolling-tag ruleset on GitHub, which only the repository Admin role
+bypasses, is what enforces who can move the tag.
 
 The target must be an existing `vX.Y.Z` tag on origin whose commit is on
 origin's `main` and that has a published (non-draft) GitHub Release; any
@@ -323,8 +327,9 @@ v2.1 1a2b3c4d5e6f -> v2.1.50 fc17882a9b0c
 Otherwise it asks `Move vX.Y on <repo>? [y/N]` on the terminal, and moves
 the tag only on `y` or `yes`. With no terminal to confirm on, it refuses.
 Before it pushes it re-resolves the move and refuses if anything changed
-since it was confirmed, and checks that the local release tag is the
-confirmed commit. It then pushes that release tag to the rolling tag's ref
+since it was confirmed, and resolves the local release tag once and checks
+that it is the confirmed commit. It then pushes that tag object, by its id,
+to the rolling tag's ref
 as a compare-and-swap (`--force-with-lease` on the rolling tag's value on
 origin, empty when the tag is new), so it overwrites exactly the tag that
 was shown, or is refused. The local rolling tag is updated only after origin
@@ -334,6 +339,9 @@ prints only the "already promoted" line, asks nothing and pushes nothing.
 When `vrg-release`'s promote stage calls it, the GitHub Release read retries
 a 404 for a short budget, since that Release was just published. A version
 given to `vrg-promote` is read once, so a missing Release is refused at once.
+The read names `github.com/<owner>/<repo>`, the host origin was checked
+against. A missing or unusable GitHub credential prints the same guided
+message as other `vrg-*` commands.
 
 | Attribute | Value |
 |---|---|

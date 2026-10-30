@@ -1,9 +1,13 @@
 """Rolling-tag management: move vX.Y to an existing release vX.Y.Z.
 
 Moving a rolling tag is a human maintainer action. :func:`plan_promotion`
-refuses any agent identity, fail-closed, before it runs a single git command,
-so every caller (the ``vrg-promote`` CLI and ``vrg-release``'s promote stage)
-refuses alike.
+refuses any agent identity before it runs a single git command (any agent
+signal refuses, whatever else is set), so every caller (the ``vrg-promote``
+CLI and ``vrg-release``'s promote stage) refuses alike. The refusal stops an
+agent from running it by mistake; it is not a security boundary, since the
+identity signals it reads come from the caller's environment. The rolling-tag
+ruleset on GitHub, which only the repository Admin role bypasses, is what
+enforces who can move the tag.
 
 The target of a move is checked: the release tag must exist on origin, its
 commit must be on origin's ``main`` (the primary guard, which limits the
@@ -11,8 +15,9 @@ target to merged work), and it must have a published GitHub Release (an
 additional layer). Every check, and the push, act on the one repo origin's
 fetch and push URLs both name.
 
-The push sends the release tag that was checked (verified locally against
-the commit origin reported) straight to the rolling tag's ref, as a
+The push sends the release tag object that was checked (resolved once
+locally and verified against the commit origin reported) straight to the
+rolling tag's ref, by object id, as a
 compare-and-swap (``--force-with-lease`` on the rolling tag's raw value on
 origin). The tag that is overwritten is exactly the one that was planned, or
 the push is refused.
@@ -42,7 +47,26 @@ _SHORT = 12
 
 
 class PromoteError(ValueError):
-    """A promotion was refused, or its plan could not be resolved."""
+    """A promotion was refused, or its plan could not be resolved.
+
+    One raised for a failed command carries that command's ``cmd``,
+    ``stdout`` and ``stderr``, as :class:`subprocess.CalledProcessError`
+    does, so ``vrg-release``'s tracking issue records the command and its
+    output. A refusal that is not a command failure has none of them.
+    """
+
+    cmd: str | list[str]
+    stdout: str | None
+    stderr: str | None
+
+
+def _process_error(message: str, exc: subprocess.CalledProcessError) -> PromoteError:
+    """A :class:`PromoteError` for *message* carrying *exc*'s command and output."""
+    err = PromoteError(message)
+    err.cmd = exc.cmd
+    err.stdout = exc.stdout
+    err.stderr = exc.stderr
+    return err
 
 
 @dataclass(frozen=True)
@@ -72,7 +96,7 @@ def _git_read(*args: str) -> str:
     try:
         return git.read_output(*args)
     except subprocess.CalledProcessError as exc:
-        raise PromoteError(error_text(exc, output=False)) from exc
+        raise _process_error(error_text(exc, output=False), exc) from exc
 
 
 def _remote_tag(tag: str) -> tuple[str, str]:
@@ -80,11 +104,13 @@ def _remote_tag(tag: str) -> tuple[str, str]:
 
     *raw* is the ``refs/tags/<tag>`` line (an annotated tag's object id), and
     *peeled* the commit it resolves to (the ``^{}`` line, or *raw* itself for a
-    lightweight tag). A failed ``ls-remote`` raises rather than reading as an
-    absent tag.
+    lightweight tag). ``ls-remote`` returns the ``^{}`` line only for a pattern
+    that matches it, so both refs are asked for by name. A failed
+    ``ls-remote`` raises rather than reading as an absent tag.
     """
     raw = peeled = ""
-    for line in _git_read("ls-remote", "origin", f"refs/tags/{tag}").splitlines():
+    ref_lines = _git_read("ls-remote", "origin", f"refs/tags/{tag}", f"refs/tags/{tag}^{{}}")
+    for line in ref_lines.splitlines():
         sha, _, ref = line.partition("\t")
         if ref == f"refs/tags/{tag}^{{}}":
             peeled = sha
@@ -141,7 +167,7 @@ def _require_on_main(release_tag: str, commit: str) -> None:
         on_main = git.is_ancestor(commit, _MAIN_REF)
     except subprocess.CalledProcessError as exc:
         msg = f"cannot check whether {release_tag} is on origin/main: {error_text(exc)}"
-        raise PromoteError(msg) from exc
+        raise _process_error(msg, exc) from exc
     if not on_main:
         msg = f"{release_tag} ({commit[:_SHORT]}) is not on origin/main"
         raise PromoteError(msg)
@@ -150,7 +176,15 @@ def _require_on_main(release_tag: str, commit: str) -> None:
 def _read_release_draft(repo: str, release_tag: str, *, known_published: bool) -> str:
     def read() -> str:
         return github.read_output(
-            "release", "view", release_tag, "--repo", repo, "--json", "isDraft", "--jq", ".isDraft"
+            "release",
+            "view",
+            release_tag,
+            "--repo",
+            f"github.com/{repo}",
+            "--json",
+            "isDraft",
+            "--jq",
+            ".isDraft",
         )
 
     if known_published:
@@ -166,15 +200,22 @@ def _require_published_release(repo: str, release_tag: str, *, known_published: 
     :func:`retry.retry_known_resource`, as ``release/confirm.py`` reads the
     same Release (#3137), so a transient 404 does not fail the stage. A
     version a human typed is read once, so a missing Release fails fast.
+
+    The read names ``github.com`` explicitly, the host origin was checked
+    against, so ``GH_HOST`` cannot point it at another host's repo. A missing
+    GitHub token propagates unwrapped, so the command's entry point gives its
+    guided message.
     """
     try:
         is_draft = _read_release_draft(repo, release_tag, known_published=known_published)
+    except github.MissingGitHubTokenError:
+        raise
     except subprocess.CalledProcessError as exc:
         if retry.is_not_found(exc):
             msg = f"{release_tag} has no published GitHub Release on {repo}: {error_text(exc)}"
         else:
             msg = f"cannot check the GitHub Release of {release_tag} on {repo}: {error_text(exc)}"
-        raise PromoteError(msg) from exc
+        raise _process_error(msg, exc) from exc
     if is_draft.strip() != "false":
         msg = f"{release_tag} has no published GitHub Release on {repo} (draft: {is_draft})"
         raise PromoteError(msg)
@@ -239,32 +280,38 @@ def _changed_message(confirmed: Promotion, fresh: Promotion) -> str:
     return "\n".join(lines)
 
 
-def _require_local_release(confirmed: Promotion) -> None:
-    """Refuse unless the local release tag peels to the confirmed commit."""
+def _local_release_object(confirmed: Promotion) -> str:
+    """The local release tag's object id, refusing unless it peels to the confirmed commit.
+
+    The id is resolved once, and the push and the local tag update use it
+    rather than the tag's name, so what is pushed is the object checked here.
+    """
     ref = f"refs/tags/{confirmed.release_tag}"
-    local = _git_read("rev-parse", "--verify", "--end-of-options", f"{ref}^{{commit}}")
+    obj = _git_read("rev-parse", "--verify", "--end-of-options", ref)
+    local = _git_read("rev-parse", "--verify", "--end-of-options", f"{obj}^{{commit}}")
     if local != confirmed.new_commit:
         msg = (
             f"local {ref} ({local[:_SHORT]}) is not the confirmed commit "
             f"({confirmed.new_commit[:_SHORT]}); refusing to push it"
         )
         raise PromoteError(msg)
+    return obj
 
 
 def promote_confirmed(confirmed: Promotion, *, release_just_published: bool = False) -> None:
     """Move the rolling tag exactly as *confirmed*, or refuse.
 
     Re-resolves the plan and refuses if anything changed since it was
-    confirmed, then checks that the local release tag is the confirmed
-    commit. The push sends that tag to the rolling tag's ref, leasing on the
-    confirmed raw value (empty for "must not exist"), so origin applies it as
-    a compare-and-swap. The local rolling tag is updated only after origin
-    accepted the move.
+    confirmed, then resolves the local release tag once and checks that it
+    is the confirmed commit. The push sends that object to the rolling tag's
+    ref, leasing on the confirmed raw value (empty for "must not exist"), so
+    origin applies it as a compare-and-swap. The local rolling tag is updated
+    only after origin accepted the move.
     """
     fresh = plan_promotion(confirmed.release_tag, release_just_published=release_just_published)
     if fresh != confirmed:
         raise PromoteError(_changed_message(confirmed, fresh))
-    _require_local_release(confirmed)
+    obj = _local_release_object(confirmed)
 
     rolling, release = confirmed.rolling_tag, confirmed.release_tag
     print(f"Pushing {rolling} -> {release} to origin")
@@ -272,7 +319,7 @@ def promote_confirmed(confirmed: Promotion, *, release_just_published: bool = Fa
         git.read_output(
             "push",
             "origin",
-            f"refs/tags/{release}:refs/tags/{rolling}",
+            f"{obj}:refs/tags/{rolling}",
             f"--force-with-lease=refs/tags/{rolling}:{confirmed.old_ref}",
         )
     except subprocess.CalledProcessError as exc:
@@ -282,17 +329,17 @@ def promote_confirmed(confirmed: Promotion, *, release_just_published: bool = Fa
             f"(the push required origin's {rolling} to be {expected}): "
             f"{error_text(exc, output=False)}"
         )
-        raise PromoteError(msg) from exc
+        raise _process_error(msg, exc) from exc
     print(f"Promoted: {rolling} -> {release}")
     try:
-        git.read_output("tag", "-f", rolling, f"refs/tags/{release}")
+        git.read_output("tag", "-f", rolling, obj)
     except subprocess.CalledProcessError as exc:
         msg = (
             f"{rolling} moved to {release} on origin, but updating the local {rolling} "
             f"tag failed ({error_text(exc, output=False)}); run "
             "`vrg-git fetch --tags --force origin` to refresh it"
         )
-        raise PromoteError(msg) from exc
+        raise _process_error(msg, exc) from exc
 
 
 def promote(version: str, *, dry_run: bool = False) -> None:

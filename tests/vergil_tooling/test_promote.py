@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from vergil_tooling.lib import github
 from vergil_tooling.lib.promote import (
     PromoteError,
     Promotion,
@@ -44,12 +45,16 @@ def _ok(out: str = "", returncode: int = 0, stderr: str = "") -> _sp.CompletedPr
     return _sp.CompletedProcess(args=[], returncode=returncode, stdout=out, stderr=stderr)
 
 
-def _ls_lines(tag: str, raw: str | None, peeled: str | None) -> str:
-    """ls-remote output for *tag*: annotated when *peeled* differs from *raw*."""
+def _ls_lines(tag: str, raw: str | None, peeled: str | None, patterns: list[str]) -> str:
+    """ls-remote output for *tag*: annotated when *peeled* differs from *raw*.
+
+    Like real git, the ``^{}`` line is returned only when *patterns* asks
+    for it by name: ``refs/tags/<tag>`` alone does not match it.
+    """
     if not raw:
         return ""
-    out = f"{raw}\trefs/tags/{tag}\n"
-    if peeled and peeled != raw:
+    out = f"{raw}\trefs/tags/{tag}\n" if f"refs/tags/{tag}" in patterns else ""
+    if peeled and peeled != raw and f"refs/tags/{tag}^{{}}" in patterns:
         out += f"{peeled}\trefs/tags/{tag}^{{}}\n"
     return out
 
@@ -92,17 +97,21 @@ def _git_responses(  # noqa: PLR0913
         if sub == "ls-remote":
             if ls_rc:
                 return _ok(returncode=ls_rc, stderr="fatal: network")
-            ref = argv[3].removeprefix("refs/tags/")
+            patterns = argv[3:]
+            ref = patterns[0].removeprefix("refs/tags/")
             if ref.count(".") == 2:  # release tag vX.Y.Z
-                return _ok(_ls_lines(ref, release_raw or release, release))
+                return _ok(_ls_lines(ref, release_raw or release, release, patterns))
             if seq is not None:
                 raw, peeled = next(seq)
-                return _ok(_ls_lines(ref, raw, peeled))
-            return _ok(_ls_lines(ref, rolling_raw or rolling, rolling))
+                return _ok(_ls_lines(ref, raw, peeled, patterns))
+            return _ok(_ls_lines(ref, rolling_raw or rolling, rolling, patterns))
         if sub == "merge-base":
             return _ok(returncode=on_main, stderr="fatal: bad object")
         if sub == "rev-parse":
-            return _ok((local_release or release or "") + "\n")
+            target = argv[-1]
+            if target.endswith("^{commit}"):  # peel the resolved release object
+                return _ok((local_release or release or "") + "\n")
+            return _ok((release_raw or release or "") + "\n")  # the local release tag
         if sub in ("tag", "push"):
             return _ok()
         msg = f"unexpected git call: {argv}"
@@ -150,16 +159,26 @@ _PUSH_ARGV = [
     "git",
     "push",
     "origin",
-    "refs/tags/v2.1.50:refs/tags/v2.1",
+    f"{NEW_TAG_OBJ}:refs/tags/v2.1",
     f"--force-with-lease=refs/tags/v2.1:{OLD_REF}",
 ]
-_LOCAL_TAG_ARGV = ["git", "tag", "-f", "v2.1", "refs/tags/v2.1.50"]
+_LOCAL_TAG_ARGV = ["git", "tag", "-f", "v2.1", NEW_TAG_OBJ]
 
 
 def test_plan_promotion_reports_repo_and_commits() -> None:
     with _patched():
         p = plan_promotion("2.1.50")
     assert p == Promotion(_REPO, "v2.1", "v2.1.50", OLD_REF, OLD, NEW)
+
+
+def test_plan_promotion_peels_annotated_tags_by_asking_for_the_peeled_ref() -> None:
+    with _patched() as (mock_run, _):
+        p = plan_promotion("2.1.50")
+    assert p.new_commit == NEW  # the commit, not the tag object NEW_TAG_OBJ
+    assert p.old_commit == OLD  # the commit, not the tag object OLD_REF
+    ls = [a for a in _argvs(mock_run) if a[1] == "ls-remote"]
+    assert ["git", "ls-remote", "origin", "refs/tags/v2.1.50", "refs/tags/v2.1.50^{}"] in ls
+    assert ["git", "ls-remote", "origin", "refs/tags/v2.1", "refs/tags/v2.1^{}"] in ls
 
 
 def test_plan_promotion_equal_commits_when_already_promoted() -> None:
@@ -322,6 +341,23 @@ def test_plan_promotion_retries_a_transient_release_404_when_just_published() ->
     assert read.call_args.args[:3] == ("release", "view", "v2.1.50")
 
 
+def test_plan_promotion_reads_the_release_on_github_com() -> None:
+    with _patched() as (_, read):
+        plan_promotion("2.1.50")
+    assert read.call_args.args[3:5] == ("--repo", f"github.com/{_REPO}")
+
+
+def test_plan_promotion_lets_a_missing_token_through_unwrapped() -> None:
+    def view(*_a: str) -> str:
+        raise github.MissingGitHubTokenError(4, ["gh"], "", "gh auth login")
+
+    with (
+        _patched(release_view=view),
+        pytest.raises(github.MissingGitHubTokenError),
+    ):
+        plan_promotion("2.1.50")
+
+
 def test_plan_promotion_refuses_draft_release() -> None:
     with (
         _patched(release_view="true"),
@@ -421,13 +457,20 @@ def test_promote_confirmed_refuses_a_local_release_tag_that_differs() -> None:
     ):
         promote_confirmed(plan_promotion("2.1.50"))
     assert _mutations(mock_run) == []
-    assert [
-        "git",
-        "rev-parse",
-        "--verify",
-        "--end-of-options",
-        "refs/tags/v2.1.50^{commit}",
-    ] in _argvs(mock_run)
+    argvs = _argvs(mock_run)
+    assert ["git", "rev-parse", "--verify", "--end-of-options", "refs/tags/v2.1.50"] in argvs
+    peel = ["git", "rev-parse", "--verify", "--end-of-options", f"{NEW_TAG_OBJ}^{{commit}}"]
+    assert peel in argvs
+
+
+def test_promote_confirmed_pushes_the_object_it_checked() -> None:
+    with _patched() as (mock_run, _):
+        promote_confirmed(plan_promotion("2.1.50"))
+    argvs = _argvs(mock_run)
+    peel = ["git", "rev-parse", "--verify", "--end-of-options", f"{NEW_TAG_OBJ}^{{commit}}"]
+    assert argvs.index(peel) < argvs.index(_PUSH_ARGV)
+    # neither the push nor the local tag update resolves the release tag's name again
+    assert all("refs/tags/v2.1.50" not in " ".join(a) for a in _mutations(mock_run))
 
 
 def test_promote_confirmed_leases_on_raw_annotated_tag_object() -> None:
@@ -453,7 +496,7 @@ def test_promote_confirmed_new_rolling_tag_uses_empty_lease() -> None:
         "git",
         "push",
         "origin",
-        "refs/tags/v2.2.0:refs/tags/v2.2",
+        f"{NEW_TAG_OBJ}:refs/tags/v2.2",
         "--force-with-lease=refs/tags/v2.2:",
     ]
 
@@ -546,6 +589,22 @@ def test_promote_refused_push_names_the_lease(capsys: pytest.CaptureFixture[str]
     assert "stale info" not in str(excinfo.value)  # git's stderr is echoed once, not repeated
     assert capsys.readouterr().err.count("stale info") == 1
     assert not any(a[1] == "tag" for a in _argvs(mock_run))  # local tag untouched
+    # vrg-release's tracking issue records the command and git's output
+    assert excinfo.value.cmd == ["git"]
+    assert excinfo.value.stderr == "! [rejected] v2.1 (stale info)\n"
+
+
+def test_promote_git_failure_carries_command_and_output() -> None:
+    with _patched(fetch_rc=1), pytest.raises(PromoteError) as excinfo:
+        promote("2.1.50")
+    assert excinfo.value.cmd[:2] == ["git", "fetch"]
+    assert excinfo.value.stderr == "fatal: unable to access"
+
+
+def test_promote_refusal_carries_no_command() -> None:
+    with _patched(on_main=1), pytest.raises(PromoteError) as excinfo:
+        promote("2.1.50")
+    assert getattr(excinfo.value, "cmd", "fallback") == "fallback"
 
 
 def test_promote_refused_push_of_new_tag_names_absent_lease() -> None:

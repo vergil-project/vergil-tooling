@@ -3,23 +3,25 @@
 from __future__ import annotations
 
 import subprocess as _sp
+from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
+import pytest
+
 from tests.vergil_tooling.test_promote import (  # noqa: F401 (autouse fixture)
     NEW,
+    NEW_TAG_OBJ,
     OLD,
     OLD_REF,
     _git_responses,
     _no_installation_token,
 )
 from vergil_tooling.bin.vrg_promote import main
+from vergil_tooling.lib import github
 
 if TYPE_CHECKING:
-    from pathlib import Path
     from unittest.mock import MagicMock
-
-    import pytest
 
 _RUN = "vergil_tooling.lib.promote.subprocess.run"
 _READ = "vergil_tooling.lib.promote.github.read_output"
@@ -147,7 +149,7 @@ def test_confirmed_run_promotes(capsys: pytest.CaptureFixture[str]) -> None:
         patch("builtins.input", return_value="y") as mock_input,
     ):
         assert main() == 0
-    refspec = "refs/tags/v2.1.50:refs/tags/v2.1"
+    refspec = f"{NEW_TAG_OBJ}:refs/tags/v2.1"
     assert _pushes(mock_run) == [["git", "push", "origin", refspec, _LEASE]]
     prompt = "Move v2.1 on vergil-project/vergil-claude-plugin? [y/N] "
     assert mock_input.call_args.args[0] == prompt
@@ -209,7 +211,7 @@ def test_promote_from_version_file(tmp_path: Path, capsys: pytest.CaptureFixture
         result = main()
     assert result == 0
     assert "v3.1" in capsys.readouterr().out
-    assert ["git", "tag", "-f", "v3.1", "refs/tags/v3.1.0"] in _mutations(mock_run)
+    assert ["git", "tag", "-f", "v3.1", NEW_TAG_OBJ] in _mutations(mock_run)
 
 
 def test_promote_no_version_no_file(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -247,3 +249,34 @@ def test_push_failure_reports_error(capsys: pytest.CaptureFixture[str]) -> None:
     err = capsys.readouterr().err
     assert err.count("stale info") == 1
     assert "Error: origin did not accept the move of v2.1" in err
+
+
+def test_missing_token_gets_the_guided_message(capsys: pytest.CaptureFixture[str]) -> None:
+    def view(*_a: str) -> str:
+        raise github.MissingGitHubTokenError(4, ["gh"], "", "gh auth login")
+
+    with (
+        patch("sys.argv", ["vrg-promote", "--dry-run", "2.1.50"]),
+        patch(_RUN, side_effect=_git_responses()),
+        patch(_READ, side_effect=view),
+        pytest.raises(SystemExit) as excinfo,
+    ):
+        main()
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert err.strip() == github.missing_token_message("vrg-promote").strip()
+    assert "Error:" not in err
+
+
+def test_app_auth_error_gets_the_guided_message(capsys: pytest.CaptureFixture[str]) -> None:
+    exc = github.AppAuthError("vergil-project", "123", Path("/nonexistent/key.pem"), "no key")
+    with (
+        patch("sys.argv", ["vrg-promote", "--dry-run", "2.1.50"]),
+        patch(_RUN, side_effect=_git_responses()),
+        patch(_READ, side_effect=exc),
+        pytest.raises(SystemExit),
+    ):
+        main()
+    err = capsys.readouterr().err
+    assert err.startswith("vrg-promote: ")
+    assert "Error:" not in err

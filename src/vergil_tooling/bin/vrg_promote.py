@@ -1,7 +1,9 @@
 """CLI entry point for vrg-promote.
 
 Moves the rolling ``vX.Y`` tag to an existing release ``vX.Y.Z``. It is a
-human maintainer action: an agent identity is refused before any output. The
+human maintainer action: an agent identity is refused before any output (a
+guard against an agent running it by mistake; the GitHub rolling-tag ruleset
+is what enforces who can move the tag). The
 command prints the origin repo and the tag move, and asks for confirmation on
 the terminal before it pushes; with no terminal to ask on, it refuses.
 """
@@ -12,7 +14,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from vergil_tooling.lib import identity_mode
+from vergil_tooling.lib import github, identity_mode
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.promote import describe, plan_promotion, promote_confirmed
@@ -83,6 +85,8 @@ def main() -> int:
             print(f"vrg-promote: {p.rolling_tag} not moved.", file=sys.stderr)
             return 1
         promote_confirmed(p)
+    except (github.AppAuthError, github.NoInstallationError, github.MissingGitHubTokenError):
+        raise  # cli_main prints the guided remediation message
     except Exception as exc:
         print(f"Error: {error_text(exc)}", file=sys.stderr)
         return 1
