@@ -19037,8 +19037,47 @@ version in <code>VERSION</code>, using <code>git-cliff</code>.</p>
 </tbody>
 </table>
 <h3 id="vrg-promote">vrg-promote<a class="headerlink" href="#vrg-promote" title="Permanent link">&para;</a></h3>
-<p>Force-update the rolling <code>vX.Y</code> tag to point at release <code>vX.Y.Z</code>.
-<code>--dry-run</code> prints what it would do.</p>
+<p>Move the rolling <code>vX.Y</code> tag to release <code>vX.Y.Z</code>. It is human-only: it
+refuses any agent identity, failing closed on any agent signal
+(<code>is_agent() or any_agent_signal()</code>), before any output or git call.
+<code>vrg-release</code>'s promote stage uses the same library and the same refusal.
+The refusal stops an agent from running it by mistake; it is not a security
+boundary, because the identity signals come from the caller's environment.
+The rolling-tag ruleset on GitHub, which only the repository Admin role
+bypasses, is what enforces who can move the tag.</p>
+<p>The target must be an existing <code>vX.Y.Z</code> tag on origin whose commit is on
+origin's <code>main</code> and that has a published (non-draft) GitHub Release; any
+other target is refused. origin's push URL must name the same GitHub repo as
+its fetch URL. Every run, <code>--dry-run</code> included, first runs
+<code>git fetch --tags --force origin +refs/heads/main:refs/remotes/origin/main</code>,
+so the checks run against origin's current state. That fetch overwrites
+local tags with origin's.</p>
+<p>It prints the origin repo and the tag move, for example:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>origin: vergil-project/vergil-claude-plugin
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>v2.1 1a2b3c4d5e6f -&gt; v2.1.50 fc17882a9b0c
+</code></pre></div>
+<p><code>--dry-run</code> prints the same lines, after the same target check, and stops.
+Otherwise it asks <code>Move vX.Y on &lt;repo&gt;? [y/N]</code> on the terminal, and moves
+the tag only on <code>y</code> or <code>yes</code>. With no terminal to confirm on, it refuses.
+Before it pushes it re-resolves the move and refuses if anything changed
+since it was confirmed, and resolves the local release tag once and checks
+that it is the confirmed commit. It then pushes that tag object, by its id,
+to the rolling tag's ref
+as a compare-and-swap (<code>--force-with-lease</code> on the rolling tag's value on
+origin, empty when the tag is new), so it overwrites exactly the tag that
+was shown, or is refused. The local rolling tag is updated only after origin
+accepts the move. When the rolling tag already points at the release, it
+prints only the "already promoted" line, asks nothing and pushes nothing.</p>
+<p>When <code>vrg-release</code>'s promote stage calls it, the GitHub Release read retries
+a 404 for a short budget, since that Release was just published. A version
+given to <code>vrg-promote</code> is read once, so a missing Release is refused at once.
+The read names <code>github.com/&lt;owner&gt;/&lt;repo&gt;</code>, the host origin was checked
+against. A missing GitHub token, or GitHub App credentials that cannot give
+an installation token, print the same guided message as other <code>vrg-*</code>
+commands; any other failed GitHub or git call prints <code>Error: …</code>. If a push
+fails, it reads origin's rolling tag back: when origin holds the release (an
+earlier attempt landed before the connection dropped), the move is reported
+as done.</p>
 <table>
 <thead>
 <tr>
@@ -19057,15 +19096,15 @@ version in <code>VERSION</code>, using <code>git-cliff</code>.</p>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>Git repo with the release tag; push access to origin</td>
+<td>Human identity; run in the repo's checkout; a terminal to confirm on; push access to origin</td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td><code>Error:</code> on stderr when there is no version or the tag update fails</td>
+<td>Exit 1 with a message on stderr. An agent identity, a run with no terminal, a declined or unanswered confirmation, and a missing <code>VERSION</code> file each print their own <code>vrg-promote:</code> or plain message; a refused target, a move that changed since it was confirmed, an unreadable <code>VERSION</code> file, and a failed git or GitHub call print <code>Error: …</code>; a missing GitHub token or unusable GitHub App credentials print the guided <code>vrg-promote:</code> message</td>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 success, 1 error</td>
+<td>0 success (including "already promoted" and <code>--dry-run</code>), 1 refusal or error</td>
 </tr>
 <tr>
 <td>Status</td>
@@ -19708,9 +19747,9 @@ deferral — so no review skill hand-rolls them. Routes:</p>
 <li><code>defer --reason TEXT --revisit-when TEXT [--date YYYY-MM-DD]</code> — move the
   item into its queue home's deferred epic and post the deferral record:</li>
 </ul>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>Deferred &lt;YYYY-MM-DD&gt;: &lt;reason&gt;
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>Revisit when: &lt;conditions&gt;
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>Deferred from: &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>Deferred &lt;YYYY-MM-DD&gt;: &lt;reason&gt;
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>Revisit when: &lt;conditions&gt;
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>Deferred from: &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;
 </code></pre></div>
 <p><code>--date</code> stamps an original deferral date instead of today. The item is
   linked before the record is posted, and a planning item's <code>in-progress</code>
@@ -19803,7 +19842,7 @@ advisory still not retargeted. A split retargets an item's one advisory
 before the original closes. A split of an item naming several advisories
 is refused before any change, because which advisory goes to which task
 can't be inferred:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>vrg-intake-route: &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt; names several advisories (&lt;GHSA-id&gt;, &lt;GHSA-id&gt;); retarget each by hand with vrg-security-record retarget, then split
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>vrg-intake-route: &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt; names several advisories (&lt;GHSA-id&gt;, &lt;GHSA-id&gt;); retarget each by hand with vrg-security-record retarget, then split
 </code></pre></div>
 <p>See <a href="../../guides/security-records/#when-the-issue-moves">Security Records</a>.</p>
 <h3 id="vrg-security-record">vrg-security-record<a class="headerlink" href="#vrg-security-record" title="Permanent link">&para;</a></h3>
@@ -20140,21 +20179,21 @@ merged verdict was withheld, issue #1719) is counted under
 behind a "0 cruft" message (issue #2347). A merged release or deps
 worktree shows as <code>merged</code> in its own section but is not counted as
 <code>vrg-finalize-pr</code> cruft.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>Main checkout (integration branch: develop)
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>CHECKOUT               BRANCH   DIRTY  LAST COMMIT  STATUS
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>mq-gateway-replay-lab  develop  -      23d ago      ok
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>Development
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>WORKTREE                      BRANCH                          PR  STATE  WORKFLOW  AHEAD  DIRTY  LAST COMMIT  LAST MODIFIED
-<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>issue-315-deps-security-bump  feature/315-deps-security-bump  -   no-pr  ready     1      -      1h ago       1h ago
-<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>
-<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>Other / unknown
-<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>WORKTREE         BRANCH      PR  STATE     WORKFLOW  AHEAD  DIRTY  LAST COMMIT  LAST MODIFIED
-<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>tmp-wheel-build  (detached)  -   detached  -         0      -      82d ago      82d ago
-<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>  note: tmp-wheel-build (detached): detached HEAD — no branch checked out; check out a branch to resume work
-<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>
-<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>3 worktrees: main checkout (ok), 1 development, 0 release and dependency machinery, 1 other / unknown.
-<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>Development: 0 active, 0 needs-attention, 1 stalled (no-pr), 0 cruft (removable). 1 PR prepared.
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>Main checkout (integration branch: develop)
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>CHECKOUT               BRANCH   DIRTY  LAST COMMIT  STATUS
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>mq-gateway-replay-lab  develop  -      23d ago      ok
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>Development
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>WORKTREE                      BRANCH                          PR  STATE  WORKFLOW  AHEAD  DIRTY  LAST COMMIT  LAST MODIFIED
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>issue-315-deps-security-bump  feature/315-deps-security-bump  -   no-pr  ready     1      -      1h ago       1h ago
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>Other / unknown
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>WORKTREE         BRANCH      PR  STATE     WORKFLOW  AHEAD  DIRTY  LAST COMMIT  LAST MODIFIED
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>tmp-wheel-build  (detached)  -   detached  -         0      -      82d ago      82d ago
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>  note: tmp-wheel-build (detached): detached HEAD — no branch checked out; check out a branch to resume work
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a>3 worktrees: main checkout (ok), 1 development, 0 release and dependency machinery, 1 other / unknown.
+<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a>Development: 0 active, 0 needs-attention, 1 stalled (no-pr), 0 cruft (removable). 1 PR prepared.
 </code></pre></div>
 <table>
 <thead>
@@ -21091,7 +21130,7 @@ plugin trees loaded from disk instead of the installed plugins, for running
 unreleased plugin work (for example a paad checkout's <code>preview/paad</code>) across
 the fleet. List the trees in <code>~/.config/vergil/plugin-dirs.toml</code> on the host,
 a personal file you create by hand:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">plugin_dirs</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"/Users/me/dev/projects/me/paad-fleet/preview/paad"</span><span class="p">]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">plugin_dirs</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"/Users/me/dev/projects/me/paad-fleet/preview/paad"</span><span class="p">]</span>
 </code></pre></div>
 <p><code>plugin_dirs</code> is the only key, and each entry must be an absolute path. For
 each entry the session adds <code>--plugin-dir &lt;path&gt;</code> to the <code>claude</code> launch,
