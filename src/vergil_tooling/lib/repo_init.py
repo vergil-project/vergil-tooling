@@ -1458,6 +1458,7 @@ def step_github_config(ctx: RepoInitContext) -> None:
         fetch_actual_state,
         ghas_available,
     )
+    from vergil_tooling.lib.versions import VersionsError
 
     print("Step 9: Applying GitHub config...")
 
@@ -1466,7 +1467,12 @@ def step_github_config(ctx: RepoInitContext) -> None:
     cfg = config_module.read_config(ctx.work_dir)
     result = fetch_actual_state(ctx.repo)
     is_org = result.owner_type == "Organization"
-    desired = compute_desired_state(cfg, visibility=result.visibility, is_org=is_org)
+    # A resumed run skips step 3's version check, and the window may have moved
+    # since; a pin outside it stops here as one line, like step 3 (#3670).
+    try:
+        desired = compute_desired_state(cfg, visibility=result.visibility, is_org=is_org)
+    except VersionsError as exc:
+        raise SystemExit(f"error: {exc}") from exc
     # Refuse to apply a CI-gates ruleset whose required status checks the
     # generated ci.yml never emits on a pull_request — the defect that ships a
     # repository which cannot merge its first PR with every check green (#2720).

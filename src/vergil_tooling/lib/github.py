@@ -1124,11 +1124,34 @@ def _reconcile_stale_checks(pr: str, checks: list[dict[str, str]]) -> list[dict[
 # App-posted statuses (CodeQL/Semgrep/Trivy) use a different, non-Actions link
 # with no run id to probe, so they never match.
 _ACTIONS_RUN_LINK_RE = re.compile(r"/actions/runs/(\d+)/job/")
+# The ``owner/repo`` that owns an Actions job link's run.
+_ACTIONS_RUN_REPO_LINK_RE = re.compile(r"github\.com/([^/]+/[^/]+)/actions/runs/(\d+)/job/")
 
 
-def run_completed(run_id: str) -> bool:
-    """True if the workflow run has reached a terminal status."""
-    data = read_json("run", "view", run_id, "--json", "status")
+def actions_run_of(link: str) -> tuple[str, str] | None:
+    """The ``(owner/repo, run_id)`` of an Actions job *link*, or ``None`` for a non-Actions link.
+
+    The run must be looked up in the repo that owns it, not the cwd's (#3829),
+    so an Actions job link whose repo cannot be read is an error rather than a
+    run silently looked up elsewhere or skipped.
+    """
+    if _ACTIONS_RUN_LINK_RE.search(link) is None:
+        return None
+    match = _ACTIONS_RUN_REPO_LINK_RE.search(link)
+    if match is None:
+        msg = f"cannot read the repository of Actions job link {link!r}"
+        raise ValueError(msg)
+    return match.group(1), match.group(2)
+
+
+def run_completed(repo: str, run_id: str) -> bool:
+    """True if workflow run *run_id* of *repo* (``owner/repo``) has reached a terminal status.
+
+    *repo* is passed to ``gh`` explicitly: without it ``gh run view`` resolves
+    the current directory's repo, which 404s when the watched PR lives in
+    another repo (#3829).
+    """
+    data = read_json("run", "view", run_id, "--repo", repo, "--json", "status")
     return isinstance(data, dict) and data.get("status") == "completed"
 
 
@@ -1192,14 +1215,14 @@ class _StaleCheckProbe:
         self._job_reads: dict[tuple[str, str], tuple[float, str | None, Exception | None]] = {}
         self._suspected: tuple[str, ...] = ()
 
-    def _run_done_since(self, run_id: str, now: float) -> float | None:
-        """When *run_id* was first seen completed, probing it if due; None while running."""
+    def _run_done_since(self, repo: str, run_id: str, now: float) -> float | None:
+        """When *repo*'s run *run_id* was first seen completed, probing if due; else None."""
         if run_id not in self._completed_at:
             last = self._probed_at.get(run_id)
             if last is not None and now - last < _RUN_PROBE_INTERVAL_SECS:
                 return None
             self._probed_at[run_id] = now
-            if not run_completed(run_id):
+            if not run_completed(repo, run_id):
                 return None
             self._completed_at[run_id] = now
         return self._completed_at[run_id]
@@ -1243,10 +1266,10 @@ class _StaleCheckProbe:
             name, link = str(check.get("name")), str(check.get("link") or "")
             key = (name, link)
             if key not in self._passed:
-                run = _ACTIONS_RUN_LINK_RE.search(link)
+                run = actions_run_of(link)
                 if run is None:
                     continue  # app-posted status: no run to probe
-                done = self._run_done_since(run.group(1), now)
+                done = self._run_done_since(*run, now)
                 if done is None or now - done < _STALE_GRACE_SECS:
                     continue
                 waited = now - done
@@ -1482,10 +1505,10 @@ def orphaned_check_names(pr: str) -> list[str]:
     for check in pr_checks(pr):
         if check.get("bucket") != "pending":
             continue
-        match = _ACTIONS_RUN_LINK_RE.search(check.get("link") or "")
-        if match is None:
+        run = actions_run_of(check.get("link") or "")
+        if run is None:
             continue
-        if run_completed(match.group(1)):
+        if run_completed(*run):
             orphans.append(str(check.get("name")))
     return orphans
 

@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.280] - 2026-10-30
+
+### Bug fixes
+
+- report version-window resolution errors as one line, not a traceback (#3856)
+- look up Actions runs in the repo their check link names (#3858)
+
+### Chores
+
+- uv lock --upgrade
+
+### Documentation
+
+- name the CLAUDE.md template region in the adoption section (#3859)
+- allow ignored scratch in the main clone's build/ (#3861)
+
+### Features
+
+- remove the vrg-triage-create deprecated alias (#3857)
+- add rolling-tag rulesets (#3862)
+- refuse agents, check the target and confirm before moving a rolling tag (#3863)
+
 ## [2.1.279] - 2026-10-29
 
 ### Documentation

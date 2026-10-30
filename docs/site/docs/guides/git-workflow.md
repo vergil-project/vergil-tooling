@@ -365,8 +365,8 @@ with a fix task, and the next
 
 `vrg-github-repo-init` creates a new managed repository, or adopts
 an existing one with `--adopt`, and writes every managed file in its
-canonical form: `vergil.toml`, `CLAUDE.md` (including the
-Parallel-AI-agent-development section), `.claude/settings.json`,
+canonical form: `vergil.toml`, `CLAUDE.md` (the packaged template
+region, including its "Worktrees" section), `.claude/settings.json`,
 `.claude/hooks/guard.sh`, the managed `.gitignore` block (including
 `.worktrees/`) and the GitHub workflows. Two guides cover it:
 

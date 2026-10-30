@@ -299,16 +299,61 @@ version in `VERSION`, using `git-cliff`.
 
 ### vrg-promote
 
-Force-update the rolling `vX.Y` tag to point at release `vX.Y.Z`.
-`--dry-run` prints what it would do.
+Move the rolling `vX.Y` tag to release `vX.Y.Z`. It is human-only: it
+refuses any agent identity, failing closed on any agent signal
+(`is_agent() or any_agent_signal()`), before any output or git call.
+`vrg-release`'s promote stage uses the same library and the same refusal.
+The refusal stops an agent from running it by mistake; it is not a security
+boundary, because the identity signals come from the caller's environment.
+The rolling-tag ruleset on GitHub, which only the repository Admin role
+bypasses, is what enforces who can move the tag.
+
+The target must be an existing `vX.Y.Z` tag on origin whose commit is on
+origin's `main` and that has a published (non-draft) GitHub Release; any
+other target is refused. origin's push URL must name the same GitHub repo as
+its fetch URL. Every run, `--dry-run` included, first runs
+`git fetch --tags --force origin +refs/heads/main:refs/remotes/origin/main`,
+so the checks run against origin's current state. That fetch overwrites
+local tags with origin's.
+
+It prints the origin repo and the tag move, for example:
+
+```text
+origin: vergil-project/vergil-claude-plugin
+v2.1 1a2b3c4d5e6f -> v2.1.50 fc17882a9b0c
+```
+
+`--dry-run` prints the same lines, after the same target check, and stops.
+Otherwise it asks `Move vX.Y on <repo>? [y/N]` on the terminal, and moves
+the tag only on `y` or `yes`. With no terminal to confirm on, it refuses.
+Before it pushes it re-resolves the move and refuses if anything changed
+since it was confirmed, and resolves the local release tag once and checks
+that it is the confirmed commit. It then pushes that tag object, by its id,
+to the rolling tag's ref
+as a compare-and-swap (`--force-with-lease` on the rolling tag's value on
+origin, empty when the tag is new), so it overwrites exactly the tag that
+was shown, or is refused. The local rolling tag is updated only after origin
+accepts the move. When the rolling tag already points at the release, it
+prints only the "already promoted" line, asks nothing and pushes nothing.
+
+When `vrg-release`'s promote stage calls it, the GitHub Release read retries
+a 404 for a short budget, since that Release was just published. A version
+given to `vrg-promote` is read once, so a missing Release is refused at once.
+The read names `github.com/<owner>/<repo>`, the host origin was checked
+against. A missing GitHub token, or GitHub App credentials that cannot give
+an installation token, print the same guided message as other `vrg-*`
+commands; any other failed GitHub or git call prints `Error: …`. If a push
+fails, it reads origin's rolling tag back: when origin holds the release (an
+earlier attempt landed before the connection dropped), the move is reported
+as done.
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_promote` |
 | Args | `version` (positional, default: the `VERSION` file), `--dry-run` |
-| Preconditions | Git repo with the release tag; push access to origin |
-| Failure mode | `Error:` on stderr when there is no version or the tag update fails |
-| Exit codes | 0 success, 1 error |
+| Preconditions | Human identity; run in the repo's checkout; a terminal to confirm on; push access to origin |
+| Failure mode | Exit 1 with a message on stderr. An agent identity, a run with no terminal, a declined or unanswered confirmation, and a missing `VERSION` file each print their own `vrg-promote:` or plain message; a refused target, a move that changed since it was confirmed, an unreadable `VERSION` file, and a failed git or GitHub call print `Error: …`; a missing GitHub token or unusable GitHub App credentials print the guided `vrg-promote:` message |
+| Exit codes | 0 success (including "already promoted" and `--dry-run`), 1 refusal or error |
 | Status | Active |
 
 ### vrg-version
@@ -581,8 +626,6 @@ tool exits 1 naming its URL and the `vrg-epic-move` command that links it. Used
 by the `intake-capture` skill. See
 [Intake, planning and deferred queues](../standards/github-issues.md#intake-planning-and-deferred-queues).
 
-[`vrg-triage-create`](#vrg-triage-create) is a deprecated alias.
-
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_intake_create` |
@@ -591,21 +634,6 @@ by the `intake-capture` skill. See
 | Failure mode | An extra `--label` missing from the registry is refused before anything is created; a failed link after creation exits 1 naming the created issue |
 | Exit codes | 0 created and linked, 1 error |
 | Status | Active |
-
-### vrg-triage-create
-
-Deprecated alias for [`vrg-intake-create`](#vrg-intake-create), kept for one
-release. It warns on stderr, ignores `--kind` (intake has no kind label), and
-forwards every other argument to `vrg-intake-create`.
-
-| Attribute | Value |
-|---|---|
-| Source | `vergil_tooling.bin.vrg_triage_create` |
-| Args | As `vrg-intake-create` |
-| Preconditions | As `vrg-intake-create` |
-| Failure mode | As `vrg-intake-create` |
-| Exit codes | As `vrg-intake-create` |
-| Status | Deprecated |
 
 ### vrg-intake-route
 
