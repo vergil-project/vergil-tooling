@@ -53,6 +53,7 @@ from vergil_tooling.lib.repo_init import (
     step_scaffold_config_files,
     step_scaffold_language,
 )
+from vergil_tooling.lib.versions import ResolutionError
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.versions.resolve import Resolution
@@ -2102,6 +2103,26 @@ class TestStepGithubConfigExtended:
             mock_fetch.return_value.owner_type = "Organization"
             mock_fetch.return_value.visibility = "public"
             step_github_config(ctx)
+
+    def test_version_window_error_stops_cleanly_before_apply(self, tmp_path: Path) -> None:
+        # A resumed run skips step 3's version check; a pin that has since left
+        # the window must stop step 9 as a one-line error, not a traceback,
+        # and before anything is applied (#3670).
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+        ctx.work_dir = tmp_path
+        failure = ResolutionError("[ci].versions pins 1.25, which is not in the go window")
+
+        with (
+            patch("vergil_tooling.lib.github_config.fetch_actual_state") as mock_fetch,
+            patch("vergil_tooling.lib.github_config.compute_desired_state", side_effect=failure),
+            patch("vergil_tooling.lib.github_config.apply_desired_state") as mock_apply,
+            patch("vergil_tooling.lib.config.read_config"),
+            pytest.raises(SystemExit, match=r"^error: \[ci\]\.versions pins 1\.25"),
+        ):
+            mock_fetch.return_value.owner_type = "Organization"
+            mock_fetch.return_value.visibility = "public"
+            step_github_config(ctx)
+        mock_apply.assert_not_called()
 
 
 class TestStepGithubPagesExtended:

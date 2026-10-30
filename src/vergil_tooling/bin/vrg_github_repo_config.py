@@ -33,6 +33,7 @@ from vergil_tooling.lib.remote_config import decode_contents as _decode_contents
 from vergil_tooling.lib.remote_config import fetch_config_from_ref as _fetch_config_from_ref
 from vergil_tooling.lib.remote_config import is_not_found as _is_not_found
 from vergil_tooling.lib.repo_config import audit_local_config
+from vergil_tooling.lib.versions import VersionsError
 
 
 @cli_main
@@ -80,9 +81,10 @@ def _audit_and_apply(args: argparse.Namespace, repo: str, *, local_compliant: bo
     # Exit codes are a contract for callers (e.g. vrg-release): 0 = compliant,
     # 1 = genuinely non-compliant, 2 = the audit could not complete. Config
     # resolution and the GitHub state fetch can fail operationally (missing
-    # vergil.toml, HTTP 403 reading actions/permissions under an App token);
-    # those are exit 2 with a clean diagnostic, never a false "non-compliant"
-    # verdict or a raw traceback (#1691).
+    # vergil.toml, a [ci].versions pin outside the published version window,
+    # HTTP 403 reading actions/permissions under an App token); those are exit
+    # 2 with a clean diagnostic, never a false "non-compliant" verdict or a raw
+    # traceback (#1691, #3670).
     try:
         config = _load_local_config(args.config) if args.config else _resolve_config(repo)
     except github.GitHubAPIError as exc:
@@ -94,6 +96,11 @@ def _audit_and_apply(args: argparse.Namespace, repo: str, *, local_compliant: bo
 
     try:
         github_diff = _audit_repo(repo, config)
+    except VersionsError as exc:
+        # The desired state carries the CI versions resolved from the published
+        # window; the error already says what to fix, so report it on one line.
+        emit_error(f"Could not resolve the CI versions for {repo}: {exc}")
+        return 2
     except (github.GitHubAPIError, RuntimeError) as exc:
         emit_error(f"Could not audit {repo}: {exc}")
         return 2
@@ -112,6 +119,9 @@ def _audit_and_apply(args: argparse.Namespace, repo: str, *, local_compliant: bo
         print(f"  Applying to {repo}...")
         try:
             reports = _apply_repo(repo, config)
+        except VersionsError as exc:
+            emit_error(f"Could not resolve the CI versions for {repo}: {exc}")
+            return 2
         except RuntimeError as exc:
             emit_error(str(exc))
             return 1
