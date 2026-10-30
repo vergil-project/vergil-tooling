@@ -35,10 +35,12 @@ from vergil_tooling.lib.process_errors import error_text
 _VERSION_RE = re.compile(r"^v?(\d+\.\d+\.\d+)$")
 # A github.com remote URL, in the forms git accepts: https (optionally with a
 # user), ssh:// (any user, optional port) or scp-style ``user@github.com:``.
+# The user part excludes ``?``, ``#``, ``\`` and whitespace, so the host that
+# is matched is the host a URL parser sees.
 _ORIGIN_RE = re.compile(
-    r"^(?:https://(?:[^@/]+@)?github\.com/"
-    r"|ssh://(?:[^@/]+@)?github\.com(?::\d+)?/"
-    r"|[^@/:]+@github\.com:)"
+    r"^(?:https://(?:[^@/?#\\\s]+@)?github\.com/"
+    r"|ssh://(?:[^@/?#\\\s]+@)?github\.com(?::\d+)?/"
+    r"|[^@/:?#\\\s]+@github\.com:)"
     r"(?P<repo>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?/?$",
     re.IGNORECASE,
 )
@@ -166,7 +168,8 @@ def _require_on_main(release_tag: str, commit: str) -> None:
     try:
         on_main = git.is_ancestor(commit, _MAIN_REF)
     except subprocess.CalledProcessError as exc:
-        msg = f"cannot check whether {release_tag} is on origin/main: {error_text(exc)}"
+        detail = error_text(exc, output=False)
+        msg = f"cannot check whether {release_tag} is on origin/main: {detail}"
         raise _process_error(msg, exc) from exc
     if not on_main:
         msg = f"{release_tag} ({commit[:_SHORT]}) is not on origin/main"
@@ -212,9 +215,15 @@ def _require_published_release(repo: str, release_tag: str, *, known_published: 
         raise
     except subprocess.CalledProcessError as exc:
         if retry.is_not_found(exc):
-            msg = f"{release_tag} has no published GitHub Release on {repo}: {error_text(exc)}"
+            msg = (
+                f"{release_tag} has no published GitHub Release on {repo}, or {repo} is not "
+                f"readable with this GitHub credential: {error_text(exc, output=False)}"
+            )
         else:
-            msg = f"cannot check the GitHub Release of {release_tag} on {repo}: {error_text(exc)}"
+            msg = (
+                f"cannot check the GitHub Release of {release_tag} on {repo}: "
+                f"{error_text(exc, output=False)}"
+            )
         raise _process_error(msg, exc) from exc
     if is_draft.strip() != "false":
         msg = f"{release_tag} has no published GitHub Release on {repo} (draft: {is_draft})"
@@ -298,6 +307,36 @@ def _local_release_object(confirmed: Promotion) -> str:
     return obj
 
 
+def _require_push_landed(
+    confirmed: Promotion, obj: str, exc: subprocess.CalledProcessError
+) -> None:
+    """Accept a failed push only if origin's rolling tag now holds *obj*; else raise.
+
+    ``git.read_output`` retries a push after a dropped connection, so a first
+    attempt can land and the retry then fail its lease against the new value.
+    Origin is re-read so that case reads as the move it was, not a refusal.
+    """
+    rolling = confirmed.rolling_tag
+    try:
+        raw, _ = _remote_tag(rolling)
+    except PromoteError as read_exc:
+        msg = (
+            f"the push of {rolling} failed ({error_text(exc, output=False)}), and origin's "
+            f"{rolling} could not be read back to see whether it moved ({read_exc}); "
+            f"check origin's {rolling} before running again"
+        )
+        raise _process_error(msg, exc) from exc
+    if raw == obj:
+        return
+    expected = confirmed.old_ref or "absent"
+    msg = (
+        f"origin did not accept the move of {rolling} "
+        f"(the push required origin's {rolling} to be {expected}): "
+        f"{error_text(exc, output=False)}"
+    )
+    raise _process_error(msg, exc) from exc
+
+
 def promote_confirmed(confirmed: Promotion, *, release_just_published: bool = False) -> None:
     """Move the rolling tag exactly as *confirmed*, or refuse.
 
@@ -323,13 +362,7 @@ def promote_confirmed(confirmed: Promotion, *, release_just_published: bool = Fa
             f"--force-with-lease=refs/tags/{rolling}:{confirmed.old_ref}",
         )
     except subprocess.CalledProcessError as exc:
-        expected = confirmed.old_ref or "absent"
-        msg = (
-            f"origin did not accept the move of {rolling} "
-            f"(the push required origin's {rolling} to be {expected}): "
-            f"{error_text(exc, output=False)}"
-        )
-        raise _process_error(msg, exc) from exc
+        _require_push_landed(confirmed, obj, exc)
     print(f"Promoted: {rolling} -> {release}")
     try:
         git.read_output("tag", "-f", rolling, obj)

@@ -225,6 +225,33 @@ def test_promote_no_version_no_file(tmp_path: Path, capsys: pytest.CaptureFixtur
     assert "VERSION" in err
 
 
+def test_interrupt_at_prompt_pushes_nothing(capsys: pytest.CaptureFixture[str]) -> None:
+    with (
+        patch("sys.argv", ["vrg-promote", "2.1.50"]),
+        patch(_RUN, side_effect=_git_responses()) as mock_run,
+        patch(_READ, return_value="false"),
+        patch("sys.stdin.isatty", return_value=True),
+        patch("builtins.input", side_effect=KeyboardInterrupt),
+    ):
+        assert main() == 1
+    assert _mutations(mock_run) == []
+    assert "not moved" in capsys.readouterr().err
+
+
+def test_unreadable_version_file_reports_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with (
+        patch("vergil_tooling.bin.vrg_promote.Path.cwd", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_promote.show", side_effect=ValueError("bad VERSION")),
+        patch("sys.argv", ["vrg-promote"]),
+        patch(_RUN) as mock_run,
+    ):
+        assert main() == 1
+    mock_run.assert_not_called()
+    assert "Error: cannot read the VERSION file: bad VERSION" in capsys.readouterr().err
+
+
 def test_promote_invalid_version(capsys: pytest.CaptureFixture[str]) -> None:
     with patch("sys.argv", ["vrg-promote", "invalid"]), patch(_RUN) as mock_run:
         result = main()

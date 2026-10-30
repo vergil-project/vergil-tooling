@@ -72,13 +72,14 @@ def _git_responses(  # noqa: PLR0913
     fetch_rc: int = 0,
     ls_rc: int = 0,
     fail: dict[str, _sp.CalledProcessError] | None = None,
-    rolling_seq: list[tuple[str | None, str | None]] | None = None,
+    rolling_seq: list[tuple[str | None, str | None] | None] | None = None,
 ) -> Callable[..., _sp.CompletedProcess[str]]:
     """A ``subprocess.run`` side effect answering git by argv.
 
     It honours ``check=True`` the way ``subprocess.run`` does. *rolling_seq*,
     when given, is consumed one ``(raw, peeled)`` per ls-remote of the rolling
-    tag, so a test can make origin move. *push_urls* defaults to *origin*, and
+    tag, so a test can make origin move; a ``None`` step makes that read
+    fail. *push_urls* defaults to *origin*, and
     *local_release* (the local release tag's commit) to *release*.
     """
     seq = iter(rolling_seq) if rolling_seq is not None else None
@@ -102,7 +103,10 @@ def _git_responses(  # noqa: PLR0913
             if ref.count(".") == 2:  # release tag vX.Y.Z
                 return _ok(_ls_lines(ref, release_raw or release, release, patterns))
             if seq is not None:
-                raw, peeled = next(seq)
+                step = next(seq)
+                if step is None:  # this read of the rolling tag fails
+                    return _ok(returncode=128, stderr="fatal: network")
+                raw, peeled = step
                 return _ok(_ls_lines(ref, raw, peeled, patterns))
             return _ok(_ls_lines(ref, rolling_raw or rolling, rolling, patterns))
         if sub == "merge-base":
@@ -592,6 +596,69 @@ def test_promote_refused_push_names_the_lease(capsys: pytest.CaptureFixture[str]
     # vrg-release's tracking issue records the command and git's output
     assert excinfo.value.cmd == ["git"]
     assert excinfo.value.stderr == "! [rejected] v2.1 (stale info)\n"
+
+
+def test_promote_push_that_landed_before_a_failed_retry_is_a_move(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The plan and the re-check read the old value; after the failed push,
+    # origin already holds the pushed release object.
+    with _patched(
+        rolling_seq=[(OLD_REF, OLD), (OLD_REF, OLD), (NEW_TAG_OBJ, NEW)],
+        fail={"push": _git_err("! [rejected] v2.1 (stale info)\n")},
+    ) as (mock_run, _):
+        promote("2.1.50")
+    assert _mutations(mock_run) == [_PUSH_ARGV, _LOCAL_TAG_ARGV]
+    assert "Promoted: v2.1 -> v2.1.50" in capsys.readouterr().out
+
+
+def test_promote_failed_push_with_unreadable_origin_says_so() -> None:
+    with (
+        _patched(
+            rolling_seq=[(OLD_REF, OLD), (OLD_REF, OLD), None],
+            fail={"push": _git_err("fatal: the remote end hung up\n")},
+        ) as (mock_run, _),
+        pytest.raises(PromoteError, match="could not be read back") as excinfo,
+    ):
+        promote("2.1.50")
+    assert not any(a[1] == "tag" for a in _argvs(mock_run))  # local tag untouched
+    assert excinfo.value.stderr == "fatal: the remote end hung up\n"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://evil.example#@github.com/o/r",
+        "https://evil.example?@github.com/o/r",
+        "ssh://evil.example#@github.com/o/r",
+        "evil.example?x@github.com:o/r",
+    ],
+)
+def test_plan_promotion_refuses_origin_whose_real_host_is_not_github(url: str) -> None:
+    with _patched(origin=url), pytest.raises(PromoteError, match="fetch URL"):
+        plan_promotion("2.1.50")
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["https://evil.example#@github.com/o/r", "https://evil.example?@github.com/o/r"],
+)
+def test_plan_promotion_refuses_push_url_whose_real_host_is_not_github(url: str) -> None:
+    with (
+        _patched(push_urls=[url]),
+        pytest.raises(PromoteError, match="push URL"),
+    ):
+        plan_promotion("2.1.50")
+
+
+def test_release_errors_name_the_failure_once() -> None:
+    with (
+        _patched(release_view=_view_raising("HTTP 404: Not Found")),
+        pytest.raises(PromoteError, match="not readable with this GitHub credential") as excinfo,
+    ):
+        plan_promotion("2.1.50")
+    assert "HTTP 404" not in str(excinfo.value)  # carried as the error's output instead
+    assert excinfo.value.stderr == "HTTP 404: Not Found"
 
 
 def test_promote_git_failure_carries_command_and_output() -> None:

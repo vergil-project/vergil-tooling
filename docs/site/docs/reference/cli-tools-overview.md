@@ -340,15 +340,19 @@ When `vrg-release`'s promote stage calls it, the GitHub Release read retries
 a 404 for a short budget, since that Release was just published. A version
 given to `vrg-promote` is read once, so a missing Release is refused at once.
 The read names `github.com/<owner>/<repo>`, the host origin was checked
-against. A missing or unusable GitHub credential prints the same guided
-message as other `vrg-*` commands.
+against. A missing GitHub token, or GitHub App credentials that cannot give
+an installation token, print the same guided message as other `vrg-*`
+commands; any other failed GitHub or git call prints `Error: …`. If a push
+fails, it reads origin's rolling tag back: when origin holds the release (an
+earlier attempt landed before the connection dropped), the move is reported
+as done.
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_promote` |
 | Args | `version` (positional, default: the `VERSION` file), `--dry-run` |
 | Preconditions | Human identity; run in the repo's checkout; a terminal to confirm on; push access to origin |
-| Failure mode | Exit 1 with a message on stderr. An agent identity, a run with no terminal, a declined or unanswered confirmation, and a missing `VERSION` file each print their own `vrg-promote:` or plain message; a refused target, a move that changed since it was confirmed, and a failed git or GitHub call print `Error: …` |
+| Failure mode | Exit 1 with a message on stderr. An agent identity, a run with no terminal, a declined or unanswered confirmation, and a missing `VERSION` file each print their own `vrg-promote:` or plain message; a refused target, a move that changed since it was confirmed, an unreadable `VERSION` file, and a failed git or GitHub call print `Error: …`; a missing GitHub token or unusable GitHub App credentials print the guided `vrg-promote:` message |
 | Exit codes | 0 success (including "already promoted" and `--dry-run`), 1 refusal or error |
 | Status | Active |
 

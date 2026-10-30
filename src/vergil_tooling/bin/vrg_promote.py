@@ -62,6 +62,9 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 1
+        except Exception as exc:
+            print(f"Error: cannot read the VERSION file: {error_text(exc)}", file=sys.stderr)
+            return 1
 
     try:
         p = plan_promotion(version)
@@ -79,7 +82,8 @@ def main() -> int:
             return 1
         try:
             answer = input(f"Move {p.rolling_tag} on {p.origin_repo}? [y/N] ")
-        except EOFError:
+        except (EOFError, KeyboardInterrupt):
+            print(file=sys.stderr)
             answer = ""
         if answer.strip().lower() not in ("y", "yes"):
             print(f"vrg-promote: {p.rolling_tag} not moved.", file=sys.stderr)
