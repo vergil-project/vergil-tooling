@@ -163,6 +163,8 @@ each one's includes, rules and bypass.
    - Prevent creating a branch named like a rolling tag, since some consumers,
      Claude Code among them, resolve a ref such as `v2.1` as a branch before a
      tag
+   - Prevent updating or force-pushing such a branch
+   - No deletion restriction, so a stray branch of that shape can be removed
    - No bypass
 
 **Documentation repositories** require two rulesets:

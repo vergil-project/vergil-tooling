@@ -295,7 +295,7 @@ def test_rolling_tag_branch_ruleset() -> None:
     assert r.enforcement == "active"
     assert r.ref_include == [BRANCH_PATTERN]
     assert r.bypass_actors == []
-    assert [rule["type"] for rule in r.rules] == ["creation"]
+    assert [rule["type"] for rule in r.rules] == ["creation", "update", "non_fast_forward"]
 
 
 # ---------------------------------------------------------------------------
