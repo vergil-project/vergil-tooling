@@ -509,8 +509,7 @@ vrg-intake-create --title "<what>" [--body TEXT | --body-file PATH]
 The issue is filed in the current repo's queue home — `<org>/.github` for a
 public repo, the repo itself for a private one (override with `--repo`) — and is
 linked under that home's intake epic as it is created; there is no unlinked
-path. `vrg-triage-create` survives for one release as a **deprecated alias**: it
-warns, ignores `--kind`, and forwards to `vrg-intake-create`.
+path.
 
 ### Viewing the queues: `vrg-queue`
 
