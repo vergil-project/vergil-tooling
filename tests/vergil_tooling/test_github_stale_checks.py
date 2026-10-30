@@ -77,7 +77,7 @@ def _checks(*pending: tuple[str, str]) -> Callable[[str], list[dict[str, str]]]:
 def _stub(
     monkeypatch: pytest.MonkeyPatch,
     *,
-    run_completed: Callable[[str], bool],
+    run_completed: Callable[[str, str], bool],
     job_conclusion: Callable[[str, str], str | None],
     pending: tuple[tuple[str, str], ...] = ((_MATRIX, _MATRIX_LINK),),
 ) -> None:
@@ -130,7 +130,7 @@ def test_replay_pr_3356_stale_matrix_check_passes_within_grace(
         jobs_read.append((repo, job_id))
         return "success"
 
-    _stub(monkeypatch, run_completed=lambda rid: clock.now >= run_done_at, job_conclusion=job)
+    _stub(monkeypatch, run_completed=lambda repo, rid: clock.now >= run_done_at, job_conclusion=job)
     github.wait_for_checks("3356", poll_interval=5, poll_timeout=1800, required=())
     assert clock.now <= run_done_at + github._RUN_PROBE_INTERVAL_SECS + github._STALE_GRACE_SECS
     assert clock.now >= run_done_at + github._STALE_GRACE_SECS
@@ -149,7 +149,7 @@ def test_stale_passed_check_is_not_rechecked_on_later_polls(
     running = "test / 3.14"
     running_link = "https://github.com/o/r/actions/runs/2/job/9"
 
-    def completed(rid: str) -> bool:
+    def completed(repo: str, rid: str) -> bool:
         return rid == "39619708036" or clock.now >= 300
 
     def job(repo: str, job_id: str) -> str:
@@ -179,7 +179,7 @@ def test_check_that_settles_within_grace_never_reads_the_job(
 
     _stub(
         monkeypatch,
-        run_completed=lambda rid: True,
+        run_completed=lambda repo, rid: True,
         job_conclusion=lambda repo, job: pytest.fail("job must not be read within grace"),
     )
     monkeypatch.setattr(github, "pr_checks", fake_checks)
@@ -194,7 +194,7 @@ def test_check_that_settles_within_grace_never_reads_the_job(
 def test_stale_check_without_successful_job_fails_after_grace(
     monkeypatch: pytest.MonkeyPatch, clock: _Clock, conclusion: str | None
 ) -> None:
-    _stub(monkeypatch, run_completed=lambda rid: True, job_conclusion=lambda r, j: conclusion)
+    _stub(monkeypatch, run_completed=lambda repo, rid: True, job_conclusion=lambda r, j: conclusion)
     with pytest.raises(github.OrphanedCheckError) as excinfo:
         github.wait_for_checks("1", poll_interval=5, poll_timeout=1800, required=())
     assert clock.now == github._ORPHAN_GRACE_SECS
@@ -215,7 +215,7 @@ def test_stale_check_with_unreadable_job_fails_after_grace(
     def unreadable(repo: str, job_id: str) -> str | None:
         raise cause
 
-    _stub(monkeypatch, run_completed=lambda rid: True, job_conclusion=unreadable)
+    _stub(monkeypatch, run_completed=lambda repo, rid: True, job_conclusion=unreadable)
     with pytest.raises(github.OrphanedCheckError, match="could not be read") as excinfo:
         github.wait_for_checks("1", poll_interval=5, poll_timeout=1800, required=())
     assert excinfo.value.__cause__ is cause
@@ -248,7 +248,7 @@ def test_late_result_within_grace_is_not_an_orphan(
     # Replay of the 2026-10-22 Actions incident (vrg-finalize-pr 651): the run
     # completed, the job had no result yet, and GitHub wrote the result back
     # minutes later. The waiter must wait it out rather than declare an orphan.
-    _stub(monkeypatch, run_completed=lambda rid: True, job_conclusion=lambda r, j: conclusion)
+    _stub(monkeypatch, run_completed=lambda repo, rid: True, job_conclusion=lambda r, j: conclusion)
     monkeypatch.setattr(github, "pr_checks", _late_result(clock, 200))
     github.wait_for_checks("651", poll_interval=5, poll_timeout=1800, required=())
     assert clock.now == 200
@@ -258,12 +258,29 @@ def test_late_result_within_grace_is_not_an_orphan(
     assert "re-checking for up to 5m00s" in err
 
 
+def test_stale_probe_looks_up_the_run_in_the_links_repo(
+    monkeypatch: pytest.MonkeyPatch, clock: _Clock
+) -> None:
+    """The run is probed in the repo its link names, not the cwd's (#3829)."""
+    probed: list[tuple[str, str]] = []
+
+    def completed(repo: str, rid: str) -> bool:
+        probed.append((repo, rid))
+        return True
+
+    _stub(monkeypatch, run_completed=completed, job_conclusion=lambda r, j: "success")
+    github.wait_for_checks("1", poll_interval=5, poll_timeout=1800, required=())
+    assert probed
+    assert set(probed) == {("vergil-project/vergil-tooling", "39619708036")}
+    del clock
+
+
 def test_late_required_check_with_successful_job_is_not_an_orphan(
     monkeypatch: pytest.MonkeyPatch, clock: _Clock
 ) -> None:
     # Replay of release PR #3425: `test / evidence` (required) stayed pending over
     # a successful job until GitHub caught up; it must not fail the release.
-    _stub(monkeypatch, run_completed=lambda rid: True, job_conclusion=lambda r, j: "success")
+    _stub(monkeypatch, run_completed=lambda repo, rid: True, job_conclusion=lambda r, j: "success")
     monkeypatch.setattr(github, "pr_checks", _late_result(clock, 240))
     github.wait_for_checks("3425", poll_interval=5, poll_timeout=1800, required={_MATRIX})
     assert clock.now == 240
@@ -278,7 +295,7 @@ def test_suspect_job_is_reread_throttled_then_once_more_for_the_verdict(
         reads.append(clock.now)
         return None
 
-    _stub(monkeypatch, run_completed=lambda rid: True, job_conclusion=job)
+    _stub(monkeypatch, run_completed=lambda repo, rid: True, job_conclusion=job)
     with pytest.raises(github.OrphanedCheckError):
         github.wait_for_checks("1", poll_interval=5, poll_timeout=1800, required=())
     grace, stale = github._ORPHAN_GRACE_SECS, github._STALE_GRACE_SECS
@@ -293,7 +310,7 @@ def test_suspect_whose_job_succeeds_during_grace_passes(
     # as soon as the job reads success, without waiting out the grace.
     _stub(
         monkeypatch,
-        run_completed=lambda rid: True,
+        run_completed=lambda repo, rid: True,
         job_conclusion=lambda r, j: "success" if clock.now >= 120 else None,
     )
     github.wait_for_checks("1", poll_interval=5, poll_timeout=1800, required=())
@@ -307,7 +324,7 @@ def test_suspects_are_reannounced_when_the_set_changes(
     other = ("docs / docs", "https://github.com/o/r/actions/runs/7/job/5")
     _stub(
         monkeypatch,
-        run_completed=lambda rid: rid == "39619708036" or clock.now >= 100,
+        run_completed=lambda repo, rid: rid == "39619708036" or clock.now >= 100,
         job_conclusion=lambda r, j: None,
         pending=((_MATRIX, _MATRIX_LINK), other),
     )
@@ -326,7 +343,7 @@ def test_orphan_grace_env_override_shortens_the_wait(
     monkeypatch: pytest.MonkeyPatch, clock: _Clock
 ) -> None:
     monkeypatch.setenv(github.ORPHAN_GRACE_ENV, "120")
-    _stub(monkeypatch, run_completed=lambda rid: True, job_conclusion=lambda r, j: None)
+    _stub(monkeypatch, run_completed=lambda repo, rid: True, job_conclusion=lambda r, j: None)
     with pytest.raises(github.OrphanedCheckError, match="within the 2m00s grace period"):
         github.wait_for_checks("1", poll_interval=5, poll_timeout=1800, required=())
     assert clock.now == 120
@@ -345,7 +362,7 @@ def test_stale_checks_are_all_named_in_one_error(
     other = ("docs / docs", "https://github.com/o/r/actions/runs/39619708036/job/5")
     _stub(
         monkeypatch,
-        run_completed=lambda rid: True,
+        run_completed=lambda repo, rid: True,
         job_conclusion=lambda r, j: "failure",
         pending=((_MATRIX, _MATRIX_LINK), other),
     )
@@ -355,19 +372,37 @@ def test_stale_checks_are_all_named_in_one_error(
     assert "docs / docs" in str(excinfo.value)
 
 
-def test_stale_check_with_unparseable_job_link_fails_after_grace(
+def test_stale_check_with_unparseable_job_link_fails_loud(
     monkeypatch: pytest.MonkeyPatch, clock: _Clock
 ) -> None:
-    # A job link whose repo cannot be parsed has no readable job: an orphan.
+    # A job link whose repo cannot be parsed names no repo to look the run up
+    # in, so it fails loud rather than being probed in some other repo (#3829).
     link = "https://ghe.example/o/r/actions/runs/7/job/8"
     _stub(
         monkeypatch,
-        run_completed=lambda rid: True,
+        run_completed=lambda repo, rid: pytest.fail("no repo to query"),
         job_conclusion=lambda r, j: pytest.fail("no repo to query"),
         pending=((_MATRIX, link),),
     )
-    with pytest.raises(github.OrphanedCheckError, match="could not be read"):
+    with pytest.raises(ValueError, match="cannot read the repository"):
         github.wait_for_checks("1", poll_interval=5, poll_timeout=1800, required=())
+    del clock
+
+
+def test_stale_check_with_unrecognised_job_id_fails_after_grace(
+    monkeypatch: pytest.MonkeyPatch, clock: _Clock
+) -> None:
+    # The run's repo is readable but the job id is not: no job to read, an orphan.
+    link = "https://github.com/o/r/actions/runs/7/job/not-a-number"
+    _stub(
+        monkeypatch,
+        run_completed=lambda repo, rid: True,
+        job_conclusion=lambda r, j: pytest.fail("no job to query"),
+        pending=((_MATRIX, link),),
+    )
+    with pytest.raises(github.OrphanedCheckError, match="unrecognised job link"):
+        github.wait_for_checks("1", poll_interval=5, poll_timeout=1800, required=())
+    del clock
 
 
 # --- wait_for_checks: genuinely running checks --------------------------------
@@ -378,7 +413,7 @@ def test_running_check_waits_until_deadline_with_throttled_probes(
 ) -> None:
     probes: list[float] = []
 
-    def running(rid: str) -> bool:
+    def running(repo: str, rid: str) -> bool:
         probes.append(clock.now)
         return False
 
@@ -402,7 +437,7 @@ def test_app_posted_pending_check_is_never_probed(
 ) -> None:
     _stub(
         monkeypatch,
-        run_completed=lambda rid: pytest.fail("app status has no run to probe"),
+        run_completed=lambda repo, rid: pytest.fail("app status has no run to probe"),
         job_conclusion=lambda r, j: pytest.fail("app status has no job"),
         pending=(("CodeQL", "https://github.com/o/r/runs/5"),),
     )
@@ -429,7 +464,7 @@ def test_failed_check_still_gates_after_stale_pass(
         seen.append([str(c["bucket"]) for c in checks])
         return real_terminal(checks, ())
 
-    _stub(monkeypatch, run_completed=lambda rid: True, job_conclusion=lambda r, j: "success")
+    _stub(monkeypatch, run_completed=lambda repo, rid: True, job_conclusion=lambda r, j: "success")
     monkeypatch.setattr(github, "pr_checks", fake_checks)
     monkeypatch.setattr(github, "_checks_terminal", spy)
     github.wait_for_checks("1", poll_interval=5, poll_timeout=1800, required=())
@@ -443,7 +478,7 @@ def test_deadline_backstop_still_raises_orphan_inside_grace(
     # is still caught by the existing deadline orphan probe.
     _stub(
         monkeypatch,
-        run_completed=lambda rid: clock.now >= 590,
+        run_completed=lambda repo, rid: clock.now >= 590,
         job_conclusion=lambda r, j: pytest.fail("still inside grace at the deadline"),
     )
     monkeypatch.setattr(github, "orphaned_check_names", lambda pr: [_MATRIX])
@@ -457,7 +492,7 @@ def test_unreadable_job_error_types_include_called_process_error(
     def unreadable(repo: str, job_id: str) -> str | None:
         raise subprocess.CalledProcessError(1, ["gh"], stderr="boom")
 
-    _stub(monkeypatch, run_completed=lambda rid: True, job_conclusion=unreadable)
+    _stub(monkeypatch, run_completed=lambda repo, rid: True, job_conclusion=unreadable)
     with pytest.raises(github.OrphanedCheckError, match="boom"):
         github.wait_for_checks("1", poll_interval=5, poll_timeout=1800, required=())
 
@@ -470,7 +505,7 @@ def test_stale_required_check_with_successful_job_fails_after_grace(
 ) -> None:
     # GitHub keeps blocking the merge on a required check it reports pending, so
     # passing it here would only move the stall into pr_merge's not-ready loop.
-    _stub(monkeypatch, run_completed=lambda rid: True, job_conclusion=lambda r, j: "success")
+    _stub(monkeypatch, run_completed=lambda repo, rid: True, job_conclusion=lambda r, j: "success")
     with pytest.raises(github.OrphanedCheckError) as excinfo:
         github.wait_for_checks(
             "1", poll_interval=5, poll_timeout=1800, required=frozenset({_MATRIX})
@@ -488,7 +523,7 @@ def test_stale_required_check_with_successful_job_fails_after_grace(
 def test_stale_non_required_check_passes_with_a_required_set_present(
     monkeypatch: pytest.MonkeyPatch, clock: _Clock, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    _stub(monkeypatch, run_completed=lambda rid: True, job_conclusion=lambda r, j: "success")
+    _stub(monkeypatch, run_completed=lambda repo, rid: True, job_conclusion=lambda r, j: "success")
     github.wait_for_checks(
         "1", poll_interval=5, poll_timeout=1800, required=frozenset({"quality / common"})
     )
@@ -500,7 +535,7 @@ def test_stale_check_with_unknown_required_set_fails_loudly(
 ) -> None:
     # pr_merge passes a failed lookup through as None: whether GitHub will block
     # on the stale check is unknown, so it must not be passed.
-    _stub(monkeypatch, run_completed=lambda rid: True, job_conclusion=lambda r, j: "success")
+    _stub(monkeypatch, run_completed=lambda repo, rid: True, job_conclusion=lambda r, j: "success")
     monkeypatch.setattr(github, "required_check_names", lambda pr: pytest.fail("no second lookup"))
     with pytest.raises(github.OrphanedCheckError) as excinfo:
         github.wait_for_checks("1", poll_interval=5, poll_timeout=1800, required=None)
@@ -515,7 +550,7 @@ def test_self_resolved_lookup_failure_fails_stale_check_loudly(
 ) -> None:
     # The waiter's own lookup (vrg-wait-until-green) failing is "unknown" too.
     lookups: list[str] = []
-    _stub(monkeypatch, run_completed=lambda rid: True, job_conclusion=lambda r, j: "success")
+    _stub(monkeypatch, run_completed=lambda repo, rid: True, job_conclusion=lambda r, j: "success")
     monkeypatch.setattr(github, "required_check_names", lambda pr: bool(lookups.append(pr)) or None)
     with pytest.raises(github.OrphanedCheckError, match="could not be read"):
         github.wait_for_checks("1", poll_interval=5, poll_timeout=1800)
@@ -532,7 +567,7 @@ def test_unknown_required_set_keeps_the_registered_checks_fallback(
 
     _stub(
         monkeypatch,
-        run_completed=lambda rid: False,
+        run_completed=lambda repo, rid: False,
         job_conclusion=lambda r, j: pytest.fail("not stale"),
     )
     monkeypatch.setattr(github, "pr_checks", settles)

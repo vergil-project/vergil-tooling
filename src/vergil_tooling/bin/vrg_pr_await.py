@@ -29,6 +29,9 @@ When the PR is given as a URL, every GitHub call is scoped to the URL's owner
 org regardless of the cwd -- e.g. under a Monitor whose cwd is not a git repo,
 where cwd org detection finds nothing and no token is injected (#3055). A bare
 PR number keeps the cwd-based resolution, matching how ``gh`` resolves it.
+The PR's own calls pass the PR (URL or number) to ``gh``, and the orphan
+probe looks each Actions run up in the repo its check link names, so no call
+falls back to the cwd's repo for a PR given by URL (#3829).
 
 A GitHub API failure while polling exits 1 with the underlying ``gh`` error on
 stderr instead of a traceback. A permission failure (HTTP 403 / "Resource not
