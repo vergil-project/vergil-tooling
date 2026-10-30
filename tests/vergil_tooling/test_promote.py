@@ -32,6 +32,14 @@ NEW = "b" * 40
 NEW_TAG_OBJ = "r" * 40
 
 
+@pytest.fixture(autouse=True)
+def _no_installation_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep ``lib/git``'s token layering off the host's real App credentials."""
+    monkeypatch.setattr(
+        "vergil_tooling.lib.git.github.get_installation_token", lambda *_a, **_k: None
+    )
+
+
 def _ok(out: str = "", returncode: int = 0, stderr: str = "") -> _sp.CompletedProcess[str]:
     return _sp.CompletedProcess(args=[], returncode=returncode, stdout=out, stderr=stderr)
 
@@ -195,12 +203,26 @@ def test_plan_promotion_refuses_non_github_origin() -> None:
         plan_promotion("2.1.50")
 
 
-def test_plan_promotion_refusal_never_echoes_url_credentials() -> None:
-    url = "https://x-access-token:s3cret@example.com/x/y.git"
-    with _patched(origin=url), pytest.raises(PromoteError) as excinfo:
+_SECRET_URLS = [
+    "https://x-access-token:s3cret@example.com/x/y.git",
+    "https://user:pa/s3cret@github.com/o/r",
+    "https://user:p@s3cret@github.com/o/r",
+    "https://user:s3cret@github.com/o/r/extra",
+]
+
+
+@pytest.mark.parametrize("url", _SECRET_URLS)
+def test_plan_promotion_fetch_url_refusal_never_echoes_credentials(url: str) -> None:
+    with _patched(origin=url), pytest.raises(PromoteError, match="fetch URL") as excinfo:
         plan_promotion("2.1.50")
     assert "s3cret" not in str(excinfo.value)
-    assert "https://example.com/x/y.git" in str(excinfo.value)
+
+
+@pytest.mark.parametrize("url", _SECRET_URLS)
+def test_plan_promotion_push_url_refusal_never_echoes_credentials(url: str) -> None:
+    with _patched(push_urls=[url]), pytest.raises(PromoteError, match="push URL") as excinfo:
+        plan_promotion("2.1.50")
+    assert "s3cret" not in str(excinfo.value)
 
 
 def test_plan_promotion_refuses_push_url_to_another_repo() -> None:
@@ -439,7 +461,11 @@ def test_promote_confirmed_new_rolling_tag_uses_empty_lease() -> None:
 def test_promote_confirmed_never_plain_force() -> None:
     with _patched() as (mock_run, _):
         promote_confirmed(plan_promotion("2.1.50"))
-    assert not any("--force" in a for a in _argvs(mock_run) if a[1] == "push")
+    pushes = [a for a in _argvs(mock_run) if a[1] == "push"]
+    assert pushes == [_PUSH_ARGV]
+    for arg in pushes[0][2:]:
+        assert arg not in ("--force", "-f")
+        assert not arg.startswith("+")
 
 
 # --- promote ----------------------------------------------------------------
@@ -511,18 +537,27 @@ def test_promote_local_tag_failure_after_push_says_origin_moved(
     assert "cannot lock ref" in capsys.readouterr().err
 
 
-def test_promote_prints_stderr_on_push_failure(capsys: pytest.CaptureFixture[str]) -> None:
+def test_promote_refused_push_names_the_lease(capsys: pytest.CaptureFixture[str]) -> None:
     with (
         _patched(fail={"push": _git_err("! [rejected] v2.1 (stale info)\n")}) as (mock_run, _),
-        pytest.raises(_sp.CalledProcessError),
+        pytest.raises(PromoteError, match=f"required origin's v2.1 to be {OLD_REF}") as excinfo,
     ):
         promote("2.1.50")
-    assert "stale info" in capsys.readouterr().err
+    assert "stale info" not in str(excinfo.value)  # git's stderr is echoed once, not repeated
+    assert capsys.readouterr().err.count("stale info") == 1
     assert not any(a[1] == "tag" for a in _argvs(mock_run))  # local tag untouched
 
 
+def test_promote_refused_push_of_new_tag_names_absent_lease() -> None:
+    with (
+        _patched(rolling=None, rolling_raw=None, fail={"push": _git_err("")}),
+        pytest.raises(PromoteError, match="required origin's v2.2 to be absent"),
+    ):
+        promote("2.2.0")
+
+
 def test_promote_push_failure_no_stderr(capsys: pytest.CaptureFixture[str]) -> None:
-    with _patched(fail={"push": _git_err("")}), pytest.raises(_sp.CalledProcessError):
+    with _patched(fail={"push": _git_err("")}), pytest.raises(PromoteError):
         promote("2.1.50")
     assert capsys.readouterr().err == ""
 

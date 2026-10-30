@@ -309,8 +309,8 @@ origin's `main` and that has a published (non-draft) GitHub Release; any
 other target is refused. origin's push URL must name the same GitHub repo as
 its fetch URL. Every run, `--dry-run` included, first runs
 `git fetch --tags --force origin +refs/heads/main:refs/remotes/origin/main`,
-so the checks run against origin's current state; like the rollback
-runbook's own fetch, this overwrites local tags with origin's.
+so the checks run against origin's current state. That fetch overwrites
+local tags with origin's.
 
 It prints the origin repo and the tag move, for example:
 

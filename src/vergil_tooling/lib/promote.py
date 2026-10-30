@@ -37,7 +37,6 @@ _ORIGIN_RE = re.compile(
     r"(?P<repo>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?/?$",
     re.IGNORECASE,
 )
-_USERINFO_RE = re.compile(r"^([a-z][a-z0-9+.-]*://)[^@/]+@", re.IGNORECASE)
 _MAIN_REF = "refs/remotes/origin/main"
 _SHORT = 12
 
@@ -99,15 +98,17 @@ def _peeled_commit(tag: str) -> str:
     return _remote_tag(tag)[1]
 
 
-def _redact(url: str) -> str:
-    """*url* without any ``user[:secret]@`` part, safe to print."""
-    return _USERINFO_RE.sub(r"\1", url)
+def _repo_of(url: str, which: str) -> str:
+    """``owner/repo`` of a github.com remote *url*.
 
-
-def _repo_of(url: str) -> str:
+    The refusal never echoes *url*: a remote URL can carry credentials.
+    """
     m = _ORIGIN_RE.match(url.strip())
     if not m:
-        msg = f"origin ({_redact(url)}) is not a GitHub repository URL"
+        msg = (
+            f"origin's {which} URL is not a GitHub repository URL "
+            "(expected https://github.com/<owner>/<repo> or git@github.com:<owner>/<repo>)"
+        )
         raise PromoteError(msg)
     return m.group("repo")
 
@@ -119,9 +120,9 @@ def _origin_repo() -> str:
     URL(s), so a push URL that names another repo would move a tag that none
     of the checks looked at.
     """
-    repo = _repo_of(_git_read("remote", "get-url", "origin"))
+    repo = _repo_of(_git_read("remote", "get-url", "origin"), "fetch")
     push_urls = _git_read("remote", "get-url", "--push", "--all", "origin").splitlines()
-    push_repos = {_repo_of(u).lower() for u in push_urls if u.strip()}
+    push_repos = {_repo_of(u, "push").lower() for u in push_urls if u.strip()}
     if push_repos != {repo.lower()}:
         msg = (
             f"origin's push URL does not name the repo its fetch URL names ({repo}); "
@@ -267,12 +268,21 @@ def promote_confirmed(confirmed: Promotion, *, release_just_published: bool = Fa
 
     rolling, release = confirmed.rolling_tag, confirmed.release_tag
     print(f"Pushing {rolling} -> {release} to origin")
-    git.read_output(
-        "push",
-        "origin",
-        f"refs/tags/{release}:refs/tags/{rolling}",
-        f"--force-with-lease=refs/tags/{rolling}:{confirmed.old_ref}",
-    )
+    try:
+        git.read_output(
+            "push",
+            "origin",
+            f"refs/tags/{release}:refs/tags/{rolling}",
+            f"--force-with-lease=refs/tags/{rolling}:{confirmed.old_ref}",
+        )
+    except subprocess.CalledProcessError as exc:
+        expected = confirmed.old_ref or "absent"
+        msg = (
+            f"origin did not accept the move of {rolling} "
+            f"(the push required origin's {rolling} to be {expected}): "
+            f"{error_text(exc, output=False)}"
+        )
+        raise PromoteError(msg) from exc
     print(f"Promoted: {rolling} -> {release}")
     try:
         git.read_output("tag", "-f", rolling, f"refs/tags/{release}")

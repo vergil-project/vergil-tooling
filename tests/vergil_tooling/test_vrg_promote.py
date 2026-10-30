@@ -6,7 +6,13 @@ import subprocess as _sp
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
-from tests.vergil_tooling.test_promote import NEW, OLD, OLD_REF, _git_responses
+from tests.vergil_tooling.test_promote import (  # noqa: F401 (autouse fixture)
+    NEW,
+    OLD,
+    OLD_REF,
+    _git_responses,
+    _no_installation_token,
+)
 from vergil_tooling.bin.vrg_promote import main
 
 if TYPE_CHECKING:
@@ -64,7 +70,11 @@ def test_refuses_agent_mode(capsys: pytest.CaptureFixture[str]) -> None:
     ):
         assert main() == 1
     mock_run.assert_not_called()
-    assert "human maintainer action" in capsys.readouterr().err
+    captured = capsys.readouterr()
+    # The CLI's own refusal, not the library's PromoteError reported as Error:
+    assert "Agents cannot run vrg-promote" in captured.err
+    assert "Error:" not in captured.err
+    assert captured.out == ""
 
 
 def test_dry_run_prints_repo_and_commits(capsys: pytest.CaptureFixture[str]) -> None:
@@ -234,4 +244,6 @@ def test_push_failure_reports_error(capsys: pytest.CaptureFixture[str]) -> None:
         patch("builtins.input", return_value="y"),
     ):
         assert main() == 1
-    assert "stale info" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert err.count("stale info") == 1
+    assert "Error: origin did not accept the move of v2.1" in err
