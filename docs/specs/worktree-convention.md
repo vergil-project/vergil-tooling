@@ -102,6 +102,14 @@ which worktree it will operate in.
    hook that refuses direct pushes to develop is the natural place
    to refuse commits originating outside `.worktrees/*` (see
    [Enforcement and follow-up work](#enforcement-and-follow-up-work)).
+
+   **The `build/` exception.** Read-only means read-only for source.
+   Ignored scratch in the main clone's `build/` is allowed: it is not a
+   source edit, and every repo with a `vergil.toml` ignores `build/`
+   through the managed `.gitignore`, so nothing written there is ever
+   committed. The MQ lab already keeps its shared live-lab state there.
+   `build/.vergil-state/` is the namespace for agent state that must
+   survive a session or a VM rebuild.
 4. **One worktree per issue.** Do not stack multiple in-flight issues
    in one worktree. When a worktree branch lands, remove the worktree
    before starting the next.

@@ -257,6 +257,14 @@ class TestClaudeMdTemplate:
     def test_template_within_line_budget(self) -> None:
         assert len(_TEMPLATE_TEXT.splitlines()) <= 60
 
+    def test_template_read_only_line_allows_build_scratch(self) -> None:
+        # The worktree convention's read-only rule carries one exception:
+        # ignored scratch in the main clone's build/. The template's
+        # read-only line must state it, so no consumer CLAUDE.md contradicts
+        # the convention.
+        [line] = [ln for ln in _TEMPLATE_TEXT.splitlines() if "main worktree is read-only" in ln]
+        assert "ignored `build/` scratch" in line
+
     def test_previous_template_files_are_gone(self) -> None:
         assert not (_TEMPLATE_PATH.parent / "claude_md_consumer_previous.md").exists()
         assert not (_TEMPLATE_PATH.parent / "claude_settings_previous.json").exists()
