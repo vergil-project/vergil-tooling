@@ -87,7 +87,8 @@ install is reported as a failure that names its scope and project. An enabled
 plugin with no install at any scope is installed at user scope. Last, it
 **verifies** that each declared GitHub marketplace is registered, as `claude
 plugin marketplace list --json` reports it, at the declared repo and ref; a
-mismatch, a missing ref or a missing registration is a failure. Every failure
+mismatch (including no registered ref when the settings declare one) or a
+missing registration is a failure. Every failure
 is named and raised. The refresh is driven by `vrg-vm update`, which first
 copies the host's current `settings.json` into the running VM, and by a
 warn-mode stage on VM start/rebuild. `vrg-vm update --all` skips stopped VMs

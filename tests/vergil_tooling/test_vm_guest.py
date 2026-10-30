@@ -680,7 +680,8 @@ class TestCopyClaudeConfig:
         transport = _transport()
         copy_claude_config(transport, claude_dir)
 
-        transport.run.assert_not_called()
+        # Nothing is copied, and a guest CLAUDE.md the host lacks is removed.
+        assert [c.args[-1] for c in transport.run.call_args_list] == ["rm -f ~/.claude/CLAUDE.md"]
         transport.pipe.assert_not_called()
 
 

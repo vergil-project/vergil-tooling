@@ -1642,6 +1642,24 @@ def _cmd_update_off_platform(target: Target, args: argparse.Namespace) -> int:
     return 0
 
 
+def _require_host_settings() -> bool:
+    """Check, before touching any VM, that the host ``~/.claude/settings.json`` exists.
+
+    The update copies it into each VM and refreshes the plugins from that copy
+    (spec §6 of epic vergil-project/.github#760), so without it every VM would
+    fail halfway through its update. Prints the error and returns False.
+    """
+    settings = Path.home() / ".claude" / "settings.json"
+    if settings.is_file():
+        return True
+    print(
+        f"ERROR: the host {settings} is missing; vrg-vm update copies it into each VM "
+        "and refreshes the plugins from it",
+        file=sys.stderr,
+    )
+    return False
+
+
 def _cmd_update(args: argparse.Namespace) -> int:
     # Epic vergil-project/.github#760, spec §6: the update refreshes the VMs'
     # plugins from the host settings, which is run by the human. It refuses an
@@ -1651,6 +1669,8 @@ def _cmd_update(args: argparse.Namespace) -> int:
             "ERROR: vrg-vm update is a human action. Agents cannot run vrg-vm update.",
             file=sys.stderr,
         )
+        return 1
+    if not _require_host_settings():
         return 1
     if args.all:
         return _cmd_update_all(args)

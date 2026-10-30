@@ -60,7 +60,6 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
-import json
 import subprocess
 import sys
 from pathlib import Path
@@ -539,23 +538,16 @@ def _read_host_settings(path: Path) -> dict[str, Any]:
     """Return the host ``settings.json`` as a dict.
 
     Raises:
-        ValueError: the file is missing, unreadable, not valid JSON, or not a
-            JSON object. The message names the file.
+        claude_marketplace.MarketplaceError: the file is missing, unreadable,
+            not UTF-8, not valid JSON, or not a JSON object. The message names
+            the file.
     """
     try:
-        text = path.read_text()
-    except OSError as exc:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
         msg = f"cannot read {path}: {exc}"
-        raise ValueError(msg) from exc
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError as exc:
-        msg = f"{path} is not valid JSON: {exc}"
-        raise ValueError(msg) from exc
-    if not isinstance(data, dict):
-        msg = f"{path} is not a JSON object"
-        raise ValueError(msg)
-    return data
+        raise claude_marketplace.MarketplaceError(msg) from exc
+    return claude_marketplace.parse_settings(text, str(path))
 
 
 def _plugins(_args: argparse.Namespace) -> int:
@@ -569,7 +561,7 @@ def _plugins(_args: argparse.Namespace) -> int:
         return 1
     try:
         settings = _read_host_settings(_host_settings_path())
-    except ValueError as exc:
+    except claude_marketplace.MarketplaceError as exc:
         print(f"vrg-host plugins: {exc}", file=sys.stderr)
         return host_status.ERROR
     print("Refreshing Claude plugins...")

@@ -94,6 +94,26 @@ def _report(label: str, exc: subprocess.CalledProcessError) -> None:
     print(f"ERROR: {label} failed (exit status {exc.returncode})", file=sys.stderr)
 
 
+def parse_settings(text: str, where: str) -> dict[str, Any]:
+    """Parse a ``settings.json`` text read from *where* (named in every error).
+
+    Shared by the host (``vrg-host plugins``) and the guest
+    (``vm_guest.update_plugins``) so both reject the same inputs the same way.
+
+    Raises:
+        MarketplaceError: *text* is not valid JSON or not a JSON object.
+    """
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        msg = f"{where} is not valid JSON: {exc}"
+        raise MarketplaceError(msg) from exc
+    if not isinstance(data, dict):
+        msg = f"{where} is not a JSON object"
+        raise MarketplaceError(msg)
+    return data
+
+
 def _section(settings: dict[str, Any], key: str) -> dict[str, Any]:
     """Return the settings object *key*, or ``{}`` when it is absent.
 

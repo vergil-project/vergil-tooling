@@ -34,6 +34,7 @@ from vergil_tooling.bin.vrg_vm import (
     _preflight_target,
     _probe_running,
     _read_repo_vm,
+    _require_host_settings,
     _resolve,
     _resolve_target,
     _resolve_vm_verbose,
@@ -100,6 +101,7 @@ def _stub_guest_transport() -> Iterator[None]:
         patch(mod + "update_tooling"),
         patch(mod + "update_plugins"),
         patch(mod + "prune_cache_images"),
+        patch(mod + "_require_host_settings", return_value=True),
         patch("vergil_tooling.lib.vm_packages.dev_ref", return_value=None),
     ):
         yield
@@ -1681,6 +1683,32 @@ class TestUpdate:
         with patch("vergil_tooling.bin.vrg_vm.update_tooling") as mock_update:
             assert main(["update", "--config", str(config_file)]) == 1
         mock_update.assert_not_called()
+
+    @pytest.mark.parametrize("flags", [[], ["--all"]])
+    @patch("vergil_tooling.bin.vrg_vm.list_vms")
+    def test_update_without_host_settings_touches_no_vm(
+        self, mock_list: MagicMock, flags: list[str], config_file: Path
+    ) -> None:
+        with (
+            patch("vergil_tooling.bin.vrg_vm._require_host_settings", return_value=False),
+            patch("vergil_tooling.bin.vrg_vm.update_tooling") as mock_update,
+        ):
+            assert main(["update", *flags, "--config", str(config_file)]) == 1
+        mock_update.assert_not_called()
+        mock_list.assert_not_called()
+
+    def test_require_host_settings(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        assert _require_host_settings() is False
+        assert ".claude/settings.json is missing" in capsys.readouterr().err
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".claude" / "settings.json").write_text("{}")
+        assert _require_host_settings() is True
 
     @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")

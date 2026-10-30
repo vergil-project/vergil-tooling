@@ -1333,3 +1333,17 @@ def test_plugins_exits_2_on_malformed_listing(
 
 def test_host_settings_path_is_the_user_settings() -> None:
     assert vrg_host._host_settings_path() == Path.home() / ".claude" / "settings.json"
+
+
+def test_plugins_exits_2_on_non_utf8_settings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    local_run: _LocalRun,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    settings = tmp_path / "settings.json"
+    settings.write_bytes(b"\xff\xfe")
+    monkeypatch.setattr(vrg_host, "_host_settings_path", lambda: settings)
+    assert vrg_host.main(["plugins"]) == 2
+    assert local_run.calls == []
+    assert f"cannot read {settings}" in capsys.readouterr().err

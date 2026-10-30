@@ -407,8 +407,9 @@ def _read_guest_settings(transport: Transport) -> dict[str, Any]:
     vergil-project/.github#760).
 
     Raises:
-        RuntimeError: the file cannot be read, is not valid JSON, or is not a
-            JSON object. The message names the file.
+        RuntimeError: the file cannot be read. The message names the file.
+        claude_marketplace.MarketplaceError: (a ``RuntimeError``) the file is
+            not valid JSON or not a JSON object. The message names the file.
     """
     try:
         result = transport.run("bash", "-c", f"cat {_GUEST_SETTINGS}")
@@ -418,15 +419,7 @@ def _read_guest_settings(transport: Transport) -> dict[str, Any]:
             f"(exit status {exc.returncode})"
         )
         raise RuntimeError(msg) from exc
-    try:
-        data = json.loads(result.stdout)
-    except json.JSONDecodeError as exc:
-        msg = f"the guest {_GUEST_SETTINGS} is not valid JSON: {exc}"
-        raise RuntimeError(msg) from exc
-    if not isinstance(data, dict):
-        msg = f"the guest {_GUEST_SETTINGS} is not a JSON object"
-        raise RuntimeError(msg)
-    return data
+    return claude_marketplace.parse_settings(result.stdout, f"the guest {_GUEST_SETTINGS}")
 
 
 def update_plugins(transport: Transport) -> None:
@@ -499,6 +492,8 @@ def copy_claude_config(
         )
         raise RuntimeError(msg)
     if not claude_dir.is_dir():
+        # No host config at all: the guest keeps no CLAUDE.md the host lacks.
+        transport.run("bash", "-c", "rm -f ~/.claude/CLAUDE.md")
         return
     transport.run("bash", "-c", "mkdir -p ~/.claude")
     for filename, locked in _CLAUDE_CONFIG_FILES:

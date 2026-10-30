@@ -221,8 +221,8 @@ VM (`lib/claude_marketplace.py`):
    scope, and `claude plugin install` for an enabled plugin with no install.
 4. A verification: each declared GitHub marketplace must be registered, as
    `claude plugin marketplace list --json` reports it, at the declared repo and
-   ref. A registration with no ref, a different repo or ref, or no
-   registration at all is a failure.
+   ref. A different repo or ref (including no registered ref when the settings
+   declare one), or no registration at all, is a failure.
 
 It is a human command. Under an agent identity, or when any identity signal
 implies an agent, it refuses before running any `claude` command. It exits `0`
