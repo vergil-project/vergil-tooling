@@ -305,9 +305,12 @@ refuses any agent identity, failing closed on any agent signal
 `vrg-release`'s promote stage uses the same library and the same refusal.
 
 The target must be an existing `vX.Y.Z` tag on origin whose commit is on
-`origin/main` and that has a published (non-draft) GitHub Release; any other
-target is refused. The command fetches `main` and the tags first, so the
-check runs against origin's current state.
+origin's `main` and that has a published (non-draft) GitHub Release; any
+other target is refused. origin's push URL must name the same GitHub repo as
+its fetch URL. Every run, `--dry-run` included, first runs
+`git fetch --tags --force origin +refs/heads/main:refs/remotes/origin/main`,
+so the checks run against origin's current state; like the rollback
+runbook's own fetch, this overwrites local tags with origin's.
 
 It prints the origin repo and the tag move, for example:
 
@@ -320,19 +323,25 @@ v2.1 1a2b3c4d5e6f -> v2.1.50 fc17882a9b0c
 Otherwise it asks `Move vX.Y on <repo>? [y/N]` on the terminal, and moves
 the tag only on `y` or `yes`. With no terminal to confirm on, it refuses.
 Before it pushes it re-resolves the move and refuses if anything changed
-since it was confirmed. The push is a compare-and-swap
-(`--force-with-lease` on the rolling tag's value on origin, empty when the
-tag is new), so it overwrites exactly the tag that was shown, or is refused.
-When the rolling tag already points at the release, it reports "already
-promoted" and pushes nothing.
+since it was confirmed, and checks that the local release tag is the
+confirmed commit. It then pushes that release tag to the rolling tag's ref
+as a compare-and-swap (`--force-with-lease` on the rolling tag's value on
+origin, empty when the tag is new), so it overwrites exactly the tag that
+was shown, or is refused. The local rolling tag is updated only after origin
+accepts the move. When the rolling tag already points at the release, it
+prints only the "already promoted" line, asks nothing and pushes nothing.
+
+When `vrg-release`'s promote stage calls it, the GitHub Release read retries
+a 404 for a short budget, since that Release was just published. A version
+given to `vrg-promote` is read once, so a missing Release is refused at once.
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_promote` |
 | Args | `version` (positional, default: the `VERSION` file), `--dry-run` |
 | Preconditions | Human identity; run in the repo's checkout; a terminal to confirm on; push access to origin |
-| Failure mode | `Error:` on stderr when there is no version, the target is refused, the move changed since it was confirmed, or the tag update fails |
-| Exit codes | 0 success, 1 error |
+| Failure mode | Exit 1 with a message on stderr. An agent identity, a run with no terminal, a declined or unanswered confirmation, and a missing `VERSION` file each print their own `vrg-promote:` or plain message; a refused target, a move that changed since it was confirmed, and a failed git or GitHub call print `Error: …` |
+| Exit codes | 0 success (including "already promoted" and `--dry-run`), 1 refusal or error |
 | Status | Active |
 
 ### vrg-version

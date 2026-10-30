@@ -15,12 +15,7 @@ from pathlib import Path
 from vergil_tooling.lib import identity_mode
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.process_errors import error_text
-from vergil_tooling.lib.promote import (
-    already_promoted_message,
-    describe,
-    plan_promotion,
-    promote_confirmed,
-)
+from vergil_tooling.lib.promote import describe, plan_promotion, promote_confirmed
 from vergil_tooling.lib.version import show
 
 
@@ -69,7 +64,7 @@ def main() -> int:
     try:
         p = plan_promotion(version)
         if p.old_commit == p.new_commit:
-            print(already_promoted_message(p))
+            print(f"{p.rolling_tag} already points at {p.release_tag} — already promoted.")
             return 0
         print(describe(p))
         if args.dry_run:

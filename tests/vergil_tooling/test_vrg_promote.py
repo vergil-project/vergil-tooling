@@ -30,11 +30,11 @@ def _write_toml(tmp_path: Path) -> None:
 
 
 def _pushes(mock_run: MagicMock) -> list[list[str]]:
-    return [c.args[0] for c in mock_run.call_args_list if c.args[0][1] == "push"]
+    return [list(c.args[0]) for c in mock_run.call_args_list if c.args[0][1] == "push"]
 
 
 def _mutations(mock_run: MagicMock) -> list[list[str]]:
-    return [c.args[0] for c in mock_run.call_args_list if c.args[0][1] in ("tag", "push")]
+    return [list(c.args[0]) for c in mock_run.call_args_list if c.args[0][1] in ("tag", "push")]
 
 
 def _never_prompt(*_a: object) -> str:
@@ -137,7 +137,8 @@ def test_confirmed_run_promotes(capsys: pytest.CaptureFixture[str]) -> None:
         patch("builtins.input", return_value="y") as mock_input,
     ):
         assert main() == 0
-    assert _pushes(mock_run) == [["git", "push", "origin", "v2.1", _LEASE]]
+    refspec = "refs/tags/v2.1.50:refs/tags/v2.1"
+    assert _pushes(mock_run) == [["git", "push", "origin", refspec, _LEASE]]
     prompt = "Move v2.1 on vergil-project/vergil-claude-plugin? [y/N] "
     assert mock_input.call_args.args[0] == prompt
     out = capsys.readouterr().out
@@ -198,7 +199,7 @@ def test_promote_from_version_file(tmp_path: Path, capsys: pytest.CaptureFixture
         result = main()
     assert result == 0
     assert "v3.1" in capsys.readouterr().out
-    assert ["git", "tag", "-f", "v3.1", "v3.1.0"] in _mutations(mock_run)
+    assert ["git", "tag", "-f", "v3.1", "refs/tags/v3.1.0"] in _mutations(mock_run)
 
 
 def test_promote_no_version_no_file(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

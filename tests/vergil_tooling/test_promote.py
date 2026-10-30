@@ -54,6 +54,8 @@ def _git_responses(  # noqa: PLR0913
     release_raw: str | None = NEW_TAG_OBJ,
     on_main: int = 0,
     origin: str = f"https://github.com/{_REPO}.git",
+    push_urls: list[str] | None = None,
+    local_release: str | None = None,
     fetch_rc: int = 0,
     ls_rc: int = 0,
     fail: dict[str, _sp.CalledProcessError] | None = None,
@@ -61,16 +63,21 @@ def _git_responses(  # noqa: PLR0913
 ) -> Callable[..., _sp.CompletedProcess[str]]:
     """A ``subprocess.run`` side effect answering git by argv.
 
-    *rolling_seq*, when given, is consumed one ``(raw, peeled)`` per
-    ls-remote of the rolling tag, so a test can make origin move.
+    It honours ``check=True`` the way ``subprocess.run`` does. *rolling_seq*,
+    when given, is consumed one ``(raw, peeled)`` per ls-remote of the rolling
+    tag, so a test can make origin move. *push_urls* defaults to *origin*, and
+    *local_release* (the local release tag's commit) to *release*.
     """
     seq = iter(rolling_seq) if rolling_seq is not None else None
+    pushes = push_urls if push_urls is not None else [origin]
 
-    def run(argv: list[str], **_kw: Any) -> _sp.CompletedProcess[str]:  # noqa: PLR0911
+    def answer(argv: list[str]) -> _sp.CompletedProcess[str]:  # noqa: PLR0911
         sub = argv[1]
         if fail and sub in fail:
             raise fail[sub]
-        if argv[1:4] == ["remote", "get-url", "origin"]:
+        if argv[1:] == ["remote", "get-url", "--push", "--all", "origin"]:
+            return _ok("".join(f"{u}\n" for u in pushes))
+        if argv[1:] == ["remote", "get-url", "origin"]:
             return _ok(origin + "\n")
         if sub == "fetch":
             return _ok(returncode=fetch_rc, stderr="fatal: unable to access")
@@ -85,17 +92,27 @@ def _git_responses(  # noqa: PLR0913
                 return _ok(_ls_lines(ref, raw, peeled))
             return _ok(_ls_lines(ref, rolling_raw or rolling, rolling))
         if sub == "merge-base":
-            return _ok(returncode=on_main)
+            return _ok(returncode=on_main, stderr="fatal: bad object")
+        if sub == "rev-parse":
+            return _ok((local_release or release or "") + "\n")
         if sub in ("tag", "push"):
             return _ok()
         msg = f"unexpected git call: {argv}"
         raise AssertionError(msg)
 
+    def run(argv: list[str] | tuple[str, ...], **kw: Any) -> _sp.CompletedProcess[str]:
+        result = answer(list(argv))
+        if kw.get("check") and result.returncode:
+            raise _sp.CalledProcessError(
+                result.returncode, list(argv), result.stdout, result.stderr
+            )
+        return result
+
     return run
 
 
 def _argvs(mock_run: MagicMock) -> list[list[str]]:
-    return [c.args[0] for c in mock_run.call_args_list]
+    return [list(c.args[0]) for c in mock_run.call_args_list]
 
 
 def _mutations(mock_run: MagicMock) -> list[list[str]]:
@@ -120,6 +137,16 @@ def _patched(
 
 # --- plan_promotion ---------------------------------------------------------
 
+_MAIN = "refs/remotes/origin/main"
+_PUSH_ARGV = [
+    "git",
+    "push",
+    "origin",
+    "refs/tags/v2.1.50:refs/tags/v2.1",
+    f"--force-with-lease=refs/tags/v2.1:{OLD_REF}",
+]
+_LOCAL_TAG_ARGV = ["git", "tag", "-f", "v2.1", "refs/tags/v2.1.50"]
+
 
 def test_plan_promotion_reports_repo_and_commits() -> None:
     with _patched():
@@ -133,11 +160,12 @@ def test_plan_promotion_equal_commits_when_already_promoted() -> None:
     assert p.old_commit == p.new_commit == NEW
 
 
-def test_plan_promotion_fetches_main_and_tags() -> None:
+def test_plan_promotion_fetches_main_explicitly_and_checks_qualified_ref() -> None:
     with _patched() as (mock_run, _):
         plan_promotion("2.1.50")
-    assert ["git", "fetch", "--tags", "--force", "origin", "main"] in _argvs(mock_run)
-    assert ["git", "merge-base", "--is-ancestor", NEW, "origin/main"] in _argvs(mock_run)
+    argvs = _argvs(mock_run)
+    assert ["git", "fetch", "--tags", "--force", "origin", f"+refs/heads/main:{_MAIN}"] in argvs
+    assert ["git", "merge-base", "--is-ancestor", NEW, _MAIN] in argvs
 
 
 @pytest.mark.parametrize(
@@ -145,8 +173,13 @@ def test_plan_promotion_fetches_main_and_tags() -> None:
     [
         f"https://github.com/{_REPO}.git",
         f"https://github.com/{_REPO}",
+        f"https://github.com/{_REPO}/",
+        f"https://x-access-token:secret@github.com/{_REPO}.git",
+        f"https://GitHub.com/{_REPO}.git",
         f"git@github.com:{_REPO}.git",
+        f"org-123@github.com:{_REPO}.git",
         f"ssh://git@github.com/{_REPO}.git",
+        f"ssh://git@github.com:22/{_REPO}.git",
     ],
 )
 def test_plan_promotion_normalizes_origin(url: str) -> None:
@@ -160,6 +193,38 @@ def test_plan_promotion_refuses_non_github_origin() -> None:
         pytest.raises(PromoteError, match="not a GitHub repository URL"),
     ):
         plan_promotion("2.1.50")
+
+
+def test_plan_promotion_refusal_never_echoes_url_credentials() -> None:
+    url = "https://x-access-token:s3cret@example.com/x/y.git"
+    with _patched(origin=url), pytest.raises(PromoteError) as excinfo:
+        plan_promotion("2.1.50")
+    assert "s3cret" not in str(excinfo.value)
+    assert "https://example.com/x/y.git" in str(excinfo.value)
+
+
+def test_plan_promotion_refuses_push_url_to_another_repo() -> None:
+    with (
+        _patched(push_urls=["git@github.com:someone/else.git"]) as (mock_run, read),
+        pytest.raises(PromoteError, match="push URL does not name the repo"),
+    ):
+        plan_promotion("2.1.50")
+    assert not any(a[1] in ("fetch", "ls-remote") for a in _argvs(mock_run))
+    read.assert_not_called()
+
+
+def test_plan_promotion_refuses_a_second_push_url() -> None:
+    urls = [f"https://github.com/{_REPO}.git", "https://github.com/someone/else.git"]
+    with (
+        _patched(push_urls=urls),
+        pytest.raises(PromoteError, match="push URL does not name the repo"),
+    ):
+        plan_promotion("2.1.50")
+
+
+def test_plan_promotion_accepts_push_url_in_another_form() -> None:
+    with _patched(push_urls=[f"git@github.com:{_REPO}.git"]):
+        assert plan_promotion("2.1.50").origin_repo == _REPO
 
 
 def test_plan_promotion_refuses_tag_not_on_main() -> None:
@@ -182,33 +247,43 @@ def test_plan_promotion_ls_remote_failure_raises() -> None:
         plan_promotion("2.1.50")
 
 
-def test_plan_promotion_refuses_tag_without_published_release() -> None:
+def _view_raising(stderr: str) -> Callable[..., str]:
     def view(*_a: str) -> str:
-        raise _sp.CalledProcessError(1, ["gh", "release", "view"], "", "HTTP 500: boom")
+        raise _sp.CalledProcessError(1, ["gh", "release", "view"], "", stderr)
 
+    return view
+
+
+def test_plan_promotion_refuses_tag_without_published_release() -> None:
     with (
-        _patched(release_view=view),
+        _patched(release_view=_view_raising("release not found")) as (_, read),
         pytest.raises(PromoteError, match="no published GitHub Release"),
+    ):
+        plan_promotion("2.1.50")
+    assert read.call_count == 1  # a typed version fails fast, no 404 retry
+
+
+def test_plan_promotion_unreadable_release_is_not_reported_as_missing() -> None:
+    with (
+        _patched(release_view=_view_raising("HTTP 500: boom")),
+        pytest.raises(PromoteError, match="cannot check the GitHub Release"),
     ):
         plan_promotion("2.1.50")
 
 
 def test_plan_promotion_refuses_release_still_missing_after_retry_budget() -> None:
-    def view(*_a: str) -> str:
-        raise _sp.CalledProcessError(1, ["gh", "release", "view"], "", "release not found")
-
     clock = itertools.count(0, 30)
     with (
-        _patched(release_view=view) as (_, read),
+        _patched(release_view=_view_raising("release not found")) as (_, read),
         patch("vergil_tooling.lib.retry.time.sleep"),
         patch("vergil_tooling.lib.retry.time.monotonic", side_effect=lambda: next(clock)),
         pytest.raises(PromoteError, match="no published GitHub Release"),
     ):
-        plan_promotion("2.1.50")
+        plan_promotion("2.1.50", release_just_published=True)
     assert read.call_count > 1
 
 
-def test_plan_promotion_retries_a_transient_release_404() -> None:
+def test_plan_promotion_retries_a_transient_release_404_when_just_published() -> None:
     answers = iter(["404", "false"])
 
     def view(*_a: str) -> str:
@@ -220,7 +295,7 @@ def test_plan_promotion_retries_a_transient_release_404() -> None:
         _patched(release_view=view) as (_, read),
         patch("vergil_tooling.lib.retry.time.sleep"),
     ):
-        plan_promotion("2.1.50")
+        plan_promotion("2.1.50", release_just_published=True)
     assert read.call_count == 2
     assert read.call_args.args[:3] == ("release", "view", "v2.1.50")
 
@@ -295,15 +370,50 @@ def test_promote_confirmed_refuses_changed_resolution() -> None:
     assert _mutations(mock_run) == []
 
 
+def test_promote_confirmed_refuses_a_moved_release_tag() -> None:
+    confirmed = Promotion(_REPO, "v2.1", "v2.1.50", OLD_REF, OLD, "e" * 40)
+    with (
+        _patched() as (mock_run, _),
+        pytest.raises(PromoteError, match="changed since it was confirmed") as excinfo,
+    ):
+        promote_confirmed(confirmed)
+    assert "on origin was" not in str(excinfo.value)
+    assert _mutations(mock_run) == []
+
+
+def test_promote_confirmed_names_a_raw_only_change() -> None:
+    confirmed = Promotion(_REPO, "v2.1", "v2.1.50", OLD_REF, OLD, NEW)
+    retagged = "u" * 40
+    with (
+        _patched(rolling=OLD, rolling_raw=retagged) as (mock_run, _),
+        pytest.raises(PromoteError, match=f"was {OLD_REF}, now {retagged}"),
+    ):
+        promote_confirmed(confirmed)
+    assert _mutations(mock_run) == []
+
+
+def test_promote_confirmed_refuses_a_local_release_tag_that_differs() -> None:
+    with (
+        _patched(local_release="d" * 40) as (mock_run, _),
+        pytest.raises(PromoteError, match="not the confirmed commit"),
+    ):
+        promote_confirmed(plan_promotion("2.1.50"))
+    assert _mutations(mock_run) == []
+    assert [
+        "git",
+        "rev-parse",
+        "--verify",
+        "--end-of-options",
+        "refs/tags/v2.1.50^{commit}",
+    ] in _argvs(mock_run)
+
+
 def test_promote_confirmed_leases_on_raw_annotated_tag_object() -> None:
     with _patched(rolling=OLD, rolling_raw=OLD_REF) as (mock_run, _):
         p = plan_promotion("2.1.50")
         assert (p.old_ref, p.old_commit) == (OLD_REF, OLD)
         promote_confirmed(p)
-    assert _mutations(mock_run) == [
-        ["git", "tag", "-f", "v2.1", "v2.1.50"],
-        ["git", "push", "origin", "v2.1", f"--force-with-lease=refs/tags/v2.1:{OLD_REF}"],
-    ]
+    assert _mutations(mock_run) == [_PUSH_ARGV, _LOCAL_TAG_ARGV]
 
 
 def test_promote_confirmed_lightweight_tag_leases_on_commit() -> None:
@@ -311,17 +421,17 @@ def test_promote_confirmed_lightweight_tag_leases_on_commit() -> None:
         p = plan_promotion("2.1.50")
         assert p.old_ref == p.old_commit == OLD
         promote_confirmed(p)
-    assert _mutations(mock_run)[-1][-1] == f"--force-with-lease=refs/tags/v2.1:{OLD}"
+    assert _mutations(mock_run)[0][-1] == f"--force-with-lease=refs/tags/v2.1:{OLD}"
 
 
 def test_promote_confirmed_new_rolling_tag_uses_empty_lease() -> None:
     with _patched(rolling=None, rolling_raw=None) as (mock_run, _):
         promote_confirmed(plan_promotion("2.2.0"))
-    assert _mutations(mock_run)[-1] == [
+    assert _mutations(mock_run)[0] == [
         "git",
         "push",
         "origin",
-        "v2.2",
+        "refs/tags/v2.2.0:refs/tags/v2.2",
         "--force-with-lease=refs/tags/v2.2:",
     ]
 
@@ -335,17 +445,23 @@ def test_promote_confirmed_never_plain_force() -> None:
 # --- promote ----------------------------------------------------------------
 
 
-def test_promote_runs_tag_and_push() -> None:
+def test_promote_runs_push_then_local_tag() -> None:
     with _patched() as (mock_run, _):
         promote("2.1.50")
-    assert _mutations(mock_run) == [
-        ["git", "tag", "-f", "v2.1", "v2.1.50"],
-        ["git", "push", "origin", "v2.1", f"--force-with-lease=refs/tags/v2.1:{OLD_REF}"],
-    ]
+    assert _mutations(mock_run) == [_PUSH_ARGV, _LOCAL_TAG_ARGV]
     argvs = _argvs(mock_run)
-    assert argvs.index(["git", "tag", "-f", "v2.1", "v2.1.50"]) > argvs.index(
-        ["git", "merge-base", "--is-ancestor", NEW, "origin/main"]
-    )
+    assert argvs.index(_PUSH_ARGV) > argvs.index(["git", "merge-base", "--is-ancestor", NEW, _MAIN])
+
+
+def test_promote_retries_the_release_read() -> None:
+    with (
+        _patched(release_view=_view_raising("HTTP 404: Not Found")) as (_, read),
+        patch("vergil_tooling.lib.promote.retry.retry_known_resource") as m_retry,
+    ):
+        m_retry.return_value = "false"
+        promote("2.1.50")
+    assert m_retry.call_count == 2  # the plan and the re-check before the push
+    read.assert_not_called()  # the patched retry never called the read
 
 
 def test_promote_refuses_when_origin_moved_between_plan_and_push() -> None:
@@ -373,45 +489,40 @@ def test_promote_dry_run_applies_target_check() -> None:
 def test_promote_strips_v_prefix() -> None:
     with _patched() as (mock_run, _):
         promote("v2.1.50")
-    assert _mutations(mock_run)[0] == ["git", "tag", "-f", "v2.1", "v2.1.50"]
+    assert _mutations(mock_run)[0] == _PUSH_ARGV
 
 
-def _tag_err(stderr: str) -> _sp.CalledProcessError:
-    err = _sp.CalledProcessError(1, "git tag")
+def _git_err(stderr: str) -> _sp.CalledProcessError:
+    err = _sp.CalledProcessError(1, ["git"])
     err.stderr = stderr
     err.stdout = ""
     return err
 
 
-def test_promote_raises_on_tag_failure() -> None:
+def test_promote_local_tag_failure_after_push_says_origin_moved(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     with (
-        _patched(fail={"tag": _tag_err("")}) as (mock_run, _),
-        pytest.raises(_sp.CalledProcessError),
+        _patched(fail={"tag": _git_err("fatal: cannot lock ref\n")}) as (mock_run, _),
+        pytest.raises(PromoteError, match="moved to v2.1.50 on origin"),
     ):
         promote("2.1.50")
-    assert not any(a[1] == "push" for a in _argvs(mock_run))
-
-
-def test_promote_prints_stderr_on_failure(capsys: pytest.CaptureFixture[str]) -> None:
-    with (
-        _patched(fail={"tag": _tag_err("fatal: tag already exists\n")}),
-        pytest.raises(_sp.CalledProcessError),
-    ):
-        promote("2.1.50")
-    assert "tag already exists" in capsys.readouterr().err
+    assert _mutations(mock_run)[0] == _PUSH_ARGV
+    assert "cannot lock ref" in capsys.readouterr().err
 
 
 def test_promote_prints_stderr_on_push_failure(capsys: pytest.CaptureFixture[str]) -> None:
     with (
-        _patched(fail={"push": _tag_err("fatal: could not read remote\n")}),
+        _patched(fail={"push": _git_err("! [rejected] v2.1 (stale info)\n")}) as (mock_run, _),
         pytest.raises(_sp.CalledProcessError),
     ):
         promote("2.1.50")
-    assert "could not read remote" in capsys.readouterr().err
+    assert "stale info" in capsys.readouterr().err
+    assert not any(a[1] == "tag" for a in _argvs(mock_run))  # local tag untouched
 
 
 def test_promote_push_failure_no_stderr(capsys: pytest.CaptureFixture[str]) -> None:
-    with _patched(fail={"push": _tag_err("")}), pytest.raises(_sp.CalledProcessError):
+    with _patched(fail={"push": _git_err("")}), pytest.raises(_sp.CalledProcessError):
         promote("2.1.50")
     assert capsys.readouterr().err == ""
 
@@ -464,7 +575,7 @@ def test_peeled_commit_absent_tag_returns_empty() -> None:
 
 def test_peeled_commit_git_failure_raises() -> None:
     with (
-        patch(_RUN, return_value=_ok("noise", returncode=1)),
+        patch(_RUN, side_effect=_git_responses(ls_rc=1)),
         pytest.raises(PromoteError, match="ls-remote"),
     ):
         _peeled_commit("v2.1")
