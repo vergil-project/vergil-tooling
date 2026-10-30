@@ -13051,6 +13051,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#github-checks-rulesets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GitHub checks — rulesets
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#github-checks-the-required-status-check-set" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -16842,6 +16853,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#github-checks-rulesets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GitHub checks — rulesets
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#github-checks-the-required-status-check-set" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17249,6 +17271,72 @@ on, 404 means off). Any other status is an error, never a silent "off".
 <code>security_and_analysis</code> settings. <code>apply</code> is a human action: it needs
 Administration write access, which the org automation Apps do not
 have.</p>
+<h2 id="github-checks-rulesets">GitHub checks — rulesets<a class="headerlink" href="#github-checks-rulesets" title="Permanent link">&para;</a></h2>
+<p>The GitHub half compares the repo's live rulesets against the desired set
+that <code>compute_desired_state()</code> in <code>lib/github_config.py</code> declares, in this
+order:</p>
+<table>
+<thead>
+<tr>
+<th>Ruleset</th>
+<th>Target</th>
+<th>Includes</th>
+<th>Rules</th>
+<th>Bypass</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Branch protection</code></td>
+<td>branch</td>
+<td><code>refs/heads/main</code>, <code>refs/heads/develop</code></td>
+<td><code>deletion</code>, <code>non_fast_forward</code>, <code>pull_request</code></td>
+<td>none</td>
+</tr>
+<tr>
+<td><code>Tag protection</code></td>
+<td>tag</td>
+<td><code>refs/tags/v*.*.*</code>, <code>refs/tags/v*.*</code></td>
+<td><code>deletion</code>, <code>non_fast_forward</code>, <code>update</code></td>
+<td>repository Admin role (<code>RepositoryRole</code>, <code>actor_id</code> 5)</td>
+</tr>
+<tr>
+<td><code>Rolling tag branch names</code></td>
+<td>branch</td>
+<td><code>refs/heads/v[0-9]*</code></td>
+<td><code>creation</code>, <code>update</code>, <code>non_fast_forward</code></td>
+<td>none</td>
+</tr>
+<tr>
+<td><code>CI gates</code></td>
+<td>branch</td>
+<td><code>refs/heads/main</code>, <code>refs/heads/develop</code></td>
+<td><code>required_status_checks</code> (see below)</td>
+<td>none</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><strong>Tag protection</strong> covers both the <code>vX.Y.Z</code> release tags and the rolling
+  <code>vX.Y</code> tags consumers follow as their deploy ref, so only the human release
+  identity can move or delete either.</li>
+<li><strong>Rolling tag branch names</strong> blocks creating any branch named like a rolling
+  tag (a <code>v</code> followed by a digit). Some consumers, Claude Code among them,
+  resolve a ref such as <code>v2.1</code> as a branch before a tag (git's own short-name
+  lookup prefers the tag), so for them the tag's protection holds only while
+  no such branch can exist. The ruleset also blocks updates and force-pushes
+  to such a branch, but not its deletion, so a stray one can be removed.
+  Names such as <code>vm-…</code> are not covered. GitHub's ruleset ref matching
+  uses <code>fnmatch</code> syntax and supports character sets in square brackets
+  (<a href="https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/creating-rulesets-for-a-repository#using-fnmatch-syntax">Using <code>fnmatch</code> syntax</a>).
+  A pattern include names no single branch, so the classic branch-protection
+  read skips it.</li>
+<li><strong>Bypass actors are not compared under the App token.</strong> The nightly audit
+  runs on a GitHub App token, which cannot read a ruleset's bypass list, so in
+  that mode it checks each ruleset's includes, enforcement and rules but not
+  its bypass actors, and lists the skipped <code>rulesets.&lt;name&gt;.bypass_actors</code>
+  fields instead. This holds for every ruleset above.</li>
+</ul>
 <h2 id="github-checks-the-required-status-check-set">GitHub checks — the required-status-check set<a class="headerlink" href="#github-checks-the-required-status-check-set" title="Permanent link">&para;</a></h2>
 <p>The GitHub half compares the repo's live branch-protection configuration
 against the canonical CI-gates ruleset that

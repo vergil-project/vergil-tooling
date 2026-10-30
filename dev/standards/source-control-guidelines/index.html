@@ -16971,10 +16971,15 @@ deletion explicitly. The repository-level setting acts as defense in depth.</p>
 <p>All repositories must use GitHub rulesets for branch and tag protection.
 Rulesets replace legacy branch protection rules. Legacy branch protection must
 not be used on any repository.</p>
-<p><strong>Enforce-admins-ON</strong>: Every ruleset must have an empty <code>bypass_actors</code> list.
-This means ruleset enforcement applies to all users including repository
-administrators. There is no escape hatch for admins.</p>
-<p><strong>Library repositories</strong> require three rulesets:</p>
+<p><strong>Enforce-admins-ON</strong>: Every ruleset has an empty <code>bypass_actors</code> list except
+Tag protection, which only the repository Admin role (the human release
+identity) may bypass, to move or delete a tag. Every other ruleset applies to
+all users, including repository administrators.</p>
+<p>The rulesets are declared by <code>compute_desired_state()</code> in
+<code>lib/github_config.py</code> and checked by the config audit; the
+<a href="../../reference/config-audit/#github-checks-rulesets">rulesets table</a> lists
+each one's includes, rules and bypass.</p>
+<p><strong>Library repositories</strong> require four rulesets:</p>
 <ol>
 <li><strong>Branch protection</strong> (targets: <code>main</code>, <code>develop</code>)</li>
 <li>Prevent branch deletion</li>
@@ -16991,12 +16996,24 @@ administrators. There is no escape hatch for admins.</p>
      in the repository's workflow files</p>
 </li>
 <li>
-<p><strong>Tag protection</strong> (targets: <code>v*</code>)</p>
+<p><strong>Tag protection</strong> (targets: <code>v*.*.*</code> release tags and <code>v*.*</code> rolling tags)</p>
 </li>
 <li>Prevent tag deletion</li>
 <li>Prevent force-updating tags</li>
 <li>Prevent modifying existing tags</li>
 <li>No creation restriction (the publish workflow creates tags)</li>
+<li>
+<p>Bypass: the repository Admin role only</p>
+</li>
+<li>
+<p><strong>Rolling tag branch names</strong> (targets: <code>v[0-9]*</code>)</p>
+</li>
+<li>Prevent creating a branch named like a rolling tag, since some consumers,
+     Claude Code among them, resolve a ref such as <code>v2.1</code> as a branch before a
+     tag</li>
+<li>Prevent updating or force-pushing such a branch</li>
+<li>No deletion restriction, so a stray branch of that shape can be removed</li>
+<li>No bypass</li>
 </ol>
 <p><strong>Documentation repositories</strong> require two rulesets:</p>
 <ol>
