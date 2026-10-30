@@ -137,6 +137,23 @@ def test_main_aborts_under_agent_identity(capsys: pytest.CaptureFixture[str]) ->
     assert "human" in capsys.readouterr().err.lower()
 
 
+def test_release_refuses_mixed_signals(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A human env value cannot override another agent signal (fail closed)."""
+    monkeypatch.setenv("VRG_IDENTITY_MODE", "human")
+    with (
+        patch(_MOD + ".identity_mode.any_agent_signal", return_value=True),
+        patch(_MOD + ".git") as m_git,
+        patch(_MOD + ".progress.run_pipeline") as m_pipeline,
+    ):
+        rc = main(["--output-format", "plain"])
+    assert rc == 1
+    m_pipeline.assert_not_called()
+    assert m_git.mock_calls == []
+    assert "human" in capsys.readouterr().err.lower()
+
+
 def test_main_resume_with_bump_errors(capsys: pytest.CaptureFixture[str]) -> None:
     with patch(_MOD + ".git"):
         assert main(["minor", "--resume"]) == 1
