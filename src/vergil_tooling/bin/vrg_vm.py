@@ -1542,6 +1542,9 @@ def _update_over_transport(
     images of finished branches against *prune_roots* (#3604). The prune is
     best-effort: it reports its own failure and never fails the update.
 
+    The host's ``~/.claude`` config is copied in before the plugin refresh, so
+    the refresh reads the host's current ``settings.json``.
+
     The host's *trusted_authors* are re-delivered (or the VM file removed when
     the host has none), so an update alone keeps the VM's list current.
     """
@@ -1565,6 +1568,10 @@ def _update_over_transport(
     if prune:
         prune_cache_images(transport, prune_roots)
 
+    # Deliver the host's current settings.json (and the read-only CLAUDE.md)
+    # before the refresh, so a running VM follows a changed marketplace ref
+    # without a restart (epic vergil-project/.github#760, spec §6).
+    copy_claude_config(transport, Path.home() / ".claude")
     update_plugins(transport)
 
 
@@ -1771,6 +1778,12 @@ def _cmd_update_all(args: argparse.Namespace) -> int:
             # update_tooling/resolve_vergil_version abort via SystemExit after
             # printing their own ERROR line; defer the failure like any other.
             reason = f"aborted (exit {exc.code})"
+            print(f"ERROR: failed to update VM '{instance}': {reason}", file=sys.stderr)
+            failed.append((instance, reason))
+        except RuntimeError as exc:
+            # update_plugins raises RuntimeError on a plugin failure; defer it so
+            # one VM's plugins never stop the rest from updating.
+            reason = str(exc)
             print(f"ERROR: failed to update VM '{instance}': {reason}", file=sys.stderr)
             failed.append((instance, reason))
 
@@ -2992,10 +3005,10 @@ def _cloud_session(
         vm_cloud.bootstrap_volume(transport, identity, req_org, req_repo)
     workdir = vm_cloud.ensure_host_path(transport, identity.projects_dir, req_org, req_repo)
     # #2411 (Component 3): project this repo's memory subset (per-repo memory/ +
-    # MEMORY.md) and the global CLAUDE.md from the host into the guest at the
-    # matching slug, so the cloud session reads canonical host memory rather than a
-    # divergent (or empty) cloud copy. The read-only lock is applied separately
-    # (#2412); this copies the files only.
+    # MEMORY.md) from the host into the guest at the matching slug, so the cloud
+    # session reads canonical host memory rather than a divergent (or empty) cloud
+    # copy, and lock it read-only (#2412). The global CLAUDE.md was copied and
+    # locked by copy_claude_config above.
     #
     # #3346: with no session verb the resolver only lists sessions and exits, so the
     # (slow, per-file) projection is skipped; it runs on the reconnect that names one.

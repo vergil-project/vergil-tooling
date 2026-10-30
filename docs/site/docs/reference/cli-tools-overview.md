@@ -1492,17 +1492,20 @@ drift, auxiliary-check health and pins; `status --fix` first runs the
 remediations of unsatisfied checks. `upgrade` upgrades only `auto`
 dependencies and holds actively pinned ones unless `--force`. `pin` /
 `unpin` record holds in the user's `~/.config/vergil/host-pins.toml`
-under the epic #155 pin-as-tech-debt doctrine. Runs unprivileged and
-refuses `sudo`/`doas`/`su`/`pkexec`. See the
+under the epic #155 pin-as-tech-debt doctrine. `plugins` refreshes the
+host's Claude Code plugins from `~/.claude/settings.json` and verifies that
+each declared marketplace is registered at its declared repo and ref (the
+same refresh `vrg-vm update` runs in each VM); it refuses an agent identity.
+Runs unprivileged and refuses `sudo`/`doas`/`su`/`pkexec`. See the
 [vrg-host reference](dev/host.md).
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_host` |
-| Args | `status [--fix]` (default); `upgrade <dep>…` or `upgrade --all`, each with optional `--force`; `pin <dep> --constraint --inducing-release --reason [--tracking-issue] [--deterministic]`; `unpin <dep>` |
+| Args | `status [--fix]` (default); `upgrade <dep>…` or `upgrade --all`, each with optional `--force`; `pin <dep> --constraint --inducing-release --reason [--tracking-issue] [--deterministic]`; `unpin <dep>`; `plugins` |
 | Preconditions | macOS host with each dependency installed by its documented method (Homebrew for the `brew-formula` and `brew-cask` entries, including `uv`) |
 | Failure mode | Per-dependency `probe-error` rows (never fatal to the report); loud error on an unreadable manifest or pins file; refused pins and upgrades print the reason |
-| Exit codes | `status`: 0 OK, 1 warnings, 2 errors; `upgrade`: 0 done, 1 a named dependency refused, 2 failure; `pin`/`unpin`: 0 success, 1 refused |
+| Exit codes | `status`: 0 OK, 1 warnings, 2 errors; `upgrade`: 0 done, 1 a named dependency refused, 2 failure; `pin`/`unpin`: 0 success, 1 refused; `plugins`: 0 refreshed and verified, 1 refused (agent identity), 2 failure |
 | Status | Active |
 
 ### vrg-generate-commands

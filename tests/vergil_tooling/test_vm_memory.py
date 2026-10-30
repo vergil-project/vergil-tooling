@@ -31,7 +31,7 @@ def _seed_memory(claude: Path) -> Path:
     return memory
 
 
-def test_project_memory_copies_memory_and_claude_md(tmp_path: Path) -> None:
+def test_project_memory_copies_memory_not_claude_md(tmp_path: Path) -> None:
     transport = MagicMock()
     claude = tmp_path / ".claude"
     _seed_memory(claude)
@@ -43,19 +43,21 @@ def test_project_memory_copies_memory_and_claude_md(tmp_path: Path) -> None:
     # copy_claude_config idiom: pipe a ``cat > <dest>`` for each file, prefixed
     # with a chmod that clears any prior read-only lock before overwrite.
     assert any("cat > " in cmd and "/memory/MEMORY.md" in cmd for cmd in piped)
-    assert any("cat > " in cmd and cmd.endswith("/CLAUDE.md") for cmd in piped)
     assert all(cmd.startswith("chmod u+w ") for cmd in piped)
-    # The memory content is piped as the input payload.
+    # The global CLAUDE.md is copy_claude_config's, never written here.
+    assert not any("CLAUDE.md" in cmd for cmd in piped)
     contents = [c.args[1] for c in transport.pipe.call_args_list]
     assert "m" in contents
-    assert "global" in contents
+    assert "global" not in contents
     # The projection is locked read-only *after* the copy: the final transport
-    # command is the surgical lock (a chmod of the memory subtree + CLAUDE.md).
+    # command is the surgical lock of the memory subtree, which no longer names
+    # CLAUDE.md.
     last_run = transport.run.call_args_list[-1].args
     assert last_run[0] == "bash"
     assert "chmod -R a-w" in last_run[-1]
     assert f'"$HOME/.claude/projects/{_SLUG}/memory"' in last_run[-1]
-    assert '"$HOME/.claude/CLAUDE.md"' in last_run[-1]
+    assert "CLAUDE.md" not in last_run[-1]
+    assert not any("CLAUDE.md" in c.args[-1] for c in transport.run.call_args_list)
 
 
 def test_project_memory_mkdirs_guest_memory_dir(tmp_path: Path) -> None:
@@ -113,7 +115,7 @@ def test_project_memory_copies_nested_memory_file(tmp_path: Path) -> None:
     assert any("/memory/notes/topic.md" in cmd for cmd in piped)
 
 
-def test_project_memory_without_host_memory_dir_still_seeds_and_copies_claude_md(
+def test_project_memory_without_host_memory_dir_still_seeds(
     tmp_path: Path,
 ) -> None:
     transport = MagicMock()
@@ -124,14 +126,11 @@ def test_project_memory_without_host_memory_dir_still_seeds_and_copies_claude_md
 
     vm_memory.project_memory(transport, claude_dir=claude, host_workdir=_WORKDIR)
 
-    # The guest memory (slug) dir is still created — no error — and the global
-    # CLAUDE.md is projected regardless of per-repo memory. mkdir is the first run.
+    # The guest memory (slug) dir is still created — no error. mkdir is the first
+    # run. Nothing is piped: no memory files, and never the global CLAUDE.md.
     script = transport.run.call_args_list[0].args[-1]
     assert f"mkdir -p ~/.claude/projects/{_SLUG}/memory" in script
-    piped = [c.args[0] for c in transport.pipe.call_args_list]
-    assert any(cmd.endswith("/CLAUDE.md") for cmd in piped)
-    # No memory files were copied.
-    assert not any("/memory/" in cmd for cmd in piped)
+    transport.pipe.assert_not_called()
 
 
 def test_project_memory_without_global_claude_md(tmp_path: Path) -> None:

@@ -1637,6 +1637,24 @@ class TestUpdate:
 
     @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
+    def test_update_over_transport_copies_config_before_plugins(
+        self, _status: MagicMock, _ver: MagicMock, config_file: Path
+    ) -> None:
+        # Epic vergil-project/.github#760, spec §6: an update delivers the host's
+        # current settings.json to the running VM before the plugin refresh reads it.
+        manager = MagicMock()
+        with (
+            patch("vergil_tooling.bin.vrg_vm.copy_claude_config", manager.copy),
+            patch("vergil_tooling.bin.vrg_vm.update_plugins", manager.plugins),
+        ):
+            assert main(["update", "--config", str(config_file)]) == 0
+        assert [name for name, _, _ in manager.mock_calls] == ["copy", "plugins"]
+        manager.copy.assert_called_once_with(ANY, Path.home() / ".claude")
+        assert manager.copy.call_args.args[0] is manager.plugins.call_args.args[0]
+        _assert_transport(manager.copy, "vergil-agent")
+
+    @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
     def test_failed_prune_does_not_fail_update(
         self, _status: MagicMock, _ver: MagicMock, config_file: Path
     ) -> None:
@@ -1804,6 +1822,38 @@ class TestUpdateAll:
         result = main(["update", "--all", "--config", str(config_file)])
         assert result == 1
         assert mock_update.call_count == 2
+
+    @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
+    @patch("vergil_tooling.bin.vrg_vm.list_vms")
+    def test_update_all_continues_after_lima_plugin_failure(
+        self,
+        mock_list: MagicMock,
+        _ver: MagicMock,
+        _mock_update_plugins: MagicMock,
+        config_file: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # One Lima VM's plugin failure never stops the rest from updating; the
+        # run still exits non-zero and names the failed VM.
+        mock_list.return_value = [
+            {"name": "vergil-agent", "status": "Running"},
+            {"name": "vergil.acme.widgets", "status": "Running"},
+        ]
+        _mock_update_plugins.side_effect = [
+            RuntimeError("plugin refresh failed: marketplace:vergil-marketplace"),
+            None,
+        ]
+        result = main(["update", "--all", "--config", str(config_file)])
+        assert result == 1
+        assert _mock_update_plugins.call_count == 2
+        instances = [c.args[0].instance for c in _mock_update_plugins.call_args_list]
+        assert instances == ["vergil-agent", "vergil.acme.widgets"]
+        captured = capsys.readouterr()
+        assert "failed to update 1 of 2" in captured.err
+        assert "'vergil-agent' (plugin refresh failed: marketplace:vergil-marketplace)" in (
+            captured.err
+        )
+        assert "1 updated" in captured.out
 
     @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
     @patch("vergil_tooling.bin.vrg_vm.update_tooling")

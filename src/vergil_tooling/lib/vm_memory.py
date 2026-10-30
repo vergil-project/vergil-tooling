@@ -4,7 +4,7 @@ Net-new logic for the cloud-memory-projection epic (vergil-project/.github#156,
 spec Component 3). The physical host is the single source of truth for agent
 memory; a cloud VM is a projection of it. Before a cloud session opens, the host
 copies that repo's memory subset — the per-repo ``memory/`` directory (including
-``MEMORY.md``) — plus the global ``~/.claude/CLAUDE.md`` into the guest at the
+``MEMORY.md``) — into the guest at the
 slug Claude derives from the host project path, file-by-file over the
 established ``transport.pipe`` (``cat > <dest>``) idiom (the same mechanism
 ``copy_claude_config`` uses; there is no ``rsync`` over the transport).
@@ -49,20 +49,24 @@ def host_memory_dir(claude_dir: Path, slug: str) -> Path:
 
 
 def project_memory(transport: Transport, *, claude_dir: Path, host_workdir: str) -> None:
-    """Copy the host memory subset and global ``CLAUDE.md`` into the cloud guest.
+    """Copy the host memory subset into the cloud guest.
 
     Resolves the host memory slug from ``host_workdir``, ensures the guest memory
     directory exists, then copies — file-by-file over ``transport.pipe`` — every
     file under the host ``memory/`` directory (including ``MEMORY.md``) to the
-    matching guest path under ``~/.claude/projects/<slug>/memory/`` and the global
-    ``~/.claude/CLAUDE.md``. Before the copy the whole guest memory subtree is
+    matching guest path under ``~/.claude/projects/<slug>/memory/``. Before the
+    copy the whole guest memory subtree is
     reopened for writing (``chmod -R u+w``) so a re-projection can both overwrite
     existing files *and* create new ones into a directory a prior
     ``lock_projection`` froze read-only (issue #2591); each pipe additionally
     clears the per-file lock (``chmod u+w`` before ``cat >``). If the host has no
     memory directory for this repo yet, the guest memory
     directory is still created and the memory copy is skipped (not an error — a
-    repo may have no memory yet); the global ``CLAUDE.md`` is projected regardless.
+    repo may have no memory yet).
+
+    The global ``~/.claude/CLAUDE.md`` is not projected here: ``vm_guest.copy_claude_config``
+    copies it and is the sole owner of its read-only mode (epic
+    vergil-project/.github#760, spec §6).
 
     After the copy, ``lock_projection`` freezes the projected canonical set
     read-only. Re-projection is safe: each pipe above clears the lock
@@ -105,22 +109,17 @@ def project_memory(transport: Transport, *, claude_dir: Path, host_workdir: str)
     for dest, src in copies:
         transport.pipe(f"chmod u+w {dest} 2>/dev/null; cat > {dest}", src.read_text())
 
-    global_claude_md = claude_dir / "CLAUDE.md"
-    if global_claude_md.exists():
-        dest = f"{_GUEST_CLAUDE_DIR}/CLAUDE.md"
-        transport.pipe(f"chmod u+w {dest} 2>/dev/null; cat > {dest}", global_claude_md.read_text())
-
     # Freeze the projection read-only. ``$HOME`` (not ``~``) is used because the
     # lock paths are double-quoted to survive the slug's characters, and ``~``
-    # does not expand inside double quotes whereas ``$HOME`` does. The only extra
-    # beyond the memory subtree is the global ``CLAUDE.md`` (the Task-1 audit's
-    # locked set: vergil-project/.github#161); ``settings.json`` is deliberately
-    # NOT locked — provisioning and the Claude runtime both write it.
+    # does not expand inside double quotes whereas ``$HOME`` does. The projection
+    # locks only the memory subtree it owns: the global ``CLAUDE.md`` is locked by
+    # ``copy_claude_config``, and ``settings.json`` is deliberately never locked
+    # (provisioning and the Claude runtime both write it).
     lock_projection(
         transport,
         claude_dir_guest="$HOME/.claude",
         slug=slug,
-        locked_set=["$HOME/.claude/CLAUDE.md"],
+        locked_set=[],
     )
 
 
@@ -137,8 +136,8 @@ def lock_projection(
     write fails loudly with ``EACCES`` rather than succeeding-then-vanishing
     (spec §Component 3): the per-repo ``memory`` subtree
     (``<claude_dir_guest>/projects/<slug>/memory``, recursively), its
-    ``MEMORY.md``, and every path in ``locked_set`` (the Task-1 audit's extras,
-    i.e. the global ``CLAUDE.md``).
+    ``MEMORY.md``, and every path in ``locked_set`` (any extra file the caller
+    owns; ``project_memory`` passes none).
 
     **Surgical.** The ``projects/<slug>/`` directory co-mingles the durable
     ``memory/`` subtree with the session-transcript ``.jsonl`` files Claude writes
