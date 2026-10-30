@@ -130,11 +130,17 @@ All repositories must use GitHub rulesets for branch and tag protection.
 Rulesets replace legacy branch protection rules. Legacy branch protection must
 not be used on any repository.
 
-**Enforce-admins-ON**: Every ruleset must have an empty `bypass_actors` list.
-This means ruleset enforcement applies to all users including repository
-administrators. There is no escape hatch for admins.
+**Enforce-admins-ON**: Every ruleset has an empty `bypass_actors` list except
+Tag protection, which only the repository Admin role (the human release
+identity) may bypass, to move or delete a tag. Every other ruleset applies to
+all users, including repository administrators.
 
-**Library repositories** require three rulesets:
+The rulesets are declared by `compute_desired_state()` in
+`lib/github_config.py` and checked by the config audit; the
+[rulesets table](../reference/config-audit.md#github-checks-rulesets) lists
+each one's includes, rules and bypass.
+
+**Library repositories** require four rulesets:
 
 1. **Branch protection** (targets: `main`, `develop`)
    - Prevent branch deletion
@@ -146,11 +152,18 @@ administrators. There is no escape hatch for admins.
    - Required checks are repo-specific and must match the CI job names defined
      in the repository's workflow files
 
-3. **Tag protection** (targets: `v*`)
+3. **Tag protection** (targets: `v*.*.*` release tags and `v*.*` rolling tags)
    - Prevent tag deletion
    - Prevent force-updating tags
    - Prevent modifying existing tags
    - No creation restriction (the publish workflow creates tags)
+   - Bypass: the repository Admin role only
+
+4. **Rolling tag branch names** (targets: `v[0-9]*`)
+   - Prevent creating a branch named like a rolling tag, since some consumers,
+     Claude Code among them, resolve a ref such as `v2.1` as a branch before a
+     tag
+   - No bypass
 
 **Documentation repositories** require two rulesets:
 

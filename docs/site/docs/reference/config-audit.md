@@ -331,9 +331,10 @@ order:
   `vX.Y` tags consumers follow as their deploy ref, so only the human release
   identity can move or delete either.
 - **Rolling tag branch names** blocks creating any branch named like a rolling
-  tag (a `v` followed by a digit). A ref such as `v2.1` resolves to a branch
-  before a tag, so the tag's protection holds only while no such branch can
-  exist. Names such as `vm-…` are not covered. GitHub's ruleset ref matching
+  tag (a `v` followed by a digit). Some consumers, Claude Code among them,
+  resolve a ref such as `v2.1` as a branch before a tag (git's own short-name
+  lookup prefers the tag), so for them the tag's protection holds only while
+  no such branch can exist. Names such as `vm-…` are not covered. GitHub's ruleset ref matching
   uses `fnmatch` syntax and supports character sets in square brackets
   ([Using `fnmatch` syntax](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/creating-rulesets-for-a-repository#using-fnmatch-syntax)).
   A pattern include names no single branch, so the classic branch-protection

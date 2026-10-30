@@ -224,9 +224,10 @@ def desired_tag_protection_ruleset() -> DesiredRuleset:
 def desired_rolling_tag_branch_ruleset() -> DesiredRuleset:
     """Block creating any branch whose name has the shape of a rolling tag.
 
-    A ref such as ``v2.1`` resolves to a branch before a tag, so the rolling
-    tag's protection holds only while no branch of that name can exist. The
-    ruleset has no bypass actor.
+    Some consumers, Claude Code among them, resolve a ref such as ``v2.1`` as
+    a branch before a tag (git's own short-name lookup prefers the tag), so
+    for them the rolling tag's protection holds only while no branch of that
+    name can exist. The ruleset has no bypass actor.
 
     The pattern is ``refs/heads/v[0-9]*``: a ``v`` followed by a digit, so
     rolling-tag-shaped names are covered while names such as ``vm-...`` stay
