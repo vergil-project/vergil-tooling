@@ -299,15 +299,39 @@ version in `VERSION`, using `git-cliff`.
 
 ### vrg-promote
 
-Force-update the rolling `vX.Y` tag to point at release `vX.Y.Z`.
-`--dry-run` prints what it would do.
+Move the rolling `vX.Y` tag to release `vX.Y.Z`. It is human-only: it
+refuses any agent identity, failing closed on any agent signal
+(`is_agent() or any_agent_signal()`), before any output or git call.
+`vrg-release`'s promote stage uses the same library and the same refusal.
+
+The target must be an existing `vX.Y.Z` tag on origin whose commit is on
+`origin/main` and that has a published (non-draft) GitHub Release; any other
+target is refused. The command fetches `main` and the tags first, so the
+check runs against origin's current state.
+
+It prints the origin repo and the tag move, for example:
+
+```text
+origin: vergil-project/vergil-claude-plugin
+v2.1 1a2b3c4d5e6f -> v2.1.50 fc17882a9b0c
+```
+
+`--dry-run` prints the same lines, after the same target check, and stops.
+Otherwise it asks `Move vX.Y on <repo>? [y/N]` on the terminal, and moves
+the tag only on `y` or `yes`. With no terminal to confirm on, it refuses.
+Before it pushes it re-resolves the move and refuses if anything changed
+since it was confirmed. The push is a compare-and-swap
+(`--force-with-lease` on the rolling tag's value on origin, empty when the
+tag is new), so it overwrites exactly the tag that was shown, or is refused.
+When the rolling tag already points at the release, it reports "already
+promoted" and pushes nothing.
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_promote` |
 | Args | `version` (positional, default: the `VERSION` file), `--dry-run` |
-| Preconditions | Git repo with the release tag; push access to origin |
-| Failure mode | `Error:` on stderr when there is no version or the tag update fails |
+| Preconditions | Human identity; run in the repo's checkout; a terminal to confirm on; push access to origin |
+| Failure mode | `Error:` on stderr when there is no version, the target is refused, the move changed since it was confirmed, or the tag update fails |
 | Exit codes | 0 success, 1 error |
 | Status | Active |
 

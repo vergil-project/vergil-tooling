@@ -20,7 +20,8 @@ def main(argv: list[str] | None = None) -> int:
     # The release workflow — branch, tag, merge, finalize — is a human
     # action, like vrg-submit-pr. Hard-abort under any agent identity before
     # any side effect, so an agent VM cannot drive a release (issue #1694).
-    if identity_mode.is_agent():
+    # Fail closed: any agent signal refuses, whatever else is set.
+    if identity_mode.is_agent() or identity_mode.any_agent_signal():
         print(
             "vrg-release: releasing is a human maintainer action. Agents cannot run vrg-release.",
             file=sys.stderr,
