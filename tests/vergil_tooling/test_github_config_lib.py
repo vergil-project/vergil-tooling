@@ -35,6 +35,7 @@ from vergil_tooling.lib.github_config import (
     _apply_repo_settings,
     _apply_rulesets,
     _apply_security_settings,
+    _branch_from_ref,
     _canonicalize_rules,
     _classic_required_contexts,
     _cleanup_classic_branch_protection,
@@ -54,6 +55,7 @@ from vergil_tooling.lib.github_config import (
     desired_branch_protection_ruleset,
     desired_ci_gates_ruleset,
     desired_repo_settings,
+    desired_rolling_tag_branch_ruleset,
     desired_security_settings,
     desired_tag_protection_ruleset,
     fetch_actual_state,
@@ -262,7 +264,7 @@ def test_tag_protection_ruleset() -> None:
     r = desired_tag_protection_ruleset()
     assert r.name == "Tag protection"
     assert r.target == "tag"
-    assert r.ref_include == ["refs/tags/v*.*.*"]
+    assert r.ref_include == ["refs/tags/v*.*.*", "refs/tags/v*.*"]
     assert r.bypass_actors is not None
     assert len(r.bypass_actors) == 1
     assert r.bypass_actors[0]["actor_type"] == "RepositoryRole"
@@ -271,6 +273,29 @@ def test_tag_protection_ruleset() -> None:
     assert "deletion" in rule_types
     assert "non_fast_forward" in rule_types
     assert "update" in rule_types
+
+
+# The literal the rolling-tag branch ruleset matches: a ``v`` then a digit, so a
+# rolling-tag-shaped name such as ``v2.1`` is covered while ``vm-...`` is not.
+BRANCH_PATTERN = "refs/heads/v[0-9]*"
+
+
+def test_branch_from_ref_skips_glob_includes() -> None:
+    assert _branch_from_ref("refs/heads/v*") is None
+    assert _branch_from_ref("refs/heads/v?") is None
+    assert _branch_from_ref(BRANCH_PATTERN) is None
+    assert _branch_from_ref("refs/heads/main") == "main"
+    assert _branch_from_ref("refs/tags/v1.2.3") is None
+
+
+def test_rolling_tag_branch_ruleset() -> None:
+    r = desired_rolling_tag_branch_ruleset()
+    assert r.name == "Rolling tag branch names"
+    assert r.target == "branch"
+    assert r.enforcement == "active"
+    assert r.ref_include == [BRANCH_PATTERN]
+    assert r.bypass_actors == []
+    assert [rule["type"] for rule in r.rules] == ["creation"]
 
 
 # ---------------------------------------------------------------------------
@@ -1095,13 +1120,15 @@ def test_compute_desired_state_requires_resolved_integration_checks() -> None:
     assert "test / integration / 3.13" in _check_names(gates)
 
 
-def test_compute_desired_state_has_three_rulesets() -> None:
+def test_compute_desired_state_has_four_rulesets() -> None:
     state = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
-    assert len(state.rulesets) == 3
-    names = [r.name for r in state.rulesets]
-    assert "Branch protection" in names
-    assert "Tag protection" in names
-    assert "CI gates" in names
+    assert len(state.rulesets) == 4
+    assert [r.name for r in state.rulesets][:3] == [
+        "Branch protection",
+        "Tag protection",
+        "Rolling tag branch names",
+    ]
+    assert "CI gates" in [r.name for r in state.rulesets]
 
 
 def test_compute_desired_state_omits_docs_gate_when_publish_docs_false() -> None:
@@ -2285,7 +2312,7 @@ def test_ruleset_body_structure() -> None:
     assert body["target"] == "tag"
     assert body["enforcement"] == "active"
     assert body["conditions"] == {
-        "ref_name": {"include": ["refs/tags/v*.*.*"], "exclude": []},
+        "ref_name": {"include": ["refs/tags/v*.*.*", "refs/tags/v*.*"], "exclude": []},
     }
     assert body["bypass_actors"] == ruleset.bypass_actors
     assert body["rules"] == ruleset.rules

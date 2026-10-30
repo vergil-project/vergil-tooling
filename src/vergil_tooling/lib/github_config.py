@@ -202,7 +202,10 @@ def desired_tag_protection_ruleset() -> DesiredRuleset:
         name="Tag protection",
         target="tag",
         enforcement="active",
-        ref_include=["refs/tags/v*.*.*"],
+        # ``v*.*.*`` covers release tags; ``v*.*`` covers the rolling ``vX.Y``
+        # tags consumers follow as their deploy ref. Only the repository Admin
+        # role (the human release identity) may move or delete either.
+        ref_include=["refs/tags/v*.*.*", "refs/tags/v*.*"],
         bypass_actors=[
             {
                 "actor_id": 5,
@@ -215,6 +218,31 @@ def desired_tag_protection_ruleset() -> DesiredRuleset:
             {"type": "non_fast_forward"},
             {"type": "update"},
         ],
+    )
+
+
+def desired_rolling_tag_branch_ruleset() -> DesiredRuleset:
+    """Block creating any branch whose name has the shape of a rolling tag.
+
+    A ref such as ``v2.1`` resolves to a branch before a tag, so the rolling
+    tag's protection holds only while no branch of that name can exist. The
+    ruleset has no bypass actor.
+
+    The pattern is ``refs/heads/v[0-9]*``: a ``v`` followed by a digit, so
+    rolling-tag-shaped names are covered while names such as ``vm-...`` stay
+    available. GitHub's ruleset ref matching uses ``fnmatch`` syntax and
+    supports character sets in square brackets (only the ``[^...]`` complement
+    is unsupported): "Creating rulesets for a repository", section "Using
+    fnmatch syntax",
+    https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/creating-rulesets-for-a-repository#using-fnmatch-syntax
+    """
+    return DesiredRuleset(
+        name="Rolling tag branch names",
+        target="branch",
+        enforcement="active",
+        ref_include=["refs/heads/v[0-9]*"],
+        bypass_actors=[],
+        rules=[{"type": "creation"}],
     )
 
 
@@ -730,6 +758,7 @@ def compute_desired_state(
 
     rulesets.append(desired_branch_protection_ruleset())
     rulesets.append(desired_tag_protection_ruleset())
+    rulesets.append(desired_rolling_tag_branch_ruleset())
     rulesets.append(
         desired_ci_gates_ruleset(
             config.project,
@@ -924,11 +953,22 @@ def _read_classic_protection(repo: str, branch: str) -> dict[str, object] | None
     return data if isinstance(data, dict) else None
 
 
+_GLOB_CHARS = frozenset("*?[")
+
+
 def _branch_from_ref(ref: str) -> str | None:
-    """The branch name of a ``refs/heads/<b>`` include, or ``None`` otherwise."""
-    if ref.startswith("refs/heads/"):
-        return ref.removeprefix("refs/heads/")
-    return None
+    """The branch name of a ``refs/heads/<b>`` include, or ``None`` otherwise.
+
+    An include containing a glob character (``*``, ``?``, ``[``) is a pattern,
+    not a branch name, so it names no single branch whose classic protection
+    could be read; it yields ``None``.
+    """
+    if not ref.startswith("refs/heads/"):
+        return None
+    branch = ref.removeprefix("refs/heads/")
+    if any(ch in branch for ch in _GLOB_CHARS):
+        return None
+    return branch
 
 
 def _ruleset_branches(rulesets: list[DesiredRuleset]) -> set[str]:

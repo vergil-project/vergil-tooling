@@ -314,6 +314,36 @@ on, 404 means off). Any other status is an error, never a silent "off".
 Administration write access, which the org automation Apps do not
 have.
 
+## GitHub checks — rulesets
+
+The GitHub half compares the repo's live rulesets against the desired set
+that `compute_desired_state()` in `lib/github_config.py` declares, in this
+order:
+
+| Ruleset | Target | Includes | Rules | Bypass |
+|---|---|---|---|---|
+| `Branch protection` | branch | `refs/heads/main`, `refs/heads/develop` | `deletion`, `non_fast_forward`, `pull_request` | none |
+| `Tag protection` | tag | `refs/tags/v*.*.*`, `refs/tags/v*.*` | `deletion`, `non_fast_forward`, `update` | repository Admin role (`RepositoryRole`, `actor_id` 5) |
+| `Rolling tag branch names` | branch | `refs/heads/v[0-9]*` | `creation` | none |
+| `CI gates` | branch | `refs/heads/main`, `refs/heads/develop` | `required_status_checks` (see below) | none |
+
+- **Tag protection** covers both the `vX.Y.Z` release tags and the rolling
+  `vX.Y` tags consumers follow as their deploy ref, so only the human release
+  identity can move or delete either.
+- **Rolling tag branch names** blocks creating any branch named like a rolling
+  tag (a `v` followed by a digit). A ref such as `v2.1` resolves to a branch
+  before a tag, so the tag's protection holds only while no such branch can
+  exist. Names such as `vm-…` are not covered. GitHub's ruleset ref matching
+  uses `fnmatch` syntax and supports character sets in square brackets
+  ([Using `fnmatch` syntax](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/creating-rulesets-for-a-repository#using-fnmatch-syntax)).
+  A pattern include names no single branch, so the classic branch-protection
+  read skips it.
+- **Bypass actors are not compared under the App token.** The nightly audit
+  runs on a GitHub App token, which cannot read a ruleset's bypass list, so in
+  that mode it checks each ruleset's includes, enforcement and rules but not
+  its bypass actors, and lists the skipped `rulesets.<name>.bypass_actors`
+  fields instead. This holds for every ruleset above.
+
 ## GitHub checks — the required-status-check set
 
 The GitHub half compares the repo's live branch-protection configuration
