@@ -88,17 +88,21 @@ class FakeRun:
         marketplace_list: str = _V1_LIST_V21,
         plugin_list: str = _V1_PLUGIN_LIST,
         fail_on: tuple[str, ...] = (),
+        fail_stdout: str = "",
     ) -> None:
         self.marketplace_list = marketplace_list
         self.plugin_list = plugin_list
         self.fail_on = fail_on
+        self.fail_stdout = fail_stdout
         self.calls: list[tuple[str, ...]] = []
 
     def __call__(self, *argv: str) -> subprocess.CompletedProcess[str]:
         self.calls.append(argv)
         cmd = argv[-1]
         if any(f in cmd for f in self.fail_on):
-            raise subprocess.CalledProcessError(1, list(argv), stderr="boom\n")
+            raise subprocess.CalledProcessError(
+                1, list(argv), output=self.fail_stdout, stderr="boom\n"
+            )
         if "marketplace list --json" in cmd:
             out = self.marketplace_list
         elif "plugin list --json" in cmd:
@@ -130,7 +134,7 @@ class TestRefresh:
         assert refresh(run, SETTINGS_V21, "") == []
         assert run.cmds == [
             "claude plugin marketplace add vergil-project/vergil-claude-plugin@v2.1",
-            "claude plugin marketplace update",
+            "claude plugin marketplace update vergil-marketplace",
             "claude plugin list --json",
             "claude plugin update vergil@vergil-marketplace --scope user",
             "claude plugin marketplace list --json",
@@ -163,22 +167,93 @@ class TestRefresh:
             marketplace_list="[]",
         )
         failures = refresh(run, SETTINGS_V21, "")
-        # The failed add and the failed verification name the same marketplace
-        # by name, so it is listed once.
+        # The failed add, the failed update and the failed verification name
+        # the same marketplace by name, so it is listed once.
         assert failures == [
             "marketplace:vergil-marketplace",
-            "marketplace update",
             "vergil@vergil-marketplace (user)",
         ]
         err = capsys.readouterr().err
         # Each failed step is named with its exit status. Its stderr is the
         # Run's to echo, so it is not printed a second time here.
-        assert "ERROR: marketplace update failed (exit status 1)" in err
+        assert "ERROR: marketplace update vergil-marketplace failed (exit status 1)" in err
         assert (
             "ERROR: marketplace add vergil-project/vergil-claude-plugin@v2.1 failed "
             "(exit status 1)" in err
         )
         assert "boom" not in err
+
+    def test_updates_exactly_the_declared_marketplaces_by_name(self) -> None:
+        # #3879: a registered marketplace the settings do not declare (a stale
+        # leftover) is never updated, so it cannot fail the refresh.
+        settings = {
+            "extraKnownMarketplaces": {
+                "vergil-marketplace": SETTINGS_V21["extraKnownMarketplaces"]["vergil-marketplace"],
+                "paad": {"source": {"source": "github", "repo": "o/paad"}},
+            },
+            "enabledPlugins": {"superpowers@claude-plugins-official": True},
+        }
+        listing = json.loads(_V1_LIST_V21) + [
+            {"name": "paad", "source": "github", "repo": "o/paad"},
+            {"name": "standard-tooling-marketplace", "source": "github", "repo": "o/old"},
+        ]
+        run = FakeRun(marketplace_list=json.dumps(listing), plugin_list="[]")
+        assert refresh(run, settings, "") == []
+        assert [c for c in run.cmds if "marketplace update" in c] == [
+            "claude plugin marketplace update vergil-marketplace",
+            "claude plugin marketplace update paad",
+            "claude plugin marketplace update claude-plugins-official",
+        ]
+        assert not any("standard-tooling-marketplace" in c for c in run.cmds)
+        assert "claude plugin marketplace update" not in run.cmds
+
+    def test_update_quotes_the_marketplace_name(self) -> None:
+        name = "m; touch x"
+        settings = {"extraKnownMarketplaces": {name: {"source": {"repo": "o/r"}}}}
+        run = FakeRun(plugin_list="[]")
+        refresh(run, settings, "")
+        assert f"claude plugin marketplace update {shlex.quote(name)}" in run.cmds
+
+    def test_a_failed_update_is_named_by_marketplace(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        settings = {
+            "extraKnownMarketplaces": {
+                "vergil-marketplace": SETTINGS_V21["extraKnownMarketplaces"]["vergil-marketplace"],
+                "paad": {"source": {"source": "url", "url": "https://x/paad.git"}},
+            },
+        }
+        run = FakeRun(plugin_list="[]", fail_on=("marketplace update paad",))
+        # One marketplace's failure is reported by name; the others still run.
+        assert refresh(run, settings, "") == ["marketplace:paad"]
+        assert "claude plugin marketplace update vergil-marketplace" in run.cmds
+        assert "ERROR: marketplace update paad failed (exit status 1)" in capsys.readouterr().err
+
+    def test_a_failed_command_reports_its_stdout(self, capsys: pytest.CaptureFixture[str]) -> None:
+        # #3879: claude writes some failure causes only to stdout.
+        cause = "1 marketplace could not be refreshed (see --debug): vergil-marketplace\n"
+        run = FakeRun(fail_on=("marketplace update",), fail_stdout=cause)
+        assert refresh(run, SETTINGS_V21, "") == ["marketplace:vergil-marketplace"]
+        err = capsys.readouterr().err
+        assert cause + "ERROR: marketplace update vergil-marketplace failed (exit status 1)" in err
+
+    def test_stdout_without_a_newline_ends_its_line(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        run = FakeRun(fail_on=("plugin update vergil",), fail_stdout="no newline")
+        refresh(run, SETTINGS_V21, "")
+        assert "no newline\nERROR: update vergil@" in capsys.readouterr().err
+
+    @pytest.mark.parametrize("listing", ["claude plugin list --json", "marketplace list --json"])
+    def test_a_failed_listing_reports_its_stdout_and_raises(
+        self, listing: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        run = FakeRun(fail_on=(listing,), fail_stdout="listing cause\n")
+        with pytest.raises(subprocess.CalledProcessError):
+            refresh(run, SETTINGS_V21, "")
+        err = capsys.readouterr().err
+        assert "listing cause\nERROR: claude plugin " in err
+        assert "failed (exit status 1)" in err
 
     def test_a_plugin_enabled_as_false_is_neither_installed_nor_derived(self) -> None:
         settings = {"enabledPlugins": {"superpowers@claude-plugins-official": False}}
@@ -210,7 +285,7 @@ class TestRefresh:
         assert refresh(run, settings, "") == []
         assert run.cmds[:2] == [
             "claude plugin marketplace add anthropics/claude-plugins-official",
-            "claude plugin marketplace update",
+            "claude plugin marketplace update claude-plugins-official",
         ]
         assert "claude plugin install superpowers@claude-plugins-official --scope user" in run.cmds
 

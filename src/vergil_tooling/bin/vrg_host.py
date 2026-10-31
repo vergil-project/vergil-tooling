@@ -42,7 +42,7 @@ Subcommands (epic vergil-project/.github#167, spec §6):
 - ``vrg-host plugins`` — refresh the host's Claude Code plugins from
   ``~/.claude/settings.json`` and verify them (epic
   vergil-project/.github#760, spec §6): re-add each declared marketplace at its
-  declared ref, update the marketplaces and every plugin install, then check
+  declared ref, update those marketplaces and every plugin install, then check
   each declared marketplace is registered at its declared repo and ref. It is
   a human command: an agent identity is refused (exit ``1``) before any
   ``claude`` call. Exit ``0`` when everything refreshed and verified, ``2``
@@ -133,7 +133,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="refresh and verify the host's Claude Code plugins (human only)",
         description=(
             "Re-add each marketplace ~/.claude/settings.json declares at its declared "
-            "ref, update the marketplaces and every plugin install, then verify each "
+            "ref, update those marketplaces and every plugin install, then verify each "
             "declared marketplace is registered at its declared repo and ref. Refuses "
             "an agent identity. Exit 0 = refreshed and verified, 1 = refused, "
             "2 = a failure."

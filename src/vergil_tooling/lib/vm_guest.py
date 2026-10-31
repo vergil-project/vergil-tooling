@@ -431,7 +431,7 @@ def update_plugins(transport: Transport) -> None:
 
     Runs the shared refresh (:func:`claude_marketplace.refresh`), the same
     sequence ``vrg-host plugins`` runs on the host: re-add each declared
-    marketplace at its declared ref, update the marketplaces, update every
+    marketplace at its declared ref, update each of them by name, update every
     install of an enabled plugin at its own scope and install any enabled id
     that is missing, then verify each declared marketplace is registered at its
     declared repo and ref. Transport-generic (#1812): the same refresh runs over
