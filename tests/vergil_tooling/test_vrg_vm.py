@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import shutil
@@ -7238,3 +7239,92 @@ class TestDevToolingBanner:
         state.vergil_version = "v2.1"
         vrg_vm._cs_tooling(state)
         assert "DEV tooling" not in capsys.readouterr().out
+
+
+# Every vrg-vm subcommand, with the smallest argv that parses, mapped to its handler.
+_SUBCOMMAND_ARGV: dict[str, list[str]] = {
+    "create": ["create"],
+    "start": ["start"],
+    "stop": ["stop"],
+    "restart": ["restart"],
+    "update": ["update"],
+    "destroy": ["destroy"],
+    "destroy-volume": ["destroy-volume"],
+    "rebuild": ["rebuild"],
+    "list": ["list"],
+    "volumes": ["volumes"],
+    "session": ["session", "."],
+    "cp": ["cp", ".", "a", ":b"],
+}
+
+
+class TestAgentRefusal:
+    """vrg-vm is a human tool: every subcommand refuses an agent before any work.
+
+    Epic vergil-project/.github#760, spec §6 named `vrg-vm update`; the human
+    extended the refusal to the whole command.
+    """
+
+    @pytest.fixture()
+    def handlers(self) -> Iterator[dict[str, MagicMock]]:
+        mocks = {name: MagicMock(return_value=0) for name in _SUBCOMMAND_ARGV}
+        with contextlib.ExitStack() as stack:
+            for name, mock in mocks.items():
+                attr = "_cmd_" + name.replace("-", "_")
+                stack.enter_context(patch(f"vergil_tooling.bin.vrg_vm.{attr}", mock))
+            yield mocks
+
+    def test_every_subcommand_is_covered(self, capsys: pytest.CaptureFixture[str]) -> None:
+        # The usage line lists the subcommands as `{create,start,...}`.
+        with pytest.raises(SystemExit):
+            main(["--help"])
+        usage = capsys.readouterr().out
+        listed = usage[usage.index("{") + 1 : usage.index("}")].split(",")
+        assert set(listed) == set(_SUBCOMMAND_ARGV)
+
+    @pytest.mark.parametrize("command", list(_SUBCOMMAND_ARGV))
+    def test_agent_is_refused(
+        self,
+        command: str,
+        handlers: dict[str, MagicMock],
+        monkeypatch: pytest.MonkeyPatch,
+        config_file: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
+        assert main(["--config", str(config_file), *_SUBCOMMAND_ARGV[command]]) == 1
+        handlers[command].assert_not_called()
+        assert f"Agents cannot run vrg-vm {command}." in capsys.readouterr().err
+
+    @pytest.mark.parametrize("command", list(_SUBCOMMAND_ARGV))
+    def test_any_agent_signal_is_refused(
+        self,
+        command: str,
+        handlers: dict[str, MagicMock],
+        monkeypatch: pytest.MonkeyPatch,
+        config_file: Path,
+    ) -> None:
+        # A human mode value cannot talk the check out of a provisioned agent signal.
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "human")
+        monkeypatch.setattr(identity_mode, "any_agent_signal", lambda: True)
+        assert main(["--config", str(config_file), *_SUBCOMMAND_ARGV[command]]) == 1
+        handlers[command].assert_not_called()
+
+    @pytest.mark.parametrize("command", list(_SUBCOMMAND_ARGV))
+    def test_human_reaches_the_handler(
+        self, command: str, handlers: dict[str, MagicMock], config_file: Path
+    ) -> None:
+        assert main(["--config", str(config_file), *_SUBCOMMAND_ARGV[command]]) == 0
+        handlers[command].assert_called_once()
+
+    def test_agent_can_still_read_help(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
+        with pytest.raises(SystemExit) as exc:
+            main(["start", "--help"])
+        assert exc.value.code == 0
+        assert main([]) == 1
+        out = capsys.readouterr().out
+        assert "usage: vrg-vm start" in out
+        assert "usage: vrg-vm" in out

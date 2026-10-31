@@ -399,6 +399,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.command is None:
         parser.print_help()
         return 1
+    # vrg-vm runs the VMs the agents work inside, so every subcommand is a human
+    # action: it refuses an agent with the fail-closed check, before any work.
+    # Epic vergil-project/.github#760, spec §6 named `vrg-vm update`; the human
+    # extended the refusal to the whole command. Help output stays available.
+    if identity_mode.is_agent() or identity_mode.any_agent_signal():
+        print(
+            f"ERROR: vrg-vm {args.command} is a human action. "
+            f"Agents cannot run vrg-vm {args.command}.",
+            file=sys.stderr,
+        )
+        return 1
 
     dispatch = {
         "create": _cmd_create,
@@ -1678,15 +1689,7 @@ def _require_host_settings() -> bool:
 
 
 def _cmd_update(args: argparse.Namespace) -> int:
-    # Epic vergil-project/.github#760, spec §6: the update refreshes the VMs'
-    # plugins from the host settings, which is run by the human. It refuses an
-    # agent with the fail-closed check, before any work.
-    if identity_mode.is_agent() or identity_mode.any_agent_signal():
-        print(
-            "ERROR: vrg-vm update is a human action. Agents cannot run vrg-vm update.",
-            file=sys.stderr,
-        )
-        return 1
+    # `main` has already refused an agent (epic vergil-project/.github#760, spec §6).
     if args.all:
         return _cmd_update_all(args)
     if not _require_host_settings():
