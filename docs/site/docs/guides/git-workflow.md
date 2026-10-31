@@ -401,12 +401,15 @@ on the host and every agent VM with `vrg-host plugins` and
 [Switching an existing machine](consuming-repo-setup.md#switching-an-existing-machine)
 and
 [Pick the move up on each machine](releasing.md#pick-the-move-up-on-each-machine)).
-Do not use the in-session `/plugin marketplace update` and `/reload-plugins`
-pair instead: it does not switch a changed `ref` and verifies nothing. The
-plugin README's
+They verify only the marketplace repo and ref, which is `v2.1` before and
+after a release, so confirm the installed version on each machine with
+`claude plugin list --json`. The plugin README's
 [Update section](https://github.com/vergil-project/vergil-claude-plugin#update)
-describes the same pick-up of a release or a rollback, and how to verify
-the installed version.
+describes the same pick-up of a release or a rollback, and its
+[Verify the update](https://github.com/vergil-project/vergil-claude-plugin#verify-the-update)
+subsection gives that check. Do not use the in-session
+`/plugin marketplace update` and `/reload-plugins` pair instead: it does not
+switch a changed `ref` and checks nothing.
 
 ## Related
 
