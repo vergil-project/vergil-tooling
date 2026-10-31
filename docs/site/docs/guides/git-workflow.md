@@ -395,8 +395,12 @@ The hook that fired will print a reason. Common signals:
 
 ### My plugin cache is stale
 
-If you're running an old version of a hook, refresh the plugin from
-inside Claude Code:
+If you're running an old version of a hook, refresh and verify the plugin
+on the host and every agent VM with `vrg-host plugins` and
+`vrg-vm update --all`, in a human shell, then restart Claude Code (see
+[Switching an existing machine](consuming-repo-setup.md#switching-an-existing-machine)).
+Inside a single session on an unchanged marketplace `ref`, you can instead
+run:
 
 ```text
 /plugin marketplace update vergil-marketplace

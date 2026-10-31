@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.282] - 2026-10-31
+
+### Bug fixes
+
+- update only the declared marketplaces and report a failed command's stdout (#3881)
+
+### Documentation
+
+- document rolling back a release and switching the marketplace ref (#3880)
+
 ## [2.1.281] - 2026-10-31
 
 ### Chores

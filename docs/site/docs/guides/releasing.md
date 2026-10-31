@@ -282,6 +282,159 @@ edits its `v1.x` pin to `v2` deliberately. The difference is
   breakages from removed APIs / changed behaviors.
 - Merge the bump PR per the consumer's normal review flow.
 
+## Rolling back a release
+
+A rollback moves a rolling `vX.Y` tag back to an earlier `vX.Y.Z`, so
+consumers that follow the tag return to that release. It is a release act
+and stays human-gated. The gate is the `Tag protection` ruleset, which lets
+only the repository Admin role move a rolling tag (see the
+[config audit reference](../reference/config-audit.md#github-checks-rulesets)).
+For Claude Code consumers the no-bypass `Rolling tag branch names` ruleset
+is part of the gate: Claude Code resolves `v2.1` as a branch before a tag,
+so the tag's protection holds only while no `v2.1` branch can exist.
+`vrg-promote` also refuses an agent identity, but that stops an agent from
+running it by mistake; it is not an access control.
+The procedure below is written for the Claude Code plugin,
+`vergil-project/vergil-claude-plugin`, whose consumers follow `v2.1`
+(epic [vergil-project/.github#760](https://github.com/vergil-project/.github/issues/760),
+[spec §5](https://github.com/vergil-project/.github/blob/develop/epics/760-plugin-tag-distribution/spec.md#5-rollback-procedure)).
+Moving the tag works the same way in any repo; how other consumers pick up a
+backward move depends on how they install and is not covered here.
+
+### Move the tag back
+
+Run these steps exactly, in a human shell on a terminal. `vrg-promote` acts
+on the repo of the current directory, and the fleet's repos share tag names
+(`v2.1.50` exists in vergil-tooling and vergil-actions too), so running it
+from the wrong checkout would move the wrong repo's tag.
+
+1. `cd` into a vergil-claude-plugin checkout.
+2. Fetch the tags:
+
+   ```bash
+   vrg-git fetch --tags --force origin
+   ```
+
+   The rolling tag moves on every release, and without `--force` the fetch
+   refuses to update a local tag that has moved.
+3. Check the move:
+
+   ```bash
+   vrg-promote --dry-run <X.Y.Z>
+   ```
+
+   It prints the origin repo and the tag move, and changes nothing:
+
+   ```text
+   origin: vergil-project/vergil-claude-plugin
+   v2.1 1a2b3c4d5e6f -> v2.1.50 fc17882a9b0c
+   ```
+
+   Check that the origin line names vergil-claude-plugin, that the rolling
+   tag is `v2.1`, and that the move goes to the release you mean. Always
+   pass the version: with none, `vrg-promote` reads the `VERSION` file.
+4. Move the tag:
+
+   ```bash
+   vrg-promote <X.Y.Z>
+   ```
+
+   It checks the move again, prints the two lines from that check and asks
+   `Move v2.1 on vergil-project/vergil-claude-plugin? [y/N]`. Read the lines
+   again before you answer, in particular the current `v2.1` commit: they
+   can differ from the dry run if origin moved in between. Only `y` or
+   `yes` moves the tag. It pushes the verified release tag object straight
+   to the rolling tag's ref under a lease on origin's value of the rolling
+   tag as this run planned it, so it overwrites exactly that tag or is
+   refused, and it moves your local rolling tag only after GitHub accepts
+   the push.
+
+Both `vrg-promote` runs check the target against origin's current state
+(each one fetches `main` and the tags first). The target must be an existing
+`vX.Y.Z` tag on origin whose commit is on origin's `main` and that has a
+published GitHub Release. `vrg-promote` refuses, with exit 1:
+
+- any other target;
+- an agent identity;
+- a run with no terminal to confirm on (from a script, CI or a pipe);
+- a declined or unanswered confirmation;
+- a move that changed on origin after you confirmed it.
+
+An exit 1 after `Promoted:` (the local tag update failed) or after a
+failure to read origin's rolling tag back leaves origin moved or unknown.
+After either, re-run `vrg-promote --dry-run <X.Y.Z>` to see where `v2.1` is.
+
+When `v2.1` already points at the target, it prints
+`v2.1 already points at vX.Y.Z — already promoted.` and pushes nothing. It
+prints no `origin:` line in that case, so check the checkout with
+`vrg-git ls-remote --get-url origin` instead. See
+the [`vrg-promote` reference](../reference/cli-tools-overview.md#vrg-promote)
+for every exit path.
+
+### Pick the move up on each machine
+
+Each machine picks up the move when its plugins are next updated. Run, in a
+human shell:
+
+```bash
+vrg-host plugins        # the host
+vrg-vm update --all     # every running agent VM
+```
+
+Then restart Claude Code: a running session keeps the plugin version it
+loaded. Both commands refresh the marketplace and the installed plugins and
+verify the registered repo and ref, and both refuse an agent identity (see
+[Switching an existing machine](consuming-repo-setup.md#switching-an-existing-machine),
+which also covers VMs that are not running). Where Claude Code's background
+auto-update is on, it does the marketplace and plugin update on its own.
+
+That verification does not prove the rollback reached a machine: the ref is
+`v2.1` before and after, so it passes whether or not the plugin moved back.
+Finish by checking each machine, host and every VM: `claude plugin list
+--json` must show `vergil@vergil-marketplace` at the `X.Y.Z` you rolled back
+to. Run `vrg-host plugins` or `vrg-vm update` again on any machine that does
+not.
+
+A rollback moves the installed plugin only. A Lima `vrg-vm session` loads
+each tree listed in the host's `~/.config/vergil/plugin-dirs.toml` with
+`--plugin-dir`, so when a listed tree is the vergil plugin the session runs
+that tree instead of the installed one, and the rollback does not reach it.
+To run the rolled-back release in those sessions, remove the vergil tree
+from the file (see the
+[`--plugin-dir` override](../reference/cli-tools-overview.md#vrg-vm)). A
+cloud session does not apply the file's entries and always runs the
+installed plugins, though a malformed file still fails its launch. A listed
+tree that is not the vergil plugin, such as a paad tree, leaves the
+installed vergil plugin in place.
+
+### How long a rollback lasts
+
+A rollback lasts until the next release, whose `promote` stage moves `v2.1`
+forward again. Keeping it in place until the fix ships is managed by hand:
+the human who rolled back makes sure the next release carries the fix, or
+cuts it with `vrg-release --no-promote`. A release cut with `--no-promote`
+leaves `v2.1` where it is; promote it later with the `vrg-promote` steps in
+[Move the tag back](#move-the-tag-back), passing its version. Rolling
+forward again is the same steps with the latest `v2.1.Z`. Nothing holds the
+tag automatically. An issue that blocks promotion until it is closed is a
+separate idea,
+[vergil-project/.github#763](https://github.com/vergil-project/.github/issues/763).
+
+Two cases undo a rollback with no prompt, because the `promote` stage asks
+nothing:
+
+- **A release already in flight.** A vergil-claude-plugin release that is
+  still running moves `v2.1` forward when it reaches `promote`. So does any
+  open `release: <version>` tracking issue, the release you are rolling back
+  included, even with its `promote` stage ticked: `vrg-release --resume`
+  runs every stage again, `promote` with it. Before you roll back, let a
+  running release finish, and close every open tracking issue or resume it
+  only with `--no-promote`.
+- **A resume without `--no-promote`.** `vrg-release` does not remember
+  `--no-promote`: each run, `--resume` included, promotes unless that run
+  passes the flag. Pass `--no-promote` to every `vrg-release --resume` of a
+  release you are holding back.
+
 ## Dependency updates
 
 Every release ends by updating the repo's dependencies to the newest

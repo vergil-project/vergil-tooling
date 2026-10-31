@@ -1283,7 +1283,7 @@ def test_plugins_runs_refresh(host_claude: Path, local_run: _LocalRun) -> None:
     assert all(c[:2] == ("bash", "-c") for c in local_run.calls)
     assert [c[-1] for c in local_run.calls] == [
         "claude plugin marketplace add vergil-project/vergil-claude-plugin@v2.1",
-        "claude plugin marketplace update",
+        "claude plugin marketplace update vergil-marketplace",
         "claude plugin list --json",
         "claude plugin update paad@paad --scope user",
         "claude plugin update vergil@vergil-marketplace --scope user",
