@@ -2,8 +2,11 @@
 
 One sequence serves both places (epic vergil-project/.github#760, spec §6):
 for each marketplace the settings declare, ``claude plugin marketplace add
-<repo>@<ref>``, then ``claude plugin marketplace update``, then the
-per-install ``claude plugin update``. Once ``settings.json`` declares a new
+<repo>@<ref>``, then ``claude plugin marketplace update <name>`` for each of
+those same marketplaces, then the per-install ``claude plugin update``. Only
+the marketplaces the refresh adds are updated: a marketplace registered on the
+machine but not declared is not the fleet's to manage, so it is never touched
+(vergil-project/vergil-tooling#3879). Once ``settings.json`` declares a new
 ref, the re-add re-clones the marketplace at that ref and rewrites its
 registration, which is how a machine switches ref (proven on Claude Code
 2.1.312 by vergil-project/vergil-tooling#3850).
@@ -22,7 +25,10 @@ registration files.
 
 Failures are collected and returned as labels, never swallowed: the caller
 decides how to report them (``vm_guest.update_plugins`` raises, ``vrg-host
-plugins`` exits 2).
+plugins`` exits 2). A failed command is reported with both of its output
+streams and its exit status: the ``Run`` echoes its stderr, and
+:func:`_report` prints its stdout (``claude`` writes some failure causes only
+to stdout).
 """
 
 from __future__ import annotations
@@ -86,12 +92,25 @@ def shell(prefix: str, command: str) -> list[str]:
 
 
 def _report(label: str, exc: subprocess.CalledProcessError) -> None:
-    """Print which step failed and its exit status.
+    """Print the failed step's stdout, then which step failed and its exit status.
 
     The step's own stderr has already been echoed by the ``Run`` (``local_run``
-    or ``Transport.run``), so it is not printed again here.
+    or ``Transport.run``), so it is not printed again here. No ``Run`` echoes
+    stdout, and ``claude`` writes some failure causes only there
+    (vergil-project/vergil-tooling#3879), so it is printed here.
     """
+    if exc.stdout:
+        print(exc.stdout, end="" if exc.stdout.endswith("\n") else "\n", file=sys.stderr)
     print(f"ERROR: {label} failed (exit status {exc.returncode})", file=sys.stderr)
+
+
+def _run_reported(run: Run, prefix: str, command: str) -> subprocess.CompletedProcess[str]:
+    """Run *command*; on a failure, report it with :func:`_report` and re-raise."""
+    try:
+        return run(*shell(prefix, command))
+    except subprocess.CalledProcessError as exc:
+        _report(command, exc)
+        raise
 
 
 def parse_settings(text: str, where: str) -> dict[str, Any]:
@@ -311,7 +330,7 @@ def registered_marketplaces(run: Run, prefix: str) -> dict[str, tuple[str | None
         MarketplaceError: the output is not a JSON list of objects that each
             carry a string ``name``.
     """
-    result = run(*shell(prefix, "claude plugin marketplace list --json"))
+    result = _run_reported(run, prefix, "claude plugin marketplace list --json")
     try:
         data = json.loads(result.stdout)
     except json.JSONDecodeError as exc:
@@ -421,7 +440,7 @@ def _installed_entries(run: Run, prefix: str) -> list[dict[str, Any]]:
             is present but not a string, or its ``enabled`` is present but not
             a boolean.
     """
-    listing = run(*shell(prefix, "claude plugin list --json"))
+    listing = _run_reported(run, prefix, "claude plugin list --json")
     try:
         entries = json.loads(listing.stdout)
     except json.JSONDecodeError as exc:
@@ -483,11 +502,14 @@ def update_installed_plugins(run: Run, settings: dict[str, Any], prefix: str) ->
 
 
 def refresh(run: Run, settings: dict[str, Any], prefix: str) -> list[str]:
-    """Re-add each declared marketplace, update, update the installs, then verify.
+    """Re-add and update each declared marketplace, update the installs, then verify.
 
     The re-add at the declared ref is what switches a registered marketplace
-    to a new ref (spec §6). Returns every failure label, the verification's
-    included; an empty list means the refresh succeeded and every declared
+    to a new ref (spec §6). Each added marketplace is then updated by name,
+    so a registered marketplace the settings do not declare is never touched
+    and cannot fail the refresh (vergil-project/vergil-tooling#3879). A failed
+    add or update is labelled ``marketplace:<name>``. Returns every failure
+    label, the verification's included; an empty list means the refresh succeeded and every declared
     GitHub marketplace is registered at its declared repo and ref.
 
     Raises:
@@ -496,20 +518,23 @@ def refresh(run: Run, settings: dict[str, Any], prefix: str) -> list[str]:
             the state could not be read at all.
     """
     failures: list[str] = []
-    for name, source in _marketplace_adds(settings):
+    adds = _marketplace_adds(settings)
+    for name, source in adds:
         print(f"    registering marketplace {source}...")
         try:
             run(*shell(prefix, f"claude plugin marketplace add {source}"))
         except subprocess.CalledProcessError as exc:
             _report(f"marketplace add {source}", exc)
             failures.append(f"marketplace:{name}")
-    try:
-        run(*shell(prefix, "claude plugin marketplace update"))
-    except subprocess.CalledProcessError as exc:
-        _report("marketplace update", exc)
-        failures.append("marketplace update")
+    for name, _ in adds:
+        print(f"    updating marketplace {name}...")
+        try:
+            run(*shell(prefix, f"claude plugin marketplace update {shlex.quote(name)}"))
+        except subprocess.CalledProcessError as exc:
+            _report(f"marketplace update {name}", exc)
+            failures.append(f"marketplace:{name}")
     failures.extend(update_installed_plugins(run, settings, prefix))
     failures.extend(verify(run, settings, prefix))
-    # A marketplace whose add failed usually fails its verification too; both
-    # carry the same `marketplace:<name>` label, so it is named once.
+    # A marketplace whose add failed usually fails its update and verification
+    # too; all carry the same `marketplace:<name>` label, so it is named once.
     return list(dict.fromkeys(failures))
