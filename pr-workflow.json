@@ -1,0 +1,20 @@
+{
+  "schema_version": 2,
+  "issue": "3853",
+  "branch": "feature/3853-rollback-runbook",
+  "base": "origin/develop",
+  "status": "ready",
+  "created_at": "2026-10-31T13:09:31Z",
+  "updated_at": "2026-10-31T13:09:31Z",
+  "git": {
+    "base_sha": "6618576f08dda69a33130fc2d45756ff37043550",
+    "head_sha": "230c3465508ede4d4fed0b96e34e10620119ae57"
+  },
+  "pr_metadata": {
+    "title": "docs(release): document rolling back a release and switching the marketplace ref",
+    "summary": "Adds the rollback runbook to the release guide and documents the plugin marketplace's v2.1 ref, how to switch existing machines and how a rollback reaches them, so the fleet can follow and roll back the floating plugin tag.",
+    "notes": "Agentic-review gate: pass after 5 rounds (rounds 4 and 5 ran by human ruling, beyond the default three). Round 5 had no blocking findings. vrg-validate is green at the final commit.\n\nApproved scope additions (human ruling), done on this branch, to be closed by hand after merge:\n- vergil-project/vergil-tooling#3876: the vrg-promote reference links to the rollback runbook.\n- vergil-project/vergil-tooling#3877: \"Pick the move up on each machine\" says a Lima vrg-vm session whose host plugin-dirs.toml lists a vergil plugin tree runs that tree, so a rollback does not reach it; cloud sessions and non-vergil trees are unaffected.\n- vergil-project/vergil-tooling#3878 (both halves): \"Keeping up to date\" points at vrg-host plugins and vrg-vm update --all, and \"How long a rollback lasts\" says a --no-promote release is promoted later with the runbook's vrg-promote steps and rolling forward is the same steps with the latest v2.1.Z.\nAlso kept by human ruling: the stale-cache rewrite in git-workflow.md.\n\nWhere the docs describe shipped behaviour that differs from the plan text:\n- The refresh updates every registered marketplace, not only declared ones, and verifies only the declared ones, so a missing or misspelled entry is not caught; the guide says to confirm the ref by hand.\n- vrg-vm update runs tooling, then settings, then plugins; a failed tooling update leaves the old ref. --all skips stopped VMs, a Lima VM's start-time refresh only warns, and an off-platform box does not support vrg-vm start.\n- The refresh verification cannot prove a rollback (the ref is v2.1 before and after), so the runbook adds a claude plugin list --json check on every machine.\n- The runbook warns that any open plugin release tracking issue re-promotes on vrg-release --resume unless that run passes --no-promote, and covers vrg-promote's uncertain exits and its already-promoted case.\n\nNot fixed: how a stopped off-platform box is brought back, and vrg-vm update's wrong vrg-vm start hint for one, both in vergil-project/.github#799.\n\nUnreviewed commit: 230c346550 (round 5 wording fix: a malformed plugin-dirs.toml still fails a cloud session).\n\nSecurity: 2 found; 2 fixed on the branch, 0 recorded.\n\nFollow-ups: vergil-project/.github#797 (closes when this merges), vergil-project/vergil-tooling#3879, vergil-project/.github#799.",
+    "linkage": "Ref"
+  },
+  "submitted": null
+}
