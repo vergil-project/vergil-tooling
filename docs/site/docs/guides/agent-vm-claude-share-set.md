@@ -110,9 +110,11 @@ persistent, an agent writes memory believing it durable, and the write
 quietly evaporates.
 
 To keep the physical host the single source of truth, a cloud VM receives
-canonical agent data — the per-repo `memory/` subtree and the global
-`CLAUDE.md` — as a **read-only cached projection** that never flows back
-automatically. See epic
+canonical agent data — the per-repo `memory/` subtree, including
+`MEMORY.md` — as a **read-only cached projection** that never flows back
+automatically. (The global `CLAUDE.md` is not part of the projection:
+`copy_claude_config` copies it and makes it read-only on every transport,
+as described above.) See epic
 [vergil-project/.github#156](https://github.com/vergil-project/.github/issues/156)
 and its
 [spec](https://github.com/vergil-project/.github/blob/develop/epics/156-cloud-memory-projection/spec.md)
@@ -132,8 +134,8 @@ axes — *sandbox* (in a VM) vs. *host* (not a VM), and *cloud* vs.
 
 `physical-host` names the property that matters — *physical, not a VM* —
 not the operating system; it is macOS today only because that is the
-hardware in use. The read-only memory control activates **only** on
-`cloud-vm`: `local-vm` writes already reach the live host store, and
+hardware in use. The read-only memory control (the `memory/` subtree only)
+activates **only** on `cloud-vm`: `local-vm` writes already reach the live host store, and
 `physical-host` *is* the store.
 
 ### The platform resolver (`vrg-whoami --platform`)
