@@ -74,10 +74,12 @@ any `ref` the entry declares (`owner/repo@ref` for a GitHub source,
 `url#ref` for a git URL): Claude Code refuses an add whose source does not
 match the declared entry. Once the settings declare a new ref, this re-add
 re-clones the marketplace at that ref, which is how a VM switches ref. It
-then refreshes each of those marketplaces by name (`claude plugin
-marketplace update <name>`); a marketplace registered in the VM but not
-declared is never updated, so a stale leftover cannot fail the refresh. It
-then updates every **install** of an
+then refreshes each marketplace it added by name (`claude plugin
+marketplace update <name>`), including `claude-plugins-official` when it
+added that one for an enabled plugin. Any other marketplace registered in the
+VM is never updated, so a stale leftover cannot fail the refresh; a plugin
+enabled from one is still updated, from that marketplace's catalog as it
+stands. It then updates every **install** of an
 enabled plugin to its latest version, each at its own scope (`claude plugin
 update <id> --scope <user|project>` — there is no bulk-update form), all
 inside the VM. One plugin can be installed at user scope and again at project
