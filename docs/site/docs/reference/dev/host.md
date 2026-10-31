@@ -4,7 +4,7 @@
 
 **Source:** `src/vergil_tooling/bin/vrg_host.py` (libraries:
 `src/vergil_tooling/lib/host_deps.py`, `host_methods.py`, `host_pins.py`,
-`host_status.py`, `host_versions.py`)
+`host_status.py`, `host_versions.py`, `claude_marketplace.py`)
 
 Observes and manages the tools Vergil development needs **on the macOS host
 itself** — the ones that cannot live in a dev container or an agent VM, such as
@@ -32,6 +32,7 @@ The pinning doctrine is inherited from epic
 | `vrg-host upgrade --all [--force]` | Upgrade every `auto` dependency, holding pinned ones unless `--force` |
 | `vrg-host pin <dep> --constraint … --inducing-release … --reason …` | Hold a dependency back |
 | `vrg-host unpin <dep>` | Free a pin (kept as history) |
+| `vrg-host plugins` | Refresh and verify the host's Claude Code plugins (human only) |
 
 ### status
 
@@ -200,6 +201,36 @@ pin for the same dependency. `unpin` sets the pin's state to `freed` and **keeps
 it in the pins file as history**, so the file stays the audit trail of what was
 held back and why. Unpinning a dependency with no pin, or one already freed, is
 refused. Both commands exit `0` on success and `1` when refused.
+
+### plugins
+
+```bash
+vrg-host plugins
+```
+
+Refreshes the host's Claude Code plugins from `~/.claude/settings.json` and
+verifies the result. It runs the same sequence `vrg-vm update` runs inside each
+VM (`lib/claude_marketplace.py`):
+
+1. `claude plugin marketplace add <repo>@<ref>` for each marketplace the
+   settings declare in `extraKnownMarketplaces`. Once the settings declare a
+   new ref, this re-add re-clones the marketplace at that ref and rewrites its
+   registration, which is how a machine switches ref.
+2. `claude plugin marketplace update`.
+3. `claude plugin update` for every install of an enabled plugin, at its own
+   scope, and `claude plugin install` for an enabled plugin with no install.
+4. A verification: each declared GitHub marketplace must be registered, as
+   `claude plugin marketplace list --json` reports it, at the declared repo and
+   ref. A different repo or ref (including no registered ref when the settings
+   declare one), or no registration at all, is a failure.
+
+It is a human command. Under an agent identity, or when any identity signal
+implies an agent, it refuses before running any `claude` command. It exits `0`
+when every step succeeded and the verification passed, `1` when refused, and
+`2` when the settings file is missing or invalid, or any step or the
+verification failed. Each failure is named. Design: epic
+[vergil-project/.github#760](https://github.com/vergil-project/.github/issues/760),
+spec §6.
 
 ## The host-dependency manifest
 

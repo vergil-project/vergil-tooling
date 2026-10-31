@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shlex
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -1176,3 +1178,172 @@ def test_status_classifies_the_captured_host(
     assert _row(rows["xcode-clt"]) == _row("[OK   ] xcode-clt custom 26.6.0 -> 26.6.0 current")
     assert "          check numpy-in-interpreter: satisfied" in lines
     assert lines[-1] == f"overall: WARN ({len(deps)} dependencies)"
+
+
+# --- vrg-host plugins (epic vergil-project/.github#760, spec §6) ---------------
+
+_PLUGIN_SETTINGS = {
+    "extraKnownMarketplaces": {
+        "vergil-marketplace": {
+            "source": {
+                "source": "github",
+                "repo": "vergil-project/vergil-claude-plugin",
+                "ref": "v2.1",
+            }
+        }
+    },
+    "enabledPlugins": {"vergil@vergil-marketplace": True, "paad@paad": True},
+}
+
+_REGISTERED_V21 = json.dumps(
+    [
+        {
+            "name": "vergil-marketplace",
+            "source": "github",
+            "repo": "vergil-project/vergil-claude-plugin",
+            "ref": "v2.1",
+        }
+    ]
+)
+
+_INSTALLS = json.dumps(
+    [
+        {"id": "vergil@vergil-marketplace", "scope": "user", "enabled": True},
+        {"id": "paad@paad", "scope": "user", "enabled": True},
+    ]
+)
+
+
+class _LocalRun:
+    """Stands in for ``claude_marketplace.local_run``; records every argv."""
+
+    def __init__(self, fail_on: tuple[str, ...] = ()) -> None:
+        self.fail_on = fail_on
+        self.calls: list[tuple[str, ...]] = []
+
+    def __call__(self, *argv: str) -> subprocess.CompletedProcess[str]:
+        self.calls.append(argv)
+        cmd = argv[-1]
+        if any(f in cmd for f in self.fail_on):
+            raise subprocess.CalledProcessError(1, list(argv), stderr="")
+        out = ""
+        if "marketplace list --json" in cmd:
+            out = _REGISTERED_V21
+        elif "plugin list --json" in cmd:
+            out = _INSTALLS
+        return subprocess.CompletedProcess(list(argv), 0, stdout=out, stderr="")
+
+
+@pytest.fixture
+def host_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A host ``~/.claude/settings.json`` declaring the marketplace at v2.1."""
+    settings = tmp_path / ".claude" / "settings.json"
+    settings.parent.mkdir()
+    settings.write_text(json.dumps(_PLUGIN_SETTINGS))
+    monkeypatch.setattr(vrg_host, "_host_settings_path", lambda: settings)
+    return settings
+
+
+@pytest.fixture
+def local_run(monkeypatch: pytest.MonkeyPatch) -> _LocalRun:
+    run = _LocalRun()
+    monkeypatch.setattr(vrg_host.claude_marketplace, "local_run", run)
+    return run
+
+
+def test_parse_args_plugins() -> None:
+    assert vrg_host.parse_args(["plugins"]).cmd == "plugins"
+
+
+def test_plugins_refuses_agent(
+    monkeypatch: pytest.MonkeyPatch,
+    host_claude: Path,
+    local_run: _LocalRun,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
+    assert vrg_host.main(["plugins"]) == 1
+    assert local_run.calls == []
+    assert "Agents cannot run vrg-host plugins" in capsys.readouterr().err
+
+
+def test_plugins_refuses_mixed_signals(
+    monkeypatch: pytest.MonkeyPatch, host_claude: Path, local_run: _LocalRun
+) -> None:
+    # A human mode value cannot talk the guard out of a provisioned agent signal.
+    monkeypatch.setenv("VRG_IDENTITY_MODE", "human")
+    monkeypatch.setattr(vrg_host.identity_mode, "any_agent_signal", lambda: True)
+    assert vrg_host.main(["plugins"]) == 1
+    assert local_run.calls == []
+
+
+def test_plugins_runs_refresh(host_claude: Path, local_run: _LocalRun) -> None:
+    assert vrg_host.main(["plugins"]) == 0
+    # The host runs bare bash -c commands, with no PATH prefix.
+    assert all(c[:2] == ("bash", "-c") for c in local_run.calls)
+    assert [c[-1] for c in local_run.calls] == [
+        "claude plugin marketplace add vergil-project/vergil-claude-plugin@v2.1",
+        "claude plugin marketplace update",
+        "claude plugin list --json",
+        "claude plugin update paad@paad --scope user",
+        "claude plugin update vergil@vergil-marketplace --scope user",
+        "claude plugin marketplace list --json",
+    ]
+
+
+def test_plugins_exits_2_naming_each_failure(
+    monkeypatch: pytest.MonkeyPatch, host_claude: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run = _LocalRun(fail_on=("plugin update paad@paad", "plugin update vergil@"))
+    monkeypatch.setattr(vrg_host.claude_marketplace, "local_run", run)
+    assert vrg_host.main(["plugins"]) == 2
+    err = capsys.readouterr().err
+    assert "paad@paad (user)" in err
+    assert "vergil@vergil-marketplace (user)" in err
+
+
+@pytest.mark.parametrize("content", [None, "{not json", "[]"])
+def test_plugins_exits_2_on_unusable_settings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    local_run: _LocalRun,
+    content: str | None,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    settings = tmp_path / "settings.json"
+    if content is not None:
+        settings.write_text(content)
+    monkeypatch.setattr(vrg_host, "_host_settings_path", lambda: settings)
+    assert vrg_host.main(["plugins"]) == 2
+    assert local_run.calls == []
+    assert str(settings) in capsys.readouterr().err
+
+
+def test_plugins_exits_2_on_malformed_listing(
+    monkeypatch: pytest.MonkeyPatch, host_claude: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def run(*argv: str) -> subprocess.CompletedProcess[str]:
+        out = '{"not": "a list"}' if "marketplace list --json" in argv[-1] else "[]"
+        return subprocess.CompletedProcess(list(argv), 0, stdout=out, stderr="")
+
+    monkeypatch.setattr(vrg_host.claude_marketplace, "local_run", run)
+    assert vrg_host.main(["plugins"]) == 2
+    assert "MarketplaceError" in capsys.readouterr().err
+
+
+def test_host_settings_path_is_the_user_settings() -> None:
+    assert vrg_host._host_settings_path() == Path.home() / ".claude" / "settings.json"
+
+
+def test_plugins_exits_2_on_non_utf8_settings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    local_run: _LocalRun,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    settings = tmp_path / "settings.json"
+    settings.write_bytes(b"\xff\xfe")
+    monkeypatch.setattr(vrg_host, "_host_settings_path", lambda: settings)
+    assert vrg_host.main(["plugins"]) == 2
+    assert local_run.calls == []
+    assert f"cannot read {settings}" in capsys.readouterr().err

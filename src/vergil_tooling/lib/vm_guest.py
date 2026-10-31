@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from vergil_tooling.lib import vm_packages
+from vergil_tooling.lib import claude_marketplace, vm_packages
 from vergil_tooling.lib.trusted_authors import VM_FILE_NAME, render_vm_file
 from vergil_tooling.lib.vm_transport import TransportTimeoutError
 
@@ -395,250 +395,134 @@ def _failure_reason(exc: subprocess.CalledProcessError | TransportTimeoutError) 
 _PLUGIN_PATH_EXPORT = 'export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"'
 
 
-_OFFICIAL_MARKETPLACE = "claude-plugins-official"
-_OFFICIAL_MARKETPLACE_SOURCE = "anthropics/claude-plugins-official"
+_GUEST_SETTINGS = "~/.claude/settings.json"
 
 
 def _read_guest_settings(transport: Transport) -> dict[str, Any]:
     """Return the guest ``~/.claude/settings.json`` as a dict.
 
-    Absent, unreadable, or non-object settings yield ``{}`` — the caller then
-    registers no marketplaces and refreshes only what is already installed.
+    The file is required: ``vrg-vm`` copies the host's in before every
+    refresh, so a missing, unreadable or invalid one means something is
+    broken, never "nothing declared" (spec §6 of epic
+    vergil-project/.github#760).
+
+    Raises:
+        RuntimeError: the file cannot be read. The message names the file.
+        claude_marketplace.MarketplaceError: (a ``RuntimeError``) the file is
+            not valid JSON or not a JSON object. The message names the file.
     """
     try:
-        result = transport.run(
-            "bash",
-            "-c",
-            f"{_PLUGIN_PATH_EXPORT} && cat ~/.claude/settings.json",
+        result = transport.run("bash", "-c", f"cat {_GUEST_SETTINGS}")
+    except subprocess.CalledProcessError as exc:
+        msg = (
+            f"cannot read the guest {_GUEST_SETTINGS}: it is missing or unreadable "
+            f"(exit status {exc.returncode})"
         )
-    except subprocess.CalledProcessError:
-        return {}
-    try:
-        data = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def _enabled_plugin_ids(settings: dict[str, Any]) -> set[str]:
-    """Return the plugin ids ``enabledPlugins`` marks true.
-
-    Declarative desired set: the authoritative list of what *should* be
-    present, independent of what is installed. An enabled entry is not proof
-    of an install: the Claude Code v2.1.195 changelog says only that external
-    plugins enabled solely by a project ``.claude/settings.json`` need explicit
-    install consent. Whether user-enabled plugins install on their own is
-    still unverified (vergil-project/.github#578).
-    """
-    return {pid for pid, on in (settings.get("enabledPlugins") or {}).items() if on}
-
-
-def _marketplace_sources(settings: dict[str, Any]) -> list[str]:
-    """Return the ``marketplace add`` sources needed for the enabled plugins.
-
-    Primarily the ``extraKnownMarketplaces`` entries (each ``source`` -> an
-    add-arg: ``owner/repo[@ref]``, a URL ``[#ref]``, or a path). Headless ``claude plugin
-    marketplace update``/``list`` do NOT register these on a fresh box (#2021) —
-    only ``marketplace add <source>`` clones the catalog.
-
-    Hardening (#2029): an enabled plugin can reference a marketplace not declared
-    in ``extraKnownMarketplaces`` — notably the built-in ``claude-plugins-official``,
-    which is not always listed. For such a plugin, derive a source where we can
-    (official -> its Anthropic repo); an undecidable third-party marketplace has
-    no derivable source and is left for the install to surface, never invented.
-    """
-    extra = settings.get("extraKnownMarketplaces") or {}
-    sources: list[str] = []
-    for spec in extra.values():
-        src = spec.get("source") or {}
-        # #3751: keep a declared `ref`. Claude Code refuses an add whose source
-        # does not match the extraKnownMarketplaces entry (failureCode
-        # "declared"). A github repo pins with `@ref` (the form `marketplace
-        # list` shows); a git URL pins with `#ref` (Claude Code docs, "Add a
-        # marketplace"). A path has no ref.
-        ref = src.get("ref")
-        if src.get("repo"):
-            arg = f"{src['repo']}@{ref}" if ref else src["repo"]
-        elif src.get("url"):
-            arg = f"{src['url']}#{ref}" if ref else src["url"]
-        else:
-            arg = src.get("path")
-        if arg:
-            sources.append(arg)
-    for pid in _enabled_plugin_ids(settings):
-        if "@" not in pid:
-            continue
-        market = pid.split("@", 1)[1]
-        if market in extra:
-            continue
-        if market == _OFFICIAL_MARKETPLACE and _OFFICIAL_MARKETPLACE_SOURCE not in sources:
-            sources.append(_OFFICIAL_MARKETPLACE_SOURCE)
-    return sources
-
-
-# Scopes whose install belongs to one project. `claude plugin update` has no
-# project flag (only `--scope`); the CLI takes the project from the working
-# directory, so these are updated from inside the entry's projectPath (#3764).
-_PROJECT_SCOPES = frozenset({"project", "local"})
-
-
-def _plugin_entry_label(entry: dict[str, Any]) -> str:
-    """Name one install entry by id, scope and (for a project install) project."""
-    scope = entry.get("scope", "user")
-    if scope in _PROJECT_SCOPES:
-        project = entry.get("projectPath") or "<no projectPath>"
-        return f"{entry['id']} ({scope}: {project})"
-    return f"{entry['id']} ({scope})"
-
-
-def _update_plugin_entry(transport: Transport, entry: dict[str, Any]) -> str | None:
-    """Update one install entry at its own scope; return a failure label or None.
-
-    A project-scoped entry runs from inside its projectPath. If that directory
-    no longer exists in the guest, ``cd`` fails and the entry is reported as a
-    failure naming its scope and project — never skipped. A project-scoped
-    entry with no projectPath cannot be targeted at all (running it from the
-    home directory would update the wrong project), so it is reported as a
-    failure without running anything.
-    """
-    pid = entry["id"]
-    scope = entry.get("scope", "user")
-    label = _plugin_entry_label(entry)
-    print(f"    update {label}...")
-    update = f"claude plugin update {shlex.quote(pid)} --scope {shlex.quote(scope)}"
-    if scope in _PROJECT_SCOPES:
-        project = entry.get("projectPath")
-        if not project:
-            print(f"ERROR: {label}: no projectPath to update it in", file=sys.stderr)
-            return label
-        update = f"cd {shlex.quote(project)} && {update}"
-    try:
-        transport.run("bash", "-c", f"{_PLUGIN_PATH_EXPORT} && {update}")
-    except subprocess.CalledProcessError:
-        return label
-    return None
+        raise RuntimeError(msg) from exc
+    return claude_marketplace.parse_settings(result.stdout, f"the guest {_GUEST_SETTINGS}")
 
 
 def update_plugins(transport: Transport) -> None:
-    """Reconcile enabled Claude Code plugins inside the guest.
+    """Refresh and verify the Claude Code plugins inside the guest.
 
     Plugins are installed guest-locally from their GitHub marketplaces (declared
     in the copied settings.json); they are deliberately not shared from the host
     (see docs/site/docs/guides/agent-vm-claude-share-set.md).
 
-    Reconcile, not just refresh (#2006): the enabled set is declared by
-    ``enabledPlugins`` in the guest settings.json, and an update-only pass can
-    leave a fresh box with zero plugins. The Claude Code v2.1.195 changelog
-    says only that external plugins enabled solely by a project
-    ``.claude/settings.json`` need explicit install consent; it does not say
-    that user-enabled plugins stopped installing on their own. This reconcile
-    step stays until vergil-project/.github#578 shows whether they do. So
-    install any
-    enabled-but-missing plugin, then advance every enabled plugin to its latest
-    version, mirroring how update_tooling advances vergil-tooling.
+    Runs the shared refresh (:func:`claude_marketplace.refresh`), the same
+    sequence ``vrg-host plugins`` runs on the host: re-add each declared
+    marketplace at its declared ref, update the marketplaces, update every
+    install of an enabled plugin at its own scope and install any enabled id
+    that is missing, then verify each declared marketplace is registered at its
+    declared repo and ref. Transport-generic (#1812): the same refresh runs over
+    a local Lima instance or a remote off-platform box.
 
-    Transport-generic (#1812): the same reconcile runs over a local Lima
-    instance or a remote off-platform box, so an in-place off-platform
-    ``update`` reaches the plugins over IAP without a rebuild.
-
-    `claude plugin install`/`update` have no bulk form: each takes a specific
-    id and honours a scope. `claude plugin list --json` has one entry per
-    install, so one id can appear at user scope and again at project scope for
-    each project (#3764). Every install entry is updated at its own scope; a
-    project-scope entry is updated from inside its ``projectPath``, because the
-    CLI has no project flag and takes the project from the working directory.
-    An enabled id with no install entry at any scope is installed at user scope
-    (it comes from the user settings.json). Updates apply on the next Claude
-    restart, which every new session triggers.
-
-    Best-effort across the set: one install failing does not block the others;
-    failures are collected per entry, naming the scope and project, and surfaced
-    by raising afterwards (never swallowed). A project install whose directory
-    no longer exists in the guest is one such failure.
+    Raises:
+        RuntimeError: the guest settings.json is missing, unreadable or
+            invalid, or any step or the verification failed. The message names
+            every failure.
     """
     print("  Refreshing Claude plugins...")
-    failures: list[str] = []
     settings = _read_guest_settings(transport)
-    # Register every marketplace the enabled plugins reference so their catalogs
-    # are cloned. Headless `marketplace update`/`list` do NOT register a fresh
-    # box's extraKnownMarketplaces (#2021) — only `marketplace add <source>` does.
-    # Idempotent (re-add is a no-op) and best-effort.
-    for source in _marketplace_sources(settings):
-        print(f"    registering marketplace {source}...")
-        try:
-            transport.run(
-                "bash",
-                "-c",
-                f"{_PLUGIN_PATH_EXPORT} && claude plugin marketplace add {shlex.quote(source)}",
-            )
-        except subprocess.CalledProcessError:
-            failures.append(f"marketplace:{source}")
-    transport.run(
-        "bash",
-        "-c",
-        f"{_PLUGIN_PATH_EXPORT} && claude plugin marketplace update",
-    )
-    desired = _enabled_plugin_ids(settings)
-    listing = transport.run(
-        "bash",
-        "-c",
-        f"{_PLUGIN_PATH_EXPORT} && claude plugin list --json",
-    )
-    # One entry per INSTALL, not per id (#3764): the same id can be installed at
-    # user scope and again at project scope for each project. Never key by id.
-    entries: list[dict[str, Any]] = json.loads(listing.stdout)
-    installed_ids = {entry["id"] for entry in entries}
-
-    # Refresh every install of a declared-enabled id, plus any install that is
-    # itself enabled (the pre-#2006 behaviour), each at its own scope/project.
-    updates = [e for e in entries if e["id"] in desired or e.get("enabled")]
-    for entry in sorted(updates, key=_plugin_entry_label):
-        failure = _update_plugin_entry(transport, entry)
-        if failure:
-            failures.append(failure)
-
-    # Install an enabled id that no entry has, at user scope (it comes from the
-    # user settings.json). An id installed at any scope is not reinstalled.
-    for pid in sorted(desired - installed_ids):
-        print(f"    install {pid} (user)...")
-        cmd = f"{_PLUGIN_PATH_EXPORT} && claude plugin install {shlex.quote(pid)} --scope user"
-        try:
-            transport.run("bash", "-c", cmd)
-        except subprocess.CalledProcessError:
-            failures.append(f"{pid} (user)")
-
+    failures = claude_marketplace.refresh(transport.run, settings, _PLUGIN_PATH_EXPORT)
     if failures:
-        joined = ", ".join(failures)
-        msg = f"failed to reconcile: {joined}"
+        msg = f"plugin refresh failed: {', '.join(failures)}"
         print(f"ERROR: {msg}", file=sys.stderr)
         raise RuntimeError(msg)
 
 
-_CLAUDE_CONFIG_FILES = ("CLAUDE.md", "settings.json")
+# Each copied file, and whether the guest copy is locked read-only after the
+# write. The guest CLAUDE.md is a read-only copy of the host's on every
+# transport (epic vergil-project/.github#760, spec §6); settings.json stays
+# writable, because provisioning and the Claude runtime both write it.
+_CLAUDE_CONFIG_FILES = (("CLAUDE.md", True), ("settings.json", False))
 
 
-def copy_claude_config(transport: Transport, claude_dir: Path) -> None:
+def copy_claude_config(
+    transport: Transport, claude_dir: Path, *, require_settings: bool = False
+) -> None:
     """Copy CLAUDE.md and settings.json from host into the VM.
 
-    Each target is made writable (``chmod u+w``) before the overwrite: on a
-    cloud VM the memory projection locks ``~/.claude/CLAUDE.md`` read-only at the
-    end of a session (``lock_projection``, #2412), so a later session's plain
-    ``cat >`` would fail with "permission denied" (#2436). The ``chmod u+w``
-    clears any prior lock first; it is a harmless no-op on Lima (never locked)
-    and on a fresh file (guarded with ``2>/dev/null``). Mirrors the same guard in
-    ``vm_memory.project_memory``.
+    The sole owner of the guest ``~/.claude/CLAUDE.md`` file mode: after
+    writing it, the copy runs ``chmod a-w`` on it, on Lima as well as cloud,
+    so every path that copies it (start, rebuild, session, cloud create,
+    update) leaves it read-only. When the host has no ``CLAUDE.md``, any guest
+    copy is removed, so the guest never keeps one the host does not have. The
+    mode is a guard that makes an accidental write fail loudly; it is not a
+    security boundary, since the guest user owns the file.
+
+    Each target is made writable (``chmod u+w``) before the overwrite, so a
+    copy locked by an earlier run does not fail the ``cat >`` with "permission
+    denied" (#2436). The ``chmod u+w`` is a harmless no-op on a fresh file
+    (guarded with ``2>/dev/null``).
+
+    With *require_settings* (the update path, which refreshes plugins from the
+    copied file right after), a missing host ``settings.json`` is an error
+    naming the host file, not a skip, and the text copied is first parsed and
+    shape-checked as the refresh will read it.
+
+    Raises:
+        RuntimeError: *require_settings* is set and the host settings.json is
+            missing or unusable, or a host file cannot be read.
     """
+    settings = claude_dir / "settings.json"
+    if require_settings and not settings.is_file():
+        msg = (
+            f"the host {settings} is missing; it is required, because the plugin "
+            "refresh reads the copy of it in the VM"
+        )
+        raise RuntimeError(msg)
     if not claude_dir.is_dir():
+        # No host config at all: the guest keeps no CLAUDE.md the host lacks.
+        transport.run("bash", "-c", "rm -f ~/.claude/CLAUDE.md")
         return
     transport.run("bash", "-c", "mkdir -p ~/.claude")
-    for filename in _CLAUDE_CONFIG_FILES:
+    for filename, locked in _CLAUDE_CONFIG_FILES:
         source = claude_dir / filename
-        if source.exists():
-            content = source.read_text()
-            transport.pipe(
-                f"chmod u+w ~/.claude/{filename} 2>/dev/null; cat > ~/.claude/{filename}",
-                content,
-            )
+        dest = f"~/.claude/{filename}"
+        if not source.exists():
+            if locked:
+                transport.run("bash", "-c", f"rm -f {dest}")
+            continue
+        try:
+            content = source.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            msg = f"cannot read the host {source}: {exc}"
+            raise RuntimeError(msg) from exc
+        if require_settings and filename == "settings.json":
+            # Check the exact text about to be piped, as the refresh will read
+            # it, so a host file changed since the pre-flight is never copied.
+            try:
+                claude_marketplace.validate_settings(
+                    claude_marketplace.parse_settings(content, f"the host {source}")
+                )
+            except claude_marketplace.MarketplaceError as exc:
+                msg = f"the host {source} is unusable: {exc}"
+                raise RuntimeError(msg) from exc
+        cmd = f"chmod u+w {dest} 2>/dev/null; cat > {dest}"
+        if locked:
+            cmd += f" && chmod a-w {dest}"
+        transport.pipe(cmd, content)
 
 
 # The agent-VM ~/.claude share set. See

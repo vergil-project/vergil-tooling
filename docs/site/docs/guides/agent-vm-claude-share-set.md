@@ -22,7 +22,15 @@ projection](#cloud-vms-read-only-memory-projection).
 | `plugins/` | **not shared** (VM-local) | n/a | Installed/refreshed in-VM from GitHub marketplaces. |
 
 `copy_claude_config` additionally copies `CLAUDE.md` and `settings.json`
-into each VM on create and on every start.
+into each VM on every start, rebuild and session, on cloud create, and on
+every `vrg-vm update` (which requires the host `settings.json` and fails,
+naming it, when it is missing). The guest `CLAUDE.md` is a read-only copy of
+the host's on every transport: `copy_claude_config` is the sole owner of its
+file mode and runs `chmod a-w` on it after each copy, and removes the guest
+copy when the host has none. The mode makes an accidental write fail loudly;
+it is not a security boundary, because the guest user owns the file and can
+change its mode. `settings.json` stays writable, because provisioning and the
+Claude runtime both write it.
 
 ## Why resume survives a rebuild
 
@@ -57,11 +65,16 @@ on first launch and keeps them current with an in-VM refresh — the same
 model used for vergil-tooling. The host's materialized `~/.claude/plugins`
 checkout is never shared: doing so would cross the macOS/Linux boundary
 (fragile if any plugin ships a binary) and hit the same `EXDEV` write
-problem as the roster. Instead, `update_plugins` first registers each
+problem as the roster. Instead, `update_plugins` runs the shared refresh in
+`lib/claude_marketplace.py`, the same one `vrg-host plugins` runs on the
+host. It reads the guest `settings.json`; a missing, unreadable or invalid
+file is a failure, never "nothing declared". It first registers each
 `extraKnownMarketplaces` entry with `claude plugin marketplace add`, keeping
 any `ref` the entry declares (`owner/repo@ref` for a GitHub source,
 `url#ref` for a git URL): Claude Code refuses an add whose source does not
-match the declared entry. It then refreshes the marketplaces
+match the declared entry. Once the settings declare a new ref, this re-add
+re-clones the marketplace at that ref, which is how a VM switches ref. It
+then refreshes the marketplaces
 (`claude plugin marketplace update`) and updates every **install** of an
 enabled plugin to its latest version, each at its own scope (`claude plugin
 update <id> --scope <user|project>` — there is no bulk-update form), all
@@ -71,8 +84,16 @@ separately, and each one is updated. The CLI has no project flag, and takes
 the project from the working directory, so a project install is updated from
 inside its `projectPath`. If that directory no longer exists in the VM, the
 install is reported as a failure that names its scope and project. An enabled
-plugin with no install at any scope is installed at user scope. The refresh
-is driven by `vrg-vm update` and a warn-mode stage on VM start/rebuild.
+plugin with no install at any scope is installed at user scope. Last, it
+**verifies** that each declared GitHub marketplace is registered, as `claude
+plugin marketplace list --json` reports it, at the declared repo and ref; a
+mismatch (including no registered ref when the settings declare one) or a
+missing registration is a failure. Every failure
+is named and raised. The refresh is driven by `vrg-vm update`, which first
+copies the host's current `settings.json` into the running VM, and by a
+warn-mode stage on VM start/rebuild. `vrg-vm update --all` skips stopped VMs
+(they pick up the settings on their next start), and one VM's plugin failure
+does not stop the rest from updating.
 
 ## Cloud VMs: read-only memory projection
 
@@ -89,9 +110,11 @@ persistent, an agent writes memory believing it durable, and the write
 quietly evaporates.
 
 To keep the physical host the single source of truth, a cloud VM receives
-canonical agent data — the per-repo `memory/` subtree and the global
-`CLAUDE.md` — as a **read-only cached projection** that never flows back
-automatically. See epic
+canonical agent data — the per-repo `memory/` subtree, including
+`MEMORY.md` — as a **read-only cached projection** that never flows back
+automatically. (The global `CLAUDE.md` is not part of the projection:
+`copy_claude_config` copies it and makes it read-only on every transport,
+as described above.) See epic
 [vergil-project/.github#156](https://github.com/vergil-project/.github/issues/156)
 and its
 [spec](https://github.com/vergil-project/.github/blob/develop/epics/156-cloud-memory-projection/spec.md)
@@ -111,8 +134,8 @@ axes — *sandbox* (in a VM) vs. *host* (not a VM), and *cloud* vs.
 
 `physical-host` names the property that matters — *physical, not a VM* —
 not the operating system; it is macOS today only because that is the
-hardware in use. The read-only memory control activates **only** on
-`cloud-vm`: `local-vm` writes already reach the live host store, and
+hardware in use. The read-only memory control (the `memory/` subtree only)
+activates **only** on `cloud-vm`: `local-vm` writes already reach the live host store, and
 `physical-host` *is* the store.
 
 ### The platform resolver (`vrg-whoami --platform`)
@@ -140,12 +163,12 @@ session refreshes it. Before opening the session, `vrg-vm`:
 1. aligns the guest working directory to the host project path (via a
    symlink onto the `/vergil` checkout) so Claude derives the **same
    memory slug** as the host and finds the projected memory;
-2. copies that repo's `memory/` + `MEMORY.md` and the global `CLAUDE.md`
-   from the host over the established transport idiom (the same
+2. copies that repo's `memory/` + `MEMORY.md` from the host over the
+   established transport idiom (the same
    `cat > <file>` mechanism `copy_claude_config` uses — there is no
    `rsync` over the transport);
-3. re-applies **surgical** read-only permissions — locking `memory/`,
-   `MEMORY.md`, and `CLAUDE.md` while leaving the session-transcript
+3. re-applies **surgical** read-only permissions — locking `memory/` and
+   `MEMORY.md` while leaving the session-transcript
    `.jsonl` files writable (a blanket `chmod` of `projects/<slug>/`
    would break session logging);
 4. **verifies** that the host path resolves in the guest and the slug

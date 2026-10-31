@@ -39,6 +39,15 @@ Subcommands (epic vergil-project/.github#167, spec §6):
   ``x`` (``1.x``, ``2.40.x``, ``2.40.0``); anything else is refused up front.
 - ``vrg-host unpin <dep>`` — free the pin (state → ``freed``, kept in the pins
   file as history).
+- ``vrg-host plugins`` — refresh the host's Claude Code plugins from
+  ``~/.claude/settings.json`` and verify them (epic
+  vergil-project/.github#760, spec §6): re-add each declared marketplace at its
+  declared ref, update the marketplaces and every plugin install, then check
+  each declared marketplace is registered at its declared repo and ref. It is
+  a human command: an agent identity is refused (exit ``1``) before any
+  ``claude`` call. Exit ``0`` when everything refreshed and verified, ``2``
+  when the settings cannot be read or any step or the verification failed,
+  naming each failure.
 
 Pins live in the host-local ``~/.config/vergil/host-pins.toml`` (see
 :mod:`vergil_tooling.lib.host_pins`), never in the packaged manifest. ``pin``
@@ -51,10 +60,20 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import subprocess
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING, Final, NamedTuple
 
-from vergil_tooling.lib import host_deps, host_methods, host_pins, host_status, host_versions
+from vergil_tooling.lib import (
+    claude_marketplace,
+    host_deps,
+    host_methods,
+    host_pins,
+    host_status,
+    host_versions,
+    identity_mode,
+)
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.host_status import Report
 
@@ -75,7 +94,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         prog="vrg-host",
         description="Observe and manage Vergil-critical macOS host dependencies.",
     )
-    sub = parser.add_subparsers(dest="cmd", metavar="{status,upgrade,pin,unpin}")
+    sub = parser.add_subparsers(dest="cmd", metavar="{status,upgrade,pin,unpin,plugins}")
     status = sub.add_parser(
         "status",
         help="report installed-vs-latest gaps and health (default)",
@@ -109,6 +128,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--force", action="store_true", help="upgrade past an active pin (overrides the hold)"
     )
     _add_pin_parsers(sub)
+    sub.add_parser(
+        "plugins",
+        help="refresh and verify the host's Claude Code plugins (human only)",
+        description=(
+            "Re-add each marketplace ~/.claude/settings.json declares at its declared "
+            "ref, update the marketplaces and every plugin install, then verify each "
+            "declared marketplace is registered at its declared repo and ref. Refuses "
+            "an agent identity. Exit 0 = refreshed and verified, 1 = refused, "
+            "2 = a failure."
+        ),
+    )
     args = parser.parse_args(argv)
     if args.cmd == "upgrade" and bool(args.deps) == args.all:
         up.error("name one or more dependencies, or pass --all (not both)")
@@ -500,11 +530,43 @@ def _upgrade(args: argparse.Namespace) -> int:
     return worst
 
 
+def _host_settings_path() -> Path:
+    return Path.home() / ".claude" / "settings.json"
+
+
+def _plugins(_args: argparse.Namespace) -> int:
+    """Refresh and verify the host's Claude Code plugins (spec §6 of epic #760)."""
+    if identity_mode.is_agent() or identity_mode.any_agent_signal():
+        print(
+            "vrg-host plugins: refreshing the host's plugins is a human action. "
+            "Agents cannot run vrg-host plugins.",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        settings = claude_marketplace.read_settings_file(_host_settings_path())
+    except claude_marketplace.MarketplaceError as exc:
+        print(f"vrg-host plugins: {exc}", file=sys.stderr)
+        return host_status.ERROR
+    print("Refreshing Claude plugins...")
+    try:
+        failures = claude_marketplace.refresh(claude_marketplace.local_run, settings, "")
+    except (claude_marketplace.MarketplaceError, subprocess.CalledProcessError, OSError) as exc:
+        print(f"vrg-host plugins: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return host_status.ERROR
+    if failures:
+        print(f"vrg-host plugins: failed: {', '.join(failures)}", file=sys.stderr)
+        return host_status.ERROR
+    print("Plugins refreshed; every declared marketplace is at its declared repo and ref.")
+    return host_status.OK
+
+
 _COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
     "status": _status,
     "upgrade": _upgrade,
     "pin": _pin,
     "unpin": _unpin,
+    "plugins": _plugins,
 }
 
 
