@@ -612,21 +612,18 @@ hand.
 branch.
 
 After a plugin release, refresh the host and every agent VM with
-`vrg-host plugins` and `vrg-vm update --all`, then restart Claude Code (see
+`vrg-host plugins` and `vrg-vm update --all`, in a human shell, then
+restart Claude Code (see
 [Switching an existing machine](#switching-an-existing-machine)). The same
 commands pick up a changed `ref` and a
-[rollback](releasing.md#rolling-back-a-release). Inside a single session on
-an unchanged `ref`, you can instead pick up a new release with:
-
-```text
-/plugin marketplace update vergil-marketplace
-/reload-plugins
-```
-
-That does not switch a changed `ref` and verifies nothing. See the plugin
-README's
+[rollback](releasing.md#rolling-back-a-release); the
+[Pick the move up on each machine](releasing.md#pick-the-move-up-on-each-machine)
+runbook also covers checking that each machine moved. Do not use the
+in-session `/plugin marketplace update` and `/reload-plugins` pair instead:
+it does not switch a changed `ref` and verifies nothing. The plugin README's
 [Update section](https://github.com/vergil-project/vergil-claude-plugin#update)
-for what each step does.
+describes the same pick-up of a release or a rollback, and how to verify
+the installed version.
 
 ## Troubleshooting
 
