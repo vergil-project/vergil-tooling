@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.281] - 2026-10-31
+
+### Chores
+
+- uv lock --upgrade
+
+### Features
+
+- share and verify the marketplace refresh on host and VMs (#3872)
+
 ## [2.1.280] - 2026-10-30
 
 ### Bug fixes

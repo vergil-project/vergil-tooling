@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import shutil
@@ -24,6 +25,7 @@ from vergil_tooling.bin.vrg_vm import (
     _candidate_zones,
     _cloud_backend,
     _CloudState,
+    _cmd_update_off_platform,
     _create_from_target,
     _cs_credentials,
     _cs_link_claude,
@@ -34,6 +36,7 @@ from vergil_tooling.bin.vrg_vm import (
     _preflight_target,
     _probe_running,
     _read_repo_vm,
+    _require_host_settings,
     _resolve,
     _resolve_target,
     _resolve_vm_verbose,
@@ -48,7 +51,7 @@ from vergil_tooling.bin.vrg_vm import (
     resolve_borrow,
     warn_if_off_host,
 )
-from vergil_tooling.lib import vm_cloud, vm_memory
+from vergil_tooling.lib import identity_mode, vm_cloud, vm_memory
 from vergil_tooling.lib.identity import Identity, IdentityConfig
 from vergil_tooling.lib.trusted_authors import TrustedAuthors
 from vergil_tooling.lib.vm_backend import select_backend
@@ -100,6 +103,7 @@ def _stub_guest_transport() -> Iterator[None]:
         patch(mod + "update_tooling"),
         patch(mod + "update_plugins"),
         patch(mod + "prune_cache_images"),
+        patch(mod + "_require_host_settings", return_value=True),
         patch("vergil_tooling.lib.vm_packages.dev_ref", return_value=None),
     ):
         yield
@@ -1637,6 +1641,179 @@ class TestUpdate:
 
     @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
+    def test_update_over_transport_copies_config_before_plugins(
+        self, _status: MagicMock, _ver: MagicMock, config_file: Path
+    ) -> None:
+        # Epic vergil-project/.github#760, spec §6: an update delivers the host's
+        # current settings.json to the running VM before the plugin refresh reads it.
+        manager = MagicMock()
+        with (
+            patch("vergil_tooling.bin.vrg_vm.copy_claude_config", manager.copy),
+            patch("vergil_tooling.bin.vrg_vm.update_plugins", manager.plugins),
+        ):
+            assert main(["update", "--config", str(config_file)]) == 0
+        assert [name for name, _, _ in manager.mock_calls] == ["copy", "plugins"]
+        manager.copy.assert_called_once_with(ANY, Path.home() / ".claude", require_settings=True)
+        assert manager.copy.call_args.args[0] is manager.plugins.call_args.args[0]
+        _assert_transport(manager.copy, "vergil-agent")
+
+    @pytest.mark.parametrize("flags", [[], ["--all"]])
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
+    @patch("vergil_tooling.bin.vrg_vm.list_vms")
+    def test_update_refuses_agent(
+        self,
+        mock_list: MagicMock,
+        _status: MagicMock,
+        flags: list[str],
+        monkeypatch: pytest.MonkeyPatch,
+        config_file: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
+        with patch("vergil_tooling.bin.vrg_vm.update_tooling") as mock_update:
+            assert main(["update", *flags, "--config", str(config_file)]) == 1
+        mock_update.assert_not_called()
+        mock_list.assert_not_called()
+        assert "Agents cannot run vrg-vm update" in capsys.readouterr().err
+
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
+    def test_update_refuses_mixed_signals(
+        self, _status: MagicMock, monkeypatch: pytest.MonkeyPatch, config_file: Path
+    ) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "human")
+        monkeypatch.setattr(identity_mode, "any_agent_signal", lambda: True)
+        with patch("vergil_tooling.bin.vrg_vm.update_tooling") as mock_update:
+            assert main(["update", "--config", str(config_file)]) == 1
+        mock_update.assert_not_called()
+
+    @pytest.mark.parametrize("flags", [[], ["--all"]])
+    @patch("vergil_tooling.bin.vrg_vm.list_vms")
+    def test_update_without_host_settings_touches_no_vm(
+        self, mock_list: MagicMock, flags: list[str], config_file: Path
+    ) -> None:
+        with (
+            patch("vergil_tooling.bin.vrg_vm._require_host_settings", return_value=False),
+            patch("vergil_tooling.bin.vrg_vm.update_tooling") as mock_update,
+        ):
+            assert main(["update", *flags, "--config", str(config_file)]) == 1
+        mock_update.assert_not_called()
+        mock_list.assert_not_called()
+
+    def test_require_host_settings(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        assert _require_host_settings() is False
+        err = capsys.readouterr().err
+        assert "the host settings are unusable" in err
+        assert ".claude/settings.json" in err
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".claude" / "settings.json").write_text("{}")
+        assert _require_host_settings() is True
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            b"{not json",
+            b"[]",
+            b"\xff\xfe",
+            # Valid JSON objects the refresh would reject: the shape is checked too.
+            b'{"enabledPlugins": {"x@y": "true"}}',
+            b'{"extraKnownMarketplaces": {"m": {"source": "github"}}}',
+        ],
+    )
+    def test_require_host_settings_rejects_an_invalid_host_file(
+        self,
+        content: bytes,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # An invalid host file must stop the update before it is copied over
+        # any VM's working settings.json; the error names the host file.
+        monkeypatch.setenv("HOME", str(tmp_path))
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".claude" / "settings.json").write_bytes(content)
+        assert _require_host_settings() is False
+        err = capsys.readouterr().err
+        assert str(tmp_path / ".claude" / "settings.json") in err
+
+    @patch("vergil_tooling.bin.vrg_vm.list_vms")
+    def test_update_all_usage_error_comes_before_the_host_settings_check(
+        self, mock_list: MagicMock, config_file: Path
+    ) -> None:
+        with patch(
+            "vergil_tooling.bin.vrg_vm._require_host_settings", return_value=False
+        ) as mock_check:
+            assert (
+                main(["update", "--all", "--identity", "vergil", "--config", str(config_file)]) == 2
+            )
+        mock_check.assert_not_called()
+        mock_list.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("error", "shown"),
+        [
+            (
+                RuntimeError("plugin refresh failed: marketplace:vergil-marketplace"),
+                "marketplace:vergil-marketplace",
+            ),
+            (subprocess.CalledProcessError(3, "claude"), "exit status 3"),
+        ],
+    )
+    @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
+    @patch("vergil_tooling.bin.vrg_vm.update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
+    def test_update_reports_a_plugin_failure_without_a_traceback(
+        self,
+        _status: MagicMock,
+        _update: MagicMock,
+        _ver: MagicMock,
+        error: Exception,
+        shown: str,
+        config_file: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        with patch("vergil_tooling.bin.vrg_vm.update_plugins", side_effect=error):
+            assert main(["update", "--config", str(config_file)]) == 1
+        err = capsys.readouterr().err
+        assert "ERROR: failed to update VM 'vergil-agent'" in err
+        assert shown in err
+
+    @pytest.mark.parametrize(
+        ("error", "shown"),
+        [
+            (
+                RuntimeError("plugin refresh failed: marketplace:vergil-marketplace"),
+                "marketplace:vergil-marketplace",
+            ),
+            (subprocess.CalledProcessError(3, "claude"), "exit status 3"),
+        ],
+    )
+    def test_off_platform_update_reports_a_plugin_failure_without_a_traceback(
+        self, error: Exception, shown: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        backend = MagicMock()
+        backend.name = "box-1"
+        backend.status.return_value = "Running"
+        target = MagicMock(identity_name="vergil")
+        args = argparse.Namespace(tag=None, prune=False)
+        mod = "vergil_tooling.bin.vrg_vm."
+        with (
+            patch(mod + "_cloud_backend", return_value=backend),
+            patch(mod + "resolve_vergil_version", return_value="v2.0"),
+            patch(mod + "_update_over_transport", side_effect=error),
+        ):
+            assert _cmd_update_off_platform(target, args) == 1
+        err = capsys.readouterr().err
+        assert "ERROR: failed to update off-platform box 'box-1'" in err
+        assert shown in err
+
+    @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
     def test_failed_prune_does_not_fail_update(
         self, _status: MagicMock, _ver: MagicMock, config_file: Path
     ) -> None:
@@ -1804,6 +1981,38 @@ class TestUpdateAll:
         result = main(["update", "--all", "--config", str(config_file)])
         assert result == 1
         assert mock_update.call_count == 2
+
+    @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
+    @patch("vergil_tooling.bin.vrg_vm.list_vms")
+    def test_update_all_continues_after_lima_plugin_failure(
+        self,
+        mock_list: MagicMock,
+        _ver: MagicMock,
+        _mock_update_plugins: MagicMock,
+        config_file: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # One Lima VM's plugin failure never stops the rest from updating; the
+        # run still exits non-zero and names the failed VM.
+        mock_list.return_value = [
+            {"name": "vergil-agent", "status": "Running"},
+            {"name": "vergil.acme.widgets", "status": "Running"},
+        ]
+        _mock_update_plugins.side_effect = [
+            RuntimeError("plugin refresh failed: marketplace:vergil-marketplace"),
+            None,
+        ]
+        result = main(["update", "--all", "--config", str(config_file)])
+        assert result == 1
+        assert _mock_update_plugins.call_count == 2
+        instances = [c.args[0].instance for c in _mock_update_plugins.call_args_list]
+        assert instances == ["vergil-agent", "vergil.acme.widgets"]
+        captured = capsys.readouterr()
+        assert "failed to update 1 of 2" in captured.err
+        assert "'vergil-agent' (plugin refresh failed: marketplace:vergil-marketplace)" in (
+            captured.err
+        )
+        assert "1 updated" in captured.out
 
     @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
     @patch("vergil_tooling.bin.vrg_vm.update_tooling")
@@ -7056,3 +7265,92 @@ class TestDevToolingBanner:
         state.vergil_version = "v2.1"
         vrg_vm._cs_tooling(state)
         assert "DEV tooling" not in capsys.readouterr().out
+
+
+# Every vrg-vm subcommand, with the smallest argv that parses, mapped to its handler.
+_SUBCOMMAND_ARGV: dict[str, list[str]] = {
+    "create": ["create"],
+    "start": ["start"],
+    "stop": ["stop"],
+    "restart": ["restart"],
+    "update": ["update"],
+    "destroy": ["destroy"],
+    "destroy-volume": ["destroy-volume"],
+    "rebuild": ["rebuild"],
+    "list": ["list"],
+    "volumes": ["volumes"],
+    "session": ["session", "."],
+    "cp": ["cp", ".", "a", ":b"],
+}
+
+
+class TestAgentRefusal:
+    """vrg-vm is a human tool: every subcommand refuses an agent before any work.
+
+    Epic vergil-project/.github#760, spec §6 named `vrg-vm update`; the human
+    extended the refusal to the whole command.
+    """
+
+    @pytest.fixture()
+    def handlers(self) -> Iterator[dict[str, MagicMock]]:
+        mocks = {name: MagicMock(return_value=0) for name in _SUBCOMMAND_ARGV}
+        with contextlib.ExitStack() as stack:
+            for name, mock in mocks.items():
+                attr = "_cmd_" + name.replace("-", "_")
+                stack.enter_context(patch(f"vergil_tooling.bin.vrg_vm.{attr}", mock))
+            yield mocks
+
+    def test_every_subcommand_is_covered(self, capsys: pytest.CaptureFixture[str]) -> None:
+        # The usage line lists the subcommands as `{create,start,...}`.
+        with pytest.raises(SystemExit):
+            main(["--help"])
+        usage = capsys.readouterr().out
+        listed = usage[usage.index("{") + 1 : usage.index("}")].split(",")
+        assert set(listed) == set(_SUBCOMMAND_ARGV)
+
+    @pytest.mark.parametrize("command", list(_SUBCOMMAND_ARGV))
+    def test_agent_is_refused(
+        self,
+        command: str,
+        handlers: dict[str, MagicMock],
+        monkeypatch: pytest.MonkeyPatch,
+        config_file: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
+        assert main(["--config", str(config_file), *_SUBCOMMAND_ARGV[command]]) == 1
+        handlers[command].assert_not_called()
+        assert f"Agents cannot run vrg-vm {command}." in capsys.readouterr().err
+
+    @pytest.mark.parametrize("command", list(_SUBCOMMAND_ARGV))
+    def test_any_agent_signal_is_refused(
+        self,
+        command: str,
+        handlers: dict[str, MagicMock],
+        monkeypatch: pytest.MonkeyPatch,
+        config_file: Path,
+    ) -> None:
+        # A human mode value cannot talk the check out of a provisioned agent signal.
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "human")
+        monkeypatch.setattr(identity_mode, "any_agent_signal", lambda: True)
+        assert main(["--config", str(config_file), *_SUBCOMMAND_ARGV[command]]) == 1
+        handlers[command].assert_not_called()
+
+    @pytest.mark.parametrize("command", list(_SUBCOMMAND_ARGV))
+    def test_human_reaches_the_handler(
+        self, command: str, handlers: dict[str, MagicMock], config_file: Path
+    ) -> None:
+        assert main(["--config", str(config_file), *_SUBCOMMAND_ARGV[command]]) == 0
+        handlers[command].assert_called_once()
+
+    def test_agent_can_still_read_help(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
+        with pytest.raises(SystemExit) as exc:
+            main(["start", "--help"])
+        assert exc.value.code == 0
+        assert main([]) == 1
+        out = capsys.readouterr().out
+        assert "usage: vrg-vm start" in out
+        assert "usage: vrg-vm" in out

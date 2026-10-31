@@ -1417,11 +1417,15 @@ Lima on the Mac or off-platform (cloud). Subcommands: `create`, `start`,
 `stop`, `restart`, `update`, `destroy`, `destroy-volume`, `rebuild`,
 `list`, `volumes`, `session` (launch a Claude session in the VM) and `cp`
 (copy files between the host and a VM). `vrg-vm update` reinstalls
-vergil-tooling and refreshes the plugins in a running VM in place; `--all`
-updates every configured identity's boxes. VMs install vergil-tooling as
-the signed package; `vrg-vm update --tag <ref>` with a non-release ref
-installs a dev copy instead and flags it with a `DEV tooling` banner, and
-a plain `vrg-vm update` returns the VM to the package. See
+vergil-tooling, copies the host's `~/.claude` config in and refreshes and
+verifies the plugins in a running VM in place; `--all` updates every
+configured identity's boxes, and one box's failure does not stop the rest.
+`vrg-vm` is a human tool: it runs the VMs the agents work inside, so every
+subcommand refuses an agent identity before doing anything (`--help` still
+works). VMs install vergil-tooling as the signed package;
+`vrg-vm update --tag <ref>` with a non-release ref installs a dev copy
+instead and flags it with a `DEV tooling` banner, and a plain
+`vrg-vm update` returns the VM to the package. See
 [VM Spec](vm-spec.md#vergil-tooling-inside-the-vm).
 
 **The `--plugin-dir` override.** `vrg-vm session` can launch Claude with
@@ -1458,8 +1462,8 @@ change applies to the next session.
 |---|---|
 | Source | `vergil_tooling.bin.vrg_vm` |
 | Args | Global `--identity` (default: the configured default identity), `--config` (path to `identities.toml`); then a subcommand with its own flags (`vrg-vm <subcommand> --help`) |
-| Preconditions | Host with Lima (local VMs) or the off-platform backend configured; `identities.toml` |
-| Failure mode | Error on stderr; `update --all` attempts every box and reports each failure |
+| Preconditions | Run by the human (any agent identity is refused, exit 1); host with Lima (local VMs) or the off-platform backend configured; `identities.toml` |
+| Failure mode | Error on stderr; an agent identity is refused before any work; `update --all` attempts every box and reports each failure |
 | Exit codes | 0 success, non-zero on failure |
 | Status | Active |
 
@@ -1492,17 +1496,20 @@ drift, auxiliary-check health and pins; `status --fix` first runs the
 remediations of unsatisfied checks. `upgrade` upgrades only `auto`
 dependencies and holds actively pinned ones unless `--force`. `pin` /
 `unpin` record holds in the user's `~/.config/vergil/host-pins.toml`
-under the epic #155 pin-as-tech-debt doctrine. Runs unprivileged and
-refuses `sudo`/`doas`/`su`/`pkexec`. See the
+under the epic #155 pin-as-tech-debt doctrine. `plugins` refreshes the
+host's Claude Code plugins from `~/.claude/settings.json` and verifies that
+each declared marketplace is registered at its declared repo and ref (the
+same refresh `vrg-vm update` runs in each VM); it refuses an agent identity.
+Runs unprivileged and refuses `sudo`/`doas`/`su`/`pkexec`. See the
 [vrg-host reference](dev/host.md).
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_host` |
-| Args | `status [--fix]` (default); `upgrade <dep>…` or `upgrade --all`, each with optional `--force`; `pin <dep> --constraint --inducing-release --reason [--tracking-issue] [--deterministic]`; `unpin <dep>` |
-| Preconditions | macOS host with each dependency installed by its documented method (Homebrew for the `brew-formula` and `brew-cask` entries, including `uv`) |
-| Failure mode | Per-dependency `probe-error` rows (never fatal to the report); loud error on an unreadable manifest or pins file; refused pins and upgrades print the reason |
-| Exit codes | `status`: 0 OK, 1 warnings, 2 errors; `upgrade`: 0 done, 1 a named dependency refused, 2 failure; `pin`/`unpin`: 0 success, 1 refused |
+| Args | `status [--fix]` (default); `upgrade <dep>…` or `upgrade --all`, each with optional `--force`; `pin <dep> --constraint --inducing-release --reason [--tracking-issue] [--deterministic]`; `unpin <dep>`; `plugins` |
+| Preconditions | macOS host with each dependency installed by its documented method (Homebrew for the `brew-formula` and `brew-cask` entries, including `uv`); `plugins` also needs the `claude` CLI and a valid `~/.claude/settings.json` |
+| Failure mode | Per-dependency `probe-error` rows (never fatal to the report); loud error on an unreadable manifest or pins file; refused pins and upgrades print the reason; `plugins` names each failed step and each marketplace that is not at its declared repo and ref, and a missing, unreadable or invalid `~/.claude/settings.json` is a failure |
+| Exit codes | `status`: 0 OK, 1 warnings, 2 errors; `upgrade`: 0 done, 1 a named dependency refused, 2 failure; `pin`/`unpin`: 0 success, 1 refused; `plugins`: 0 refreshed and verified, 1 refused (agent identity), 2 failure |
 | Status | Active |
 
 ### vrg-generate-commands

@@ -31,8 +31,15 @@ from vergil_tooling.bin.vrg_vm_resolve_session import (
     name_by_session,
     projects_glob,
 )
+from vergil_tooling.lib import (
+    claude_marketplace,
+    identity_mode,
+    progress,
+    vm_cloud,
+    vm_memory,
+    vm_packages,
+)
 from vergil_tooling.lib import plugin_dirs as plugin_dirs_lib
-from vergil_tooling.lib import progress, vm_cloud, vm_memory, vm_packages
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.config import ConfigError, VmStanza, read_config
 from vergil_tooling.lib.identity import (
@@ -391,6 +398,17 @@ def main(argv: list[str] | None = None) -> int:
     warn_if_off_host()
     if args.command is None:
         parser.print_help()
+        return 1
+    # vrg-vm runs the VMs the agents work inside, so every subcommand is a human
+    # action: it refuses an agent with the fail-closed check, before any work.
+    # Epic vergil-project/.github#760, spec §6 named `vrg-vm update`; the human
+    # extended the refusal to the whole command. Help output stays available.
+    if identity_mode.is_agent() or identity_mode.any_agent_signal():
+        print(
+            f"ERROR: vrg-vm {args.command} is a human action. "
+            f"Agents cannot run vrg-vm {args.command}.",
+            file=sys.stderr,
+        )
         return 1
 
     dispatch = {
@@ -1542,6 +1560,9 @@ def _update_over_transport(
     images of finished branches against *prune_roots* (#3604). The prune is
     best-effort: it reports its own failure and never fails the update.
 
+    The host's ``~/.claude`` config is copied in before the plugin refresh, so
+    the refresh reads the host's current ``settings.json``.
+
     The host's *trusted_authors* are re-delivered (or the VM file removed when
     the host has none), so an update alone keeps the VM's list current.
     """
@@ -1565,6 +1586,10 @@ def _update_over_transport(
     if prune:
         prune_cache_images(transport, prune_roots)
 
+    # Deliver the host's current settings.json (and the read-only CLAUDE.md)
+    # before the refresh, so a running VM follows a changed marketplace ref
+    # without a restart (epic vergil-project/.github#760, spec §6).
+    copy_claude_config(transport, Path.home() / ".claude", require_settings=True)
     update_plugins(transport)
 
 
@@ -1622,22 +1647,56 @@ def _cmd_update_off_platform(target: Target, args: argparse.Namespace) -> int:
     tag = args.tag if args.tag else None
     fallback = resolve_vergil_version(target.config, target.identity)
     label = f"off-platform box '{backend.name}' (identity: {target.identity_name})"
-    _update_over_transport(
-        backend.transport(),
-        label,
-        tag,
-        fallback,
-        trusted_authors=target.config.trusted_authors,
-        prune=args.prune,
-    )
+    try:
+        _update_over_transport(
+            backend.transport(),
+            label,
+            tag,
+            fallback,
+            trusted_authors=target.config.trusted_authors,
+            prune=args.prune,
+        )
+    except subprocess.CalledProcessError as exc:
+        print(f"ERROR: failed to update {label}: exit status {exc.returncode}", file=sys.stderr)
+        return 1
+    except RuntimeError as exc:
+        # A config copy or plugin refresh failure (RuntimeError, including
+        # MarketplaceError), reported like the --all loop reports it.
+        print(f"ERROR: failed to update {label}: {exc}", file=sys.stderr)
+        return 1
 
     print("Update complete.")
     return 0
 
 
+def _require_host_settings() -> bool:
+    """Check, before touching any VM, that the host ``~/.claude/settings.json`` is usable.
+
+    The update copies it into each VM and refreshes the plugins from that copy
+    (spec §6 of epic vergil-project/.github#760). So the file must exist and
+    parse as the refresh will parse it: otherwise a broken host file would be
+    copied over every VM's working ``settings.json`` before the refresh
+    rejected it. Prints the error, naming the host file, and returns False.
+    """
+    settings = Path.home() / ".claude" / "settings.json"
+    try:
+        claude_marketplace.validate_settings(claude_marketplace.read_settings_file(settings))
+    except claude_marketplace.MarketplaceError as exc:
+        print(
+            f"ERROR: the host settings are unusable ({exc}); vrg-vm update copies "
+            f"{settings} into each VM and refreshes the plugins from it",
+            file=sys.stderr,
+        )
+        return False
+    return True
+
+
 def _cmd_update(args: argparse.Namespace) -> int:
+    # `main` has already refused an agent (epic vergil-project/.github#760, spec §6).
     if args.all:
         return _cmd_update_all(args)
+    if not _require_host_settings():
+        return 1
 
     # Off-platform boxes update IN PLACE over IAP — same transport-generic tooling
     # update as Lima, no rebuild (#1812, correcting #1803's stateless premise).
@@ -1658,15 +1717,25 @@ def _cmd_update(args: argparse.Namespace) -> int:
 
     tag = args.tag if args.tag else None
     fallback = resolve_vergil_version(config, identity)
-    _update_instance(
-        instance,
-        name,
-        identity,
-        tag,
-        fallback,
-        trusted_authors=config.trusted_authors,
-        prune=args.prune,
-    )
+    try:
+        _update_instance(
+            instance,
+            name,
+            identity,
+            tag,
+            fallback,
+            trusted_authors=config.trusted_authors,
+            prune=args.prune,
+        )
+    except subprocess.CalledProcessError as exc:
+        reason = f"exit status {exc.returncode}"
+        print(f"ERROR: failed to update VM '{instance}': {reason}", file=sys.stderr)
+        return 1
+    except RuntimeError as exc:
+        # A config copy or plugin refresh failure (RuntimeError, including
+        # MarketplaceError), reported like the --all loop reports it.
+        print(f"ERROR: failed to update VM '{instance}': {exc}", file=sys.stderr)
+        return 1
 
     print("Update complete.")
     return 0
@@ -1730,6 +1799,8 @@ def _cmd_update_all(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
+    if not _require_host_settings():
+        return 1
 
     config_path = args.config if args.config else _default_config_path()
     config = load_config(config_path)
@@ -1771,6 +1842,12 @@ def _cmd_update_all(args: argparse.Namespace) -> int:
             # update_tooling/resolve_vergil_version abort via SystemExit after
             # printing their own ERROR line; defer the failure like any other.
             reason = f"aborted (exit {exc.code})"
+            print(f"ERROR: failed to update VM '{instance}': {reason}", file=sys.stderr)
+            failed.append((instance, reason))
+        except RuntimeError as exc:
+            # update_plugins raises RuntimeError on a plugin failure; defer it so
+            # one VM's plugins never stop the rest from updating.
+            reason = str(exc)
             print(f"ERROR: failed to update VM '{instance}': {reason}", file=sys.stderr)
             failed.append((instance, reason))
 
@@ -2992,10 +3069,10 @@ def _cloud_session(
         vm_cloud.bootstrap_volume(transport, identity, req_org, req_repo)
     workdir = vm_cloud.ensure_host_path(transport, identity.projects_dir, req_org, req_repo)
     # #2411 (Component 3): project this repo's memory subset (per-repo memory/ +
-    # MEMORY.md) and the global CLAUDE.md from the host into the guest at the
-    # matching slug, so the cloud session reads canonical host memory rather than a
-    # divergent (or empty) cloud copy. The read-only lock is applied separately
-    # (#2412); this copies the files only.
+    # MEMORY.md) from the host into the guest at the matching slug, so the cloud
+    # session reads canonical host memory rather than a divergent (or empty) cloud
+    # copy, and lock it read-only (#2412). The global CLAUDE.md was copied and
+    # locked by copy_claude_config above.
     #
     # #3346: with no session verb the resolver only lists sessions and exits, so the
     # (slow, per-file) projection is skipped; it runs on the reconnect that names one.

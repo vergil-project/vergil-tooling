@@ -13,10 +13,10 @@ from vergil_tooling.lib import vm_packages
 from vergil_tooling.lib.identity import Identity
 from vergil_tooling.lib.trusted_authors import TrustedAuthors, parse_trusted_authors
 from vergil_tooling.lib.vm_guest import (
+    _PLUGIN_PATH_EXPORT,
     _PRUNE_PROBE,
     VmUnreachableError,
     _inject_host_git_identity,
-    _marketplace_sources,
     _read_host_git_config,
     copy_claude_config,
     get_tooling_version,
@@ -595,16 +595,35 @@ class TestCopyClaudeConfig:
         assert '"key"' in settings_call[0][1]
 
         # #2436: the target must be made writable before the overwrite, because
-        # the cloud memory projection locks CLAUDE.md read-only (#2412) — a plain
-        # `cat >` on a later session would fail with "permission denied". Guard
-        # both files against a non-chmod regression.
-        assert (
-            "chmod u+w ~/.claude/CLAUDE.md 2>/dev/null; cat > ~/.claude/CLAUDE.md" in md_call[0][0]
+        # an earlier copy left CLAUDE.md read-only, so a plain `cat >` on a later
+        # session would fail with "permission denied". Guard both files against a
+        # non-chmod regression.
+        assert md_call[0][0].startswith(
+            "chmod u+w ~/.claude/CLAUDE.md 2>/dev/null; cat > ~/.claude/CLAUDE.md"
         )
         assert (
-            "chmod u+w ~/.claude/settings.json 2>/dev/null; cat > ~/.claude/settings.json"
-            in settings_call[0][0]
+            settings_call[0][0]
+            == "chmod u+w ~/.claude/settings.json 2>/dev/null; cat > ~/.claude/settings.json"
         )
+
+    def test_copy_claude_config_locks_claude_md(self, tmp_path: Path) -> None:
+        # The guest CLAUDE.md is a read-only copy of the host's on every
+        # transport: the copy writes it, then locks it. settings.json is never
+        # locked (provisioning and the Claude runtime both write it).
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        (claude_dir / "CLAUDE.md").write_text("# prefs\n")
+        (claude_dir / "settings.json").write_text("{}\n")
+
+        transport = _transport()
+        copy_claude_config(transport, claude_dir)
+
+        piped = [c.args[0] for c in transport.pipe.call_args_list]
+        md = next(cmd for cmd in piped if "cat > ~/.claude/CLAUDE.md" in cmd)
+        assert md.index("cat > ~/.claude/CLAUDE.md") < md.index("chmod a-w ~/.claude/CLAUDE.md")
+        assert md.endswith("cat > ~/.claude/CLAUDE.md && chmod a-w ~/.claude/CLAUDE.md")
+        every = " ".join(piped) + " ".join(c.args[-1] for c in transport.run.call_args_list)
+        assert "chmod a-w ~/.claude/settings.json" not in every
 
     def test_skips_missing_files(self, tmp_path: Path) -> None:
         claude_dir = tmp_path / ".claude"
@@ -613,8 +632,74 @@ class TestCopyClaudeConfig:
         transport = _transport()
         copy_claude_config(transport, claude_dir)
 
-        transport.run.assert_called_once()
+        # Nothing is piped; a guest CLAUDE.md the host does not have is removed,
+        # and a guest settings.json is left alone.
+        cmds = [c.args[-1] for c in transport.run.call_args_list]
+        assert cmds == ["mkdir -p ~/.claude", "rm -f ~/.claude/CLAUDE.md"]
         transport.pipe.assert_not_called()
+
+    def test_require_settings_fails_naming_the_host_file(self, tmp_path: Path) -> None:
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        (claude_dir / "CLAUDE.md").write_text("# prefs\n")
+
+        transport = _transport()
+        with pytest.raises(RuntimeError, match=r"host .*\.claude/settings\.json is missing"):
+            copy_claude_config(transport, claude_dir, require_settings=True)
+        transport.run.assert_not_called()
+        transport.pipe.assert_not_called()
+
+    def test_require_settings_fails_without_a_host_claude_dir(self, tmp_path: Path) -> None:
+        transport = _transport()
+        with pytest.raises(RuntimeError, match="settings.json is missing"):
+            copy_claude_config(transport, tmp_path / ".claude", require_settings=True)
+        transport.run.assert_not_called()
+
+    def test_require_settings_copies_when_present(self, tmp_path: Path) -> None:
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        (claude_dir / "settings.json").write_text("{}\n")
+
+        transport = _transport()
+        copy_claude_config(transport, claude_dir, require_settings=True)
+        piped = [c.args[0] for c in transport.pipe.call_args_list]
+        assert any("cat > ~/.claude/settings.json" in cmd for cmd in piped)
+
+    @pytest.mark.parametrize("content", ["{not json", "[]", '{"enabledPlugins": {"x@y": "true"}}'])
+    def test_require_settings_rejects_an_unusable_host_file(
+        self, content: str, tmp_path: Path
+    ) -> None:
+        # The text about to be piped is checked as the refresh will read it, so
+        # a host file changed after the pre-flight is never copied into a VM.
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        (claude_dir / "settings.json").write_text(content)
+
+        transport = _transport()
+        with pytest.raises(RuntimeError, match=r"the host .*settings\.json is unusable"):
+            copy_claude_config(transport, claude_dir, require_settings=True)
+        piped = [c.args[0] for c in transport.pipe.call_args_list]
+        assert not any("settings.json" in cmd for cmd in piped)
+
+    def test_settings_shape_is_not_checked_without_require_settings(self, tmp_path: Path) -> None:
+        # Start, rebuild and session copy the file as-is; the refresh reports it.
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        (claude_dir / "settings.json").write_text("{not json")
+
+        transport = _transport()
+        copy_claude_config(transport, claude_dir)
+        piped = [c.args[0] for c in transport.pipe.call_args_list]
+        assert any("cat > ~/.claude/settings.json" in cmd for cmd in piped)
+
+    def test_unreadable_host_file_is_a_named_error(self, tmp_path: Path) -> None:
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        # A directory where the file should be: read_text raises an OSError.
+        (claude_dir / "CLAUDE.md").mkdir()
+
+        with pytest.raises(RuntimeError, match=r"cannot read the host .*CLAUDE\.md"):
+            copy_claude_config(_transport(), claude_dir)
 
     def test_skips_if_claude_dir_missing(self, tmp_path: Path) -> None:
         claude_dir = tmp_path / ".claude"
@@ -622,7 +707,8 @@ class TestCopyClaudeConfig:
         transport = _transport()
         copy_claude_config(transport, claude_dir)
 
-        transport.run.assert_not_called()
+        # Nothing is copied, and a guest CLAUDE.md the host lacks is removed.
+        assert [c.args[-1] for c in transport.run.call_args_list] == ["rm -f ~/.claude/CLAUDE.md"]
         transport.pipe.assert_not_called()
 
 
@@ -782,500 +868,122 @@ class TestVmProbe:
 
 class TestUpdatePlugins:
     # update_plugins is transport-generic (#1812): the same refresh drives a Lima
-    # box over limactl or an off-platform box over IAP — only the transport differs.
-    _LISTING = json.dumps(
-        [
-            {"id": "paad@paad", "scope": "user", "enabled": True},
-            {"id": "frontend-design@official", "scope": "user", "enabled": False},
-            # A real project-scope entry always carries its projectPath (#3764).
-            {
-                "id": "vergil@vergil-marketplace",
-                "scope": "project",
-                "enabled": True,
-                "projectPath": "/p/tooling",
-            },
-        ]
-    )
-
-    def _fake_transport(self) -> MagicMock:
-        def side_effect(*args: str, **_kw: object) -> MagicMock:
-            cmd = args[-1]
-            out = self._LISTING if "plugin list --json" in cmd else ""
-            return MagicMock(stdout=out, returncode=0)
-
-        transport = MagicMock()
-        transport.run.side_effect = side_effect
-        return transport
-
-    def test_refreshes_marketplaces_then_updates_enabled_plugins(self) -> None:
-        transport = self._fake_transport()
-        update_plugins(transport)
-        cmds = [c.args[-1] for c in transport.run.call_args_list]
-        # Marketplace metadata refreshed first, then the installed list is read.
-        assert any("claude plugin marketplace update" in c for c in cmds)
-        assert any("claude plugin list --json" in c for c in cmds)
-        # Each ENABLED plugin updated with its own scope; no bulk update exists.
-        assert any("claude plugin update paad@paad --scope user" in c for c in cmds)
-        assert any(
-            "claude plugin update vergil@vergil-marketplace --scope project" in c for c in cmds
-        )
-        # Disabled plugins are left alone.
-        assert not any("frontend-design" in c for c in cmds)
-        # Every call is a non-login bash -c with an explicit PATH export, so claude
-        # resolves regardless of the guest's zsh-configured interactive environment.
-        for c in transport.run.call_args_list:
-            assert c.args[:2] == ("bash", "-c")
-            assert "export PATH=" in c.args[-1]
-
-    @staticmethod
-    def _listing_transport(listing: str, settings: str = "{}", fail_on: str = "") -> MagicMock:
-        def side_effect(*args: str, **_kw: object) -> MagicMock:
-            cmd = args[-1]
-            if fail_on and fail_on in cmd:
-                raise subprocess.CalledProcessError(1, "bash")
-            if "cat ~/.claude/settings.json" in cmd:
-                out = settings
-            elif "plugin list --json" in cmd:
-                out = listing
-            else:
-                out = ""
-            return MagicMock(stdout=out, returncode=0)
-
-        transport = MagicMock()
-        transport.run.side_effect = side_effect
-        return transport
-
-    def test_updates_every_install_entry_at_its_own_scope_and_project(self) -> None:
-        # #3764: `claude plugin list --json` has one entry PER INSTALL — the same
-        # id at user scope and again at project scope for each project. Keying
-        # by id kept only the last entry, so only one install was ever updated.
-        # Every entry is updated at its own scope; a project-scope update has no
-        # project flag (`claude plugin update --help` offers only --scope), the
-        # CLI takes the project from the working directory, so it runs from
-        # inside that entry's projectPath (shell-quoted).
-        pid = "vergil@vergil-marketplace"
-        listing = json.dumps(
-            [
-                {"id": pid, "scope": "user", "enabled": True},
-                {"id": pid, "scope": "project", "enabled": True, "projectPath": "/p/tooling"},
-                {"id": pid, "scope": "project", "enabled": True, "projectPath": "/p/my proj"},
-            ]
-        )
-        transport = self._listing_transport(listing)
-        update_plugins(transport)
-        cmds = [c.args[-1] for c in transport.run.call_args_list]
-        updates = [c for c in cmds if f"claude plugin update {pid}" in c]
-        assert len(updates) == 3
-        user = [c for c in updates if "--scope user" in c]
-        assert len(user) == 1
-        assert " cd " not in user[0]
-        assert any(
-            f"cd /p/tooling && claude plugin update {pid} --scope project" in c for c in updates
-        )
-        quoted = shlex.quote("/p/my proj")
-        assert any(
-            f"cd {quoted} && claude plugin update {pid} --scope project" in c for c in updates
-        )
-        # Already installed (at some scope), so never installed afresh.
-        assert not any("claude plugin install" in c for c in cmds)
-
-    def test_missing_project_dir_fails_that_entry_naming_scope_and_project(self) -> None:
-        # #3764: a projectPath that no longer exists in the guest makes `cd` fail.
-        # That entry is a per-entry failure naming its scope and project — never
-        # skipped silently — and the other entries are still attempted.
-        pid = "vergil@vergil-marketplace"
-        listing = json.dumps(
-            [
-                {"id": pid, "scope": "user", "enabled": True},
-                {"id": pid, "scope": "project", "enabled": True, "projectPath": "/p/gone"},
-                {"id": pid, "scope": "project", "enabled": True, "projectPath": "/p/here"},
-            ]
-        )
-        transport = self._listing_transport(listing, fail_on="cd /p/gone")
-        with pytest.raises(RuntimeError) as excinfo:
-            update_plugins(transport)
-        assert f"{pid} (project: /p/gone)" in str(excinfo.value)
-        assert "/p/here" not in str(excinfo.value)
-        cmds = [c.args[-1] for c in transport.run.call_args_list]
-        assert any("cd /p/here && claude plugin update" in c for c in cmds)
-        assert any(f"claude plugin update {pid} --scope user" in c for c in cmds)
-
-    def test_project_entry_without_project_path_is_a_failure(self) -> None:
-        # #3764: a project-scope entry with no projectPath cannot be targeted.
-        # Running it from the home directory would update the wrong project (or
-        # none), so it is recorded as a failure instead of being run or skipped.
-        pid = "vergil@vergil-marketplace"
-        listing = json.dumps(
-            [
-                {"id": "paad@paad", "scope": "user", "enabled": True},
-                {"id": pid, "scope": "project", "enabled": True},
-            ]
-        )
-        transport = self._listing_transport(listing)
-        with pytest.raises(RuntimeError, match=r"vergil@vergil-marketplace \(project: "):
-            update_plugins(transport)
-        cmds = [c.args[-1] for c in transport.run.call_args_list]
-        assert not any(f"claude plugin update {pid}" in c for c in cmds)
-        assert any("claude plugin update paad@paad --scope user" in c for c in cmds)
-
-    def test_id_installed_only_at_project_scope_is_not_reinstalled(self) -> None:
-        # #3764: an id counts as installed if ANY entry has it, so an enabled id
-        # present only at project scope is updated there, not installed at user.
-        pid = "vergil@vergil-marketplace"
-        settings = json.dumps({"enabledPlugins": {pid: True}})
-        listing = json.dumps(
-            [{"id": pid, "scope": "project", "enabled": True, "projectPath": "/p/tooling"}]
-        )
-        transport = self._listing_transport(listing, settings=settings)
-        update_plugins(transport)
-        cmds = [c.args[-1] for c in transport.run.call_args_list]
-        assert not any("claude plugin install" in c for c in cmds)
-        assert any(
-            f"cd /p/tooling && claude plugin update {pid} --scope project" in c for c in cmds
-        )
-
-    def test_install_failure_is_surfaced_with_its_scope(self) -> None:
-        # An enabled-but-missing id that fails to install is collected (labelled
-        # with the user scope it was installed at) and raised, never swallowed.
-        settings = json.dumps({"enabledPlugins": {"superpowers@official": True}})
-        transport = self._listing_transport(
-            "[]", settings=settings, fail_on="claude plugin install superpowers@official"
-        )
-        with pytest.raises(RuntimeError, match=r"superpowers@official \(user\)"):
-            update_plugins(transport)
-
-    def test_raises_after_attempting_all_when_a_plugin_fails(self) -> None:
-        def side_effect(*args: str, **_kw: object) -> MagicMock:
-            cmd = args[-1]
-            if "claude plugin update paad@paad" in cmd:
-                raise subprocess.CalledProcessError(1, "claude plugin update")
-            out = self._LISTING if "plugin list --json" in cmd else ""
-            return MagicMock(stdout=out, returncode=0)
-
-        transport = MagicMock()
-        transport.run.side_effect = side_effect
-        with pytest.raises(RuntimeError, match="paad@paad"):
-            update_plugins(transport)
-        # Best-effort: the other enabled plugin is still attempted before raising.
-        cmds = [c.args[-1] for c in transport.run.call_args_list]
-        assert any("claude plugin update vergil@vergil-marketplace" in c for c in cmds)
-
-    def test_installs_enabled_plugins_not_yet_installed(self) -> None:
-        # #2006 (Fix C): a plugin enabled in the guest settings.json but absent from
-        # `claude plugin list` (never installed) must be INSTALLED, not skipped.
-        # An update-only pass can leave a fresh box with zero plugins. Changelog
-        # v2.1.195 says only that project-only enabled plugins need explicit
-        # install consent; the reconcile stays until vergil-project/.github#578
-        # shows whether user-enabled plugins install on their own.
-        settings = json.dumps({"enabledPlugins": {"superpowers@official": True, "paad@paad": True}})
-        # superpowers is enabled-but-not-installed; paad is already installed.
-        listing = json.dumps([{"id": "paad@paad", "scope": "user", "enabled": True}])
-
-        def side_effect(*args: str, **_kw: object) -> MagicMock:
-            cmd = args[-1]
-            if "cat ~/.claude/settings.json" in cmd:
-                out = settings
-            elif "plugin list --json" in cmd:
-                out = listing
-            else:
-                out = ""
-            return MagicMock(stdout=out, returncode=0)
-
-        transport = MagicMock()
-        transport.run.side_effect = side_effect
-        update_plugins(transport)
-        cmds = [c.args[-1] for c in transport.run.call_args_list]
-        # The enabled-but-uninstalled plugin is installed...
-        assert any("claude plugin install superpowers@official --scope user" in c for c in cmds)
-        # ...and the already-installed enabled plugin is updated, not reinstalled.
-        assert any("claude plugin update paad@paad --scope user" in c for c in cmds)
-        assert not any("claude plugin install paad@paad" in c for c in cmds)
-
-    def test_unreadable_settings_still_refreshes_installed(self) -> None:
-        # #2006: if the guest settings.json cannot be read (cat fails), the desired
-        # set is empty but anything already installed-and-enabled is still refreshed.
-        def side_effect(*args: str, **_kw: object) -> MagicMock:
-            cmd = args[-1]
-            if "cat ~/.claude/settings.json" in cmd:
-                raise subprocess.CalledProcessError(1, "cat")
-            out = self._LISTING if "plugin list --json" in cmd else ""
-            return MagicMock(stdout=out, returncode=0)
-
-        transport = MagicMock()
-        transport.run.side_effect = side_effect
-        update_plugins(transport)  # no raise
-        cmds = [c.args[-1] for c in transport.run.call_args_list]
-        assert any("claude plugin update paad@paad --scope user" in c for c in cmds)
-
-    def test_malformed_settings_is_tolerated(self) -> None:
-        # #2006: garbage in settings.json must not crash the reconcile; the
-        # installed-enabled set is still refreshed.
-        def side_effect(*args: str, **_kw: object) -> MagicMock:
-            cmd = args[-1]
-            if "cat ~/.claude/settings.json" in cmd:
-                out = "{not valid json"
-            elif "plugin list --json" in cmd:
-                out = self._LISTING
-            else:
-                out = ""
-            return MagicMock(stdout=out, returncode=0)
-
-        transport = MagicMock()
-        transport.run.side_effect = side_effect
-        update_plugins(transport)  # no raise
-        cmds = [c.args[-1] for c in transport.run.call_args_list]
-        assert any(
-            "claude plugin update vergil@vergil-marketplace --scope project" in c for c in cmds
-        )
-
-    def test_registers_declared_marketplaces_before_install(self) -> None:
-        # #2021 (Fix C v2): headless `marketplace update`/`list` do NOT register the
-        # marketplaces declared in settings.json extraKnownMarketplaces — only
-        # `marketplace add <source>` does. Without it, install fails "not found in
-        # marketplace, local copy out of date" on a fresh box.
-        settings = json.dumps(
-            {
-                "extraKnownMarketplaces": {
-                    "vergil-marketplace": {
-                        "source": {
-                            "source": "github",
-                            "repo": "vergil-project/vergil-claude-plugin",
-                        }
-                    },
-                    "paad": {"source": {"source": "github", "repo": "Ovid/paad"}},
-                },
-                "enabledPlugins": {"vergil@vergil-marketplace": True},
-            }
-        )
-
-        def side_effect(*args: str, **_kw: object) -> MagicMock:
-            cmd = args[-1]
-            if "cat ~/.claude/settings.json" in cmd:
-                out = settings
-            elif "plugin list --json" in cmd:
-                out = "[]"
-            else:
-                out = ""
-            return MagicMock(stdout=out, returncode=0)
-
-        transport = MagicMock()
-        transport.run.side_effect = side_effect
-        update_plugins(transport)
-        cmds = [c.args[-1] for c in transport.run.call_args_list]
-
-        def find(sub: str) -> int:
-            return next((i for i, c in enumerate(cmds) if sub in c), -1)
-
-        # Each declared marketplace is registered by source...
-        assert find("marketplace add vergil-project/vergil-claude-plugin") >= 0
-        assert find("marketplace add Ovid/paad") >= 0
-        # ...before the enabled plugin is installed.
-        assert find("plugin install vergil@vergil-marketplace") >= 0
-        assert find("marketplace add vergil-project/vergil-claude-plugin") < find(
-            "plugin install vergil@vergil-marketplace"
-        )
-
-    def test_marketplace_sources_keeps_github_ref(self) -> None:
-        # #3751: Claude Code refuses an add whose source does not match the
-        # declared extraKnownMarketplaces entry, so a github entry's `ref` must
-        # be kept (`<repo>@<ref>`); an entry with no ref stays the bare repo.
-        settings = {
+    # box over limactl or an off-platform box over IAP; only the transport differs.
+    # The refresh itself lives in claude_marketplace (test_claude_marketplace.py);
+    # these tests cover the guest wiring: the settings read, the PATH export and
+    # the RuntimeError naming every failure.
+    _SETTINGS = json.dumps(
+        {
             "extraKnownMarketplaces": {
                 "vergil-marketplace": {
                     "source": {
                         "source": "github",
                         "repo": "vergil-project/vergil-claude-plugin",
-                        "ref": "main",
+                        "ref": "v2.1",
                     }
-                },
-                "paad": {"source": {"source": "github", "repo": "Ovid/paad"}},
+                }
             },
-            "enabledPlugins": {},
+            "enabledPlugins": {"vergil@vergil-marketplace": True},
         }
-        assert _marketplace_sources(settings) == [
-            "vergil-project/vergil-claude-plugin@main",
-            "Ovid/paad",
-        ]
+    )
+    _PLUGIN_LIST = json.dumps([{"id": "vergil@vergil-marketplace", "scope": "user"}])
 
-    def test_marketplace_sources_keeps_git_url_ref(self) -> None:
-        # #3751: a git URL source pins its ref with `#ref` (Claude Code docs,
-        # "Add a marketplace"); without a ref the URL is passed unchanged.
-        settings = {
-            "extraKnownMarketplaces": {
-                "pinned": {
-                    "source": {
-                        "source": "git",
-                        "url": "https://example.com/y.git",
-                        "ref": "v1.0.0",
-                    }
-                },
-                "bare": {"source": {"source": "git", "url": "https://example.com/z.git"}},
-                "p": {"source": {"path": "./local-mp"}},
-            },
-            "enabledPlugins": {},
-        }
-        assert _marketplace_sources(settings) == [
-            "https://example.com/y.git#v1.0.0",
-            "https://example.com/z.git",
-            "./local-mp",
-        ]
-
-    def test_marketplace_sources_handles_url_and_path_and_skips_sourceless(self) -> None:
-        # #2021: non-github sources (url, path) are registered; entries with no
-        # usable source are skipped, not crashed on.
-        settings = json.dumps(
-            {
-                "extraKnownMarketplaces": {
-                    "u": {"source": {"source": "git", "url": "https://example.com/y.git"}},
-                    "p": {"source": {"path": "./local-mp"}},
-                    "empty": {"source": {}},
-                    "nosrc": {},
-                },
-                "enabledPlugins": {},
-            }
+    @staticmethod
+    def _registered(ref: str) -> str:
+        return json.dumps(
+            [
+                {
+                    "name": "vergil-marketplace",
+                    "source": "github",
+                    "repo": "vergil-project/vergil-claude-plugin",
+                    "ref": ref,
+                }
+            ]
         )
+
+    def _fake_transport(
+        self,
+        *,
+        settings: str | Exception | None = None,
+        registered_ref: str = "v2.1",
+        fail_on: str = "",
+    ) -> MagicMock:
+        settings_out = self._SETTINGS if settings is None else settings
 
         def side_effect(*args: str, **_kw: object) -> MagicMock:
             cmd = args[-1]
+            if fail_on and fail_on in cmd:
+                raise subprocess.CalledProcessError(1, "bash")
             if "cat ~/.claude/settings.json" in cmd:
-                out = settings
+                if isinstance(settings_out, Exception):
+                    raise settings_out
+                out = settings_out
+            elif "marketplace list --json" in cmd:
+                out = self._registered(registered_ref)
             elif "plugin list --json" in cmd:
-                out = "[]"
+                out = self._PLUGIN_LIST
             else:
                 out = ""
             return MagicMock(stdout=out, returncode=0)
 
         transport = MagicMock()
         transport.run.side_effect = side_effect
-        update_plugins(transport)  # no raise (nothing enabled)
-        cmds = [c.args[-1] for c in transport.run.call_args_list]
-        assert any("marketplace add https://example.com/y.git" in c for c in cmds)
-        assert any("marketplace add ./local-mp" in c for c in cmds)
-        # sourceless entries produced no add command
-        assert sum("marketplace add" in c for c in cmds) == 2
+        return transport
 
-    def test_marketplace_add_failure_is_surfaced(self) -> None:
-        # #2021: a marketplace that fails to register is collected and surfaced,
-        # never silently skipped.
-        settings = json.dumps(
-            {
-                "extraKnownMarketplaces": {
-                    "bad": {"source": {"source": "github", "repo": "x/bad"}}
-                },
-                "enabledPlugins": {},
-            }
-        )
+    def test_refreshes_through_the_shared_sequence(self) -> None:
+        transport = self._fake_transport()
+        update_plugins(transport)
+        claude_cmds = [c.args[-1] for c in transport.run.call_args_list if "claude " in c.args[-1]]
+        assert [c.split(" && ", 1)[1] for c in claude_cmds] == [
+            "claude plugin marketplace add vergil-project/vergil-claude-plugin@v2.1",
+            "claude plugin marketplace update",
+            "claude plugin list --json",
+            "claude plugin update vergil@vergil-marketplace --scope user",
+            "claude plugin marketplace list --json",
+        ]
+        # Every claude call is a non-login bash -c with an explicit PATH export, so
+        # claude resolves regardless of the guest's zsh-configured environment.
+        for c in transport.run.call_args_list:
+            assert c.args[:2] == ("bash", "-c")
+        for cmd in claude_cmds:
+            assert cmd.startswith(_PLUGIN_PATH_EXPORT + " && ")
 
-        def side_effect(*args: str, **_kw: object) -> MagicMock:
-            cmd = args[-1]
-            if "marketplace add x/bad" in cmd:
-                raise subprocess.CalledProcessError(1, "claude plugin marketplace add")
-            if "cat ~/.claude/settings.json" in cmd:
-                out = settings
-            elif "plugin list --json" in cmd:
-                out = "[]"
-            else:
-                out = ""
-            return MagicMock(stdout=out, returncode=0)
-
-        transport = MagicMock()
-        transport.run.side_effect = side_effect
-        with pytest.raises(RuntimeError, match="marketplace:x/bad"):
+    def test_update_plugins_fails_when_verification_fails(self) -> None:
+        transport = self._fake_transport(registered_ref="main")
+        with pytest.raises(RuntimeError, match="marketplace:vergil-marketplace"):
             update_plugins(transport)
 
-    def test_derives_official_marketplace_when_undeclared(self) -> None:
-        # #2029: an enabled plugin can reference a marketplace not in
-        # extraKnownMarketplaces — notably claude-plugins-official, which isn't
-        # always declared. Derive its source so add+install still work.
-        settings = json.dumps(
-            {
-                "extraKnownMarketplaces": {},
-                "enabledPlugins": {"superpowers@claude-plugins-official": True},
-            }
-        )
+    @pytest.mark.parametrize(
+        "settings",
+        [
+            pytest.param(subprocess.CalledProcessError(1, "cat"), id="missing"),
+            pytest.param(subprocess.CalledProcessError(126, "cat"), id="unreadable"),
+            pytest.param("{not valid json", id="invalid"),
+            pytest.param("[]", id="not-an-object"),
+        ],
+    )
+    def test_update_plugins_fails_on_missing_unreadable_or_invalid_guest_settings(
+        self, settings: str | Exception
+    ) -> None:
+        transport = self._fake_transport(settings=settings)
+        with pytest.raises(RuntimeError, match=r"~/\.claude/settings\.json"):
+            update_plugins(transport)
+        # Nothing ran against claude before the failure.
+        assert not any("claude " in c.args[-1] for c in transport.run.call_args_list)
 
-        def side_effect(*args: str, **_kw: object) -> MagicMock:
-            cmd = args[-1]
-            if "cat ~/.claude/settings.json" in cmd:
-                out = settings
-            elif "plugin list --json" in cmd:
-                out = "[]"
-            else:
-                out = ""
-            return MagicMock(stdout=out, returncode=0)
-
-        transport = MagicMock()
-        transport.run.side_effect = side_effect
-        update_plugins(transport)
+    def test_raises_naming_every_failure_after_attempting_all(self) -> None:
+        transport = self._fake_transport(fail_on="claude plugin update vergil")
+        with pytest.raises(RuntimeError) as excinfo:
+            update_plugins(transport)
+        assert "vergil@vergil-marketplace (user)" in str(excinfo.value)
+        # The verification still ran after the failed update.
         cmds = [c.args[-1] for c in transport.run.call_args_list]
-        assert any("marketplace add anthropics/claude-plugins-official" in c for c in cmds)
-        assert any(
-            "plugin install superpowers@claude-plugins-official --scope user" in c for c in cmds
-        )
+        assert any("marketplace list --json" in c for c in cmds)
 
-    def test_undecidable_undeclared_marketplace_is_not_added(self) -> None:
-        # #2029: a plugin against an unknown third-party marketplace has no
-        # derivable source — we do not invent one; the install surfaces the error.
-        settings = json.dumps(
-            {
-                "extraKnownMarketplaces": {},
-                "enabledPlugins": {"thing@some-third-party": True},
-            }
-        )
-
-        def side_effect(*args: str, **_kw: object) -> MagicMock:
-            cmd = args[-1]
-            if "cat ~/.claude/settings.json" in cmd:
-                out = settings
-            elif "plugin list --json" in cmd:
-                out = "[]"
-            else:
-                out = ""
-            return MagicMock(stdout=out, returncode=0)
-
-        transport = MagicMock()
-        transport.run.side_effect = side_effect
-        update_plugins(transport)
-        cmds = [c.args[-1] for c in transport.run.call_args_list]
-        assert not any("marketplace add" in c for c in cmds)
-
-    def test_non_object_settings_is_tolerated(self) -> None:
-        # #2029: settings.json that isn't a JSON object (e.g. an array) is treated
-        # as empty, not crashed on.
-        def side_effect(*args: str, **_kw: object) -> MagicMock:
-            cmd = args[-1]
-            if "cat ~/.claude/settings.json" in cmd or "plugin list --json" in cmd:
-                out = "[]"
-            else:
-                out = ""
-            return MagicMock(stdout=out, returncode=0)
-
-        transport = MagicMock()
-        transport.run.side_effect = side_effect
-        update_plugins(transport)  # no raise
-        cmds = [c.args[-1] for c in transport.run.call_args_list]
-        assert not any("marketplace add" in c for c in cmds)
-
-    def test_enabled_id_without_marketplace_suffix_is_skipped(self) -> None:
-        # #2029: an enabled id with no @marketplace can't map to a marketplace, so
-        # it yields no add command (its install surfaces any problem).
-        settings = json.dumps({"extraKnownMarketplaces": {}, "enabledPlugins": {"bare-id": True}})
-
-        def side_effect(*args: str, **_kw: object) -> MagicMock:
-            cmd = args[-1]
-            if "cat ~/.claude/settings.json" in cmd:
-                out = settings
-            elif "plugin list --json" in cmd:
-                out = "[]"
-            else:
-                out = ""
-            return MagicMock(stdout=out, returncode=0)
-
-        transport = MagicMock()
-        transport.run.side_effect = side_effect
-        update_plugins(transport)
-        cmds = [c.args[-1] for c in transport.run.call_args_list]
-        assert not any("marketplace add" in c for c in cmds)
+    def test_marketplace_add_failure_is_surfaced(self) -> None:
+        transport = self._fake_transport(fail_on="marketplace add")
+        with pytest.raises(RuntimeError, match="marketplace:vergil-marketplace"):
+            update_plugins(transport)
 
 
 class TestPruneCacheImages:
