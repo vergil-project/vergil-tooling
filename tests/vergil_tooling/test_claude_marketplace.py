@@ -426,6 +426,17 @@ class TestMarketplaceSources:
         }
         assert _marketplace_sources(settings) == ["anthropics/claude-plugins-official"]
 
+    def test_official_repo_declared_under_another_name_is_added_once(self) -> None:
+        settings = {
+            "extraKnownMarketplaces": {
+                "anthropic": {
+                    "source": {"source": "github", "repo": "anthropics/claude-plugins-official"}
+                }
+            },
+            "enabledPlugins": {"superpowers@claude-plugins-official": True},
+        }
+        assert _marketplace_sources(settings) == ["anthropics/claude-plugins-official"]
+
     def test_undecidable_undeclared_marketplace_is_not_added(self) -> None:
         enabled = {"thing@some-third-party": True}
         settings = {"extraKnownMarketplaces": {}, "enabledPlugins": enabled}

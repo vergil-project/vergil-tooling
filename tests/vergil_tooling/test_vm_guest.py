@@ -665,6 +665,33 @@ class TestCopyClaudeConfig:
         piped = [c.args[0] for c in transport.pipe.call_args_list]
         assert any("cat > ~/.claude/settings.json" in cmd for cmd in piped)
 
+    @pytest.mark.parametrize("content", ["{not json", "[]", '{"enabledPlugins": {"x@y": "true"}}'])
+    def test_require_settings_rejects_an_unusable_host_file(
+        self, content: str, tmp_path: Path
+    ) -> None:
+        # The text about to be piped is checked as the refresh will read it, so
+        # a host file changed after the pre-flight is never copied into a VM.
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        (claude_dir / "settings.json").write_text(content)
+
+        transport = _transport()
+        with pytest.raises(RuntimeError, match=r"the host .*settings\.json is unusable"):
+            copy_claude_config(transport, claude_dir, require_settings=True)
+        piped = [c.args[0] for c in transport.pipe.call_args_list]
+        assert not any("settings.json" in cmd for cmd in piped)
+
+    def test_settings_shape_is_not_checked_without_require_settings(self, tmp_path: Path) -> None:
+        # Start, rebuild and session copy the file as-is; the refresh reports it.
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        (claude_dir / "settings.json").write_text("{not json")
+
+        transport = _transport()
+        copy_claude_config(transport, claude_dir)
+        piped = [c.args[0] for c in transport.pipe.call_args_list]
+        assert any("cat > ~/.claude/settings.json" in cmd for cmd in piped)
+
     def test_unreadable_host_file_is_a_named_error(self, tmp_path: Path) -> None:
         claude_dir = tmp_path / ".claude"
         claude_dir.mkdir()

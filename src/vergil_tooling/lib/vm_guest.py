@@ -478,11 +478,12 @@ def copy_claude_config(
 
     With *require_settings* (the update path, which refreshes plugins from the
     copied file right after), a missing host ``settings.json`` is an error
-    naming the host file, not a skip.
+    naming the host file, not a skip, and the text copied is first parsed and
+    shape-checked as the refresh will read it.
 
     Raises:
         RuntimeError: *require_settings* is set and the host settings.json is
-            missing, or a host file cannot be read.
+            missing or unusable, or a host file cannot be read.
     """
     settings = claude_dir / "settings.json"
     if require_settings and not settings.is_file():
@@ -504,10 +505,20 @@ def copy_claude_config(
                 transport.run("bash", "-c", f"rm -f {dest}")
             continue
         try:
-            content = source.read_text()
+            content = source.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as exc:
             msg = f"cannot read the host {source}: {exc}"
             raise RuntimeError(msg) from exc
+        if require_settings and filename == "settings.json":
+            # Check the exact text about to be piped, as the refresh will read
+            # it, so a host file changed since the pre-flight is never copied.
+            try:
+                claude_marketplace.validate_settings(
+                    claude_marketplace.parse_settings(content, f"the host {source}")
+                )
+            except claude_marketplace.MarketplaceError as exc:
+                msg = f"the host {source} is unusable: {exc}"
+                raise RuntimeError(msg) from exc
         cmd = f"chmod u+w {dest} 2>/dev/null; cat > {dest}"
         if locked:
             cmd += f" && chmod a-w {dest}"

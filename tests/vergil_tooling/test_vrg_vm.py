@@ -1714,7 +1714,17 @@ class TestUpdate:
         (tmp_path / ".claude" / "settings.json").write_text("{}")
         assert _require_host_settings() is True
 
-    @pytest.mark.parametrize("content", [b"{not json", b"[]", b"\xff\xfe"])
+    @pytest.mark.parametrize(
+        "content",
+        [
+            b"{not json",
+            b"[]",
+            b"\xff\xfe",
+            # Valid JSON objects the refresh would reject: the shape is checked too.
+            b'{"enabledPlugins": {"x@y": "true"}}',
+            b'{"extraKnownMarketplaces": {"m": {"source": "github"}}}',
+        ],
+    )
     def test_require_host_settings_rejects_an_invalid_host_file(
         self,
         content: bytes,
@@ -1744,6 +1754,16 @@ class TestUpdate:
         mock_check.assert_not_called()
         mock_list.assert_not_called()
 
+    @pytest.mark.parametrize(
+        ("error", "shown"),
+        [
+            (
+                RuntimeError("plugin refresh failed: marketplace:vergil-marketplace"),
+                "marketplace:vergil-marketplace",
+            ),
+            (subprocess.CalledProcessError(3, "claude"), "exit status 3"),
+        ],
+    )
     @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
     @patch("vergil_tooling.bin.vrg_vm.update_tooling")
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
@@ -1752,20 +1772,29 @@ class TestUpdate:
         _status: MagicMock,
         _update: MagicMock,
         _ver: MagicMock,
+        error: Exception,
+        shown: str,
         config_file: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        with patch(
-            "vergil_tooling.bin.vrg_vm.update_plugins",
-            side_effect=RuntimeError("plugin refresh failed: marketplace:vergil-marketplace"),
-        ):
+        with patch("vergil_tooling.bin.vrg_vm.update_plugins", side_effect=error):
             assert main(["update", "--config", str(config_file)]) == 1
         err = capsys.readouterr().err
         assert "ERROR: failed to update VM 'vergil-agent'" in err
-        assert "marketplace:vergil-marketplace" in err
+        assert shown in err
 
+    @pytest.mark.parametrize(
+        ("error", "shown"),
+        [
+            (
+                RuntimeError("plugin refresh failed: marketplace:vergil-marketplace"),
+                "marketplace:vergil-marketplace",
+            ),
+            (subprocess.CalledProcessError(3, "claude"), "exit status 3"),
+        ],
+    )
     def test_off_platform_update_reports_a_plugin_failure_without_a_traceback(
-        self, capsys: pytest.CaptureFixture[str]
+        self, error: Exception, shown: str, capsys: pytest.CaptureFixture[str]
     ) -> None:
         backend = MagicMock()
         backend.name = "box-1"
@@ -1776,15 +1805,12 @@ class TestUpdate:
         with (
             patch(mod + "_cloud_backend", return_value=backend),
             patch(mod + "resolve_vergil_version", return_value="v2.0"),
-            patch(
-                mod + "_update_over_transport",
-                side_effect=RuntimeError("plugin refresh failed: marketplace:vergil-marketplace"),
-            ),
+            patch(mod + "_update_over_transport", side_effect=error),
         ):
             assert _cmd_update_off_platform(target, args) == 1
         err = capsys.readouterr().err
         assert "ERROR: failed to update off-platform box 'box-1'" in err
-        assert "marketplace:vergil-marketplace" in err
+        assert shown in err
 
     @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")

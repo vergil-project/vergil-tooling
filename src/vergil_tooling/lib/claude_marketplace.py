@@ -224,6 +224,20 @@ def _enabled_plugin_ids(settings: dict[str, Any]) -> set[str]:
     return enabled
 
 
+def validate_settings(settings: dict[str, Any]) -> None:
+    """Check *settings* has the shape the refresh reads, before any ``claude`` call.
+
+    Runs the same ``extraKnownMarketplaces`` and ``enabledPlugins`` checks the
+    refresh runs, so a caller (``vrg-vm update``) can reject a misshapen file
+    before copying it anywhere.
+
+    Raises:
+        MarketplaceError: either section has the wrong shape.
+    """
+    _declared_sources(settings)
+    _enabled_plugin_ids(settings)
+
+
 def _marketplace_sources(settings: dict[str, Any]) -> list[str]:
     """Return the ``marketplace add`` arguments needed for the enabled plugins, quoted.
 
@@ -278,7 +292,9 @@ def _marketplace_adds(settings: dict[str, Any]) -> list[tuple[str, str]]:
         market = pid.split("@", 1)[1]
         if market in extra:
             continue
-        if market == _OFFICIAL_MARKETPLACE and official not in adds:
+        # Deduplicate on the source, as before the move: the official repo
+        # declared under another name is already added.
+        if market == _OFFICIAL_MARKETPLACE and official[1] not in {arg for _, arg in adds}:
             adds.append(official)
     return adds
 

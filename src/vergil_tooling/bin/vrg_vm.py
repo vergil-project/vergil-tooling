@@ -1656,6 +1656,9 @@ def _cmd_update_off_platform(target: Target, args: argparse.Namespace) -> int:
             trusted_authors=target.config.trusted_authors,
             prune=args.prune,
         )
+    except subprocess.CalledProcessError as exc:
+        print(f"ERROR: failed to update {label}: exit status {exc.returncode}", file=sys.stderr)
+        return 1
     except RuntimeError as exc:
         # A config copy or plugin refresh failure (RuntimeError, including
         # MarketplaceError), reported like the --all loop reports it.
@@ -1677,7 +1680,7 @@ def _require_host_settings() -> bool:
     """
     settings = Path.home() / ".claude" / "settings.json"
     try:
-        claude_marketplace.read_settings_file(settings)
+        claude_marketplace.validate_settings(claude_marketplace.read_settings_file(settings))
     except claude_marketplace.MarketplaceError as exc:
         print(
             f"ERROR: the host settings are unusable ({exc}); vrg-vm update copies "
@@ -1724,6 +1727,10 @@ def _cmd_update(args: argparse.Namespace) -> int:
             trusted_authors=config.trusted_authors,
             prune=args.prune,
         )
+    except subprocess.CalledProcessError as exc:
+        reason = f"exit status {exc.returncode}"
+        print(f"ERROR: failed to update VM '{instance}': {reason}", file=sys.stderr)
+        return 1
     except RuntimeError as exc:
         # A config copy or plugin refresh failure (RuntimeError, including
         # MarketplaceError), reported like the --all loop reports it.
