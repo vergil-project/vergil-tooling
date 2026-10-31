@@ -395,13 +395,27 @@ Finish by checking each machine, host and every VM: `claude plugin list
 to. Run `vrg-host plugins` or `vrg-vm update` again on any machine that does
 not.
 
+A rollback moves the installed plugin only. A Lima `vrg-vm session` loads
+each tree listed in the host's `~/.config/vergil/plugin-dirs.toml` with
+`--plugin-dir`, so when a listed tree is the vergil plugin the session runs
+that tree instead of the installed one, and the rollback does not reach it.
+To run the rolled-back release in those sessions, remove the vergil tree
+from the file (see the
+[`--plugin-dir` override](../reference/cli-tools-overview.md#vrg-vm)). A
+cloud session ignores the file and always runs the installed plugins, and a
+listed tree that is not the vergil plugin, such as a paad tree, leaves the
+installed vergil plugin in place.
+
 ### How long a rollback lasts
 
 A rollback lasts until the next release, whose `promote` stage moves `v2.1`
 forward again. Keeping it in place until the fix ships is managed by hand:
 the human who rolled back makes sure the next release carries the fix, or
-cuts it with `vrg-release --no-promote`. Nothing holds the tag
-automatically. An issue that blocks promotion until it is closed is a
+cuts it with `vrg-release --no-promote`. A release cut with `--no-promote`
+leaves `v2.1` where it is; promote it later with the `vrg-promote` steps in
+[Move the tag back](#move-the-tag-back), passing its version. Rolling
+forward again is the same steps with the latest `v2.1.Z`. Nothing holds the
+tag automatically. An issue that blocks promotion until it is closed is a
 separate idea,
 [vergil-project/.github#763](https://github.com/vergil-project/.github/issues/763).
 
