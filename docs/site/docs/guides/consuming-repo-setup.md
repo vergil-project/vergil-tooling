@@ -334,10 +334,11 @@ declare, so a missing or misspelled `vergil-marketplace` entry is not
 caught; after a switch, confirm the ref in `claude plugin marketplace list
 --json` yourself.
 
-`vrg-vm update` copies the host's current `settings.json` into each running
-VM, then updates vergil-tooling, then refreshes the plugins. A box whose
-vergil-tooling update fails is not refreshed, so run `vrg-vm update` on it
-again once the cause is fixed. `vrg-vm update --all` skips and reports a VM
+`vrg-vm update` updates vergil-tooling in each running VM, then copies the
+host's current `settings.json` into it, then refreshes the plugins. A box
+whose vergil-tooling update fails gets neither the new settings nor the
+refresh, so it still declares the old `ref`; run `vrg-vm update` on it again
+once the cause is fixed. `vrg-vm update --all` skips and reports a VM
 that is not running; a single-VM `vrg-vm update` on one fails with exit 1.
 A skipped Lima VM's next `vrg-vm start` refreshes its plugins, but on start
 a failed refresh or verification is only a warning: check the start output

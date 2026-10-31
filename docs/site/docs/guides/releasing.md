@@ -289,6 +289,9 @@ consumers that follow the tag return to that release. It is a release act
 and stays human-gated. The gate is the `Tag protection` ruleset, which lets
 only the repository Admin role move a rolling tag (see the
 [config audit reference](../reference/config-audit.md#github-checks-rulesets)).
+For Claude Code consumers the no-bypass `Rolling tag branch names` ruleset
+is part of the gate: Claude Code resolves `v2.1` as a branch before a tag,
+so the tag's protection holds only while no `v2.1` branch can exist.
 `vrg-promote` also refuses an agent identity, but that stops an agent from
 running it by mistake; it is not an access control.
 The procedure below is written for the Claude Code plugin,
@@ -359,8 +362,14 @@ published GitHub Release. `vrg-promote` refuses, with exit 1:
 - a declined or unanswered confirmation;
 - a move that changed on origin after you confirmed it.
 
+An exit 1 after `Promoted:` (the local tag update failed) or after a
+failure to read origin's rolling tag back leaves origin moved or unknown.
+After either, re-run `vrg-promote --dry-run <X.Y.Z>` to see where `v2.1` is.
+
 When `v2.1` already points at the target, it prints
-`v2.1 already points at vX.Y.Z — already promoted.` and pushes nothing. See
+`v2.1 already points at vX.Y.Z — already promoted.` and pushes nothing. It
+prints no `origin:` line in that case, so check the checkout with
+`vrg-git remote get-url origin` instead. See
 the [`vrg-promote` reference](../reference/cli-tools-overview.md#vrg-promote)
 for every exit path.
 
