@@ -31,7 +31,14 @@ from vergil_tooling.bin.vrg_vm_resolve_session import (
     name_by_session,
     projects_glob,
 )
-from vergil_tooling.lib import identity_mode, progress, vm_cloud, vm_memory, vm_packages
+from vergil_tooling.lib import (
+    claude_marketplace,
+    identity_mode,
+    progress,
+    vm_cloud,
+    vm_memory,
+    vm_packages,
+)
 from vergil_tooling.lib import plugin_dirs as plugin_dirs_lib
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.config import ConfigError, VmStanza, read_config
@@ -1629,35 +1636,45 @@ def _cmd_update_off_platform(target: Target, args: argparse.Namespace) -> int:
     tag = args.tag if args.tag else None
     fallback = resolve_vergil_version(target.config, target.identity)
     label = f"off-platform box '{backend.name}' (identity: {target.identity_name})"
-    _update_over_transport(
-        backend.transport(),
-        label,
-        tag,
-        fallback,
-        trusted_authors=target.config.trusted_authors,
-        prune=args.prune,
-    )
+    try:
+        _update_over_transport(
+            backend.transport(),
+            label,
+            tag,
+            fallback,
+            trusted_authors=target.config.trusted_authors,
+            prune=args.prune,
+        )
+    except RuntimeError as exc:
+        # A config copy or plugin refresh failure (RuntimeError, including
+        # MarketplaceError), reported like the --all loop reports it.
+        print(f"ERROR: failed to update {label}: {exc}", file=sys.stderr)
+        return 1
 
     print("Update complete.")
     return 0
 
 
 def _require_host_settings() -> bool:
-    """Check, before touching any VM, that the host ``~/.claude/settings.json`` exists.
+    """Check, before touching any VM, that the host ``~/.claude/settings.json`` is usable.
 
     The update copies it into each VM and refreshes the plugins from that copy
-    (spec §6 of epic vergil-project/.github#760), so without it every VM would
-    fail halfway through its update. Prints the error and returns False.
+    (spec §6 of epic vergil-project/.github#760). So the file must exist and
+    parse as the refresh will parse it: otherwise a broken host file would be
+    copied over every VM's working ``settings.json`` before the refresh
+    rejected it. Prints the error, naming the host file, and returns False.
     """
     settings = Path.home() / ".claude" / "settings.json"
-    if settings.is_file():
-        return True
-    print(
-        f"ERROR: the host {settings} is missing; vrg-vm update copies it into each VM "
-        "and refreshes the plugins from it",
-        file=sys.stderr,
-    )
-    return False
+    try:
+        claude_marketplace.read_settings_file(settings)
+    except claude_marketplace.MarketplaceError as exc:
+        print(
+            f"ERROR: the host settings are unusable ({exc}); vrg-vm update copies "
+            f"{settings} into each VM and refreshes the plugins from it",
+            file=sys.stderr,
+        )
+        return False
+    return True
 
 
 def _cmd_update(args: argparse.Namespace) -> int:
@@ -1670,10 +1687,10 @@ def _cmd_update(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
-    if not _require_host_settings():
-        return 1
     if args.all:
         return _cmd_update_all(args)
+    if not _require_host_settings():
+        return 1
 
     # Off-platform boxes update IN PLACE over IAP — same transport-generic tooling
     # update as Lima, no rebuild (#1812, correcting #1803's stateless premise).
@@ -1694,15 +1711,21 @@ def _cmd_update(args: argparse.Namespace) -> int:
 
     tag = args.tag if args.tag else None
     fallback = resolve_vergil_version(config, identity)
-    _update_instance(
-        instance,
-        name,
-        identity,
-        tag,
-        fallback,
-        trusted_authors=config.trusted_authors,
-        prune=args.prune,
-    )
+    try:
+        _update_instance(
+            instance,
+            name,
+            identity,
+            tag,
+            fallback,
+            trusted_authors=config.trusted_authors,
+            prune=args.prune,
+        )
+    except RuntimeError as exc:
+        # A config copy or plugin refresh failure (RuntimeError, including
+        # MarketplaceError), reported like the --all loop reports it.
+        print(f"ERROR: failed to update VM '{instance}': {exc}", file=sys.stderr)
+        return 1
 
     print("Update complete.")
     return 0
@@ -1766,6 +1789,8 @@ def _cmd_update_all(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
+    if not _require_host_settings():
+        return 1
 
     config_path = args.config if args.config else _default_config_path()
     config = load_config(config_path)

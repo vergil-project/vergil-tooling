@@ -24,6 +24,7 @@ from vergil_tooling.bin.vrg_vm import (
     _candidate_zones,
     _cloud_backend,
     _CloudState,
+    _cmd_update_off_platform,
     _create_from_target,
     _cs_credentials,
     _cs_link_claude,
@@ -1705,10 +1706,84 @@ class TestUpdate:
     ) -> None:
         monkeypatch.setenv("HOME", str(tmp_path))
         assert _require_host_settings() is False
-        assert ".claude/settings.json is missing" in capsys.readouterr().err
+        err = capsys.readouterr().err
+        assert "the host settings are unusable" in err
+        assert ".claude/settings.json" in err
         (tmp_path / ".claude").mkdir()
         (tmp_path / ".claude" / "settings.json").write_text("{}")
         assert _require_host_settings() is True
+
+    @pytest.mark.parametrize("content", [b"{not json", b"[]", b"\xff\xfe"])
+    def test_require_host_settings_rejects_an_invalid_host_file(
+        self,
+        content: bytes,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # An invalid host file must stop the update before it is copied over
+        # any VM's working settings.json; the error names the host file.
+        monkeypatch.setenv("HOME", str(tmp_path))
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".claude" / "settings.json").write_bytes(content)
+        assert _require_host_settings() is False
+        err = capsys.readouterr().err
+        assert str(tmp_path / ".claude" / "settings.json") in err
+
+    @patch("vergil_tooling.bin.vrg_vm.list_vms")
+    def test_update_all_usage_error_comes_before_the_host_settings_check(
+        self, mock_list: MagicMock, config_file: Path
+    ) -> None:
+        with patch(
+            "vergil_tooling.bin.vrg_vm._require_host_settings", return_value=False
+        ) as mock_check:
+            assert (
+                main(["update", "--all", "--identity", "vergil", "--config", str(config_file)]) == 2
+            )
+        mock_check.assert_not_called()
+        mock_list.assert_not_called()
+
+    @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
+    @patch("vergil_tooling.bin.vrg_vm.update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
+    def test_update_reports_a_plugin_failure_without_a_traceback(
+        self,
+        _status: MagicMock,
+        _update: MagicMock,
+        _ver: MagicMock,
+        config_file: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        with patch(
+            "vergil_tooling.bin.vrg_vm.update_plugins",
+            side_effect=RuntimeError("plugin refresh failed: marketplace:vergil-marketplace"),
+        ):
+            assert main(["update", "--config", str(config_file)]) == 1
+        err = capsys.readouterr().err
+        assert "ERROR: failed to update VM 'vergil-agent'" in err
+        assert "marketplace:vergil-marketplace" in err
+
+    def test_off_platform_update_reports_a_plugin_failure_without_a_traceback(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        backend = MagicMock()
+        backend.name = "box-1"
+        backend.status.return_value = "Running"
+        target = MagicMock(identity_name="vergil")
+        args = argparse.Namespace(tag=None, prune=False)
+        mod = "vergil_tooling.bin.vrg_vm."
+        with (
+            patch(mod + "_cloud_backend", return_value=backend),
+            patch(mod + "resolve_vergil_version", return_value="v2.0"),
+            patch(
+                mod + "_update_over_transport",
+                side_effect=RuntimeError("plugin refresh failed: marketplace:vergil-marketplace"),
+            ),
+        ):
+            assert _cmd_update_off_platform(target, args) == 1
+        err = capsys.readouterr().err
+        assert "ERROR: failed to update off-platform box 'box-1'" in err
+        assert "marketplace:vergil-marketplace" in err
 
     @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")

@@ -163,17 +163,33 @@ class TestRefresh:
             marketplace_list="[]",
         )
         failures = refresh(run, SETTINGS_V21, "")
+        # The failed add and the failed verification name the same marketplace
+        # by name, so it is listed once.
         assert failures == [
-            "marketplace:vergil-project/vergil-claude-plugin@v2.1",
+            "marketplace:vergil-marketplace",
             "marketplace update",
             "vergil@vergil-marketplace (user)",
-            "marketplace:vergil-marketplace",
         ]
         err = capsys.readouterr().err
         # Each failed step is named with its exit status. Its stderr is the
         # Run's to echo, so it is not printed a second time here.
         assert "ERROR: marketplace update failed (exit status 1)" in err
+        assert (
+            "ERROR: marketplace add vergil-project/vergil-claude-plugin@v2.1 failed "
+            "(exit status 1)" in err
+        )
         assert "boom" not in err
+
+    def test_a_plugin_enabled_as_false_is_neither_installed_nor_derived(self) -> None:
+        settings = {"enabledPlugins": {"superpowers@claude-plugins-official": False}}
+        run = FakeRun(plugin_list="[]")
+        assert refresh(run, settings, "") == []
+        assert not any("marketplace add" in c or "plugin install" in c for c in run.cmds)
+
+    def test_failed_add_of_a_derived_marketplace_is_named_by_marketplace(self) -> None:
+        settings = {"enabledPlugins": {"superpowers@claude-plugins-official": True}}
+        run = FakeRun(plugin_list="[]", fail_on=("marketplace add",))
+        assert refresh(run, settings, "") == ["marketplace:claude-plugins-official"]
 
     def test_refresh_adds_marketplaces_before_installing(self) -> None:
         # #2021: only `marketplace add` registers a declared marketplace on a
@@ -207,6 +223,9 @@ class TestRefresh:
             {"extraKnownMarketplaces": {"m": {"source": {"repo": ["o/r"]}}}},
             {"extraKnownMarketplaces": {"m": {"source": {"repo": "o/r", "ref": 2}}}},
             {"enabledPlugins": ["vergil@vergil-marketplace"]},
+            {"enabledPlugins": {"vergil@vergil-marketplace": "false"}},
+            {"enabledPlugins": {"vergil@vergil-marketplace": 1}},
+            {"enabledPlugins": {"vergil@vergil-marketplace": None}},
         ],
     )
     def test_refresh_rejects_misshapen_settings(self, settings: dict[str, Any]) -> None:
@@ -514,6 +533,27 @@ class TestUpdateInstalledPlugins:
     def test_malformed_plugin_list_raises(self, stdout: str) -> None:
         with pytest.raises(MarketplaceError):
             update_installed_plugins(FakeRun(plugin_list=stdout), {}, "")
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("scope", None),
+            ("scope", 2),
+            ("projectPath", None),
+            ("projectPath", ["/p"]),
+            ("enabled", "false"),
+            ("enabled", 1),
+        ],
+    )
+    def test_misshapen_install_entry_raises_before_any_update(
+        self, field: str, value: object
+    ) -> None:
+        entry = {"id": "vergil@vergil-marketplace", "scope": "user", "enabled": True}
+        entry[field] = value
+        run = FakeRun(plugin_list=json.dumps([entry]))
+        with pytest.raises(MarketplaceError, match=field):
+            update_installed_plugins(run, {"enabledPlugins": {entry["id"]: True}}, "")
+        assert not any("claude plugin update" in c for c in run.cmds)
 
 
 def test_marketplace_error_is_a_runtime_error() -> None:

@@ -63,7 +63,7 @@ import dataclasses
 import subprocess
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final, NamedTuple
+from typing import TYPE_CHECKING, Final, NamedTuple
 
 from vergil_tooling.lib import (
     claude_marketplace,
@@ -534,22 +534,6 @@ def _host_settings_path() -> Path:
     return Path.home() / ".claude" / "settings.json"
 
 
-def _read_host_settings(path: Path) -> dict[str, Any]:
-    """Return the host ``settings.json`` as a dict.
-
-    Raises:
-        claude_marketplace.MarketplaceError: the file is missing, unreadable,
-            not UTF-8, not valid JSON, or not a JSON object. The message names
-            the file.
-    """
-    try:
-        text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as exc:
-        msg = f"cannot read {path}: {exc}"
-        raise claude_marketplace.MarketplaceError(msg) from exc
-    return claude_marketplace.parse_settings(text, str(path))
-
-
 def _plugins(_args: argparse.Namespace) -> int:
     """Refresh and verify the host's Claude Code plugins (spec §6 of epic #760)."""
     if identity_mode.is_agent() or identity_mode.any_agent_signal():
@@ -560,7 +544,7 @@ def _plugins(_args: argparse.Namespace) -> int:
         )
         return 1
     try:
-        settings = _read_host_settings(_host_settings_path())
+        settings = claude_marketplace.read_settings_file(_host_settings_path())
     except claude_marketplace.MarketplaceError as exc:
         print(f"vrg-host plugins: {exc}", file=sys.stderr)
         return host_status.ERROR

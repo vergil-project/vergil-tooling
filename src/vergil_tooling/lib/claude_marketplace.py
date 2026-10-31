@@ -114,6 +114,24 @@ def parse_settings(text: str, where: str) -> dict[str, Any]:
     return data
 
 
+def read_settings_file(path: Path) -> dict[str, Any]:
+    """Read and parse a host ``settings.json`` at *path* (named in every error).
+
+    Shared by ``vrg-host plugins``, which refreshes from it, and ``vrg-vm
+    update``, which checks it before copying it into any VM.
+
+    Raises:
+        MarketplaceError: the file is missing, unreadable, not UTF-8, not
+            valid JSON, or not a JSON object.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        msg = f"cannot read {path}: {exc}"
+        raise MarketplaceError(msg) from exc
+    return parse_settings(text, str(path))
+
+
 def _section(settings: dict[str, Any], key: str) -> dict[str, Any]:
     """Return the settings object *key*, or ``{}`` when it is absent.
 
@@ -193,13 +211,29 @@ def _enabled_plugin_ids(settings: dict[str, Any]) -> set[str]:
     still unverified (vergil-project/.github#578).
 
     Raises:
-        MarketplaceError: ``enabledPlugins`` is not a JSON object.
+        MarketplaceError: ``enabledPlugins`` is not a JSON object, or one of
+            its values is not a boolean.
     """
-    return {pid for pid, on in _section(settings, "enabledPlugins").items() if on}
+    enabled: set[str] = set()
+    for pid, on in _section(settings, "enabledPlugins").items():
+        if not isinstance(on, bool):
+            msg = f"settings.json enabledPlugins.{pid} is not a boolean"
+            raise MarketplaceError(msg)
+        if on:
+            enabled.add(pid)
+    return enabled
 
 
 def _marketplace_sources(settings: dict[str, Any]) -> list[str]:
     """Return the ``marketplace add`` arguments needed for the enabled plugins, quoted.
+
+    The arguments of :func:`_marketplace_adds`, without their names.
+    """
+    return [arg for _, arg in _marketplace_adds(settings)]
+
+
+def _marketplace_adds(settings: dict[str, Any]) -> list[tuple[str, str]]:
+    """Return ``(marketplace name, quoted add-arg)`` for each marketplace to add.
 
     Primarily the ``extraKnownMarketplaces`` entries (each ``source`` -> an
     add-arg: ``owner/repo[@ref]``, a URL ``[#ref]``, or a path). Headless
@@ -217,8 +251,8 @@ def _marketplace_sources(settings: dict[str, Any]) -> list[str]:
     """
     declared = _declared_sources(settings)
     extra = {name for name, _ in declared}
-    sources: list[str] = []
-    for _, src in declared:
+    adds: list[tuple[str, str]] = []
+    for name, src in declared:
         # #3751: keep a declared `ref`. Claude Code refuses an add whose source
         # does not match the extraKnownMarketplaces entry (failureCode
         # "declared"). A github repo pins with `@ref` (the form `marketplace
@@ -236,16 +270,17 @@ def _marketplace_sources(settings: dict[str, Any]) -> list[str]:
         arg = shlex.quote(base)
         if ref and sep:
             arg = f"{arg}{sep}{shlex.quote(ref)}"
-        sources.append(arg)
+        adds.append((name, arg))
+    official = (_OFFICIAL_MARKETPLACE, _OFFICIAL_MARKETPLACE_SOURCE)
     for pid in _enabled_plugin_ids(settings):
         if "@" not in pid:
             continue
         market = pid.split("@", 1)[1]
         if market in extra:
             continue
-        if market == _OFFICIAL_MARKETPLACE and _OFFICIAL_MARKETPLACE_SOURCE not in sources:
-            sources.append(_OFFICIAL_MARKETPLACE_SOURCE)
-    return sources
+        if market == _OFFICIAL_MARKETPLACE and official not in adds:
+            adds.append(official)
+    return adds
 
 
 def registered_marketplaces(run: Run, prefix: str) -> dict[str, tuple[str | None, str | None]]:
@@ -352,11 +387,23 @@ def _update_plugin_entry(run: Run, entry: dict[str, Any], prefix: str) -> str | 
     return None
 
 
+# The install-entry fields the refresh reads, and the JSON type each must have
+# when present (`id` is checked on its own, since it is required).
+_INSTALL_FIELD_TYPES: tuple[tuple[str, type], ...] = (
+    ("scope", str),
+    ("projectPath", str),
+    ("enabled", bool),
+)
+
+
 def _installed_entries(run: Run, prefix: str) -> list[dict[str, Any]]:
     """Return ``claude plugin list --json``: one entry per install.
 
     Raises:
-        MarketplaceError: the output is not a JSON list of objects with an ``id``.
+        MarketplaceError: the output is not a JSON list of objects that each
+            carry a string ``id``, or an entry's ``scope`` or ``projectPath``
+            is present but not a string, or its ``enabled`` is present but not
+            a boolean.
     """
     listing = run(*shell(prefix, "claude plugin list --json"))
     try:
@@ -369,6 +416,14 @@ def _installed_entries(run: Run, prefix: str) -> list[dict[str, Any]]:
     ):
         msg = "claude plugin list --json is not a list of objects that each carry an id"
         raise MarketplaceError(msg)
+    for entry in entries:
+        for field, kind in _INSTALL_FIELD_TYPES:
+            if field in entry and not isinstance(entry[field], kind):
+                msg = (
+                    f"claude plugin list --json entry {entry['id']!r} has a "
+                    f"{field} that is not a {kind.__name__}: {entry[field]!r}"
+                )
+                raise MarketplaceError(msg)
     return entries
 
 
@@ -425,13 +480,13 @@ def refresh(run: Run, settings: dict[str, Any], prefix: str) -> list[str]:
             the state could not be read at all.
     """
     failures: list[str] = []
-    for source in _marketplace_sources(settings):
+    for name, source in _marketplace_adds(settings):
         print(f"    registering marketplace {source}...")
         try:
             run(*shell(prefix, f"claude plugin marketplace add {source}"))
         except subprocess.CalledProcessError as exc:
             _report(f"marketplace add {source}", exc)
-            failures.append(f"marketplace:{source}")
+            failures.append(f"marketplace:{name}")
     try:
         run(*shell(prefix, "claude plugin marketplace update"))
     except subprocess.CalledProcessError as exc:
@@ -439,4 +494,6 @@ def refresh(run: Run, settings: dict[str, Any], prefix: str) -> list[str]:
         failures.append("marketplace update")
     failures.extend(update_installed_plugins(run, settings, prefix))
     failures.extend(verify(run, settings, prefix))
-    return failures
+    # A marketplace whose add failed usually fails its verification too; both
+    # carry the same `marketplace:<name>` label, so it is named once.
+    return list(dict.fromkeys(failures))

@@ -955,9 +955,7 @@ class TestUpdatePlugins:
 
     def test_marketplace_add_failure_is_surfaced(self) -> None:
         transport = self._fake_transport(fail_on="marketplace add")
-        with pytest.raises(
-            RuntimeError, match="marketplace:vergil-project/vergil-claude-plugin@v2.1"
-        ):
+        with pytest.raises(RuntimeError, match="marketplace:vergil-marketplace"):
             update_plugins(transport)
 
 
