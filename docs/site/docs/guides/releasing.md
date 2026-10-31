@@ -306,9 +306,7 @@ backward move depends on how they install and is not covered here.
 Run these steps exactly, in a human shell on a terminal. `vrg-promote` acts
 on the repo of the current directory, and the fleet's repos share tag names
 (`v2.1.50` exists in vergil-tooling and vergil-actions too), so running it
-from the wrong checkout would move the wrong repo's tag. Before you start,
-read [How long a rollback lasts](#how-long-a-rollback-lasts): a release
-already in flight undoes the rollback.
+from the wrong checkout would move the wrong repo's tag.
 
 1. `cd` into a vergil-claude-plugin checkout.
 2. Fetch the tags:
@@ -369,7 +367,7 @@ After either, re-run `vrg-promote --dry-run <X.Y.Z>` to see where `v2.1` is.
 When `v2.1` already points at the target, it prints
 `v2.1 already points at vX.Y.Z — already promoted.` and pushes nothing. It
 prints no `origin:` line in that case, so check the checkout with
-`vrg-git remote get-url origin` instead. See
+`vrg-git ls-remote --get-url origin` instead. See
 the [`vrg-promote` reference](../reference/cli-tools-overview.md#vrg-promote)
 for every exit path.
 
@@ -411,9 +409,12 @@ Two cases undo a rollback with no prompt, because the `promote` stage asks
 nothing:
 
 - **A release already in flight.** A vergil-claude-plugin release that is
-  still running, or has an open `release: <version>` tracking issue with an
-  unticked `promote` stage, moves `v2.1` forward when it reaches `promote`.
-  Finish or abandon it before you roll back.
+  still running moves `v2.1` forward when it reaches `promote`. So does any
+  open `release: <version>` tracking issue, the release you are rolling back
+  included, even with its `promote` stage ticked: `vrg-release --resume`
+  runs every stage again, `promote` with it. Before you roll back, let a
+  running release finish, and close every open tracking issue or resume it
+  only with `--no-promote`.
 - **A resume without `--no-promote`.** `vrg-release` does not remember
   `--no-promote`: each run, `--resume` included, promotes unless that run
   passes the flag. Pass `--no-promote` to every `vrg-release --resume` of a
