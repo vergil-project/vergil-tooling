@@ -356,6 +356,9 @@ as done.
 | Exit codes | 0 success (including "already promoted" and `--dry-run`), 1 refusal or error |
 | Status | Active |
 
+To roll a release back with `vrg-promote`, follow the
+[rollback runbook](../guides/releasing.md#rolling-back-a-release).
+
 ### vrg-version
 
 Print or bump the repo's version. `show` prints the current version
