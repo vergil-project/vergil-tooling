@@ -74,8 +74,10 @@ any `ref` the entry declares (`owner/repo@ref` for a GitHub source,
 `url#ref` for a git URL): Claude Code refuses an add whose source does not
 match the declared entry. Once the settings declare a new ref, this re-add
 re-clones the marketplace at that ref, which is how a VM switches ref. It
-then refreshes the marketplaces
-(`claude plugin marketplace update`) and updates every **install** of an
+then refreshes each of those marketplaces by name (`claude plugin
+marketplace update <name>`); a marketplace registered in the VM but not
+declared is never updated, so a stale leftover cannot fail the refresh. It
+then updates every **install** of an
 enabled plugin to its latest version, each at its own scope (`claude plugin
 update <id> --scope <user|project>` — there is no bulk-update form), all
 inside the VM. One plugin can be installed at user scope and again at project
@@ -89,7 +91,8 @@ plugin with no install at any scope is installed at user scope. Last, it
 plugin marketplace list --json` reports it, at the declared repo and ref; a
 mismatch (including no registered ref when the settings declare one) or a
 missing registration is a failure. Every failure
-is named and raised. The refresh is driven by `vrg-vm update`, which first
+is named and raised, and a failed `claude` command is reported with its
+stdout and stderr as well as its exit status. The refresh is driven by `vrg-vm update`, which first
 copies the host's current `settings.json` into the running VM, and by a
 warn-mode stage on VM start/rebuild. `vrg-vm update --all` skips stopped VMs
 (they pick up the settings on their next start), and one VM's plugin failure

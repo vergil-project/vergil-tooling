@@ -936,7 +936,7 @@ class TestUpdatePlugins:
         claude_cmds = [c.args[-1] for c in transport.run.call_args_list if "claude " in c.args[-1]]
         assert [c.split(" && ", 1)[1] for c in claude_cmds] == [
             "claude plugin marketplace add vergil-project/vergil-claude-plugin@v2.1",
-            "claude plugin marketplace update",
+            "claude plugin marketplace update vergil-marketplace",
             "claude plugin list --json",
             "claude plugin update vergil@vergil-marketplace --scope user",
             "claude plugin marketplace list --json",

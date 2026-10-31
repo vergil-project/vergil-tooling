@@ -216,7 +216,11 @@ VM (`lib/claude_marketplace.py`):
    settings declare in `extraKnownMarketplaces`. Once the settings declare a
    new ref, this re-add re-clones the marketplace at that ref and rewrites its
    registration, which is how a machine switches ref.
-2. `claude plugin marketplace update`.
+2. `claude plugin marketplace update <name>` for each marketplace step 1
+   added. A marketplace that is registered on the machine but not declared in
+   the settings is not the fleet's to manage, so it is never updated and
+   cannot fail the refresh. A declared marketplace whose update fails is a
+   failure that names it.
 3. `claude plugin update` for every install of an enabled plugin, at its own
    scope, and `claude plugin install` for an enabled plugin with no install.
 4. A verification: each declared GitHub marketplace must be registered, as
@@ -228,7 +232,9 @@ It is a human command. Under an agent identity, or when any identity signal
 implies an agent, it refuses before running any `claude` command. It exits `0`
 when every step succeeded and the verification passed, `1` when refused, and
 `2` when the settings file is missing or invalid, or any step or the
-verification failed. Each failure is named. Design: epic
+verification failed. Each failure is named. A failed `claude` command is
+reported with its stdout and stderr as well as its exit status, because
+`claude` writes some failure causes only to stdout. Design: epic
 [vergil-project/.github#760](https://github.com/vergil-project/.github/issues/760),
 spec §6.
 
