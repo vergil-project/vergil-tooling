@@ -1360,6 +1360,8 @@
       
         
       
+        
+      
     
     
     
@@ -1412,6 +1414,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.282/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.282
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -16523,6 +16553,45 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#the-vergil-marketplace-definition" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The vergil-marketplace definition
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The vergil-marketplace definition">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#switching-an-existing-machine" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Switching an existing machine
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#moving-to-a-new-minor-line" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Moving to a new minor line
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#claudemd" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -16911,6 +16980,45 @@
       
     </span>
   </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-vergil-marketplace-definition" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The vergil-marketplace definition
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The vergil-marketplace definition">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#switching-an-existing-machine" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Switching an existing machine
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#moving-to-a-new-minor-line" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Moving to a new minor line
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
         
@@ -17318,7 +17426,7 @@ unchanged. It has four parts:</p>
 </tr>
 <tr>
 <td><code>enabledPlugins</code></td>
-<td>Enables <code>vergil@vergil-marketplace</code>. The <code>vergil-marketplace</code> definition (<code>vergil-project/vergil-claude-plugin</code>, <code>ref: "main"</code>) lives only in the user settings: a second definition in the repo file would replace the user's whole entry.</td>
+<td>Enables <code>vergil@vergil-marketplace</code>. The <code>vergil-marketplace</code> definition (<code>vergil-project/vergil-claude-plugin</code>, <code>ref: "v2.1"</code>) lives only in the user settings: a second definition in the repo file would replace the user's whole entry. See <a href="#the-vergil-marketplace-definition">The <code>vergil-marketplace</code> definition</a>.</td>
 </tr>
 <tr>
 <td><code>attribution</code></td>
@@ -17356,6 +17464,81 @@ Claude Code setting, see
 <p>See the plugin's own
 <a href="https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/site/docs/hooks/index.md">Hooks reference</a>
 for the details.</p>
+<h3 id="the-vergil-marketplace-definition">The <code>vergil-marketplace</code> definition<a class="headerlink" href="#the-vergil-marketplace-definition" title="Permanent link">&para;</a></h3>
+<p>The marketplace that <code>enabledPlugins</code> names is defined once, in the user
+settings, <code>~/.claude/settings.json</code> on the host:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="p">{</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="nt">"extraKnownMarketplaces"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">    </span><span class="nt">"vergil-marketplace"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">      </span><span class="nt">"source"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">        </span><span class="nt">"source"</span><span class="p">:</span><span class="w"> </span><span class="s2">"github"</span><span class="p">,</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">        </span><span class="nt">"repo"</span><span class="p">:</span><span class="w"> </span><span class="s2">"vergil-project/vergil-claude-plugin"</span><span class="p">,</span>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="w">        </span><span class="nt">"ref"</span><span class="p">:</span><span class="w"> </span><span class="s2">"v2.1"</span>
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="w">      </span><span class="p">}</span>
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a><span class="p">}</span>
+</code></pre></div>
+<p><code>v2.1</code> is the plugin's floating rolling tag, as for vergil-tooling and
+vergil-actions consumers. Each plugin release moves it forward to the new
+<code>v2.1.Z</code>, and a rollback moves it back to an earlier one (see
+<a href="../releasing/#rolling-back-a-release">Rolling back a release</a>). <code>main</code> is
+still the plugin's release branch, but consumers follow the tag, not the
+branch. <code>vrg-vm</code> copies the host file into each agent VM, so the host entry
+is the only one to maintain. Don't define <code>vergil-marketplace</code> in a repo's
+<code>.claude/settings.json</code>: that entry would replace the user entry as a whole.
+The design is epic
+<a href="https://github.com/vergil-project/.github/issues/760">vergil-project/.github#760</a>
+(<a href="https://github.com/vergil-project/.github/blob/develop/epics/760-plugin-tag-distribution/spec.md">spec</a>).</p>
+<h4 id="switching-an-existing-machine">Switching an existing machine<a class="headerlink" href="#switching-an-existing-machine" title="Permanent link">&para;</a></h4>
+<p>Editing the <code>ref</code> of a marketplace that is already registered is a change
+of source, not an update: <code>claude plugin marketplace update</code> alone keeps the
+old registration. After you edit the <code>ref</code> in the host
+<code>~/.claude/settings.json</code>, run, in a human shell:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>vrg-host<span class="w"> </span>plugins<span class="w">        </span><span class="c1"># the host</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>vrg-vm<span class="w"> </span>update<span class="w"> </span>--all<span class="w">     </span><span class="c1"># every running agent VM</span>
+</code></pre></div>
+<p>Both run one shared refresh. For each declared marketplace it re-adds the
+marketplace at the declared ref, which re-clones it and rewrites its
+registration, then updates every registered marketplace (a bare <code>claude
+plugin marketplace update</code>, so this includes any old marketplace that no
+settings file declares) and the installed plugins. It
+then verifies that each declared GitHub marketplace is registered, as
+<code>claude plugin marketplace list --json</code> reports it, at the declared repo
+and ref. A mismatch or a missing registration is a reported failure:
+<code>vrg-host plugins</code> exits <code>2</code>, and <code>vrg-vm update --all</code> reports the failed
+box and goes on to the rest. The check covers only what the settings
+declare, so a missing or misspelled <code>vergil-marketplace</code> entry is not
+caught; after a switch, confirm the ref in <code>claude plugin marketplace list
+--json</code> yourself.</p>
+<p><code>vrg-vm update</code> updates vergil-tooling in each running VM, then copies the
+host's current <code>settings.json</code> into it, then refreshes the plugins. A box
+whose vergil-tooling update fails gets neither the new settings nor the
+refresh, so it still declares the old <code>ref</code>; run <code>vrg-vm update</code> on it again
+once the cause is fixed. <code>vrg-vm update --all</code> skips and reports a VM
+that is not running; a single-VM <code>vrg-vm update</code> on one fails with exit 1.
+A skipped Lima VM's next <code>vrg-vm start</code> refreshes its plugins, but on start
+a failed refresh or verification is only a warning: check the start output
+for an <code>update-plugins</code> warning, or run <code>vrg-vm update</code> on that VM once it is
+up. An off-platform (cloud) box does not support <code>vrg-vm start</code>; run
+<code>vrg-vm update</code> on it once it is running again.</p>
+<p>Restart Claude Code afterwards: a running session keeps the plugin version
+it loaded.</p>
+<p>Both commands are human actions. <code>vrg-host plugins</code> and every <code>vrg-vm</code>
+subcommand refuse an agent identity. No machine is switched by hand-editing
+Claude Code's own registration files. See
+<a href="../../reference/dev/host/#plugins"><code>vrg-host plugins</code></a>.</p>
+<h4 id="moving-to-a-new-minor-line">Moving to a new minor line<a class="headerlink" href="#moving-to-a-new-minor-line" title="Permanent link">&para;</a></h4>
+<p>When the plugin's first <code>2.2.0</code> release creates the <code>v2.2</code> rolling tag,
+<code>v2.1</code> stops moving. The fleet stays on the last <code>v2.1.Z</code> until you change
+the host <code>ref</code> to <code>"v2.2"</code> and run the same two commands. Moving to a new
+minor line is a deliberate act, never automatic, as it is for
+vergil-tooling and vergil-actions (see
+<a href="../releasing/#minor-release-opt-in-for-new-features">Minor release</a>).
+A <a href="../releasing/#rolling-back-a-release">rollback</a> stays within one line:
+<code>vrg-promote</code> moves the rolling tag of the target's own line, so it cannot
+take the fleet from <code>v2.2</code> back to a <code>v2.1.Z</code>. To leave a bad first release
+of a new line, change the host <code>ref</code> back and run the same two commands.</p>
 <h3 id="claudemd"><code>CLAUDE.md</code><a class="headerlink" href="#claudemd" title="Permanent link">&para;</a></h3>
 <p><code>vrg-github-repo-init</code> writes <code>CLAUDE.md</code> with the packaged template
 <a href="https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/data/claude_md_consumer.md"><code>claude_md_consumer.md</code></a>
@@ -17447,8 +17630,8 @@ updaters cover Python (<code>uv.lock</code>), vergil ecosystem refs, the package
 runtime, and container image tags. If the repo has other dependencies
 to keep current, such as binary tool versions or provider pins, add a
 hook to <code>vergil.toml</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="k">[dependency-update]</span>
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="n">hook</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"scripts/dev/update-deps.sh"</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="k">[dependency-update]</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="n">hook</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"scripts/dev/update-deps.sh"</span>
 </code></pre></div>
 <p>The hook runs in the dev container after the built-in updaters. It
 edits files but never commits, and it reports anything it holds back as
@@ -17457,7 +17640,7 @@ JSON lines in <code>$VRG_DEPS_REPORT</code>. The full contract is in the
 <p>Dependency-update PRs carry the <code>dependency-update</code> label. The update
 creates the label the first time it needs it, but provisioning the full
 label set up front keeps the repo in line with the registry:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>vrg-ensure-label<span class="w"> </span>--sync<span class="w"> </span>--repo<span class="w"> </span>&lt;owner&gt;/&lt;repo&gt;
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>vrg-ensure-label<span class="w"> </span>--sync<span class="w"> </span>--repo<span class="w"> </span>&lt;owner&gt;/&lt;repo&gt;
 </code></pre></div>
 <h2 id="step-7-managed-gitignore-block-and-config-audit">Step 7: Managed <code>.gitignore</code> block and config audit<a class="headerlink" href="#step-7-managed-gitignore-block-and-config-audit" title="Permanent link">&para;</a></h2>
 <p>Every managed repo owes two things to the fleet's self-policing config
@@ -17512,25 +17695,25 @@ GitHub to clear it. See the
 <code>.claude/settings.json</code>, <code>.claude/hooks/guard.sh</code>, the reusable-workflow
 pins and the GitHub settings. Check your repo locally before relying on
 the nightly run:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>vrg-github-repo-config<span class="w"> </span>audit<span class="w">   </span><span class="c1"># exit 0 compliant, 1 drift, 2 could-not-complete</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>vrg-github-repo-config<span class="w"> </span>audit<span class="w">   </span><span class="c1"># exit 0 compliant, 1 drift, 2 could-not-complete</span>
 </code></pre></div>
 <p>See the <a href="../../reference/config-audit/">GitHub Config Audit reference</a>
 for the full check list and the managed-block propagation model.</p>
 <h2 id="step-8-verify-end-to-end">Step 8: Verify end-to-end<a class="headerlink" href="#step-8-verify-end-to-end" title="Permanent link">&para;</a></h2>
 <p>Once the repo is bootstrapped, sanity-check each layer:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="c1"># 1. Host tools — should print vrg-container-run help</span>
-<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>vrg-container-run<span class="w"> </span>--help
-<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>
-<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="c1"># 2. Full validation inside the dev container, including</span>
-<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="c1">#    vrg-repo-profile against vergil.toml</span>
-<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>vrg-container-run<span class="w"> </span>--<span class="w"> </span>vrg-validate
-<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>
-<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="c1"># 3. Config audit — local files and GitHub settings</span>
-<a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>vrg-github-repo-config<span class="w"> </span>audit
-<a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a>
-<a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a><span class="c1"># 4. Hook guard (requires a Claude Code session) — in a Claude</span>
-<a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a><span class="c1">#    Code session in this repo, have Claude try to run a raw</span>
-<a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a><span class="c1">#    `git commit`. The hook guard should block it.</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="c1"># 1. Host tools — should print vrg-container-run help</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>vrg-container-run<span class="w"> </span>--help
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="c1"># 2. Full validation inside the dev container, including</span>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="c1">#    vrg-repo-profile against vergil.toml</span>
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>vrg-container-run<span class="w"> </span>--<span class="w"> </span>vrg-validate
+<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>
+<a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="c1"># 3. Config audit — local files and GitHub settings</span>
+<a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a>vrg-github-repo-config<span class="w"> </span>audit
+<a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a>
+<a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a><span class="c1"># 4. Hook guard (requires a Claude Code session) — in a Claude</span>
+<a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a><span class="c1">#    Code session in this repo, have Claude try to run a raw</span>
+<a id="__codelineno-11-13" name="__codelineno-11-13" href="#__codelineno-11-13"></a><span class="c1">#    `git commit`. The hook guard should block it.</span>
 </code></pre></div>
 <p>If any step fails, check the corresponding section above, then
 re-run. Common causes: <code>uv tool install</code> not run,
@@ -17539,7 +17722,7 @@ Code session loaded, or a managed file edited by hand (re-run
 <code>vrg-github-repo-init --adopt</code>).</p>
 <h2 id="keeping-up-to-date">Keeping up to date<a class="headerlink" href="#keeping-up-to-date" title="Permanent link">&para;</a></h2>
 <p>After each <code>vergil-tooling</code> release, upgrade the host tools:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>uv<span class="w"> </span>tool<span class="w"> </span>upgrade<span class="w"> </span>vergil-tooling
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>uv<span class="w"> </span>tool<span class="w"> </span>upgrade<span class="w"> </span>vergil-tooling
 </code></pre></div>
 <p><code>uv tool upgrade</code> re-resolves the git reference, pulls the current
 tip of the rolling minor tag, and rebuilds the isolated tool venv.
@@ -17547,8 +17730,8 @@ No need to repeat the full git URL.</p>
 <p>On macOS, <code>vrg-host</code> covers vergil-tooling and the other host
 prerequisites together (<code>uv</code>, <code>gh</code>, Docker, and the <code>vrg-vm</code> tools
 such as Lima, <code>gcloud</code> and OpenTofu):</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>vrg-host<span class="w">                   </span><span class="c1"># report drift, missing tools and failed health checks</span>
-<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>vrg-host<span class="w"> </span>upgrade<span class="w"> </span>--all<span class="w">     </span><span class="c1"># upgrade every auto-managed tool, respecting pins</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>vrg-host<span class="w">                   </span><span class="c1"># report drift, missing tools and failed health checks</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>vrg-host<span class="w"> </span>upgrade<span class="w"> </span>--all<span class="w">     </span><span class="c1"># upgrade every auto-managed tool, respecting pins</span>
 </code></pre></div>
 <p><code>vrg-host upgrade vergil-tooling</code> runs the same <code>uv tool upgrade</code>.
 Docker Desktop and macOS itself are reported but never upgraded by
@@ -17561,12 +17744,17 @@ lockfile or <code>vergil.toml</code> changes, so there is nothing to refresh by
 hand.
 <code>vrg-container-cache status</code> shows the cache state for the current
 branch.</p>
-<p>After a plugin release, refresh the Claude Code plugin from inside
-Claude Code:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>/plugin marketplace update vergil-marketplace
-<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>/reload-plugins
+<p>After a plugin release, refresh the host and every agent VM with
+<code>vrg-host plugins</code> and <code>vrg-vm update --all</code>, then restart Claude Code (see
+<a href="#switching-an-existing-machine">Switching an existing machine</a>). The same
+commands pick up a changed <code>ref</code> and a
+<a href="../releasing/#rolling-back-a-release">rollback</a>. Inside a single session on
+an unchanged <code>ref</code>, you can instead pick up a new release with:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>/plugin marketplace update vergil-marketplace
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>/reload-plugins
 </code></pre></div>
-<p>See the plugin README's
+<p>That does not switch a changed <code>ref</code> and verifies nothing. See the plugin
+README's
 <a href="https://github.com/vergil-project/vergil-claude-plugin#update">Update section</a>
 for what each step does.</p>
 <h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
@@ -17581,6 +17769,11 @@ for what each step does.</p>
   is present, committed, and syntactically valid JSON. Restart
   Claude Code; the plugin is loaded at session start. If still
   stuck, refresh the plugin per "Keeping up to date" above.</li>
+<li><strong><code>vrg-host plugins</code> fails with <code>marketplace update failed</code> and no
+  cause</strong> — run <code>claude plugin marketplace update</code> by hand to see which
+  marketplace could not be refreshed; an old, undeclared one still
+  registered on the machine fails the whole step. Tracked in
+  <a href="https://github.com/vergil-project/vergil-tooling/issues/3879">vergil-project/vergil-tooling#3879</a>.</li>
 <li><strong>Commits blocked with "originate from inside .worktrees/"</strong> —
   intentional. This repo has adopted the worktree convention.
   Create a worktree for your work; see

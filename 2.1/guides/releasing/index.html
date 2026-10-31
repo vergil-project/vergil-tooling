@@ -1358,6 +1358,8 @@
       
         
       
+        
+      
     
     
     
@@ -1410,6 +1412,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.282/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.282
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -16677,6 +16707,56 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#rolling-back-a-release" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rolling back a release
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Rolling back a release">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#move-the-tag-back" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Move the tag back
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pick-the-move-up-on-each-machine" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pick the move up on each machine
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#how-long-a-rollback-lasts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How long a rollback lasts
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#dependency-updates" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -16951,6 +17031,56 @@
     <span class="md-ellipsis">
       
         Consumer steps
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rolling-back-a-release" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rolling back a release
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Rolling back a release">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#move-the-tag-back" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Move the tag back
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pick-the-move-up-on-each-machine" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pick the move up on each machine
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#how-long-a-rollback-lasts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How long a rollback lasts
       
     </span>
   </a>
@@ -17450,6 +17580,133 @@ edits its <code>v1.x</code> pin to <code>v2</code> deliberately. The difference 
   breakages from removed APIs / changed behaviors.</li>
 <li>Merge the bump PR per the consumer's normal review flow.</li>
 </ul>
+<h2 id="rolling-back-a-release">Rolling back a release<a class="headerlink" href="#rolling-back-a-release" title="Permanent link">&para;</a></h2>
+<p>A rollback moves a rolling <code>vX.Y</code> tag back to an earlier <code>vX.Y.Z</code>, so
+consumers that follow the tag return to that release. It is a release act
+and stays human-gated. The gate is the <code>Tag protection</code> ruleset, which lets
+only the repository Admin role move a rolling tag (see the
+<a href="../../reference/config-audit/#github-checks-rulesets">config audit reference</a>).
+For Claude Code consumers the no-bypass <code>Rolling tag branch names</code> ruleset
+is part of the gate: Claude Code resolves <code>v2.1</code> as a branch before a tag,
+so the tag's protection holds only while no <code>v2.1</code> branch can exist.
+<code>vrg-promote</code> also refuses an agent identity, but that stops an agent from
+running it by mistake; it is not an access control.
+The procedure below is written for the Claude Code plugin,
+<code>vergil-project/vergil-claude-plugin</code>, whose consumers follow <code>v2.1</code>
+(epic <a href="https://github.com/vergil-project/.github/issues/760">vergil-project/.github#760</a>,
+<a href="https://github.com/vergil-project/.github/blob/develop/epics/760-plugin-tag-distribution/spec.md#5-rollback-procedure">spec §5</a>).
+Moving the tag works the same way in any repo; how other consumers pick up a
+backward move depends on how they install and is not covered here.</p>
+<h3 id="move-the-tag-back">Move the tag back<a class="headerlink" href="#move-the-tag-back" title="Permanent link">&para;</a></h3>
+<p>Run these steps exactly, in a human shell on a terminal. <code>vrg-promote</code> acts
+on the repo of the current directory, and the fleet's repos share tag names
+(<code>v2.1.50</code> exists in vergil-tooling and vergil-actions too), so running it
+from the wrong checkout would move the wrong repo's tag.</p>
+<ol>
+<li><code>cd</code> into a vergil-claude-plugin checkout.</li>
+<li>Fetch the tags:</li>
+</ol>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>vrg-git<span class="w"> </span>fetch<span class="w"> </span>--tags<span class="w"> </span>--force<span class="w"> </span>origin
+</code></pre></div>
+<p>The rolling tag moves on every release, and without <code>--force</code> the fetch
+   refuses to update a local tag that has moved.
+3. Check the move:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>vrg-promote<span class="w"> </span>--dry-run<span class="w"> </span>&lt;X.Y.Z&gt;
+</code></pre></div>
+<p>It prints the origin repo and the tag move, and changes nothing:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>origin: vergil-project/vergil-claude-plugin
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>v2.1 1a2b3c4d5e6f -&gt; v2.1.50 fc17882a9b0c
+</code></pre></div>
+<p>Check that the origin line names vergil-claude-plugin, that the rolling
+   tag is <code>v2.1</code>, and that the move goes to the release you mean. Always
+   pass the version: with none, <code>vrg-promote</code> reads the <code>VERSION</code> file.
+4. Move the tag:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>vrg-promote<span class="w"> </span>&lt;X.Y.Z&gt;
+</code></pre></div>
+<p>It checks the move again, prints the two lines from that check and asks
+   <code>Move v2.1 on vergil-project/vergil-claude-plugin? [y/N]</code>. Read the lines
+   again before you answer, in particular the current <code>v2.1</code> commit: they
+   can differ from the dry run if origin moved in between. Only <code>y</code> or
+   <code>yes</code> moves the tag. It pushes the verified release tag object straight
+   to the rolling tag's ref under a lease on origin's value of the rolling
+   tag as this run planned it, so it overwrites exactly that tag or is
+   refused, and it moves your local rolling tag only after GitHub accepts
+   the push.</p>
+<p>Both <code>vrg-promote</code> runs check the target against origin's current state
+(each one fetches <code>main</code> and the tags first). The target must be an existing
+<code>vX.Y.Z</code> tag on origin whose commit is on origin's <code>main</code> and that has a
+published GitHub Release. <code>vrg-promote</code> refuses, with exit 1:</p>
+<ul>
+<li>any other target;</li>
+<li>an agent identity;</li>
+<li>a run with no terminal to confirm on (from a script, CI or a pipe);</li>
+<li>a declined or unanswered confirmation;</li>
+<li>a move that changed on origin after you confirmed it.</li>
+</ul>
+<p>An exit 1 after <code>Promoted:</code> (the local tag update failed) or after a
+failure to read origin's rolling tag back leaves origin moved or unknown.
+After either, re-run <code>vrg-promote --dry-run &lt;X.Y.Z&gt;</code> to see where <code>v2.1</code> is.</p>
+<p>When <code>v2.1</code> already points at the target, it prints
+<code>v2.1 already points at vX.Y.Z — already promoted.</code> and pushes nothing. It
+prints no <code>origin:</code> line in that case, so check the checkout with
+<code>vrg-git ls-remote --get-url origin</code> instead. See
+the <a href="../../reference/cli-tools-overview/#vrg-promote"><code>vrg-promote</code> reference</a>
+for every exit path.</p>
+<h3 id="pick-the-move-up-on-each-machine">Pick the move up on each machine<a class="headerlink" href="#pick-the-move-up-on-each-machine" title="Permanent link">&para;</a></h3>
+<p>Each machine picks up the move when its plugins are next updated. Run, in a
+human shell:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>vrg-host<span class="w"> </span>plugins<span class="w">        </span><span class="c1"># the host</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>vrg-vm<span class="w"> </span>update<span class="w"> </span>--all<span class="w">     </span><span class="c1"># every running agent VM</span>
+</code></pre></div>
+<p>Then restart Claude Code: a running session keeps the plugin version it
+loaded. Both commands refresh the marketplace and the installed plugins and
+verify the registered repo and ref, and both refuse an agent identity (see
+<a href="../consuming-repo-setup/#switching-an-existing-machine">Switching an existing machine</a>,
+which also covers VMs that are not running). Where Claude Code's background
+auto-update is on, it does the marketplace and plugin update on its own.</p>
+<p>That verification does not prove the rollback reached a machine: the ref is
+<code>v2.1</code> before and after, so it passes whether or not the plugin moved back.
+Finish by checking each machine, host and every VM: <code>claude plugin list
+--json</code> must show <code>vergil@vergil-marketplace</code> at the <code>X.Y.Z</code> you rolled back
+to. Run <code>vrg-host plugins</code> or <code>vrg-vm update</code> again on any machine that does
+not.</p>
+<p>A rollback moves the installed plugin only. A Lima <code>vrg-vm session</code> loads
+each tree listed in the host's <code>~/.config/vergil/plugin-dirs.toml</code> with
+<code>--plugin-dir</code>, so when a listed tree is the vergil plugin the session runs
+that tree instead of the installed one, and the rollback does not reach it.
+To run the rolled-back release in those sessions, remove the vergil tree
+from the file (see the
+<a href="../../reference/cli-tools-overview/#vrg-vm"><code>--plugin-dir</code> override</a>). A
+cloud session does not apply the file's entries and always runs the
+installed plugins, though a malformed file still fails its launch. A listed
+tree that is not the vergil plugin, such as a paad tree, leaves the
+installed vergil plugin in place.</p>
+<h3 id="how-long-a-rollback-lasts">How long a rollback lasts<a class="headerlink" href="#how-long-a-rollback-lasts" title="Permanent link">&para;</a></h3>
+<p>A rollback lasts until the next release, whose <code>promote</code> stage moves <code>v2.1</code>
+forward again. Keeping it in place until the fix ships is managed by hand:
+the human who rolled back makes sure the next release carries the fix, or
+cuts it with <code>vrg-release --no-promote</code>. A release cut with <code>--no-promote</code>
+leaves <code>v2.1</code> where it is; promote it later with the <code>vrg-promote</code> steps in
+<a href="#move-the-tag-back">Move the tag back</a>, passing its version. Rolling
+forward again is the same steps with the latest <code>v2.1.Z</code>. Nothing holds the
+tag automatically. An issue that blocks promotion until it is closed is a
+separate idea,
+<a href="https://github.com/vergil-project/.github/issues/763">vergil-project/.github#763</a>.</p>
+<p>Two cases undo a rollback with no prompt, because the <code>promote</code> stage asks
+nothing:</p>
+<ul>
+<li><strong>A release already in flight.</strong> A vergil-claude-plugin release that is
+  still running moves <code>v2.1</code> forward when it reaches <code>promote</code>. So does any
+  open <code>release: &lt;version&gt;</code> tracking issue, the release you are rolling back
+  included, even with its <code>promote</code> stage ticked: <code>vrg-release --resume</code>
+  runs every stage again, <code>promote</code> with it. Before you roll back, let a
+  running release finish, and close every open tracking issue or resume it
+  only with <code>--no-promote</code>.</li>
+<li><strong>A resume without <code>--no-promote</code>.</strong> <code>vrg-release</code> does not remember
+  <code>--no-promote</code>: each run, <code>--resume</code> included, promotes unless that run
+  passes the flag. Pass <code>--no-promote</code> to every <code>vrg-release --resume</code> of a
+  release you are holding back.</li>
+</ul>
 <h2 id="dependency-updates">Dependency updates<a class="headerlink" href="#dependency-updates" title="Permanent link">&para;</a></h2>
 <p>Every release ends by updating the repo's dependencies to the newest
 versions their declared bounds allow. This is the <code>update-deps</code> stage,
@@ -17513,9 +17770,9 @@ as a warning. If a publish job also failed, <code>publish-status</code> fails wi
 both.</p>
 <p>To fix a failed update, work the fix task like any other task, but cut
 its branch from the failed update so it starts from those commits:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>vrg-git<span class="w"> </span>fetch<span class="w"> </span>origin
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>vrg-git<span class="w"> </span>worktree<span class="w"> </span>add<span class="w"> </span>-b<span class="w"> </span>chore/&lt;fix-issue&gt;-dep-update-&lt;version&gt;<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>.worktrees/issue-&lt;fix-issue&gt;-dep-update<span class="w"> </span>origin/deps/update-&lt;version&gt;
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>vrg-git<span class="w"> </span>fetch<span class="w"> </span>origin
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>vrg-git<span class="w"> </span>worktree<span class="w"> </span>add<span class="w"> </span>-b<span class="w"> </span>chore/&lt;fix-issue&gt;-dep-update-&lt;version&gt;<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">  </span>.worktrees/issue-&lt;fix-issue&gt;-dep-update<span class="w"> </span>origin/deps/update-&lt;version&gt;
 </code></pre></div>
 <p>Fix the cause, then hand off and merge as usual. When the fix PR merges
 and closes the fix task as completed, the next <code>vrg-release</code> closes the
@@ -17568,9 +17825,9 @@ anything.
 It runs before the dependency-update gate, so a refusal changes
 nothing. The refusal names each conflicting package and the release
 that first published it:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>vergil-project/example@v1.2.0 would re-publish 4 package(s) at a version an earlier release already published:
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>  - example-server 2.0.0-1 amd64 (deb): already published by vergil-project/example@v1.1.0
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>  ...
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>vergil-project/example@v1.2.0 would re-publish 4 package(s) at a version an earlier release already published:
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>  - example-server 2.0.0-1 amd64 (deb): already published by vergil-project/example@v1.1.0
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>  ...
 </code></pre></div>
 <p>To fix it, bump the package version in <code>vergil.toml</code>: a new
 <code>upstream-version</code>, or for a <code>version</code> override a new <code>version</code>. An
@@ -17597,9 +17854,9 @@ any other fresh-start check, when <code>origin/main</code> has commits not on
   <code>back-merge-bump</code> has <code>main</code> ahead of <code>develop</code> by design.</li>
 <li>Otherwise, back-merge <code>main</code> into <code>develop</code> by hand:</li>
 </ul>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>git<span class="w"> </span>fetch<span class="w"> </span>origin
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>git<span class="w"> </span>switch<span class="w"> </span>-c<span class="w"> </span>release/back-merge-main<span class="w"> </span>origin/main
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>git<span class="w"> </span>push<span class="w"> </span>-u<span class="w"> </span>origin<span class="w"> </span>release/back-merge-main
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>git<span class="w"> </span>fetch<span class="w"> </span>origin
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>git<span class="w"> </span>switch<span class="w"> </span>-c<span class="w"> </span>release/back-merge-main<span class="w"> </span>origin/main
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>git<span class="w"> </span>push<span class="w"> </span>-u<span class="w"> </span>origin<span class="w"> </span>release/back-merge-main
 </code></pre></div>
 <p>Open a PR from <code>release/back-merge-main</code> to <code>develop</code> and merge it
   with a merge commit. A squash merge leaves <code>main</code>'s commits off
@@ -17626,8 +17883,8 @@ deadline defaults to 90 minutes and can be changed with <code>VRG_CD_TIMEOUT</co
 progress; result unknown", with the run URL and how to re-check it, not
 as a failed run. It still fails finalize (issue #3316).</p>
 <p>For deeper investigation, view recent runs directly:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>gh<span class="w"> </span>run<span class="w"> </span>list<span class="w"> </span>--repo<span class="w"> </span>vergil-project/vergil-tooling<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span>--workflow<span class="o">=</span><span class="s2">"Documentation"</span><span class="w"> </span>--limit<span class="w"> </span><span class="m">5</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>gh<span class="w"> </span>run<span class="w"> </span>list<span class="w"> </span>--repo<span class="w"> </span>vergil-project/vergil-tooling<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="w">  </span>--workflow<span class="o">=</span><span class="s2">"Documentation"</span><span class="w"> </span>--limit<span class="w"> </span><span class="m">5</span>
 </code></pre></div>
 <h2 id="release-tracking-artifacts">Release tracking artifacts<a class="headerlink" href="#release-tracking-artifacts" title="Permanent link">&para;</a></h2>
 <p>Each release has a tracking issue, <code>release: &lt;version&gt;</code>, which
