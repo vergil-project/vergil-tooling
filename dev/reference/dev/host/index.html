@@ -13709,6 +13709,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#plugins" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        plugins
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -16780,6 +16791,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#plugins" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        plugins
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -16917,7 +16939,7 @@
 <p><strong>Installed as:</strong> <code>vrg-host</code> (Python console script)</p>
 <p><strong>Source:</strong> <code>src/vergil_tooling/bin/vrg_host.py</code> (libraries:
 <code>src/vergil_tooling/lib/host_deps.py</code>, <code>host_methods.py</code>, <code>host_pins.py</code>,
-<code>host_status.py</code>, <code>host_versions.py</code>)</p>
+<code>host_status.py</code>, <code>host_versions.py</code>, <code>claude_marketplace.py</code>)</p>
 <p>Observes and manages the tools Vergil development needs <strong>on the macOS host
 itself</strong> — the ones that cannot live in a dev container or an agent VM, such as
 <code>gh</code>, <code>git</code>, <code>uv</code>, <code>gcloud</code>, Lima, Docker Desktop and the Xcode Command Line
@@ -16963,6 +16985,10 @@ The pinning doctrine is inherited from epic
 <tr>
 <td><code>vrg-host unpin &lt;dep&gt;</code></td>
 <td>Free a pin (kept as history)</td>
+</tr>
+<tr>
+<td><code>vrg-host plugins</code></td>
+<td>Refresh and verify the host's Claude Code plugins (human only)</td>
 </tr>
 </tbody>
 </table>
@@ -17245,6 +17271,32 @@ pin for the same dependency. <code>unpin</code> sets the pin's state to <code>fr
 it in the pins file as history</strong>, so the file stays the audit trail of what was
 held back and why. Unpinning a dependency with no pin, or one already freed, is
 refused. Both commands exit <code>0</code> on success and <code>1</code> when refused.</p>
+<h3 id="plugins">plugins<a class="headerlink" href="#plugins" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>vrg-host<span class="w"> </span>plugins
+</code></pre></div>
+<p>Refreshes the host's Claude Code plugins from <code>~/.claude/settings.json</code> and
+verifies the result. It runs the same sequence <code>vrg-vm update</code> runs inside each
+VM (<code>lib/claude_marketplace.py</code>):</p>
+<ol>
+<li><code>claude plugin marketplace add &lt;repo&gt;@&lt;ref&gt;</code> for each marketplace the
+   settings declare in <code>extraKnownMarketplaces</code>. Once the settings declare a
+   new ref, this re-add re-clones the marketplace at that ref and rewrites its
+   registration, which is how a machine switches ref.</li>
+<li><code>claude plugin marketplace update</code>.</li>
+<li><code>claude plugin update</code> for every install of an enabled plugin, at its own
+   scope, and <code>claude plugin install</code> for an enabled plugin with no install.</li>
+<li>A verification: each declared GitHub marketplace must be registered, as
+   <code>claude plugin marketplace list --json</code> reports it, at the declared repo and
+   ref. A different repo or ref (including no registered ref when the settings
+   declare one), or no registration at all, is a failure.</li>
+</ol>
+<p>It is a human command. Under an agent identity, or when any identity signal
+implies an agent, it refuses before running any <code>claude</code> command. It exits <code>0</code>
+when every step succeeded and the verification passed, <code>1</code> when refused, and
+<code>2</code> when the settings file is missing or invalid, or any step or the
+verification failed. Each failure is named. Design: epic
+<a href="https://github.com/vergil-project/.github/issues/760">vergil-project/.github#760</a>,
+spec §6.</p>
 <h2 id="the-host-dependency-manifest">The host-dependency manifest<a class="headerlink" href="#the-host-dependency-manifest" title="Permanent link">&para;</a></h2>
 <p>The list of host dependencies is a manifest <strong>packaged with vergil-tooling</strong>:
 <code>src/vergil_tooling/data/host_dependencies.toml</code>. It is tooling-owned and is
@@ -17498,14 +17550,14 @@ onto the packaged manifest when <code>status</code> and <code>upgrade</code> run
 written into the packaged manifest: that would modify the installed package and
 be lost on every reinstall.)</p>
 <p><code>vrg-host pin</code> and <code>unpin</code> manage the file; it looks like this:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">[pin.gh]</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">constraint</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"2.40.x"</span>
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">inducing_release</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"2.41.0"</span>
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="n">deterministic</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
-<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="n">reason</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"2.41.0 breaks vrg-gh auth"</span>
-<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="n">state</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"active"</span>
-<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="n">tracking_issue</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"https://github.com/vergil-project/vergil-tooling/issues/NNNN"</span>
-<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="n">pinned_date</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"2026-10-15"</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="k">[pin.gh]</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="n">constraint</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"2.40.x"</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">inducing_release</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"2.41.0"</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="n">deterministic</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="n">reason</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"2.41.0 breaks vrg-gh auth"</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="n">state</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"active"</span>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="n">tracking_issue</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"https://github.com/vergil-project/vergil-tooling/issues/NNNN"</span>
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="n">pinned_date</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"2026-10-15"</span>
 </code></pre></div>
 <p>The fields are #155's pin schema plus one host extension, <code>pinned_date</code>, so
 <code>status</code> can show how long a pin has stood. A pin's <code>state</code> is <code>active</code> (holds
