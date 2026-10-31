@@ -402,8 +402,9 @@ that tree instead of the installed one, and the rollback does not reach it.
 To run the rolled-back release in those sessions, remove the vergil tree
 from the file (see the
 [`--plugin-dir` override](../reference/cli-tools-overview.md#vrg-vm)). A
-cloud session ignores the file and always runs the installed plugins, and a
-listed tree that is not the vergil plugin, such as a paad tree, leaves the
+cloud session does not apply the file's entries and always runs the
+installed plugins, though a malformed file still fails its launch. A listed
+tree that is not the vergil plugin, such as a paad tree, leaves the
 installed vergil plugin in place.
 
 ### How long a rollback lasts
