@@ -17745,18 +17745,21 @@ hand.
 <code>vrg-container-cache status</code> shows the cache state for the current
 branch.</p>
 <p>After a plugin release, refresh the host and every agent VM with
-<code>vrg-host plugins</code> and <code>vrg-vm update --all</code>, then restart Claude Code (see
+<code>vrg-host plugins</code> and <code>vrg-vm update --all</code>, in a human shell, then
+restart Claude Code (see
 <a href="#switching-an-existing-machine">Switching an existing machine</a>). The same
 commands pick up a changed <code>ref</code> and a
-<a href="../releasing/#rolling-back-a-release">rollback</a>. Inside a single session on
-an unchanged <code>ref</code>, you can instead pick up a new release with:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>/plugin marketplace update vergil-marketplace
-<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>/reload-plugins
-</code></pre></div>
-<p>That does not switch a changed <code>ref</code> and verifies nothing. See the plugin
-README's
+<a href="../releasing/#rolling-back-a-release">rollback</a> (see the
+<a href="../releasing/#pick-the-move-up-on-each-machine">Pick the move up on each machine</a>
+runbook). They verify only the marketplace repo and ref, which is <code>v2.1</code>
+before and after a release, so confirm the installed version on each
+machine with <code>claude plugin list --json</code>. The plugin README's
 <a href="https://github.com/vergil-project/vergil-claude-plugin#update">Update section</a>
-for what each step does.</p>
+describes the same pick-up of a release or a rollback, and its
+<a href="https://github.com/vergil-project/vergil-claude-plugin#verify-the-update">Verify the update</a>
+subsection gives that check. Do not use the in-session
+<code>/plugin marketplace update</code> and <code>/reload-plugins</code> pair instead: it does not
+switch a changed <code>ref</code> and checks nothing.</p>
 <h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong><code>vrg-container-run: command not found</code></strong> — <code>uv tool install</code> has
