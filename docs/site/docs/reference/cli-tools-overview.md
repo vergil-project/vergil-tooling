@@ -1505,8 +1505,8 @@ Runs unprivileged and refuses `sudo`/`doas`/`su`/`pkexec`. See the
 |---|---|
 | Source | `vergil_tooling.bin.vrg_host` |
 | Args | `status [--fix]` (default); `upgrade <dep>…` or `upgrade --all`, each with optional `--force`; `pin <dep> --constraint --inducing-release --reason [--tracking-issue] [--deterministic]`; `unpin <dep>`; `plugins` |
-| Preconditions | macOS host with each dependency installed by its documented method (Homebrew for the `brew-formula` and `brew-cask` entries, including `uv`) |
-| Failure mode | Per-dependency `probe-error` rows (never fatal to the report); loud error on an unreadable manifest or pins file; refused pins and upgrades print the reason |
+| Preconditions | macOS host with each dependency installed by its documented method (Homebrew for the `brew-formula` and `brew-cask` entries, including `uv`); `plugins` also needs the `claude` CLI and a valid `~/.claude/settings.json` |
+| Failure mode | Per-dependency `probe-error` rows (never fatal to the report); loud error on an unreadable manifest or pins file; refused pins and upgrades print the reason; `plugins` names each failed step and each marketplace that is not at its declared repo and ref, and a missing, unreadable or invalid `~/.claude/settings.json` is a failure |
 | Exit codes | `status`: 0 OK, 1 warnings, 2 errors; `upgrade`: 0 done, 1 a named dependency refused, 2 failure; `pin`/`unpin`: 0 success, 1 refused; `plugins`: 0 refreshed and verified, 1 refused (agent identity), 2 failure |
 | Status | Active |
 
