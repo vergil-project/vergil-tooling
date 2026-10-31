@@ -331,8 +331,10 @@ or a missing registration is a reported failure, never a silent pass:
 `vrg-host plugins` exits `2`, and `vrg-vm update --all` reports the failed
 box and goes on to the rest. `vrg-vm update` copies the host's current
 `settings.json` into each running VM before its refresh. It skips and
-reports a VM that is not running; that VM switches on its next
-`vrg-vm start`. Restart Claude Code afterwards: a running session keeps the
+reports a VM that is not running. That VM's next `vrg-vm start` refreshes
+its plugins, but on start a failed refresh or verification is only a
+warning: check the start output for an `update-plugins` warning, or run
+`vrg-vm update` on that VM once it is up. Restart Claude Code afterwards: a running session keeps the
 plugin version it loaded.
 
 Both commands are human actions. `vrg-host plugins` and every `vrg-vm`
@@ -601,10 +603,7 @@ Claude Code:
 
 See the plugin README's
 [Update section](https://github.com/vergil-project/vergil-claude-plugin#update)
-for what each step does. To refresh and verify the host and every agent VM
-at once, run `vrg-host plugins` and `vrg-vm update --all` instead (see
-[Switching an existing machine](#switching-an-existing-machine)); a rollback
-is picked up the same way.
+for what each step does.
 
 ## Troubleshooting
 

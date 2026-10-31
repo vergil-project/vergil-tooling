@@ -347,9 +347,6 @@ fails, it reads origin's rolling tag back: when origin holds the release (an
 earlier attempt landed before the connection dropped), the move is reported
 as done.
 
-To roll back a release with it, follow
-[Rolling back a release](../guides/releasing.md#rolling-back-a-release).
-
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_promote` |

@@ -304,6 +304,12 @@ on the repo of the current directory, and the fleet's repos share tag names
 (`v2.1.50` exists in vergil-tooling and vergil-actions too), so running it
 from the wrong checkout would move the wrong repo's tag.
 
+First make sure no vergil-claude-plugin release is in flight: no
+`vrg-release` still running, and no open `release: <version>` tracking issue
+with an unticked `promote` stage. Such a release, when it reaches `promote`,
+or a later `vrg-release --resume` of it run without `--no-promote`, moves
+`v2.1` forward over the rollback with no prompt. Finish or abandon it first.
+
 1. `cd` into a vergil-claude-plugin checkout.
 2. Fetch the tags:
 
@@ -372,27 +378,22 @@ Then restart Claude Code: a running session keeps the plugin version it
 loaded. Both commands refresh the marketplace and the installed plugins and
 verify the registered repo and ref, and both refuse an agent identity (see
 [Switching an existing machine](consuming-repo-setup.md#switching-an-existing-machine)).
-A VM that is not running is skipped and reported; it picks up the move on its
-next `vrg-vm start`. Where Claude Code's background auto-update is on, it
-does the marketplace and plugin update on its own. `claude plugin list
---json` shows the installed version on each machine.
-
-A `vrg-vm session` started with plugin trees listed in the host's
-`~/.config/vergil/plugin-dirs.toml` loads those trees instead of the
-installed plugin, so a rollback does not reach it (see
-[The `--plugin-dir` override](../reference/cli-tools-overview.md#vrg-vm)).
+A VM that is not running is skipped and reported. Its next `vrg-vm start`
+refreshes its plugins, but on start a failed refresh or verification is only
+a warning, so check the start output for an `update-plugins` warning, or run
+`vrg-vm update` on that VM once it is up. Where Claude Code's background
+auto-update is on, it does the marketplace and plugin update on its own.
+`claude plugin list --json` shows the installed version on each machine.
 
 ### How long a rollback lasts
 
 A rollback lasts until the next release, whose `promote` stage moves `v2.1`
 forward again. Keeping it in place until the fix ships is managed by hand:
 the human who rolled back makes sure the next release carries the fix, or
-cuts that release with `vrg-release --no-promote` and promotes it with
-`vrg-promote` once it is safe. Nothing holds the tag automatically. An
-issue that blocks promotion until it is closed is a separate idea,
+cuts it with `vrg-release --no-promote`. Nothing holds the tag
+automatically. An issue that blocks promotion until it is closed is a
+separate idea,
 [vergil-project/.github#763](https://github.com/vergil-project/.github/issues/763).
-
-To roll forward again, run the same steps with the latest `v2.1.Z`.
 
 ## Dependency updates
 
