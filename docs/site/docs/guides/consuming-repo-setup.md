@@ -324,7 +324,9 @@ vrg-vm update --all     # every running agent VM
 
 Both run one shared refresh. For each declared marketplace it re-adds the
 marketplace at the declared ref, which re-clones it and rewrites its
-registration, then updates the marketplaces and the installed plugins. It
+registration, then updates every registered marketplace (a bare `claude
+plugin marketplace update`, so this includes any old marketplace that no
+settings file declares) and the installed plugins. It
 then verifies that each declared GitHub marketplace is registered, as
 `claude plugin marketplace list --json` reports it, at the declared repo
 and ref. A mismatch or a missing registration is a reported failure:
@@ -638,6 +640,11 @@ for what each step does.
   is present, committed, and syntactically valid JSON. Restart
   Claude Code; the plugin is loaded at session start. If still
   stuck, refresh the plugin per "Keeping up to date" above.
+- **`vrg-host plugins` fails with `marketplace update failed` and no
+  cause** — run `claude plugin marketplace update` by hand to see which
+  marketplace could not be refreshed; an old, undeclared one still
+  registered on the machine fails the whole step. Tracked in
+  [vergil-project/vergil-tooling#3879](https://github.com/vergil-project/vergil-tooling/issues/3879).
 - **Commits blocked with "originate from inside .worktrees/"** —
   intentional. This repo has adopted the worktree convention.
   Create a worktree for your work; see
