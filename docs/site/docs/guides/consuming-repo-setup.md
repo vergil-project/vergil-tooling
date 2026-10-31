@@ -325,17 +325,28 @@ vrg-vm update --all     # every running agent VM
 Both run one shared refresh. For each declared marketplace it re-adds the
 marketplace at the declared ref, which re-clones it and rewrites its
 registration, then updates the marketplaces and the installed plugins. It
-then verifies that each registration's repo and ref, as `claude plugin
-marketplace list --json` reports them, equal the declared ones. A mismatch
-or a missing registration is a reported failure, never a silent pass:
+then verifies that each declared GitHub marketplace is registered, as
+`claude plugin marketplace list --json` reports it, at the declared repo
+and ref. A mismatch or a missing registration is a reported failure:
 `vrg-host plugins` exits `2`, and `vrg-vm update --all` reports the failed
-box and goes on to the rest. `vrg-vm update` copies the host's current
-`settings.json` into each running VM before its refresh. It skips and
-reports a VM that is not running. That VM's next `vrg-vm start` refreshes
-its plugins, but on start a failed refresh or verification is only a
-warning: check the start output for an `update-plugins` warning, or run
-`vrg-vm update` on that VM once it is up. Restart Claude Code afterwards: a running session keeps the
-plugin version it loaded.
+box and goes on to the rest. The check covers only what the settings
+declare, so a missing or misspelled `vergil-marketplace` entry is not
+caught; after a switch, confirm the ref in `claude plugin marketplace list
+--json` yourself.
+
+`vrg-vm update` copies the host's current `settings.json` into each running
+VM, then updates vergil-tooling, then refreshes the plugins. A box whose
+vergil-tooling update fails is not refreshed, so run `vrg-vm update` on it
+again once the cause is fixed. `vrg-vm update --all` skips and reports a VM
+that is not running; a single-VM `vrg-vm update` on one fails with exit 1.
+A skipped Lima VM's next `vrg-vm start` refreshes its plugins, but on start
+a failed refresh or verification is only a warning: check the start output
+for an `update-plugins` warning, or run `vrg-vm update` on that VM once it is
+up. An off-platform (cloud) box does not support `vrg-vm start`; run
+`vrg-vm update` on it once it is running again.
+
+Restart Claude Code afterwards: a running session keeps the plugin version
+it loaded.
 
 Both commands are human actions. `vrg-host plugins` and every `vrg-vm`
 subcommand refuse an agent identity. No machine is switched by hand-editing
@@ -350,6 +361,10 @@ the host `ref` to `"v2.2"` and run the same two commands. Moving to a new
 minor line is a deliberate act, never automatic, as it is for
 vergil-tooling and vergil-actions (see
 [Minor release](releasing.md#minor-release-opt-in-for-new-features)).
+A [rollback](releasing.md#rolling-back-a-release) stays within one line:
+`vrg-promote` moves the rolling tag of the target's own line, so it cannot
+take the fleet from `v2.2` back to a `v2.1.Z`. To leave a bad first release
+of a new line, change the host `ref` back and run the same two commands.
 
 ### `CLAUDE.md`
 
@@ -593,15 +608,20 @@ hand.
 `vrg-container-cache status` shows the cache state for the current
 branch.
 
-After a plugin release, refresh the Claude Code plugin from inside
-Claude Code:
+After a plugin release, refresh the host and every agent VM with
+`vrg-host plugins` and `vrg-vm update --all`, then restart Claude Code (see
+[Switching an existing machine](#switching-an-existing-machine)). The same
+commands pick up a changed `ref` and a
+[rollback](releasing.md#rolling-back-a-release). Inside a single session on
+an unchanged `ref`, you can instead pick up a new release with:
 
 ```text
 /plugin marketplace update vergil-marketplace
 /reload-plugins
 ```
 
-See the plugin README's
+That does not switch a changed `ref` and verifies nothing. See the plugin
+README's
 [Update section](https://github.com/vergil-project/vergil-claude-plugin#update)
 for what each step does.
 
