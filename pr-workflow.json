@@ -1,0 +1,20 @@
+{
+  "schema_version": 2,
+  "issue": "3879",
+  "branch": "feature/3879-marketplace-update-declared",
+  "base": "origin/develop",
+  "status": "ready",
+  "created_at": "2026-10-31T13:10:48Z",
+  "updated_at": "2026-10-31T13:10:48Z",
+  "git": {
+    "base_sha": "4dee487be1525c4f6103a655d1c2104db070f718",
+    "head_sha": "9248c11313543d58b3e23f19626791f5f131c4a6"
+  },
+  "pr_metadata": {
+    "title": "fix(plugins): update only the declared marketplaces and report a failed command's stdout",
+    "summary": "The shared marketplace refresh now runs 'claude plugin marketplace update <name>' for each marketplace it adds, so a stale undeclared marketplace can no longer fail vrg-host plugins or vrg-vm update, and a failed command's stdout (where claude writes some causes) is now printed with its failure.",
+    "notes": "Agentic review: pass after 1 round (0 Critical, 0 Important, 2 Suggestions). R1.2 fixed: docs and docstrings now name the derived claude-plugins-official marketplace in the update step. R1.1 not fixed in code: by ruling, undeclared marketplaces are not touched, so a plugin enabled from one is updated from that marketplace's catalog as it stands; documented on the branch, and follow-up vergil-project/.github#801 checks whether that leaves it stale. A failed add or update is labelled marketplace:<name> (the old 'marketplace update' label is gone). Stdout is printed by _report (the Run still echoes stderr), which also covers the two list --json commands. Each update prints a new 'updating marketplace <name>...' progress line. Security: 0 found. No commits after the reviewed HEAD other than the R1.2 docs fix (9248c11, unreviewed).",
+    "linkage": "Ref"
+  },
+  "submitted": null
+}
