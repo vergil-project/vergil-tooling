@@ -4,12 +4,15 @@ One sequence serves both places (epic vergil-project/.github#760, spec §6):
 for each marketplace the settings declare, ``claude plugin marketplace add
 <repo>@<ref>``, then ``claude plugin marketplace update <name>`` for each of
 those same marketplaces, then the per-install ``claude plugin update``. Only
-the marketplaces the refresh adds are updated: a marketplace registered on the
-machine but not declared is not the fleet's to manage, so it is never touched
-(vergil-project/vergil-tooling#3879). Once ``settings.json`` declares a new
-ref, the re-add re-clones the marketplace at that ref and rewrites its
-registration, which is how a machine switches ref (proven on Claude Code
-2.1.312 by vergil-project/vergil-tooling#3850).
+the marketplaces the refresh adds are updated: the declared ones, plus
+``claude-plugins-official`` when an enabled plugin needs it and the settings do
+not declare it. Any other registered marketplace is not the fleet's to manage,
+so it is never touched (vergil-project/vergil-tooling#3879); a plugin enabled
+from one is still updated, from that marketplace's catalog as it stands.
+Once ``settings.json`` declares a new ref, the re-add re-clones the
+marketplace at that ref and rewrites its registration, which is how a machine
+switches ref (proven on Claude Code 2.1.312 by
+vergil-project/vergil-tooling#3850).
 
 The sequence ends by **verifying** that each declared GitHub marketplace is
 registered at the declared repo and ref, read from ``claude plugin
@@ -505,11 +508,12 @@ def refresh(run: Run, settings: dict[str, Any], prefix: str) -> list[str]:
     """Re-add and update each declared marketplace, update the installs, then verify.
 
     The re-add at the declared ref is what switches a registered marketplace
-    to a new ref (spec §6). Each added marketplace is then updated by name,
-    so a registered marketplace the settings do not declare is never touched
-    and cannot fail the refresh (vergil-project/vergil-tooling#3879). A failed
-    add or update is labelled ``marketplace:<name>``. Returns every failure
-    label, the verification's included; an empty list means the refresh succeeded and every declared
+    to a new ref (spec §6). Each added marketplace (see
+    :func:`_marketplace_adds`) is then updated by name, so any other
+    registered marketplace is never touched and cannot fail the refresh
+    (vergil-project/vergil-tooling#3879). A failed add or update is labelled
+    ``marketplace:<name>``. Returns every failure label, the verification's
+    included; an empty list means the refresh succeeded and every declared
     GitHub marketplace is registered at its declared repo and ref.
 
     Raises:

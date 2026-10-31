@@ -216,11 +216,14 @@ VM (`lib/claude_marketplace.py`):
    settings declare in `extraKnownMarketplaces`. Once the settings declare a
    new ref, this re-add re-clones the marketplace at that ref and rewrites its
    registration, which is how a machine switches ref.
+   An enabled plugin from `claude-plugins-official` also gets that
+   marketplace added when the settings do not declare it.
 2. `claude plugin marketplace update <name>` for each marketplace step 1
-   added. A marketplace that is registered on the machine but not declared in
-   the settings is not the fleet's to manage, so it is never updated and
-   cannot fail the refresh. A declared marketplace whose update fails is a
-   failure that names it.
+   added. Any other marketplace registered on the machine is not the fleet's
+   to manage, so it is never updated and cannot fail the refresh; a plugin
+   enabled from one is still updated in step 3, from that marketplace's
+   catalog as it stands. A marketplace whose update fails is a failure that
+   names it.
 3. `claude plugin update` for every install of an enabled plugin, at its own
    scope, and `claude plugin install` for an enabled plugin with no install.
 4. A verification: each declared GitHub marketplace must be registered, as
