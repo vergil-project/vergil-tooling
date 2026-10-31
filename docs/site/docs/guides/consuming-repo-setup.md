@@ -241,7 +241,7 @@ unchanged. It has four parts:
 |---|---|
 | `permissions.allow` | Allows `Bash(vrg-*)`, so the `vrg-*` tools run without a permission prompt. |
 | `hooks.PreToolUse` | Runs `${CLAUDE_PROJECT_DIR}/.claude/hooks/guard.sh` on every `Bash` tool call. |
-| `enabledPlugins` | Enables `vergil@vergil-marketplace`. The `vergil-marketplace` definition (`vergil-project/vergil-claude-plugin`, `ref: "main"`) lives only in the user settings: a second definition in the repo file would replace the user's whole entry. |
+| `enabledPlugins` | Enables `vergil@vergil-marketplace`. The `vergil-marketplace` definition (`vergil-project/vergil-claude-plugin`, `ref: "v2.1"`) lives only in the user settings: a second definition in the repo file would replace the user's whole entry. See [The `vergil-marketplace` definition](#the-vergil-marketplace-definition). |
 | `attribution` | Turns off Claude Code's AI co-author trailer on commits and PRs. |
 
 AI co-author attribution is not used (#3200). The `attribution` block
@@ -278,6 +278,96 @@ The plugin adds these hooks:
 See the plugin's own
 [Hooks reference](https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/site/docs/hooks/index.md)
 for the details.
+
+### The `vergil-marketplace` definition
+
+The marketplace that `enabledPlugins` names is defined once, in the user
+settings, `~/.claude/settings.json` on the host:
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "vergil-marketplace": {
+      "source": {
+        "source": "github",
+        "repo": "vergil-project/vergil-claude-plugin",
+        "ref": "v2.1"
+      }
+    }
+  }
+}
+```
+
+`v2.1` is the plugin's floating rolling tag, as for vergil-tooling and
+vergil-actions consumers. Each plugin release moves it forward to the new
+`v2.1.Z`, and a rollback moves it back to an earlier one (see
+[Rolling back a release](releasing.md#rolling-back-a-release)). `main` is
+still the plugin's release branch, but consumers follow the tag, not the
+branch. `vrg-vm` copies the host file into each agent VM, so the host entry
+is the only one to maintain. Don't define `vergil-marketplace` in a repo's
+`.claude/settings.json`: that entry would replace the user entry as a whole.
+The design is epic
+[vergil-project/.github#760](https://github.com/vergil-project/.github/issues/760)
+([spec](https://github.com/vergil-project/.github/blob/develop/epics/760-plugin-tag-distribution/spec.md)).
+
+#### Switching an existing machine
+
+Editing the `ref` of a marketplace that is already registered is a change
+of source, not an update: `claude plugin marketplace update` alone keeps the
+old registration. After you edit the `ref` in the host
+`~/.claude/settings.json`, run, in a human shell:
+
+```bash
+vrg-host plugins        # the host
+vrg-vm update --all     # every running agent VM
+```
+
+Both run one shared refresh. For each declared marketplace it re-adds the
+marketplace at the declared ref, which re-clones it and rewrites its
+registration, then updates every registered marketplace (a bare `claude
+plugin marketplace update`, so this includes any old marketplace that no
+settings file declares) and the installed plugins. It
+then verifies that each declared GitHub marketplace is registered, as
+`claude plugin marketplace list --json` reports it, at the declared repo
+and ref. A mismatch or a missing registration is a reported failure:
+`vrg-host plugins` exits `2`, and `vrg-vm update --all` reports the failed
+box and goes on to the rest. The check covers only what the settings
+declare, so a missing or misspelled `vergil-marketplace` entry is not
+caught; after a switch, confirm the ref in `claude plugin marketplace list
+--json` yourself.
+
+`vrg-vm update` updates vergil-tooling in each running VM, then copies the
+host's current `settings.json` into it, then refreshes the plugins. A box
+whose vergil-tooling update fails gets neither the new settings nor the
+refresh, so it still declares the old `ref`; run `vrg-vm update` on it again
+once the cause is fixed. `vrg-vm update --all` skips and reports a VM
+that is not running; a single-VM `vrg-vm update` on one fails with exit 1.
+A skipped Lima VM's next `vrg-vm start` refreshes its plugins, but on start
+a failed refresh or verification is only a warning: check the start output
+for an `update-plugins` warning, or run `vrg-vm update` on that VM once it is
+up. An off-platform (cloud) box does not support `vrg-vm start`; run
+`vrg-vm update` on it once it is running again.
+
+Restart Claude Code afterwards: a running session keeps the plugin version
+it loaded.
+
+Both commands are human actions. `vrg-host plugins` and every `vrg-vm`
+subcommand refuse an agent identity. No machine is switched by hand-editing
+Claude Code's own registration files. See
+[`vrg-host plugins`](../reference/dev/host.md#plugins).
+
+#### Moving to a new minor line
+
+When the plugin's first `2.2.0` release creates the `v2.2` rolling tag,
+`v2.1` stops moving. The fleet stays on the last `v2.1.Z` until you change
+the host `ref` to `"v2.2"` and run the same two commands. Moving to a new
+minor line is a deliberate act, never automatic, as it is for
+vergil-tooling and vergil-actions (see
+[Minor release](releasing.md#minor-release-opt-in-for-new-features)).
+A [rollback](releasing.md#rolling-back-a-release) stays within one line:
+`vrg-promote` moves the rolling tag of the target's own line, so it cannot
+take the fleet from `v2.2` back to a `v2.1.Z`. To leave a bad first release
+of a new line, change the host `ref` back and run the same two commands.
 
 ### `CLAUDE.md`
 
@@ -521,15 +611,20 @@ hand.
 `vrg-container-cache status` shows the cache state for the current
 branch.
 
-After a plugin release, refresh the Claude Code plugin from inside
-Claude Code:
+After a plugin release, refresh the host and every agent VM with
+`vrg-host plugins` and `vrg-vm update --all`, then restart Claude Code (see
+[Switching an existing machine](#switching-an-existing-machine)). The same
+commands pick up a changed `ref` and a
+[rollback](releasing.md#rolling-back-a-release). Inside a single session on
+an unchanged `ref`, you can instead pick up a new release with:
 
 ```text
 /plugin marketplace update vergil-marketplace
 /reload-plugins
 ```
 
-See the plugin README's
+That does not switch a changed `ref` and verifies nothing. See the plugin
+README's
 [Update section](https://github.com/vergil-project/vergil-claude-plugin#update)
 for what each step does.
 
@@ -545,6 +640,11 @@ for what each step does.
   is present, committed, and syntactically valid JSON. Restart
   Claude Code; the plugin is loaded at session start. If still
   stuck, refresh the plugin per "Keeping up to date" above.
+- **`vrg-host plugins` fails with `marketplace update failed` and no
+  cause** — run `claude plugin marketplace update` by hand to see which
+  marketplace could not be refreshed; an old, undeclared one still
+  registered on the machine fails the whole step. Tracked in
+  [vergil-project/vergil-tooling#3879](https://github.com/vergil-project/vergil-tooling/issues/3879).
 - **Commits blocked with "originate from inside .worktrees/"** —
   intentional. This repo has adopted the worktree convention.
   Create a worktree for your work; see
