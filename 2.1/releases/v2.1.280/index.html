@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.281/">
       
       
         <link rel="next" href="../v2.1.279/">
@@ -1365,6 +1365,8 @@
       
         
       
+        
+      
     
     
     
@@ -1420,6 +1422,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.281/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.281
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -16715,6 +16745,7 @@ vrg-triage-create was kept as a one-release alias of vrg-intake-create and has o
 <li>fix(promote): treat a push that landed before a failed retry as the move, and tighten prompt and error handling</li>
 </ul>
 <p>After a failed push, read origin's rolling tag back: when it already holds the pushed release object (an attempt landed before the connection dropped and the retry failed its lease), report the move and update the local tag. If origin cannot be read back, say so instead of reporting a refusal. Ctrl-C at the confirmation prompt is a decline. An unreadable VERSION file prints an error instead of a traceback. Release and ancestry errors no longer repeat the command output they already carry, and a not-found Release read also names an unreadable repo as a cause. The origin URL parser no longer lets ?, #, backslash or whitespace into the user part, so the matched host is the real host. The reference describes which credential errors get the guided message.</p>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.280/v2.1.280-ci-evidence.tar.gz">Download →</a></p>
 
 
 

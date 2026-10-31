@@ -1358,6 +1358,8 @@
       
         
       
+        
+      
     
     
     
@@ -1410,6 +1412,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.281/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.281
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -21149,11 +21179,15 @@ Lima on the Mac or off-platform (cloud). Subcommands: <code>create</code>, <code
 <code>stop</code>, <code>restart</code>, <code>update</code>, <code>destroy</code>, <code>destroy-volume</code>, <code>rebuild</code>,
 <code>list</code>, <code>volumes</code>, <code>session</code> (launch a Claude session in the VM) and <code>cp</code>
 (copy files between the host and a VM). <code>vrg-vm update</code> reinstalls
-vergil-tooling and refreshes the plugins in a running VM in place; <code>--all</code>
-updates every configured identity's boxes. VMs install vergil-tooling as
-the signed package; <code>vrg-vm update --tag &lt;ref&gt;</code> with a non-release ref
-installs a dev copy instead and flags it with a <code>DEV tooling</code> banner, and
-a plain <code>vrg-vm update</code> returns the VM to the package. See
+vergil-tooling, copies the host's <code>~/.claude</code> config in and refreshes and
+verifies the plugins in a running VM in place; <code>--all</code> updates every
+configured identity's boxes, and one box's failure does not stop the rest.
+<code>vrg-vm</code> is a human tool: it runs the VMs the agents work inside, so every
+subcommand refuses an agent identity before doing anything (<code>--help</code> still
+works). VMs install vergil-tooling as the signed package;
+<code>vrg-vm update --tag &lt;ref&gt;</code> with a non-release ref installs a dev copy
+instead and flags it with a <code>DEV tooling</code> banner, and a plain
+<code>vrg-vm update</code> returns the VM to the package. See
 <a href="../vm-spec/#vergil-tooling-inside-the-vm">VM Spec</a>.</p>
 <p><strong>The <code>--plugin-dir</code> override.</strong> <code>vrg-vm session</code> can launch Claude with
 plugin trees loaded from disk instead of the installed plugins, for running
@@ -21200,11 +21234,11 @@ change applies to the next session.</p>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>Host with Lima (local VMs) or the off-platform backend configured; <code>identities.toml</code></td>
+<td>Run by the human (any agent identity is refused, exit 1); host with Lima (local VMs) or the off-platform backend configured; <code>identities.toml</code></td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>Error on stderr; <code>update --all</code> attempts every box and reports each failure</td>
+<td>Error on stderr; an agent identity is refused before any work; <code>update --all</code> attempts every box and reports each failure</td>
 </tr>
 <tr>
 <td>Exit codes</td>
@@ -21267,8 +21301,11 @@ drift, auxiliary-check health and pins; <code>status --fix</code> first runs the
 remediations of unsatisfied checks. <code>upgrade</code> upgrades only <code>auto</code>
 dependencies and holds actively pinned ones unless <code>--force</code>. <code>pin</code> /
 <code>unpin</code> record holds in the user's <code>~/.config/vergil/host-pins.toml</code>
-under the epic #155 pin-as-tech-debt doctrine. Runs unprivileged and
-refuses <code>sudo</code>/<code>doas</code>/<code>su</code>/<code>pkexec</code>. See the
+under the epic #155 pin-as-tech-debt doctrine. <code>plugins</code> refreshes the
+host's Claude Code plugins from <code>~/.claude/settings.json</code> and verifies that
+each declared marketplace is registered at its declared repo and ref (the
+same refresh <code>vrg-vm update</code> runs in each VM); it refuses an agent identity.
+Runs unprivileged and refuses <code>sudo</code>/<code>doas</code>/<code>su</code>/<code>pkexec</code>. See the
 <a href="../dev/host/">vrg-host reference</a>.</p>
 <table>
 <thead>
@@ -21284,19 +21321,19 @@ refuses <code>sudo</code>/<code>doas</code>/<code>su</code>/<code>pkexec</code>.
 </tr>
 <tr>
 <td>Args</td>
-<td><code>status [--fix]</code> (default); <code>upgrade &lt;dep&gt;…</code> or <code>upgrade --all</code>, each with optional <code>--force</code>; <code>pin &lt;dep&gt; --constraint --inducing-release --reason [--tracking-issue] [--deterministic]</code>; <code>unpin &lt;dep&gt;</code></td>
+<td><code>status [--fix]</code> (default); <code>upgrade &lt;dep&gt;…</code> or <code>upgrade --all</code>, each with optional <code>--force</code>; <code>pin &lt;dep&gt; --constraint --inducing-release --reason [--tracking-issue] [--deterministic]</code>; <code>unpin &lt;dep&gt;</code>; <code>plugins</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>macOS host with each dependency installed by its documented method (Homebrew for the <code>brew-formula</code> and <code>brew-cask</code> entries, including <code>uv</code>)</td>
+<td>macOS host with each dependency installed by its documented method (Homebrew for the <code>brew-formula</code> and <code>brew-cask</code> entries, including <code>uv</code>); <code>plugins</code> also needs the <code>claude</code> CLI and a valid <code>~/.claude/settings.json</code></td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>Per-dependency <code>probe-error</code> rows (never fatal to the report); loud error on an unreadable manifest or pins file; refused pins and upgrades print the reason</td>
+<td>Per-dependency <code>probe-error</code> rows (never fatal to the report); loud error on an unreadable manifest or pins file; refused pins and upgrades print the reason; <code>plugins</code> names each failed step and each marketplace that is not at its declared repo and ref, and a missing, unreadable or invalid <code>~/.claude/settings.json</code> is a failure</td>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td><code>status</code>: 0 OK, 1 warnings, 2 errors; <code>upgrade</code>: 0 done, 1 a named dependency refused, 2 failure; <code>pin</code>/<code>unpin</code>: 0 success, 1 refused</td>
+<td><code>status</code>: 0 OK, 1 warnings, 2 errors; <code>upgrade</code>: 0 done, 1 a named dependency refused, 2 failure; <code>pin</code>/<code>unpin</code>: 0 success, 1 refused; <code>plugins</code>: 0 refreshed and verified, 1 refused (agent identity), 2 failure</td>
 </tr>
 <tr>
 <td>Status</td>

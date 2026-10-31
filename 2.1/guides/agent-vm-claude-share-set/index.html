@@ -1358,6 +1358,8 @@
       
         
       
+        
+      
     
     
     
@@ -1410,6 +1412,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.281/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.281
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -16827,7 +16857,15 @@ projection</a>.</p>
 </tbody>
 </table>
 <p><code>copy_claude_config</code> additionally copies <code>CLAUDE.md</code> and <code>settings.json</code>
-into each VM on create and on every start.</p>
+into each VM on every start, rebuild and session, on cloud create, and on
+every <code>vrg-vm update</code> (which requires the host <code>settings.json</code> and fails,
+naming it, when it is missing). The guest <code>CLAUDE.md</code> is a read-only copy of
+the host's on every transport: <code>copy_claude_config</code> is the sole owner of its
+file mode and runs <code>chmod a-w</code> on it after each copy, and removes the guest
+copy when the host has none. The mode makes an accidental write fail loudly;
+it is not a security boundary, because the guest user owns the file and can
+change its mode. <code>settings.json</code> stays writable, because provisioning and the
+Claude runtime both write it.</p>
 <h2 id="why-resume-survives-a-rebuild">Why resume survives a rebuild<a class="headerlink" href="#why-resume-survives-a-rebuild" title="Permanent link">&para;</a></h2>
 <p>Conversation transcripts are written as append-only <code>*.jsonl</code> files under
 <code>~/.claude/projects/&lt;slug&gt;/</code>. That directory is a symlink onto the
@@ -16857,11 +16895,16 @@ on first launch and keeps them current with an in-VM refresh — the same
 model used for vergil-tooling. The host's materialized <code>~/.claude/plugins</code>
 checkout is never shared: doing so would cross the macOS/Linux boundary
 (fragile if any plugin ships a binary) and hit the same <code>EXDEV</code> write
-problem as the roster. Instead, <code>update_plugins</code> first registers each
+problem as the roster. Instead, <code>update_plugins</code> runs the shared refresh in
+<code>lib/claude_marketplace.py</code>, the same one <code>vrg-host plugins</code> runs on the
+host. It reads the guest <code>settings.json</code>; a missing, unreadable or invalid
+file is a failure, never "nothing declared". It first registers each
 <code>extraKnownMarketplaces</code> entry with <code>claude plugin marketplace add</code>, keeping
 any <code>ref</code> the entry declares (<code>owner/repo@ref</code> for a GitHub source,
 <code>url#ref</code> for a git URL): Claude Code refuses an add whose source does not
-match the declared entry. It then refreshes the marketplaces
+match the declared entry. Once the settings declare a new ref, this re-add
+re-clones the marketplace at that ref, which is how a VM switches ref. It
+then refreshes the marketplaces
 (<code>claude plugin marketplace update</code>) and updates every <strong>install</strong> of an
 enabled plugin to its latest version, each at its own scope (<code>claude plugin
 update &lt;id&gt; --scope &lt;user|project&gt;</code> — there is no bulk-update form), all
@@ -16871,8 +16914,16 @@ separately, and each one is updated. The CLI has no project flag, and takes
 the project from the working directory, so a project install is updated from
 inside its <code>projectPath</code>. If that directory no longer exists in the VM, the
 install is reported as a failure that names its scope and project. An enabled
-plugin with no install at any scope is installed at user scope. The refresh
-is driven by <code>vrg-vm update</code> and a warn-mode stage on VM start/rebuild.</p>
+plugin with no install at any scope is installed at user scope. Last, it
+<strong>verifies</strong> that each declared GitHub marketplace is registered, as <code>claude
+plugin marketplace list --json</code> reports it, at the declared repo and ref; a
+mismatch (including no registered ref when the settings declare one) or a
+missing registration is a failure. Every failure
+is named and raised. The refresh is driven by <code>vrg-vm update</code>, which first
+copies the host's current <code>settings.json</code> into the running VM, and by a
+warn-mode stage on VM start/rebuild. <code>vrg-vm update --all</code> skips stopped VMs
+(they pick up the settings on their next start), and one VM's plugin failure
+does not stop the rest from updating.</p>
 <h2 id="cloud-vms-read-only-memory-projection">Cloud VMs: read-only memory projection<a class="headerlink" href="#cloud-vms-read-only-memory-projection" title="Permanent link">&para;</a></h2>
 <p>The share set above works because <strong>local (Lima) VMs</strong> path-preserve the
 project mount and symlink <code>~/.claude/{projects,skills}</code> onto the host's
@@ -16886,9 +16937,11 @@ loss is <strong>silent</strong>: the harness advertises the memory directory as
 persistent, an agent writes memory believing it durable, and the write
 quietly evaporates.</p>
 <p>To keep the physical host the single source of truth, a cloud VM receives
-canonical agent data — the per-repo <code>memory/</code> subtree and the global
-<code>CLAUDE.md</code> — as a <strong>read-only cached projection</strong> that never flows back
-automatically. See epic
+canonical agent data — the per-repo <code>memory/</code> subtree, including
+<code>MEMORY.md</code> — as a <strong>read-only cached projection</strong> that never flows back
+automatically. (The global <code>CLAUDE.md</code> is not part of the projection:
+<code>copy_claude_config</code> copies it and makes it read-only on every transport,
+as described above.) See epic
 <a href="https://github.com/vergil-project/.github/issues/156">vergil-project/.github#156</a>
 and its
 <a href="https://github.com/vergil-project/.github/blob/develop/epics/156-cloud-memory-projection/spec.md">spec</a>
@@ -16929,8 +16982,8 @@ axes — <em>sandbox</em> (in a VM) vs. <em>host</em> (not a VM), and <em>cloud<
 </table>
 <p><code>physical-host</code> names the property that matters — <em>physical, not a VM</em> —
 not the operating system; it is macOS today only because that is the
-hardware in use. The read-only memory control activates <strong>only</strong> on
-<code>cloud-vm</code>: <code>local-vm</code> writes already reach the live host store, and
+hardware in use. The read-only memory control (the <code>memory/</code> subtree only)
+activates <strong>only</strong> on <code>cloud-vm</code>: <code>local-vm</code> writes already reach the live host store, and
 <code>physical-host</code> <em>is</em> the store.</p>
 <h3 id="the-platform-resolver-vrg-whoami-platform">The platform resolver (<code>vrg-whoami --platform</code>)<a class="headerlink" href="#the-platform-resolver-vrg-whoami-platform" title="Permanent link">&para;</a></h3>
 <p><code>vrg-whoami --platform</code> reports the platform as a single token, parallel
@@ -16953,12 +17006,12 @@ session refreshes it. Before opening the session, <code>vrg-vm</code>:</p>
 <li>aligns the guest working directory to the host project path (via a
    symlink onto the <code>/vergil</code> checkout) so Claude derives the <strong>same
    memory slug</strong> as the host and finds the projected memory;</li>
-<li>copies that repo's <code>memory/</code> + <code>MEMORY.md</code> and the global <code>CLAUDE.md</code>
-   from the host over the established transport idiom (the same
+<li>copies that repo's <code>memory/</code> + <code>MEMORY.md</code> from the host over the
+   established transport idiom (the same
    <code>cat &gt; &lt;file&gt;</code> mechanism <code>copy_claude_config</code> uses — there is no
    <code>rsync</code> over the transport);</li>
-<li>re-applies <strong>surgical</strong> read-only permissions — locking <code>memory/</code>,
-   <code>MEMORY.md</code>, and <code>CLAUDE.md</code> while leaving the session-transcript
+<li>re-applies <strong>surgical</strong> read-only permissions — locking <code>memory/</code> and
+   <code>MEMORY.md</code> while leaving the session-transcript
    <code>.jsonl</code> files writable (a blanket <code>chmod</code> of <code>projects/&lt;slug&gt;/</code>
    would break session logging);</li>
 <li><strong>verifies</strong> that the host path resolves in the guest and the slug
