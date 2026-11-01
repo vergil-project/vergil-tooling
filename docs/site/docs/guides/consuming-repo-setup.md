@@ -648,8 +648,9 @@ switch a changed `ref` and checks nothing.
   `<name>` is a marketplace the refresh re-added: a declared one, or
   `claude-plugins-official`. The `claude` command's stdout and stderr,
   printed just above the error, give the cause. Every add runs before any
-  update, so if an earlier `marketplace add <source> failed` error gives
-  that marketplace's declared source (its repo and ref), fix that first.
+  update, so an earlier `marketplace add <source> failed` error, where
+  `<source>` is what the refresh tried to add, is the likelier cause: fix
+  that first.
   Then re-run `vrg-host plugins`. Any other registered marketplace, one the
   refresh did not re-add, is never updated, so it cannot cause this. See
   [`vrg-host plugins`](../reference/dev/host.md#plugins).
