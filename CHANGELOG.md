@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.283] - 2026-11-01
+
+### Chores
+
+- uv lock --upgrade
+
+### Documentation
+
+- stop offering the in-session plugin refresh pair in the consumer guides (#3889)
+- describe the per-declared-marketplace refresh after #3879 (#3891)
+
 ## [2.1.282] - 2026-10-31
 
 ### Bug fixes
