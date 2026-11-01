@@ -1362,6 +1362,8 @@
       
         
       
+        
+      
     
     
     
@@ -1414,6 +1416,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.283/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.283
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17498,12 +17528,16 @@ old registration. After you edit the <code>ref</code> in the host
 <div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>vrg-host<span class="w"> </span>plugins<span class="w">        </span><span class="c1"># the host</span>
 <a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>vrg-vm<span class="w"> </span>update<span class="w"> </span>--all<span class="w">     </span><span class="c1"># every running agent VM</span>
 </code></pre></div>
-<p>Both run one shared refresh. For each declared marketplace it re-adds the
-marketplace at the declared ref, which re-clones it and rewrites its
-registration, then updates every registered marketplace (a bare <code>claude
-plugin marketplace update</code>, so this includes any old marketplace that no
-settings file declares) and the installed plugins. It
-then verifies that each declared GitHub marketplace is registered, as
+<p>Both run one shared refresh. It re-adds each declared marketplace at the
+declared ref, which re-clones it and rewrites its registration, then
+updates each of those marketplaces by name (<code>claude plugin marketplace
+update &lt;name&gt;</code>), then the installed plugins. <code>claude-plugins-official</code> is
+re-added and updated the same way when an enabled plugin needs it and the
+settings do not declare it. Any other registered marketplace, such as an
+old one that no settings file declares, is never updated and cannot fail
+the refresh; a plugin enabled from one is still updated, from that
+marketplace's catalog as it stands. It then verifies that each declared
+GitHub marketplace is registered, as
 <code>claude plugin marketplace list --json</code> reports it, at the declared repo
 and ref. A mismatch or a missing registration is a reported failure:
 <code>vrg-host plugins</code> exits <code>2</code>, and <code>vrg-vm update --all</code> reports the failed
@@ -17745,18 +17779,21 @@ hand.
 <code>vrg-container-cache status</code> shows the cache state for the current
 branch.</p>
 <p>After a plugin release, refresh the host and every agent VM with
-<code>vrg-host plugins</code> and <code>vrg-vm update --all</code>, then restart Claude Code (see
+<code>vrg-host plugins</code> and <code>vrg-vm update --all</code>, in a human shell, then
+restart Claude Code (see
 <a href="#switching-an-existing-machine">Switching an existing machine</a>). The same
 commands pick up a changed <code>ref</code> and a
-<a href="../releasing/#rolling-back-a-release">rollback</a>. Inside a single session on
-an unchanged <code>ref</code>, you can instead pick up a new release with:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>/plugin marketplace update vergil-marketplace
-<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>/reload-plugins
-</code></pre></div>
-<p>That does not switch a changed <code>ref</code> and verifies nothing. See the plugin
-README's
+<a href="../releasing/#rolling-back-a-release">rollback</a> (see the
+<a href="../releasing/#pick-the-move-up-on-each-machine">Pick the move up on each machine</a>
+runbook). They verify only the marketplace repo and ref, which is <code>v2.1</code>
+before and after a release, so confirm the installed version on each
+machine with <code>claude plugin list --json</code>. The plugin README's
 <a href="https://github.com/vergil-project/vergil-claude-plugin#update">Update section</a>
-for what each step does.</p>
+describes the same pick-up of a release or a rollback, and its
+<a href="https://github.com/vergil-project/vergil-claude-plugin#verify-the-update">Verify the update</a>
+subsection gives that check. Do not use the in-session
+<code>/plugin marketplace update</code> and <code>/reload-plugins</code> pair instead: it does not
+switch a changed <code>ref</code> and checks nothing.</p>
 <h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong><code>vrg-container-run: command not found</code></strong> — <code>uv tool install</code> has
@@ -17769,11 +17806,16 @@ for what each step does.</p>
   is present, committed, and syntactically valid JSON. Restart
   Claude Code; the plugin is loaded at session start. If still
   stuck, refresh the plugin per "Keeping up to date" above.</li>
-<li><strong><code>vrg-host plugins</code> fails with <code>marketplace update failed</code> and no
-  cause</strong> — run <code>claude plugin marketplace update</code> by hand to see which
-  marketplace could not be refreshed; an old, undeclared one still
-  registered on the machine fails the whole step. Tracked in
-  <a href="https://github.com/vergil-project/vergil-tooling/issues/3879">vergil-project/vergil-tooling#3879</a>.</li>
+<li><strong><code>vrg-host plugins</code> fails with <code>marketplace update &lt;name&gt; failed</code></strong> —
+  <code>&lt;name&gt;</code> is a marketplace the refresh re-added: a declared one, or
+  <code>claude-plugins-official</code>. The <code>claude</code> command's stdout and stderr,
+  printed just above the error, give the cause. Every add runs before any
+  update, so an earlier <code>marketplace add &lt;source&gt; failed</code> error, where
+  <code>&lt;source&gt;</code> is what the refresh tried to add, is the likelier cause: fix
+  that first.
+  Then re-run <code>vrg-host plugins</code>. Any other registered marketplace, one the
+  refresh did not re-add, is never updated, so it cannot cause this. See
+  <a href="../../reference/dev/host/#plugins"><code>vrg-host plugins</code></a>.</li>
 <li><strong>Commits blocked with "originate from inside .worktrees/"</strong> —
   intentional. This repo has adopted the worktree convention.
   Create a worktree for your work; see

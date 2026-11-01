@@ -1362,6 +1362,8 @@
       
         
       
+        
+      
     
     
     
@@ -1414,6 +1416,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.283/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.283
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17488,15 +17518,18 @@ region, including its "Worktrees" section), <code>.claude/settings.json</code>,
 <p>If you're running an old version of a hook, refresh and verify the plugin
 on the host and every agent VM with <code>vrg-host plugins</code> and
 <code>vrg-vm update --all</code>, in a human shell, then restart Claude Code (see
-<a href="../consuming-repo-setup/#switching-an-existing-machine">Switching an existing machine</a>).
-Inside a single session on an unchanged marketplace <code>ref</code>, you can instead
-run:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>/plugin marketplace update vergil-marketplace
-<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>/reload-plugins
-</code></pre></div>
-<p>See the plugin README's
+<a href="../consuming-repo-setup/#switching-an-existing-machine">Switching an existing machine</a>
+and
+<a href="../releasing/#pick-the-move-up-on-each-machine">Pick the move up on each machine</a>).
+They verify only the marketplace repo and ref, which is <code>v2.1</code> before and
+after a release, so confirm the installed version on each machine with
+<code>claude plugin list --json</code>. The plugin README's
 <a href="https://github.com/vergil-project/vergil-claude-plugin#update">Update section</a>
-for what each step does.</p>
+describes the same pick-up of a release or a rollback, and its
+<a href="https://github.com/vergil-project/vergil-claude-plugin#verify-the-update">Verify the update</a>
+subsection gives that check. Do not use the in-session
+<code>/plugin marketplace update</code> and <code>/reload-plugins</code> pair instead: it does not
+switch a changed <code>ref</code> and checks nothing.</p>
 <h2 id="related">Related<a class="headerlink" href="#related" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../validation-matrix/">Validation Matrix</a>
