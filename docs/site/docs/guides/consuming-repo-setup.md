@@ -329,7 +329,9 @@ marketplace update <name>`), then the installed plugins. It does the same
 for `claude-plugins-official` when an enabled plugin needs it and the
 settings do not declare it. Any other registered marketplace, such as an
 old one that no settings file declares, is never updated and cannot fail
-the refresh. It then verifies that each declared GitHub marketplace is registered, as
+the refresh; a plugin enabled from one is still updated, from that
+marketplace's catalog as it stands. It then verifies that each declared
+GitHub marketplace is registered, as
 `claude plugin marketplace list --json` reports it, at the declared repo
 and ref. A mismatch or a missing registration is a reported failure:
 `vrg-host plugins` exits `2`, and `vrg-vm update --all` reports the failed
@@ -645,9 +647,11 @@ switch a changed `ref` and checks nothing.
 - **`vrg-host plugins` fails with `marketplace update <name> failed`** —
   `<name>` is a marketplace the refresh re-added: a declared one, or
   `claude-plugins-official`. The `claude` command's stdout and stderr,
-  printed just above the error, give the cause; fix it and re-run
-  `vrg-host plugins`. A marketplace that no settings file declares is never
-  updated, so it cannot cause this. See
+  printed just above the error, give the cause. Every add runs before any
+  update, so if an earlier `marketplace add` error names the same
+  marketplace, fix that first. Then re-run `vrg-host plugins`. Any other
+  registered marketplace, one the refresh did not re-add, is never updated,
+  so it cannot cause this. See
   [`vrg-host plugins`](../reference/dev/host.md#plugins).
 - **Commits blocked with "originate from inside .worktrees/"** —
   intentional. This repo has adopted the worktree convention.
