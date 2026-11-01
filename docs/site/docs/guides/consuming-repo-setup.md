@@ -649,9 +649,9 @@ switch a changed `ref` and checks nothing.
   `claude-plugins-official`. The `claude` command's stdout and stderr,
   printed just above the error, give the cause. Every add runs before any
   update, so if an earlier `marketplace add <source> failed` error gives
-  that marketplace's declared source (its repo and ref), fix that first. Then re-run `vrg-host plugins`. Any other
-  registered marketplace, one the refresh did not re-add, is never updated,
-  so it cannot cause this. See
+  that marketplace's declared source (its repo and ref), fix that first.
+  Then re-run `vrg-host plugins`. Any other registered marketplace, one the
+  refresh did not re-add, is never updated, so it cannot cause this. See
   [`vrg-host plugins`](../reference/dev/host.md#plugins).
 - **Commits blocked with "originate from inside .worktrees/"** —
   intentional. This repo has adopted the worktree convention.
