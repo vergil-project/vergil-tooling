@@ -322,11 +322,11 @@ vrg-host plugins        # the host
 vrg-vm update --all     # every running agent VM
 ```
 
-Both run one shared refresh. For each declared marketplace it re-adds the
-marketplace at the declared ref, which re-clones it and rewrites its
-registration, then updates that marketplace by name (`claude plugin
-marketplace update <name>`), then the installed plugins. It does the same
-for `claude-plugins-official` when an enabled plugin needs it and the
+Both run one shared refresh. It re-adds each declared marketplace at the
+declared ref, which re-clones it and rewrites its registration, then
+updates each of those marketplaces by name (`claude plugin marketplace
+update <name>`), then the installed plugins. `claude-plugins-official` is
+re-added and updated the same way when an enabled plugin needs it and the
 settings do not declare it. Any other registered marketplace, such as an
 old one that no settings file declares, is never updated and cannot fail
 the refresh; a plugin enabled from one is still updated, from that
@@ -648,8 +648,8 @@ switch a changed `ref` and checks nothing.
   `<name>` is a marketplace the refresh re-added: a declared one, or
   `claude-plugins-official`. The `claude` command's stdout and stderr,
   printed just above the error, give the cause. Every add runs before any
-  update, so if an earlier `marketplace add` error names the same
-  marketplace, fix that first. Then re-run `vrg-host plugins`. Any other
+  update, so if an earlier `marketplace add <source> failed` error gives
+  that marketplace's declared source (its repo and ref), fix that first. Then re-run `vrg-host plugins`. Any other
   registered marketplace, one the refresh did not re-add, is never updated,
   so it cannot cause this. See
   [`vrg-host plugins`](../reference/dev/host.md#plugins).
