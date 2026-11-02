@@ -528,7 +528,8 @@ that links the epic's spec, plan and retrospective or notes why one does not
 exist. `set --epic OWNER/REPO#N` adds the section, or updates it in place;
 an entry not named keeps its value, and a new section starts all `pending`.
 A `PATH` is in the epic's home repo, or `<repo>:<path>` for another repo of
-the same org; the file's existence is not checked. Hand-written document
+the same org (an `<owner>/<repo>:<path>` value is refused); the file's
+existence is not checked. Hand-written document
 lines elsewhere in the body are removed, and a body that is already correct
 is not edited. The run uses the epic owner's App token.
 

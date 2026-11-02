@@ -115,19 +115,35 @@ def test_set_removes_legacy_lines(fake: _Fake, capsys: pytest.CaptureFixture[str
 
 
 def test_set_does_not_check_existence(fake: _Fake) -> None:
+    # Every gh call path ends in subprocess.run, so patching it catches a probe
+    # made through any github wrapper.
     with (
         patch("vergil_tooling.lib.github.read_json") as mock_read,
         patch("vergil_tooling.lib.github.read_output") as mock_output,
+        patch("vergil_tooling.lib.github.subprocess.run") as mock_run,
     ):
         assert main(["set", "--epic", "o/.github#1", "--spec", "epics/1-x/spec.md"]) == 0
     mock_read.assert_not_called()
     mock_output.assert_not_called()
+    mock_run.assert_not_called()
 
 
 def test_set_runs_in_target_org(fake: _Fake) -> None:
     assert main(["set", "--epic", "other-org/.github#5", "--spec", "epics/5-x/spec.md"]) == 0
-    assert [kind for kind, _ in fake.orgs] == ["read", "branch", "write"]
+    # The branch lookups come before the read, keeping the read and the write together.
+    assert [kind for kind, _ in fake.orgs] == ["branch", "read", "write"]
     assert {org for _, org in fake.orgs} == {"other-org"}
+
+
+def test_set_keeps_other_repo_link_on_branch_ending_in_repo(fake: _Fake) -> None:
+    plan = DocLink("o", "vergil-vm", "plan.md", "x/vergil-vm")
+    fake.body = epic_docs.render(
+        {"spec": PENDING, "plan": plan, "retrospective": PENDING}, ".github"
+    )
+    assert main(["set", "--epic", "o/.github#1", "--spec", "epics/1-x/spec.md"]) == 0
+    entries = epic_docs.parse(fake.body, ".github")
+    assert entries is not None
+    assert entries["plan"] == plan
 
 
 def test_set_malformed_section_edits_nothing(
@@ -146,6 +162,12 @@ def test_set_malformed_section_edits_nothing(
         (["set", "--epic", "o/.github#1", "--spec", "/abs.md"], "bad document path"),
         (["set", "--epic", "o/.github#1", "--plan", ":a.md"], "empty repo name"),
         (["set", "--epic", "o/.github#1", "--plan", "vm:"], "bad document path"),
+        (["set", "--epic", "o/.github#1", "--plan", "x?y:a.md"], "bad repo name"),
+        (["set", "--epic", "o/.github#1", "--plan", "vm#1:a.md"], "bad repo name"),
+        (["set", "--epic", "o/.github#1", "--plan", "my repo:a.md"], "bad repo name"),
+        (["set", "--epic", "o/.github#1", "--plan", "..:a.md"], "bad repo name"),
+        (["set", "--epic", "o/.github#1", "--spec", "o/vergil-vm:docs/a.md"], "names the owner"),
+        (["set", "--epic", "O/.github#1", "--spec", "o/vergil-vm:docs/a.md"], "names the owner"),
     ],
 )
 def test_set_rejects_bad_arguments(
@@ -154,6 +176,7 @@ def test_set_rejects_bad_arguments(
     assert main(argv) == 1
     assert message in capsys.readouterr().err
     fake.read_body.assert_not_called()
+    fake.default_branch.assert_not_called()
 
 
 def test_set_no_installation(fake: _Fake, capsys: pytest.CaptureFixture[str]) -> None:

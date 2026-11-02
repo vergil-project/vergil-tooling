@@ -16,6 +16,7 @@ section's format.
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 
 from vergil_tooling.lib import epic_docs, epics, github
@@ -29,7 +30,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
         epic = epics.parse_issue_ref(args.epic, default_repo="")
-        paths = {doc: _parse_path(getattr(args, doc)) for doc in epic_docs.DOCS}
+        paths = {doc: _parse_path(getattr(args, doc), epic.owner) for doc in epic_docs.DOCS}
     except ValueError as exc:
         print(f"{_PROG}: {exc}", file=sys.stderr)
         return 1
@@ -44,11 +45,17 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
 
-def _parse_path(value: str | None) -> tuple[str | None, str] | None:
+_REPO_NAME_RE = re.compile(r"[A-Za-z0-9._-]+")
+
+
+def _parse_path(value: str | None, owner: str) -> tuple[str | None, str] | None:
     """Split a ``--spec``/``--plan``/``--retrospective`` value into (repo, path).
 
     ``<path>`` is in the epic's home repo (repo ``None``); ``<repo>:<path>`` is
-    in another repo of the same org. Returns None when the option was not given.
+    in another repo of the same org. A value naming the owner,
+    ``<owner>/<repo>:<path>``, is refused rather than read as a home path.
+    Returns None when the option was not given. Raises ValueError, before any
+    API call, for a value it cannot use.
     """
     if value is None:
         return None
@@ -59,6 +66,14 @@ def _parse_path(value: str | None) -> tuple[str | None, str] | None:
         repo, path = head, tail
         if not repo:
             raise ValueError(f"empty repo name in {value!r}; use <repo>:<path> or <path>")
+        if not _REPO_NAME_RE.fullmatch(repo) or repo in {".", ".."}:
+            raise ValueError(
+                f"bad repo name {repo!r} in {value!r}: use letters, digits, '.', '-' or '_'"
+            )
+    elif sep and head.count("/") == 1 and head.split("/")[0].lower() == owner.lower():
+        raise ValueError(
+            f"{value!r} names the owner: give <repo>:<path> for another repo of the same org"
+        )
     if not path or path.startswith("/") or any(c.isspace() or c == "`" for c in path):
         raise ValueError(
             f"bad document path {value!r}: give a repo-relative path without spaces or backticks"
@@ -67,20 +82,25 @@ def _parse_path(value: str | None) -> tuple[str | None, str] | None:
 
 
 def _set(epic: epics.IssueRef, paths: dict[str, tuple[str | None, str] | None]) -> int:
-    """Rewrite *epic*'s Documents section with the named *paths*."""
+    """Rewrite *epic*'s Documents section with the named *paths*.
+
+    The default branches are looked up before the body is read, so the read
+    and the write are as close together as they can be.
+    """
+    branches: dict[str, str] = {}
+    for named in paths.values():
+        repo = (named[0] or epic.repo) if named is not None else None
+        if repo is not None and repo not in branches:
+            branches[repo] = epic_docs.default_branch(epic.owner, repo)
     body = epic_docs.read_body(epic.owner, epic.repo, epic.number)
-    current = epic_docs.parse(body)
+    current = epic_docs.parse(body, epic.repo)
     entries: dict[str, epic_docs.Entry] = (
         dict(current) if current is not None else dict.fromkeys(epic_docs.DOCS, epic_docs.PENDING)
     )
-    branches: dict[str, str] = {}
     for doc, named in paths.items():
-        if named is None:
-            continue
-        repo = named[0] or epic.repo
-        if repo not in branches:
-            branches[repo] = epic_docs.default_branch(epic.owner, repo)
-        entries[doc] = epic_docs.DocLink(epic.owner, repo, named[1], branches[repo])
+        if named is not None:
+            repo = named[0] or epic.repo
+            entries[doc] = epic_docs.DocLink(epic.owner, repo, named[1], branches[repo])
     block = epic_docs.render(entries, epic.repo)
     new_body, removed = epic_docs.upsert(body, block)
     print(block)
