@@ -86,7 +86,11 @@ def main(argv: list[str] | None = None) -> int:
     since = (datetime.now(UTC) - timedelta(days=args.window_days)).date().isoformat()
     tasks = epic_audit.task_drift(since, org=org)
     epics_drift = epic_audit.epic_drift(org, home=home)
-    closed_epic_open_children = epic_audit.closed_epic_open_child(org, home=home)
+    # One listing of the home's epics feeds both per-epic checks (epic .github#819).
+    home_epics = epic_audit.list_home_epics(home)
+    closed_epic_open_children = epic_audit.closed_epic_open_child(
+        org, home=home, listing=home_epics
+    )
     if args.close:
         closed = epic_audit.close_drift(tasks, epics_drift, org=org, home=home)
         # Remediate the closed-epic-with-open-child invariant (issue #2259): reopen
@@ -164,6 +168,7 @@ def main(argv: list[str] | None = None) -> int:
             body_only=epic_audit.body_only_parents(org, issues=issues),
             public_queues=epic_audit.public_self_homed_queues(org, issues=issues),
             private_under_public=epic_audit.private_under_public_epic(org, issues=issues),
+            epic_docs_findings=epic_audit.epic_documents(org, home=home, listing=home_epics),
         )
     )
     return security_rc
@@ -258,7 +263,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
             "non-perpetual epics whose children are all closed, and issues in "
             "the wrong place (epics outside .github; stray .github issues; "
             "orphans with no epic parent; private-repo work under public .github "
-            "epics). "
+            "epics), and each epic's Documents section (present and well formed; "
+            "on a closed epic, nothing pending and every link resolving). "
             "Read-only by default; pass --close (as a human) to close the drift "
             "it finds (invariant violations are report-only)."
         ),

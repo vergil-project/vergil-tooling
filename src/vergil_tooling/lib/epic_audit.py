@@ -22,7 +22,7 @@ import sys
 from dataclasses import dataclass
 from typing import Any
 
-from vergil_tooling.lib import epics, github, linkage, release, roadmap
+from vergil_tooling.lib import epic_docs, epics, github, linkage, release, roadmap
 from vergil_tooling.lib.labels import RETIRED_LABELS
 
 # A closed-epic-with-open-child violation (issue #2259): the closed epic paired
@@ -351,7 +351,12 @@ def stray_dotgithub_issue(org: str, *, home: str | None = None) -> list[str]:
     return strays
 
 
-def closed_epic_open_child(org: str, *, home: str | None = None) -> list[EpicOpenChildViolation]:
+def closed_epic_open_child(
+    org: str,
+    *,
+    home: str | None = None,
+    listing: list[epic_docs.EpicRecord] | None = None,
+) -> list[EpicOpenChildViolation]:
     """Closed epics that still have an open child (invariant, issue #2259 Fix B).
 
     Core invariant: *an epic must never be closed while it has open children*. A
@@ -363,34 +368,138 @@ def closed_epic_open_child(org: str, *, home: str | None = None) -> list[EpicOpe
     not a violation for them. Report-only: like the other invariants it is never
     auto-acted (remediation is :func:`reopen_epics_with_open_children`, gated to a
     human). Scoped to the resolved epic *home* (default ``<org>/.github``).
+
+    *listing* is the home's :func:`list_home_epics`, shared with
+    :func:`epic_documents` so the audit lists the epics once; it is read here
+    when not given. Only its closed epics are checked.
     """
     if home is None:
         home = f"{org}/.github"
     home_owner, home_repo = home.split("/", 1)
-    raw: Any = github.read_json(
-        "issue",
-        "list",
-        "--repo",
-        home,
-        "--label",
-        "epic",
-        "--state",
-        "closed",
-        "--limit",
-        "300",
-        "--json",
-        "number,title,labels",
-    )
+    if listing is None:
+        listing = list_home_epics(home)
     violations: list[EpicOpenChildViolation] = []
-    for item in raw if isinstance(raw, list) else []:
-        labels = {str((label or {}).get("name", "")) for label in (item.get("labels") or [])}
-        if epics.is_standing(labels):
+    for record in listing:
+        if record["state"] != "CLOSED":
+            continue
+        if epics.is_standing(set(record["labels"])):
             continue  # standing epics never roll up; closed-with-open-child doesn't apply
-        epic = epics.IssueRef(home_owner, home_repo, int(item["number"]))
+        epic = epics.IssueRef(home_owner, home_repo, record["number"])
         open_kids = tuple(cs.ref for cs in epics.child_states(epic) if cs.state == "OPEN")
         if open_kids:
             violations.append((epic, open_kids))
     return violations
+
+
+def list_home_epics(home: str) -> list[epic_docs.EpicRecord]:
+    """Every ``epic``-labelled issue of *home*, open and closed, with no skips.
+
+    The one epic listing the audit reads, shared by :func:`closed_epic_open_child`
+    and :func:`epic_documents`, which each apply their own skips.
+    """
+    return epic_docs.list_epics(home, apply_skips=False)
+
+
+# -- Epic documents (epic vergil-project/.github#819) --------------------------
+
+
+@dataclass(frozen=True)
+class EpicDocsFinding:
+    """One problem with an epic's Documents section: epic *number* in the home."""
+
+    number: int
+    state: str
+    problem: str
+
+
+def epic_documents(
+    org: str,
+    *,
+    home: str | None = None,
+    listing: list[epic_docs.EpicRecord] | None = None,
+) -> list[EpicDocsFinding]:
+    """Problems with the Documents section of every epic of *home* (spec §6).
+
+    Container and ``[archived]`` epics are skipped (:func:`epic_docs.is_skipped`).
+    Every other epic needs a well-formed section: both markers, the heading and
+    exactly the three entries, each a link or one of the notes. On a closed
+    epic, no entry may read ``pending`` and every link must name a file that
+    exists on its repo's default branch; an open epic's links are not checked,
+    since a link written at handoff resolves only once its PR merges. Where the
+    section sits in the body is not checked.
+
+    Report-only. A contents-API 404 is a finding; any other API error
+    propagates. The reads run under *home*'s owner's App token, so a 404 never
+    comes from a token that cannot see the org. *listing* is
+    :func:`list_home_epics`, read here when not given.
+    """
+    if home is None:
+        home = f"{org}/.github"
+    owner, repo = home.split("/", 1)
+    with github.target_org(owner):
+        if listing is None:
+            listing = list_home_epics(home)
+        branches: dict[str, str | None] = {}
+        findings: list[EpicDocsFinding] = []
+        for record in listing:
+            if epic_docs.is_skipped(record["title"], record["labels"]):
+                continue
+            findings += [
+                EpicDocsFinding(record["number"], record["state"], problem)
+                for problem in _epic_docs_problems(record, owner, repo, branches)
+            ]
+    return findings
+
+
+def _epic_docs_problems(
+    record: epic_docs.EpicRecord, owner: str, repo: str, branches: dict[str, str | None]
+) -> list[str]:
+    """The problems with one epic's section; *branches* caches default branches."""
+    try:
+        entries = epic_docs.parse(record["body"] or "", repo)
+    except epic_docs.EpicDocsFormatError as exc:
+        return [f"malformed Documents section: {exc}"]
+    if entries is None:
+        return ["no Documents section"]
+    if record["state"] != "CLOSED":
+        return []
+    problems: list[str] = []
+    for doc in epic_docs.DOCS:
+        entry = entries[doc]
+        label = doc.capitalize()
+        if entry == epic_docs.PENDING:
+            problems.append(f"{label} is still `pending` on a closed epic")
+        elif isinstance(entry, epic_docs.DocLink):
+            problems += _link_problems(label, entry, owner, branches)
+    return problems
+
+
+def _link_problems(
+    label: str, link: epic_docs.DocLink, owner: str, branches: dict[str, str | None]
+) -> list[str]:
+    """Why *link* does not resolve on its repo's default branch, if it does not."""
+    where = f"`{link.repo}/{link.path}`"
+    if link.owner.lower() != owner.lower():
+        return [f"{label} links {where} outside the {owner} org"]
+    key = link.repo.lower()
+    if key not in branches:
+        try:
+            branches[key] = epic_docs.default_branch(link.owner, link.repo)
+        except github.GitHubAPIError as exc:
+            if isinstance(exc, github.MissingGitHubTokenError) or not epic_docs.is_not_found(exc):
+                raise
+            branches[key] = None
+    branch = branches[key]
+    if branch is None:
+        return [f"{label} links {where} in a repo that does not exist"]
+    problems: list[str] = []
+    if link.branch != branch:
+        problems.append(
+            f"{label} links {where} on branch `{link.branch}`, not the default branch `{branch}`"
+        )
+    if not epic_docs.file_exists(link.owner, link.repo, link.path, branch):
+        problems.append(f"{label} link {where} does not resolve on `{branch}`")
+    return problems
 
 
 # -- orphan pass, label retirement, queue visibility (epic .github#176) --------
@@ -790,6 +899,7 @@ def render(
     body_only: list[tuple[epics.IssueRef, epics.IssueRef]] | None = None,
     public_queues: list[epics.IssueRef] | None = None,
     private_under_public: list[str] | None = None,
+    epic_docs_findings: list[EpicDocsFinding] | None = None,
 ) -> str:
     """Format the drift + invariant report; a clean state says so explicitly.
 
@@ -804,8 +914,9 @@ def render(
     operational tasks (validations/deployments, runnable vs blocked);
     ``closed_operational_no_success`` is the operational invariant (a closed
     operational task with no recorded success comment). ``closed_epic_open_children``
-    is the closed-epic-with-open-child invariant (issue #2259). Each section
-    appears only when it has something to report.
+    is the closed-epic-with-open-child invariant (issue #2259).
+    ``epic_docs_findings`` are the :func:`epic_documents` problems (epic
+    .github#819). Each section appears only when it has something to report.
     """
     epics_outside = epics_outside or []
     stray = stray or []
@@ -817,6 +928,7 @@ def render(
     body_only = body_only or []
     public_queues = public_queues or []
     private_under_public = private_under_public or []
+    epic_docs_findings = epic_docs_findings or []
     scope = f"the **{home}** repo" if home and home != f"{org}/.github" else f"the **{org}** org"
     banner = (
         f"_Read-only audit of {scope} (merged PRs from the last "
@@ -838,6 +950,7 @@ def render(
             body_only,
             public_queues,
             private_under_public,
+            epic_docs_findings,
         ]
     ):
         return "\n".join([*header, "_No drift — everything that should be closed is closed._", ""])
@@ -902,8 +1015,27 @@ def render(
                 )
                 lines.append(f"- {closed_epic.slug} — open children: {open_kids}")
         lines += _render_private_under_public(private_under_public)
+    lines += _render_epic_documents(epic_docs_findings, home or f"{org}/.github")
     lines.append("")
     return "\n".join(lines)
+
+
+def _render_epic_documents(findings: list[EpicDocsFinding], home: str) -> list[str]:
+    """The ``## Epic documents`` section, one line per problem; none when clean."""
+    if not findings:
+        return []
+    lines = [
+        "",
+        "## Epic documents",
+        "",
+        "Settle each with `vrg-epic-docs set` or `vrg-epic-docs backfill`:",
+        "",
+    ]
+    lines += [
+        f"- {home}#{f.number} ({f.state.lower()}) — {f.problem}"
+        for f in sorted(findings, key=lambda f: f.number)
+    ]
+    return lines
 
 
 _PRIVATE_UNDER_PUBLIC_HEADING = (

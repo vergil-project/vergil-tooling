@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vergil_tooling.lib import epic_audit, epics, github, roadmap
+from vergil_tooling.lib import epic_audit, epic_docs, epics, github, roadmap
 from vergil_tooling.lib.epic_audit import TaskDrift
 
 
@@ -326,12 +326,33 @@ def test_stray_skips_open_archive() -> None:
 # -- closed-epic-with-open-child invariant + reopen remediation (issue #2259) --
 
 
+def _record(  # noqa: PLR0913 - one field per EpicRecord key
+    number: int,
+    *,
+    state: str = "CLOSED",
+    title: str = "Epic: x",
+    labels: tuple[str, ...] = ("epic",),
+    body: str | None = "",
+    reason: str | None = None,
+    created: str = "2026-09-01T00:00:00Z",
+) -> epic_docs.EpicRecord:
+    return epic_docs.EpicRecord(
+        number=number,
+        title=title,
+        state=state,
+        stateReason=reason,
+        createdAt=created,
+        labels=list(labels),
+        body=body,
+    )
+
+
 def test_closed_epic_open_child_flags_closed_epic_with_open_child() -> None:
     listing = [
-        {"number": 19, "title": "MQ Guides", "labels": []},  # has an open child -> violation
-        {"number": 15, "title": "Cockpit", "labels": []},  # all children closed -> ok
-        # perpetual -> skipped
-        {"number": 99, "title": "Ad hoc", "labels": [{"name": "epic"}, {"name": "ad-hoc"}]},
+        _record(19, title="MQ Guides"),  # has an open child -> violation
+        _record(15, title="Cockpit"),  # all children closed -> ok
+        _record(99, title="Ad hoc", labels=("epic", "ad-hoc")),  # perpetual -> skipped
+        _record(20, state="OPEN"),  # open -> not checked
     ]
 
     def fake_child_states(epic: epics.IssueRef) -> list[epics.ChildState]:
@@ -340,10 +361,13 @@ def test_closed_epic_open_child_flags_closed_epic_with_open_child() -> None:
                 epics.ChildState(epics.IssueRef("org", "lab", 462), "OPEN"),
                 epics.ChildState(epics.IssueRef("org", "lab", 463), "CLOSED"),
             ]
+        if epic.number == 20:
+            msg = "an open epic is never checked"
+            raise AssertionError(msg)
         return [epics.ChildState(epics.IssueRef("org", "lab", 1), "CLOSED")]
 
     with (
-        patch("vergil_tooling.lib.github.read_json", return_value=listing),
+        patch("vergil_tooling.lib.epic_docs.list_epics", return_value=listing),
         patch("vergil_tooling.lib.epics.child_states", side_effect=fake_child_states),
     ):
         result = epic_audit.closed_epic_open_child("org")
@@ -356,25 +380,48 @@ def test_closed_epic_open_child_skips_perpetual_before_fetching_children(
 ) -> None:
     # A perpetual standing epic (ad-hoc, intake, planning) is skipped without a
     # children lookup.
-    labels = [{"name": "epic"}, {"name": kind_label}]
-    listing = [{"number": 99, "title": "Standing", "labels": labels}]
+    listing = [_record(99, title="Standing", labels=("epic", kind_label))]
     child_states = MagicMock()
     with (
-        patch("vergil_tooling.lib.github.read_json", return_value=listing),
+        patch("vergil_tooling.lib.epic_docs.list_epics", return_value=listing),
         patch("vergil_tooling.lib.epics.child_states", child_states),
     ):
         assert epic_audit.closed_epic_open_child("org") == []
     child_states.assert_not_called()
 
 
+def test_closed_epic_open_child_keeps_archived_epics() -> None:
+    # Only its own perpetual-epic skip applies: an [archived] epic is checked.
+    listing = [_record(7, title="[archived] Old", body=None)]
+    kid = epics.IssueRef("org", "lab", 8)
+    with (
+        patch("vergil_tooling.lib.epic_docs.list_epics", return_value=listing),
+        patch(
+            "vergil_tooling.lib.epics.child_states", return_value=[epics.ChildState(kid, "OPEN")]
+        ),
+    ):
+        assert epic_audit.closed_epic_open_child("org") == [
+            (epics.IssueRef("org", ".github", 7), (kid,))
+        ]
+
+
 def test_closed_epic_open_child_scopes_to_home() -> None:
     with (
-        patch("vergil_tooling.lib.github.read_json", return_value=[]) as mock_list,
+        patch("vergil_tooling.lib.epic_docs.list_epics", return_value=[]) as mock_list,
         patch("vergil_tooling.lib.epics.child_states", return_value=[]),
     ):
         epic_audit.closed_epic_open_child("org", home="org/lab")
-    assert "org/lab" in mock_list.call_args.args  # lists the home, not <org>/.github
-    assert "closed" in mock_list.call_args.args  # only closed epics
+    # Lists the home, not <org>/.github, with no skips applied.
+    mock_list.assert_called_once_with("org/lab", apply_skips=False)
+
+
+def test_closed_epic_open_child_uses_a_given_listing() -> None:
+    with (
+        patch("vergil_tooling.lib.epic_docs.list_epics") as mock_list,
+        patch("vergil_tooling.lib.epics.child_states", return_value=[]),
+    ):
+        assert epic_audit.closed_epic_open_child("org", listing=[_record(1)]) == []
+    mock_list.assert_not_called()
 
 
 def test_reopen_epics_with_open_children_reopens_and_comments() -> None:
@@ -1453,3 +1500,241 @@ def test_queue_full_hint_deferred() -> None:
     assert epic_audit._QUEUE_FULL_HINT["deferred"] == "Run deferred-review."
     # Every queue kind has a hint, so StandingEpicFull never KeyErrors.
     assert set(epic_audit._QUEUE_FULL_HINT) == set(epics.QUEUE_KIND_BY_KEY)
+
+
+# -- Epic documents check (epic vergil-project/.github#819) --------------------
+
+
+def _link(
+    path: str, *, repo: str = ".github", owner: str = "org", branch: str = "develop"
+) -> epic_docs.DocLink:
+    return epic_docs.DocLink(owner, repo, path, branch)
+
+
+def _section(
+    spec: epic_docs.Entry = epic_docs.PENDING,
+    plan: epic_docs.Entry = epic_docs.PENDING,
+    retrospective: epic_docs.Entry = epic_docs.PENDING,
+) -> str:
+    block = epic_docs.render(
+        {"spec": spec, "plan": plan, "retrospective": retrospective}, ".github"
+    )
+    return f"{block}\n\nThe epic's description.\n"
+
+
+def _linked() -> str:
+    return _section(
+        _link("epics/5-x/spec.md"), _link("epics/5-x/plan.md"), _link("epics/5-x/retrospective.md")
+    )
+
+
+def _not_found() -> github.GitHubAPIError:
+    return github.GitHubAPIError(1, ["gh", "api"], output="", stderr="gh: Not Found (HTTP 404)")
+
+
+def _documents(
+    listing: list[epic_docs.EpicRecord],
+    *,
+    exists: bool | MagicMock = True,
+    branch: str = "develop",
+) -> tuple[list[epic_audit.EpicDocsFinding], MagicMock]:
+    file_exists = exists if isinstance(exists, MagicMock) else MagicMock(return_value=exists)
+    with (
+        patch("vergil_tooling.lib.epic_docs.list_epics", return_value=listing),
+        patch("vergil_tooling.lib.epic_docs.default_branch", return_value=branch),
+        patch("vergil_tooling.lib.epic_docs.file_exists", file_exists),
+    ):
+        return epic_audit.epic_documents("org"), file_exists
+
+
+def test_epic_documents_missing_section() -> None:
+    findings, _ = _documents([_record(1, state="OPEN", body="No section."), _record(2, body=None)])
+    assert findings == [
+        epic_audit.EpicDocsFinding(1, "OPEN", "no Documents section"),
+        epic_audit.EpicDocsFinding(2, "CLOSED", "no Documents section"),
+    ]
+
+
+def test_epic_documents_malformed() -> None:
+    half = f"{epic_docs.BEGIN}\n{epic_docs.HEADING}\n\n- Spec: pending\n"
+    findings, _ = _documents([_record(3, state="OPEN", body=half)])
+    assert len(findings) == 1
+    assert findings[0].number == 3
+    assert findings[0].problem.startswith("malformed Documents section: ")
+
+
+def test_epic_documents_bad_entry_is_malformed() -> None:
+    body = _section().replace("- Plan: pending", "- Plan: see the wiki")
+    findings, _ = _documents([_record(4, body=body)])
+    assert [f.problem.split(":")[0] for f in findings] == ["malformed Documents section"]
+
+
+def test_epic_documents_closed_link_404() -> None:
+    findings, file_exists = _documents([_record(5, body=_linked())], exists=False)
+    problems = [f.problem for f in findings]
+    assert problems == [
+        "Spec link `.github/epics/5-x/spec.md` does not resolve on `develop`",
+        "Plan link `.github/epics/5-x/plan.md` does not resolve on `develop`",
+        "Retrospective link `.github/epics/5-x/retrospective.md` does not resolve on `develop`",
+    ]
+    file_exists.assert_any_call("org", ".github", "epics/5-x/spec.md", "develop")
+
+
+def test_epic_documents_closed_links_resolve() -> None:
+    findings, file_exists = _documents([_record(5, body=_linked())])
+    assert findings == []
+    assert file_exists.call_count == 3
+
+
+def test_epic_documents_closed_link_off_the_default_branch() -> None:
+    body = _section(
+        _link("epics/5-x/spec.md", branch="main"), epic_docs.NOT_WRITTEN, epic_docs.NOT_WRITTEN
+    )
+    findings, file_exists = _documents([_record(5, body=body)])
+    assert [f.problem for f in findings] == [
+        "Spec links `.github/epics/5-x/spec.md` on branch `main`, not the default branch `develop`"
+    ]
+    file_exists.assert_called_once_with("org", ".github", "epics/5-x/spec.md", "develop")
+
+
+def test_epic_documents_closed_link_to_a_missing_repo() -> None:
+    body = _section(
+        _link("docs/specs/x.md", repo="gone"), epic_docs.NOT_WRITTEN, epic_docs.NOT_WRITTEN
+    )
+    file_exists = MagicMock(return_value=True)
+    with (
+        patch("vergil_tooling.lib.epic_docs.list_epics", return_value=[_record(6, body=body)]),
+        patch("vergil_tooling.lib.epic_docs.default_branch", side_effect=_not_found()),
+        patch("vergil_tooling.lib.epic_docs.file_exists", file_exists),
+    ):
+        findings = epic_audit.epic_documents("org")
+    assert [f.problem for f in findings] == [
+        "Spec links `gone/docs/specs/x.md` in a repo that does not exist"
+    ]
+    file_exists.assert_not_called()
+
+
+def test_epic_documents_other_api_errors_propagate() -> None:
+    error = github.GitHubAPIError(1, ["gh", "api"], output="", stderr="HTTP 502: Bad Gateway")
+    with (
+        patch("vergil_tooling.lib.epic_docs.list_epics", return_value=[_record(5, body=_linked())]),
+        patch("vergil_tooling.lib.epic_docs.default_branch", side_effect=error),
+        pytest.raises(github.GitHubAPIError),
+    ):
+        epic_audit.epic_documents("org")
+
+
+def test_epic_documents_caches_default_branches() -> None:
+    default_branch = MagicMock(return_value="develop")
+    listing = [_record(5, body=_linked()), _record(6, body=_linked())]
+    with (
+        patch("vergil_tooling.lib.epic_docs.list_epics", return_value=listing),
+        patch("vergil_tooling.lib.epic_docs.default_branch", default_branch),
+        patch("vergil_tooling.lib.epic_docs.file_exists", return_value=True),
+    ):
+        assert epic_audit.epic_documents("org") == []
+    default_branch.assert_called_once_with("org", ".github")
+
+
+def test_epic_documents_closed_link_outside_the_org() -> None:
+    body = _section(
+        _link("docs/specs/x.md", owner="elsewhere", repo="tools"),
+        epic_docs.NOT_WRITTEN,
+        epic_docs.NOT_WRITTEN,
+    )
+    findings, file_exists = _documents([_record(7, body=body)])
+    assert [f.problem for f in findings] == [
+        "Spec links `tools/docs/specs/x.md` outside the org org"
+    ]
+    file_exists.assert_not_called()
+
+
+def test_epic_documents_closed_pending() -> None:
+    body = _section(_link("epics/5-x/spec.md"), _link("epics/5-x/plan.md"))
+    findings, _ = _documents([_record(8, body=body)])
+    assert [f.problem for f in findings] == ["Retrospective is still `pending` on a closed epic"]
+
+
+def test_epic_documents_closed_notes_are_fine() -> None:
+    body = _section(
+        epic_docs.PREDATES_SPEC_PLAN, epic_docs.PREDATES_SPEC_PLAN, epic_docs.PREDATES_RETRO
+    )
+    findings, _ = _documents([_record(9, body=body, reason="COMPLETED")])
+    assert findings == []
+
+
+def test_epic_documents_open_link_not_checked() -> None:
+    findings, file_exists = _documents([_record(10, state="OPEN", body=_linked())], exists=False)
+    assert findings == []
+    file_exists.assert_not_called()
+
+
+def test_epic_documents_open_pending_is_fine() -> None:
+    findings, _ = _documents([_record(11, state="OPEN", body=_section())])
+    assert findings == []
+
+
+@pytest.mark.parametrize(
+    ("title", "labels"),
+    [
+        ("Epic (ad-hoc): lab", ("epic", "ad-hoc")),
+        ("Epic (intake): lab", ("epic", "intake")),
+        ("Old standing", ("epic", "standing")),
+        ("Epic (standing): misc", ("epic",)),
+        ("[archived] Epic: old", ("epic",)),
+    ],
+)
+def test_epic_documents_skips(title: str, labels: tuple[str, ...]) -> None:
+    findings, _ = _documents([_record(12, title=title, labels=labels, body=None)])
+    assert findings == []
+
+
+def test_epic_documents_scopes_to_home_under_its_owner_token() -> None:
+    seen: list[str | None] = []
+
+    def fake_list(home: str, *, apply_skips: bool) -> list[epic_docs.EpicRecord]:
+        assert home == "lab-org/lab"
+        assert apply_skips is False
+        seen.append(github._target_org.get())
+        return []
+
+    with patch("vergil_tooling.lib.epic_docs.list_epics", side_effect=fake_list):
+        assert epic_audit.epic_documents("org", home="lab-org/lab") == []
+    assert seen == ["lab-org"]
+
+
+def test_epic_documents_uses_a_given_listing() -> None:
+    with patch("vergil_tooling.lib.epic_docs.list_epics") as mock_list:
+        assert epic_audit.epic_documents("org", listing=[]) == []
+    mock_list.assert_not_called()
+
+
+def test_render_epic_documents_section() -> None:
+    findings = [
+        epic_audit.EpicDocsFinding(
+            30, "CLOSED", "Retrospective is still `pending` on a closed epic"
+        ),
+        epic_audit.EpicDocsFinding(4, "OPEN", "no Documents section"),
+    ]
+    out = epic_audit.render([], [], org="org", window_days=30, epic_docs_findings=findings)
+    assert "No drift" not in out
+    section = out.split("## Epic documents\n", 1)[1]
+    lines = [line for line in section.splitlines() if line.startswith("- ")]
+    assert lines == [
+        "- org/.github#4 (open) — no Documents section",
+        "- org/.github#30 (closed) — Retrospective is still `pending` on a closed epic",
+    ]
+
+
+def test_render_epic_documents_names_the_home() -> None:
+    findings = [epic_audit.EpicDocsFinding(4, "OPEN", "no Documents section")]
+    out = epic_audit.render(
+        [], [], org="org", window_days=30, home="org/lab", epic_docs_findings=findings
+    )
+    assert "- org/lab#4 (open) — no Documents section" in out
+
+
+def test_render_without_epic_documents_findings_has_no_section() -> None:
+    out = epic_audit.render([], [], org="org", window_days=30, epic_docs_findings=[])
+    assert "Epic documents" not in out
+    assert "No drift" in out
