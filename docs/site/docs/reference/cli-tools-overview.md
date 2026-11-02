@@ -521,6 +521,30 @@ The sanctioned path for creating epics, used by the `epic-create` and
 | Exit codes | 0 created, 1 error |
 | Status | Active |
 
+### vrg-epic-docs
+
+Write an epic's **Documents** section, the marked block at the top of its body
+that links the epic's spec, plan and retrospective or notes why one does not
+exist. `set --epic OWNER/REPO#N` adds the section, or updates it in place;
+an entry not named keeps its value, and a new section starts all `pending`.
+The issue must carry the `epic` label. A `PATH` is in the epic's home repo,
+or `<repo>:<path>` for another repo of the same org (an
+`<owner>/<repo>:<path>` value naming the epic's owner is refused); the
+file's existence is not checked. A path is repo-relative, with no leading
+`/`, whitespace or backtick, and a repo name uses only letters, digits, `.`,
+`-` and `_`. Hand-written document lines elsewhere in the body are removed,
+and a body that is already correct is not edited. The run uses the epic
+owner's App token.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_epic_docs` |
+| Args | `set`: `--epic` (required), `--spec PATH`, `--plan PATH`, `--retrospective PATH` |
+| Preconditions | GitHub App credentials for the epic's org |
+| Failure mode | Error on stderr; an issue that is not an epic, a bad `PATH`, or a malformed section (half a section, a bad entry) is refused with nothing edited |
+| Exit codes | 0 written or already correct, 1 error |
+| Status | Active |
+
 ### vrg-epic-link
 
 Link a task under an epic as a native GitHub sub-issue, reopening a closed
