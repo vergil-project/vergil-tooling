@@ -345,6 +345,11 @@ Each implementation task then runs through the `issue-implement` skill, which
 runs an **agentic-review gate** before it hands the PR off. The gate is advisory:
 when it pauses, the human can accept the branch as it stands. The rules
 are in the [paad review doctrine](https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-review-doctrine.md#3-mode-2-agentic-review-in-issue-implement).
+The design-review rounds and the gate's rounds both need paad's unattended
+runner, `paad:paad-delegate`, which only a Lima `vrg-vm session` with the
+[`--plugin-dir` override](../reference/cli-tools-overview.md#vrg-vm) loads; a
+session without it runs no review round
+([paad-policy §10](https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-policy.md#10-paad-unattended-mode-and-the-fleet-checkout)).
 
 ### The bookend convention
 
