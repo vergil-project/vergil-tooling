@@ -17356,8 +17356,12 @@ sweeps automatically.</p>
 <p>See the <a href="../../reference/dev/finalize-pr/">vrg-finalize-pr reference</a>.</p>
 <h2 id="parallel-work-with-worktrees">Parallel work with worktrees<a class="headerlink" href="#parallel-work-with-worktrees" title="Permanent link">&para;</a></h2>
 <p>The main worktree at the project root stays on <code>develop</code> and is
-read-only. Every change happens in its own worktree under
-<code>.worktrees/</code>, on its own branch. This lets several agents work in the
+read-only for source; ignored scratch anywhere in the main clone's
+<code>build/</code> is allowed, with <code>build/.vergil-state/</code> the namespace for
+agent state that must survive a session (rule 3 of
+<a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/worktree-convention.md">the worktree convention</a>). Every
+change happens in its own worktree under <code>.worktrees/</code>, on its own
+branch. This lets several agents work in the
 same repository at once, and lets you start a second issue before the
 first is merged.</p>
 <p>For the full spec (rationale, trust model, failure modes, memory-path
@@ -17411,10 +17415,11 @@ filled in, it reads:</p>
 <a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a>- For Bash commands that touch files, cd into the worktree first
 <a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a>  or use absolute paths.
 <a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a>- Do not edit files at the project root. The main worktree is
-<a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a>  read-only — all changes flow through your worktree on your
-<a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a>  feature branch.
-<a id="__codelineno-9-15" name="__codelineno-9-15" href="#__codelineno-9-15"></a>- When you need to run validation, run it from inside your worktree
-<a id="__codelineno-9-16" name="__codelineno-9-16" href="#__codelineno-9-16"></a>  (vrg-container-run mounts the current directory).
+<a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a>  read-only for source — all changes flow through your worktree on
+<a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a>  your feature branch. Ignored scratch in the main clone's build/
+<a id="__codelineno-9-15" name="__codelineno-9-15" href="#__codelineno-9-15"></a>  is allowed (rule 3 of the worktree convention).
+<a id="__codelineno-9-16" name="__codelineno-9-16" href="#__codelineno-9-16"></a>- When you need to run validation, run it from inside your worktree
+<a id="__codelineno-9-17" name="__codelineno-9-17" href="#__codelineno-9-17"></a>  (vrg-container-run mounts the current directory).
 </code></pre></div>
 <h3 id="cleanup-after-merge">Cleanup after merge<a class="headerlink" href="#cleanup-after-merge" title="Permanent link">&para;</a></h3>
 <p><code>vrg-finalize-pr</code> removes the finalized branch's worktree when it lives

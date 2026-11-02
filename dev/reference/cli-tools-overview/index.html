@@ -21323,7 +21323,12 @@ instead and flags it with a <code>DEV tooling</code> banner, and a plain
 <p><strong>The <code>--plugin-dir</code> override.</strong> <code>vrg-vm session</code> can launch Claude with
 plugin trees loaded from disk instead of the installed plugins, for running
 unreleased plugin work (for example a paad checkout's <code>preview/paad</code>) across
-the fleet. List the trees in <code>~/.config/vergil/plugin-dirs.toml</code> on the host,
+the fleet. The fleet uses it permanently to load paad's fleet checkout,
+which carries paad's unattended runner, <code>paad:paad-delegate</code>. Every paad
+review round needs that runner, so a session without the override, including
+every cloud session, runs no review round
+(<a href="https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-policy.md#10-paad-unattended-mode-and-the-fleet-checkout">paad-policy §10</a>).
+List the trees in <code>~/.config/vergil/plugin-dirs.toml</code> on the host,
 a personal file you create by hand:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">plugin_dirs</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"/Users/me/dev/projects/me/paad-fleet/preview/paad"</span><span class="p">]</span>
 </code></pre></div>
