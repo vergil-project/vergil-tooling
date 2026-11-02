@@ -85,11 +85,12 @@ class DocLink:
 
         *home_repo* is the epic's home repo **name** (``.github``), not
         ``owner/name``; a document is only ever linked within the epic's org.
+        Repo names are compared without case, as GitHub does.
         """
         if "/" in home_repo:
             msg = f"home_repo is a repo name, not owner/name: {home_repo!r}"
             raise ValueError(msg)
-        return self.path if self.repo == home_repo else f"{self.repo}/{self.path}"
+        return self.path if _same_repo(self.repo, home_repo) else f"{self.repo}/{self.path}"
 
     @property
     def url(self) -> str:
@@ -101,12 +102,42 @@ Entry = DocLink | str
 """One document's entry: a :class:`DocLink`, or one of the five notes."""
 
 
+def _same_repo(a: str, b: str) -> bool:
+    """True when *a* and *b* name the same repo: GitHub repo names ignore case."""
+    return a.lower() == b.lower()
+
+
 # --- lines and fences --------------------------------------------------------
+
+
+def _split(body: str) -> list[str]:
+    """*body*'s lines, each with its line ending.
+
+    Only ``\\n`` (with an optional ``\\r`` before it) ends a line, as in
+    Markdown; :meth:`str.splitlines` would also split on a form feed, U+2028
+    and the like, which render inside one line.
+    """
+    parts = body.split("\n")
+    lines = [part + "\n" for part in parts[:-1]]
+    if parts[-1]:
+        lines.append(parts[-1])
+    return lines
 
 
 def _content(line: str) -> str:
     """*line* without its line ending."""
     return line.rstrip("\r\n")
+
+
+def _is_marker(content: str, marker: str) -> bool:
+    """True when *content* is *marker*, indented at most three spaces.
+
+    Four spaces or a tab start an indented code block, so a marker there is
+    an example, not the section.
+    """
+    text = content.rstrip()
+    indent = len(text) - len(text.lstrip(" "))
+    return indent <= 3 and text[indent:] == marker
 
 
 def _newline(body: str) -> str:
@@ -158,9 +189,9 @@ def _region(lines: list[str]) -> tuple[int, int] | None:
         content = _content(line)
         if fences.step(content):
             continue
-        if content.strip() == BEGIN:
+        if _is_marker(content, BEGIN):
             begins.append(index)
-        elif content.strip() == END:
+        elif _is_marker(content, END):
             ends.append(index)
     if not begins and not ends:
         return None
@@ -210,7 +241,7 @@ def _path_candidates(text: str, repo: str, home_repo: str | None) -> list[str]:
     prefixed = text[len(repo) + 1 :] if text.startswith(f"{repo}/") else None
     if home_repo is None:
         return [text] if prefixed is None else [text, prefixed]
-    if repo == home_repo:
+    if _same_repo(repo, home_repo):
         return [text]
     return [] if prefixed is None else [prefixed]
 
@@ -260,7 +291,7 @@ def parse(body: str, home_repo: str | None = None) -> dict[str, Entry] | None:
     if home_repo is not None and "/" in home_repo:
         msg = f"home_repo is a repo name, not owner/name: {home_repo!r}"
         raise ValueError(msg)
-    lines = body.splitlines(keepends=True)
+    lines = _split(body)
     region = _region(lines)
     if region is None:
         return None
@@ -290,11 +321,13 @@ _LEGACY_BULLET_RE = re.compile(r"^- (Spec|Plan|Retrospective):")
 _NOTE_ALTERNATION = "|".join(re.escape(note) for note in sorted(NOTES, key=len, reverse=True))
 _LEGACY_LINE_RE = re.compile(
     r"^(Spec|Plan|Retrospective): *"
-    rf"(?:`|\[|(?:{_NOTE_ALTERNATION})(?: *\(.*\))?\.?\s*$)"
+    rf"(?:`[^`]+`|\[[^\]]*\]\([^)\s]*\)|{_NOTE_ALTERNATION})"
+    r"(?: *\(.*\))?\.?\s*$"
 )
-"""A standalone document line: its value is a backticked path, a markdown
-link, or a note (with an optional bracketed remark). A prose line that merely
-starts with the label, such as ``Plan: migrate the repos first.``, is kept."""
+"""A standalone document line: its whole value is one backticked path, one
+markdown link or one note, with an optional bracketed remark. A prose line
+that merely starts with the label, such as ``Plan: migrate the repos first.``
+or ``Plan: `vrg-foo` ships first.``, is kept."""
 _CONTINUATION_RE = re.compile(r"^\(.*\)\.?$")
 
 
@@ -341,7 +374,7 @@ def strip_legacy(body: str) -> tuple[str, list[str]]:
     the body), one blank line after it goes too, so no double gap is left.
     Every other line keeps its exact bytes.
     """
-    lines = body.splitlines(keepends=True)
+    lines = _split(body)
     contents = [_content(line) for line in lines]
     fences = _Fences()
     fenced = [fences.step(content) for content in contents]
@@ -375,7 +408,7 @@ def upsert(body: str, block: str) -> tuple[str, list[str]]:
     (:func:`strip_legacy`). Raises :class:`EpicDocsFormatError` on half a
     section, before anything is changed.
     """
-    lines = body.splitlines(keepends=True)
+    lines = _split(body)
     region = _region(lines)
     newline = _newline(body)
     framed = block.replace("\n", newline)

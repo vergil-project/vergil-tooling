@@ -147,6 +147,31 @@ def test_parse_with_home_repo_rejects_wrong_text_form() -> None:
         parse("", "o/.github")
 
 
+def test_repo_names_compare_without_case() -> None:
+    # A section written under --epic o/.GitHub#N parses back with home ".github".
+    link = DocLink(_OWNER, ".GitHub", "epics/1-x/spec.md", "develop")
+    assert link.text(".github") == "epics/1-x/spec.md"
+    block = render(_entries(spec=link), ".GitHub")
+    assert parse(block, _HOME) == _entries(spec=link)
+
+
+def test_parse_ignores_markers_in_indented_code_block() -> None:
+    section = render(_entries(), _HOME)
+    indented = "\n".join(f"    {line}" if line else "" for line in section.split("\n"))
+    assert parse(f"Example:\n\n{indented}\n") is None
+    # Up to three spaces is still the section.
+    shallow = "\n".join(f"   {line}" if line else "" for line in section.split("\n"))
+    assert parse(shallow) == _entries()
+
+
+def test_only_newline_ends_a_line() -> None:
+    # A form feed or U+2028 renders inside one line, so it never starts a legacy line.
+    for sep in (" ", "\x0c", "\x85"):
+        body = f"Note text{sep}Spec: `x.md`\n"
+        assert strip_legacy(body) == (body, [])
+        assert upsert(body, _block())[0].endswith(f"\n\n{body}")
+
+
 def test_parse_none_without_section() -> None:
     assert parse("") is None
     assert parse("Just a description.\n\nSpec: `epics/1-x/spec.md`\n") is None
@@ -163,7 +188,7 @@ def test_parse_ignores_markers_in_nested_code_fence() -> None:
     body = f"Example:\n\n````markdown\n```text\n{section}\n```\n````\n"
     assert parse(body) is None
     # Nor does a closing run with an info string, or a run of the other character.
-    body = f"~~~~\n~~~ text\n{section}\n```\n~~~~\n"
+    body = f"~~~~\n~~~~ text\n{section}\n```\n~~~~\n"
     assert parse(body) is None
 
 
@@ -345,6 +370,9 @@ def test_strip_legacy_standalone_note_lines() -> None:
         "Spec: see the wiki page for details",
         "Retrospective: pending review by the team",
         "Plan:",
+        "Plan: `vrg-foo` must ship before the migration starts.",
+        "Spec: [optional] cover CRLF too",
+        "Spec: [the draft](https://example.com/a.md) is out of date.",
     ],
 )
 def test_strip_legacy_keeps_prose_with_a_label(line: str) -> None:
@@ -374,7 +402,7 @@ def test_strip_legacy_keeps_code_fence_lines() -> None:
         "Documents:\n\n- Spec: pending\n"
         "Spec: `epics/1-x/spec.md`\n"
         "```\n\n"
-        "~~~\nPlan: kept\n~~~\n"
+        "~~~\nPlan: `epics/1-x/other.md`\n~~~\n"
         "Plan: `epics/1-x/plan.md`\n"
     )
     new, removed = strip_legacy(body)
