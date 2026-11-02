@@ -252,8 +252,12 @@ See the [vrg-finalize-pr reference](../reference/dev/finalize-pr.md).
 ## Parallel work with worktrees
 
 The main worktree at the project root stays on `develop` and is
-read-only. Every change happens in its own worktree under
-`.worktrees/`, on its own branch. This lets several agents work in the
+read-only for source; ignored scratch anywhere in the main clone's
+`build/` is allowed, with `build/.vergil-state/` the namespace for
+agent state that must survive a session (rule 3 of
+[the worktree convention][worktree-spec]). Every
+change happens in its own worktree under `.worktrees/`, on its own
+branch. This lets several agents work in the
 same repository at once, and lets you start a second issue before the
 first is merged.
 
@@ -322,8 +326,9 @@ Rules for this session:
 - For Bash commands that touch files, cd into the worktree first
   or use absolute paths.
 - Do not edit files at the project root. The main worktree is
-  read-only — all changes flow through your worktree on your
-  feature branch.
+  read-only for source — all changes flow through your worktree on
+  your feature branch. Ignored scratch in the main clone's build/
+  is allowed (rule 3 of the worktree convention).
 - When you need to run validation, run it from inside your worktree
   (vrg-container-run mounts the current directory).
 ```
