@@ -27,6 +27,12 @@ class _Fake:
         self.read_body = MagicMock(side_effect=self._read)
         self.write_body = MagicMock(side_effect=self._write)
         self.default_branch = MagicMock(side_effect=self._branch)
+        self.epic = True
+        self.is_epic = MagicMock(side_effect=self._is_epic)
+
+    def _is_epic(self, ref: object) -> bool:
+        self.orgs.append(("epic", github._target_org.get()))
+        return self.epic
 
     def _read(self, owner: str, repo: str, number: int) -> str:
         self.orgs.append(("read", github._target_org.get()))
@@ -48,6 +54,7 @@ def fake() -> Generator[_Fake]:
         patch(f"{_MOD}.epic_docs.read_body", state.read_body),
         patch(f"{_MOD}.epic_docs.write_body", state.write_body),
         patch(f"{_MOD}.epic_docs.default_branch", state.default_branch),
+        patch(f"{_MOD}.epics.is_epic", state.is_epic),
     ):
         yield state
 
@@ -131,7 +138,7 @@ def test_set_does_not_check_existence(fake: _Fake) -> None:
 def test_set_runs_in_target_org(fake: _Fake) -> None:
     assert main(["set", "--epic", "other-org/.github#5", "--spec", "epics/5-x/spec.md"]) == 0
     # The branch lookups come before the read, keeping the read and the write together.
-    assert [kind for kind, _ in fake.orgs] == ["branch", "read", "write"]
+    assert [kind for kind, _ in fake.orgs] == ["epic", "branch", "read", "write"]
     assert {org for _, org in fake.orgs} == {"other-org"}
 
 
@@ -182,7 +189,68 @@ def test_set_rejects_bad_arguments(
 def test_set_no_installation(fake: _Fake, capsys: pytest.CaptureFixture[str]) -> None:
     fake.read_body.side_effect = github.NoInstallationError("o", ["x"])
     assert main(["set", "--epic", "o/.github#1"]) == 1
-    assert "o" in capsys.readouterr().err
+    assert "no installation for owner 'o'" in capsys.readouterr().err
+    fake.write_body.assert_not_called()
+
+
+def test_set_refuses_an_issue_that_is_not_an_epic(
+    fake: _Fake, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake.epic = False
+    assert main(["set", "--epic", "o/.github#1", "--spec", "epics/1-x/spec.md"]) == 1
+    assert "o/.github#1 is not an epic" in capsys.readouterr().err
+    fake.read_body.assert_not_called()
+    fake.default_branch.assert_not_called()
+    fake.write_body.assert_not_called()
+
+
+def _api_error() -> github.GitHubAPIError:
+    return github.GitHubAPIError(1, ["gh", "api"], output="", stderr="HTTP 404: Not Found")
+
+
+@pytest.mark.parametrize(
+    "where",
+    ["read_body", "default_branch"],
+)
+def test_set_api_error_before_the_write(
+    fake: _Fake, capsys: pytest.CaptureFixture[str], where: str
+) -> None:
+    getattr(fake, where).side_effect = _api_error()
+    assert main(["set", "--epic", "o/.github#1", "--plan", "typo-repo:a.md"]) == 1
+    err = capsys.readouterr().err
+    assert "o/.github#1:" in err
+    assert "nothing was edited" in err
+    fake.write_body.assert_not_called()
+
+
+def test_set_malformed_api_answer_edits_nothing(
+    fake: _Fake, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake.read_body.side_effect = ValueError("unexpected API response: no body field")
+    assert main(["set", "--epic", "o/.github#1"]) == 1
+    assert "no body field; nothing was edited" in capsys.readouterr().err
+
+
+def test_set_failed_write(fake: _Fake, capsys: pytest.CaptureFixture[str]) -> None:
+    fake.write_body.side_effect = _api_error()
+    assert main(["set", "--epic", "o/.github#1"]) == 1
+    err = capsys.readouterr().err
+    assert "o/.github#1: the edit failed" in err
+    assert "nothing was edited" not in err
+
+
+@pytest.mark.parametrize("where", ["read_body", "write_body"])
+def test_set_missing_token_is_left_to_cli_main(
+    fake: _Fake, capsys: pytest.CaptureFixture[str], where: str
+) -> None:
+    getattr(fake, where).side_effect = github.MissingGitHubTokenError(
+        4, ("gh", "api"), "", "no token"
+    )
+    with pytest.raises(SystemExit):
+        main(["set", "--epic", "o/.github#1"])
+    err = capsys.readouterr().err
+    assert "no GitHub token available" in err
+    assert "nothing was edited" not in err
 
 
 def test_path_with_colon_after_slash_is_home_path(fake: _Fake) -> None:

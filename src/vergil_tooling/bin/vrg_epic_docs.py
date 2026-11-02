@@ -6,7 +6,12 @@ current value; a new section starts with all three ``pending``. Hand-written
 document lines elsewhere in the body (a ``Documents:`` list, a standalone
 ``Spec:`` line) are removed. The command does not check that a named file
 exists: at handoff it exists only on the PR branch, so the link resolves once
-that PR merges. Re-running with the same arguments makes no edit.
+that PR merges. Re-running with the same arguments makes no edit. An issue
+without the ``epic`` label is refused.
+
+A ``PATH`` is repo-relative, with no leading ``/``, whitespace or backtick
+(the link text is a backticked path); a ``<repo>`` name is letters, digits,
+``.``, ``-`` and ``_``, as GitHub allows.
 
 The whole run, reads and writes, happens under the epic owner's App token
 (``github.target_org``). See :mod:`vergil_tooling.lib.epic_docs` for the
@@ -40,7 +45,12 @@ def main(argv: list[str] | None = None) -> int:
     except github.NoInstallationError as exc:
         print(f"{_PROG}: {github.no_installation_message(exc)}", file=sys.stderr)
         return 1
-    except epic_docs.EpicDocsFormatError as exc:
+    except github.MissingGitHubTokenError:
+        raise
+    except (github.GitHubAPIError, ValueError) as exc:
+        # Every failure that reaches here comes before the write (_set
+        # reports a failed write itself): a malformed section, an unreadable
+        # API answer, or a failed read or branch lookup.
         print(f"{_PROG}: {epic.slug}: {exc}; nothing was edited", file=sys.stderr)
         return 1
 
@@ -84,9 +94,14 @@ def _parse_path(value: str | None, owner: str) -> tuple[str | None, str] | None:
 def _set(epic: epics.IssueRef, paths: dict[str, tuple[str | None, str] | None]) -> int:
     """Rewrite *epic*'s Documents section with the named *paths*.
 
-    The default branches are looked up before the body is read, so the read
-    and the write are as close together as they can be.
+    *epic* must carry the ``epic`` label, so a mistyped number cannot rewrite
+    a task's or a pull request's body. The default branches are looked up
+    before the body is read, so the read and the write are as close together
+    as they can be.
     """
+    if not epics.is_epic(epic):
+        print(f"{_PROG}: {epic.slug} is not an epic (missing the 'epic' label)", file=sys.stderr)
+        return 1
     branches: dict[str, str] = {}
     for named in paths.values():
         repo = (named[0] or epic.repo) if named is not None else None
@@ -109,7 +124,13 @@ def _set(epic: epics.IssueRef, paths: dict[str, tuple[str | None, str] | None]) 
     if new_body == body:
         print(f"{epic.slug}: no change")
         return 0
-    epic_docs.write_body(epic.owner, epic.repo, epic.number, new_body)
+    try:
+        epic_docs.write_body(epic.owner, epic.repo, epic.number, new_body)
+    except github.MissingGitHubTokenError:
+        raise
+    except github.GitHubAPIError as exc:
+        print(f"{_PROG}: {epic.slug}: the edit failed: {exc}", file=sys.stderr)
+        return 1
     print(f"{epic.slug}: {'changed' if current is not None else 'added'} the Documents section")
     return 0
 
