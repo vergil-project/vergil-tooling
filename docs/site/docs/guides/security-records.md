@@ -13,7 +13,8 @@ extended to several advisories per issue by epic
 ## The policy
 
 - **Every security finding gets one record**, except a finding that an
-  agentic review raises and the same branch fixes (see
+  agentic review raises and the human does not rule `record` (it is
+  fixed on the branch, or rejected; see
   [Recording findings from a review](#recording-findings-from-a-review)).
   A record is one pair (an issue may name several advisories, one per
   finding; see [The two reference lines](#the-two-reference-lines)):
@@ -54,7 +55,7 @@ its security findings in a delimited section of its result, which the
 caller keeps in a main clone's ignored `build/.vergil-state/` (the
 [paad review doctrine §1.5 and §1.9](https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-review-doctrine.md#15-state-directories)).
 Both are local scratch: they live on one machine and are lost to
-`git clean -x`, a deleted worktree or a deleted state directory. A
+`git clean -fdx`, a deleted worktree or a deleted state directory. A
 security record is the durable, private home for them.
 
 ### Where a record lives
