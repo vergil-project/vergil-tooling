@@ -86,8 +86,10 @@ def main(argv: list[str] | None = None) -> int:
     since = (datetime.now(UTC) - timedelta(days=args.window_days)).date().isoformat()
     tasks = epic_audit.task_drift(since, org=org)
     epics_drift = epic_audit.epic_drift(org, home=home)
-    # One listing of the home's epics feeds both per-epic checks (epic .github#819).
-    home_epics = epic_audit.list_home_epics(home)
+    # One listing of the home's epics feeds both per-epic checks (epic .github#819),
+    # read under the home owner's App token, as epic_documents reads its links.
+    with github.target_org(home.split("/", 1)[0]):
+        home_epics = epic_audit.list_home_epics(home)
     closed_epic_open_children = epic_audit.closed_epic_open_child(
         org, home=home, listing=home_epics
     )
@@ -264,7 +266,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
             "the wrong place (epics outside .github; stray .github issues; "
             "orphans with no epic parent; private-repo work under public .github "
             "epics), and each epic's Documents section (present and well formed; "
-            "on a closed epic, nothing pending and every link resolving). "
+            "on a closed epic, nothing pending and every link naming a file; "
+            "checked only without --close). "
             "Read-only by default; pass --close (as a human) to close the drift "
             "it finds (invariant violations are report-only)."
         ),

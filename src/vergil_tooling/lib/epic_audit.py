@@ -423,15 +423,19 @@ def epic_documents(
     Container and ``[archived]`` epics are skipped (:func:`epic_docs.is_skipped`).
     Every other epic needs a well-formed section: both markers, the heading and
     exactly the three entries, each a link or one of the notes. On a closed
-    epic, no entry may read ``pending`` and every link must name a file that
-    exists on its repo's default branch; an open epic's links are not checked,
+    epic, no entry may read ``pending`` and every link must name a file (not a
+    directory) that exists on its repo's default branch; an open epic's links are not checked,
     since a link written at handoff resolves only once its PR merges. Where the
     section sits in the body is not checked.
 
     Report-only. A contents-API 404 is a finding; any other API error
     propagates. The reads run under *home*'s owner's App token, so a 404 never
     comes from a token that cannot see the org. *listing* is
-    :func:`list_home_epics`, read here when not given.
+    :func:`list_home_epics`, read here when not given; a caller that passes it
+    reads it under the same token.
+
+    Runs on the read-only report path only: ``vrg-epic-audit --close`` does
+    not run this check.
     """
     if home is None:
         home = f"{org}/.github"
@@ -451,6 +455,9 @@ def epic_documents(
     return findings
 
 
+_MALFORMED = "malformed Documents section: "
+
+
 def _epic_docs_problems(
     record: epic_docs.EpicRecord, owner: str, repo: str, branches: dict[str, str | None]
 ) -> list[str]:
@@ -458,7 +465,11 @@ def _epic_docs_problems(
     try:
         entries = epic_docs.parse(record["body"] or "", repo)
     except epic_docs.EpicDocsFormatError as exc:
-        return [f"malformed Documents section: {exc}"]
+        # The half-section error already names the section; say it only once.
+        message = str(exc)
+        if message.startswith(_MALFORMED):
+            return [message]
+        return [f"{_MALFORMED}{message}"]
     if entries is None:
         return ["no Documents section"]
     if record["state"] != "CLOSED":
@@ -477,7 +488,7 @@ def _epic_docs_problems(
 def _link_problems(
     label: str, link: epic_docs.DocLink, owner: str, branches: dict[str, str | None]
 ) -> list[str]:
-    """Why *link* does not resolve on its repo's default branch, if it does not."""
+    """Why *link* does not name a file on its repo's default branch, if it does not."""
     where = f"`{link.repo}/{link.path}`"
     if link.owner.lower() != owner.lower():
         return [f"{label} links {where} outside the {owner} org"]
@@ -497,8 +508,13 @@ def _link_problems(
         problems.append(
             f"{label} links {where} on branch `{link.branch}`, not the default branch `{branch}`"
         )
-    if not epic_docs.file_exists(link.owner, link.repo, link.path, branch):
+    kind = epic_docs.content_type(link.owner, link.repo, link.path, branch)
+    if kind is None:
         problems.append(f"{label} link {where} does not resolve on `{branch}`")
+    elif kind == "dir":
+        problems.append(f"{label} links a directory, {where}, on `{branch}`, not a file")
+    elif kind != "file":
+        problems.append(f"{label} links {where}, a {kind} on `{branch}`, not a file")
     return problems
 
 

@@ -1535,16 +1535,16 @@ def _not_found() -> github.GitHubAPIError:
 def _documents(
     listing: list[epic_docs.EpicRecord],
     *,
-    exists: bool | MagicMock = True,
+    kind: str | None = "file",
     branch: str = "develop",
 ) -> tuple[list[epic_audit.EpicDocsFinding], MagicMock]:
-    file_exists = exists if isinstance(exists, MagicMock) else MagicMock(return_value=exists)
+    content_type = MagicMock(return_value=kind)
     with (
         patch("vergil_tooling.lib.epic_docs.list_epics", return_value=listing),
         patch("vergil_tooling.lib.epic_docs.default_branch", return_value=branch),
-        patch("vergil_tooling.lib.epic_docs.file_exists", file_exists),
+        patch("vergil_tooling.lib.epic_docs.content_type", content_type),
     ):
-        return epic_audit.epic_documents("org"), file_exists
+        return epic_audit.epic_documents("org"), content_type
 
 
 def test_epic_documents_missing_section() -> None:
@@ -1558,60 +1558,84 @@ def test_epic_documents_missing_section() -> None:
 def test_epic_documents_malformed() -> None:
     half = f"{epic_docs.BEGIN}\n{epic_docs.HEADING}\n\n- Spec: pending\n"
     findings, _ = _documents([_record(3, state="OPEN", body=half)])
-    assert len(findings) == 1
-    assert findings[0].number == 3
-    assert findings[0].problem.startswith("malformed Documents section: ")
+    assert findings == [
+        epic_audit.EpicDocsFinding(
+            3,
+            "OPEN",
+            f"malformed Documents section: expected one {epic_docs.BEGIN} followed by one "
+            f"{epic_docs.END}, found 1 and 0",
+        )
+    ]
 
 
 def test_epic_documents_bad_entry_is_malformed() -> None:
     body = _section().replace("- Plan: pending", "- Plan: see the wiki")
     findings, _ = _documents([_record(4, body=body)])
-    assert [f.problem.split(":")[0] for f in findings] == ["malformed Documents section"]
+    assert [f.problem for f in findings] == [
+        "malformed Documents section: Documents entry is neither a note nor a link: 'see the wiki'"
+    ]
 
 
 def test_epic_documents_closed_link_404() -> None:
-    findings, file_exists = _documents([_record(5, body=_linked())], exists=False)
+    findings, content_type = _documents([_record(5, body=_linked())], kind=None)
     problems = [f.problem for f in findings]
     assert problems == [
         "Spec link `.github/epics/5-x/spec.md` does not resolve on `develop`",
         "Plan link `.github/epics/5-x/plan.md` does not resolve on `develop`",
         "Retrospective link `.github/epics/5-x/retrospective.md` does not resolve on `develop`",
     ]
-    file_exists.assert_any_call("org", ".github", "epics/5-x/spec.md", "develop")
+    content_type.assert_any_call("org", ".github", "epics/5-x/spec.md", "develop")
+
+
+def test_epic_documents_closed_link_to_a_directory() -> None:
+    body = _section(_link("epics/5-x"), epic_docs.NOT_WRITTEN, epic_docs.NOT_WRITTEN)
+    findings, content_type = _documents([_record(5, body=body)], kind="dir")
+    assert [f.problem for f in findings] == [
+        "Spec links a directory, `.github/epics/5-x`, on `develop`, not a file"
+    ]
+    content_type.assert_called_once_with("org", ".github", "epics/5-x", "develop")
+
+
+def test_epic_documents_closed_link_to_another_kind() -> None:
+    body = _section(_link("epics/5-x/spec.md"), epic_docs.NOT_WRITTEN, epic_docs.NOT_WRITTEN)
+    findings, _ = _documents([_record(5, body=body)], kind="submodule")
+    assert [f.problem for f in findings] == [
+        "Spec links `.github/epics/5-x/spec.md`, a submodule on `develop`, not a file"
+    ]
 
 
 def test_epic_documents_closed_links_resolve() -> None:
-    findings, file_exists = _documents([_record(5, body=_linked())])
+    findings, content_type = _documents([_record(5, body=_linked())])
     assert findings == []
-    assert file_exists.call_count == 3
+    assert content_type.call_count == 3
 
 
 def test_epic_documents_closed_link_off_the_default_branch() -> None:
     body = _section(
         _link("epics/5-x/spec.md", branch="main"), epic_docs.NOT_WRITTEN, epic_docs.NOT_WRITTEN
     )
-    findings, file_exists = _documents([_record(5, body=body)])
+    findings, content_type = _documents([_record(5, body=body)])
     assert [f.problem for f in findings] == [
         "Spec links `.github/epics/5-x/spec.md` on branch `main`, not the default branch `develop`"
     ]
-    file_exists.assert_called_once_with("org", ".github", "epics/5-x/spec.md", "develop")
+    content_type.assert_called_once_with("org", ".github", "epics/5-x/spec.md", "develop")
 
 
 def test_epic_documents_closed_link_to_a_missing_repo() -> None:
     body = _section(
         _link("docs/specs/x.md", repo="gone"), epic_docs.NOT_WRITTEN, epic_docs.NOT_WRITTEN
     )
-    file_exists = MagicMock(return_value=True)
+    content_type = MagicMock(return_value="file")
     with (
         patch("vergil_tooling.lib.epic_docs.list_epics", return_value=[_record(6, body=body)]),
         patch("vergil_tooling.lib.epic_docs.default_branch", side_effect=_not_found()),
-        patch("vergil_tooling.lib.epic_docs.file_exists", file_exists),
+        patch("vergil_tooling.lib.epic_docs.content_type", content_type),
     ):
         findings = epic_audit.epic_documents("org")
     assert [f.problem for f in findings] == [
         "Spec links `gone/docs/specs/x.md` in a repo that does not exist"
     ]
-    file_exists.assert_not_called()
+    content_type.assert_not_called()
 
 
 def test_epic_documents_other_api_errors_propagate() -> None:
@@ -1630,7 +1654,7 @@ def test_epic_documents_caches_default_branches() -> None:
     with (
         patch("vergil_tooling.lib.epic_docs.list_epics", return_value=listing),
         patch("vergil_tooling.lib.epic_docs.default_branch", default_branch),
-        patch("vergil_tooling.lib.epic_docs.file_exists", return_value=True),
+        patch("vergil_tooling.lib.epic_docs.content_type", return_value="file"),
     ):
         assert epic_audit.epic_documents("org") == []
     default_branch.assert_called_once_with("org", ".github")
@@ -1642,11 +1666,11 @@ def test_epic_documents_closed_link_outside_the_org() -> None:
         epic_docs.NOT_WRITTEN,
         epic_docs.NOT_WRITTEN,
     )
-    findings, file_exists = _documents([_record(7, body=body)])
+    findings, content_type = _documents([_record(7, body=body)])
     assert [f.problem for f in findings] == [
         "Spec links `tools/docs/specs/x.md` outside the org org"
     ]
-    file_exists.assert_not_called()
+    content_type.assert_not_called()
 
 
 def test_epic_documents_closed_pending() -> None:
@@ -1664,9 +1688,9 @@ def test_epic_documents_closed_notes_are_fine() -> None:
 
 
 def test_epic_documents_open_link_not_checked() -> None:
-    findings, file_exists = _documents([_record(10, state="OPEN", body=_linked())], exists=False)
+    findings, content_type = _documents([_record(10, state="OPEN", body=_linked())], kind=None)
     assert findings == []
-    file_exists.assert_not_called()
+    content_type.assert_not_called()
 
 
 def test_epic_documents_open_pending_is_fine() -> None:

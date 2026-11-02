@@ -169,6 +169,24 @@ def test_main_lists_home_epics_once_for_both_per_epic_checks(
     assert rc == 0  # report-only: a finding does not change the exit status
 
 
+def test_main_lists_home_epics_under_the_home_owner_token() -> None:
+    seen: list[str | None] = []
+
+    def fake_list(home: str) -> list[Any]:
+        assert home == "lab-org/lab"
+        seen.append(github._target_org.get())
+        return []
+
+    with (
+        _patched(_report_patches()),
+        patch(f"{_MOD}.epics.resolve_epic_home", return_value="lab-org/lab"),
+        patch(f"{_MOD}.epic_audit.list_home_epics", side_effect=fake_list),
+        patch(f"{_MOD}.epic_audit.closed_epic_open_child", return_value=[]),
+    ):
+        assert main(["--repo", "lab-org/lab"]) == 0
+    assert seen == ["lab-org"]
+
+
 def test_close_does_not_run_the_epic_documents_check() -> None:
     documents = MagicMock(return_value=[])
     with (
@@ -478,9 +496,10 @@ def test_close_sweep_drain_scoped_to_org(capsys: pytest.CaptureFixture[str]) -> 
         rc = main(["--close"])
     assert rc == 0
     assert scope.call_args.args[0] == "org"
-    # The second scoped block is the orphan pass (no-op on an empty org), the
-    # third the security-records pass.
-    assert order == ["enter", "drain", "exit", "enter", "exit", "enter", "exit"]
+    # The first scoped block lists the home's epics, the second drains, the
+    # third is the orphan pass (no-op on an empty org), the fourth the
+    # security-records pass.
+    assert order == ["enter", "exit", "enter", "drain", "exit", "enter", "exit", "enter", "exit"]
 
 
 def test_close_sweep_drain_summary(capsys: pytest.CaptureFixture[str]) -> None:
@@ -584,8 +603,9 @@ def test_epic_audit_close_runs_standing_drain(
     ):
         rc = main(["--close"])
     assert rc == 0
-    # Then the orphan pass and the security-records pass, each in its own block.
-    assert order == ["enter", "standing", "exit", "enter", "exit", "enter", "exit"]
+    # After the home's epic listing and the drains, the orphan pass and the
+    # security-records pass, each in its own block.
+    assert order == ["enter", "exit", "enter", "standing", "exit", "enter", "exit", "enter", "exit"]
     assert standing_drain.call_args.args[0] == "org"
     assert standing_drain.call_args.kwargs["apply"] is True
     out = capsys.readouterr().out
@@ -722,10 +742,13 @@ def test_vrg_epic_audit_close_applies_in_order(capsys: pytest.CaptureFixture[str
     ):
         rc = main(["--close"])
     assert rc == 0
-    # The existing passes run in the first org-scoped block; the orphan pass
-    # applies in its own, in the order nativize -> strip -> move -> attach; the
-    # security-records pass runs last, in its own block.
+    # The home's epic listing runs in the first org-scoped block and the existing
+    # passes in the second; the orphan pass applies in its own, in the order
+    # nativize -> strip -> move -> attach; the security-records pass runs last,
+    # in its own block.
     assert order == [
+        "enter",
+        "exit",
         "enter",
         "exit",
         "enter",
