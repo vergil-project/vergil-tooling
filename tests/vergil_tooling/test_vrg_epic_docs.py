@@ -514,6 +514,30 @@ def test_backfill_set_decided_not_reflagged(capsys: pytest.CaptureFixture[str]) 
     home.list_dir.assert_called_once()  # the home's epics/ listing only
 
 
+def test_backfill_partly_linked_epic_not_reflagged(capsys: pytest.CaptureFixture[str]) -> None:
+    # Settled with set: spec and plan linked, the retrospective still a note.
+    entries: dict[str, epic_docs.Entry] = {
+        doc: DocLink("o", ".github", f"epics/7-a/{doc}.md", "develop") for doc in ("spec", "plan")
+    }
+    entries["retrospective"] = epic_docs.NOT_WRITTEN
+    body = f"{epic_docs.render(entries, '.github')}\n\nSee also docs/specs/old.md.\n"
+    files = _home_files(
+        ("o/.github", "epics/7-a/spec.md"),
+        ("o/.github", "epics/7-a/plan.md"),
+        ("o/.github", "epics/7-b/spec.md"),
+        ("o/.github", "docs/specs/old.md"),
+    )
+    home = _Home([_record(7, body), _record(8, body.replace("7-a", "8-a"))], files)
+    home.files |= _home_files(
+        ("o/.github", "epics/8-a/spec.md"), ("o/.github", "epics/8-a/plan.md")
+    )
+    assert home.run(["backfill", "--org", "o"]) == 0
+    out = capsys.readouterr().out
+    assert "o/.github#7: no change" in out
+    assert "o/.github#8: no change" in out
+    assert "0 need a decision" in out
+
+
 def test_backfill_reads_in_target_org() -> None:
     files = _home_files(("o/.github", "epics/1-a/spec.md"))
     files.add(("vergil-vm", "docs/specs/a.md"))

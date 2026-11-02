@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypedDict, cast
 from urllib.parse import quote
 
-from vergil_tooling.lib import branch_sweep, epics, github, remote_config
+from vergil_tooling.lib import branch_sweep, epics, github
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
@@ -466,6 +466,19 @@ def write_body(owner: str, repo: str, number: int, body: str) -> None:
     github.write_json("PATCH", _issue_endpoint(owner, repo, number), {"body": body})
 
 
+_NOT_FOUND_RE = re.compile(r"\(HTTP 404\)$", re.MULTILINE)
+
+
+def is_not_found(exc: github.GitHubAPIError) -> bool:
+    """True when *exc* is gh reporting an HTTP 404 status.
+
+    gh ends its error line with the status, ``gh: Not Found (HTTP 404)``, so
+    only a stderr line ending in exactly ``(HTTP 404)`` counts; a ``404``
+    anywhere else (a path such as ``epics/404-x``, a request id) does not.
+    """
+    return _NOT_FOUND_RE.search((exc.stderr or "").replace("\r", "")) is not None
+
+
 def _contents_endpoint(owner: str, repo: str, path: str, branch: str) -> str:
     return f"repos/{owner}/{repo}/contents/{quote(path)}?ref={quote(branch, safe='')}"
 
@@ -478,7 +491,7 @@ def file_exists(owner: str, repo: str, path: str, branch: str) -> bool:
     try:
         github.read_json("api", _contents_endpoint(owner, repo, path, branch))
     except github.GitHubAPIError as exc:
-        if remote_config.is_not_found(exc):
+        if is_not_found(exc):
             return False
         raise
     return True
@@ -495,7 +508,7 @@ def list_dir(owner: str, repo: str, path: str, branch: str) -> dict[str, str] | 
     try:
         data = github.read_json("api", endpoint)
     except github.GitHubAPIError as exc:
-        if remote_config.is_not_found(exc):
+        if is_not_found(exc):
             return None
         raise
     if not isinstance(data, list):
@@ -601,8 +614,23 @@ def epic_directories(owner: str, home_repo: str, branch: str) -> frozenset[str]:
 _EPIC_DIR_RE = re.compile(r"(?<![\w.-])epics/([\w.-]+)/")
 _DOC_PATH_RE = re.compile(
     r"(?<![\w./-])(?:([\w.-]+)/)?(?:([\w.-]+)/)?"
-    r"(docs/(?:specs|superpowers/specs|plans)/[\w./-]*?[\w-]\.md)(?![\w/-]|\.\w)"
+    r"(docs/(?:specs|plans|superpowers/specs|superpowers/plans)/[\w./-]*?[\w-]\.md)"
+    r"(?![\w/-]|\.\w)"
 )
+_PLAN_PREFIXES = ("docs/plans/", "docs/superpowers/plans/")
+
+
+def _outside_section(body: str) -> str:
+    """*body* without its marked Documents section, markers included.
+
+    Discovery reads only what the epic's prose mentions: the section's own
+    links name documents already decided, possibly another epic's.
+    """
+    lines = _split(body)
+    region = _region(lines)
+    if region is None:
+        return body
+    return "".join(lines[: region[0]] + lines[region[1] + 1 :])
 
 
 def discover(
@@ -614,33 +642,61 @@ def discover(
     *,
     epic_dirs: Iterable[str] | None = None,
     branches: dict[str, str] | None = None,
+    wanted: Iterable[str] = DOCS,
 ) -> dict[str, DocLink | None]:
     """The documents of epic *number*, each a :class:`DocLink` or None (§5.2).
 
     Looks, in order, for the directory ``epics/<number>-*/`` in the home repo
     on *branch*, an existing ``epics/<dir>/`` the *body* mentions, and
-    existing ``docs/specs/``, ``docs/superpowers/specs/`` or ``docs/plans/``
-    paths the body mentions, in the home repo or another repo of *owner*. In
-    a directory, ``spec.md``, ``plan.md`` and ``retrospective.md`` are the
-    documents. Raises :class:`Ambiguous` for two candidate directories, or
-    two candidate specs or plans.
+    existing ``docs/specs/``, ``docs/plans/``, ``docs/superpowers/specs/`` or
+    ``docs/superpowers/plans/`` paths the body mentions, in the home repo or
+    another repo of *owner*. In a directory, ``spec.md``, ``plan.md`` and
+    ``retrospective.md`` are the documents. The body's marked Documents
+    section is not read.
+
+    *wanted* names the documents still needing a decision; only they are
+    looked for. Raises :class:`Ambiguous` when more than one candidate
+    directory holds a wanted document, or a wanted spec or plan has more
+    than one candidate. A document not wanted is returned as None.
 
     *epic_dirs* is :func:`epic_directories`, looked up when not given;
     *branches* caches default branches by repo name across calls.
     """
+    wanted = frozenset(wanted)
+    if not wanted <= set(DOCS):
+        msg = f"not documents: {', '.join(sorted(wanted - set(DOCS)))}"
+        raise ValueError(msg)
+    if not wanted:
+        return dict.fromkeys(DOCS)
+    body = _outside_section(body)
     dirs = frozenset(epic_dirs) if epic_dirs is not None else None
     if dirs is None:
         dirs = epic_directories(owner, home_repo, branch)
     found = sorted(name for name in dirs if name.startswith(f"{number}-"))
     if not found:
         found = sorted({name for name in _EPIC_DIR_RE.findall(body) if name in dirs})
-    if len(found) > 1:
-        raise Ambiguous("directories", (f"epics/{name}/" for name in found))
     if found:
-        return _directory_documents(owner, home_repo, f"epics/{found[0]}", branch)
+        return _found_directory(owner, home_repo, found, branch, wanted)
     cache = branches if branches is not None else {}
     cache.setdefault(home_repo, branch)
-    return _mentioned_documents(owner, home_repo, body, cache)
+    return _mentioned_documents(owner, home_repo, body, cache, wanted)
+
+
+def _found_directory(
+    owner: str, repo: str, found: list[str], branch: str, wanted: frozenset[str]
+) -> dict[str, DocLink | None]:
+    """The wanted documents of the one directory in *found* that holds any."""
+    holding: list[tuple[str, dict[str, DocLink | None]]] = []
+    for name in found:
+        documents = _directory_documents(owner, repo, f"epics/{name}", branch)
+        if any(documents[doc] is not None for doc in wanted):
+            holding.append((name, documents))
+    if len(holding) > 1:
+        raise Ambiguous("directories", (f"epics/{name}/" for name, _ in holding))
+    if not holding:
+        return dict.fromkeys(DOCS)
+    documents = holding[0][1]
+    return {doc: documents[doc] if doc in wanted else None for doc in DOCS}
 
 
 def _directory_documents(
@@ -659,9 +715,9 @@ def _directory_documents(
 
 
 def _mentioned_documents(
-    owner: str, home_repo: str, body: str, branches: dict[str, str]
+    owner: str, home_repo: str, body: str, branches: dict[str, str], wanted: frozenset[str]
 ) -> dict[str, DocLink | None]:
-    """The spec and plan among the ``docs/…`` paths *body* mentions that exist."""
+    """The wanted spec and plan among the ``docs/…`` paths *body* mentions that exist."""
     candidates: dict[str, dict[tuple[str, str], DocLink]] = {"spec": {}, "plan": {}}
     for first, second, path in _DOC_PATH_RE.findall(body):
         if second:
@@ -670,9 +726,9 @@ def _mentioned_documents(
             repo = second
         else:
             repo = first or home_repo
-        doc = "plan" if path.startswith("docs/plans/") else "spec"
+        doc = "plan" if path.startswith(_PLAN_PREFIXES) else "spec"
         key = (repo.lower(), path)
-        if key in candidates[doc]:
+        if doc not in wanted or key in candidates[doc]:
             continue
         branch = _repo_branch(owner, repo, branches)
         if branch is not None and file_exists(owner, repo, path, branch):
@@ -693,7 +749,7 @@ def _repo_branch(owner: str, repo: str, branches: dict[str, str]) -> str | None:
     try:
         branch = default_branch(owner, repo)
     except github.GitHubAPIError as exc:
-        if remote_config.is_not_found(exc):
+        if is_not_found(exc):
             return None
         raise
     branches[repo] = branch

@@ -655,13 +655,21 @@ class _Tree:
             raise _not_found()
         return self.branches[repo]
 
-    def discover(self, number: int, body: str = "") -> dict[str, DocLink | None]:
+    def discover(
+        self, number: int, body: str = "", wanted: tuple[str, ...] = epic_docs.DOCS
+    ) -> dict[str, DocLink | None]:
+        self.checked: list[str] = []
+
+        def file_exists(owner: str, repo: str, path: str, branch: str) -> bool:
+            self.checked.append(path)
+            return self.file_exists(owner, repo, path, branch)
+
         with (
             patch.object(epic_docs, "list_dir", self.list_dir),
-            patch.object(epic_docs, "file_exists", self.file_exists),
+            patch.object(epic_docs, "file_exists", file_exists),
             patch.object(epic_docs, "default_branch", self.default_branch),
         ):
-            return epic_docs.discover(_OWNER, _HOME, number, body, "develop")
+            return epic_docs.discover(_OWNER, _HOME, number, body, "develop", wanted=wanted)
 
 
 def test_epic_directories_skip_archive_and_files() -> None:
@@ -731,6 +739,88 @@ def test_discover_superpowers_spec_and_home_plan() -> None:
         "plan": _link("docs/plans/p.md"),
         "retrospective": None,
     }
+
+
+def test_discover_superpowers_plan() -> None:
+    tree = _Tree({("vergil-vm", "docs/superpowers/plans/p.md")})
+    body = "Plan: `vergil-vm/docs/superpowers/plans/p.md`\n"
+    assert tree.discover(54, body) == {
+        "spec": None,
+        "plan": _link("docs/superpowers/plans/p.md", "vergil-vm", "main"),
+        "retrospective": None,
+    }
+
+
+def test_discover_skips_the_marked_section() -> None:
+    tree = _Tree({(_HOME, "epics/553-x/spec.md"), (_HOME, "epics/553-x/plan.md")})
+    tree.files |= {(_HOME, "epics/554-y/spec.md"), (_HOME, "docs/specs/s.md")}
+    section = epic_docs.render(
+        {
+            "spec": _link("epics/553-x/spec.md"),
+            "plan": epic_docs.PENDING,
+            "retrospective": epic_docs.PENDING,
+        },
+        _HOME,
+    )
+    # The section's own link is not a mention: epics/553-x/ is not picked up.
+    assert tree.discover(560, f"{section}\n\nEpic.\n") == dict.fromkeys(epic_docs.DOCS)
+    # Nor does it make a directory the prose mentions ambiguous.
+    assert tree.discover(560, f"{section}\n\nSee epics/554-y/.\n")["spec"] == _link(
+        "epics/554-y/spec.md"
+    )
+    # Nor a second spec beside one the prose mentions.
+    linked = section.replace("epics/553-x/spec.md", "docs/specs/s.md")
+    tree.files.add((_HOME, "docs/specs/t.md"))
+    assert tree.discover(560, f"{linked}\n\ndocs/specs/t.md\n")["spec"] == _link("docs/specs/t.md")
+
+
+def test_discover_only_wanted_documents() -> None:
+    tree = _Tree({(_HOME, "epics/7-a/spec.md"), (_HOME, "epics/7-b/spec.md")})
+    # Two directories, neither holding the one document still to decide.
+    assert tree.discover(7, wanted=("retrospective",)) == dict.fromkeys(epic_docs.DOCS)
+    # One of them holds it: that directory, and only the wanted document.
+    tree.files |= {(_HOME, "epics/7-b/retrospective.md"), (_HOME, "epics/7-b/plan.md")}
+    assert tree.discover(7, wanted=("retrospective",)) == {
+        "spec": None,
+        "plan": None,
+        "retrospective": _link("epics/7-b/retrospective.md"),
+    }
+    # Both hold a wanted document: ambiguous.
+    with pytest.raises(epic_docs.Ambiguous) as caught:
+        tree.discover(7, wanted=("spec", "retrospective"))
+    assert caught.value.candidates == ("epics/7-a/", "epics/7-b/")
+    # Two candidate specs, but only the plan is still to decide.
+    tree = _Tree({("vergil-vm", "docs/specs/a.md"), (_HOME, "docs/specs/b.md")})
+    tree.files.add((_HOME, "docs/plans/p.md"))
+    body = "vergil-vm/docs/specs/a.md\ndocs/specs/b.md\ndocs/plans/p.md\n"
+    assert tree.discover(51, body, wanted=("plan",)) == {
+        "spec": None,
+        "plan": _link("docs/plans/p.md"),
+        "retrospective": None,
+    }
+    assert tree.checked == ["docs/plans/p.md"]
+    # Nothing wanted: nothing looked up.
+    assert tree.discover(51, body, wanted=()) == dict.fromkeys(epic_docs.DOCS)
+    assert tree.checked == []
+    with pytest.raises(ValueError, match="not documents: notes"):
+        tree.discover(51, body, wanted=("notes",))
+
+
+@pytest.mark.parametrize(
+    ("stderr", "stdout", "found"),
+    [
+        ("gh: Not Found (HTTP 404)", "", True),
+        ("gh: Not Found (HTTP 404)\r\n", "", True),
+        ("warning\ngh: Not Found (HTTP 404)\n", "", True),
+        ("gh: Bad Gateway (HTTP 502)\nepics/404-x/spec.md", "", False),
+        ("gh: Server Error (HTTP 500) request 1404", "", False),
+        ("gh: Bad Gateway (HTTP 502)", '{"status": "404"}', False),
+        (None, "HTTP 404", False),
+    ],
+)
+def test_is_not_found_matches_the_status_only(stderr: str | None, stdout: str, found: bool) -> None:
+    exc = github.GitHubAPIError(1, ["gh", "api"], output=stdout, stderr=stderr)
+    assert epic_docs.is_not_found(exc) is found
 
 
 def test_discover_ignores_missing_other_org_and_unknown_repo() -> None:

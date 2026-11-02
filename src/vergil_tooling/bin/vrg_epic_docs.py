@@ -247,11 +247,10 @@ def _backfill_one(  # noqa: PLR0913 - the run's shared lookups, passed rather th
     links = {
         doc: entry for doc, entry in (current or {}).items() if isinstance(entry, epic_docs.DocLink)
     }
-    found: dict[str, epic_docs.DocLink | None] = dict.fromkeys(epic_docs.DOCS)
-    if len(links) < len(epic_docs.DOCS):
-        found = epic_docs.discover(
-            owner, repo, number, body, branch, epic_dirs=dirs, branches=branches
-        )
+    wanted = [doc for doc in epic_docs.DOCS if doc not in links]
+    found = epic_docs.discover(
+        owner, repo, number, body, branch, epic_dirs=dirs, branches=branches, wanted=wanted
+    )
     entries: dict[str, epic_docs.Entry] = {
         doc: links.get(doc)
         or epic_docs.entry_for(
