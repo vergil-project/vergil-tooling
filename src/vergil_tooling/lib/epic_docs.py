@@ -324,11 +324,13 @@ _LEGACY_BULLET_RE = re.compile(r"^- (Spec|Plan|Retrospective):")
 _NOTE_ALTERNATION = "|".join(re.escape(note) for note in sorted(NOTES, key=len, reverse=True))
 _LEGACY_LINE_RE = re.compile(
     r"^(Spec|Plan|Retrospective): *"
-    rf"(?:`[^`]+`|\[[^\]]*\]\([^)\s]*\)|{_NOTE_ALTERNATION})"
+    r"(?:`[^`]+`|\[[^\]]*\]\([^)\s]*\)|[\w.-]+(?:/[\w.-]+)*/[\w.-]*\w\.md|"
+    rf"{_NOTE_ALTERNATION})"
     r"(?: *\(.*\))?\.?\s*$"
 )
 """A standalone document line: its whole value is one backticked path, one
-markdown link or one note, with an optional bracketed remark. A prose line
+bare ``.md`` path with a directory, one markdown link or one note, with an
+optional bracketed remark. A prose line
 that merely starts with the label, such as ``Plan: migrate the repos first.``
 or ``Plan: `vrg-foo` ships first.``, is kept."""
 _CONTINUATION_RE = re.compile(r"^\(.*\)\.?$")

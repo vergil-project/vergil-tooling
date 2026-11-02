@@ -357,6 +357,21 @@ def test_strip_legacy_standalone_lines() -> None:
     ]
 
 
+def test_strip_legacy_standalone_bare_path_lines() -> None:
+    body = (
+        "Intro.\n\n"
+        "Spec: vergil-vm/docs/superpowers/specs/a.md\n"
+        "Plan: docs/plans/2026-01-01-b.md (the second draft).\n\n"
+        "Planning: vergil-project/.github#469\n"
+    )
+    new, removed = strip_legacy(body)
+    assert new == "Intro.\n\nPlanning: vergil-project/.github#469\n"
+    assert removed == [
+        "Spec: vergil-vm/docs/superpowers/specs/a.md",
+        "Plan: docs/plans/2026-01-01-b.md (the second draft).",
+    ]
+
+
 def test_strip_legacy_standalone_note_lines() -> None:
     body = "Spec: pending\nPlan: not written (closed as not planned).\nRetrospective: pending.\n"
     new, removed = strip_legacy(body)
@@ -373,6 +388,8 @@ def test_strip_legacy_standalone_note_lines() -> None:
         "Plan:",
         "Plan: `vrg-foo` must ship before the migration starts.",
         "Spec: [optional] cover CRLF too",
+        "Spec: notes.md",
+        "Plan: docs/plans/a.md is out of date.",
         "Spec: [the draft](https://example.com/a.md) is out of date.",
     ],
 )
