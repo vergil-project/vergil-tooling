@@ -558,15 +558,17 @@ looks for the documents, in order:
 In a directory, `spec.md`, `plan.md` and `retrospective.md` are the
 documents; the `epics/archive/` directory is never read. A link already in
 the section is kept, so only entries that are still notes are decided, by
-the entry rules. Two candidate directories, or two candidate specs or plans,
-make the epic **need a decision**: it is named and left unchanged, for a
-human to settle with `set`. Hand-written `Documents:`, `Spec:`, `Plan:` and
-`Retrospective:` lines (and a bracketed note line after one) are removed.
-Without `--apply` it is a dry run: per epic it prints whether it would add,
-change or leave the section, the section itself and each line it would
-remove, then a summary count. With `--apply` each body is read again just
-before it is written, so an edit made since the listing is kept. A failed
-epic is named and the run carries on.
+the entry rules. Two candidate directories that each hold a document still
+to be decided, or two candidate specs or plans, make the epic **need a
+decision**: it is named and left unchanged, for a human to settle with
+`set`. Hand-written `Documents:`, `Spec:`, `Plan:` and `Retrospective:`
+lines (and a bracketed note line after one) are removed. Without `--apply`
+it is a dry run: per epic it prints whether it would add, change or leave
+the section, the section itself and each line it would remove, then a
+summary count. With `--apply` each body is read again before its documents
+are looked for, so an edit made since the listing is kept; an edit made
+while that epic is being worked on is not. A failed epic is named and the
+run carries on.
 
 Both subcommands run every read and write under the epic owner's App token.
 
@@ -576,7 +578,7 @@ Both subcommands run every read and write under the epic owner's App token.
 | Args | `set`: `--epic` (required), `--spec PATH`, `--plan PATH`, `--retrospective PATH`; `backfill`: `--org ORG` or `--repo OWNER/REPO` (one required), `--apply` |
 | Preconditions | GitHub App credentials for the epic's org |
 | Failure mode | Error on stderr; for `set`, an issue that is not an epic, a bad `PATH`, or a malformed section (half a section, a bad entry) is refused with nothing edited. For `backfill`, a failed listing edits nothing; an epic that needs a decision or fails is named and left unchanged while the rest run |
-| Exit codes | 0 written, already correct, or (`backfill`) every epic correct or corrected; 1 error, or any epic that needs a decision or failed |
+| Exit codes | 0 written or already correct, or (`backfill`) no epic needs a decision or failed, including a dry run with changes still to make; 1 error, or any epic that needs a decision or failed; 2 bad arguments |
 | Status | Active |
 
 ### vrg-epic-link
@@ -884,11 +886,13 @@ An **Epic documents** section checks the
 every epic in the home, open and closed, apart from the standing and
 `[archived]` epics. Each epic needs the section, well formed, with its three
 entries. On a closed epic, no entry may read `pending` and every link must
-name a file on its repo's default branch (a link to another branch, another
-org or a missing repo is reported too). An open epic's links are not
-checked. The findings are report-only: they do not change the exit status,
-and `vrg-epic-docs` settles them. The audit lists the home's epics once, for
-this check and the closed-epic-with-open-child check.
+name a file on its repo's default branch (a link to a directory, another
+branch, another org or a missing repo is reported too). An open epic's links
+are not checked. The findings are report-only: they do not change the exit
+status, and `vrg-epic-docs` settles them. The check runs only without
+`--close`, so the scheduled sweep does not report it. The audit lists the
+home's epics once, under the home owner's App token, for this check and the
+closed-epic-with-open-child check.
 
 The report previews, without
 writing, the ad-hoc and queue-epic drains and the security-records pass that
