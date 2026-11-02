@@ -13219,6 +13219,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-epic-docs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-epic-docs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-epic-link" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17842,6 +17853,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-epic-docs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-epic-docs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-epic-link" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19573,6 +19595,53 @@ The sanctioned path for creating epics, used by the <code>epic-create</code> and
 <tr>
 <td>Exit codes</td>
 <td>0 created, 1 error</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-epic-docs">vrg-epic-docs<a class="headerlink" href="#vrg-epic-docs" title="Permanent link">&para;</a></h3>
+<p>Write an epic's <strong>Documents</strong> section, the marked block at the top of its body
+that links the epic's spec, plan and retrospective or notes why one does not
+exist. <code>set --epic OWNER/REPO#N</code> adds the section, or updates it in place;
+an entry not named keeps its value, and a new section starts all <code>pending</code>.
+The issue must carry the <code>epic</code> label. A <code>PATH</code> is in the epic's home repo,
+or <code>&lt;repo&gt;:&lt;path&gt;</code> for another repo of the same org (an
+<code>&lt;owner&gt;/&lt;repo&gt;:&lt;path&gt;</code> value naming the epic's owner is refused); the
+file's existence is not checked. A path is repo-relative, with no leading
+<code>/</code>, whitespace or backtick, and a repo name uses only letters, digits, <code>.</code>,
+<code>-</code> and <code>_</code>. Hand-written document lines elsewhere in the body are removed,
+and a body that is already correct is not edited. The run uses the epic
+owner's App token.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_epic_docs</code></td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>set</code>: <code>--epic</code> (required), <code>--spec PATH</code>, <code>--plan PATH</code>, <code>--retrospective PATH</code></td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>GitHub App credentials for the epic's org</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td>Error on stderr; an issue that is not an epic, a bad <code>PATH</code>, or a malformed section (half a section, a bad entry) is refused with nothing edited</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 written or already correct, 1 error</td>
 </tr>
 <tr>
 <td>Status</td>
