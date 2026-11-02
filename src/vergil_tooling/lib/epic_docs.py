@@ -26,13 +26,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, TypedDict, cast
 from urllib.parse import quote
 
-from vergil_tooling.lib import branch_sweep, github
+from vergil_tooling.lib import branch_sweep, epics, github
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Iterable, Mapping
 
 DOCS = ("spec", "plan", "retrospective")
 """The three documents, in the order the section lists them."""
@@ -150,10 +150,12 @@ class _Fences:
     """Track whether successive lines are inside a fenced code block.
 
     As in CommonMark, a fence is a run of three or more backticks or tildes
-    (a backtick fence's info string has no backtick), and only a run of the
-    same character, at least as long as the opener's, with nothing but
-    whitespace after it, closes the block. A shorter run, or one with an info
-    string, is content of the block (a nested example).
+    (a backtick fence's info string has no backtick) indented at most three
+    spaces, and only such a run of the same character, at least as long as
+    the opener's, with nothing but whitespace after it, closes the block. A
+    shorter run, or one with an info string, is content of the block (a
+    nested example). A run indented four spaces or more is indented code, not
+    a fence, the same limit :func:`_is_marker` applies to the markers.
     """
 
     def __init__(self) -> None:
@@ -163,7 +165,8 @@ class _Fences:
         """Advance over *content*; True when the line is a fence or fenced."""
         stripped = content.lstrip(" ")
         char = stripped[:1]
-        run = len(stripped) - len(stripped.lstrip(char)) if char in ("`", "~") else 0
+        fence_char = char in ("`", "~") and len(content) - len(stripped) <= 3
+        run = len(stripped) - len(stripped.lstrip(char)) if fence_char else 0
         rest = stripped[run:]
         if self._open is None:
             if run >= 3 and not (char == "`" and "`" in rest):
@@ -321,11 +324,13 @@ _LEGACY_BULLET_RE = re.compile(r"^- (Spec|Plan|Retrospective):")
 _NOTE_ALTERNATION = "|".join(re.escape(note) for note in sorted(NOTES, key=len, reverse=True))
 _LEGACY_LINE_RE = re.compile(
     r"^(Spec|Plan|Retrospective): *"
-    rf"(?:`[^`]+`|\[[^\]]*\]\([^)\s]*\)|{_NOTE_ALTERNATION})"
+    r"(?:`[^`]+`|\[[^\]]*\]\([^)\s]*\)|[\w.-]+(?:/[\w.-]+)*/[\w.-]*\w\.md|"
+    rf"{_NOTE_ALTERNATION})"
     r"(?: *\(.*\))?\.?\s*$"
 )
 """A standalone document line: its whole value is one backticked path, one
-markdown link or one note, with an optional bracketed remark. A prose line
+bare ``.md`` path with a directory, one markdown link or one note, with an
+optional bracketed remark. A prose line
 that merely starts with the label, such as ``Plan: migrate the repos first.``
 or ``Plan: `vrg-foo` ships first.``, is kept."""
 _CONTINUATION_RE = re.compile(r"^\(.*\)\.?$")
@@ -338,16 +343,19 @@ def _legacy_group(contents: list[str], fenced: list[bool], start: int) -> int:
     after it (blank lines before and between them allowed; the group ends at
     the last bullet), or a standalone ``Spec:``, ``Plan:`` or
     ``Retrospective:`` document line with an optional following line that is
-    only a bracketed note.
+    only a bracketed note. A bullet keeps the indented lines directly after
+    it, so a bullet wrapped onto continuation lines goes as one entry.
     """
     line = contents[start]
     if line.strip() == _LEGACY_HEADER:
         end = start
         index = start + 1
         while index < len(contents) and not fenced[index]:
-            if _LEGACY_BULLET_RE.match(contents[index]):
+            text = contents[index]
+            continuation = end == index > start and text.strip() and text[0] in " \t"
+            if continuation or _LEGACY_BULLET_RE.match(text):
                 end = index + 1
-            elif contents[index].strip():
+            elif text.strip():
                 break
             index += 1
         return end
@@ -458,3 +466,362 @@ def read_body(owner: str, repo: str, number: int) -> str:
 def write_body(owner: str, repo: str, number: int, body: str) -> None:
     """Replace the body of issue *owner*/*repo*#*number* with *body*."""
     github.write_json("PATCH", _issue_endpoint(owner, repo, number), {"body": body})
+
+
+_NOT_FOUND_RE = re.compile(r"\(HTTP 404\)$", re.MULTILINE)
+
+
+def is_not_found(exc: github.GitHubAPIError) -> bool:
+    """True when *exc* is gh reporting an HTTP 404 status.
+
+    gh ends its error line with the status, ``gh: Not Found (HTTP 404)``, so
+    only a stderr line ending in exactly ``(HTTP 404)`` counts; a ``404``
+    anywhere else (a path such as ``epics/404-x``, a request id) does not.
+    """
+    return _NOT_FOUND_RE.search((exc.stderr or "").replace("\r", "")) is not None
+
+
+def _contents_endpoint(owner: str, repo: str, path: str, branch: str) -> str:
+    return f"repos/{owner}/{repo}/contents/{quote(path)}?ref={quote(branch, safe='')}"
+
+
+def file_exists(owner: str, repo: str, path: str, branch: str) -> bool:
+    """True when *path* exists in *owner*/*repo* on *branch* (contents API).
+
+    A 404 is ``False``; any other error propagates.
+    """
+    try:
+        github.read_json("api", _contents_endpoint(owner, repo, path, branch))
+    except github.GitHubAPIError as exc:
+        if is_not_found(exc):
+            return False
+        raise
+    return True
+
+
+def list_dir(owner: str, repo: str, path: str, branch: str) -> dict[str, str] | None:
+    """The entries of directory *path* in *owner*/*repo* on *branch*, name to type.
+
+    The type is the contents API's (``file``, ``dir``, …). None when *path*
+    does not exist (a 404); any other error propagates, and a path that is a
+    file, not a directory, raises :class:`ValueError`.
+    """
+    endpoint = _contents_endpoint(owner, repo, path, branch)
+    try:
+        data = github.read_json("api", endpoint)
+    except github.GitHubAPIError as exc:
+        if is_not_found(exc):
+            return None
+        raise
+    if not isinstance(data, list):
+        msg = f"{owner}/{repo}:{path} is not a directory on {branch}"
+        raise ValueError(msg)  # noqa: TRY004 - a malformed API answer, not a caller type error
+    entries: dict[str, str] = {}
+    for item in data:
+        name = item.get("name") if isinstance(item, dict) else None
+        kind = item.get("type") if isinstance(item, dict) else None
+        if not isinstance(name, str) or not isinstance(kind, str):
+            msg = f"unexpected entry in the contents API response for {endpoint}: {item!r}"
+            raise ValueError(msg)
+        entries[name] = kind
+    return entries
+
+
+# --- backfill: which epics, entry rules and discovery ---------------------------
+
+SPEC_PLAN_CUTOFF = "2026-07-12"
+"""Epics created before this date predate the spec and plan convention (§3)."""
+RETRO_CUTOFF = "2026-07-27"
+"""Epics created before this date predate the retrospective convention (§3)."""
+
+_ARCHIVED_PREFIX = "[archived]"
+_STANDING_TITLE_PREFIX = "Epic (standing):"
+_RETIRED_STANDING_LABEL = "standing"
+_ARCHIVE_DIR = "archive"
+_FILES = {"spec": "spec.md", "plan": "plan.md", "retrospective": "retrospective.md"}
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}")
+
+
+def is_skipped(title: str, labels: Iterable[str]) -> bool:
+    """True for an epic the Documents section does not apply to.
+
+    A container epic (one :func:`epics.is_standing` recognises, one carrying
+    the retired ``standing`` label, or one titled ``Epic (standing): …``) or
+    an archived one (titled ``[archived] …``).
+    """
+    names = set(labels)
+    return (
+        epics.is_standing(names)
+        or _RETIRED_STANDING_LABEL in names
+        or title.startswith((_STANDING_TITLE_PREFIX, _ARCHIVED_PREFIX))
+    )
+
+
+def entry_for(
+    doc: str, link: DocLink | None, *, state: str, state_reason: str | None, created_at: str
+) -> Entry:
+    """The entry for *doc* under the §3 rules: the first matching row decides.
+
+    *link* is the discovered document, or None when it is missing. *state*
+    and *state_reason* are GitHub's (``OPEN``/``CLOSED``, ``NOT_PLANNED`` and
+    so on, in either case); *created_at* is the epic's ISO creation time, and
+    only its date is compared with the cutoffs.
+    """
+    if doc not in DOCS:
+        msg = f"not a document: {doc!r}"
+        raise ValueError(msg)
+    if link is not None:
+        return link
+    if state.upper() == "OPEN":
+        return PENDING
+    if state.upper() != "CLOSED":
+        msg = f"unexpected issue state: {state!r}"
+        raise ValueError(msg)
+    if (state_reason or "").upper() == "NOT_PLANNED":
+        return NOT_PLANNED
+    if _DATE_RE.match(created_at) is None:
+        msg = f"unexpected creation time: {created_at!r}"
+        raise ValueError(msg)
+    created = created_at[:10]
+    if doc != "retrospective" and created < SPEC_PLAN_CUTOFF:
+        return PREDATES_SPEC_PLAN
+    if doc == "retrospective" and created < RETRO_CUTOFF:
+        return PREDATES_RETRO
+    return NOT_WRITTEN
+
+
+class Ambiguous(Exception):  # noqa: N818 - the plan's name for "needs a decision"
+    """Discovery found more than one candidate; the human decides with ``set``."""
+
+    def __init__(self, what: str, candidates: Iterable[str]) -> None:
+        self.what = what
+        self.candidates = tuple(candidates)
+        super().__init__(f"{len(self.candidates)} candidate {what}: {', '.join(self.candidates)}")
+
+
+def epic_directories(owner: str, home_repo: str, branch: str) -> frozenset[str]:
+    """The directory names under ``epics/`` in the home repo, minus ``archive``.
+
+    Empty when the repo has no ``epics/`` directory. The archive directory is
+    left out by name and never listed.
+    """
+    entries = list_dir(owner, home_repo, "epics", branch)
+    if entries is None:
+        return frozenset()
+    return frozenset(
+        name for name, kind in entries.items() if kind == "dir" and name != _ARCHIVE_DIR
+    )
+
+
+_EPIC_DIR_RE = re.compile(r"(?<![\w.-])epics/([\w.-]+)/")
+_DOC_PATH_RE = re.compile(
+    r"(?<![\w./-])(?:([\w.-]+)/)?(?:([\w.-]+)/)?"
+    r"(docs/(?:specs|plans|superpowers/specs|superpowers/plans)/[\w./-]*?[\w-]\.md)"
+    r"(?![\w/-]|\.\w)"
+)
+_PLAN_PREFIXES = ("docs/plans/", "docs/superpowers/plans/")
+
+
+def _outside_section(body: str) -> str:
+    """*body* without its marked Documents section, markers included.
+
+    Discovery reads only what the epic's prose mentions: the section's own
+    links name documents already decided, possibly another epic's.
+    """
+    lines = _split(body)
+    region = _region(lines)
+    if region is None:
+        return body
+    return "".join(lines[: region[0]] + lines[region[1] + 1 :])
+
+
+def discover(
+    owner: str,
+    home_repo: str,
+    number: int,
+    body: str,
+    branch: str,
+    *,
+    epic_dirs: Iterable[str] | None = None,
+    branches: dict[str, str] | None = None,
+    wanted: Iterable[str] = DOCS,
+) -> dict[str, DocLink | None]:
+    """The documents of epic *number*, each a :class:`DocLink` or None (§5.2).
+
+    Looks, in order, for the directory ``epics/<number>-*/`` in the home repo
+    on *branch*, an existing ``epics/<dir>/`` the *body* mentions, and
+    existing ``docs/specs/``, ``docs/plans/``, ``docs/superpowers/specs/`` or
+    ``docs/superpowers/plans/`` paths the body mentions, in the home repo or
+    another repo of *owner*. In a directory, ``spec.md``, ``plan.md`` and
+    ``retrospective.md`` are the documents. The body's marked Documents
+    section is not read.
+
+    *wanted* names the documents still needing a decision; only they are
+    looked for. Raises :class:`Ambiguous` when more than one candidate
+    directory holds a wanted document, or a wanted spec or plan has more
+    than one candidate. A document not wanted is returned as None.
+
+    *epic_dirs* is :func:`epic_directories`, looked up when not given;
+    *branches* caches default branches by repo name across calls.
+    """
+    wanted = frozenset(wanted)
+    if not wanted <= set(DOCS):
+        msg = f"not documents: {', '.join(sorted(wanted - set(DOCS)))}"
+        raise ValueError(msg)
+    if not wanted:
+        return dict.fromkeys(DOCS)
+    body = _outside_section(body)
+    dirs = frozenset(epic_dirs) if epic_dirs is not None else None
+    if dirs is None:
+        dirs = epic_directories(owner, home_repo, branch)
+    found = sorted(name for name in dirs if name.startswith(f"{number}-"))
+    if not found:
+        found = sorted({name for name in _EPIC_DIR_RE.findall(body) if name in dirs})
+    if found:
+        return _found_directory(owner, home_repo, found, branch, wanted)
+    cache = branches if branches is not None else {}
+    cache.setdefault(home_repo, branch)
+    return _mentioned_documents(owner, home_repo, body, cache, wanted)
+
+
+def _found_directory(
+    owner: str, repo: str, found: list[str], branch: str, wanted: frozenset[str]
+) -> dict[str, DocLink | None]:
+    """The wanted documents of the one directory in *found* that holds any."""
+    holding: list[tuple[str, dict[str, DocLink | None]]] = []
+    for name in found:
+        documents = _directory_documents(owner, repo, f"epics/{name}", branch)
+        if any(documents[doc] is not None for doc in wanted):
+            holding.append((name, documents))
+    if len(holding) > 1:
+        raise Ambiguous("directories", (f"epics/{name}/" for name, _ in holding))
+    if not holding:
+        return dict.fromkeys(DOCS)
+    documents = holding[0][1]
+    return {doc: documents[doc] if doc in wanted else None for doc in DOCS}
+
+
+def _directory_documents(
+    owner: str, repo: str, directory: str, branch: str
+) -> dict[str, DocLink | None]:
+    entries = list_dir(owner, repo, directory, branch)
+    if entries is None:
+        msg = f"{owner}/{repo}:{directory} was listed but no longer exists on {branch}"
+        raise ValueError(msg)
+    return {
+        doc: DocLink(owner, repo, f"{directory}/{name}", branch)
+        if entries.get(name) == "file"
+        else None
+        for doc, name in _FILES.items()
+    }
+
+
+def _mentioned_documents(
+    owner: str, home_repo: str, body: str, branches: dict[str, str], wanted: frozenset[str]
+) -> dict[str, DocLink | None]:
+    """The wanted spec and plan among the ``docs/…`` paths *body* mentions that exist."""
+    candidates: dict[str, dict[tuple[str, str], DocLink]] = {"spec": {}, "plan": {}}
+    for first, second, path in _DOC_PATH_RE.findall(body):
+        if second:
+            if first.lower() != owner.lower():
+                continue  # another org's document: never linked
+            repo = second
+        else:
+            repo = first or home_repo
+        doc = "plan" if path.startswith(_PLAN_PREFIXES) else "spec"
+        key = (repo.lower(), path)
+        if doc not in wanted or key in candidates[doc]:
+            continue
+        branch = _repo_branch(owner, repo, branches)
+        if branch is not None and file_exists(owner, repo, path, branch):
+            candidates[doc][key] = DocLink(owner, repo, path, branch)
+    result: dict[str, DocLink | None] = dict.fromkeys(DOCS)
+    for doc, links in candidates.items():
+        if len(links) > 1:
+            raise Ambiguous(f"{doc}s", (f"{link.repo}/{link.path}" for link in links.values()))
+        result[doc] = next(iter(links.values()), None)
+    return result
+
+
+def _repo_branch(owner: str, repo: str, branches: dict[str, str]) -> str | None:
+    """*repo*'s default branch, cached in *branches*; None when the repo does not exist."""
+    for name, branch in branches.items():
+        if _same_repo(name, repo):
+            return branch
+    try:
+        branch = default_branch(owner, repo)
+    except github.GitHubAPIError as exc:
+        if is_not_found(exc):
+            return None
+        raise
+    branches[repo] = branch
+    return branch
+
+
+class EpicRecord(TypedDict):
+    """One epic as :func:`list_epics` returns it, in ``gh issue list``'s field names.
+
+    ``state`` is ``OPEN`` or ``CLOSED`` and ``stateReason`` upper case, as
+    ``gh`` reports them. ``body`` is None for an ``[archived]`` epic, whose
+    body is dropped by the API query and never read.
+    """
+
+    number: int
+    title: str
+    state: str
+    stateReason: str | None  # noqa: N815 - gh's field name
+    createdAt: str  # noqa: N815 - gh's field name
+    labels: list[str]
+    body: str | None
+
+
+_LIST_JQ = (
+    '[.[] | select(has("pull_request") | not) | {number, title, state, '
+    "stateReason: .state_reason, createdAt: .created_at, labels: [.labels[].name], "
+    f'body: (if (.title | startswith("{_ARCHIVED_PREFIX}")) then null else (.body // "") end)}}]'
+)
+
+
+def list_epics(home: str, *, apply_skips: bool = True) -> list[EpicRecord]:
+    """Every ``epic``-labelled issue in *home* (``owner/repo``), open and closed.
+
+    Read through the paginated issues API, so no epic is lost past a page
+    limit. With *apply_skips*, the epics :func:`is_skipped` names are left
+    out. Raises :class:`ValueError` for an answer of an unexpected shape.
+    """
+    raw = github.read_json_paginated(f"repos/{home}/issues?labels=epic&state=all", jq=_LIST_JQ)
+    records = [_epic_record(item, home) for item in raw]
+    if apply_skips:
+        records = [r for r in records if not is_skipped(r["title"], r["labels"])]
+    return records
+
+
+def _epic_record(item: object, home: str) -> EpicRecord:
+    if not isinstance(item, dict):
+        msg = f"unexpected epic in the {home} issue listing: {item!r}"
+        raise ValueError(msg)  # noqa: TRY004 - a malformed API answer, not a caller type error
+    fields = cast("dict[str, object]", item)
+    number, title, state = fields.get("number"), fields.get("title"), fields.get("state")
+    reason, created = fields.get("stateReason"), fields.get("createdAt")
+    labels, body = fields.get("labels"), fields.get("body")
+    if (
+        not isinstance(number, int)
+        or not isinstance(title, str)
+        or not isinstance(state, str)
+        or not (reason is None or isinstance(reason, str))
+        or not isinstance(created, str)
+        or not isinstance(labels, list)
+        or not all(isinstance(label, str) for label in labels)
+        or not (body is None or isinstance(body, str))
+    ):
+        msg = f"unexpected epic in the {home} issue listing: {item!r}"
+        raise ValueError(msg)
+    return EpicRecord(
+        number=number,
+        title=title,
+        state=state.upper(),
+        stateReason=reason.upper() if reason is not None else None,
+        createdAt=created,
+        labels=cast("list[str]", labels),
+        body=body,
+    )
