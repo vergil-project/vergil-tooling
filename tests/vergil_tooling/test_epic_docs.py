@@ -114,6 +114,37 @@ def test_doclink_rejects_bad_fields(field: str, value: str) -> None:
 def test_parse_roundtrip(entries: dict[str, epic_docs.Entry]) -> None:
     assert parse(render(entries, _HOME)) == entries
     assert parse("Intro.\n\n" + render(entries, _HOME) + "\n\nMore.") == entries
+    assert parse(render(entries, _HOME), _HOME) == entries
+
+
+@pytest.mark.parametrize(
+    "link",
+    [
+        # Another repo's link on a branch ending in /<repo>.
+        _link("plan.md", repo="vergil-vm", branch="x/vergil-vm"),
+        # A home path that starts with the home repo's own name.
+        _link(".github/workflows/notes.md"),
+    ],
+    ids=["branch-ends-in-repo", "home-path-starts-with-repo"],
+)
+def test_parse_with_home_repo_is_exact(link: DocLink) -> None:
+    block = render(_entries(plan=link), _HOME)
+    assert parse(block, _HOME) == _entries(plan=link)
+    # Without the home repo the text fits both forms: refused, never guessed.
+    with pytest.raises(EpicDocsFormatError, match="ambiguous"):
+        parse(block)
+
+
+def test_parse_with_home_repo_rejects_wrong_text_form() -> None:
+    # Another repo's link must show <repo>/<path> as its text.
+    inner = (
+        "**Documents**\n\n- Spec: [`a.md`](https://github.com/o/vergil-vm/blob/main/a.md)\n"
+        "- Plan: pending\n- Retrospective: pending"
+    )
+    with pytest.raises(EpicDocsFormatError, match="does not match"):
+        parse(f"{BEGIN}\n{inner}\n{END}\n", _HOME)
+    with pytest.raises(ValueError, match="repo name"):
+        parse("", "o/.github")
 
 
 def test_parse_none_without_section() -> None:
@@ -123,6 +154,16 @@ def test_parse_none_without_section() -> None:
 
 def test_parse_ignores_markers_in_code_fence() -> None:
     body = f"Example:\n\n```markdown\n{BEGIN}\n**Documents**\n{END}\n```\n"
+    assert parse(body) is None
+
+
+def test_parse_ignores_markers_in_nested_code_fence() -> None:
+    # A three-backtick line inside a four-backtick fence does not close it.
+    section = render(_entries(), _HOME)
+    body = f"Example:\n\n````markdown\n```text\n{section}\n```\n````\n"
+    assert parse(body) is None
+    # Nor does a closing run with an info string, or a run of the other character.
+    body = f"~~~~\n~~~ text\n{section}\n```\n~~~~\n"
     assert parse(body) is None
 
 
@@ -245,6 +286,28 @@ def test_strip_legacy_documents_list_at_top() -> None:
     assert len(removed) == 4
 
 
+def test_strip_legacy_documents_list_with_gaps_between_bullets() -> None:
+    body = (
+        "Intro.\n\nDocuments:\n\n- Spec: pending\n\n- Plan: pending\n\n- Retrospective: pending\n\n"
+        "Description.\n"
+    )
+    new, removed = strip_legacy(body)
+    assert new == "Intro.\n\nDescription.\n"
+    assert removed == [
+        "Documents:",
+        "- Spec: pending",
+        "- Plan: pending",
+        "- Retrospective: pending",
+    ]
+    # A list that runs to the end of the body, and one cut off by a fence.
+    assert strip_legacy("Intro.\n\nDocuments:\n- Spec: pending\n\n")[0] == "Intro.\n\n"
+    fenced = "Documents:\n- Spec: pending\n```\n- Plan: pending\n```\n"
+    assert strip_legacy(fenced) == (
+        "```\n- Plan: pending\n```\n",
+        ["Documents:", "- Spec: pending"],
+    )
+
+
 def test_strip_legacy_keeps_documents_line_without_bullets() -> None:
     body = "Documents:\n\nSee the wiki.\n"
     assert strip_legacy(body) == (body, [])
@@ -266,6 +329,27 @@ def test_strip_legacy_standalone_lines() -> None:
         "Plan: `epics/550-x/plan.md`",
         "Retrospective: `epics/550-x/retrospective.md`",
     ]
+
+
+def test_strip_legacy_standalone_note_lines() -> None:
+    body = "Spec: pending\nPlan: not written (closed as not planned).\nRetrospective: pending.\n"
+    new, removed = strip_legacy(body)
+    assert new == ""
+    assert removed == body.splitlines()
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Plan: migrate the four repos first.",
+        "Spec: see the wiki page for details",
+        "Retrospective: pending review by the team",
+        "Plan:",
+    ],
+)
+def test_strip_legacy_keeps_prose_with_a_label(line: str) -> None:
+    body = f"Context.\n\n{line}\n(Ordered by risk.)\n\nMore.\n"
+    assert strip_legacy(body) == (body, [])
 
 
 def test_strip_legacy_continuation_line() -> None:
@@ -296,6 +380,11 @@ def test_strip_legacy_keeps_code_fence_lines() -> None:
     new, removed = strip_legacy(body)
     assert removed == ["Plan: `epics/1-x/plan.md`"]
     assert new == body.replace("Plan: `epics/1-x/plan.md`\n", "")
+
+
+def test_strip_legacy_keeps_nested_code_fence_lines() -> None:
+    body = "Intro\n\n````markdown\n```text\nSpec: `epics/1-x/spec.md`\n```\n````\n"
+    assert strip_legacy(body) == (body, [])
 
 
 def test_strip_legacy_leaves_marked_section_and_prose() -> None:
@@ -340,7 +429,7 @@ def test_read_body_none_is_empty() -> None:
         assert epic_docs.read_body("o", ".github", 5) == ""
 
 
-@pytest.mark.parametrize("payload", [[], {"body": 3}])
+@pytest.mark.parametrize("payload", [[], {"body": 3}, {"title": "no body field"}])
 def test_read_body_rejects_unexpected_response(payload: object) -> None:
     with (
         patch.object(epic_docs.github, "read_json", return_value=payload),

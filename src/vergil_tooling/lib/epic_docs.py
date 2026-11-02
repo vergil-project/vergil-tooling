@@ -116,21 +116,31 @@ def _newline(body: str) -> str:
 
 
 class _Fences:
-    """Track whether successive lines are inside a fenced code block."""
+    """Track whether successive lines are inside a fenced code block.
+
+    As in CommonMark, a fence is a run of three or more backticks or tildes
+    (a backtick fence's info string has no backtick), and only a run of the
+    same character, at least as long as the opener's, with nothing but
+    whitespace after it, closes the block. A shorter run, or one with an info
+    string, is content of the block (a nested example).
+    """
 
     def __init__(self) -> None:
-        self._open: str | None = None
+        self._open: tuple[str, int] | None = None
 
     def step(self, content: str) -> bool:
         """Advance over *content*; True when the line is a fence or fenced."""
         stripped = content.lstrip(" ")
-        marker = next((m for m in ("```", "~~~") if stripped.startswith(m)), None)
+        char = stripped[:1]
+        run = len(stripped) - len(stripped.lstrip(char)) if char in ("`", "~") else 0
+        rest = stripped[run:]
         if self._open is None:
-            if marker is not None:
-                self._open = marker
+            if run >= 3 and not (char == "`" and "`" in rest):
+                self._open = (char, run)
                 return True
             return False
-        if marker == self._open:
+        open_char, open_run = self._open
+        if char == open_char and run >= open_run and not rest.strip():
             self._open = None
         return True
 
@@ -195,39 +205,61 @@ _ENTRY_RE = re.compile(r"^- (Spec|Plan|Retrospective): (.+)$")
 _LINK_RE = re.compile(r"^\[`([^`]+)`\]\(https://github\.com/([^/\s]+)/([^/\s]+)/blob/(\S+)\)$")
 
 
-def _parse_link(value: str) -> DocLink:
+def _path_candidates(text: str, repo: str, home_repo: str | None) -> list[str]:
+    """The paths a link *text* may name in *repo* (see :meth:`DocLink.text`)."""
+    prefixed = text[len(repo) + 1 :] if text.startswith(f"{repo}/") else None
+    if home_repo is None:
+        return [text] if prefixed is None else [text, prefixed]
+    if repo == home_repo:
+        return [text]
+    return [] if prefixed is None else [prefixed]
+
+
+def _parse_link(value: str, home_repo: str | None) -> DocLink:
     """Parse a rendered link back to its :class:`DocLink`.
 
     The text names the path (``<repo>/`` first for another repo), which
-    splits the URL's ``<branch>/<path>`` tail unambiguously even for a
-    branch with a slash in it.
+    splits the URL's ``<branch>/<path>`` tail even for a branch with a slash
+    in it. With *home_repo* the text's form is known, so the split is exact.
+    Without it, a link whose text fits both forms (another repo's link on a
+    branch ending in ``/<repo>``, or a home path starting with the home
+    repo's name) is refused as ambiguous rather than guessed.
     """
     match = _LINK_RE.match(value)
     if match is None:
         msg = f"Documents entry is neither a note nor a link: {value!r}"
         raise EpicDocsFormatError(msg)
     text, owner, repo, tail = match.groups()
-    candidates = [text]
-    if text.startswith(f"{repo}/"):
-        candidates.append(text[len(repo) + 1 :])
-    for path in candidates:
+    splits: list[tuple[str, str]] = []
+    for path in _path_candidates(text, repo, home_repo):
         suffix = f"/{quote(path)}"
         if tail.endswith(suffix) and len(tail) > len(suffix):
-            try:
-                return DocLink(owner, repo, path, tail[: -len(suffix)])
-            except ValueError as exc:
-                raise EpicDocsFormatError(f"bad Documents link {value!r}: {exc}") from exc
-    msg = f"Documents link text does not match its URL: {value!r}"
-    raise EpicDocsFormatError(msg)
+            splits.append((path, tail[: -len(suffix)]))
+    if not splits:
+        msg = f"Documents link text does not match its URL: {value!r}"
+        raise EpicDocsFormatError(msg)
+    if len(splits) > 1:
+        msg = f"Documents link is ambiguous without the epic's home repo: {value!r}"
+        raise EpicDocsFormatError(msg)
+    path, branch = splits[0]
+    try:
+        return DocLink(owner, repo, path, branch)
+    except ValueError as exc:
+        raise EpicDocsFormatError(f"bad Documents link {value!r}: {exc}") from exc
 
 
-def parse(body: str) -> dict[str, Entry] | None:
+def parse(body: str, home_repo: str | None = None) -> dict[str, Entry] | None:
     """The entries of *body*'s Documents section, or None when it has none.
 
-    Raises :class:`EpicDocsFormatError` when the section is malformed: half a
+    *home_repo* is the epic's home repo name (see :meth:`DocLink.text`);
+    given, every link parses exactly as :func:`render` wrote it. Raises
+    :class:`EpicDocsFormatError` when the section is malformed: half a
     section, a missing heading, a missing, extra or out-of-order entry, or an
     entry that is neither a link nor one of the five notes.
     """
+    if home_repo is not None and "/" in home_repo:
+        msg = f"home_repo is a repo name, not owner/name: {home_repo!r}"
+        raise ValueError(msg)
     lines = body.splitlines(keepends=True)
     region = _region(lines)
     if region is None:
@@ -247,7 +279,7 @@ def parse(body: str) -> dict[str, Entry] | None:
     entries: dict[str, Entry] = {}
     for doc, match in zip(DOCS, matches, strict=True):
         value = cast("re.Match[str]", match).group(2).strip()
-        entries[doc] = value if value in NOTES else _parse_link(value)
+        entries[doc] = value if value in NOTES else _parse_link(value, home_repo)
     return entries
 
 
@@ -255,7 +287,14 @@ def parse(body: str) -> dict[str, Entry] | None:
 
 _LEGACY_HEADER = "Documents:"
 _LEGACY_BULLET_RE = re.compile(r"^- (Spec|Plan|Retrospective):")
-_LEGACY_LINE_RE = re.compile(r"^(Spec|Plan|Retrospective):")
+_NOTE_ALTERNATION = "|".join(re.escape(note) for note in sorted(NOTES, key=len, reverse=True))
+_LEGACY_LINE_RE = re.compile(
+    r"^(Spec|Plan|Retrospective): *"
+    rf"(?:`|\[|(?:{_NOTE_ALTERNATION})(?: *\(.*\))?\.?\s*$)"
+)
+"""A standalone document line: its value is a backticked path, a markdown
+link, or a note (with an optional bracketed remark). A prose line that merely
+starts with the label, such as ``Plan: migrate the repos first.``, is kept."""
 _CONTINUATION_RE = re.compile(r"^\(.*\)\.?$")
 
 
@@ -263,21 +302,22 @@ def _legacy_group(contents: list[str], fenced: list[bool], start: int) -> int:
     """The end (exclusive) of a legacy group starting at *start*, or *start* for none.
 
     A group is a ``Documents:`` line with the Spec/Plan/Retrospective bullets
-    after it (blank lines between allowed), or a standalone ``Spec:``,
-    ``Plan:`` or ``Retrospective:`` line with an optional following line
-    that is only a bracketed note.
+    after it (blank lines before and between them allowed; the group ends at
+    the last bullet), or a standalone ``Spec:``, ``Plan:`` or
+    ``Retrospective:`` document line with an optional following line that is
+    only a bracketed note.
     """
     line = contents[start]
     if line.strip() == _LEGACY_HEADER:
+        end = start
         index = start + 1
-        while index < len(contents) and not fenced[index] and not contents[index].strip():
+        while index < len(contents) and not fenced[index]:
+            if _LEGACY_BULLET_RE.match(contents[index]):
+                end = index + 1
+            elif contents[index].strip():
+                break
             index += 1
-        bullets = index
-        while (
-            index < len(contents) and not fenced[index] and _LEGACY_BULLET_RE.match(contents[index])
-        ):
-            index += 1
-        return index if index > bullets else start
+        return end
     if _LEGACY_LINE_RE.match(line):
         index = start + 1
         if (
@@ -294,11 +334,12 @@ def strip_legacy(body: str) -> tuple[str, list[str]]:
     """*body* without its hand-written document lines, plus the lines removed.
 
     Removes a ``Documents:`` line with its Spec/Plan/Retrospective bullets,
-    and standalone ``Spec:``/``Plan:``/``Retrospective:`` lines with any
-    bracketed-note line after them. Nothing inside a fenced code block or the
-    marked section is touched. When a removed group stood alone between blank
-    lines (or at the top of the body), one blank line after it goes too, so
-    no double gap is left. Every other line keeps its exact bytes.
+    and standalone ``Spec:``/``Plan:``/``Retrospective:`` lines whose value
+    is a path, a link or a note, with any bracketed-note line after them.
+    Nothing inside a fenced code block or the marked section is touched.
+    When a removed group stood alone between blank lines (or at the top of
+    the body), one blank line after it goes too, so no double gap is left.
+    Every other line keeps its exact bytes.
     """
     lines = body.splitlines(keepends=True)
     contents = [_content(line) for line in lines]
@@ -369,7 +410,10 @@ def read_body(owner: str, repo: str, number: int) -> str:
     if not isinstance(data, dict):
         msg = f"unexpected API response for {endpoint}: {type(data).__name__}"
         raise ValueError(msg)  # noqa: TRY004 - a malformed API answer, not a caller type error
-    body = data.get("body")
+    if "body" not in data:
+        msg = f"unexpected API response for {endpoint}: no body field"
+        raise ValueError(msg)
+    body = data["body"]
     if body is None:
         return ""
     if not isinstance(body, str):
