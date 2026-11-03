@@ -1364,6 +1364,8 @@
       
         
       
+        
+      
     
     
     
@@ -1416,6 +1418,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.284/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.284
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13219,6 +13249,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-epic-docs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-epic-docs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-epic-link" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17842,6 +17883,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-epic-docs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-epic-docs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-epic-link" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19580,6 +19632,86 @@ The sanctioned path for creating epics, used by the <code>epic-create</code> and
 </tr>
 </tbody>
 </table>
+<h3 id="vrg-epic-docs">vrg-epic-docs<a class="headerlink" href="#vrg-epic-docs" title="Permanent link">&para;</a></h3>
+<p>Write an epic's <strong>Documents</strong> section, the marked block at the top of its body
+that links the epic's spec, plan and retrospective or notes why one does not
+exist (see
+<a href="../../standards/github-issues/#the-documents-section">The Documents section</a>
+for the format and the entry rules). It has two subcommands.</p>
+<p><code>set --epic OWNER/REPO#N</code> adds the section, or updates it in place;
+an entry not named keeps its value, and a new section starts all <code>pending</code>.
+The issue must carry the <code>epic</code> label. A <code>PATH</code> is in the epic's home repo,
+or <code>&lt;repo&gt;:&lt;path&gt;</code> for another repo of the same org (an
+<code>&lt;owner&gt;/&lt;repo&gt;:&lt;path&gt;</code> value naming the epic's owner is refused); the
+file's existence is not checked. A path is repo-relative, with no leading
+<code>/</code>, whitespace or backtick, and a repo name uses only letters, digits, <code>.</code>,
+<code>-</code> and <code>_</code>. Hand-written document lines elsewhere in the body are removed,
+and a body that is already correct is not edited. The skills run it when an
+epic is created and at each docs PR handoff.</p>
+<p><code>backfill (--org ORG | --repo OWNER/REPO)</code> writes the section on every epic
+of an epic home, open and closed: <code>--org</code> works on the org's <code>.github</code>, and
+<code>--repo</code> on a private repo that keeps its own epics. It skips the standing
+epics (ad hoc, intake, planning, deferred, the retired <code>standing</code> label, and
+titles starting <code>Epic (standing):</code>) and <code>[archived]</code> epics. For each epic it
+looks for the documents, in order:</p>
+<ol>
+<li>the directory <code>epics/&lt;N&gt;-*/</code> in the home repo's default branch;</li>
+<li>otherwise, an <code>epics/&lt;dir&gt;/</code> the body mentions that exists;</li>
+<li>otherwise, <code>docs/specs/</code>, <code>docs/plans/</code>, <code>docs/superpowers/specs/</code> or
+   <code>docs/superpowers/plans/</code> paths the body mentions, in the home repo or
+   another repo of the same org (<code>&lt;repo&gt;/docs/…</code> or <code>&lt;owner&gt;/&lt;repo&gt;/docs/…</code>),
+   that exist. A file under a <code>plans/</code> directory is the plan, any other the
+   spec.</li>
+</ol>
+<p>In a directory, <code>spec.md</code>, <code>plan.md</code> and <code>retrospective.md</code> are the
+documents; the <code>epics/archive/</code> directory is never read. A link already in
+the section is kept, so only entries that are still notes are decided, by
+the entry rules. Two candidate directories that each hold a document still
+to be decided, or two candidate specs or plans, make the epic <strong>need a
+decision</strong>: it is named and left unchanged, for a human to settle with
+<code>set</code>. Hand-written <code>Documents:</code>, <code>Spec:</code>, <code>Plan:</code> and <code>Retrospective:</code>
+lines (and a bracketed note line after one) are removed. Without <code>--apply</code>
+it is a dry run: per epic it prints whether it would add, change or leave
+the section, the section itself and each line it would remove, then a
+summary count. With <code>--apply</code> each body is read again before its documents
+are looked for, so an edit made since the listing is kept; an edit made
+while that epic is being worked on is not. A failed epic is named and the
+run carries on.</p>
+<p>Both subcommands run every read and write under the epic owner's App token.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_epic_docs</code> (format, parser and discovery: <code>lib/epic_docs.py</code>)</td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>set</code>: <code>--epic</code> (required), <code>--spec PATH</code>, <code>--plan PATH</code>, <code>--retrospective PATH</code>; <code>backfill</code>: <code>--org ORG</code> or <code>--repo OWNER/REPO</code> (one required), <code>--apply</code></td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>GitHub App credentials for the epic's org</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td>Error on stderr; for <code>set</code>, an issue that is not an epic, a bad <code>PATH</code>, or a malformed section (half a section, a bad entry) is refused with nothing edited. For <code>backfill</code>, a failed listing edits nothing; an epic that needs a decision or fails is named and left unchanged while the rest run</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 written or already correct, or (<code>backfill</code>) no epic needs a decision or failed, including a dry run with changes still to make; 1 error, or any epic that needs a decision or failed; 2 bad arguments</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
 <h3 id="vrg-epic-link">vrg-epic-link<a class="headerlink" href="#vrg-epic-link" title="Permanent link">&para;</a></h3>
 <p>Link a task under an epic as a native GitHub sub-issue, reopening a closed
 epic first. Used when creating a task under an epic and to backfill
@@ -20194,7 +20326,20 @@ epics outside <code>.github</code>, stray <code>.github</code> issues, a closed 
 child, orphans, retired kind labels, body-only <code>Parent:</code> links, self-homed
 queues in a now-public repo, and private work under a public epic. It also
 lists open epics with operational tasks still pending, and closed
-operational tasks with no <code>Outcome: SUCCESS</code>. The report previews, without
+operational tasks with no <code>Outcome: SUCCESS</code>.</p>
+<p>An <strong>Epic documents</strong> section checks the
+<a href="../../standards/github-issues/#the-documents-section">Documents section</a> of
+every epic in the home, open and closed, apart from the standing and
+<code>[archived]</code> epics. Each epic needs the section, well formed, with its three
+entries. On a closed epic, no entry may read <code>pending</code> and every link must
+name a file on its repo's default branch (a link to a directory, another
+branch, another org or a missing repo is reported too). An open epic's links
+are not checked. The findings are report-only: they do not change the exit
+status, and <code>vrg-epic-docs</code> settles them. The check runs only without
+<code>--close</code>, so the scheduled sweep does not report it. The audit lists the
+home's epics once, under the home owner's App token, for this check and the
+closed-epic-with-open-child check.</p>
+<p>The report previews, without
 writing, the ad-hoc and queue-epic drains and the security-records pass that
 <code>--close</code> would run.</p>
 <p>The org comes from the current repo's <code>origin</code> remote (there is no <code>--org</code>
@@ -21254,7 +21399,12 @@ instead and flags it with a <code>DEV tooling</code> banner, and a plain
 <p><strong>The <code>--plugin-dir</code> override.</strong> <code>vrg-vm session</code> can launch Claude with
 plugin trees loaded from disk instead of the installed plugins, for running
 unreleased plugin work (for example a paad checkout's <code>preview/paad</code>) across
-the fleet. List the trees in <code>~/.config/vergil/plugin-dirs.toml</code> on the host,
+the fleet. The fleet uses it permanently to load paad's fleet checkout,
+which carries paad's unattended runner, <code>paad:paad-delegate</code>. Every paad
+review round needs that runner, so a session without the override, including
+every cloud session, runs no review round
+(<a href="https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-policy.md#10-paad-unattended-mode-and-the-fleet-checkout">paad-policy §10</a>).
+List the trees in <code>~/.config/vergil/plugin-dirs.toml</code> on the host,
 a personal file you create by hand:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">plugin_dirs</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"/Users/me/dev/projects/me/paad-fleet/preview/paad"</span><span class="p">]</span>
 </code></pre></div>

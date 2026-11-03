@@ -1364,6 +1364,8 @@
       
         
       
+        
+      
     
     
     
@@ -1416,6 +1418,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.284/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.284
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17047,7 +17077,8 @@ extended to several advisories per issue by epic
 <h2 id="the-policy">The policy<a class="headerlink" href="#the-policy" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Every security finding gets one record</strong>, except a finding that an
-  agentic review raises and the same branch fixes (see
+  agentic review raises and the human does not rule <code>record</code> (it is
+  fixed on the branch, or rejected; see
   <a href="#recording-findings-from-a-review">Recording findings from a review</a>).
   A record is one pair (an issue may name several advisories, one per
   finding; see <a href="#the-two-reference-lines">The two reference lines</a>):</li>
@@ -17079,10 +17110,15 @@ any OWASP Top 10:2025 category, and anything in a payment,
 tenant-isolation, or secret-handling path; on the edge, treat it as
 security.</p>
 </blockquote>
-<p>paad writes such findings only to its gitignored <code>paad/security/</code> folder,
-which is local scratch: it lives on one machine and is lost to
-<code>git clean -x</code> or a deleted worktree. A security record is the durable,
-private home for them.</p>
+<p>A paad skill run by hand writes such findings only to its gitignored
+<code>paad/security/</code> folder. In the review rounds of <code>epic-create</code> and
+<code>issue-implement</code>, paad runs unattended and writes nothing: it returns
+its security findings in a delimited section of its result, which the
+caller keeps in a main clone's ignored <code>build/.vergil-state/</code> (the
+<a href="https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-review-doctrine.md#15-state-directories">paad review doctrine §1.5 and §1.9</a>).
+Both are local scratch: they live on one machine and are lost to
+<code>git clean -fdx</code>, a deleted worktree or a deleted state directory. A
+security record is the durable, private home for them.</p>
 <h3 id="where-a-record-lives">Where a record lives<a class="headerlink" href="#where-a-record-lives" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>The advisory</strong> is always in <strong><code>&lt;org&gt;/.github</code></strong>, whichever repo the
@@ -17324,17 +17360,18 @@ depends on the decision:</p>
 security findings, how many were accepted, and the GHSA IDs the round
 created. The rules are in the
 <a href="https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-review-doctrine.md#27-security-findings">paad review doctrine §2.7</a>.</p>
-<p><strong>Agentic review, during <code>issue-implement</code>.</strong> This review records a
-finding only once the round has decided what to do with it, at the end
-of the round:</p>
+<p><strong>Agentic review, during <code>issue-implement</code>.</strong> Every security finding
+waits for the human's ruling, and only a <code>record</code> ruling creates a
+record:</p>
 <ul>
-<li>a finding <strong>not fixed</strong> on the branch (out of scope, dismissed,
-  deferred, pending the human, or a removed addition) is recorded with
-  plain <code>create</code>, which gives it its own intake issue. A finding already
-  recorded in an earlier round of the same task is not recorded again;</li>
-<li>a finding <strong>fixed on the branch</strong> is not recorded at all. The weakness
-  never reached <code>develop</code>, so it needs no advisory, and the task's
-  records give it only as a count.</li>
+<li><strong><code>fix</code></strong>: the finding is fixed on the branch and not recorded. The
+  weakness never reached <code>develop</code>, so it needs no advisory, and the
+  task's records give it only as a count;</li>
+<li><strong><code>record</code></strong>: the finding is recorded with plain <code>create</code>, which gives
+  it its own intake issue. A finding already recorded in an earlier
+  round of the same task is not recorded again;</li>
+<li><strong><code>reject</code></strong>: no fix and no record, and no public record gives a
+  reason.</li>
 </ul>
 <p>Agentic review never attaches a finding to the task, which is why it
 records with plain <code>create</code> and no <code>--issue</code>: a record on the task would

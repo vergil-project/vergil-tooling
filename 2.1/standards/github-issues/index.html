@@ -1366,6 +1366,8 @@
       
         
       
+        
+      
     
     
     
@@ -1418,6 +1420,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.284/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.284
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -14435,6 +14465,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#the-documents-section" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Documents section
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#epic-home-the-orggithub-rule" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17265,6 +17306,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#the-documents-section" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Documents section
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#epic-home-the-orggithub-rule" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17798,7 +17850,9 @@ defined handoffs:</p>
    (<strong>interactive</strong>).</li>
 <li>Initialize the epic in its <a href="#epic-home-the-orggithub-rule">home</a> and seed the
    bookend tasks — the docs-first opening task, the documentation-review sweep,
-   and the terminal <strong>retrospective</strong> (see the bookend convention below).</li>
+   and the terminal <strong>retrospective</strong> (see the bookend convention below).
+   <code>vrg-epic-docs set --epic &lt;ref&gt;</code> seeds the epic's
+   <a href="#the-documents-section">Documents section</a>, all three entries <code>pending</code>.</li>
 <li>Write <code>spec.md</code> and commit it.</li>
 <li><strong>Spec pushback rounds</strong>: <code>paad:pushback</code> on the spec (<strong>human-gated
    rounds</strong>).</li>
@@ -17808,7 +17862,9 @@ defined handoffs:</p>
 <li><strong>Plan pushback rounds</strong> (<code>paad:pushback</code> on the plan, with the spec as
    context), then <strong>alignment rounds</strong> (<code>paad:alignment</code> on the spec and the
    plan, which may change either). Both are <strong>human-gated rounds</strong>.</li>
-<li>One docs PR (spec + plan) that closes the docs-first task.</li>
+<li>One docs PR (spec + plan) that closes the docs-first task. At its handoff,
+   <code>vrg-epic-docs set --epic &lt;ref&gt; --spec epics/&lt;N&gt;-&lt;slug&gt;/spec.md --plan
+   epics/&lt;N&gt;-&lt;slug&gt;/plan.md</code> turns the spec and plan entries into links.</li>
 <li>File the implementation tasks and link them under the epic.</li>
 </ol>
 <p>The <strong>interaction doctrine</strong> governs the pipeline: <code>brainstorming</code> is
@@ -17832,7 +17888,12 @@ the <a href="https://github.com/vergil-project/vergil-claude-plugin/blob/develop
 <p>Each implementation task then runs through the <code>issue-implement</code> skill, which
 runs an <strong>agentic-review gate</strong> before it hands the PR off. The gate is advisory:
 when it pauses, the human can accept the branch as it stands. The rules
-are in the <a href="https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-review-doctrine.md#3-mode-2-agentic-review-in-issue-implement">paad review doctrine</a>.</p>
+are in the <a href="https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-review-doctrine.md#3-mode-2-agentic-review-in-issue-implement">paad review doctrine</a>.
+The design-review rounds and the gate's rounds both need paad's unattended
+runner, <code>paad:paad-delegate</code>, which only a Lima <code>vrg-vm session</code> with the
+<a href="../../reference/cli-tools-overview/#vrg-vm"><code>--plugin-dir</code> override</a> loads; a
+session without it runs no review round
+(<a href="https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-policy.md#10-paad-unattended-mode-and-the-fleet-checkout">paad-policy §10</a>).</p>
 <h3 id="the-bookend-convention">The bookend convention<a class="headerlink" href="#the-bookend-convention" title="Permanent link">&para;</a></h3>
 <p><strong>An epic is never closed until you have decided what comes next AND confirmed
 the docs reflect what changed.</strong> Almost no real problem is fully resolved by one
@@ -17866,6 +17927,111 @@ the last to close, so it <strong>naturally gates closure</strong> as the final b
 convention is mechanized as prose in the <code>epic-create</code> / <code>epic-retrospective</code>
 skills (<code>vergil-claude-plugin</code>), not in rigid tooling, because the retrospective
 and any follow-on are inherently agentic judgment.</p>
+<h3 id="the-documents-section">The Documents section<a class="headerlink" href="#the-documents-section" title="Permanent link">&para;</a></h3>
+<p>Every epic body opens with a <strong>Documents</strong> section that links the epic's spec,
+plan and retrospective, or says why one does not exist. Hidden markers wrap it
+so tools can find and replace it:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>&lt;!-- vrg-epic-docs --&gt;
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="gs">**Documents**</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="k">-</span><span class="w"> </span>Spec: [<span class="sb">`epics/819-epic-docs-links/spec.md`</span>](https://github.com/vergil-project/.github/blob/develop/epics/819-epic-docs-links/spec.md)
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="k">-</span><span class="w"> </span>Plan: [<span class="sb">`epics/819-epic-docs-links/plan.md`</span>](https://github.com/vergil-project/.github/blob/develop/epics/819-epic-docs-links/plan.md)
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="k">-</span><span class="w"> </span>Retrospective: pending
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>&lt;!-- /vrg-epic-docs --&gt;
+</code></pre></div>
+<ul>
+<li><strong>Position:</strong> the section is the first thing in the body; the rest of the
+  body follows it unchanged.</li>
+<li><strong>Three entries,</strong> always in the order Spec, Plan, Retrospective, each a
+  link or a note.</li>
+<li><strong>Links:</strong> the link text is the document's repo-relative path, or
+  <code>&lt;repo&gt;/&lt;path&gt;</code> for a document in another repo of the same org. The target is
+  a <code>blob</code> URL on that repo's default branch, queried from GitHub. Nothing is
+  linked across orgs.</li>
+<li><strong>One writer:</strong> only <a href="../../reference/cli-tools-overview/#vrg-epic-docs"><code>vrg-epic-docs</code></a>
+  writes the section, never a hand edit, so its format lives in one place.</li>
+<li><strong>Scope:</strong> every epic except the standing epics (ad hoc, intake, planning,
+  deferred, and the retired <code>standing</code> label or <code>Epic (standing):</code> title) and
+  <code>[archived]</code> epics. Task issues have no section.</li>
+</ul>
+<p><strong>Entry rules.</strong> An entry is a link when the document exists. Otherwise its
+note comes from the epic's state, reading the rows top to bottom; the first
+that matches decides:</p>
+<table>
+<thead>
+<tr>
+<th>Epic state</th>
+<th>Document missing</th>
+<th>Entry</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>open</td>
+<td>any</td>
+<td><code>pending</code></td>
+</tr>
+<tr>
+<td>closed as not planned</td>
+<td>any</td>
+<td><code>not written (closed as not planned)</code></td>
+</tr>
+<tr>
+<td>closed, created before 2026-07-12</td>
+<td>spec or plan</td>
+<td><code>not written (predates the spec and plan convention)</code></td>
+</tr>
+<tr>
+<td>closed, created before 2026-07-27</td>
+<td>retrospective</td>
+<td><code>not written (predates the retrospective convention)</code></td>
+</tr>
+<tr>
+<td>closed, otherwise</td>
+<td>any</td>
+<td><code>not written</code></td>
+</tr>
+</tbody>
+</table>
+<p>The two dates mark when the spec-and-plan convention and the retrospective
+bookend began, fleet-wide. Both compare the epic's <strong>creation</strong> date, so an old
+epic that stayed open past a cutoff still predates it. An open epic says
+<code>pending</code> even for a document it may never get; the entry is settled when the
+epic closes. A missing document is never written after the fact: the note is
+the record.</p>
+<p><strong>When it is written.</strong> The skills write the section at PR handoff, not after
+merge, so a new link returns 404 until its PR merges:</p>
+<table>
+<thead>
+<tr>
+<th>Moment</th>
+<th>Who</th>
+<th>Change</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Epic created</td>
+<td><code>epic-create</code></td>
+<td>Section added, all three <code>pending</code></td>
+</tr>
+<tr>
+<td>Docs PR handed off</td>
+<td><code>epic-create</code></td>
+<td>Spec and plan become links</td>
+</tr>
+<tr>
+<td>Retrospective PR handed off</td>
+<td><code>epic-retrospective</code></td>
+<td>Retrospective becomes a link</td>
+</tr>
+</tbody>
+</table>
+<p>An epic closed without a retrospective keeps a <code>pending</code> entry, which the
+<a href="#compliance-invariants">audit</a> reports; <code>vrg-epic-docs backfill</code> settles it by
+the entry rules. The backfill also brings existing epics into line: it finds
+each epic's documents, keeps every link already written, and removes
+hand-written <code>Documents:</code>, <code>Spec:</code>, <code>Plan:</code> and <code>Retrospective:</code> lines.</p>
 <h3 id="epic-home-the-orggithub-rule">Epic home (the <code>&lt;org&gt;/.github</code> rule)<a class="headerlink" href="#epic-home-the-orggithub-rule" title="Permanent link">&para;</a></h3>
 <p>An epic's home repo is derived from repository visibility:</p>
 <ul>
@@ -17909,6 +18075,14 @@ relocating epics when a repo's visibility changes.</p>
   public → private flip, for a human to resolve (see
   <a href="../../guides/epic-home-visibility-flip/">Epic home visibility flips</a>). Tooling
   never migrates or retracts it.</li>
+<li><strong>Every epic links its documents.</strong> Every epic in the home, open or closed,
+  except the standing and <code>[archived]</code> epics, has a well-formed
+  <a href="#the-documents-section">Documents section</a>: both markers, the heading, and
+  exactly the three entries, each a link or a note. On a <strong>closed</strong> epic no
+  entry reads <code>pending</code>, and every link names a file that exists on its repo's
+  default branch. An open epic's links are not checked, since a link written at
+  handoff resolves only once its PR merges. <code>vrg-epic-docs</code> settles each
+  finding; the audit never edits a body.</li>
 </ul>
 <h4 id="the-orphan-pass-auto-heal">The orphan pass (auto-heal)<a class="headerlink" href="#the-orphan-pass-auto-heal" title="Permanent link">&para;</a></h4>
 <p><code>vrg-epic-audit --close</code> — run daily by the scheduled <code>ops-epic-sweep</code> workflow
@@ -17999,17 +18173,17 @@ route and take one human confirmation per batch.</p>
 <p>Capture has near-zero friction: a one-line "don't forget X" is a valid intake
 item, with no category to choose. Create one with the sanctioned tool (the
 <code>intake-capture</code> skill drives it):</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>vrg-intake-create<span class="w"> </span>--title<span class="w"> </span><span class="s2">"&lt;what&gt;"</span><span class="w"> </span><span class="o">[</span>--body<span class="w"> </span>TEXT<span class="w"> </span><span class="p">|</span><span class="w"> </span>--body-file<span class="w"> </span>PATH<span class="o">]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>vrg-intake-create<span class="w"> </span>--title<span class="w"> </span><span class="s2">"&lt;what&gt;"</span><span class="w"> </span><span class="o">[</span>--body<span class="w"> </span>TEXT<span class="w"> </span><span class="p">|</span><span class="w"> </span>--body-file<span class="w"> </span>PATH<span class="o">]</span>
 </code></pre></div>
 <p>The issue is filed in the current repo's queue home — <code>&lt;org&gt;/.github</code> for a
 public repo, the repo itself for a private one (override with <code>--repo</code>) — and is
 linked under that home's intake epic as it is created; there is no unlinked
 path.</p>
 <h3 id="viewing-the-queues-vrg-queue">Viewing the queues: <code>vrg-queue</code><a class="headerlink" href="#viewing-the-queues-vrg-queue" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>vrg-queue<span class="w"> </span>intake<span class="w">    </span><span class="c1"># open intake items, oldest first</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>vrg-queue<span class="w"> </span>planning<span class="w">  </span><span class="c1"># open planning items: waiting / in-progress / ready-to-close</span>
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>vrg-queue<span class="w"> </span>deferred<span class="w">  </span><span class="c1"># open deferred items, least recently deferred first</span>
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>vrg-queue<span class="w">           </span><span class="c1"># all three queues, in that order</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>vrg-queue<span class="w"> </span>intake<span class="w">    </span><span class="c1"># open intake items, oldest first</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>vrg-queue<span class="w"> </span>planning<span class="w">  </span><span class="c1"># open planning items: waiting / in-progress / ready-to-close</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>vrg-queue<span class="w"> </span>deferred<span class="w">  </span><span class="c1"># open deferred items, least recently deferred first</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>vrg-queue<span class="w">           </span><span class="c1"># all three queues, in that order</span>
 </code></pre></div>
 <p>It defaults to the current org's <code>.github</code> queues; <code>--repo &lt;owner&gt;/&lt;repo&gt;</code>
 selects that repo's queue home (a self-homed private repo's own queues), and
@@ -18085,14 +18259,14 @@ an <code>Epic:</code> marker (the development epic already exists), and an ad-ho
 refused while an open PR would close it.</p>
 <p><strong>Every deferral records why, and what to check.</strong> <code>--reason</code> and
 <code>--revisit-when</code> are both required:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>vrg-intake-route<span class="w"> </span>&lt;ref&gt;<span class="w"> </span>defer<span class="w"> </span>--reason<span class="w"> </span><span class="s2">"&lt;why now is not the time&gt;"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span>--revisit-when<span class="w"> </span><span class="s2">"&lt;what to check to know it can come back&gt;"</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>vrg-intake-route<span class="w"> </span>&lt;ref&gt;<span class="w"> </span>defer<span class="w"> </span>--reason<span class="w"> </span><span class="s2">"&lt;why now is not the time&gt;"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span>--revisit-when<span class="w"> </span><span class="s2">"&lt;what to check to know it can come back&gt;"</span>
 </code></pre></div>
 <p>The tool moves the item under its queue home's deferred epic (removing a
 planning item's <code>in-progress</code> label) and posts the record:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>Deferred &lt;YYYY-MM-DD&gt;: &lt;reason&gt;
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>Revisit when: &lt;conditions&gt;
-<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>Deferred from: &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>Deferred &lt;YYYY-MM-DD&gt;: &lt;reason&gt;
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>Revisit when: &lt;conditions&gt;
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>Deferred from: &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;
 </code></pre></div>
 <p><code>Deferred from:</code> names the container epic the item left. <code>Revisit when:</code> is free
 prose — a date, an event ("<code>&lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;</code> merges", "Zensical 1.0
@@ -18391,8 +18565,8 @@ validate</strong>, each <code>Blocked-by</code> the last.</p>
   dependency closed) is machine-derivable, not inferred from plan prose.</li>
 </ul>
 <p>Create one with the sanctioned path — never hand-roll the body:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>vrg-issue-create<span class="w"> </span>--epic<span class="w"> </span>&lt;org&gt;/.github#N<span class="w"> </span>--repo<span class="w"> </span>&lt;org&gt;/&lt;repo&gt;<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span>--kind<span class="w"> </span><span class="o">{</span>validation<span class="p">|</span>deployment<span class="o">}</span><span class="w"> </span>--title<span class="w"> </span><span class="s2">"&lt;what&gt;"</span><span class="w"> </span>--blocked-by<span class="w"> </span>&lt;org&gt;/&lt;repo&gt;#&lt;TASK&gt;
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>vrg-issue-create<span class="w"> </span>--epic<span class="w"> </span>&lt;org&gt;/.github#N<span class="w"> </span>--repo<span class="w"> </span>&lt;org&gt;/&lt;repo&gt;<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span>--kind<span class="w"> </span><span class="o">{</span>validation<span class="p">|</span>deployment<span class="o">}</span><span class="w"> </span>--title<span class="w"> </span><span class="s2">"&lt;what&gt;"</span><span class="w"> </span>--blocked-by<span class="w"> </span>&lt;org&gt;/&lt;repo&gt;#&lt;TASK&gt;
 </code></pre></div>
 <p>This stamps the kind's label and an executable scaffold: an author-defined
 <strong>precondition self-check</strong> (a machine probe or a human-attested statement — no
