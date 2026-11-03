@@ -12,7 +12,7 @@ import pytest
 
 from vergil_tooling.bin.vrg_epic_audit import main
 from vergil_tooling.lib import github, security_records
-from vergil_tooling.lib.epic_audit import Orphan, RetiredLabels, StandingEpicFull
+from vergil_tooling.lib.epic_audit import EpicDocsFinding, Orphan, RetiredLabels, StandingEpicFull
 from vergil_tooling.lib.epics import ChildState, IssueRef
 from vergil_tooling.lib.security_records import Advisory, PrivateHomeError, SecurityIssue
 
@@ -34,9 +34,12 @@ def standing_drain() -> Iterator[MagicMock]:
     # empty org makes every pass a no-op with no GitHub calls. The org-wide
     # path's <org>/.github existence probe answers "exists" by default. The
     # security-records pass reads an org with no security issues or advisories.
+    # The home's epic listing is empty and the Epic documents check clean.
     with (
         patch(f"{_MOD}.epics.drain_standing_org", return_value=[]) as mock_drain,
         patch(f"{_MOD}.epic_audit.open_issues", return_value=[]),
+        patch(f"{_MOD}.epic_audit.list_home_epics", return_value=[]),
+        patch(f"{_MOD}.epic_audit.epic_documents", return_value=[]),
         patch(f"{_MOD}.epics.github.repo_exists", return_value=True),
         patch(f"{_SEC}.security_issues", return_value=[]),
         patch(f"{_SEC}.advisory_home", side_effect=lambda org: f"{org}/.github"),
@@ -130,6 +133,74 @@ def test_main_repo_scopes_to_resolved_home() -> None:
     assert op.call_args.kwargs["home"] == "org/lab"
     assert stray.call_args.kwargs["home"] == "org/lab"
     assert ceoc.call_args.kwargs["home"] == "org/lab"
+
+
+def _report_patches() -> list[Any]:
+    return [
+        patch(f"{_MOD}.github.detect_org", return_value="org"),
+        patch(f"{_MOD}.epic_audit.operational_pending", return_value=[]),
+        patch(f"{_MOD}.epic_audit.closed_operational_without_success", return_value=[]),
+        patch(f"{_MOD}.epic_audit.task_drift", return_value=[]),
+        patch(f"{_MOD}.epic_audit.epic_drift", return_value=[]),
+        patch(f"{_MOD}.epic_audit.epic_outside_dotgithub", return_value=[]),
+        patch(f"{_MOD}.epic_audit.stray_dotgithub_issue", return_value=[]),
+        patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[]),
+    ]
+
+
+def test_main_lists_home_epics_once_for_both_per_epic_checks(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    listing = [{"number": 4}]
+    finding = EpicDocsFinding(4, "OPEN", "no Documents section")
+    with (
+        _patched(_report_patches()),
+        patch(f"{_MOD}.epic_audit.list_home_epics", return_value=listing) as list_epics,
+        patch(f"{_MOD}.epic_audit.closed_epic_open_child", return_value=[]) as ceoc,
+        patch(f"{_MOD}.epic_audit.epic_documents", return_value=[finding]) as documents,
+    ):
+        rc = main([])
+    list_epics.assert_called_once_with("org/.github")
+    assert ceoc.call_args.kwargs == {"home": "org/.github", "listing": listing}
+    assert documents.call_args.kwargs == {"home": "org/.github", "listing": listing}
+    out = capsys.readouterr().out
+    assert "## Epic documents" in out
+    assert "- org/.github#4 (open) — no Documents section" in out
+    assert rc == 0  # report-only: a finding does not change the exit status
+
+
+def test_main_lists_home_epics_under_the_home_owner_token() -> None:
+    seen: list[str | None] = []
+
+    def fake_list(home: str) -> list[Any]:
+        assert home == "lab-org/lab"
+        seen.append(github._target_org.get())
+        return []
+
+    with (
+        _patched(_report_patches()),
+        patch(f"{_MOD}.epics.resolve_epic_home", return_value="lab-org/lab"),
+        patch(f"{_MOD}.epic_audit.list_home_epics", side_effect=fake_list),
+        patch(f"{_MOD}.epic_audit.closed_epic_open_child", return_value=[]),
+    ):
+        assert main(["--repo", "lab-org/lab"]) == 0
+    assert seen == ["lab-org"]
+
+
+def test_close_does_not_run_the_epic_documents_check() -> None:
+    documents = MagicMock(return_value=[])
+    with (
+        patch(f"{_MOD}.identity_mode.is_human", return_value=True),
+        patch(f"{_MOD}.github.detect_org", return_value="org"),
+        patch(f"{_MOD}.epic_audit.task_drift", return_value=[]),
+        patch(f"{_MOD}.epic_audit.epic_drift", return_value=[]),
+        patch(f"{_MOD}.epic_audit.closed_epic_open_child", return_value=[]),
+        patch(f"{_MOD}.epic_audit.close_drift", return_value=[]),
+        patch(f"{_MOD}.epic_audit.epic_documents", documents),
+        patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[]),
+    ):
+        assert main(["--close"]) == 0
+    documents.assert_not_called()
 
 
 def test_main_repo_malformed_errors(capsys: pytest.CaptureFixture[str]) -> None:
@@ -425,9 +496,10 @@ def test_close_sweep_drain_scoped_to_org(capsys: pytest.CaptureFixture[str]) -> 
         rc = main(["--close"])
     assert rc == 0
     assert scope.call_args.args[0] == "org"
-    # The second scoped block is the orphan pass (no-op on an empty org), the
-    # third the security-records pass.
-    assert order == ["enter", "drain", "exit", "enter", "exit", "enter", "exit"]
+    # The first scoped block lists the home's epics, the second drains, the
+    # third is the orphan pass (no-op on an empty org), the fourth the
+    # security-records pass.
+    assert order == ["enter", "exit", "enter", "drain", "exit", "enter", "exit", "enter", "exit"]
 
 
 def test_close_sweep_drain_summary(capsys: pytest.CaptureFixture[str]) -> None:
@@ -531,8 +603,9 @@ def test_epic_audit_close_runs_standing_drain(
     ):
         rc = main(["--close"])
     assert rc == 0
-    # Then the orphan pass and the security-records pass, each in its own block.
-    assert order == ["enter", "standing", "exit", "enter", "exit", "enter", "exit"]
+    # After the home's epic listing and the drains, the orphan pass and the
+    # security-records pass, each in its own block.
+    assert order == ["enter", "exit", "enter", "standing", "exit", "enter", "exit", "enter", "exit"]
     assert standing_drain.call_args.args[0] == "org"
     assert standing_drain.call_args.kwargs["apply"] is True
     out = capsys.readouterr().out
@@ -669,10 +742,13 @@ def test_vrg_epic_audit_close_applies_in_order(capsys: pytest.CaptureFixture[str
     ):
         rc = main(["--close"])
     assert rc == 0
-    # The existing passes run in the first org-scoped block; the orphan pass
-    # applies in its own, in the order nativize -> strip -> move -> attach; the
-    # security-records pass runs last, in its own block.
+    # The home's epic listing runs in the first org-scoped block and the existing
+    # passes in the second; the orphan pass applies in its own, in the order
+    # nativize -> strip -> move -> attach; the security-records pass runs last,
+    # in its own block.
     assert order == [
+        "enter",
+        "exit",
         "enter",
         "exit",
         "enter",

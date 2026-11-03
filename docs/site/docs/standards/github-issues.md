@@ -310,6 +310,8 @@ defined handoffs:
 2. Initialize the epic in its [home](#epic-home-the-orggithub-rule) and seed the
    bookend tasks — the docs-first opening task, the documentation-review sweep,
    and the terminal **retrospective** (see the bookend convention below).
+   `vrg-epic-docs set --epic <ref>` seeds the epic's
+   [Documents section](#the-documents-section), all three entries `pending`.
 3. Write `spec.md` and commit it.
 4. **Spec pushback rounds**: `paad:pushback` on the spec (**human-gated
    rounds**).
@@ -319,7 +321,9 @@ defined handoffs:
 7. **Plan pushback rounds** (`paad:pushback` on the plan, with the spec as
    context), then **alignment rounds** (`paad:alignment` on the spec and the
    plan, which may change either). Both are **human-gated rounds**.
-8. One docs PR (spec + plan) that closes the docs-first task.
+8. One docs PR (spec + plan) that closes the docs-first task. At its handoff,
+   `vrg-epic-docs set --epic <ref> --spec epics/<N>-<slug>/spec.md --plan
+   epics/<N>-<slug>/plan.md` turns the spec and plan entries into links.
 9. File the implementation tasks and link them under the epic.
 
 The **interaction doctrine** governs the pipeline: `brainstorming` is
@@ -345,6 +349,11 @@ Each implementation task then runs through the `issue-implement` skill, which
 runs an **agentic-review gate** before it hands the PR off. The gate is advisory:
 when it pauses, the human can accept the branch as it stands. The rules
 are in the [paad review doctrine](https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-review-doctrine.md#3-mode-2-agentic-review-in-issue-implement).
+The design-review rounds and the gate's rounds both need paad's unattended
+runner, `paad:paad-delegate`, which only a Lima `vrg-vm session` with the
+[`--plugin-dir` override](../reference/cli-tools-overview.md#vrg-vm) loads; a
+session without it runs no review round
+([paad-policy §10](https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-policy.md#10-paad-unattended-mode-and-the-fleet-checkout)).
 
 ### The bookend convention
 
@@ -380,6 +389,70 @@ the last to close, so it **naturally gates closure** as the final bookend. The
 convention is mechanized as prose in the `epic-create` / `epic-retrospective`
 skills (`vergil-claude-plugin`), not in rigid tooling, because the retrospective
 and any follow-on are inherently agentic judgment.
+
+### The Documents section
+
+Every epic body opens with a **Documents** section that links the epic's spec,
+plan and retrospective, or says why one does not exist. Hidden markers wrap it
+so tools can find and replace it:
+
+```markdown
+<!-- vrg-epic-docs -->
+**Documents**
+
+- Spec: [`epics/819-epic-docs-links/spec.md`](https://github.com/vergil-project/.github/blob/develop/epics/819-epic-docs-links/spec.md)
+- Plan: [`epics/819-epic-docs-links/plan.md`](https://github.com/vergil-project/.github/blob/develop/epics/819-epic-docs-links/plan.md)
+- Retrospective: pending
+<!-- /vrg-epic-docs -->
+```
+
+- **Position:** the section is the first thing in the body; the rest of the
+  body follows it unchanged.
+- **Three entries,** always in the order Spec, Plan, Retrospective, each a
+  link or a note.
+- **Links:** the link text is the document's repo-relative path, or
+  `<repo>/<path>` for a document in another repo of the same org. The target is
+  a `blob` URL on that repo's default branch, queried from GitHub. Nothing is
+  linked across orgs.
+- **One writer:** only [`vrg-epic-docs`](../reference/cli-tools-overview.md#vrg-epic-docs)
+  writes the section, never a hand edit, so its format lives in one place.
+- **Scope:** every epic except the standing epics (ad hoc, intake, planning,
+  deferred, and the retired `standing` label or `Epic (standing):` title) and
+  `[archived]` epics. Task issues have no section.
+
+**Entry rules.** An entry is a link when the document exists. Otherwise its
+note comes from the epic's state, reading the rows top to bottom; the first
+that matches decides:
+
+| Epic state | Document missing | Entry |
+| --- | --- | --- |
+| open | any | `pending` |
+| closed as not planned | any | `not written (closed as not planned)` |
+| closed, created before 2026-07-12 | spec or plan | `not written (predates the spec and plan convention)` |
+| closed, created before 2026-07-27 | retrospective | `not written (predates the retrospective convention)` |
+| closed, otherwise | any | `not written` |
+
+The two dates mark when the spec-and-plan convention and the retrospective
+bookend began, fleet-wide. Both compare the epic's **creation** date, so an old
+epic that stayed open past a cutoff still predates it. An open epic says
+`pending` even for a document it may never get; the entry is settled when the
+epic closes. A missing document is never written after the fact: the note is
+the record.
+
+**When it is written.** The skills write the section at PR handoff, not after
+merge, so a new link returns 404 until its PR merges:
+
+| Moment | Who | Change |
+| --- | --- | --- |
+| Epic created | `epic-create` | Section added, all three `pending` |
+| Docs PR handed off | `epic-create` | Spec and plan become links |
+| Retrospective PR handed off | `epic-retrospective` | Retrospective becomes a link |
+
+An epic closed without a retrospective keeps a `pending` entry, which the
+[audit](#compliance-invariants) reports; `vrg-epic-docs backfill` settles it by
+the entry rules. The backfill also brings existing epics into line: it finds
+each epic's documents, keeps every link already written, and removes
+hand-written `Documents:`, `Spec:`, `Plan:` and `Retrospective:` lines.
 
 ### Epic home (the `<org>/.github` rule)
 
@@ -427,6 +500,14 @@ relocating epics when a repo's visibility changes.
   public → private flip, for a human to resolve (see
   [Epic home visibility flips](../guides/epic-home-visibility-flip.md)). Tooling
   never migrates or retracts it.
+- **Every epic links its documents.** Every epic in the home, open or closed,
+  except the standing and `[archived]` epics, has a well-formed
+  [Documents section](#the-documents-section): both markers, the heading, and
+  exactly the three entries, each a link or a note. On a **closed** epic no
+  entry reads `pending`, and every link names a file that exists on its repo's
+  default branch. An open epic's links are not checked, since a link written at
+  handoff resolves only once its PR merges. `vrg-epic-docs` settles each
+  finding; the audit never edits a body.
 
 #### The orphan pass (auto-heal)
 

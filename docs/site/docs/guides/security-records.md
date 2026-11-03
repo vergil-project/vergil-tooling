@@ -13,7 +13,8 @@ extended to several advisories per issue by epic
 ## The policy
 
 - **Every security finding gets one record**, except a finding that an
-  agentic review raises and the same branch fixes (see
+  agentic review raises and the human does not rule `record` (it is
+  fixed on the branch, or rejected; see
   [Recording findings from a review](#recording-findings-from-a-review)).
   A record is one pair (an issue may name several advisories, one per
   finding; see [The two reference lines](#the-two-reference-lines)):
@@ -47,10 +48,15 @@ The definition is paad's, used by every paad review skill:
 > tenant-isolation, or secret-handling path; on the edge, treat it as
 > security.
 
-paad writes such findings only to its gitignored `paad/security/` folder,
-which is local scratch: it lives on one machine and is lost to
-`git clean -x` or a deleted worktree. A security record is the durable,
-private home for them.
+A paad skill run by hand writes such findings only to its gitignored
+`paad/security/` folder. In the review rounds of `epic-create` and
+`issue-implement`, paad runs unattended and writes nothing: it returns
+its security findings in a delimited section of its result, which the
+caller keeps in a main clone's ignored `build/.vergil-state/` (the
+[paad review doctrine §1.5 and §1.9](https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-review-doctrine.md#15-state-directories)).
+Both are local scratch: they live on one machine and are lost to
+`git clean -fdx`, a deleted worktree or a deleted state directory. A
+security record is the durable, private home for them.
 
 ### Where a record lives
 
@@ -321,17 +327,18 @@ security findings, how many were accepted, and the GHSA IDs the round
 created. The rules are in the
 [paad review doctrine §2.7](https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-review-doctrine.md#27-security-findings).
 
-**Agentic review, during `issue-implement`.** This review records a
-finding only once the round has decided what to do with it, at the end
-of the round:
+**Agentic review, during `issue-implement`.** Every security finding
+waits for the human's ruling, and only a `record` ruling creates a
+record:
 
-- a finding **not fixed** on the branch (out of scope, dismissed,
-  deferred, pending the human, or a removed addition) is recorded with
-  plain `create`, which gives it its own intake issue. A finding already
-  recorded in an earlier round of the same task is not recorded again;
-- a finding **fixed on the branch** is not recorded at all. The weakness
-  never reached `develop`, so it needs no advisory, and the task's
-  records give it only as a count.
+- **`fix`**: the finding is fixed on the branch and not recorded. The
+  weakness never reached `develop`, so it needs no advisory, and the
+  task's records give it only as a count;
+- **`record`**: the finding is recorded with plain `create`, which gives
+  it its own intake issue. A finding already recorded in an earlier
+  round of the same task is not recorded again;
+- **`reject`**: no fix and no record, and no public record gives a
+  reason.
 
 Agentic review never attaches a finding to the task, which is why it
 records with plain `create` and no `--issue`: a record on the task would

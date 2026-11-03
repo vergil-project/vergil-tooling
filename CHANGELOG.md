@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.284] - 2026-11-03
+
+### Documentation
+
+- build/ exception, mode 2 security records and the review delegate (#3901)
+
+### Features
+
+- epic_docs library and vrg-epic-docs set (#3899)
+- vrg-epic-docs backfill (#3902)
+- check every epic's Documents section, and document it (#3911)
+
 ## [2.1.283] - 2026-11-01
 
 ### Chores
