@@ -563,6 +563,35 @@ def test_file_exists() -> None:
         epic_docs.file_exists("o", "vm", "docs/specs/a.md", "main")
 
 
+def test_content_type() -> None:
+    with patch.object(epic_docs.github, "read_json", return_value={"type": "file"}) as mock_read:
+        assert epic_docs.content_type("o", "vm", "docs/specs/a b.md", "x/y") == "file"
+    mock_read.assert_called_once_with("api", "repos/o/vm/contents/docs/specs/a%20b.md?ref=x%2Fy")
+    with patch.object(epic_docs.github, "read_json", return_value=[{"name": "a.md"}]):
+        assert epic_docs.content_type("o", "vm", "docs/specs", "main") == "dir"
+    with patch.object(epic_docs.github, "read_json", return_value={"type": "symlink"}):
+        assert epic_docs.content_type("o", "vm", "docs/specs/l.md", "main") == "symlink"
+    with patch.object(epic_docs.github, "read_json", side_effect=_not_found()):
+        assert epic_docs.content_type("o", "vm", "docs/specs/a.md", "main") is None
+
+
+@pytest.mark.parametrize("answer", [{}, {"type": 3}, "text", None])
+def test_content_type_rejects_a_malformed_answer(answer: object) -> None:
+    with (
+        patch.object(epic_docs.github, "read_json", return_value=answer),
+        pytest.raises(ValueError, match="unexpected contents API response"),
+    ):
+        epic_docs.content_type("o", "vm", "docs/specs/a.md", "main")
+
+
+def test_content_type_other_errors_propagate() -> None:
+    with (
+        patch.object(epic_docs.github, "read_json", side_effect=_server_error()),
+        pytest.raises(github.GitHubAPIError),
+    ):
+        epic_docs.content_type("o", "vm", "docs/specs/a.md", "main")
+
+
 def test_list_dir() -> None:
     listing = [{"name": "spec.md", "type": "file"}, {"name": "img", "type": "dir"}]
     with patch.object(epic_docs.github, "read_json", return_value=listing):

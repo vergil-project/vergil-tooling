@@ -525,7 +525,11 @@ The sanctioned path for creating epics, used by the `epic-create` and
 
 Write an epic's **Documents** section, the marked block at the top of its body
 that links the epic's spec, plan and retrospective or notes why one does not
-exist. `set --epic OWNER/REPO#N` adds the section, or updates it in place;
+exist (see
+[The Documents section](../standards/github-issues.md#the-documents-section)
+for the format and the entry rules). It has two subcommands.
+
+`set --epic OWNER/REPO#N` adds the section, or updates it in place;
 an entry not named keeps its value, and a new section starts all `pending`.
 The issue must carry the `epic` label. A `PATH` is in the epic's home repo,
 or `<repo>:<path>` for another repo of the same org (an
@@ -533,16 +537,48 @@ or `<repo>:<path>` for another repo of the same org (an
 file's existence is not checked. A path is repo-relative, with no leading
 `/`, whitespace or backtick, and a repo name uses only letters, digits, `.`,
 `-` and `_`. Hand-written document lines elsewhere in the body are removed,
-and a body that is already correct is not edited. The run uses the epic
-owner's App token.
+and a body that is already correct is not edited. The skills run it when an
+epic is created and at each docs PR handoff.
+
+`backfill (--org ORG | --repo OWNER/REPO)` writes the section on every epic
+of an epic home, open and closed: `--org` works on the org's `.github`, and
+`--repo` on a private repo that keeps its own epics. It skips the standing
+epics (ad hoc, intake, planning, deferred, the retired `standing` label, and
+titles starting `Epic (standing):`) and `[archived]` epics. For each epic it
+looks for the documents, in order:
+
+1. the directory `epics/<N>-*/` in the home repo's default branch;
+2. otherwise, an `epics/<dir>/` the body mentions that exists;
+3. otherwise, `docs/specs/`, `docs/plans/`, `docs/superpowers/specs/` or
+   `docs/superpowers/plans/` paths the body mentions, in the home repo or
+   another repo of the same org (`<repo>/docs/…` or `<owner>/<repo>/docs/…`),
+   that exist. A file under a `plans/` directory is the plan, any other the
+   spec.
+
+In a directory, `spec.md`, `plan.md` and `retrospective.md` are the
+documents; the `epics/archive/` directory is never read. A link already in
+the section is kept, so only entries that are still notes are decided, by
+the entry rules. Two candidate directories that each hold a document still
+to be decided, or two candidate specs or plans, make the epic **need a
+decision**: it is named and left unchanged, for a human to settle with
+`set`. Hand-written `Documents:`, `Spec:`, `Plan:` and `Retrospective:`
+lines (and a bracketed note line after one) are removed. Without `--apply`
+it is a dry run: per epic it prints whether it would add, change or leave
+the section, the section itself and each line it would remove, then a
+summary count. With `--apply` each body is read again before its documents
+are looked for, so an edit made since the listing is kept; an edit made
+while that epic is being worked on is not. A failed epic is named and the
+run carries on.
+
+Both subcommands run every read and write under the epic owner's App token.
 
 | Attribute | Value |
 |---|---|
-| Source | `vergil_tooling.bin.vrg_epic_docs` |
-| Args | `set`: `--epic` (required), `--spec PATH`, `--plan PATH`, `--retrospective PATH` |
+| Source | `vergil_tooling.bin.vrg_epic_docs` (format, parser and discovery: `lib/epic_docs.py`) |
+| Args | `set`: `--epic` (required), `--spec PATH`, `--plan PATH`, `--retrospective PATH`; `backfill`: `--org ORG` or `--repo OWNER/REPO` (one required), `--apply` |
 | Preconditions | GitHub App credentials for the epic's org |
-| Failure mode | Error on stderr; an issue that is not an epic, a bad `PATH`, or a malformed section (half a section, a bad entry) is refused with nothing edited |
-| Exit codes | 0 written or already correct, 1 error |
+| Failure mode | Error on stderr; for `set`, an issue that is not an epic, a bad `PATH`, or a malformed section (half a section, a bad entry) is refused with nothing edited. For `backfill`, a failed listing edits nothing; an epic that needs a decision or fails is named and left unchanged while the rest run |
+| Exit codes | 0 written or already correct, or (`backfill`) no epic needs a decision or failed, including a dry run with changes still to make; 1 error, or any epic that needs a decision or failed; 2 bad arguments |
 | Status | Active |
 
 ### vrg-epic-link
@@ -843,7 +879,22 @@ epics outside `.github`, stray `.github` issues, a closed epic with an open
 child, orphans, retired kind labels, body-only `Parent:` links, self-homed
 queues in a now-public repo, and private work under a public epic. It also
 lists open epics with operational tasks still pending, and closed
-operational tasks with no `Outcome: SUCCESS`. The report previews, without
+operational tasks with no `Outcome: SUCCESS`.
+
+An **Epic documents** section checks the
+[Documents section](../standards/github-issues.md#the-documents-section) of
+every epic in the home, open and closed, apart from the standing and
+`[archived]` epics. Each epic needs the section, well formed, with its three
+entries. On a closed epic, no entry may read `pending` and every link must
+name a file on its repo's default branch (a link to a directory, another
+branch, another org or a missing repo is reported too). An open epic's links
+are not checked. The findings are report-only: they do not change the exit
+status, and `vrg-epic-docs` settles them. The check runs only without
+`--close`, so the scheduled sweep does not report it. The audit lists the
+home's epics once, under the home owner's App token, for this check and the
+closed-epic-with-open-child check.
+
+The report previews, without
 writing, the ad-hoc and queue-epic drains and the security-records pass that
 `--close` would run.
 

@@ -499,6 +499,30 @@ def file_exists(owner: str, repo: str, path: str, branch: str) -> bool:
     return True
 
 
+def content_type(owner: str, repo: str, path: str, branch: str) -> str | None:
+    """What *path* is in *owner*/*repo* on *branch*: ``file``, ``dir``, … (contents API).
+
+    A directory comes back as a list, so it is ``dir``; anything else must be
+    an object whose ``type`` is a string (``file``, ``symlink``,
+    ``submodule``), and any other answer raises :class:`ValueError`. None
+    when *path* does not exist (a 404); any other error propagates.
+    """
+    endpoint = _contents_endpoint(owner, repo, path, branch)
+    try:
+        data = github.read_json("api", endpoint)
+    except github.GitHubAPIError as exc:
+        if is_not_found(exc):
+            return None
+        raise
+    if isinstance(data, list):
+        return "dir"
+    kind = data.get("type") if isinstance(data, dict) else None
+    if not isinstance(kind, str):
+        msg = f"unexpected contents API response for {endpoint}: no type in {type(data).__name__}"
+        raise ValueError(msg)  # noqa: TRY004 - a malformed API answer, not a caller type error
+    return kind
+
+
 def list_dir(owner: str, repo: str, path: str, branch: str) -> dict[str, str] | None:
     """The entries of directory *path* in *owner*/*repo* on *branch*, name to type.
 
