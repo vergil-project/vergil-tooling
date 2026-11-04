@@ -350,8 +350,9 @@ agents = ["<user-app-bot-login>", "<audit-app-bot-login>"]
 - An invalid stanza makes every `vrg-vm` command fail loudly when it loads
   `identities.toml`.
 
-The stanza is used first by the agentic review gate in `issue-implement`,
-which trusts an issue's title and body only when a trusted author opened it.
+The stanza is used first by `issue-implement`, which starts work on an issue
+only when a trusted author opened it, and by `epic-create`'s design-review
+rounds.
 It seeds the system-wide rule for every tool and skill that reads issues,
 planned in
 [vergil-project/.github#579](https://github.com/vergil-project/.github/issues/579).
