@@ -17076,9 +17076,9 @@ extended to several advisories per issue by epic
 <a href="https://github.com/vergil-project/.github/issues/573">vergil-project/.github#573</a>.</p>
 <h2 id="the-policy">The policy<a class="headerlink" href="#the-policy" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Every security finding gets one record</strong>, except a finding that an
-  agentic review raises and the human does not rule <code>record</code> (it is
-  fixed on the branch, or rejected; see
+<li><strong>Every security finding gets one record</strong>, except a security
+  follow-up that <code>issue-implement</code> finds and the human does not rule
+  <code>record</code> (it is fixed on the branch, or rejected; see
   <a href="#recording-findings-from-a-review">Recording findings from a review</a>).
   A record is one pair (an issue may name several advisories, one per
   finding; see <a href="#the-two-reference-lines">The two reference lines</a>):</li>
@@ -17111,8 +17111,8 @@ tenant-isolation, or secret-handling path; on the edge, treat it as
 security.</p>
 </blockquote>
 <p>A paad skill run by hand writes such findings only to its gitignored
-<code>paad/security/</code> folder. In the review rounds of <code>epic-create</code> and
-<code>issue-implement</code>, paad runs unattended and writes nothing: it returns
+<code>paad/security/</code> folder. In the review rounds of <code>epic-create</code>, paad
+runs unattended and writes nothing: it returns
 its security findings in a delimited section of its result, which the
 caller keeps in a main clone's ignored <code>build/.vergil-state/</code> (the
 <a href="https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-review-doctrine.md#15-state-directories">paad review doctrine §1.5 and §1.9</a>).
@@ -17332,11 +17332,12 @@ of them until the plan exists.</p>
   Don't close the planning issue by hand before every retarget: that
   would close the remaining advisories with the fix unwritten.</p>
 <h2 id="recording-findings-from-a-review">Recording findings from a review<a class="headerlink" href="#recording-findings-from-a-review" title="Permanent link">&para;</a></h2>
-<p>A review can raise security findings while the work is still being
-designed or built. Two recipes cover the reviews that run inside the
-epic/task framework. Both use <code>create</code>; design review also uses
-<code>retarget</code>, through <code>epic-create</code>'s step 9. As everywhere on this page, the refs and GHSA IDs
-are placeholders, not a real finding.</p>
+<p>Security findings can surface while the work is still being designed or
+built. Two recipes cover the findings raised inside the epic/task
+framework: design review during <code>epic-create</code>, and the security
+follow-ups <code>issue-implement</code> finds. Both use <code>create</code>; design review
+also uses <code>retarget</code>, through <code>epic-create</code>'s step 9. As everywhere on
+this page, the refs and GHSA IDs are placeholders, not a real finding.</p>
 <p><strong>Design review, during <code>epic-create</code>.</strong> The review runs in rounds
 against the spec and the plan while a planning issue tracks the work.
 Each finding is recorded once the human has decided it. Only a finding
@@ -17360,24 +17361,29 @@ depends on the decision:</p>
 security findings, how many were accepted, and the GHSA IDs the round
 created. The rules are in the
 <a href="https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-review-doctrine.md#27-security-findings">paad review doctrine §2.7</a>.</p>
-<p><strong>Agentic review, during <code>issue-implement</code>.</strong> Every security finding
-waits for the human's ruling, and only a <code>record</code> ruling creates a
-record:</p>
+<p><strong>Security follow-ups, during <code>issue-implement</code>.</strong> A security follow-up
+that <code>issue-implement</code> finds while it implements a task (a gap it hits,
+or a concern a sub-agent reports) stays private until the human rules on
+it. The task's public records give it only as a count; its details stay
+in the conversation, or, when <code>epic-implement</code> carries out the human's
+rulings, in the task's private directory,
+<code>build/.vergil-state/issue-implement/&lt;N&gt;/</code> in the main clone of the
+task's repo. Only a <code>record</code> ruling creates a record:</p>
 <ul>
 <li><strong><code>fix</code></strong>: the finding is fixed on the branch and not recorded. The
   weakness never reached <code>develop</code>, so it needs no advisory, and the
   task's records give it only as a count;</li>
 <li><strong><code>record</code></strong>: the finding is recorded with plain <code>create</code>, which gives
-  it its own intake issue. A finding already recorded in an earlier
-  round of the same task is not recorded again;</li>
+  it its own intake issue. A finding the task's records already show as
+  recorded is not recorded again;</li>
 <li><strong><code>reject</code></strong>: no fix and no record, and no public record gives a
   reason.</li>
 </ul>
-<p>Agentic review never attaches a finding to the task, which is why it
-records with plain <code>create</code> and no <code>--issue</code>: a record on the task would
-mark the task publicly, pointing from the shipped diff to the open
-record. The rules are in the
-<a href="https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-review-doctrine.md#36-security-findings">paad review doctrine §3.6</a>.</p>
+<p>A follow-up is never attached to the task, which is why it is recorded
+with plain <code>create</code> and no <code>--issue</code>: a record on the task would mark the
+task publicly, pointing from the shipped diff to the open record. The
+rules are in the
+<a href="https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-review-doctrine.md#17-creating-issues">paad review doctrine §1.7</a>.</p>
 <h2 id="checking-existing-records-after-the-several-advisories-change">Checking existing records after the several-advisories change<a class="headerlink" href="#checking-existing-records-after-the-several-advisories-change" title="Permanent link">&para;</a></h2>
 <p>An issue naming one advisory is a valid case of the several-advisories
 form, so existing records need no converting and there is no migration

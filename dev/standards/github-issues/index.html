@@ -17886,10 +17886,8 @@ How the workflow uses paad, and
 every place it deviates from the paad authors' recommendations, is recorded in
 the <a href="https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-policy.md">paad usage policy</a>.</p>
 <p>Each implementation task then runs through the <code>issue-implement</code> skill, which
-runs an <strong>agentic-review gate</strong> before it hands the PR off. The gate is advisory:
-when it pauses, the human can accept the branch as it stands. The rules
-are in the <a href="https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-review-doctrine.md#3-mode-2-agentic-review-in-issue-implement">paad review doctrine</a>.
-The design-review rounds and the gate's rounds both need paad's unattended
+implements the issue, validates it green and hands the PR off with
+<code>report-ready</code>. The design-review rounds need paad's unattended
 runner, <code>paad:paad-delegate</code>, which only a Lima <code>vrg-vm session</code> with the
 <a href="../../reference/cli-tools-overview/#vrg-vm"><code>--plugin-dir</code> override</a> loads; a
 session without it runs no review round
