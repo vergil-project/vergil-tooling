@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 #: together with that fragment. #3666 added ``paad/security/`` to base so paad's
 #: never-committed security reports stay ignored in every managed repo, and epic
 #: vergil-project/.github#568 added ``paad/code-reviews/`` after it so the
-#: agentic-review gate's report files never show in a worktree. The
+#: report files of any paad review run never show in a worktree. The
 #: lossless-split invariant below proves ``base ∪ all-fragments`` still
 #: reconstitutes exactly this set, so a future fragment edit that silently drops
 #: or invents a pattern fails CI. This is the regression guard the monolith used
