@@ -1366,6 +1366,8 @@
       
         
       
+        
+      
     
     
     
@@ -1418,6 +1420,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.285/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.285
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17499,8 +17529,9 @@ logins of your agent identities (the Apps' bot accounts).</p>
 <li>An invalid stanza makes every <code>vrg-vm</code> command fail loudly when it loads
   <code>identities.toml</code>.</li>
 </ul>
-<p>The stanza is used first by the agentic review gate in <code>issue-implement</code>,
-which trusts an issue's title and body only when a trusted author opened it.
+<p>The stanza is used first by <code>issue-implement</code>, which starts work on an issue
+only when a trusted author opened it, and by <code>epic-create</code>'s design-review
+rounds.
 It seeds the system-wide rule for every tool and skill that reads issues,
 planned in
 <a href="https://github.com/vergil-project/.github/issues/579">vergil-project/.github#579</a>.</p>

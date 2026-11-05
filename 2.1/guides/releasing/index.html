@@ -1364,6 +1364,8 @@
       
         
       
+        
+      
     
     
     
@@ -1416,6 +1418,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.285/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.285
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17730,17 +17760,6 @@ Finish by checking each machine, host and every VM: <code>claude plugin list
 --json</code> must show <code>vergil@vergil-marketplace</code> at the <code>X.Y.Z</code> you rolled back
 to. Run <code>vrg-host plugins</code> or <code>vrg-vm update</code> again on any machine that does
 not.</p>
-<p>A rollback moves the installed plugin only. A Lima <code>vrg-vm session</code> loads
-each tree listed in the host's <code>~/.config/vergil/plugin-dirs.toml</code> with
-<code>--plugin-dir</code>, so when a listed tree is the vergil plugin the session runs
-that tree instead of the installed one, and the rollback does not reach it.
-To run the rolled-back release in those sessions, remove the vergil tree
-from the file (see the
-<a href="../../reference/cli-tools-overview/#vrg-vm"><code>--plugin-dir</code> override</a>). A
-cloud session does not apply the file's entries and always runs the
-installed plugins, though a malformed file still fails its launch. A listed
-tree that is not the vergil plugin, such as a paad tree, leaves the
-installed vergil plugin in place.</p>
 <h3 id="how-long-a-rollback-lasts">How long a rollback lasts<a class="headerlink" href="#how-long-a-rollback-lasts" title="Permanent link">&para;</a></h3>
 <p>A rollback lasts until the next release, whose <code>promote</code> stage moves <code>v2.1</code>
 forward again. Keeping it in place until the fix ships is managed by hand:
