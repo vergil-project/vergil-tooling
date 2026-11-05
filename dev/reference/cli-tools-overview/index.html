@@ -18659,7 +18659,10 @@ trailer; see #3200). Performs five branch/context checks before committing
 (detached HEAD, protected branch, branch prefix, issue number,
 worktree convention).
 Local-settings guard: refuses an agent (warns a human) while a loadable
-<code>.claude/settings.local.json</code> is not absent or <code>{}</code> (epic vergil-project/.github#558).</p>
+<code>.claude/settings.local.json</code> is not absent or <code>{}</code> (epic vergil-project/.github#558).
+Freeze gate: refuses to add a commit on a branch that has been reported ready
+(#1719); <code>vrg-pr-workflow unfreeze</code> is the way back (see the freeze in
+<a href="#vrg-pr-workflow"><code>vrg-pr-workflow</code></a>).</p>
 <table>
 <thead>
 <tr>
@@ -18678,7 +18681,7 @@ Local-settings guard: refuses an agent (warns a human) while a loadable
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>Git repo, staged changes, not detached HEAD, not on protected branch, branch prefix matches branching model, issue number in branch name, not main worktree when <code>.worktrees/</code> present</td>
+<td>Git repo, staged changes, not detached HEAD, not on protected branch, branch prefix matches branching model, issue number in branch name, not main worktree when <code>.worktrees/</code> present, branch not frozen (or unfrozen)</td>
 </tr>
 <tr>
 <td>Failure mode</td>
