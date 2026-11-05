@@ -872,7 +872,9 @@ def write_json(method: str, endpoint: str, body: dict[str, object]) -> None:
     )
 
 
-def post_json_once(endpoint: str, body: dict[str, object]) -> dict[str, Any]:
+def post_json_once(
+    endpoint: str, body: dict[str, object], *, timeout: float | None = None
+) -> dict[str, Any]:
     """POST a JSON *body* to *endpoint* **exactly once** and return the response object.
 
     Unlike :func:`write_json`, this never goes through :func:`_run_with_retry`:
@@ -882,15 +884,26 @@ def post_json_once(endpoint: str, body: dict[str, object]) -> dict[str, Any]:
     what a failure means. Any non-zero exit raises :class:`GitHubAPIError`
     (:class:`MissingGitHubTokenError` for a missing token); a response that is
     not a JSON object raises :class:`GitHubAPIError` too.
+
+    *timeout* (seconds) bounds the call; ``None`` waits as long as ``gh`` takes.
+    A call that runs past it is killed and raises :class:`GitHubAPIError`, so a
+    hung POST takes the same path as any other failure: whether it landed is
+    unknown, and the caller decides how to find out.
     """
     cmd = ("gh", "api", endpoint, "-X", "POST", "--input", "-")
     kwargs: dict[str, Any] = {}
     env = _gh_env()
     if env is not None:
         kwargs["env"] = env
-    result = subprocess.run(  # noqa: S603
-        cmd, input=json.dumps(body), check=False, text=True, capture_output=True, **kwargs
-    )
+    if timeout is not None:
+        kwargs["timeout"] = timeout
+    try:
+        result = subprocess.run(  # noqa: S603
+            cmd, input=json.dumps(body), check=False, text=True, capture_output=True, **kwargs
+        )
+    except subprocess.TimeoutExpired as exc:
+        detail = f"the POST to {endpoint} timed out after {timeout} seconds"
+        raise GitHubAPIError(1, cmd, None, detail) from exc
     if result.returncode != 0:
         missing_token = _is_missing_token_error(result.stderr)
         error_type = MissingGitHubTokenError if missing_token else GitHubAPIError

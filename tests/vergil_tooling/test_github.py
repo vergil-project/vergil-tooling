@@ -1269,6 +1269,22 @@ class TestPostJsonOnce:
         ):
             github.post_json_once("repos/o/r/x", {})
 
+    def test_timeout_is_passed_to_the_call(self) -> None:
+        cp = _completed(stdout="{}")
+        with patch("vergil_tooling.lib.github.subprocess.run", return_value=cp) as mock_run:
+            github.post_json_once("repos/o/r/x", {}, timeout=30)
+        assert mock_run.call_args.kwargs["timeout"] == 30
+
+    def test_timeout_expired_raises_api_error_once(self) -> None:
+        expired = subprocess.TimeoutExpired(cmd="gh", timeout=30)
+        with (
+            patch("vergil_tooling.lib.github.subprocess.run", side_effect=expired) as mock_run,
+            patch("vergil_tooling.lib.retry.time.sleep"),
+            pytest.raises(github.GitHubAPIError, match="timed out after 30 seconds"),
+        ):
+            github.post_json_once("repos/o/r/x", {}, timeout=30)
+        assert mock_run.call_count == 1
+
 
 def test_write_json_sends_body_via_stdin() -> None:
     with patch("vergil_tooling.lib.retry.subprocess.run") as mock_run:
