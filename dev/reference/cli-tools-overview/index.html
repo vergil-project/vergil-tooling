@@ -13433,6 +13433,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-ruling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-ruling
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-epic-audit" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18067,6 +18078,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-ruling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-ruling
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-epic-audit" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -20342,6 +20364,54 @@ the logins. See
 <tr>
 <td>Exit codes</td>
 <td>0 success, 1 not configured or invalid, 2 bad arguments</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-ruling">vrg-ruling<a class="headerlink" href="#vrg-ruling" title="Permanent link">&para;</a></h3>
+<p>The agent's side of an authenticated ruling on a task issue (epic
+vergil-project/.github#889): one round is the agent's request, the human's
+reply and the agent's response, each a comment posted exactly once.
+<code>request</code> posts a request from an items file and prints its comment ID,
+refusing while the issue has an open exchange and naming that request.
+<code>read</code> runs every turn check on the reply to a request and prints the reply
+on stdout, with its comment ID on stderr. <code>respond</code> re-runs those checks and
+posts the response, which records the request and reply comment IDs; a
+re-run that finds its own response already landed reports it and posts
+nothing. A security item carries only its ID: the fixed text
+<code>security finding, details given privately</code> in a request, and an outcome
+(<code>fixed</code>, <code>filed</code>, <code>deferred</code> or <code>wont-fix</code>) in a response. All text is
+printable ASCII plus newline.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_ruling</code> (library: <code>lib/rulings/</code>)</td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>request --issue OWNER/REPO#N --items FILE</code>; <code>read --issue OWNER/REPO#N --request ID</code>; <code>respond --issue OWNER/REPO#N --request ID --reply ID --items FILE</code></td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>The <code>user</code> identity mode; trusted authors list exactly one human login, and <code>&lt;human&gt;-vergil-user</code> is on the <code>agents</code> list</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td>A refusal or error prints the reason on stderr and exits 1; a fatal turn check names the check and the comment and exits 4. A failed post is never retried: the issue is re-read, and the tool reports the landed comment, says it did not land, or says it cannot tell</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 success (or a valid reply), 1 refused or error, 2 bad arguments, 3 no reply yet, 4 fatal check</td>
 </tr>
 <tr>
 <td>Status</td>
