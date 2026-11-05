@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.285] - 2026-11-05
+
+### Chores
+
+- uv lock --upgrade
+
+### Documentation
+
+- drop the agentic-review gate from the docs (#3928)
+
+### Features
+
+- remove the --plugin-dir session override (#3929)
+
 ## [2.1.284] - 2026-11-03
 
 ### Documentation
