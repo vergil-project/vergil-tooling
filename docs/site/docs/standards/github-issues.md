@@ -349,7 +349,7 @@ Each implementation task then runs through the `issue-implement` skill, which
 implements the issue, validates it green and hands the PR off with
 `report-ready`. The design-review rounds need paad's unattended
 runner, `paad:paad-delegate`, which comes with the installed paad plugin
-([paad-policy §10](https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-policy.md#10-paad-unattended-mode-and-the-fleet-checkout)).
+([paad-policy §10](https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-policy.md#10-paad-from-the-fork)).
 
 ### The bookend convention
 
