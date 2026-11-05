@@ -395,18 +395,6 @@ Finish by checking each machine, host and every VM: `claude plugin list
 to. Run `vrg-host plugins` or `vrg-vm update` again on any machine that does
 not.
 
-A rollback moves the installed plugin only. A Lima `vrg-vm session` loads
-each tree listed in the host's `~/.config/vergil/plugin-dirs.toml` with
-`--plugin-dir`, so when a listed tree is the vergil plugin the session runs
-that tree instead of the installed one, and the rollback does not reach it.
-To run the rolled-back release in those sessions, remove the vergil tree
-from the file (see the
-[`--plugin-dir` override](../reference/cli-tools-overview.md#vrg-vm)). A
-cloud session does not apply the file's entries and always runs the
-installed plugins, though a malformed file still fails its launch. A listed
-tree that is not the vergil plugin, such as a paad tree, leaves the
-installed vergil plugin in place.
-
 ### How long a rollback lasts
 
 A rollback lasts until the next release, whose `promote` stage moves `v2.1`

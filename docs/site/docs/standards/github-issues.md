@@ -348,9 +348,7 @@ the [paad usage policy](https://github.com/vergil-project/vergil-claude-plugin/b
 Each implementation task then runs through the `issue-implement` skill, which
 implements the issue, validates it green and hands the PR off with
 `report-ready`. The design-review rounds need paad's unattended
-runner, `paad:paad-delegate`, which only a Lima `vrg-vm session` with the
-[`--plugin-dir` override](../reference/cli-tools-overview.md#vrg-vm) loads; a
-session without it runs no review round
+runner, `paad:paad-delegate`, which comes with the installed paad plugin
 ([paad-policy §10](https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-policy.md#10-paad-unattended-mode-and-the-fleet-checkout)).
 
 ### The bookend convention
