@@ -18,12 +18,15 @@ trailer; see #3200). Performs five branch/context checks before committing
 worktree convention).
 Local-settings guard: refuses an agent (warns a human) while a loadable
 `.claude/settings.local.json` is not absent or `{}` (epic vergil-project/.github#558).
+Freeze gate: refuses to add a commit on a branch that has been reported ready
+(#1719); `vrg-pr-workflow unfreeze` is the way back (see the freeze in
+[`vrg-pr-workflow`](#vrg-pr-workflow)).
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_commit` |
 | Args | `--type` (required), `--scope` (required), `--message` (required), `--body`, `--allow-empty` |
-| Preconditions | Git repo, staged changes, not detached HEAD, not on protected branch, branch prefix matches branching model, issue number in branch name, not main worktree when `.worktrees/` present |
+| Preconditions | Git repo, staged changes, not detached HEAD, not on protected branch, branch prefix matches branching model, issue number in branch name, not main worktree when `.worktrees/` present, branch not frozen (or unfrozen) |
 | Failure mode | `SystemExit` with diagnostic on stderr for each check |
 | Exit codes | 0 success, 1 rejection or error |
 | Status | Active |
