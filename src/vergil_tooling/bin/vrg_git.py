@@ -84,7 +84,7 @@ _READONLY_WITH_DENIED_SUBS: dict[str, set[str]] = {
 
 # symbolic-ref reads a symbolic ref with one positional argument and writes or
 # deletes one otherwise (`<name> <ref>`, -d/--delete, -m). Only the read form,
-# with these flags, is allowed: agentic-review resolves the default branch
+# with these flags, is allowed: paad's skills resolve the default branch
 # with `git symbolic-ref refs/remotes/origin/HEAD` (#3722).
 _SYMBOLIC_REF_READ_FLAGS: frozenset[str] = frozenset({"-q", "--quiet", "--short"})
 

@@ -12,9 +12,9 @@ extended to several advisories per issue by epic
 
 ## The policy
 
-- **Every security finding gets one record**, except a finding that an
-  agentic review raises and the human does not rule `record` (it is
-  fixed on the branch, or rejected; see
+- **Every security finding gets one record**, except a security
+  follow-up that `issue-implement` finds and the human does not rule
+  `record` (it is fixed on the branch, or rejected; see
   [Recording findings from a review](#recording-findings-from-a-review)).
   A record is one pair (an issue may name several advisories, one per
   finding; see [The two reference lines](#the-two-reference-lines)):
@@ -49,8 +49,8 @@ The definition is paad's, used by every paad review skill:
 > security.
 
 A paad skill run by hand writes such findings only to its gitignored
-`paad/security/` folder. In the review rounds of `epic-create` and
-`issue-implement`, paad runs unattended and writes nothing: it returns
+`paad/security/` folder. In the review rounds of `epic-create`, paad
+runs unattended and writes nothing: it returns
 its security findings in a delimited section of its result, which the
 caller keeps in a main clone's ignored `build/.vergil-state/` (the
 [paad review doctrine §1.5 and §1.9](https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-review-doctrine.md#15-state-directories)).
@@ -297,11 +297,12 @@ of them until the plan exists.
 
 ## Recording findings from a review
 
-A review can raise security findings while the work is still being
-designed or built. Two recipes cover the reviews that run inside the
-epic/task framework. Both use `create`; design review also uses
-`retarget`, through `epic-create`'s step 9. As everywhere on this page, the refs and GHSA IDs
-are placeholders, not a real finding.
+Security findings can surface while the work is still being designed or
+built. Two recipes cover the findings raised inside the epic/task
+framework: design review during `epic-create`, and the security
+follow-ups `issue-implement` finds. Both use `create`; design review
+also uses `retarget`, through `epic-create`'s step 9. As everywhere on
+this page, the refs and GHSA IDs are placeholders, not a real finding.
 
 **Design review, during `epic-create`.** The review runs in rounds
 against the spec and the plan while a planning issue tracks the work.
@@ -327,24 +328,29 @@ security findings, how many were accepted, and the GHSA IDs the round
 created. The rules are in the
 [paad review doctrine §2.7](https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-review-doctrine.md#27-security-findings).
 
-**Agentic review, during `issue-implement`.** Every security finding
-waits for the human's ruling, and only a `record` ruling creates a
-record:
+**Security follow-ups, during `issue-implement`.** A security follow-up
+that `issue-implement` finds while it implements a task (a gap it hits,
+or a concern a sub-agent reports) stays private until the human rules on
+it. The task's public records give it only as a count; its details stay
+in the conversation, or, when `epic-implement` carries out the human's
+rulings, in the task's private directory,
+`build/.vergil-state/issue-implement/<N>/` in the main clone of the
+task's repo. Only a `record` ruling creates a record:
 
 - **`fix`**: the finding is fixed on the branch and not recorded. The
   weakness never reached `develop`, so it needs no advisory, and the
   task's records give it only as a count;
 - **`record`**: the finding is recorded with plain `create`, which gives
-  it its own intake issue. A finding already recorded in an earlier
-  round of the same task is not recorded again;
+  it its own intake issue. A finding the task's records already show as
+  recorded is not recorded again;
 - **`reject`**: no fix and no record, and no public record gives a
   reason.
 
-Agentic review never attaches a finding to the task, which is why it
-records with plain `create` and no `--issue`: a record on the task would
-mark the task publicly, pointing from the shipped diff to the open
-record. The rules are in the
-[paad review doctrine §3.6](https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-review-doctrine.md#36-security-findings).
+A follow-up is never attached to the task, which is why it is recorded
+with plain `create` and no `--issue`: a record on the task would mark the
+task publicly, pointing from the shipped diff to the open record. The
+rules are in the
+[paad review doctrine §1.7](https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-review-doctrine.md#17-creating-issues).
 
 ## Checking existing records after the several-advisories change
 
