@@ -11,7 +11,10 @@ both tools share:
 - :mod:`.comments` reads every comment on an issue, with its 64-bit ID;
 - :mod:`.marker` renders and recognises the hidden end-of-body marker;
 - :mod:`.plain_text` screens text down to printable ASCII plus newline;
-- :mod:`.exchange` runs the turn checks over the trusted comment stream.
+- :mod:`.exchange` runs the turn checks over the trusted comment stream;
+- :mod:`.items` loads the items files and renders the request and response;
+- :mod:`.post` posts a comment exactly once and finds out whether a failed
+  post landed.
 
 Identity is never read from text: a comment's author is the only source of who
 wrote it, and the marker only says what kind of comment it is.
