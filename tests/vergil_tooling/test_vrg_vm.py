@@ -4,6 +4,7 @@ import argparse
 import contextlib
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -2797,6 +2798,32 @@ class TestSession:
         main(["session", "--config", str(config_file_top_model), "vergil-tooling"])
         assert "--model opus" in self._inner(mock_exec)
 
+    def test_session_passes_user_plugin_dir_through(
+        self,
+        _age: MagicMock,
+        _copy: MagicMock,
+        _link: MagicMock,
+        mock_exec: MagicMock,
+        config_file: Path,
+    ) -> None:
+        # A user's own --plugin-dir after `--` reaches claude, exactly once.
+        main(
+            [
+                "session",
+                "--config",
+                str(config_file),
+                "--fresh",
+                "vergil-tooling",
+                "--",
+                "claude",
+                "--plugin-dir",
+                "/x",
+            ]
+        )
+        argv = shlex.split(self._inner(mock_exec).rsplit(" exec ", 1)[1])
+        assert argv.count("--plugin-dir") == 1
+        assert argv[argv.index("--plugin-dir") + 1] == "/x"
+
     def test_cmd_session_loads_plugin_dirs(
         self,
         _age: MagicMock,
@@ -4945,6 +4972,34 @@ class TestCloudSession:
         order = [name for name, _, _ in manager.mock_calls]
         assert order.index("copy") < order.index("exec")
         assert order.index("link") < order.index("exec")
+
+    def test_session_passes_user_plugin_dir_through(
+        self, _cloud_repo: Path, tmp_path: Path
+    ) -> None:
+        # A user's own --plugin-dir after `--` reaches claude, exactly once.
+        transport = MagicMock()
+        with _CloudPatches(tmp_path / "state") as m:
+            m["transport"].return_value = transport
+            assert (
+                main(
+                    [
+                        "session",
+                        "lmf/cloud",
+                        "--config",
+                        str(_cloud_repo),
+                        "--fresh",
+                        "--",
+                        "claude",
+                        "--plugin-dir",
+                        "/x",
+                    ]
+                )
+                == 0
+            )
+        inner = transport.exec_session.call_args.kwargs["inner"]
+        argv = shlex.split(inner.rsplit(" exec ", 1)[1])
+        assert argv.count("--plugin-dir") == 1
+        assert argv[argv.index("--plugin-dir") + 1] == "/x"
 
     def test_cloud_session_skips_plugin_dirs_with_notice(
         self, _cloud_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
