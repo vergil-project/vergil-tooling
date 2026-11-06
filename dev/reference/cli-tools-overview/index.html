@@ -20378,11 +20378,20 @@ reply and the agent's response, each a comment posted exactly once.
 <code>request</code> posts a request from an items file and prints its comment ID,
 refusing while the issue has an open exchange and naming that request.
 <code>read</code> runs every turn check on the reply to a request and prints the reply
-on stdout, with its comment ID on stderr. <code>respond</code> re-runs those checks and
-posts the response, which records the request and reply comment IDs; a
-re-run that finds its own response already landed reports it and posts
-nothing. A security item carries only its ID: the fixed text
-<code>security finding, details given privately</code> in a request, and an outcome
+on stdout, with its comment ID on stderr; with <code>--json</code> a valid reply prints
+<code>{"request": &lt;ID&gt;, "reply": &lt;ID&gt;, "body": "&lt;text&gt;"}</code> instead, and every other
+outcome leaves stdout empty, so the exit code is the signal. <code>draft</code> builds the human's reply
+from a reply items file, pushes it with git plumbing to the reserved ref
+<code>refs/vergil/ruling-draft/&lt;issue&gt;/&lt;request ID&gt;</code> on the issue's repo, and
+prints the human's <code>vrg-ruling-reply</code> command; it runs only in a clone
+whose <code>origin</code> is the issue's repo, refuses once the request has a reply,
+and posts nothing. <code>respond</code> re-runs <code>read</code>'s checks and posts the
+response, which records the request and reply comment IDs; a re-run that
+finds its own response already landed reports it and posts nothing. Either
+way <code>respond</code> then deletes any leftover draft ref. A security item carries
+only its ID: the fixed text <code>security finding, details given privately</code> in
+a request, a decision
+(<code>fix</code>, <code>file</code>, <code>defer</code> or <code>wont-fix</code>) in a draft, and an outcome
 (<code>fixed</code>, <code>filed</code>, <code>deferred</code> or <code>wont-fix</code>) in a response. All text is
 printable ASCII plus newline.</p>
 <table>
@@ -20399,11 +20408,11 @@ printable ASCII plus newline.</p>
 </tr>
 <tr>
 <td>Args</td>
-<td><code>request --issue OWNER/REPO#N --items FILE</code>; <code>read --issue OWNER/REPO#N --request ID</code>; <code>respond --issue OWNER/REPO#N --request ID --reply ID --items FILE</code></td>
+<td><code>request --issue OWNER/REPO#N --items FILE</code>; <code>read --issue OWNER/REPO#N --request ID</code>; <code>draft --issue OWNER/REPO#N --request ID --items FILE</code>; <code>respond --issue OWNER/REPO#N --request ID --reply ID --items FILE</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>The <code>user</code> identity mode; trusted authors list exactly one human login, and <code>&lt;human&gt;-vergil-user</code> is on the <code>agents</code> list</td>
+<td>The <code>user</code> identity mode; trusted authors list exactly one human login, and <code>&lt;human&gt;-vergil-user</code> is on the <code>agents</code> list; for <code>draft</code>, a clone whose <code>origin</code> is the issue's repo</td>
 </tr>
 <tr>
 <td>Failure mode</td>
