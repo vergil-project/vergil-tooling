@@ -209,8 +209,8 @@ def _blob_text(repo: str, blob_sha: str, what: str) -> str:
     except binascii.Error as exc:
         msg = f"{what}: the blob's base64 content does not decode"
         raise RulingError(msg) from exc
-    # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1 -- a git
-    # blob ID is SHA-1 by definition; this checks integrity, not security.
+    # A git blob ID is SHA-1 by definition; this checks integrity, not security.
+    # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1 (git ID)
     if hashlib.sha1(b"blob %d\0" % len(raw) + raw, usedforsecurity=False).hexdigest() != blob_sha:
         msg = f"{what}: the blob's content does not match its SHA"
         raise RulingError(msg)
