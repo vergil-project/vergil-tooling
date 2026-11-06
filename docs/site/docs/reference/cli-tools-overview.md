@@ -879,19 +879,26 @@ reply and the agent's response, each a comment posted exactly once.
 `request` posts a request from an items file and prints its comment ID,
 refusing while the issue has an open exchange and naming that request.
 `read` runs every turn check on the reply to a request and prints the reply
-on stdout, with its comment ID on stderr. `respond` re-runs those checks and
-posts the response, which records the request and reply comment IDs; a
-re-run that finds its own response already landed reports it and posts
-nothing. A security item carries only its ID: the fixed text
-`security finding, details given privately` in a request, and an outcome
+on stdout, with its comment ID on stderr. `draft` builds the human's reply
+from a reply items file, pushes it with git plumbing to the reserved ref
+`refs/vergil/ruling-draft/<issue>/<request ID>` on the issue's repo, and
+prints the human's `vrg-ruling-reply` command; it runs only in a clone
+whose `origin` is the issue's repo, refuses once the request has a reply,
+and posts nothing. `respond` re-runs `read`'s checks and posts the
+response, which records the request and reply comment IDs; a re-run that
+finds its own response already landed reports it and posts nothing. Either
+way `respond` then deletes any leftover draft ref. A security item carries
+only its ID: the fixed text `security finding, details given privately` in
+a request, a decision
+(`fix`, `file`, `defer` or `wont-fix`) in a draft, and an outcome
 (`fixed`, `filed`, `deferred` or `wont-fix`) in a response. All text is
 printable ASCII plus newline.
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_ruling` (library: `lib/rulings/`) |
-| Args | `request --issue OWNER/REPO#N --items FILE`; `read --issue OWNER/REPO#N --request ID`; `respond --issue OWNER/REPO#N --request ID --reply ID --items FILE` |
-| Preconditions | The `user` identity mode; trusted authors list exactly one human login, and `<human>-vergil-user` is on the `agents` list |
+| Args | `request --issue OWNER/REPO#N --items FILE`; `read --issue OWNER/REPO#N --request ID`; `draft --issue OWNER/REPO#N --request ID --items FILE`; `respond --issue OWNER/REPO#N --request ID --reply ID --items FILE` |
+| Preconditions | The `user` identity mode; trusted authors list exactly one human login, and `<human>-vergil-user` is on the `agents` list; for `draft`, a clone whose `origin` is the issue's repo |
 | Failure mode | A refusal or error prints the reason on stderr and exits 1; a fatal turn check names the check and the comment and exits 4. A failed post is never retried: the issue is re-read, and the tool reports the landed comment, says it did not land, or says it cannot tell |
 | Exit codes | 0 success (or a valid reply), 1 refused or error, 2 bad arguments, 3 no reply yet, 4 fatal check |
 | Status | Active |

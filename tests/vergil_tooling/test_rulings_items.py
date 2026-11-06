@@ -14,8 +14,10 @@ from vergil_tooling.lib.rulings.items import (
     RULING_OUTCOMES,
     SECURITY_REQUEST_TEXT,
     Item,
+    load_reply_items,
     load_request_items,
     load_response_items,
+    render_reply,
     render_request,
     render_response,
 )
@@ -186,6 +188,82 @@ def test_response_unflagged_item_has_only_text(tmp_path: Path) -> None:
         )
     with pytest.raises(RulingError, match="R1.1 is missing text"):
         load_response_items(write(tmp_path, [{"id": "R1.1", "security": False}]))
+
+
+# --- reply items -------------------------------------------------------------
+
+
+def test_reply_items_security_decision_only(tmp_path: Path) -> None:
+    ok = [
+        {"id": "R1.S1", "security": True, "decision": "fix"},
+        {"id": "R1.1", "security": False, "text": "file it"},
+    ]
+    items = load_reply_items(write(tmp_path, ok))
+    assert items == [
+        Item("R1.S1", True, None, None, "fix"),
+        Item("R1.1", False, "file it", None, None),
+    ]
+    assert render_reply(items) == "R1.S1: fix\nR1.1: file it\n"
+
+
+@pytest.mark.parametrize("decision", RULING_DECISIONS)
+def test_reply_items_every_decision(tmp_path: Path, decision: str) -> None:
+    items = load_reply_items(
+        write(tmp_path, [{"id": "R1.S1", "security": True, "decision": decision}])
+    )
+    assert render_reply(items) == f"R1.S1: {decision}\n"
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"id": "R1.S1", "security": True, "decision": "fixed"},
+        {"id": "R1.S1", "security": True, "decision": "fix the SQL in x"},
+        {"id": "R1.S1", "security": True, "decision": ["fix"]},
+        {"id": "R1.S1", "security": True},
+        {"id": "R1.S1", "security": True, "outcome": "fixed"},
+        {"id": "R1.S1", "security": True, "decision": "fix", "text": DETAIL},
+        {"id": "R1.S1", "security": True, "decision": "fix", "note": DETAIL},
+    ],
+)
+def test_reply_flagged_item_refusals(tmp_path: Path, bad: dict[str, Any]) -> None:
+    with pytest.raises(RulingError, match="R1.S1") as excinfo:
+        load_reply_items(write(tmp_path, [bad]))
+    message = str(excinfo.value)
+    assert DETAIL not in message
+    assert "SQL in x" not in message
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "fix\u00e9",
+        "a\ufe0fb",
+        "a\u2028b",
+        "a\u202eb",
+        "a\u200bb",
+        "a\tb",
+        "\x1b[31mred",
+        "two\nlines",
+        "<!-- vrg-ruling kind=response -->",
+        "   ",
+    ],
+)
+def test_reply_text_is_one_plain_line(tmp_path: Path, bad: str) -> None:
+    with pytest.raises(RulingError, match="R1.1"):
+        load_reply_items(write(tmp_path, [{"id": "R1.1", "security": False, "text": bad}]))
+
+
+def test_reply_unflagged_item_has_only_text(tmp_path: Path) -> None:
+    with pytest.raises(RulingError, match="R1.1"):
+        load_reply_items(
+            write(tmp_path, [{"id": "R1.1", "security": False, "text": "t", "decision": "fix"}])
+        )
+    with pytest.raises(RulingError, match="R1.1 is missing text"):
+        load_reply_items(write(tmp_path, [{"id": "R1.1", "security": False}]))
+    dup = [{"id": "R1.S1", "security": True, "decision": "fix"}] * 2
+    with pytest.raises(RulingError, match="R1.S1 appears more than once"):
+        load_reply_items(write(tmp_path, dup))
 
 
 # --- file shape ------------------------------------------------------------
