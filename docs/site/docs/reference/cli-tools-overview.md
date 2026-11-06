@@ -879,7 +879,9 @@ reply and the agent's response, each a comment posted exactly once.
 `request` posts a request from an items file and prints its comment ID,
 refusing while the issue has an open exchange and naming that request.
 `read` runs every turn check on the reply to a request and prints the reply
-on stdout, with its comment ID on stderr. `draft` builds the human's reply
+on stdout, with its comment ID on stderr; with `--json` a valid reply prints
+`{"request": <ID>, "reply": <ID>, "body": "<text>"}` instead, and every other
+outcome leaves stdout empty, so the exit code is the signal. `draft` builds the human's reply
 from a reply items file, pushes it with git plumbing to the reserved ref
 `refs/vergil/ruling-draft/<issue>/<request ID>` on the issue's repo, and
 prints the human's `vrg-ruling-reply` command; it runs only in a clone

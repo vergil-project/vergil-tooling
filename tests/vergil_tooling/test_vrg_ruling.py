@@ -296,6 +296,45 @@ def test_read_untrusted_request_is_request_author(cli: Cli, issue: FakeIssue) ->
     assert "fatal check 'request-author' on comment 41" in cli.stderr
 
 
+def test_read_json_valid_reply(cli: Cli, issue: FakeIssue) -> None:
+    issue.comments = [request_comment(41), reply_comment(42, "R1.1: fix\nR1.S1: defer")]
+    assert cli("read", "--issue", "o/r#7", "--request", "41", "--json") == 0
+    assert json.loads(cli.stdout) == {
+        "request": 41,
+        "reply": 42,
+        "body": "R1.1: fix\nR1.S1: defer",
+    }
+    assert cli.stdout.count("\n") == 1
+    assert "reply 42 to request 41" in cli.stderr
+
+
+@pytest.mark.parametrize(
+    ("comments", "code", "message"),
+    [
+        ([request_comment(41)], 3, "no reply yet to request 41"),
+        (
+            [request_comment(41), reply_comment(42), reply_comment(43)],
+            4,
+            "fatal check 'turn' on comment 43",
+        ),
+    ],
+)
+def test_read_json_no_reply_and_fatal(
+    cli: Cli, issue: FakeIssue, comments: list[IssueComment], code: int, message: str
+) -> None:
+    issue.comments = comments
+    assert cli("read", "--issue", "o/r#7", "--request", "41", "--json") == code
+    assert cli.stdout == ""
+    assert message in cli.stderr
+
+
+def test_read_without_json_unchanged(cli: Cli, issue: FakeIssue) -> None:
+    issue.comments = [request_comment(41), reply_comment(42, "R1.1: fix")]
+    assert cli("read", "--issue", "o/r#7", "--request", "41") == 0
+    assert cli.stdout == "R1.1: fix\n"
+    assert cli.stderr == "vrg-ruling: reply 42 to request 41 on o/r#7\n"
+
+
 @pytest.mark.parametrize(
     "argv",
     [

@@ -13,8 +13,10 @@ One round on a task issue is a **request** (posted here), the human's
   ``vrg-ruling-reply`` command. It runs only in a clone whose ``origin`` is
   the issue's repo, refuses once the request has a reply, and posts nothing.
 - ``read --issue --request`` runs every turn check and prints the human's
-  reply on stdout (its comment ID goes to stderr). Exit ``3`` means no reply
-  yet; ``4`` is a fatal check, named with its comment.
+  reply on stdout (its comment ID goes to stderr). With ``--json`` a valid
+  reply prints ``{"request": ID, "reply": ID, "body": text}`` instead, and
+  every other outcome leaves stdout empty. Exit ``3`` means no reply yet;
+  ``4`` is a fatal check, named with its comment.
 - ``respond --issue --request --reply --items`` re-runs ``read``'s checks,
   then posts the response, which records the request and reply comment IDs.
   A re-run that finds its own response already landed reports that ID, posts
@@ -33,6 +35,7 @@ error, ``2`` a usage error, ``3`` no reply yet, ``4`` a fatal check.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -104,7 +107,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.command == "request":
                 return _request(ctx, Path(args.items))
             if args.command == "read":
-                return _read(ctx, args.request)
+                return _read(ctx, args.request, as_json=args.json)
             if args.command == "draft":
                 return _draft(ctx, args.request, Path(args.items))
             return _respond(ctx, args.request, args.reply, Path(args.items))
@@ -170,7 +173,7 @@ def _request(ctx: _Context, items_path: Path) -> int:
     return EXIT_OK
 
 
-def _read(ctx: _Context, request_id: int) -> int:
+def _read(ctx: _Context, request_id: int, *, as_json: bool) -> int:
     stream, all_ids = _stream(ctx)
     reply = read_reply(
         stream, request_id=request_id, agent=ctx.agent, human=ctx.human, all_ids=all_ids
@@ -179,7 +182,10 @@ def _read(ctx: _Context, request_id: int) -> int:
         print(f"{_PROG}: no reply yet to request {request_id} on {ctx.where}", file=sys.stderr)
         return EXIT_NO_REPLY
     print(f"{_PROG}: reply {reply.id} to request {request_id} on {ctx.where}", file=sys.stderr)
-    print(reply.body)
+    if as_json:
+        print(json.dumps({"request": request_id, "reply": reply.id, "body": reply.body}))
+    else:
+        print(reply.body)
     return EXIT_OK
 
 
@@ -304,6 +310,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     read = sub.add_parser("read", help="Read and check the human's reply to a request")
     read.add_argument("--issue", required=True, help="The task issue, owner/repo#N")
     read.add_argument("--request", required=True, type=_comment_id, help="The request's comment ID")
+    read.add_argument(
+        "--json",
+        action="store_true",
+        help=(
+            'On a valid reply, print {"request": ID, "reply": ID, "body": text} '
+            "instead of the body; on any other outcome stdout stays empty"
+        ),
+    )
 
     draft = sub.add_parser("draft", help="Push the reply drafted for the human to its draft ref")
     draft.add_argument("--issue", required=True, help="The task issue, owner/repo#N")
