@@ -18,12 +18,15 @@ trailer; see #3200). Performs five branch/context checks before committing
 worktree convention).
 Local-settings guard: refuses an agent (warns a human) while a loadable
 `.claude/settings.local.json` is not absent or `{}` (epic vergil-project/.github#558).
+Freeze gate: refuses to add a commit on a branch that has been reported ready
+(#1719); `vrg-pr-workflow unfreeze` is the way back (see the freeze in
+[`vrg-pr-workflow`](#vrg-pr-workflow)).
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_commit` |
 | Args | `--type` (required), `--scope` (required), `--message` (required), `--body`, `--allow-empty` |
-| Preconditions | Git repo, staged changes, not detached HEAD, not on protected branch, branch prefix matches branching model, issue number in branch name, not main worktree when `.worktrees/` present |
+| Preconditions | Git repo, staged changes, not detached HEAD, not on protected branch, branch prefix matches branching model, issue number in branch name, not main worktree when `.worktrees/` present, branch not frozen (or unfrozen) |
 | Failure mode | `SystemExit` with diagnostic on stderr for each check |
 | Exit codes | 0 success, 1 rejection or error |
 | Status | Active |
@@ -866,6 +869,71 @@ the logins. See
 | Preconditions | The VM file or the host stanza exists |
 | Failure mode | Nothing configured, or an invalid configuration, prints the error on stderr and exits 1; it never prints a default |
 | Exit codes | 0 success, 1 not configured or invalid, 2 bad arguments |
+| Status | Active |
+
+### vrg-ruling
+
+The agent's side of an authenticated ruling on a task issue (epic
+vergil-project/.github#889): one round is the agent's request, the human's
+reply and the agent's response, each a comment posted exactly once.
+`request` posts a request from an items file and prints its comment ID,
+refusing while the issue has an open exchange and naming that request.
+`read` runs every turn check on the reply to a request and prints the reply
+on stdout, with its comment ID on stderr; with `--json` a valid reply prints
+`{"request": <ID>, "reply": <ID>, "body": "<text>"}` instead, and every other
+outcome leaves stdout empty, so the exit code is the signal. `draft` builds the human's reply
+from a reply items file, pushes it with git plumbing to the reserved ref
+`refs/vergil/ruling-draft/<issue>/<request ID>` on the issue's repo, and
+prints the human's `vrg-ruling-reply` command; it runs only in a clone
+whose `origin` is the issue's repo, refuses once the request has a reply,
+and posts nothing. `respond` re-runs `read`'s checks and posts the
+response, which records the request and reply comment IDs; a re-run that
+finds its own response already landed reports it and posts nothing. Either
+way `respond` then deletes any leftover draft ref. A security item carries
+only its ID: the fixed text `security finding, details given privately` in
+a request, a decision
+(`fix`, `file`, `defer` or `wont-fix`) in a draft, and an outcome
+(`fixed`, `filed`, `deferred` or `wont-fix`) in a response. All text is
+printable ASCII plus newline. See the
+[vrg-ruling reference](dev/ruling.md) and the
+[Human Replies guide](../guides/human-replies.md).
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_ruling` (library: `lib/rulings/`) |
+| Args | `request --issue OWNER/REPO#N --items FILE`; `read --issue OWNER/REPO#N --request ID [--json]`; `draft --issue OWNER/REPO#N --request ID --items FILE`; `respond --issue OWNER/REPO#N --request ID --reply ID --items FILE` |
+| Preconditions | The `user` identity mode; trusted authors list exactly one human login, and `<human>-vergil-user` is on the `agents` list; for `draft`, a clone whose `origin` is the issue's repo |
+| Failure mode | A refusal or error prints the reason on stderr and exits 1; a fatal turn check names the check and the comment and exits 4. A failed post is never retried: the issue is re-read, and the tool reports the landed comment, says it did not land, or says it cannot tell |
+| Exit codes | 0 success (or a valid reply), 1 refused or error, 2 bad arguments, 3 no reply yet, 4 fatal check |
+| Status | Active |
+
+### vrg-ruling-reply
+
+The human's side of an authenticated ruling: it posts the human's reply to
+the agent's request, as the human. It is a human-only command, run in the
+human's own shell on the host, logged in to `gh` as themselves, the way
+`vrg-submit-pr` is run; never through `!` in an agent session, whose shell
+carries the agent's identity. It refuses in an agent identity mode, without
+an interactive terminal, and unless `gh api user` reports the one human
+login of the trusted-authors configuration. It refuses unless the request is
+the issue's open request and has no reply yet. It reads the reply once, from
+the agent's draft (the request's draft ref, pushed by `vrg-ruling draft`) or
+from `--response-text`, refuses anything but printable ASCII plus newline,
+and prints the reply exactly as it will be posted with its byte length and
+SHA-256. On confirmation it reads the issue again, refuses if its trusted
+comments changed while the prompt waited, posts exactly the bytes it showed,
+once, and deletes the request's draft ref. A draft pushed again while the
+prompt waits is never what is posted. Declining exits 1 and keeps the draft.
+See the [vrg-ruling-reply reference](dev/ruling-reply.md) and the
+[Human Replies guide](../guides/human-replies.md).
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_ruling_reply` (library: `lib/rulings/`) |
+| Args | `--issue OWNER/REPO#N --request ID [--response-text TEXT]` |
+| Preconditions | The human's own shell (not an agent identity), an interactive terminal, `gh` logged in as the human login; trusted authors list exactly one human login, and `<human>-vergil-user` is on the `agents` list |
+| Failure mode | A refusal, a declined prompt or an error prints the reason on stderr and exits 1, posting nothing; a fatal turn check names the check and the comment and exits 4. A failed post is never retried: the issue is re-read, and the tool reports the landed comment, says it did not land, or says it cannot tell |
+| Exit codes | 0 posted, 1 refused, declined or error, 2 bad arguments, 4 fatal check |
 | Status | Active |
 
 ### vrg-epic-audit

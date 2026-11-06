@@ -254,7 +254,8 @@ See the [vrg-finalize-pr reference](../reference/dev/finalize-pr.md).
 The main worktree at the project root stays on `develop` and is
 read-only for source; ignored scratch anywhere in the main clone's
 `build/` is allowed, with `build/.vergil-state/` the namespace for
-agent state that must survive a session (rule 3 of
+agent state that must survive a session and `build/tmp/` for scratch
+that can be deleted once nothing is using it (rule 3 of
 [the worktree convention][worktree-spec]). Every
 change happens in its own worktree under `.worktrees/`, on its own
 branch. This lets several agents work in the
