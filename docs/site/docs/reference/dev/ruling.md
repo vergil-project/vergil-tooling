@@ -15,10 +15,10 @@ posted exactly once. For the protocol, the checks and recovery, see
 ## Usage
 
 ```text
-vrg-ruling request --issue OWNER/REPO#N --items FILE
-vrg-ruling draft   --issue OWNER/REPO#N --request ID --items FILE
-vrg-ruling read    --issue OWNER/REPO#N --request ID [--json]
-vrg-ruling respond --issue OWNER/REPO#N --request ID --reply ID --items FILE
+vrg-ruling request --issue 'OWNER/REPO#N' --items FILE
+vrg-ruling draft   --issue 'OWNER/REPO#N' --request ID --items FILE
+vrg-ruling read    --issue 'OWNER/REPO#N' --request ID [--json]
+vrg-ruling respond --issue 'OWNER/REPO#N' --request ID --reply ID --items FILE
 ```
 
 `--issue` is the task issue as `owner/repo#N`. `--request` and `--reply` are
@@ -118,8 +118,12 @@ Builds the human's reply from a reply items file, pushes it to the request's
 draft ref, and prints the human's command on stdout:
 
 ```text
-vrg-ruling-reply --issue OWNER/REPO#N --request ID
+vrg-ruling-reply --issue 'OWNER/REPO#N' --request ID
 ```
+
+The issue ref is single-quoted so the command pastes into any shell:
+unquoted, the `#` is a glob operator in zsh with `EXTENDED_GLOB` set. The
+`read` command that `request`'s refusal names is quoted the same way.
 
 In order, it checks the items and the rendered reply, refuses unless the
 clone's `origin` pushes to the issue's repo, and runs `read`'s checks on the

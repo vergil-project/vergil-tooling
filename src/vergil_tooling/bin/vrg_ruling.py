@@ -155,7 +155,8 @@ def _request(ctx: _Context, items_path: Path) -> int:
     if pending is not None:
         msg = (
             f"{ctx.where} has open request {pending}; read it with"
-            f" vrg-ruling read --issue {ctx.where} --request {pending}"
+            f" vrg-ruling read --issue {draft_ref.quoted_issue_ref(ctx.repo, ctx.issue)}"
+            f" --request {pending}"
         )
         raise RulingError(msg)
     try:

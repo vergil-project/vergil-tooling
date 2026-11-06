@@ -93,7 +93,7 @@ def git_repo_with_remote(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Clo
 
 def test_draft_ref_and_reply_command() -> None:
     assert draft_ref(7, 41) == "refs/vergil/ruling-draft/7/41"
-    assert reply_command("o/r", 7, 41) == "vrg-ruling-reply --issue o/r#7 --request 41"
+    assert reply_command("o/r", 7, 41) == "vrg-ruling-reply --issue 'o/r#7' --request 41"
 
 
 # --- push_draft ----------------------------------------------------------------

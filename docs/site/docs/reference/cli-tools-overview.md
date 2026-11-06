@@ -824,7 +824,7 @@ printable ASCII plus newline. See the
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_ruling` (library: `lib/rulings/`) |
-| Args | `request --issue OWNER/REPO#N --items FILE`; `read --issue OWNER/REPO#N --request ID [--json]`; `draft --issue OWNER/REPO#N --request ID --items FILE`; `respond --issue OWNER/REPO#N --request ID --reply ID --items FILE` |
+| Args | `request --issue 'OWNER/REPO#N' --items FILE`; `read --issue 'OWNER/REPO#N' --request ID [--json]`; `draft --issue 'OWNER/REPO#N' --request ID --items FILE`; `respond --issue 'OWNER/REPO#N' --request ID --reply ID --items FILE` |
 | Preconditions | The `user` identity mode; trusted authors list exactly one human login, and `<human>-vergil-user` is on the `agents` list; for `draft`, a clone whose `origin` is the issue's repo |
 | Failure mode | A refusal or error prints the reason on stderr and exits 1; a fatal turn check names the check and the comment and exits 4. A failed post is never retried: the issue is re-read, and the tool reports the landed comment, says it did not land, or says it cannot tell |
 | Exit codes | 0 success (or a valid reply), 1 refused or error, 2 bad arguments, 3 no reply yet, 4 fatal check |
@@ -853,7 +853,7 @@ See the [vrg-ruling-reply reference](dev/ruling-reply.md) and the
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_ruling_reply` (library: `lib/rulings/`) |
-| Args | `--issue OWNER/REPO#N --request ID [--response-text TEXT]` |
+| Args | `--issue 'OWNER/REPO#N' --request ID [--response-text TEXT]` |
 | Preconditions | The human's own shell (not an agent identity), an interactive terminal, `gh` logged in as the human login; trusted authors list exactly one human login, and `<human>-vergil-user` is on the `agents` list |
 | Failure mode | A refusal, a declined prompt or an error prints the reason on stderr and exits 1, posting nothing; a fatal turn check names the check and the comment and exits 4. A failed post is never retried: the issue is re-read, and the tool reports the landed comment, says it did not land, or says it cannot tell |
 | Exit codes | 0 posted, 1 refused, declined or error, 2 bad arguments, 4 fatal check |
