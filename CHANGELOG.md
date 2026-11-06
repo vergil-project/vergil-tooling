@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.286] - 2026-11-06
+
+### Chores
+
+- uv lock --upgrade
+
+### Documentation
+
+- note the freeze gate in the vrg-commit entry (#3934)
+- re-point the paad-policy §10 link to its renamed anchor (#3936)
+- human replies protocol guide and the build/tmp convention (#3948)
+
+### Features
+
+- shared library for authenticated human replies (#3937)
+- vrg-ruling request, read and respond (#3938)
+- relay drafted replies through a reserved ref (#3945)
+- vrg-ruling-reply: post the human's reply as the human (#3946)
+
 ## [2.1.285] - 2026-11-05
 
 ### Chores
