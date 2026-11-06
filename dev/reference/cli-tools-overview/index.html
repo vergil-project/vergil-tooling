@@ -14524,6 +14524,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -14811,6 +14815,62 @@
     
   
     vrg-security-record
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/ruling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-ruling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/ruling-reply/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-ruling-reply
   
 
     
@@ -17378,6 +17438,8 @@
       
         
       
+        
+      
     
     
     
@@ -17494,6 +17556,34 @@
     
   
     Security Records
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/human-replies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Human Replies
   
 
     
@@ -20415,7 +20505,9 @@ only its ID: the fixed text <code>security finding, details given privately</cod
 a request, a decision
 (<code>fix</code>, <code>file</code>, <code>defer</code> or <code>wont-fix</code>) in a draft, and an outcome
 (<code>fixed</code>, <code>filed</code>, <code>deferred</code> or <code>wont-fix</code>) in a response. All text is
-printable ASCII plus newline.</p>
+printable ASCII plus newline. See the
+<a href="../dev/ruling/">vrg-ruling reference</a> and the
+<a href="../../guides/human-replies/">Human Replies guide</a>.</p>
 <table>
 <thead>
 <tr>
@@ -20430,7 +20522,7 @@ printable ASCII plus newline.</p>
 </tr>
 <tr>
 <td>Args</td>
-<td><code>request --issue OWNER/REPO#N --items FILE</code>; <code>read --issue OWNER/REPO#N --request ID</code>; <code>draft --issue OWNER/REPO#N --request ID --items FILE</code>; <code>respond --issue OWNER/REPO#N --request ID --reply ID --items FILE</code></td>
+<td><code>request --issue OWNER/REPO#N --items FILE</code>; <code>read --issue OWNER/REPO#N --request ID [--json]</code>; <code>draft --issue OWNER/REPO#N --request ID --items FILE</code>; <code>respond --issue OWNER/REPO#N --request ID --reply ID --items FILE</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
@@ -20465,7 +20557,9 @@ and prints the reply exactly as it will be posted with its byte length and
 SHA-256. On confirmation it reads the issue again, refuses if its trusted
 comments changed while the prompt waited, posts exactly the bytes it showed,
 once, and deletes the request's draft ref. A draft pushed again while the
-prompt waits is never what is posted. Declining exits 1 and keeps the draft.</p>
+prompt waits is never what is posted. Declining exits 1 and keeps the draft.
+See the <a href="../dev/ruling-reply/">vrg-ruling-reply reference</a> and the
+<a href="../../guides/human-replies/">Human Replies guide</a>.</p>
 <table>
 <thead>
 <tr>
