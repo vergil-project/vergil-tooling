@@ -905,6 +905,33 @@ printable ASCII plus newline.
 | Exit codes | 0 success (or a valid reply), 1 refused or error, 2 bad arguments, 3 no reply yet, 4 fatal check |
 | Status | Active |
 
+### vrg-ruling-reply
+
+The human's side of an authenticated ruling: it posts the human's reply to
+the agent's request, as the human. It is a human-only command, run in the
+human's own shell on the host, logged in to `gh` as themselves, the way
+`vrg-submit-pr` is run; never through `!` in an agent session, whose shell
+carries the agent's identity. It refuses in an agent identity mode, without
+an interactive terminal, and unless `gh api user` reports the one human
+login of the trusted-authors configuration. It refuses unless the request is
+the issue's open request and has no reply yet. It reads the reply once, from
+the agent's draft (the request's draft ref, pushed by `vrg-ruling draft`) or
+from `--response-text`, refuses anything but printable ASCII plus newline,
+and prints the reply exactly as it will be posted with its byte length and
+SHA-256. On confirmation it reads the issue again, refuses if its trusted
+comments changed while the prompt waited, posts exactly the bytes it showed,
+once, and deletes the request's draft ref. A draft pushed again while the
+prompt waits is never what is posted. Declining exits 1 and keeps the draft.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_ruling_reply` (library: `lib/rulings/`) |
+| Args | `--issue OWNER/REPO#N --request ID [--response-text TEXT]` |
+| Preconditions | The human's own shell (not an agent identity), an interactive terminal, `gh` logged in as the human login; trusted authors list exactly one human login, and `<human>-vergil-user` is on the `agents` list |
+| Failure mode | A refusal, a declined prompt or an error prints the reason on stderr and exits 1, posting nothing; a fatal turn check names the check and the comment and exits 4. A failed post is never retried: the issue is re-read, and the tool reports the landed comment, says it did not land, or says it cannot tell |
+| Exit codes | 0 posted, 1 refused, declined or error, 2 bad arguments, 4 fatal check |
+| Status | Active |
+
 ### vrg-epic-audit
 
 Report epic/task drift and invariant violations for an org, as Markdown on

@@ -70,6 +70,7 @@ vrg-resolve-tracking-issue = "vergil_tooling.bin.vrg_resolve_tracking_issue:main
 vrg-reword = "vergil_tooling.bin.vrg_reword:main"
 vrg-roadmap = "vergil_tooling.bin.vrg_roadmap:main"
 vrg-ruling = "vergil_tooling.bin.vrg_ruling:main"
+vrg-ruling-reply = "vergil_tooling.bin.vrg_ruling_reply:main"
 vrg-sarif-evaluate = "vergil_tooling.bin.vrg_sarif_evaluate:main"
 vrg-sarif-filter = "vergil_tooling.bin.vrg_sarif_filter:main"
 vrg-scorecard = "vergil_tooling.bin.vrg_scorecard:main"
