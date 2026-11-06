@@ -17,7 +17,7 @@ through `!` in an agent session, whose shell carries the agent's identity.
 ## Usage
 
 ```text
-vrg-ruling-reply --issue OWNER/REPO#N --request ID [--response-text TEXT]
+vrg-ruling-reply --issue 'OWNER/REPO#N' --request ID [--response-text TEXT]
 ```
 
 | Flag | Meaning |
