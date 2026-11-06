@@ -110,6 +110,9 @@ which worktree it will operate in.
    committed. The MQ lab already keeps its shared live-lab state there.
    `build/.vergil-state/` is the namespace for agent state that must
    survive a session or a VM rebuild.
+
+   Everything under `build/tmp/` is scratch: a file there can be
+   deleted once nothing is using it.
 4. **One worktree per issue.** Do not stack multiple in-flight issues
    in one worktree. When a worktree branch lands, remove the worktree
    before starting the next.
