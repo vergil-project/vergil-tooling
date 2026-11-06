@@ -894,12 +894,14 @@ only its ID: the fixed text `security finding, details given privately` in
 a request, a decision
 (`fix`, `file`, `defer` or `wont-fix`) in a draft, and an outcome
 (`fixed`, `filed`, `deferred` or `wont-fix`) in a response. All text is
-printable ASCII plus newline.
+printable ASCII plus newline. See the
+[vrg-ruling reference](dev/ruling.md) and the
+[Human Replies guide](../guides/human-replies.md).
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_ruling` (library: `lib/rulings/`) |
-| Args | `request --issue OWNER/REPO#N --items FILE`; `read --issue OWNER/REPO#N --request ID`; `draft --issue OWNER/REPO#N --request ID --items FILE`; `respond --issue OWNER/REPO#N --request ID --reply ID --items FILE` |
+| Args | `request --issue OWNER/REPO#N --items FILE`; `read --issue OWNER/REPO#N --request ID [--json]`; `draft --issue OWNER/REPO#N --request ID --items FILE`; `respond --issue OWNER/REPO#N --request ID --reply ID --items FILE` |
 | Preconditions | The `user` identity mode; trusted authors list exactly one human login, and `<human>-vergil-user` is on the `agents` list; for `draft`, a clone whose `origin` is the issue's repo |
 | Failure mode | A refusal or error prints the reason on stderr and exits 1; a fatal turn check names the check and the comment and exits 4. A failed post is never retried: the issue is re-read, and the tool reports the landed comment, says it did not land, or says it cannot tell |
 | Exit codes | 0 success (or a valid reply), 1 refused or error, 2 bad arguments, 3 no reply yet, 4 fatal check |
@@ -922,6 +924,8 @@ SHA-256. On confirmation it reads the issue again, refuses if its trusted
 comments changed while the prompt waited, posts exactly the bytes it showed,
 once, and deletes the request's draft ref. A draft pushed again while the
 prompt waits is never what is posted. Declining exits 1 and keeps the draft.
+See the [vrg-ruling-reply reference](dev/ruling-reply.md) and the
+[Human Replies guide](../guides/human-replies.md).
 
 | Attribute | Value |
 |---|---|
