@@ -6,8 +6,7 @@ by :func:`vergil_tooling.lib.epics.resolve_epic_home`: a public target homes
 centrally in ``<org>/.github``; a private target (with a public ``.github``)
 homes its epics in itself. The target defaults to the current repo but is named
 explicitly with ``--repo``. This is the sanctioned path for creating epics —
-``vrg-gh`` denies raw ``gh issue create`` — used by the ``epic-create`` and
-``migrate-repo`` skills.
+``vrg-gh`` denies raw ``gh issue create`` — used by the ``epic-create`` skill.
 """
 
 from __future__ import annotations

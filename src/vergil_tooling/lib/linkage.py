@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 
 # ``ALLOWED_LINKAGES`` is the keyword set accepted as a PR *submission-field*
-# value (the ``--linkage`` choices for vrg-submit-pr / vrg-pr-fix-body). ``Ref``
+# value (the ``--linkage`` choices for vrg-submit-pr). ``Ref``
 # references without closing; ``Closes`` auto-closes the linked task on merge and
 # is selected automatically by vrg-submit-pr for managed tasks — a task with an
 # ``epic``-labeled parent (epic vergil-project/.github#75). ``Fixes``/``Resolves``

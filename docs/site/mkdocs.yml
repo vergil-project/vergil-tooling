@@ -82,7 +82,6 @@ nav:
       - CLI Tools:
           - vrg-commit: reference/dev/commit.md
           - vrg-submit-pr: reference/dev/submit-pr.md
-          - vrg-pr-fix-body: reference/dev/pr-fix-body.md
           - vrg-release: reference/dev/release.md
           - vrg-update-deps: reference/dev/update-deps.md
           - vrg-finalize-pr: reference/dev/finalize-pr.md

@@ -1,9 +1,8 @@
 """Standards-compliant PR body construction.
 
 Extracted from ``vrg_submit_pr`` so every tool that writes a PR body
-(``vrg-submit-pr`` at creation, ``vrg-pr-fix-body`` on repair) builds
-it through the same template and linkage-validated fields — a body can
-only ever be produced from compliant inputs (#1459).
+builds it through the same template and linkage-validated fields — a
+body can only ever be produced from compliant inputs (#1459).
 """
 
 from __future__ import annotations
