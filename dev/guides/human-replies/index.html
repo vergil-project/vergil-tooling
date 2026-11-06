@@ -17221,11 +17221,11 @@ drafts the reply with <code>vrg-ruling draft</code>, which pushes it to the
 the issue and request already filled in. The human reads the draft that
 command shows and confirms it, or passes their own text with
 <code>--response-text</code>.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>agent:  vrg-ruling request --issue OWNER/REPO#N --items request.json   -&gt; request ID
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>agent:  vrg-ruling draft --issue OWNER/REPO#N --request ID --items reply.json
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>human:  vrg-ruling-reply --issue OWNER/REPO#N --request ID              -&gt; reply posted
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>agent:  vrg-ruling read --issue OWNER/REPO#N --request ID               -&gt; reply body
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>agent:  vrg-ruling respond --issue OWNER/REPO#N --request ID --reply ID --items response.json
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>agent:  vrg-ruling request --issue 'OWNER/REPO#N' --items request.json   -&gt; request ID
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>agent:  vrg-ruling draft --issue 'OWNER/REPO#N' --request ID --items reply.json
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>human:  vrg-ruling-reply --issue 'OWNER/REPO#N' --request ID              -&gt; reply posted
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>agent:  vrg-ruling read --issue 'OWNER/REPO#N' --request ID               -&gt; reply body
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>agent:  vrg-ruling respond --issue 'OWNER/REPO#N' --request ID --reply ID --items response.json
 </code></pre></div>
 <h3 id="where-the-response-states-the-agents-reading">Where the response states the agent's reading<a class="headerlink" href="#where-the-response-states-the-agents-reading" title="Permanent link">&para;</a></h3>
 <p>A reply has no grammar: the skill that reads it interprets it. The response
