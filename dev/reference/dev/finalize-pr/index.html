@@ -13519,8 +13519,6 @@
       
         
       
-        
-      
     
     
     
@@ -13612,34 +13610,6 @@
     
   
     vrg-submit-pr
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../pr-fix-body/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    vrg-pr-fix-body
   
 
     
@@ -17355,8 +17325,8 @@ check and its run/job link, with the recovery path: re-run the stuck job,
 then re-run the waiting command (<code>vrg-finalize-pr</code>, or <code>vrg-release --resume</code>).</p>
 <p><strong>Deadline.</strong> The deadline defaults to 30 minutes (about four times the
 longest legitimate CI run, 5–8 minutes) and is shared by every merge wait:
-<code>vrg-finalize-pr</code>, <code>vrg-release</code> (merge-release, back-merge-bump),
-<code>vrg-update-deps</code> and <code>vrg-wait-until-green</code>. Set <code>VRG_CHECKS_TIMEOUT</code>
+<code>vrg-finalize-pr</code>, <code>vrg-release</code> (merge-release, back-merge-bump) and
+<code>vrg-update-deps</code>. Set <code>VRG_CHECKS_TIMEOUT</code>
 (seconds, a positive whole number) to change it; a malformed value is an
 error, and the deadline cannot be disabled. While waiting, the waiter prints
 each pending check with how long it has been pending, re-reporting whenever
