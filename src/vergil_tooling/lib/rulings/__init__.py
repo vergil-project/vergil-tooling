@@ -12,9 +12,12 @@ both tools share:
 - :mod:`.marker` renders and recognises the hidden end-of-body marker;
 - :mod:`.plain_text` screens text down to printable ASCII plus newline;
 - :mod:`.exchange` runs the turn checks over the trusted comment stream;
-- :mod:`.items` loads the items files and renders the request and response;
+- :mod:`.items` loads the items files and renders the request, the drafted
+  reply and the response;
 - :mod:`.post` posts a comment exactly once and finds out whether a failed
-  post landed.
+  post landed;
+- :mod:`.draft_ref` relays the reply the agent drafts to the human over a
+  reserved git ref.
 
 Identity is never read from text: a comment's author is the only source of who
 wrote it, and the marker only says what kind of comment it is.

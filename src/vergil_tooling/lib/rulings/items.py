@@ -1,4 +1,4 @@
-"""The items files behind a request and a response, and the bodies rendered from them.
+"""The items files behind a request, a drafted reply and a response, and their bodies.
 
 An items file is a JSON array with one object per item. Every item has an
 ``id`` (dot-separated letters and digits, at most 16 characters) and a
@@ -12,6 +12,9 @@ the shape of its ID.
 - **A response item**, when not flagged, has ``text``: how the agent read the
   reply and what it did. A flagged one has only ``outcome``, one of
   :data:`RULING_OUTCOMES`, which is also its reading.
+- **A reply item** (the reply the agent drafts for the human), when not
+  flagged, has ``text``: the decision in prose. A flagged one has only
+  ``decision``, one of :data:`RULING_DECISIONS`.
 
 Every ``text`` and ``recommendation`` is plain text (printable ASCII, see
 :mod:`.plain_text`) on a single line, so each item renders as exactly one line
@@ -172,6 +175,41 @@ def load_response_items(path: Path) -> list[Item]:
         _check_keys(raw, item_id, {"id", "security", "text"})
         items.append(Item(item_id, False, _prose(raw, item_id, "text"), None, None))
     return _check_unique(items)
+
+
+def load_reply_items(path: Path) -> list[Item]:
+    """The items of a drafted reply, every check run; refuses with :class:`RulingError`.
+
+    Shaped like a response's items, with ``decision`` in place of ``outcome``:
+    a flagged item carries only its ID and a decision from
+    :data:`RULING_DECISIONS`, held in :attr:`Item.outcome`.
+    """
+    items: list[Item] = []
+    for position, raw in enumerate(_load_array(path), start=1):
+        item_id = _item_id(raw, position)
+        if raw["security"]:
+            _check_keys(raw, item_id, {"id", "security", "decision"})
+            decision = raw["decision"]
+            if decision not in RULING_DECISIONS:
+                msg = (
+                    f"item {item_id}: a security item's decision must be one of"
+                    f" {', '.join(RULING_DECISIONS)}"
+                )
+                raise RulingError(msg)
+            items.append(Item(item_id, True, None, None, decision))
+            continue
+        _check_keys(raw, item_id, {"id", "security", "text"})
+        items.append(Item(item_id, False, _prose(raw, item_id, "text"), None, None))
+    return _check_unique(items)
+
+
+def render_reply(items: list[Item]) -> str:
+    """The drafted reply: one ``<id>: <text or decision>`` line per item, no marker.
+
+    The reply is the human's comment, so it carries no marker; every line ends
+    with a newline.
+    """
+    return "".join(f"{item.id}: {item.outcome if item.security else item.text}\n" for item in items)
 
 
 def _body(lines: list[str], marker: Marker) -> str:

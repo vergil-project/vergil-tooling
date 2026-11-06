@@ -7,13 +7,21 @@ One round on a task issue is a **request** (posted here), the human's
 - ``request --issue --items`` posts a request from a request items file and
   prints its comment ID. It refuses while the issue has an open exchange,
   naming that request's ID so a resumed run can pick it up.
+- ``draft --issue --request --items`` builds the human's reply from a reply
+  items file, pushes it to the request's draft ref on the issue's repo
+  (``refs/vergil/ruling-draft/<issue>/<request ID>``) and prints the human's
+  ``vrg-ruling-reply`` command. It runs only in a clone whose ``origin`` is
+  the issue's repo, refuses once the request has a reply, and posts nothing.
 - ``read --issue --request`` runs every turn check and prints the human's
-  reply on stdout (its comment ID goes to stderr). Exit ``3`` means no reply
-  yet; ``4`` is a fatal check, named with its comment.
+  reply on stdout (its comment ID goes to stderr). With ``--json`` a valid
+  reply prints ``{"request": ID, "reply": ID, "body": text}`` instead, and
+  every other outcome leaves stdout empty. Exit ``3`` means no reply yet;
+  ``4`` is a fatal check, named with its comment.
 - ``respond --issue --request --reply --items`` re-runs ``read``'s checks,
   then posts the response, which records the request and reply comment IDs.
   A re-run that finds its own response already landed reports that ID, posts
-  nothing and succeeds.
+  nothing and succeeds. Either way it then deletes the request's draft ref,
+  if one is left.
 
 Every subcommand runs only in the ``user`` identity mode, as the derived
 agent login ``<the human login>-vergil-user``, which must be on the trusted
@@ -27,13 +35,14 @@ error, ``2`` a usage error, ``3`` no reply yet, ``4`` a fatal check.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import github, identity_mode
 from vergil_tooling.lib.cli import cli_main
-from vergil_tooling.lib.rulings import RulingError, comments
+from vergil_tooling.lib.rulings import RulingError, comments, draft_ref
 from vergil_tooling.lib.rulings.exchange import (
     FatalCheck,
     check_respond,
@@ -42,8 +51,10 @@ from vergil_tooling.lib.rulings.exchange import (
 )
 from vergil_tooling.lib.rulings.identity import agent_login, human_login
 from vergil_tooling.lib.rulings.items import (
+    load_reply_items,
     load_request_items,
     load_response_items,
+    render_reply,
     render_request,
     render_response,
 )
@@ -96,7 +107,9 @@ def main(argv: list[str] | None = None) -> int:
             if args.command == "request":
                 return _request(ctx, Path(args.items))
             if args.command == "read":
-                return _read(ctx, args.request)
+                return _read(ctx, args.request, as_json=args.json)
+            if args.command == "draft":
+                return _draft(ctx, args.request, Path(args.items))
             return _respond(ctx, args.request, args.reply, Path(args.items))
     except FatalCheck as exc:
         print(f"{_PROG}: {exc}", file=sys.stderr)
@@ -160,7 +173,7 @@ def _request(ctx: _Context, items_path: Path) -> int:
     return EXIT_OK
 
 
-def _read(ctx: _Context, request_id: int) -> int:
+def _read(ctx: _Context, request_id: int, *, as_json: bool) -> int:
     stream, all_ids = _stream(ctx)
     reply = read_reply(
         stream, request_id=request_id, agent=ctx.agent, human=ctx.human, all_ids=all_ids
@@ -169,7 +182,37 @@ def _read(ctx: _Context, request_id: int) -> int:
         print(f"{_PROG}: no reply yet to request {request_id} on {ctx.where}", file=sys.stderr)
         return EXIT_NO_REPLY
     print(f"{_PROG}: reply {reply.id} to request {request_id} on {ctx.where}", file=sys.stderr)
-    print(reply.body)
+    if as_json:
+        print(json.dumps({"request": request_id, "reply": reply.id, "body": reply.body}))
+    else:
+        print(reply.body)
+    return EXIT_OK
+
+
+def _draft(ctx: _Context, request_id: int, items_path: Path) -> int:
+    """Push the reply drafted from ``items_path`` to the request's draft ref.
+
+    Everything is screened before anything is published: the items, the
+    rendered reply, the clone's ``origin`` (the ref goes there, so it must be
+    the issue's repo) and the request, which must still be waiting for a reply.
+    """
+    body = render_reply(load_reply_items(items_path))
+    check_plain_text(body, what="the rendered reply")
+    draft_ref.require_remote_is(ctx.repo, remote="origin")
+    stream, all_ids = _stream(ctx)
+    reply = read_reply(
+        stream, request_id=request_id, agent=ctx.agent, human=ctx.human, all_ids=all_ids
+    )
+    if reply is not None:
+        msg = f"request {request_id} on {ctx.where} already has reply {reply.id}; nothing pushed"
+        raise RulingError(msg)
+    draft_ref.push_draft(ctx.issue, request_id, body, remote="origin")
+    print(
+        f"{_PROG}: pushed the draft reply to {draft_ref.draft_ref(ctx.issue, request_id)}"
+        f" on {ctx.repo}; the human posts it with:",
+        file=sys.stderr,
+    )
+    print(draft_ref.reply_command(ctx.repo, ctx.issue, request_id))
     return EXIT_OK
 
 
@@ -213,12 +256,24 @@ def _respond(ctx: _Context, request_id: int, reply_id: int, items_path: Path) ->
 
 
 def _after_respond(repo: str, issue: int, request_id: int) -> None:
-    """Clean up after a response: deleting the request's draft ref.
+    """Clean up after a response: delete the request's draft ref, if one is left.
 
-    The draft relay arrives in Task 3 of epic vergil-project/.github#889; until
-    then there is no draft ref to delete, so this does nothing.
+    The ref is addressed by the issue's repo, whatever the clone's ``origin``
+    is; an absent ref is not an error. A failure here comes after the response
+    landed, so the message says so: a re-run finds the response, posts nothing
+    and retries the cleanup.
     """
-    del repo, issue, request_id
+    try:
+        draft_ref.delete_draft_api(repo, issue, request_id)
+    except github.MissingGitHubTokenError:
+        raise
+    except github.GitHubAPIError as exc:
+        msg = (
+            f"the response is posted, but deleting the draft ref"
+            f" {draft_ref.draft_ref(issue, request_id)} on {repo} failed: {exc}."
+            " Re-run vrg-ruling respond with the same arguments to retry it; it posts nothing"
+        )
+        raise RulingError(msg) from exc
 
 
 # --- arguments --------------------------------------------------------------
@@ -237,8 +292,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         prog=_PROG,
         description=(
             "The agent's side of an authenticated ruling on a task issue: post a "
-            "request, read the human's reply with every turn check, and post the "
-            "response. Each comment is posted exactly once."
+            "request, relay the reply drafted for the human, read the human's reply "
+            "with every turn check, and post the response. Each comment is posted "
+            "exactly once."
         ),
         epilog=(
             "Exit codes: 0 success (or a valid reply), 1 any other refusal or error, "
@@ -254,6 +310,21 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     read = sub.add_parser("read", help="Read and check the human's reply to a request")
     read.add_argument("--issue", required=True, help="The task issue, owner/repo#N")
     read.add_argument("--request", required=True, type=_comment_id, help="The request's comment ID")
+    read.add_argument(
+        "--json",
+        action="store_true",
+        help=(
+            'On a valid reply, print {"request": ID, "reply": ID, "body": text} '
+            "instead of the body; on any other outcome stdout stays empty"
+        ),
+    )
+
+    draft = sub.add_parser("draft", help="Push the reply drafted for the human to its draft ref")
+    draft.add_argument("--issue", required=True, help="The task issue, owner/repo#N")
+    draft.add_argument(
+        "--request", required=True, type=_comment_id, help="The request's comment ID"
+    )
+    draft.add_argument("--items", required=True, help="The reply items file (JSON)")
 
     respond = sub.add_parser("respond", help="Post the response to a request and its reply")
     respond.add_argument("--issue", required=True, help="The task issue, owner/repo#N")

@@ -1,9 +1,10 @@
-"""Tests for ``vrg-ruling`` request, read and respond, with GitHub faked."""
+"""Tests for ``vrg-ruling`` request, read, draft and respond, with GitHub faked."""
 
 from __future__ import annotations
 
 import contextlib
 import json
+import subprocess
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -54,6 +55,19 @@ class FakeIssue:
         self.post_error: Exception | None = None
         self.read_error_after_post: Exception | None = None
         self.next_id = 100
+        self.drafts: dict[str, str] = {}
+        self.deleted: list[str] = []
+        self.delete_error: Exception | None = None
+
+    def delete_if_exists(self, endpoint: str) -> bool:
+        if self.delete_error is not None:
+            raise self.delete_error
+        self.deleted.append(endpoint)
+        return self.drafts.pop(endpoint.removeprefix("repos/o/r/git/"), None) is not None
+
+    def push_draft(self, issue: int, request_id: int, text: str, *, remote: str = "origin") -> None:
+        assert remote == "origin"
+        self.drafts[f"refs/vergil/ruling-draft/{issue}/{request_id}"] = text
 
     def fetch_comments(self, repo: str, issue: int) -> list[IssueComment]:
         assert (repo, issue) == ("o/r", 7)
@@ -111,6 +125,8 @@ def issue(monkeypatch: pytest.MonkeyPatch) -> FakeIssue:
     fake = FakeIssue()
     monkeypatch.setattr("vergil_tooling.lib.rulings.comments.fetch_comments", fake.fetch_comments)
     monkeypatch.setattr(github, "post_json_once", fake.post_json_once)
+    monkeypatch.setattr(github, "delete_if_exists", fake.delete_if_exists)
+    monkeypatch.setattr("vergil_tooling.lib.rulings.draft_ref.push_draft", fake.push_draft)
     monkeypatch.setattr("vergil_tooling.lib.rulings.post.time.sleep", lambda _s: None)
     monkeypatch.setattr(vrg_ruling, "load_trusted_authors", lambda: AUTHORS)
     monkeypatch.setattr(identity_mode, "current_mode", lambda: IdentityMode.USER)
@@ -278,6 +294,45 @@ def test_read_untrusted_request_is_request_author(cli: Cli, issue: FakeIssue) ->
     issue.comments = [IssueComment(41, "stranger", REQUEST_MARKER, False)]
     assert cli("read", "--issue", "o/r#7", "--request", "41") == 4
     assert "fatal check 'request-author' on comment 41" in cli.stderr
+
+
+def test_read_json_valid_reply(cli: Cli, issue: FakeIssue) -> None:
+    issue.comments = [request_comment(41), reply_comment(42, "R1.1: fix\nR1.S1: defer")]
+    assert cli("read", "--issue", "o/r#7", "--request", "41", "--json") == 0
+    assert json.loads(cli.stdout) == {
+        "request": 41,
+        "reply": 42,
+        "body": "R1.1: fix\nR1.S1: defer",
+    }
+    assert cli.stdout.count("\n") == 1
+    assert "reply 42 to request 41" in cli.stderr
+
+
+@pytest.mark.parametrize(
+    ("comments", "code", "message"),
+    [
+        ([request_comment(41)], 3, "no reply yet to request 41"),
+        (
+            [request_comment(41), reply_comment(42), reply_comment(43)],
+            4,
+            "fatal check 'turn' on comment 43",
+        ),
+    ],
+)
+def test_read_json_no_reply_and_fatal(
+    cli: Cli, issue: FakeIssue, comments: list[IssueComment], code: int, message: str
+) -> None:
+    issue.comments = comments
+    assert cli("read", "--issue", "o/r#7", "--request", "41", "--json") == code
+    assert cli.stdout == ""
+    assert message in cli.stderr
+
+
+def test_read_without_json_unchanged(cli: Cli, issue: FakeIssue) -> None:
+    issue.comments = [request_comment(41), reply_comment(42, "R1.1: fix")]
+    assert cli("read", "--issue", "o/r#7", "--request", "41") == 0
+    assert cli.stdout == "R1.1: fix\n"
+    assert cli.stderr == "vrg-ruling: reply 42 to request 41 on o/r#7\n"
 
 
 @pytest.mark.parametrize(
@@ -557,5 +612,224 @@ def test_missing_token_reaches_the_cli_boundary(
     assert issue.posted == []
 
 
-def test_after_respond_is_a_no_op() -> None:
-    assert vrg_ruling._after_respond("o/r", 7, 41) is None
+# --- draft ---------------------------------------------------------------------
+
+DRAFT_REF = "refs/vergil/ruling-draft/7/41"
+REPLY_ITEMS = [
+    {"id": "R1.1", "security": False, "text": "file it"},
+    {"id": "R1.S1", "security": True, "decision": "fix"},
+]
+
+
+def _git(*args: str, cwd: Path) -> None:
+    subprocess.run(("git", *args), cwd=cwd, check=True, capture_output=True)  # noqa: S603, S607
+
+
+def origin_is(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, repo: str) -> None:
+    """Stand in a fresh clone whose ``origin`` is ``repo`` on github.com."""
+    (tmp_path / "gitconfig").write_text("")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "gitconfig"))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    clone = tmp_path / "clone"
+    _git("init", str(clone), cwd=tmp_path)
+    _git("remote", "add", "origin", f"https://github.com/{repo}.git", cwd=clone)
+    monkeypatch.chdir(clone)
+
+
+@pytest.fixture
+def in_clone(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    origin_is(tmp_path, monkeypatch, "o/r")
+
+
+def draft_argv(items: str, request: str = "41") -> tuple[str, ...]:
+    return ("draft", "--issue", "o/r#7", "--request", request, "--items", items)
+
+
+@pytest.mark.usefixtures("in_clone")
+def test_draft_prints_reply_command(cli: Cli, issue: FakeIssue, tmp_path: Path) -> None:
+    issue.comments = [request_comment(41)]
+    assert cli(*draft_argv(write_items(tmp_path, REPLY_ITEMS))) == 0
+    assert cli.stdout == "vrg-ruling-reply --issue o/r#7 --request 41\n"
+    assert DRAFT_REF in cli.stderr
+    assert issue.drafts == {DRAFT_REF: "R1.1: file it\nR1.S1: fix\n"}
+    assert issue.posted == []
+
+
+def test_draft_refuses_other_repo(
+    cli: Cli, issue: FakeIssue, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    origin_is(tmp_path, monkeypatch, "o/other")
+    issue.comments = [request_comment(41)]
+    assert cli(*draft_argv(write_items(tmp_path, REPLY_ITEMS))) == 1
+    assert "o/other" in cli.stderr
+    assert "clone of o/r" in cli.stderr
+    assert issue.drafts == {}
+    assert issue.reads == 0
+
+
+def test_draft_refuses_outside_a_clone(
+    cli: Cli, issue: FakeIssue, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "plain").mkdir()
+    monkeypatch.chdir(tmp_path / "plain")
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+    issue.comments = [request_comment(41)]
+    assert cli(*draft_argv(write_items(tmp_path, REPLY_ITEMS))) == 1
+    assert "cannot read the push URL" in cli.stderr
+    assert issue.drafts == {}
+
+
+@pytest.mark.usefixtures("in_clone")
+@pytest.mark.parametrize("mode", [IdentityMode.AUDIT, IdentityMode.HUMAN])
+def test_draft_refuses_in_audit_mode(
+    cli: Cli, issue: FakeIssue, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: IdentityMode
+) -> None:
+    monkeypatch.setattr(identity_mode, "current_mode", lambda: mode)
+    issue.comments = [request_comment(41)]
+    assert cli(*draft_argv(write_items(tmp_path, REPLY_ITEMS))) == 1
+    assert issue.drafts == {}
+    assert issue.reads == 0
+
+
+@pytest.mark.usefixtures("in_clone")
+def test_draft_refuses_unlisted_login(
+    cli: Cli, issue: FakeIssue, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    authors = TrustedAuthors(human=(HUMAN,), agents=("someone-else",))
+    monkeypatch.setattr(vrg_ruling, "load_trusted_authors", lambda: authors)
+    issue.comments = [request_comment(41)]
+    assert cli(*draft_argv(write_items(tmp_path, REPLY_ITEMS))) == 1
+    assert issue.drafts == {}
+    assert issue.reads == 0
+
+
+@pytest.mark.usefixtures("in_clone")
+def test_draft_refuses_answered_request(cli: Cli, issue: FakeIssue, tmp_path: Path) -> None:
+    issue.comments = [request_comment(41), reply_comment(42)]
+    assert cli(*draft_argv(write_items(tmp_path, REPLY_ITEMS))) == 1
+    assert "already has reply 42" in cli.stderr
+    assert issue.drafts == {}
+
+
+@pytest.mark.usefixtures("in_clone")
+def test_draft_fatal_check_pushes_nothing(cli: Cli, issue: FakeIssue, tmp_path: Path) -> None:
+    issue.comments = [IssueComment(41, AGENT, request_comment(41).body, True)]
+    assert cli(*draft_argv(write_items(tmp_path, REPLY_ITEMS))) == 4
+    assert "fatal check 'edited'" in cli.stderr
+    assert issue.drafts == {}
+
+
+@pytest.mark.usefixtures("in_clone")
+@pytest.mark.parametrize(
+    "items",
+    [
+        [{"id": "R1.S1", "security": True, "decision": "fixed"}],
+        [{"id": "R1.S1", "security": True, "decision": "fix the SQL in x"}],
+        [{"id": "R1.S1", "security": True, "decision": "fix", "text": "the SQL in x"}],
+        [{"id": "R1.1", "security": False, "text": "fix\u00e9"}],
+        [{"id": "R1.1", "security": False, "text": "fix <!-- vrg-ruling"}],
+    ],
+)
+def test_draft_refuses_bad_items_before_reading(
+    cli: Cli, issue: FakeIssue, tmp_path: Path, items: list[dict[str, Any]]
+) -> None:
+    issue.comments = [request_comment(41)]
+    assert cli(*draft_argv(write_items(tmp_path, items))) == 1
+    assert items[0]["id"] in cli.stderr
+    assert "SQL in x" not in cli.stderr
+    assert issue.reads == 0
+    assert issue.drafts == {}
+
+
+@pytest.mark.usefixtures("in_clone")
+def test_draft_runs_inside_the_issue_owner_org(
+    cli: Cli,
+    issue: FakeIssue,
+    target_org_spy: OrgSpy,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    active: list[list[str | None]] = []
+
+    def push(issue_n: int, request_id: int, text: str, *, remote: str = "origin") -> None:
+        active.append(list(target_org_spy.active))
+        issue.push_draft(issue_n, request_id, text, remote=remote)
+
+    monkeypatch.setattr("vergil_tooling.lib.rulings.draft_ref.push_draft", push)
+    issue.comments = [request_comment(41)]
+    assert cli(*draft_argv(write_items(tmp_path, REPLY_ITEMS))) == 0
+    assert active == [["o"]]
+
+
+@pytest.mark.usefixtures("in_clone")
+def test_draft_push_failure_exits_1(
+    cli: Cli, issue: FakeIssue, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(*_a: object, **_k: object) -> None:
+        msg = "pushing the draft to refs/vergil/ruling-draft/7/41 failed: git exited 128"
+        raise vrg_ruling.RulingError(msg)
+
+    monkeypatch.setattr("vergil_tooling.lib.rulings.draft_ref.push_draft", fail)
+    issue.comments = [request_comment(41)]
+    assert cli(*draft_argv(write_items(tmp_path, REPLY_ITEMS))) == 1
+    assert "git exited 128" in cli.stderr
+    assert cli.stdout == ""
+
+
+# --- respond deletes the draft -----------------------------------------------------
+
+
+def test_respond_deletes_leftover_draft(cli: Cli, issue: FakeIssue, tmp_path: Path) -> None:
+    issue.drafts = {DRAFT_REF: "R1.1: fix\n"}
+    issue.comments = [request_comment(41), reply_comment(42)]
+    assert cli(*RESPOND, write_items(tmp_path, RESPONSE_ITEMS)) == 0
+    assert issue.deleted == ["repos/o/r/git/refs/vergil/ruling-draft/7/41"]
+    assert issue.drafts == {}
+
+
+def test_respond_absent_draft_is_not_an_error(cli: Cli, issue: FakeIssue, tmp_path: Path) -> None:
+    issue.comments = [request_comment(41), reply_comment(42)]
+    assert cli(*RESPOND, write_items(tmp_path, RESPONSE_ITEMS)) == 0
+    assert issue.deleted == ["repos/o/r/git/refs/vergil/ruling-draft/7/41"]
+
+
+def test_respond_absent_draft_422_is_not_an_error(
+    cli: Cli, issue: FakeIssue, tmp_path: Path
+) -> None:
+    issue.delete_error = github.GitHubAPIError(
+        1, ("gh",), None, "gh: Reference does not exist (HTTP 422)\n"
+    )
+    issue.comments = [request_comment(41), reply_comment(42)]
+    assert cli(*RESPOND, write_items(tmp_path, RESPONSE_ITEMS)) == 0
+    assert cli.stdout == "100\n"
+
+
+def test_respond_delete_failure_says_the_response_landed(
+    cli: Cli, issue: FakeIssue, tmp_path: Path
+) -> None:
+    issue.delete_error = github.GitHubAPIError(1, ("gh",), None, "gh: Server Error (HTTP 500)\n")
+    issue.comments = [request_comment(41), reply_comment(42)]
+    assert cli(*RESPOND, write_items(tmp_path, RESPONSE_ITEMS)) == 1
+    assert cli.stdout == "100\n"
+    assert "the response is posted" in cli.stderr
+    assert "posts nothing" in cli.stderr
+    assert len(issue.posted) == 1
+
+
+def test_respond_delete_missing_token_reaches_the_cli_boundary(
+    cli: Cli, issue: FakeIssue, tmp_path: Path
+) -> None:
+    issue.delete_error = github.MissingGitHubTokenError(4, ("gh",), None, "no token")
+    issue.comments = [request_comment(41), reply_comment(42)]
+    assert cli(*RESPOND, write_items(tmp_path, RESPONSE_ITEMS)) == 1
+    assert "token" in cli.stderr.lower()
+    assert "the response is posted" not in cli.stderr
+
+
+def test_respond_deletes_by_the_issue_repo_whatever_origin(
+    cli: Cli, issue: FakeIssue, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    origin_is(tmp_path, monkeypatch, "x/elsewhere")
+    issue.comments = [request_comment(41), reply_comment(42), response_comment(43, 41, 42)]
+    assert cli(*RESPOND, write_items(tmp_path, RESPONSE_ITEMS)) == 0
+    assert issue.deleted == ["repos/o/r/git/refs/vergil/ruling-draft/7/41"]
