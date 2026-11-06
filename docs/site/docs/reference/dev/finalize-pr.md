@@ -114,8 +114,8 @@ then re-run the waiting command (`vrg-finalize-pr`, or `vrg-release --resume`).
 
 **Deadline.** The deadline defaults to 30 minutes (about four times the
 longest legitimate CI run, 5–8 minutes) and is shared by every merge wait:
-`vrg-finalize-pr`, `vrg-release` (merge-release, back-merge-bump),
-`vrg-update-deps` and `vrg-wait-until-green`. Set `VRG_CHECKS_TIMEOUT`
+`vrg-finalize-pr`, `vrg-release` (merge-release, back-merge-bump) and
+`vrg-update-deps`. Set `VRG_CHECKS_TIMEOUT`
 (seconds, a positive whole number) to change it; a malformed value is an
 error, and the deadline cannot be disabled. While waiting, the waiter prints
 each pending check with how long it has been pending, re-reporting whenever

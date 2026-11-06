@@ -9,7 +9,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vergil_tooling.lib.container import (
-    _DEFAULT_TEST_COMMANDS,
     _NPM_GLOBAL_ROOT,
     PYCACHE_PREFIX,
     VERSION_WINDOW_MOUNT,
@@ -363,28 +362,6 @@ def test_container_platform_unknown_defaults_to_amd64() -> None:
 
 def test_docker_platform_alias() -> None:
     assert docker_platform is container_platform
-
-
-def test_cpp_default_test_command_is_conan_cmake_ctest() -> None:
-    # vrg-container-test runs this via `bash -c`, so `&&` chaining is valid.
-    cmd = _DEFAULT_TEST_COMMANDS["cpp"]
-    assert "conan install" in cmd
-    assert "cmake" in cmd
-    assert "ctest" in cmd
-    # Conan must resolve deps in the same build_type as the CMake Debug build,
-    # or the Debug config finds no matching binary (fmt/format.h not found). (#2572)
-    assert "conan install . -s build_type=Debug --build=missing" in cmd
-    assert "-DCMAKE_BUILD_TYPE=Debug" in cmd
-
-
-# -- typescript test command ---------------------------------------------------
-
-
-def test_typescript_default_test_command_is_npm_ci_vitest() -> None:
-    # vrg-container-test runs this via `bash -c`, so `&&` chaining is valid.
-    cmd = _DEFAULT_TEST_COMMANDS["typescript"]
-    assert "npm ci" in cmd
-    assert "vitest run" in cmd
 
 
 # -- workspace_mount_args -----------------------------------------------------

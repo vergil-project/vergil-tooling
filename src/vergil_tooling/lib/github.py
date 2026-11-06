@@ -1563,8 +1563,8 @@ def wait_for_checks(
     """Block until all checks on *pr* reach a terminal state, bounded by a deadline.
 
     The single check waiter behind every merge path — ``vrg-finalize-pr``,
-    ``vrg-release`` (merge-release, back-merge-bump), ``vrg-update-deps`` and
-    ``vrg-wait-until-green``. Polls :func:`pr_checks` (which re-classifies a
+    ``vrg-release`` (merge-release, back-merge-bump) and ``vrg-update-deps``.
+    Polls :func:`pr_checks` (which re-classifies a
     stale check-run GitHub has already concluded, #3170) until every check is
     terminal **and** every required status check of the base branch is
     registered and non-pending (#3061), then returns — leaving ``pr_merge``'s
