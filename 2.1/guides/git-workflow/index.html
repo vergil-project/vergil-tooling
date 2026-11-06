@@ -1368,6 +1368,8 @@
       
         
       
+        
+      
     
     
     
@@ -1420,6 +1422,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.286/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.286
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13474,6 +13504,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -13758,6 +13792,62 @@
     
   
     vrg-security-record
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/dev/ruling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-ruling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/dev/ruling-reply/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-ruling-reply
   
 
     
@@ -16327,6 +16417,8 @@
       
         
       
+        
+      
     
     
     
@@ -16731,6 +16823,34 @@
     
   
     Security Records
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../human-replies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Human Replies
   
 
     
@@ -17418,7 +17538,8 @@ sweeps automatically.</p>
 <p>The main worktree at the project root stays on <code>develop</code> and is
 read-only for source; ignored scratch anywhere in the main clone's
 <code>build/</code> is allowed, with <code>build/.vergil-state/</code> the namespace for
-agent state that must survive a session (rule 3 of
+agent state that must survive a session and <code>build/tmp/</code> for scratch
+that can be deleted once nothing is using it (rule 3 of
 <a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/worktree-convention.md">the worktree convention</a>). Every
 change happens in its own worktree under <code>.worktrees/</code>, on its own
 branch. This lets several agents work in the

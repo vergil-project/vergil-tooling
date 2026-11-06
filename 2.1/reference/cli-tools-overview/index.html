@@ -1368,6 +1368,8 @@
       
         
       
+        
+      
     
     
     
@@ -1420,6 +1422,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.286/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.286
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13433,6 +13463,28 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-ruling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-ruling
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vrg-ruling-reply" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-ruling-reply
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-epic-audit" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -14502,6 +14554,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -14789,6 +14845,62 @@
     
   
     vrg-security-record
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/ruling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-ruling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/ruling-reply/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-ruling-reply
   
 
     
@@ -17356,6 +17468,8 @@
       
         
       
+        
+      
     
     
     
@@ -17472,6 +17586,34 @@
     
   
     Security Records
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/human-replies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Human Replies
   
 
     
@@ -18060,6 +18202,28 @@
     <span class="md-ellipsis">
       
         vrg-trusted-authors
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vrg-ruling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-ruling
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vrg-ruling-reply" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-ruling-reply
       
     </span>
   </a>
@@ -18659,7 +18823,10 @@ trailer; see #3200). Performs five branch/context checks before committing
 (detached HEAD, protected branch, branch prefix, issue number,
 worktree convention).
 Local-settings guard: refuses an agent (warns a human) while a loadable
-<code>.claude/settings.local.json</code> is not absent or <code>{}</code> (epic vergil-project/.github#558).</p>
+<code>.claude/settings.local.json</code> is not absent or <code>{}</code> (epic vergil-project/.github#558).
+Freeze gate: refuses to add a commit on a branch that has been reported ready
+(#1719); <code>vrg-pr-workflow unfreeze</code> is the way back (see the freeze in
+<a href="#vrg-pr-workflow"><code>vrg-pr-workflow</code></a>).</p>
 <table>
 <thead>
 <tr>
@@ -18678,7 +18845,7 @@ Local-settings guard: refuses an agent (warns a human) while a loadable
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>Git repo, staged changes, not detached HEAD, not on protected branch, branch prefix matches branching model, issue number in branch name, not main worktree when <code>.worktrees/</code> present</td>
+<td>Git repo, staged changes, not detached HEAD, not on protected branch, branch prefix matches branching model, issue number in branch name, not main worktree when <code>.worktrees/</code> present, branch not frozen (or unfrozen)</td>
 </tr>
 <tr>
 <td>Failure mode</td>
@@ -20339,6 +20506,117 @@ the logins. See
 <tr>
 <td>Exit codes</td>
 <td>0 success, 1 not configured or invalid, 2 bad arguments</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-ruling">vrg-ruling<a class="headerlink" href="#vrg-ruling" title="Permanent link">&para;</a></h3>
+<p>The agent's side of an authenticated ruling on a task issue (epic
+vergil-project/.github#889): one round is the agent's request, the human's
+reply and the agent's response, each a comment posted exactly once.
+<code>request</code> posts a request from an items file and prints its comment ID,
+refusing while the issue has an open exchange and naming that request.
+<code>read</code> runs every turn check on the reply to a request and prints the reply
+on stdout, with its comment ID on stderr; with <code>--json</code> a valid reply prints
+<code>{"request": &lt;ID&gt;, "reply": &lt;ID&gt;, "body": "&lt;text&gt;"}</code> instead, and every other
+outcome leaves stdout empty, so the exit code is the signal. <code>draft</code> builds the human's reply
+from a reply items file, pushes it with git plumbing to the reserved ref
+<code>refs/vergil/ruling-draft/&lt;issue&gt;/&lt;request ID&gt;</code> on the issue's repo, and
+prints the human's <code>vrg-ruling-reply</code> command; it runs only in a clone
+whose <code>origin</code> is the issue's repo, refuses once the request has a reply,
+and posts nothing. <code>respond</code> re-runs <code>read</code>'s checks and posts the
+response, which records the request and reply comment IDs; a re-run that
+finds its own response already landed reports it and posts nothing. Either
+way <code>respond</code> then deletes any leftover draft ref. A security item carries
+only its ID: the fixed text <code>security finding, details given privately</code> in
+a request, a decision
+(<code>fix</code>, <code>file</code>, <code>defer</code> or <code>wont-fix</code>) in a draft, and an outcome
+(<code>fixed</code>, <code>filed</code>, <code>deferred</code> or <code>wont-fix</code>) in a response. All text is
+printable ASCII plus newline. See the
+<a href="../dev/ruling/">vrg-ruling reference</a> and the
+<a href="../../guides/human-replies/">Human Replies guide</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_ruling</code> (library: <code>lib/rulings/</code>)</td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>request --issue OWNER/REPO#N --items FILE</code>; <code>read --issue OWNER/REPO#N --request ID [--json]</code>; <code>draft --issue OWNER/REPO#N --request ID --items FILE</code>; <code>respond --issue OWNER/REPO#N --request ID --reply ID --items FILE</code></td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>The <code>user</code> identity mode; trusted authors list exactly one human login, and <code>&lt;human&gt;-vergil-user</code> is on the <code>agents</code> list; for <code>draft</code>, a clone whose <code>origin</code> is the issue's repo</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td>A refusal or error prints the reason on stderr and exits 1; a fatal turn check names the check and the comment and exits 4. A failed post is never retried: the issue is re-read, and the tool reports the landed comment, says it did not land, or says it cannot tell</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 success (or a valid reply), 1 refused or error, 2 bad arguments, 3 no reply yet, 4 fatal check</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-ruling-reply">vrg-ruling-reply<a class="headerlink" href="#vrg-ruling-reply" title="Permanent link">&para;</a></h3>
+<p>The human's side of an authenticated ruling: it posts the human's reply to
+the agent's request, as the human. It is a human-only command, run in the
+human's own shell on the host, logged in to <code>gh</code> as themselves, the way
+<code>vrg-submit-pr</code> is run; never through <code>!</code> in an agent session, whose shell
+carries the agent's identity. It refuses in an agent identity mode, without
+an interactive terminal, and unless <code>gh api user</code> reports the one human
+login of the trusted-authors configuration. It refuses unless the request is
+the issue's open request and has no reply yet. It reads the reply once, from
+the agent's draft (the request's draft ref, pushed by <code>vrg-ruling draft</code>) or
+from <code>--response-text</code>, refuses anything but printable ASCII plus newline,
+and prints the reply exactly as it will be posted with its byte length and
+SHA-256. On confirmation it reads the issue again, refuses if its trusted
+comments changed while the prompt waited, posts exactly the bytes it showed,
+once, and deletes the request's draft ref. A draft pushed again while the
+prompt waits is never what is posted. Declining exits 1 and keeps the draft.
+See the <a href="../dev/ruling-reply/">vrg-ruling-reply reference</a> and the
+<a href="../../guides/human-replies/">Human Replies guide</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_ruling_reply</code> (library: <code>lib/rulings/</code>)</td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>--issue OWNER/REPO#N --request ID [--response-text TEXT]</code></td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>The human's own shell (not an agent identity), an interactive terminal, <code>gh</code> logged in as the human login; trusted authors list exactly one human login, and <code>&lt;human&gt;-vergil-user</code> is on the <code>agents</code> list</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td>A refusal, a declined prompt or an error prints the reason on stderr and exits 1, posting nothing; a fatal turn check names the check and the comment and exits 4. A failed post is never retried: the issue is re-read, and the tool reports the landed comment, says it did not land, or says it cannot tell</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 posted, 1 refused, declined or error, 2 bad arguments, 4 fatal check</td>
 </tr>
 <tr>
 <td>Status</td>
