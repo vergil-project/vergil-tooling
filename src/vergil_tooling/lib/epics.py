@@ -275,6 +275,18 @@ def child_states(epic: IssueRef) -> list[ChildState]:
     return native if native else _reflink_child_states(epic)
 
 
+def native_children(epic: IssueRef) -> list[IssueRef]:
+    """*epic*'s native sub-issues only, never the body ``Parent:`` reflinks.
+
+    The sub-issue list is a separate view from each child's ``parent`` field,
+    and GitHub can let the two disagree for a while after a transfer
+    (vergil-project/vergil-tooling#4004), so a move that must be settled checks
+    both. Unlike :func:`child_states` there is no reflink fallback: an empty
+    list means no native sub-issues.
+    """
+    return [child.ref for child in _native_child_states(epic)]
+
+
 def render_blocked_by(deps: list[IssueRef]) -> str:
     """Render the ``Blocked-by:`` reflink lines for a validation task body.
 
