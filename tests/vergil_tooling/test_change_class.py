@@ -12,6 +12,7 @@ from vergil_tooling.lib import git
 from vergil_tooling.lib.merge_review.change_class import (
     BUILTIN_DOCS_PATHS,
     allow_list,
+    allow_list_at,
     classify,
     is_docs_path,
 )
@@ -283,16 +284,120 @@ def test_cli_option_like_ref(repo: Path, capsys: pytest.CaptureFixture[str]) -> 
     assert not (repo / "x").exists()
 
 
+def _branch_from_base_config(repo: Path, config: str | None) -> None:
+    """Commit *config* as vergil.toml on develop (none: delete it), then branch from it."""
+    _git(repo, "checkout", "-q", "develop")
+    if config is None:
+        _git(repo, "rm", "-q", "vergil.toml")
+    else:
+        _write(repo, "vergil.toml", config)
+    _commit(repo, "config")
+    _git(repo, "checkout", "-q", "-b", "feature2")
+    _write(repo, "docs/guide/a.md", "changed\n")
+    _commit(repo, "guide")
+
+
 def test_cli_invalid_config(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    _write(repo, "vergil.toml", _VERGIL_TOML + '\n[merge-review]\ndocs-paths = "docs/"\n')
+    _branch_from_base_config(repo, _VERGIL_TOML + '\n[merge-review]\ndocs-paths = "docs/"\n')
     assert vrg_change_class.main(["--base", "develop"]) == 1
-    assert "docs-paths must be a list of strings" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "docs-paths must be a list of strings" in err
+    assert "vergil.toml at " in err
+
+
+def test_cli_invalid_toml(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _branch_from_base_config(repo, "[merge-review\n")
+    assert vrg_change_class.main(["--base", "develop"]) == 1
+    assert "is not valid TOML" in capsys.readouterr().err
 
 
 def test_cli_missing_config(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    (repo / "vergil.toml").unlink()
+    _branch_from_base_config(repo, None)
     assert vrg_change_class.main(["--base", "develop"]) == 1
-    assert "vergil.toml not found" in capsys.readouterr().err
+    assert "vergil.toml not found at " in capsys.readouterr().err
+
+
+def test_cli_allow_list_comes_from_the_merge_base(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # An uncommitted edit widening the working tree's list changes nothing.
+    _write(repo, "src/x.py", "x = 9\n")
+    _commit(repo, "code")
+    widened = '\n[merge-review]\ndocs-paths = ["docs/guide/", "src/"]\n'
+    _write(repo, "vergil.toml", _VERGIL_TOML + widened)
+    assert vrg_change_class.main(["--base", "develop"]) == 0
+    assert capsys.readouterr().out == "code\n"
+
+
+def test_cli_working_tree_config_is_not_needed(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write(repo, "docs/guide/a.md", "changed\n")
+    _commit(repo, "guide")
+    (repo / "vergil.toml").unlink()
+    assert vrg_change_class.main(["--base", "develop"]) == 0
+    assert capsys.readouterr().out == "docs-only\n"
+
+
+def test_cli_head_is_judged_by_its_own_merge_base(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The checked-out branch widened its list; another head cut before that
+    # is judged by the list at its own merge base.
+    _write(repo, "src/x.py", "x = 9\n")
+    _commit(repo, "code on feature")
+    _git(repo, "checkout", "-q", "develop")
+    _write(repo, "vergil.toml", _VERGIL_TOML + '\n[merge-review]\ndocs-paths = ["src/"]\n')
+    _commit(repo, "widen on develop")
+    assert vrg_change_class.main(["--base", "develop", "--head", "feature"]) == 0
+    assert capsys.readouterr().out == "code\n"
+
+
+# -- reading a file at a commit -------------------------------------------------------
+
+
+def test_file_at(repo: Path) -> None:
+    assert git.file_at("HEAD", "README.md") == "# r"
+    assert git.file_at("HEAD", "no-such-file") is None
+
+
+def test_file_at_is_root_relative(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(repo / "docs")
+    assert git.file_at("HEAD", "vergil.toml") is not None
+
+
+def test_file_at_refuses_a_directory(repo: Path) -> None:
+    with pytest.raises(ValueError, match="docs at HEAD is a tree, not a file"):
+        git.file_at("HEAD", "docs")
+
+
+def test_file_at_refuses_option_like_revision(repo: Path) -> None:
+    with pytest.raises(ValueError, match="not a git revision"):
+        git.file_at("--output=x", "README.md")
+
+
+def test_allow_list_at(repo: Path) -> None:
+    assert allow_list_at("develop") == ("README.md", "CHANGELOG.md", "docs/guide/")
+
+
+def test_diff_patch(repo: Path) -> None:
+    _write(repo, "src/x.py", "x = 9\n")
+    after = _commit_sha(repo, "code")
+    patch = git.diff_patch("develop", after)
+    assert b"-x = 1\n+x = 9\n" in patch
+    assert git.diff_patch(after, after) == b""
+
+
+def test_diff_patch_unknown_revision(repo: Path) -> None:
+    with pytest.raises(subprocess.CalledProcessError):
+        git.diff_patch("develop", "no-such-ref")
+    with pytest.raises(ValueError, match="not a git revision"):
+        git.diff_patch("-p", "HEAD")
+
+
+def _commit_sha(repo: Path, message: str) -> str:
+    _commit(repo, message)
+    return _git(repo, "rev-parse", "HEAD")
 
 
 def test_cli_requires_base() -> None:

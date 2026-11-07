@@ -458,6 +458,49 @@ def diff_name_status(base: str, head: str) -> list[tuple[str, str, str | None]]:
     return changes
 
 
+def file_at(commit: str, path: str) -> str | None:
+    """Return the text of *path* as committed in *commit*, or ``None`` when absent.
+
+    Reads the object database only, never the working tree, so uncommitted
+    edits play no part. Raises ``ValueError`` when *path* names something
+    other than a file there (a directory or a submodule) or for a revision
+    git would read as an option, and ``CalledProcessError`` when git fails
+    (an unknown commit).
+    """
+    _check_revs(commit)
+    listing = read_output("ls-tree", "-z", "--full-tree", commit, "--", path)
+    if not listing:
+        return None
+    kind = listing.split(" ", 2)[1]
+    if kind != "blob":
+        msg = f"{path} at {commit} is a {kind}, not a file"
+        raise ValueError(msg)
+    return read_output("cat-file", "blob", f"{commit}:{path}")
+
+
+def diff_patch(base: str, head: str) -> bytes:
+    """Return ``git diff <base> <head>`` exactly as git prints it.
+
+    No external diff driver, text conversion or colour applies, so the patch
+    is the same whatever the user's configuration. Raises
+    ``CalledProcessError`` when git fails, and ``ValueError`` for a revision
+    git would read as an option.
+    """
+    _check_revs(base, head)
+    args = ("diff", "--no-ext-diff", "--no-textconv", "--no-color", base, head)
+    result = subprocess.run(  # noqa: S603
+        ("git", *args),  # noqa: S607
+        check=False,
+        capture_output=True,
+        env=_git_env(args),
+    )
+    if result.returncode != 0:
+        raise subprocess.CalledProcessError(
+            result.returncode, ("git", *args), output=result.stdout, stderr=result.stderr
+        )
+    return result.stdout
+
+
 def _in_repo(repo: Path | None) -> tuple[str, ...]:
     """Return the ``-C <repo>`` prefix that runs git in *repo* (none for the CWD)."""
     return ("-C", str(repo)) if repo is not None else ()

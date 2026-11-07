@@ -17,6 +17,12 @@ everything else is fail_defer so all failures are reported in one run.
 ``--all-versions`` (Python only) adds one test stage per resolved CI version
 after the test stage, so the coverage gate runs on every interpreter PR-CI
 tests, not only the dev container's (issue #3547).
+
+Every pipeline run, pass or fail, interrupted or not, writes
+``.vergil/vrg-validate-last.json``: the commit checked out at the start,
+the exit code, whether the run was full (no ``--check``), whether the tree
+was clean at the start, and each stage's status. merge-review's request
+builder reads it (:mod:`vergil_tooling.lib.validate_record`).
 """
 
 from __future__ import annotations
@@ -40,6 +46,7 @@ from vergil_tooling.lib.languages import (
     language_commands,
 )
 from vergil_tooling.lib.progress import Stage, StageMode
+from vergil_tooling.lib.validate_record import write_record
 from vergil_tooling.lib.versions import VersionsError
 from vergil_tooling.lib.versions.floors import check_floors, check_toolchain_selection
 from vergil_tooling.lib.versions.resolve import resolve_language
@@ -169,14 +176,35 @@ def main(argv: list[str] | None = None) -> int:
         print(f"No {args.check} commands for language '{language or '<not set>'}'")
         return 0
 
-    return progress.run_pipeline(
-        None,
-        stages,
-        command="vrg-validate",
-        label="vrg-validate",
-        args=args,
-        repo_root=repo_root,
-    )
+    # The record of this run (for merge-review) describes the commit and tree
+    # the stages judged, so both are taken before the first stage runs.
+    head = git.commit_sha("HEAD")
+    clean_at_start = git.working_tree_status() == ""
+    results: list[progress.StageResult] = []
+    exit_code = 1
+    try:
+        exit_code = progress.run_pipeline(
+            None,
+            stages,
+            command="vrg-validate",
+            label="vrg-validate",
+            args=args,
+            repo_root=repo_root,
+            results_sink=results,
+        )
+    except KeyboardInterrupt:
+        exit_code = 130
+        raise
+    finally:
+        write_record(
+            repo_root,
+            head=head,
+            exit_code=exit_code,
+            full=args.check is None,
+            clean_at_start=clean_at_start,
+            results=results,
+        )
+    return exit_code
 
 
 def _versions_resolve(

@@ -163,7 +163,9 @@ The change class is decided by the caller's tools before dispatch, from the
 changed files, never by an agent: a change is `docs-only` only when every
 changed file is an addition or edit on the documentation allow-list, and
 `code` otherwise (any deletion, rename or type change, any change to
-`vergil.toml`, an empty change, or any doubt).
+`vergil.toml`, an empty change, or any doubt). The repository's own
+allow-list entries are read from `vergil.toml` as committed at `base_sha`,
+never from the working tree.
 
 ### The result
 

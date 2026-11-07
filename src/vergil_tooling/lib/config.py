@@ -805,6 +805,22 @@ def _parse_merge_review(raw: dict[str, Any], source: str = CONFIG_FILE) -> Merge
     return MergeReviewConfig(docs_paths=tuple(paths))
 
 
+def parse_merge_review_toml(text: str, source: str) -> MergeReviewConfig:
+    """Parse the ``[merge-review]`` table of ``vergil.toml`` text read from git.
+
+    The change classifier reads the allow-list as committed at a merge base,
+    not from the working tree, and needs only this table: the rest of that
+    commit's file is not judged by today's rules. *source* labels errors.
+    Raises :class:`ConfigError` for invalid TOML or an invalid table.
+    """
+    try:
+        raw = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        msg = f"{source} is not valid TOML: {exc}"
+        raise ConfigError(msg) from exc
+    return _parse_merge_review(raw, source)
+
+
 def parse_test_workers(value: Any, where: str) -> int | str:
     """Validate a worker count: ``"auto"`` or a positive int.
 

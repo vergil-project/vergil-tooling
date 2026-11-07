@@ -9,14 +9,17 @@ any deletion, rename, copy or type change, any change to ``vergil.toml``
 list), an empty change, or any doubt.
 
 The allow-list is a list of base paths. An entry ending in ``/`` matches
-every path below it; any other entry matches that one file exactly.
+every path below it; any other entry matches that one file exactly. The
+repository's own entries are read from ``vergil.toml`` as committed at the
+merge base, never from the working tree.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib.config import CONFIG_FILE
+from vergil_tooling.lib import git
+from vergil_tooling.lib.config import CONFIG_FILE, parse_merge_review_toml
 from vergil_tooling.lib.merge_review.schema import CHANGE_CLASSES
 
 if TYPE_CHECKING:
@@ -72,3 +75,30 @@ def classify(changes: list[tuple[str, str, str | None]], docs_paths: Sequence[st
         if path == CONFIG_FILE or not is_docs_path(path, docs_paths):
             return CODE
     return DOCS_ONLY
+
+
+def allow_list_at(commit: str) -> tuple[str, ...]:
+    """The allow-list as committed at *commit*: the built-ins and its ``docs-paths``.
+
+    The repository's paths are read from ``vergil.toml`` in *commit* itself,
+    never from the working tree, so neither an uncommitted edit nor a branch
+    commit can change the list its own change is judged by. Raises
+    ``FileNotFoundError`` when *commit* has no ``vergil.toml``, and
+    :class:`~vergil_tooling.lib.config.ConfigError` when its table is invalid.
+    """
+    text = git.file_at(commit, CONFIG_FILE)
+    if text is None:
+        msg = f"{CONFIG_FILE} not found at {commit}"
+        raise FileNotFoundError(msg)
+    return allow_list(parse_merge_review_toml(text, f"{CONFIG_FILE} at {commit}").docs_paths)
+
+
+def classify_branch(base: str, head: str) -> tuple[str, str]:
+    """Return ``(merge base SHA, class)`` for *head*'s change since its merge base.
+
+    The merge base of *base* and *head* is where the branch was cut: the diff
+    runs from it, and the allow-list is the one committed there
+    (:func:`allow_list_at`).
+    """
+    base_sha = git.merge_base(base, head)
+    return base_sha, classify(git.diff_name_status(base_sha, head), allow_list_at(base_sha))
