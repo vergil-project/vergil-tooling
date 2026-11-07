@@ -20478,6 +20478,12 @@ started clean at <code>HEAD</code>, exited 0 and passed every stage; the passed 
 become <code>validate_stages</code>. The change class is
 <a href="#vrg-change-class"><code>vrg-change-class</code></a>'s, with the allow-list committed at
 the merge base.</p>
+<p><code>--issue-comments-file</code> holds the issue's trusted-author comments, a JSON
+list of <code>{"author", "created_at", "body"}</code> strings (<code>created_at</code> an ISO 8601
+timestamp with a time zone), kept in the order given; they become
+<code>issue_comments</code>, an empty list when the flag is not given. The caller
+decides which comments are trusted; the builder checks only their shape and
+refuses a malformed file by entry position, never echoing a value.</p>
 <p>A check takes <code>--fix-base</code> (the <code>HEAD</code> the previous step judged, refused
 unless it is the <code>head_sha</code> of that step's stored request), one
 <code>--earlier-result</code> per earlier step in step order, each checked against
@@ -20506,11 +20512,11 @@ makes there, and writes only to the path it prints.</p>
 </tr>
 <tr>
 <td>Args</td>
-<td><code>--issue OWNER/NAME#N --base REF --step {review,check,check-&lt;k&gt;} --issue-body-file FILE --epic-tasks-file FILE [--design-source FILE]... [--fix-base SHA --earlier-result FILE... --fix-id ID... [--ruled-id ID]...]</code>, or <code>--issue OWNER/NAME#N --ensure-dir</code></td>
+<td><code>--issue OWNER/NAME#N --base REF --step {review,check,check-&lt;k&gt;} --issue-body-file FILE --epic-tasks-file FILE [--issue-comments-file FILE] [--design-source FILE]... [--fix-base SHA --earlier-result FILE... --fix-id ID... [--ruled-id ID]...]</code>, or <code>--issue OWNER/NAME#N --ensure-dir</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>Run inside the task's worktree after <code>vrg-container-run -- vrg-validate</code> passed at <code>HEAD</code>; <code>--epic-tasks-file</code> holds a JSON list of <code>{"ref", "title"}</code></td>
+<td>Run inside the task's worktree after <code>vrg-container-run -- vrg-validate</code> passed at <code>HEAD</code>; <code>--epic-tasks-file</code> holds a JSON list of <code>{"ref", "title"}</code> and <code>--issue-comments-file</code> one of <code>{"author", "created_at", "body"}</code></td>
 </tr>
 <tr>
 <td>Failure mode</td>
