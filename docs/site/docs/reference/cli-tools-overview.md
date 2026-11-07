@@ -859,6 +859,36 @@ See the [vrg-ruling-reply reference](dev/ruling-reply.md) and the
 | Exit codes | 0 posted, 1 refused, declined or error, 2 bad arguments, 4 fatal check |
 | Status | Active |
 
+### vrg-merge-review-check
+
+The merge-review result check (epic vergil-project/.github#881): it checks
+a reviewer's stored reply against the request it answers, by the rules of
+the [merge-review protocol](https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/merge-review-protocol.md).
+The reply must open, after optional whitespace, with exactly one
+`merge-review-result` fenced block holding one JSON object, with no second
+such block anywhere. The block must carry exactly the schema's fields at
+every level, copy the request's `step` and `request_id`, use only the
+defined questions, kinds and statuses, give each finding an ID with its
+step's prefix, keep every summary and location to one line of printable
+ASCII (a summary at most 300 characters, none on a security finding), raise
+no `production-safety` finding on a `docs-only` change, and, in a check,
+raise no `pre-existing` finding and give exactly one `fix_status` per ID the
+request listed. A summary or location that carries the vrg-ruling marker
+prefix is refused too, so it can go into a `vrg-ruling` item unchanged. On
+success it prints `{"step", "counts", "security", "fix_status"}` as JSON on
+stdout. A refusal names the rule, the finding by ID (or by position when
+the ID is bad) and, for a bad character, its code point and offset; it
+never repeats the refused value. It reads the two files and writes nothing.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_merge_review_check` (library: `lib/merge_review/`) |
+| Args | `--request FILE --result FILE` |
+| Preconditions | None: no identity mode, network or git access |
+| Failure mode | `ERROR: <rule>` on stderr and exit 1, with nothing on stdout |
+| Exit codes | 0 the result passed, 1 it failed or a file could not be read, 2 bad arguments |
+| Status | Active |
+
 ### vrg-epic-audit
 
 Report epic/task drift and invariant violations for an org, as Markdown on

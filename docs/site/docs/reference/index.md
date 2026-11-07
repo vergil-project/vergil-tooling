@@ -35,6 +35,7 @@ the dev-tree override venv.
 | [vrg-finalize-pr](dev/finalize-pr.md) | Merge a PR and run post-merge cleanup |
 | [vrg-ruling](dev/ruling.md) | The agent's side of an authenticated ruling: post a request, draft the reply, read it, post the response |
 | [vrg-ruling-reply](dev/ruling-reply.md) | Post the human's reply to a ruling request, as the human (human-only) |
+| [vrg-merge-review-check](cli-tools-overview.md#vrg-merge-review-check) | Check a stored merge-review result against the request it answers |
 | [vrg-ensure-label](cli-tools-overview.md#vrg-ensure-label) | Ensure GitHub labels exist |
 | [vrg-github-repo-config](config-audit.md) | Audit/reconcile a repo against canonical config |
 | [vrg-dependabot-audit](dependabot-audit.md) | Fail on any open Dependabot alert |
