@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
     
     
       
@@ -1372,6 +1372,8 @@
       
         
       
+        
+      
     
     
     
@@ -1424,6 +1426,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.288/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.288
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13536,6 +13566,8 @@
       
         
       
+        
+      
     
     
     
@@ -13848,6 +13880,34 @@
     
   
     vrg-ruling-reply
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/dev/scope-change/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-scope-change
   
 
     
@@ -16419,6 +16479,8 @@
       
         
       
+        
+      
     
     
     
@@ -16851,6 +16913,34 @@
     
   
     Human Replies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../merge-review/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Merge Review
   
 
     
@@ -17471,7 +17561,10 @@ full flag list.</p>
 <p>See the <a href="../../reference/dev/submit-pr/">vrg-submit-pr reference</a>.</p>
 <div class="admonition note">
 <p class="admonition-title">Agent handoff and the post-report-ready freeze</p>
-<p>In an agent session, submission is a <strong>human</strong> action. The agent
+<p>In an agent session, submission is a <strong>human</strong> action. Once the
+committed branch is green, the agent first runs the
+<a href="../merge-review/">merge review</a>, the pre-PR judgement check, and
+carries its eligibility line into the PR notes. The agent then
 runs <code>vrg-pr-workflow report-ready</code>, which pushes the branch to origin
 (setting upstream) and then records the PR metadata in
 <code>.vergil/pr-workflow.json</code>, and stops; the human runs <code>vrg-submit-pr</code>.
@@ -17479,7 +17572,8 @@ No separate push is needed. When the delta touches
 <code>.github/workflows/**</code> GitHub refuses the agent push; <code>report-ready</code>
 says so, records the state anyway, and the human's <code>vrg-submit-pr</code>
 pushes the branch instead. Any other push failure fails <code>report-ready</code>
-with nothing recorded. Recording ready <strong>freezes the branch</strong>: <code>vrg-commit</code>
+with nothing recorded, as does a branch with no commits ahead of its
+base. Recording ready <strong>freezes the branch</strong>: <code>vrg-commit</code>
 and the <code>vrg-git</code> push path refuse further commits/pushes on it,
 because a task is exactly one PR and more work is a new follow-up
 issue. One push stays allowed: an explicit push of the branch while
@@ -17786,7 +17880,7 @@ switch a changed <code>ref</code> and checks nothing.</p>
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.indexes", "navigation.top", "content.code.copy", "search.highlight", "search.suggest"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
       
     
   </body>

@@ -19,7 +19,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
     
     
       
@@ -1370,6 +1370,8 @@
       
         
       
+        
+      
     
     
     
@@ -1422,6 +1424,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.288/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.288
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13534,6 +13564,8 @@
       
         
       
+        
+      
     
     
     
@@ -13846,6 +13878,34 @@
     
   
     vrg-ruling-reply
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/dev/scope-change/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-scope-change
   
 
     
@@ -16417,6 +16477,8 @@
       
         
       
+        
+      
     
     
     
@@ -16564,6 +16626,34 @@
     
   
     Human Replies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../merge-review/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Merge Review
   
 
     
@@ -17446,8 +17536,8 @@ while it is in place. A plain <code>vrg-vm update</code> returns the VM to the p
 See <a href="../../reference/vm-spec/#vergil-tooling-inside-the-vm">vergil-tooling inside the VM</a>.</p>
 <h2 id="tag-scheme-whats-user-facing-what-isnt">Tag scheme — what's user-facing, what isn't<a class="headerlink" href="#tag-scheme-whats-user-facing-what-isnt" title="Permanent link">&para;</a></h2>
 <p>Two parallel tag families exist in the repo. Consumers only see and
-use the first; the second is internal scaffolding for the changelog
-flow.</p>
+use the first; the second is an internal marker of where <code>develop</code>
+stood when a release was published.</p>
 <table>
 <thead>
 <tr>
@@ -17473,13 +17563,21 @@ flow.</p>
 <tr>
 <td><code>develop-v1.3.0</code></td>
 <td><code>develop</code></td>
-<td>Boundary marker for <code>git-cliff</code>'s next-changelog scoping</td>
+<td>Marks the <code>develop</code> tip when the release was published</td>
 <td>No — internal</td>
 </tr>
 </tbody>
 </table>
 <p>The <code>develop-</code> prefix is invisible to install / consumption; never
 pin to a <code>develop-v*</code> tag.</p>
+<p>The changelog and release notes do not use the <code>develop-v*</code> tags as
+their boundary. CD places one on the <code>develop</code> tip after the release
+has merged, so a PR merged to <code>develop</code> while the release was in flight
+would sit behind it without having shipped. A release's changes are
+instead the commits since the merge base of the release branch and the
+previous <code>vX.Y.Z</code> tag, so such a PR appears in the next release. The
+new section is added to the top of <code>CHANGELOG.md</code>; the entries of
+earlier releases are kept as they were published.</p>
 <h2 id="patch-release-the-common-path">Patch release — the common path<a class="headerlink" href="#patch-release-the-common-path" title="Permanent link">&para;</a></h2>
 <p>A patch release fixes a bug or refines an existing feature without
 adding new public surface. Versions: <code>v1.3.0</code> → <code>v1.3.1</code>.</p>
@@ -18170,7 +18268,7 @@ Follow-ups move to their own issues.</p>
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.indexes", "navigation.top", "content.code.copy", "search.highlight", "search.suggest"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
       
     
   </body>

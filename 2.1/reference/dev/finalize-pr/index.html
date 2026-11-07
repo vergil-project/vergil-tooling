@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="../../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
     
     
       
@@ -1372,6 +1372,8 @@
       
         
       
+        
+      
     
     
     
@@ -1424,6 +1426,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.288/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.288
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13549,6 +13579,8 @@
       
         
       
+        
+      
     
     
     
@@ -14121,6 +14153,34 @@
     
   
     vrg-ruling-reply
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scope-change/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-scope-change
   
 
     
@@ -16690,6 +16750,8 @@
       
         
       
+        
+      
     
     
     
@@ -16834,6 +16896,34 @@
     
   
     Human Replies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../guides/merge-review/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Merge Review
   
 
     
@@ -17576,6 +17666,21 @@ run URL, a <code>gh run view &lt;id&gt;</code> command to re-check it, and a poi
 <code>vrg-finalize-pr --cleanup-only</code> to re-confirm once the run has
 finished. It still fails the stage, because an unknown result is not a
 pass, but it never claims the run failed (issue #3316).</p>
+<p><strong>Superseded is not failure.</strong> A run that concludes <code>cancelled</code> is
+checked for a concurrency supersede: every job ended passing or
+cancelled, and every cancelled job carries GitHub's check-run annotation
+"Canceling since a higher priority waiting request for <code>&lt;group&gt;</code>
+exists". Such a run did not fail; a higher-priority run waiting on the
+same concurrency group took its place. The stage then ends with a
+warning (⚠), not a failure, headed "the CD workflow run triggered by
+this merge was superseded, not failed", with the run URL and the group.
+It says that this merge's CD result is not confirmed: GitHub does not
+record which run took the cancelled run's place, and that run may be a
+newer commit's CD or another workflow sharing the group (for example a
+scheduled rebuild), so finalize does not follow it. Any other
+cancellation (by a human, a timeout, or a run with no job to carry the
+annotation) still fails the stage, as does a cancelled run whose jobs or
+annotations cannot be read; that failure says why (issue #3834).</p>
 <h2 id="batch-mode-comma-list-all">Batch mode (comma-list / <code>--all</code>)<a class="headerlink" href="#batch-mode-comma-list-all" title="Permanent link">&para;</a></h2>
 <p>A comma-separated PR argument (<code>vrg-finalize-pr 123,124,125</code>) or <code>--all</code>
 (every open PR in <code>.worktrees/</code>) finalizes several PRs as a single
@@ -17678,7 +17783,7 @@ release — the batch runs those once at the end.</p>
       <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.tabs", "navigation.sections", "navigation.indexes", "navigation.top", "content.code.copy", "search.highlight", "search.suggest"], "search": "../../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../../assets/javascripts/bundle.c21346df.min.js"></script>
+      <script src="../../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
       
     
   </body>

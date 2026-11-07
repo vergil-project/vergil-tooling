@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
     
     
       
@@ -1374,6 +1374,8 @@
       
         
       
+        
+      
     
     
     
@@ -1426,6 +1428,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.288/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.288
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13538,6 +13568,8 @@
       
         
       
+        
+      
     
     
     
@@ -13850,6 +13882,34 @@
     
   
     vrg-ruling-reply
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/dev/scope-change/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-scope-change
   
 
     
@@ -16903,6 +16963,8 @@
       
         
       
+        
+      
     
     
     
@@ -17047,6 +17109,34 @@
     
   
     Human Replies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/merge-review/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Merge Review
   
 
     
@@ -17791,10 +17881,14 @@ capture the required structure.</p>
 <h2 id="sub-issues">Sub-issues<a class="headerlink" href="#sub-issues" title="Permanent link">&para;</a></h2>
 <p>Create a sub-issue when:</p>
 <ul>
-<li>the parent issue is too large for a single PR</li>
 <li>the PR will not fully resolve the parent issue</li>
 <li>the work can be reviewed and merged independently</li>
 </ul>
+<p>A task too big for a single PR does not get sub-issues of its own: it is split
+into lettered sibling tasks (<code>13a</code>, <code>13b</code>, …) under the same epic, each its own
+issue and PR, with their dependencies in the plan's delivery table. The
+<a href="https://github.com/vergil-project/vergil-claude-plugin/blob/develop/skills/epic-create/SKILL.md#task-sizing--split-a-task-too-big-for-one-pr"><code>epic-create</code> skill</a>
+owns that rule.</p>
 <p>Sub-issue rules:</p>
 <ul>
 <li>Link each sub-issue to its parent with the sanctioned tooling (see below).</li>
@@ -18040,6 +18134,12 @@ implements the issue, validates it green and hands the PR off with
 <code>report-ready</code>. The design-review rounds need paad's unattended
 runner, <code>paad:paad-delegate</code>, which comes with the installed paad plugin
 (<a href="https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-policy.md#10-paad-from-the-fork">paad-policy §10</a>).</p>
+<p>A plan is edited freely until its first task ships; from then on it evolves
+append-only, each change logged as a dated what/why entry in an <code>## Evolution
+during execution</code> section at the bottom of <code>plan.md</code>, while the epic's
+sub-issues stay the live task list. The
+<a href="https://github.com/vergil-project/vergil-claude-plugin/blob/develop/skills/epic-implement/SKILL.md#2-reconstruct-state-from-github-starting-at-the-epic-issue"><code>epic-implement</code> skill</a>
+owns that rule.</p>
 <h3 id="the-bookend-convention">The bookend convention<a class="headerlink" href="#the-bookend-convention" title="Permanent link">&para;</a></h3>
 <p><strong>An epic is never closed until you have decided what comes next AND confirmed
 the docs reflect what changed.</strong> Almost no real problem is fully resolved by one
@@ -18787,7 +18887,7 @@ in human hands.</p>
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.indexes", "navigation.top", "content.code.copy", "search.highlight", "search.suggest"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
       
     
   </body>

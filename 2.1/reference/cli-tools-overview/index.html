@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
     
     
       
@@ -1372,6 +1372,8 @@
       
         
       
+        
+      
     
     
     
@@ -1424,6 +1426,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.288/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.288
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13460,6 +13490,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-scope-change" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-scope-change
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-merge-review-check" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -14531,6 +14572,8 @@
       
         
       
+        
+      
     
     
     
@@ -14846,6 +14889,34 @@
     
   
     vrg-ruling-reply
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/scope-change/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-scope-change
   
 
     
@@ -17415,6 +17486,8 @@
       
         
       
+        
+      
     
     
     
@@ -17559,6 +17632,34 @@
     
   
     Human Replies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/merge-review/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Merge Review
   
 
     
@@ -18114,6 +18215,17 @@
     <span class="md-ellipsis">
       
         vrg-ruling-reply
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vrg-scope-change" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-scope-change
       
     </span>
   </a>
@@ -18964,7 +19076,9 @@ so no separate push is needed; a branch already on origin at that commit is a
 no-op push. When the delta touches <code>.github/workflows/**</code> GitHub refuses the
 agent push: <code>report-ready</code> reports that as expected, records the state anyway,
 and the human's <code>vrg-submit-pr</code> pushes the branch. Any other push failure
-fails <code>report-ready</code> with no local state and no relay ref written. A re-run on
+fails <code>report-ready</code> with no local state and no relay ref written. A branch
+with no commits ahead of <code>--base</code> is refused before any push, with nothing
+recorded and no freeze (#3870). A re-run on
 a frozen branch whose HEAD has drifted past the reported commit is refused
 before any push. After a deliberate <code>unfreeze</code>, a re-run pushes with
 <code>--force-with-lease=refs/heads/&lt;branch&gt;:&lt;recorded head_sha&gt;</code>, so a rebased
@@ -19384,10 +19498,11 @@ the <a href="../dependency-update-config/">dependency-update reference</a>.</p>
 </tbody>
 </table>
 <h3 id="vrg-upstream-refresh">vrg-upstream-refresh<a class="headerlink" href="#vrg-upstream-refresh" title="Permanent link">&para;</a></h3>
-<p>Run the repo's <code>[upstream-refresh].hook</code> on a clean checkout of the
-base branch, then open, refresh or close the single <code>upstream-refresh</code>
-PR. A no-change run closes any stale refresh PR, or exits quietly when
-there is none. It never merges, and never runs dependency updaters,
+<p>Run the repo's <code>[upstream-refresh].hook</code> in a temporary worktree of
+the base branch, then open, refresh or close the single
+<code>upstream-refresh</code> PR. The checkout it runs from must be clean and on
+the base, and it is left exactly as found. A no-change run closes any
+stale refresh PR, or exits quietly when there is none. It never merges, and never runs dependency updaters,
 validation or a release. It runs from the scheduled
 <code>ops-upstream-refresh</code> workflow under the App token, or by hand as a
 human; it refuses agent identities. See the
@@ -20228,7 +20343,11 @@ whose <code>origin</code> is the issue's repo, refuses once the request has a re
 and posts nothing. <code>respond</code> re-runs <code>read</code>'s checks and posts the
 response, which records the request and reply comment IDs; a re-run that
 finds its own response already landed reports it and posts nothing. Either
-way <code>respond</code> then deletes any leftover draft ref. A security item carries
+way <code>respond</code> then deletes any leftover draft ref. <code>draft-scope</code> pushes a
+scope change drafted for the human, the text alone, to
+<code>refs/vergil/scope-draft/&lt;issue&gt;</code> and prints the human's <code>vrg-scope-change</code>
+command; like <code>draft</code>, it runs only in a clone whose <code>origin</code> is the
+issue's repo and posts nothing. A security item carries
 only its ID: the fixed text <code>security finding, details given privately</code> in
 a request, a decision
 (<code>fix</code>, <code>file</code>, <code>defer</code> or <code>wont-fix</code>) in a draft, and an outcome
@@ -20250,11 +20369,11 @@ printable ASCII plus newline. See the
 </tr>
 <tr>
 <td>Args</td>
-<td><code>request --issue 'OWNER/REPO#N' --items FILE</code>; <code>read --issue 'OWNER/REPO#N' --request ID [--json]</code>; <code>draft --issue 'OWNER/REPO#N' --request ID --items FILE</code>; <code>respond --issue 'OWNER/REPO#N' --request ID --reply ID --items FILE</code></td>
+<td><code>request --issue 'OWNER/REPO#N' --items FILE</code>; <code>read --issue 'OWNER/REPO#N' --request ID [--json]</code>; <code>draft --issue 'OWNER/REPO#N' --request ID --items FILE</code>; <code>respond --issue 'OWNER/REPO#N' --request ID --reply ID --items FILE</code>; <code>draft-scope --issue 'OWNER/REPO#N' --text-file FILE</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>The <code>user</code> identity mode; trusted authors list exactly one human login, and <code>&lt;human&gt;-vergil-user</code> is on the <code>agents</code> list; for <code>draft</code>, a clone whose <code>origin</code> is the issue's repo</td>
+<td>The <code>user</code> identity mode; trusted authors list exactly one human login, and <code>&lt;human&gt;-vergil-user</code> is on the <code>agents</code> list; for <code>draft</code> and <code>draft-scope</code>, a clone whose <code>origin</code> is the issue's repo</td>
 </tr>
 <tr>
 <td>Failure mode</td>
@@ -20315,6 +20434,60 @@ See the <a href="../dev/ruling-reply/">vrg-ruling-reply reference</a> and the
 <tr>
 <td>Exit codes</td>
 <td>0 posted, 1 refused, declined or error, 2 bad arguments, 4 fatal check</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-scope-change">vrg-scope-change<a class="headerlink" href="#vrg-scope-change" title="Permanent link">&para;</a></h3>
+<p>Posts a scope change on a task issue (an addition to the task's scope, a
+narrowing of it, or a ruling on an item awaiting one) as the human, so merge
+review can count it as the human's. It is a human-only command, run in the
+human's own shell on the host, like <code>vrg-ruling-reply</code>, and refuses in an
+agent identity mode, without an interactive terminal, and unless <code>gh api
+user</code> reports the one human login of the trusted-authors configuration. It
+refuses while the issue has an open ruling exchange. It reads the text once,
+from the agent's draft (<code>refs/vergil/scope-draft/&lt;issue&gt;</code>, pushed by
+<code>vrg-ruling draft-scope</code>) or from <code>--text</code>, refuses anything but printable
+ASCII plus newline, and renders the comment as the header line
+<code>Scope change</code>, a blank line and the text. That header is how a scope
+change is recognised, together with the human login as its author. If the
+human has already posted exactly that comment, it prints its ID and posts
+nothing. Otherwise it prints the comment with its byte length and SHA-256,
+and on confirmation re-reads the issue, refuses if its trusted comments
+changed while the prompt waited, posts exactly the bytes it showed, once,
+prints the comment ID and deletes the draft ref. See the
+<a href="../dev/scope-change/">vrg-scope-change reference</a> and the
+<a href="../../guides/human-replies/#scope-changes">Human Replies guide</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_scope_change</code> (library: <code>lib/rulings/</code>)</td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>--issue 'OWNER/REPO#N' [--text TEXT]</code></td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>The human's own shell (not an agent identity), an interactive terminal, <code>gh</code> logged in as the human login; trusted authors list exactly one human login, and <code>&lt;human&gt;-vergil-user</code> is on the <code>agents</code> list; no open ruling exchange on the issue</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td>A refusal, a declined prompt or an error prints the reason on stderr and exits 1, posting nothing. A failed post is never retried: the issue is re-read, and the tool reports the landed comment, says it did not land, or says it cannot tell; a re-run finds a landed comment and posts nothing</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 posted or already posted, 1 refused, declined or error, 2 bad arguments</td>
 </tr>
 <tr>
 <td>Status</td>
@@ -20394,7 +20567,8 @@ one file. Markdown is not documentation by its extension: list only paths
 that hold nothing that controls behaviour. The command is for humans and
 debugging; the merge-review skill gets the class through the request
 builder, which runs the same classifier. It reads the repository and writes
-nothing.</p>
+nothing. See the <a href="../../guides/merge-review/">Merge Review guide</a> for how the
+class and the three merge-review commands fit together.</p>
 <table>
 <thead>
 <tr>
@@ -20438,13 +20612,26 @@ into the task's private directory,
 and prints the request's path. It writes <code>request-&lt;step&gt;.json</code>,
 <code>diff-&lt;step&gt;.patch</code> (<code>git diff &lt;base_sha&gt; &lt;head_sha&gt;</code>, where <code>base_sha</code> is
 the merge base of <code>--base</code> and <code>HEAD</code>) and, for a check,
-<code>fix-&lt;step&gt;.patch</code> (<code>git diff &lt;fix_base_sha&gt; &lt;head_sha&gt;</code>). It refuses,
+<code>fix-&lt;step&gt;.patch</code> (<code>git diff &lt;fix_base_sha&gt; &lt;head_sha&gt;</code>). Before it reads
+or writes anything, with or without <code>--ensure-dir</code>, it refuses unless the
+current clone's <code>origin</code> is the <code>--issue</code> repository (every push URL names
+it on github.com), naming both repositories. It refuses,
 naming the reason, unless the worktree is clean and the last <code>vrg-validate</code>
 run (its record, <code>.vergil/vrg-validate-last.json</code>) was a full run that
 started clean at <code>HEAD</code>, exited 0 and passed every stage; the passed stages
 become <code>validate_stages</code>. The change class is
 <a href="#vrg-change-class"><code>vrg-change-class</code></a>'s, with the allow-list committed at
 the merge base.</p>
+<p>It reads the comments of the <code>--issue</code> itself, every page, and keeps only
+those posted by the one human login of the trusted-authors configuration
+(see <a href="#vrg-trusted-authors"><code>vrg-trusted-authors</code></a>), oldest first, as
+<code>issue_comments</code>, each <code>{"author", "created_at", "body"}</code>. Agent and
+third-party comments are dropped. A human comment that has been edited is
+left out and counted in <code>issue_comments_excluded_edited</code>. It refuses when
+the configuration lists no human login or several, when the comments
+cannot be read, and when a kept comment's <code>created_at</code> is not an ISO 8601
+timestamp with a time zone, naming the comment by ID and never echoing a
+value.</p>
 <p>A check takes <code>--fix-base</code> (the <code>HEAD</code> the previous step judged, refused
 unless it is the <code>head_sha</code> of that step's stored request), one
 <code>--earlier-result</code> per earlier step in step order, each checked against
@@ -20469,7 +20656,7 @@ makes there, and writes only to the path it prints.</p>
 <tbody>
 <tr>
 <td>Source</td>
-<td><code>vergil_tooling.bin.vrg_merge_review_request</code> (library: <code>lib/merge_review/request.py</code>, <code>lib/merge_review/state.py</code>, <code>lib/build_dir.py</code>, <code>lib/validate_record.py</code>)</td>
+<td><code>vergil_tooling.bin.vrg_merge_review_request</code> (library: <code>lib/merge_review/request.py</code>, <code>lib/merge_review/state.py</code>, <code>lib/build_dir.py</code>, <code>lib/validate_record.py</code>, <code>lib/rulings/comments.py</code>, <code>lib/rulings/identity.py</code>)</td>
 </tr>
 <tr>
 <td>Args</td>
@@ -20477,7 +20664,7 @@ makes there, and writes only to the path it prints.</p>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>Run inside the task's worktree after <code>vrg-container-run -- vrg-validate</code> passed at <code>HEAD</code>; <code>--epic-tasks-file</code> holds a JSON list of <code>{"ref", "title"}</code></td>
+<td>Run inside the task's worktree after <code>vrg-container-run -- vrg-validate</code> passed at <code>HEAD</code>; <code>--epic-tasks-file</code> holds a JSON list of <code>{"ref", "title"}</code>; trusted authors are configured with exactly one human login, and GitHub is reachable to read the issue's comments</td>
 </tr>
 <tr>
 <td>Failure mode</td>
@@ -20623,6 +20810,13 @@ merged verdict was withheld, issue #1719) is counted under
 behind a "0 cruft" message (issue #2347). A merged release or deps
 worktree shows as <code>merged</code> in its own section but is not counted as
 <code>vrg-finalize-pr</code> cruft.</p>
+<p>LAST COMMIT is the age of the worktree's HEAD commit. In the worktree
+sections, a worktree whose branch has no commits beyond the target branch
+(AHEAD 0) shows <code>-</code> there instead: its HEAD is still the commit it was
+cut from, whose age says nothing about the work on it (issue #3828).
+LAST MODIFIED is still shown. A detached worktree whose branch cannot be
+recovered also shows AHEAD 0, because there is no branch to count, and
+keeps its LAST COMMIT.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>Main checkout (integration branch: develop)
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>CHECKOUT               BRANCH   DIRTY  LAST COMMIT  STATUS
 <a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>mq-gateway-replay-lab  develop  -      23d ago      ok
@@ -22433,7 +22627,7 @@ convention was established use 1 for all errors.</p>
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.indexes", "navigation.top", "content.code.copy", "search.highlight", "search.suggest"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
       
     
   </body>
