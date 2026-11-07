@@ -976,36 +976,65 @@ def test_merge_status_raises_on_non_dict_response() -> None:
         github.merge_status("https://github.com/pr/1")
 
 
-def test_update_branch_calls_api() -> None:
-    with patch(
-        "vergil_tooling.lib.github.read_output",
-        side_effect=["42", "acme/repo", ""],
-    ) as mock_read:
-        github.update_branch("https://github.com/pr/1")
-    calls = mock_read.call_args_list
-    assert calls[0].args == (
-        "pr",
-        "view",
-        "https://github.com/pr/1",
-        "--json",
-        "number",
-        "--jq",
-        ".number",
+def _gh_update_branch(pr_view: object) -> tuple[list[tuple[str, ...]], Callable[..., str]]:
+    """A fake ``read_output`` answering ``gh pr view`` with *pr_view* and recording calls.
+
+    ``gh repo view`` (the cwd's repo) answers a different repo from the PR's,
+    so a lookup that consults the cwd instead of the PR is caught (#3976).
+    """
+    calls: list[tuple[str, ...]] = []
+
+    def fake(*args: str) -> str:
+        calls.append(args)
+        if args[:2] == ("pr", "view"):
+            return json.dumps(pr_view)
+        if args[:2] == ("repo", "view"):
+            return "cwd-org/cwd-repo"
+        return ""
+
+    return calls, fake
+
+
+def test_update_branch_uses_the_prs_repo_not_the_cwds() -> None:
+    pr = "https://github.com/acme/repo/pull/42"
+    calls, fake = _gh_update_branch({"number": 42, "url": pr})
+    with patch("vergil_tooling.lib.github.read_output", side_effect=fake):
+        github.update_branch(pr)
+    assert calls == [
+        ("pr", "view", pr, "--json", "number,url"),
+        ("api", "repos/acme/repo/pulls/42/update-branch", "-X", "PUT"),
+    ]
+
+
+def test_update_branch_bare_number_takes_the_repo_gh_resolved() -> None:
+    calls, fake = _gh_update_branch(
+        {"number": 7, "url": "https://github.com/cwd-org/cwd-repo/pull/7"}
     )
-    assert calls[1].args == (
-        "repo",
-        "view",
-        "--json",
-        "nameWithOwner",
-        "--jq",
-        ".nameWithOwner",
-    )
-    assert calls[2].args == (
-        "api",
-        "repos/acme/repo/pulls/42/update-branch",
-        "-X",
-        "PUT",
-    )
+    with patch("vergil_tooling.lib.github.read_output", side_effect=fake):
+        github.update_branch("7")
+    assert calls == [
+        ("pr", "view", "7", "--json", "number,url"),
+        ("api", "repos/cwd-org/cwd-repo/pulls/7/update-branch", "-X", "PUT"),
+    ]
+
+
+@pytest.mark.parametrize(
+    "pr_view",
+    [
+        [],
+        {"number": 42},
+        {"number": 42, "url": "https://example.com/acme/repo/pull/42"},
+        {"url": "https://github.com/acme/repo/pull/42"},
+    ],
+)
+def test_update_branch_fails_loud_without_the_prs_repo_and_number(pr_view: object) -> None:
+    calls, fake = _gh_update_branch(pr_view)
+    with (
+        patch("vergil_tooling.lib.github.read_output", side_effect=fake),
+        pytest.raises(github.GitHubAPIError, match="update-branch"),
+    ):
+        github.update_branch("https://github.com/acme/repo/pull/42")
+    assert [call[:2] for call in calls] == [("pr", "view")]
 
 
 def test_head_sha_returns_commit_sha() -> None:

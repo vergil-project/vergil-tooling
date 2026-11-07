@@ -21,9 +21,13 @@ routes each container allows:
   item's old parent across (sometimes only after a delay), so the moved
   issue is *reparented* with ``replaceParent`` and its final parent verified
   after a settle delay, replaced again if the old parent came back late
-  (#3556). A recreated issue starts unparented and is simply linked. Either
-  way, a final parent other than the target epic fails loudly. A one-off whose
-  work lands in the item's own repo is just reparented.
+  (#3556). A matching read is not enough: it must hold on a second read after
+  another settle delay, and the old parent's sub-issue list (what the queue
+  views read) must no longer hold the item (#4004). A recreated issue starts
+  unparented and is simply linked. A one-off whose work lands in the item's
+  own repo is just reparented. On every path the parent is read back, and one
+  other than the target epic fails loudly with :class:`RouteHalfAppliedError`
+  naming the item, where it is and how to recover it.
 - **planning** — reparent onto the planning epic of the same queue home.
 - **split** — the replacement tasks already exist (made with
   ``vrg-issue-create``); comment the links and the reason, then close.
@@ -82,6 +86,10 @@ _ISSUE_URL_RE = re.compile(r"https?://[^/\s]+/([^/\s]+)/([^/\s]+)/issues/([0-9]+
 
 class RouteRefusedError(ValueError):
     """A route that must not run: wrong container, cross-org, or private → public."""
+
+
+class RouteHalfAppliedError(RuntimeError):
+    """A one-off that moved or linked the item but could not settle it under its epic."""
 
 
 @dataclass(frozen=True)
@@ -204,7 +212,7 @@ def _route(ref: IssueRef, action: RouteAction, today: date) -> RouteResult:
         _guard_visibility(ref, _repo_of(intake))
         _link(intake, ref)
         return RouteResult(final=ref, moved_by="none")
-    return _one_off(ref, action)
+    return _one_off(ref, action, parent)
 
 
 def _check_eligible(ref: IssueRef, action: RouteAction, parent: IssueRef | None) -> str | None:
@@ -332,7 +340,7 @@ def _guard_visibility(ref: IssueRef, *targets: str) -> None:
         )
 
 
-def _one_off(ref: IssueRef, action: OneOff) -> RouteResult:
+def _one_off(ref: IssueRef, action: OneOff, old_parent: IssueRef | None) -> RouteResult:
     source = _repo_of(ref)
     dest = action.repo
     if dest.count("/") != 1 or not all(dest.split("/")):
@@ -357,6 +365,7 @@ def _one_off(ref: IssueRef, action: OneOff) -> RouteResult:
         )
     if dest == source:
         _link(epic, ref)
+        _check_parent(ref, epic, ref)
         return RouteResult(final=ref, moved_by="none")
     # Read before the move: a transfer drops labels the target repo lacks.
     ghsas = _item_advisories(ref)
@@ -368,18 +377,19 @@ def _one_off(ref: IssueRef, action: OneOff) -> RouteResult:
         new = _recreate(ref, dest, exc, ghsas)
         # A recreated issue has no parent to carry over: link it, then check.
         _link(epic, new)
-        current = epics.native_parent_of(new)
-        if current != epic:
-            raise _parent_mismatch(epic, new, current) from None
+        _check_parent(ref, epic, new)
         return RouteResult(final=new, moved_by="recreate")
     final = _transferred_ref(ref, dest, epic, output)
     if not ghsas:
-        _settle_parent(epic, final)
+        _settle_parent(ref, epic, final, old_parent)
         return RouteResult(final=final, moved_by="transfer")
     try:
-        _settle_parent(epic, final)
+        _settle_parent(ref, epic, final, old_parent)
     except RuntimeError as exc:
-        raise RuntimeError(f"{exc}; also, {_transfer_recovery(ghsas, final)}") from exc
+        detail = f"{exc}; also, {_transfer_recovery(ghsas, final)}"
+        if isinstance(exc, RouteHalfAppliedError):
+            raise RouteHalfAppliedError(detail) from exc
+        raise RuntimeError(detail) from exc
     for index, ghsa in enumerate(ghsas):
         try:
             # The old number is the same issue: rewrite its tracking line, never unmark it.
@@ -466,38 +476,86 @@ def _retarget(
     security_records.retarget(home, ghsa, targets, renamed=renamed)
 
 
-def _settle_parent(epic: IssueRef, task: IssueRef) -> None:
+def _settle_parent(
+    item: IssueRef, epic: IssueRef, task: IssueRef, old_parent: IssueRef | None
+) -> None:
     """Make *epic* the transferred *task*'s parent, robust to a late carry-over.
 
     The transfer keeps the intake parent, but it may surface only after a first
     read, so every round replaces (never plainly adds) the parent, waits, and
-    verifies; a parent that reverts is replaced again. Raise if it never holds.
+    verifies; a parent that reverts is replaced again. One matching read does
+    not settle it: the carry-over can land just after it (#4004), so the round
+    waits again and re-reads, and the old parent's sub-issue list must no
+    longer hold *task* on either read. Raise if it never holds.
     """
-    current: IssueRef | None = None
+    placement = ""
     for attempt in range(1, _SETTLE_ROUNDS + 1):
         _link(epic, task, replace=True)
         time.sleep(_SETTLE_SECONDS)
-        current = epics.native_parent_of(task)
-        if current == epic:
-            return
+        current, placement = _observe(epic, task, old_parent)
+        if current == epic and not placement:
+            time.sleep(_SETTLE_SECONDS)
+            current, placement = _observe(epic, task, old_parent)
+            if current == epic and not placement:
+                return
+        next_step = "checking again" if current == epic else "replacing the parent"
         print(
-            f"intake-route: {task.slug} is {_placement(current)} after linking it "
-            f"under {epic.slug} (round {attempt}/{_SETTLE_ROUNDS}); replacing the parent",
+            f"intake-route: {task.slug} is {placement} after linking it "
+            f"under {epic.slug} (round {attempt}/{_SETTLE_ROUNDS}); {next_step}",
             file=sys.stderr,
         )
-    raise _parent_mismatch(epic, task, current)
+    raise _parent_mismatch(item, epic, task, placement)
+
+
+def _observe(
+    epic: IssueRef, task: IssueRef, old_parent: IssueRef | None
+) -> tuple[IssueRef | None, str]:
+    """Read *task*'s parent and, if *old_parent* is set, its sub-issue list.
+
+    Returns the parent and the placement text, empty when *task* is settled
+    under *epic*: its parent field names *epic* and *old_parent* no longer
+    lists it.
+    """
+    current = epics.native_parent_of(task)
+    if current != epic:
+        return current, _placement(current)
+    if old_parent is not None and old_parent != epic and task in epics.native_children(old_parent):
+        return current, (
+            f"still listed as a sub-issue of {old_parent.slug} (its parent reads {epic.slug})"
+        )
+    return current, ""
+
+
+def _check_parent(item: IssueRef, epic: IssueRef, task: IssueRef) -> None:
+    """Read *task*'s parent back once; raise unless it is *epic*."""
+    current = epics.native_parent_of(task)
+    if current != epic:
+        raise _parent_mismatch(item, epic, task, _placement(current))
 
 
 def _placement(parent: IssueRef | None) -> str:
     return f"under {parent.slug}" if parent is not None else "unparented"
 
 
-def _parent_mismatch(epic: IssueRef, task: IssueRef, current: IssueRef | None) -> RuntimeError:
-    """The loud failure for a move whose final parent is not *epic*."""
-    return RuntimeError(
-        f"moved the item to {task.slug}, but it is {_placement(current)}, "
-        f"not under {epic.slug}; the route is half-applied. Fix it with: "
-        f"vrg-epic-move --task {task.slug} --epic {epic.slug}"
+def _parent_mismatch(
+    item: IssueRef, epic: IssueRef, task: IssueRef, placement: str
+) -> RouteHalfAppliedError:
+    """The loud failure for a move whose final parent is not *epic*.
+
+    A still-listed item's parent field already names *epic*, so
+    ``vrg-epic-move`` would report it done and change nothing; its recovery is
+    to re-check the queue and, if the stale listing stays, remove it by hand.
+    """
+    moved = f"moved {item.slug} to {task.slug}" if task != item else f"linked {item.slug}"
+    if placement.startswith("still listed"):
+        return RouteHalfAppliedError(
+            f"{moved}, but it is {placement}, not settled under {epic.slug}; the route is "
+            "half-applied. Re-check with vrg-queue in a minute; if it is still listed "
+            f"there, remove {task.slug} from the sub-issues of the old epic in the GitHub UI"
+        )
+    return RouteHalfAppliedError(
+        f"{moved}, but it is {placement}, not under {epic.slug}; the route is half-applied. "
+        f"Fix it with: vrg-epic-move --task {task.slug} --epic {epic.slug}"
     )
 
 

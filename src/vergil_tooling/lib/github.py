@@ -1914,10 +1914,23 @@ def update_branch(pr: str) -> None:
     Uses the GitHub REST API ``PUT /repos/{owner}/{repo}/pulls/{number}/update-branch``.
     Only appropriate when the branch is behind the base — not when there are
     merge conflicts.
+
+    The repo is read from the PR's own URL, as ``gh pr view`` resolved it, not
+    from the current directory's remote: a PR given by URL from a checkout of
+    another repo would otherwise update the wrong PR or 404 (#3976). A PR whose
+    repo or number cannot be read is an error rather than a guess.
     """
-    number = read_output("pr", "view", pr, "--json", "number", "--jq", ".number")
-    repo = current_repo()
-    read_output("api", f"repos/{repo}/pulls/{number}/update-branch", "-X", "PUT")
+    info = read_json("pr", "view", pr, "--json", "number,url")
+    url = str(info.get("url") or "") if isinstance(info, dict) else ""
+    number = info.get("number") if isinstance(info, dict) else None
+    match = _PR_URL_REPO_RE.search(url)
+    if match is None or not number:
+        raise GitHubAPIError(
+            1,
+            ("gh", "pr", "view", pr),
+            stderr=f"cannot read the repository and number of PR {pr} for update-branch",
+        )
+    read_output("api", f"repos/{match.group(1)}/pulls/{number}/update-branch", "-X", "PUT")
 
 
 def pr_state(pr: str) -> str:

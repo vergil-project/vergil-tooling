@@ -179,7 +179,10 @@ vrg-submit-pr \
 See the [vrg-submit-pr reference](../reference/dev/submit-pr.md).
 
 !!! note "Agent handoff and the post-report-ready freeze"
-    In an agent session, submission is a **human** action. The agent
+    In an agent session, submission is a **human** action. Once the
+    committed branch is green, the agent first runs the
+    [merge review](merge-review.md), the pre-PR judgement check, and
+    carries its eligibility line into the PR notes. The agent then
     runs `vrg-pr-workflow report-ready`, which pushes the branch to origin
     (setting upstream) and then records the PR metadata in
     `.vergil/pr-workflow.json`, and stops; the human runs `vrg-submit-pr`.
@@ -187,7 +190,8 @@ See the [vrg-submit-pr reference](../reference/dev/submit-pr.md).
     `.github/workflows/**` GitHub refuses the agent push; `report-ready`
     says so, records the state anyway, and the human's `vrg-submit-pr`
     pushes the branch instead. Any other push failure fails `report-ready`
-    with nothing recorded. Recording ready **freezes the branch**: `vrg-commit`
+    with nothing recorded, as does a branch with no commits ahead of its
+    base. Recording ready **freezes the branch**: `vrg-commit`
     and the `vrg-git` push path refuse further commits/pushes on it,
     because a task is exactly one PR and more work is a new follow-up
     issue. One push stays allowed: an explicit push of the branch while
