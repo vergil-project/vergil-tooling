@@ -650,6 +650,39 @@ def test_check_refuses_bad_fix_base(repo: Path, capsys: Cap, fix_base: str, mess
     assert message in err
 
 
+def test_check_refuses_fix_base_not_the_judged_head(repo: Path, capsys: Cap) -> None:
+    review_head, result = _reviewed(repo, capsys, [_finding("R1")])
+    earlier = _git(repo, "rev-parse", f"{review_head}~1")
+    code, out, err = _run(_check_argv(repo, earlier, [result], fix=("R1",)), capsys)
+    assert code == 1
+    assert out == ""
+    assert (
+        f"--fix-base {earlier[:12]} is not the HEAD the review judged"
+        f" ({review_head[:12]}, the head_sha of request-review.json): give that commit"
+    ) in err
+    directory = _merge_review_dir(repo)
+    assert not (directory / "request-check.json").exists()
+    assert not (directory / "fix-check.patch").exists()
+
+
+@pytest.mark.parametrize("head_sha", [None, 7, "abc123", "../../etc"])
+def test_check_refuses_stored_request_without_a_head_sha(
+    repo: Path, capsys: Cap, head_sha: object
+) -> None:
+    review_head, result = _reviewed(repo, capsys, [_finding("R1")])
+    stored = _merge_review_dir(repo) / "request-review.json"
+    request = json.loads(stored.read_text())
+    if head_sha is None:
+        del request["head_sha"]
+    else:
+        request["head_sha"] = head_sha
+    stored.write_text(json.dumps(request))
+    code, _out, err = _run(_check_argv(repo, review_head, [result], fix=("R1",)), capsys)
+    assert code == 1
+    assert "must hold a head_sha that is a full commit SHA" in err
+    assert "../../etc" not in err
+
+
 def _checked(repo: Path, capsys: Cap) -> tuple[str, list[str]]:
     """Review R1 and R2, check them (R1 fixed, R2 not, C1 raised), commit a second fix."""
     review_head, review_result = _reviewed(repo, capsys, [_finding("R1"), _finding("R2")])
@@ -677,6 +710,18 @@ def test_check_2_refuses_a_defect_still_not_fixed(repo: Path, capsys: Cap) -> No
     assert "earlier defect R2 named by neither" in err
 
 
+def test_check_2_refuses_the_review_head_as_fix_base(repo: Path, capsys: Cap) -> None:
+    check_head, results = _checked(repo, capsys)
+    review = json.loads((_merge_review_dir(repo) / "request-review.json").read_text())
+    argv = _check_argv(repo, review["head_sha"], results, step="check-2", fix=("R2", "C1"))
+    code, _out, err = _run(argv, capsys)
+    assert code == 1
+    assert (
+        f"is not the HEAD the check judged ({check_head[:12]}, the head_sha of request-check.json)"
+    ) in err
+    assert not (_merge_review_dir(repo) / "request-check-2.json").exists()
+
+
 # -- the library ----------------------------------------------------------------------
 
 
@@ -685,6 +730,21 @@ def test_refuse_carries_its_exit_code() -> None:
         req.refuse("rebased", req.EXIT_REBASED)
     assert exc.value.exit_code == 3
     assert str(exc.value) == "rebased"
+
+
+@pytest.mark.parametrize("content", [None, "{", "[]"])
+def test_check_fix_base_refuses_unreadable_stored_request(
+    tmp_path: Path, content: str | None
+) -> None:
+    if content is not None:
+        (tmp_path / "request-review.json").write_text(content)
+    with pytest.raises(req.RequestError) as exc:
+        req.check_fix_base(tmp_path, "check", "a" * 40)
+    assert exc.value.exit_code == 1
+    if content == "[]":
+        assert "must hold a head_sha that is a full commit SHA" in str(exc.value)
+    else:
+        assert "cannot read the review request" in str(exc.value)
 
 
 def test_file_names() -> None:

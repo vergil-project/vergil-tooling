@@ -11,6 +11,7 @@ longer an ancestor of ``HEAD``, so the caller can tell that stop apart.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn
@@ -30,6 +31,9 @@ if TYPE_CHECKING:
 EXIT_REBASED = 3
 
 _EPIC_TASK_FIELDS = frozenset({"ref", "title"})
+
+#: A full commit SHA, SHA-1 or SHA-256, as ``git rev-parse`` prints it.
+_COMMIT_SHA_RE = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
 
 
 class RequestError(Exception):
@@ -162,6 +166,29 @@ def read_earlier_results(
         except ResultError as exc:
             refuse(f"the {earlier} result {path} fails the result check: {exc}")
     return checked
+
+
+def check_fix_base(private_dir: Path, step: str, fix_base_sha: str) -> None:
+    """Refuse a check's fix base unless it is the ``HEAD`` the previous step judged.
+
+    The previous step's ``head_sha`` is read from its stored
+    ``request-<previous>.json`` in *private_dir*, so the check's fix diff
+    always starts where the judged change ended.
+    """
+    previous = earlier_steps(step)[-1]
+    request_path = private_dir / request_file(previous)
+    try:
+        request = json.loads(request_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        refuse(f"cannot read the {previous} request: {exc}")
+    judged = request.get("head_sha") if isinstance(request, dict) else None
+    if not isinstance(judged, str) or _COMMIT_SHA_RE.fullmatch(judged) is None:
+        refuse(f"{request_path} must hold a head_sha that is a full commit SHA")
+    if fix_base_sha != judged:
+        refuse(
+            f"--fix-base {fix_base_sha[:12]} is not the HEAD the {previous} judged"
+            f" ({judged[:12]}, the head_sha of {request_path.name}): give that commit"
+        )
 
 
 def earlier_finding_ids(

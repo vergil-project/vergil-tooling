@@ -941,7 +941,8 @@ become `validate_stages`. The change class is
 [`vrg-change-class`](#vrg-change-class)'s, with the allow-list committed at
 the merge base.
 
-A check takes `--fix-base` (the `HEAD` the previous step judged), one
+A check takes `--fix-base` (the `HEAD` the previous step judged, refused
+unless it is the `head_sha` of that step's stored request), one
 `--earlier-result` per earlier step in step order, each checked against
 that step's stored request, `--fix-id` for each earlier ID asked to change
 (it becomes `earlier_finding_ids`) and `--ruled-id` for each earlier defect
