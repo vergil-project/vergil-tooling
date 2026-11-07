@@ -7,7 +7,9 @@ for every schema and rule here. The modules:
   share: the schema names, the closed value sets, the step rule and each
   step's finding ID prefix;
 - :mod:`.result` parses a reviewer's reply and runs the result check on it,
-  against the request it answers (``vrg-merge-review-check``).
+  against the request it answers (``vrg-merge-review-check``);
+- :mod:`.change_class` classifies a change as ``docs-only`` or ``code`` from
+  its changed files (``vrg-change-class``).
 """
 
 from __future__ import annotations
