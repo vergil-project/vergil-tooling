@@ -322,6 +322,22 @@ run URL, a `gh run view <id>` command to re-check it, and a pointer to
 finished. It still fails the stage, because an unknown result is not a
 pass, but it never claims the run failed (issue #3316).
 
+**Superseded is not failure.** A run that concludes `cancelled` is
+checked for a concurrency supersede: every job ended passing or
+cancelled, and every cancelled job carries GitHub's check-run annotation
+"Canceling since a higher priority waiting request for `<group>`
+exists". Such a run did not fail; a higher-priority run waiting on the
+same concurrency group took its place. The stage then ends with a
+warning (⚠), not a failure, headed "the CD workflow run triggered by
+this merge was superseded, not failed", with the run URL and the group.
+It says that this merge's CD result is not confirmed: GitHub does not
+record which run took the cancelled run's place, and that run may be a
+newer commit's CD or another workflow sharing the group (for example a
+scheduled rebuild), so finalize does not follow it. Any other
+cancellation (by a human, a timeout, or a run with no job to carry the
+annotation) still fails the stage, as does a cancelled run whose jobs or
+annotations cannot be read; that failure says why (issue #3834).
+
 ## Batch mode (comma-list / `--all`)
 
 A comma-separated PR argument (`vrg-finalize-pr 123,124,125`) or `--all`

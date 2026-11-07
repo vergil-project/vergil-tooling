@@ -14,7 +14,8 @@ extended to several advisories per issue by epic
 
 - **Every security finding gets one record**, except a security
   follow-up that `issue-implement` finds and the human does not rule
-  `record` (it is fixed on the branch, or rejected; see
+  `record` (it is fixed on the branch, or rejected), and a merge-review
+  security finding the human rules `fix` or `wont-fix` (see
   [Recording findings from a review](#recording-findings-from-a-review)).
   A record is one pair (an issue may name several advisories, one per
   finding; see [The two reference lines](#the-two-reference-lines)):
@@ -298,9 +299,10 @@ of them until the plan exists.
 ## Recording findings from a review
 
 Security findings can surface while the work is still being designed or
-built. Two recipes cover the findings raised inside the epic/task
-framework: design review during `epic-create`, and the security
-follow-ups `issue-implement` finds. Both use `create`; design review
+built. Three recipes cover the findings raised inside the epic/task
+framework: design review during `epic-create`, the security
+follow-ups `issue-implement` finds, and the security findings of a
+task's merge review. All use `create`; design review
 also uses `retarget`, through `epic-create`'s step 9. As everywhere on
 this page, the refs and GHSA IDs are placeholders, not a real finding.
 
@@ -351,6 +353,21 @@ with plain `create` and no `--issue`: a record on the task would mark the
 task publicly, pointing from the shipped diff to the open record. The
 rules are in the
 [paad review doctrine §1.7](https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-review-doctrine.md#17-creating-issues).
+
+**Security findings, during a merge review.** A security finding the
+[merge review](merge-review.md#security-findings) raises keeps its
+details in the task's private directory,
+`build/.vergil-state/issue-implement/<N>/merge-review/security-<ID>.md`,
+and every public record names it by ID or count only. The human rules on
+it through `vrg-ruling` (see [Human Replies](human-replies.md#security-items)):
+
+- **`fix`**: fixed on the branch and not recorded, as for a follow-up;
+- **`file`** or **`defer`**: recorded with plain `create` and no
+  `--issue`, before the ruling's response is posted, so the response's
+  `filed` or `deferred` outcome is real. The merge review does not hand
+  off while any such finding is still unrecorded;
+- **`wont-fix`**: an accepted risk, with no record. The task's closing
+  comment and the PR notes give only the count, as `accepted-risk`.
 
 ## Checking existing records after the several-advisories change
 

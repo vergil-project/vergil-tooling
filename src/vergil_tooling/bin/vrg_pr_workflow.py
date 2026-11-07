@@ -12,8 +12,10 @@ push is a no-op. When the delta touches ``.github/workflows/**`` GitHub refuses
 an agent identity's push; that is expected — report-ready says so and records
 the state anyway, and the human's ``vrg-submit-pr`` pushes the branch instead.
 Any other push failure fails report-ready with nothing recorded and no relay ref
-written. A re-run on a frozen branch whose HEAD has drifted past the reported
-commit is refused before anything is pushed. A re-run after a deliberate
+written. A branch with no commits ahead of ``--base`` is refused before
+anything is pushed or recorded, so it is never frozen (#3870). A re-run on a
+frozen branch whose HEAD has drifted past the reported commit is refused before
+anything is pushed. A re-run after a deliberate
 ``unfreeze`` pushes with a lease on the recorded head, so a rebased branch
 replaces the reported commit but an unexpectedly moved origin is refused (#3783).
 """
@@ -282,6 +284,22 @@ def _refuse_drifted_rerun(state: WorkflowState, head_sha: str) -> None:
         )
 
 
+def _refuse_empty_branch(branch: str, base: str) -> None:
+    """Refuse reporting a branch with no commits ahead of *base* (#3870).
+
+    Such a branch has nothing to merge — typically a ``vrg-commit`` that failed
+    unnoticed — and recording it ready would freeze it. The count is taken
+    against the same base ref the recorded ``base_sha`` comes from, and runs
+    before anything is pushed or recorded.
+    """
+    if git.commits_ahead(base, "HEAD") == 0:
+        raise WorkflowError(
+            f"report-ready: branch {branch} has no commits ahead of {base}; nothing "
+            "was recorded and the branch is not frozen. Commit the work (check that "
+            "vrg-commit succeeded) and re-run report-ready."
+        )
+
+
 def _push_relay_ref(state: WorkflowState, base: str) -> None:
     """Mirror the ready state onto the reserved relay ref, after the local write.
 
@@ -339,6 +357,7 @@ def cmd_report_ready(args: argparse.Namespace, transport: LocalFileTransport) ->
     branch = git.current_branch()
     if branch == "HEAD":
         raise WorkflowError("report-ready: HEAD is detached; check out the feature branch first.")
+    _refuse_empty_branch(branch, transport.base)
     head_sha = transport.head_sha()
     state = transport.read()
     lease_sha: str | None = None

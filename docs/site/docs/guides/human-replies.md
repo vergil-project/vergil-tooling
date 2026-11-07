@@ -15,6 +15,9 @@ Two commands carry the protocol:
 - [`vrg-ruling-reply`](../reference/dev/ruling-reply.md), run by the human:
   it posts the reply as the human.
 
+The review that uses this channel is the [merge review](merge-review.md):
+every stop it makes for the human is one request on the task issue.
+
 The task issue is the unit of record. A task is closed by one PR, and its
 comments record how that PR's change was reviewed and what the human
 decided.
@@ -250,4 +253,5 @@ and stopping; it is expected to be rare.
 - [`vrg-ruling` reference](../reference/dev/ruling.md)
 - [`vrg-ruling-reply` reference](../reference/dev/ruling-reply.md)
 - [Identity Setup: trusted authors](account-setup.md#trusted-authors)
+- [Merge Review](merge-review.md)
 - [Security Records](security-records.md)
