@@ -187,7 +187,8 @@ See the [vrg-submit-pr reference](../reference/dev/submit-pr.md).
     `.github/workflows/**` GitHub refuses the agent push; `report-ready`
     says so, records the state anyway, and the human's `vrg-submit-pr`
     pushes the branch instead. Any other push failure fails `report-ready`
-    with nothing recorded. Recording ready **freezes the branch**: `vrg-commit`
+    with nothing recorded, as does a branch with no commits ahead of its
+    base. Recording ready **freezes the branch**: `vrg-commit`
     and the `vrg-git` push path refuse further commits/pushes on it,
     because a task is exactly one PR and more work is a new follow-up
     issue. One push stays allowed: an explicit push of the branch while
