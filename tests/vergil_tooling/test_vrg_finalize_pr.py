@@ -533,7 +533,7 @@ def test_wait_fails_on_non_success_conclusion() -> None:
         ),
     ):
         problem = _wait_for_cd_run("develop", _HEAD_SHA)
-    assert problem is not None
+    assert isinstance(problem, CDRunProblem)
     assert problem.timed_out is False
     assert problem.conclusion == "failure"
     msg = problem.describe()
@@ -603,7 +603,7 @@ def test_wait_times_out_watching_run() -> None:
         ),
     ):
         problem = _wait_for_cd_run("develop", _HEAD_SHA, watch_timeout=0.0)
-    assert problem is not None
+    assert isinstance(problem, CDRunProblem)
     assert problem.timed_out is True
     assert problem.conclusion is None
     msg = problem.describe()
@@ -628,7 +628,7 @@ def test_wait_tolerates_view_errors_until_timeout() -> None:
         ),
     ):
         problem = _wait_for_cd_run("develop", _HEAD_SHA, watch_timeout=0.0)
-    assert problem is not None
+    assert isinstance(problem, CDRunProblem)
     assert problem.timed_out is True
 
 
@@ -645,7 +645,7 @@ def test_wait_tolerates_malformed_view_json() -> None:
         ),
     ):
         problem = _wait_for_cd_run("develop", _HEAD_SHA, watch_timeout=0.0)
-    assert problem is not None
+    assert isinstance(problem, CDRunProblem)
     assert problem.timed_out is True
 
 
@@ -689,7 +689,7 @@ def _annotations(*messages: str) -> list[dict]:
 class _FakeRunApi:
     """A ``github.read_json`` fake serving a run's jobs and each job's annotations."""
 
-    def __init__(self, jobs: list[dict], annotations: dict[int, list[dict]]) -> None:
+    def __init__(self, jobs: list[dict], annotations: dict[int, object]) -> None:
         self.jobs = jobs
         self.annotations = annotations
         self.calls: list[tuple[str, ...]] = []
@@ -788,7 +788,7 @@ def test_supersede_group_rejects_a_job_that_is_not_an_object() -> None:
 
 
 def test_supersede_group_rejects_a_malformed_annotations_payload() -> None:
-    fake = _FakeRunApi([_job(3, "cancelled")], {3: {"message": _SUPERSEDE_MSG}})  # type: ignore[dict-item]
+    fake = _FakeRunApi([_job(3, "cancelled")], {3: {"message": _SUPERSEDE_MSG}})
     with (
         patch(_MOD + ".github.read_json", side_effect=fake),
         pytest.raises(ValueError, match="annotations"),
@@ -2346,7 +2346,7 @@ def test_wait_uses_cd_timeout_override(monkeypatch: pytest.MonkeyPatch) -> None:
         ),
     ):
         problem = _wait_for_cd_run("develop", _HEAD_SHA)
-    assert problem is not None
+    assert isinstance(problem, CDRunProblem)
     assert problem.timed_out is True
     assert problem.waited_secs == 1
 
