@@ -13722,17 +13722,6 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#vrg-repo-profile" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        vrg-repo-profile
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#vrg-ci-resolve" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18361,17 +18350,6 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#vrg-repo-profile" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        vrg-repo-profile
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#vrg-ci-resolve" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -21496,9 +21474,10 @@ for every check and where it runs.</p>
 </table>
 <h3 id="validate_common-internal">validate_common (internal)<a class="headerlink" href="#validate_common-internal" title="Permanent link">&para;</a></h3>
 <p>Not a command on <code>PATH</code>: the module <code>vrg-validate</code> runs as its common
-stage. Shared validation checks for all repos: repository profile
-validation, markdownlint on published markdown (<code>docs/site/**/*.md</code>
-and <code>README.md</code>) using the bundled canonical config, shellcheck on
+stage. Shared validation checks for all repos: the
+<a href="../lint/repo-profile/">repo-profile</a> check (<code>vergil.toml</code> and the
+<code>README.md</code> structure), markdownlint on published markdown
+(<code>docs/site/**/*.md</code> and <code>README.md</code>) using the bundled canonical config, shellcheck on
 <code>scripts/</code>, yamllint on <code>.github/</code> and <code>docs/</code> YAML files, the
 dependabot-limit guard (when <code>.github/dependabot.yml</code> exists, every
 <code>updates</code> entry must carry <code>open-pull-requests-limit: 0</code>, so Dependabot
@@ -21537,46 +21516,6 @@ carries Ansible content.</p>
 <tr>
 <td>Status</td>
 <td>Active (called internally by <code>vrg-validate</code>)</td>
-</tr>
-</tbody>
-</table>
-<h3 id="vrg-repo-profile">vrg-repo-profile<a class="headerlink" href="#vrg-repo-profile" title="Permanent link">&para;</a></h3>
-<p>Validate the repository configuration in <code>vergil.toml</code> (required
-keys, enum values, dependencies) and the <code>README.md</code> structure
-(exactly one H1, a Table of Contents, no heading-level skips). Run by
-<code>vrg-validate</code> as a common check. See the
-<a href="../lint/repo-profile/">repo-profile reference</a>.</p>
-<table>
-<thead>
-<tr>
-<th>Attribute</th>
-<th>Value</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Source</td>
-<td><code>vergil_tooling.bin.vrg_repo_profile</code></td>
-</tr>
-<tr>
-<td>Args</td>
-<td>None</td>
-</tr>
-<tr>
-<td>Preconditions</td>
-<td>Run from the repository root; <code>vergil.toml</code> exists</td>
-</tr>
-<tr>
-<td>Failure mode</td>
-<td>Exit 2 if <code>vergil.toml</code> is not found; exit 1 for an invalid <code>vergil.toml</code> or a <code>README.md</code> structure error</td>
-</tr>
-<tr>
-<td>Exit codes</td>
-<td>0 valid, 1 invalid, 2 <code>vergil.toml</code> not found</td>
-</tr>
-<tr>
-<td>Status</td>
-<td>Active</td>
 </tr>
 </tbody>
 </table>
@@ -22161,7 +22100,8 @@ interface than argparse would provide. No alignment needed.</p>
 <ul>
 <li>0: success</li>
 <li>1: check failure, validation error, or precondition violation</li>
-<li>2: infrastructure error (used by <code>vrg-repo-profile</code>)</li>
+<li>2: infrastructure error (used by the <code>vrg-validate</code> repo-profile
+  check when <code>vergil.toml</code> is missing)</li>
 </ul>
 <p>The 1-vs-2 distinction is not universal. Tools added before the
 convention was established use 1 for all errors.</p>

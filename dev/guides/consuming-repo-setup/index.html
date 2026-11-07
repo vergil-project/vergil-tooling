@@ -17567,9 +17567,9 @@ tables have their own references:
 <a href="../../reference/package-config/"><code>[package]</code></a>,
 <a href="../../reference/dependency-update-config/"><code>[dependency-update]</code></a> and
 <a href="../../reference/vm-spec/"><code>[vm]</code></a>.</p>
-<p><code>vrg-repo-profile</code> validates <code>vergil.toml</code> (required keys and enum
-values) and the <code>README.md</code> structure; <code>vrg-validate</code> runs it as part
-of its common checks. See the
+<p><code>vrg-validate</code> validates <code>vergil.toml</code> (required keys and enum
+values) and the <code>README.md</code> structure with its repo-profile check,
+the first of its common checks. See the
 <a href="../../reference/lint/repo-profile/">repo-profile reference</a>.</p>
 <h2 id="step-5-claude-code-hook-guard-and-settings">Step 5: Claude Code hook guard and settings<a class="headerlink" href="#step-5-claude-code-hook-guard-and-settings" title="Permanent link">&para;</a></h2>
 <h3 id="hook-guard">Hook guard<a class="headerlink" href="#hook-guard" title="Permanent link">&para;</a></h3>
@@ -17889,7 +17889,7 @@ for the full check list and the managed-block propagation model.</p>
 <a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>vrg-container-run<span class="w"> </span>--help
 <a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>
 <a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="c1"># 2. Full validation inside the dev container, including</span>
-<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="c1">#    vrg-repo-profile against vergil.toml</span>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="c1">#    the repo-profile check of vergil.toml</span>
 <a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>vrg-container-run<span class="w"> </span>--<span class="w"> </span>vrg-validate
 <a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>
 <a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="c1"># 3. Config audit — local files and GitHub settings</span>

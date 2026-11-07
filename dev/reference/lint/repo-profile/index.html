@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#vrg-repo-profile" class="md-skip">
+        <a href="#repo-profile" class="md-skip">
           Skip to content
         </a>
       
@@ -13493,17 +13493,6 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#usage" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Usage
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#vergiltoml-checks" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -16836,17 +16825,6 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#usage" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Usage
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#vergiltoml-checks" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -16907,16 +16885,17 @@
 
 
 
-<h1 id="vrg-repo-profile">vrg-repo-profile<a class="headerlink" href="#vrg-repo-profile" title="Permanent link">&para;</a></h1>
-<p><strong>Installed as:</strong> <code>vrg-repo-profile</code> (Python console script)</p>
-<p>Validates the repository configuration in <code>vergil.toml</code> and the
-structure of <code>README.md</code>. <code>vrg-validate</code> runs it as part of its
-common checks.</p>
-<h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>vrg-repo-profile
+<h1 id="repo-profile">repo-profile<a class="headerlink" href="#repo-profile" title="Permanent link">&para;</a></h1>
+<p>The repo-profile check validates the repository configuration in
+<code>vergil.toml</code> and the structure of <code>README.md</code>. It is not a command of
+its own: it is the first step of the common stage of <code>vrg-validate</code>,
+which runs it in process (<code>vergil_tooling.bin.repo_profile</code>) before the
+other common checks. A failure stops the common stage.</p>
+<p>Run it through validation:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>vrg-container-run<span class="w"> </span>--<span class="w"> </span>vrg-validate
 </code></pre></div>
-<p>Run from the repository root. The script reads <code>vergil.toml</code> and
-<code>README.md</code> relative to the current directory.</p>
+<p>The check reads <code>vergil.toml</code> and <code>README.md</code> from the repository
+root.</p>
 <h2 id="vergiltoml-checks"><code>vergil.toml</code> checks<a class="headerlink" href="#vergiltoml-checks" title="Permanent link">&para;</a></h2>
 <p><code>vergil.toml</code> is parsed with the same loader every <code>vrg-*</code> tool uses,
 and any value that loader rejects fails the check. The core rules:</p>
@@ -17011,7 +16990,7 @@ on every supported version.</p>
 <p>Each violation is an error. <code>[ci].primary-version</code>, when set, must
 name a resolved version; without it the primary is the newest resolved
 version.</p>
-<p><code>vrg-repo-profile</code> checks only the shape of these keys. The window
+<p>The repo-profile check covers only the shape of these keys. The window
 rules are enforced by the resolver (<code>lib/versions/resolve.py</code>), which
 <code>vrg-validate</code>, <code>vrg-container-run</code> and the CI setup step
 (<code>vrg-ci-resolve</code>) all run.</p>
@@ -17023,6 +17002,8 @@ rules are enforced by the resolver (<code>lib/versions/resolve.py</code>), which
 <li>no heading-level skips (for example, <code>##</code> followed by <code>####</code>).</li>
 </ol>
 <h2 id="exit-codes">Exit Codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>
+<p>The check returns these codes to the common stage, which stops on any
+non-zero code:</p>
 <table>
 <thead>
 <tr>
