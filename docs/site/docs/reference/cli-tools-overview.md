@@ -376,9 +376,10 @@ the [dependency-update reference](dependency-update-config.md).
 
 ### vrg-upstream-refresh
 
-Run the repo's `[upstream-refresh].hook` on a clean checkout of the
-base branch, then open, refresh or close the single `upstream-refresh`
-PR. A no-change run closes any stale refresh PR, or exits quietly when
+Run the repo's `[upstream-refresh].hook` in a temporary worktree of
+the base branch, then open, refresh or close the single
+`upstream-refresh` PR. The checkout it runs from must be clean and on
+the base, and it is left exactly as found. A no-change run closes any stale refresh PR, or exits quietly when
 there is none. It never merges, and never runs dependency updaters,
 validation or a release. It runs from the scheduled
 `ops-upstream-refresh` workflow under the App token, or by hand as a

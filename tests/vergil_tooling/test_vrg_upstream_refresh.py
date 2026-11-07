@@ -3,15 +3,12 @@
 from __future__ import annotations
 
 import subprocess
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
 from vergil_tooling.bin import vrg_upstream_refresh as cli
 from vergil_tooling.lib import github
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 _TOML = """\
 [project]
@@ -65,6 +62,14 @@ def _seed(work: Path, toml: str) -> None:
     _git(work, "push", "-q", "origin", "develop")
 
 
+def _assert_untouched(work: Path) -> None:
+    """The checkout is exactly as found: clean, no edit, no worktree left (#3812)."""
+    assert _git(work, "status", "--porcelain", "--untracked-files=all", "--ignored") == ""
+    assert (work / "data.txt").read_text() == "old\n"
+    listed = _git(work, "worktree", "list", "--porcelain").splitlines()
+    assert [line for line in listed if line.startswith("worktree ")] == [f"worktree {work}"]
+
+
 def test_cli_refuses_agent_mode(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -104,6 +109,7 @@ def test_cli_dry_run_no_push(
     assert "Dry run: would open or refresh" in out
     assert "## Changed files\n\n- `data.txt`" in out
     assert _git(repo, "ls-remote", "origin", "refs/heads/upstream-refresh") == ""
+    _assert_untouched(repo)
 
 
 def test_cli_dry_run_nothing(
@@ -114,6 +120,7 @@ def test_cli_dry_run_nothing(
     monkeypatch.setattr(cli, "default_branch", lambda repo: "develop")
     assert cli.main(["--dry-run"]) == 0
     assert "Dry run: nothing to refresh on develop" in capsys.readouterr().out
+    _assert_untouched(repo)
 
 
 def test_cli_runs_sync_with_resolved_repo_and_base(
@@ -130,7 +137,7 @@ def test_cli_runs_sync_with_resolved_repo_and_base(
 
     monkeypatch.setattr(cli, "sync", fake_sync)
     assert cli.main([]) == 0
-    ((repo_name, base, root, notes, paths),) = calls
+    ((repo_name, base, root, tree, notes, paths),) = calls
     assert (repo_name, base, root, notes, paths) == (
         "o/from-origin",
         "develop",
@@ -138,7 +145,34 @@ def test_cli_runs_sync_with_resolved_repo_and_base(
         [],
         ["data.txt"],
     )
+    assert isinstance(tree, Path)
+    assert tree != repo
+    assert not tree.exists()
     assert "vrg-upstream-refresh: opened" in capsys.readouterr().out
+    _assert_untouched(repo)
+
+
+def test_cli_manual_run_pushes_and_leaves_tree_clean(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A real run pushes the refresh commit and leaves the checkout as it found it."""
+    _seed(repo, _HOOK_TOML)
+    base_sha = _git(repo, "rev-parse", "HEAD")
+    creates: list[tuple[str, ...]] = []
+
+    def read_output(*args: str) -> str:
+        creates.append(args)
+        return "https://github.com/o/r/pull/42"
+
+    monkeypatch.setattr(github, "read_json", lambda *_a: [])
+    monkeypatch.setattr(github, "read_output", read_output)
+    assert cli.main(["--repo", "o/r", "--base", "develop"]) == 0
+    assert "vrg-upstream-refresh: opened" in capsys.readouterr().out
+    tip = _git(repo, "ls-remote", "origin", "refs/heads/upstream-refresh").split()[0]
+    assert _git(repo, "show", f"{tip}:data.txt") == "new"
+    assert _git(repo, "rev-parse", f"{tip}^") == base_sha
+    assert len(creates) == 1
+    _assert_untouched(repo)
 
 
 def test_cli_refusal_exits_1(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -146,6 +180,8 @@ def test_cli_refusal_exits_1(repo: Path, capsys: pytest.CaptureFixture[str]) -> 
     (repo / "data.txt").write_text("dirty\n")
     assert cli.main(["--repo", "o/r", "--base", "develop"]) == 1
     assert "working tree is not clean" in capsys.readouterr().err
+    # The user's edit is kept: the refusal touches nothing.
+    assert (repo / "data.txt").read_text() == "dirty\n"
 
 
 def test_cli_command_failure_exits_1(

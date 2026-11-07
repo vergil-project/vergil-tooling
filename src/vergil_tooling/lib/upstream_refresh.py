@@ -1,8 +1,14 @@
 """Mechanics behind ``vrg-upstream-refresh`` (epic vergil-project/.github#472, spec §5.6).
 
 The repo supplies the logic in its ``[upstream-refresh].hook``; this module
-supplies the mechanics: run the hook on a clean checkout of the base branch,
+supplies the mechanics: run the hook in a scratch worktree of the base branch,
 then keep exactly one refresh PR in step with what the hook produced.
+
+The hook never runs in the user's checkout (#3812): it runs in a temporary
+linked worktree detached at ``origin/<base>``, the commit is built there, and
+the worktree is removed afterwards, so the checkout is left exactly as found.
+Fetches and pushes still run from the checkout itself, so they use its remote
+and credentials exactly as before.
 
 - **No change** (per git): close any open refresh PR and delete its branch, or
   do nothing at all when there is none.
@@ -21,11 +27,18 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import git, github
+from vergil_tooling.lib.process_errors import error_text
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 REFRESH_BRANCH = "upstream-refresh"
 REPORT_ENV = "VRG_UPSTREAM_REPORT"
@@ -100,6 +113,49 @@ def ensure_clean_on_base(repo_root: Path, base: str) -> str:
         )
         raise UpstreamRefreshError(msg)
     return base_sha
+
+
+# -- scratch worktree -------------------------------------------------------------
+
+
+@contextmanager
+def scratch_worktree(repo_root: Path, base_sha: str, path: Path) -> Iterator[Path]:
+    """A linked worktree of *repo_root* at *path*, detached at *base_sha*; removed on exit.
+
+    The hook runs and the commit is built here, so the user's checkout is never
+    touched (#3812). *path* must not exist yet; its parent is created. On exit
+    the worktree is force-removed (the hook's edits are throwaway by design).
+    If removal fails, that is an error naming the path and the cleanup commands;
+    when the body already raised, the removal failure is printed to stderr and
+    the body's error propagates, so neither is lost.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _git(repo_root, "worktree", "add", "--quiet", "--detach", str(path), base_sha)
+    failed = True
+    try:
+        yield path
+        failed = False
+    finally:
+        problem = _remove_worktree(repo_root, path)
+        if problem is not None:
+            if failed:
+                print(f"vrg-upstream-refresh: {problem}", file=sys.stderr)
+            else:
+                raise UpstreamRefreshError(problem)
+
+
+def _remove_worktree(repo_root: Path, path: Path) -> str | None:
+    """Remove the scratch worktree; return why it could not be, or None."""
+    try:
+        _git(repo_root, "worktree", "remove", "--force", str(path))
+    except subprocess.CalledProcessError as exc:
+        return (
+            f"could not remove the scratch worktree {path}: {error_text(exc)}; "
+            f"clean up with `git worktree unlock {path}` (if locked), then "
+            f"`git worktree remove --force {path}`, or `git worktree prune` once "
+            "the directory is gone"
+        )
+    return None
 
 
 # -- hook ----------------------------------------------------------------------
@@ -235,19 +291,16 @@ def _open_pr(repo: str, base: str, branch: str, body: str) -> str:
 # -- commit and push -------------------------------------------------------------
 
 
-def _commit(repo_root: Path, paths: list[str]) -> str:
-    """Commit *paths* on top of ``HEAD`` (the base) without moving ``HEAD``; return the SHA.
+def _commit(tree: Path, paths: list[str]) -> str:
+    """Commit *paths* on top of the scratch worktree's ``HEAD`` (the base); return the SHA.
 
     Plumbing (``write-tree`` + ``commit-tree``) builds a commit detached from
-    any branch, so no local branch moves and no commit hook runs. The index is
-    reset afterwards, leaving the hook's edits in the working tree.
+    any branch, so no branch moves and no commit hook runs. It is built in the
+    scratch worktree *tree*, whose index and edits are thrown away with it.
     """
-    _git(repo_root, "add", "-A", "--", *paths)
-    try:
-        tree = _git(repo_root, "write-tree")
-        return _git(repo_root, "commit-tree", tree, "-p", "HEAD", "-m", COMMIT_SUBJECT)
-    finally:
-        _git(repo_root, "reset", "--quiet")
+    _git(tree, "add", "-A", "--", *paths)
+    index_tree = _git(tree, "write-tree")
+    return _git(tree, "commit-tree", index_tree, "-p", "HEAD", "-m", COMMIT_SUBJECT)
 
 
 def _push(repo_root: Path, sha: str, branch: str, expected: str | None) -> None:
@@ -265,8 +318,13 @@ def _push(repo_root: Path, sha: str, branch: str, expected: str | None) -> None:
 # -- the decision ----------------------------------------------------------------
 
 
-def sync(repo: str, base: str, repo_root: Path, notes: list[str], paths: list[str]) -> str:
+def sync(  # noqa: PLR0913 - the run's inputs, each used once
+    repo: str, base: str, repo_root: Path, tree: Path, notes: list[str], paths: list[str]
+) -> str:
     """Bring the refresh PR in line with the hook's result; return the outcome.
+
+    *tree* is the scratch worktree the hook ran in; the commit is built there.
+    Every fetch and push runs from *repo_root*, the user's checkout.
 
     One of ``"nothing"`` (no change, no PR), ``"closed"`` (no change, stale PRs
     closed), ``"opened"``, ``"refreshed"`` (new content force-pushed) or
@@ -281,7 +339,7 @@ def sync(repo: str, base: str, repo_root: Path, notes: list[str], paths: list[st
     survivor = prs[0] if prs else None
     branch = survivor.head if survivor is not None else REFRESH_BRANCH
     remote = _remote_sha(repo_root, branch)
-    sha = _commit(repo_root, paths)
+    sha = _commit(tree, paths)
     body = render_body(notes, paths)
 
     if survivor is None:
