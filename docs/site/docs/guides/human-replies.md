@@ -15,6 +15,10 @@ Two commands carry the protocol:
 - [`vrg-ruling-reply`](../reference/dev/ruling-reply.md), run by the human:
   it posts the reply as the human.
 
+A third, [`vrg-scope-change`](../reference/dev/scope-change.md), also run by
+the human, posts a [scope change](#scope-changes) on a task issue as the
+human, outside any round.
+
 The review that uses this channel is the [merge review](merge-review.md):
 every stop it makes for the human is one request on the task issue.
 
@@ -90,13 +94,15 @@ never by guessing.
 | `vrg-ruling read` | Runs every check on the reply to a request and prints the reply. | 0, 1, 2, 3, 4 |
 | `vrg-ruling respond` | Re-runs `read`'s checks and posts the response, recording the request and reply comment IDs. | 0, 1, 2, 4 |
 | `vrg-ruling-reply` | Shows the reply, asks for confirmation, and posts it as the human. | 0, 1, 2, 4 |
+| `vrg-ruling draft-scope` | Pushes a scope change drafted for the human to the issue's scope draft ref and prints the human's command. Posts nothing. | 0, 1, 2 |
+| `vrg-scope-change` | Shows the scope change, asks for confirmation, and posts it as the human. | 0, 1, 2 |
 
 The codes mean the same in both tools:
 
 | Code | Meaning |
 |---|---|
 | 0 | Success: the comment is posted, the draft is pushed, or `read` found a valid reply |
-| 1 | A refusal or an error, including a declined prompt in `vrg-ruling-reply` |
+| 1 | A refusal or an error, including a declined prompt in `vrg-ruling-reply` or `vrg-scope-change` |
 | 2 | A usage error (bad or missing arguments) |
 | 3 | `read` only: no reply yet |
 | 4 | A fatal check, named with its comment |
@@ -159,9 +165,9 @@ on is the human's, unaltered.
 
 ## The plain-text rule
 
-Every piece of text either tool handles (item IDs, item text and
-recommendations, requests, responses, drafts, `--response-text` and the reply
-as read from the issue) is printable ASCII, U+0020 to U+007E, plus newline.
+Every piece of text the tools handle (item IDs, item text and
+recommendations, requests, responses, drafts, `--response-text`, the reply
+as read from the issue, and a scope change's text) is printable ASCII, U+0020 to U+007E, plus newline.
 Anything else, tab and carriage return included, is refused, naming the
 character's code point and its offset, and is never converted. Plain ASCII
 has no invisible or look-alike characters, so what is on screen is all that
@@ -172,6 +178,71 @@ Item IDs are dot-separated letters and digits, at most 16 characters. An
 items file holds at least one item, every ID in it is unique, and every item
 text and recommendation is a single line, so each item renders as exactly one
 line of the comment.
+
+## Scope changes
+
+A maintainer's change to a task's scope (an addition, a narrowing, or a
+ruling on an item awaiting one) is posted on the task issue **as the human**,
+with [`vrg-scope-change`](../reference/dev/scope-change.md). Merge review
+counts only scope the human posted as themselves: the implementing agent
+shares the agent identity, so a scope comment posted by an agent login could
+be the agent widening its own scope.
+
+The flow follows a round's reply. The human and the agent agree the change
+in the terminal; the agent drafts it with `vrg-ruling draft-scope`, which
+pushes the text to the [draft relay](#the-draft-relay) and prints a
+`vrg-scope-change` command with the issue filled in. The human reads the
+comment that command shows and confirms it, or passes their own text with
+`--text`.
+
+```text
+agent:  vrg-ruling draft-scope --issue 'OWNER/REPO#N' --text-file scope.txt
+human:  vrg-scope-change --issue 'OWNER/REPO#N'                           -> scope change posted
+```
+
+A scope change is not part of a round. `vrg-scope-change` refuses while the
+issue has an open exchange (a request that no response names yet), because
+the only human comment allowed there is the reply. It posts between rounds.
+
+### The scope comment's marker
+
+The posted comment is a fixed, visible header line, a blank line and the
+text:
+
+```text
+Scope change
+
+<the text>
+```
+
+The header `Scope change` is the scope comment's marker. It is visible,
+not a hidden `<!-- vrg-ruling` marker: the human's comment is plain text,
+so what the human confirms on screen is all that is posted, and a hidden
+marker counts only on an agent comment anyway. Like every marker, it says
+what kind of comment it is, never who wrote it.
+
+A comment is a **scope change** when, and only when:
+
+- its author is the human login (after a leading `app/` is stripped);
+- its first line, with trailing whitespace stripped, is exactly
+  `Scope change`.
+
+A comment with that header by any other login, an agent login included, is
+not a scope change. Whether the comment has been edited is left to the
+reader. `is_scope_change` in `vergil_tooling.lib.rulings.scope` applies this
+rule. A reader that selects the human's comments for a reviewer needs no
+marker to trust them, since the author is what makes them the human's; the
+header only tells a scope change apart from a ruling reply.
+
+### Posting it exactly once
+
+A scope change has no turn to refuse a duplicate, so `vrg-scope-change`
+checks for one: before showing anything, it looks for a comment by the human
+whose body is exactly the comment it would post. If there is one, it prints
+that comment's ID, deletes the draft ref when the text came from it, posts
+nothing and exits 0. That is how a re-run settles a post whose outcome could
+not be told, and how it retries a draft ref deletion that failed after the
+post.
 
 ## Security items
 
@@ -215,6 +286,11 @@ relay mechanism of `vrg-pr-workflow report-ready`:
 - After posting a reply, `vrg-ruling-reply` deletes the request's draft ref.
   A reply declined at the prompt keeps it, so the command can be run again.
   `vrg-ruling respond` also deletes any draft ref left for its request.
+- A scope change travels the same way: `vrg-ruling draft-scope` pushes the
+  text alone as a single-file commit (`scope.md`) to
+  `refs/vergil/scope-draft/<issue>`, one per issue, and `vrg-scope-change`
+  reads it once, shows it under its header, and deletes the ref after
+  posting it.
 
 ## Posting exactly once
 
@@ -252,6 +328,7 @@ and stopping; it is expected to be rare.
 
 - [`vrg-ruling` reference](../reference/dev/ruling.md)
 - [`vrg-ruling-reply` reference](../reference/dev/ruling-reply.md)
+- [`vrg-scope-change` reference](../reference/dev/scope-change.md)
 - [Identity Setup: trusted authors](account-setup.md#trusted-authors)
 - [Merge Review](merge-review.md)
 - [Security Records](security-records.md)

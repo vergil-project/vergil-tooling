@@ -22,6 +22,11 @@ One round on a task issue is a **request** (posted here), the human's
   A re-run that finds its own response already landed reports that ID, posts
   nothing and succeeds. Either way it then deletes the request's draft ref,
   if one is left.
+- ``draft-scope --issue --text-file`` pushes a scope change drafted for the
+  human, the text alone, to the issue's scope draft ref
+  (``refs/vergil/scope-draft/<issue>``) and prints the human's
+  ``vrg-scope-change`` command. Like ``draft``, it runs only in a clone whose
+  ``origin`` is the issue's repo and posts nothing.
 
 Every subcommand runs only in the ``user`` identity mode, as the derived
 agent login ``<the human login>-vergil-user``, which must be on the trusted
@@ -65,6 +70,7 @@ from vergil_tooling.lib.rulings.post import (
     PostOutcomeUnknown,
     post_comment_once,
 )
+from vergil_tooling.lib.rulings.scope import render_scope_change
 from vergil_tooling.lib.trusted_authors import (
     TrustedAuthors,
     TrustedAuthorsNotConfiguredError,
@@ -110,6 +116,8 @@ def main(argv: list[str] | None = None) -> int:
                 return _read(ctx, args.request, as_json=args.json)
             if args.command == "draft":
                 return _draft(ctx, args.request, Path(args.items))
+            if args.command == "draft-scope":
+                return _draft_scope(ctx, Path(args.text_file))
             return _respond(ctx, args.request, args.reply, Path(args.items))
     except FatalCheck as exc:
         print(f"{_PROG}: {exc}", file=sys.stderr)
@@ -214,6 +222,32 @@ def _draft(ctx: _Context, request_id: int, items_path: Path) -> int:
         file=sys.stderr,
     )
     print(draft_ref.reply_command(ctx.repo, ctx.issue, request_id))
+    return EXIT_OK
+
+
+def _draft_scope(ctx: _Context, text_path: Path) -> int:
+    """Push the scope change in ``text_path`` to the issue's scope draft ref.
+
+    The text is screened as ``vrg-scope-change`` will screen it, the clone's
+    ``origin`` must be the issue's repo, and the issue must exist, before
+    anything is published. The turn is not checked here: ``vrg-scope-change``
+    refuses while a ruling exchange is open, when the human runs it.
+    """
+    try:
+        text = text_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        msg = f"cannot read the scope change file {text_path}: {exc}"
+        raise RulingError(msg) from exc
+    render_scope_change(text)
+    draft_ref.require_remote_is(ctx.repo, remote="origin", command=f"{_PROG} draft-scope")
+    comments.fetch_comments(ctx.repo, ctx.issue)
+    draft_ref.push_scope_draft(ctx.issue, text, remote="origin")
+    print(
+        f"{_PROG}: pushed the draft scope change to {draft_ref.scope_draft_ref(ctx.issue)}"
+        f" on {ctx.repo}; the human posts it with:",
+        file=sys.stderr,
+    )
+    print(draft_ref.scope_command(ctx.repo, ctx.issue))
     return EXIT_OK
 
 
@@ -326,6 +360,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--request", required=True, type=_comment_id, help="The request's comment ID"
     )
     draft.add_argument("--items", required=True, help="The reply items file (JSON)")
+
+    draft_scope = sub.add_parser(
+        "draft-scope", help="Push a scope change drafted for the human to its draft ref"
+    )
+    draft_scope.add_argument("--issue", required=True, help="The task issue, owner/repo#N")
+    draft_scope.add_argument(
+        "--text-file",
+        required=True,
+        help="The scope change's text alone (printable ASCII and newline only)",
+    )
 
     respond = sub.add_parser("respond", help="Post the response to a request and its reply")
     respond.add_argument("--issue", required=True, help="The task issue, owner/repo#N")

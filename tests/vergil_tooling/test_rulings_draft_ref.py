@@ -13,11 +13,16 @@ from vergil_tooling.lib import git, github
 from vergil_tooling.lib.rulings import RulingError
 from vergil_tooling.lib.rulings.draft_ref import (
     delete_draft_api,
+    delete_scope_draft_api,
     draft_ref,
     fetch_draft,
+    fetch_scope_draft,
     push_draft,
+    push_scope_draft,
     reply_command,
     require_remote_is,
+    scope_command,
+    scope_draft_ref,
 )
 
 if TYPE_CHECKING:
@@ -398,3 +403,55 @@ def test_delete_draft_api_other_errors_propagate(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(github, "delete_if_exists", fail)
     with pytest.raises(github.GitHubAPIError):
         delete_draft_api("o/r", 7, 41)
+
+
+# --- the scope change draft --------------------------------------------------------
+
+
+def test_scope_draft_ref_and_command() -> None:
+    assert scope_draft_ref(7) == "refs/vergil/scope-draft/7"
+    assert scope_command("o/r", 7) == "vrg-scope-change --issue 'o/r#7'"
+
+
+def test_push_scope_draft_is_plumbing_only(git_repo_with_remote: Clone) -> None:
+    push_scope_draft(7, "Also cover the docs.\n")
+    assert git_repo_with_remote.head_unchanged()
+    assert git_repo_with_remote.status_clean()
+    ref = scope_draft_ref(7)
+    assert git_repo_with_remote.remote_file(ref, "scope.md") == "Also cover the docs.\n"
+    assert git_repo_with_remote.remote_tree(ref) == ["scope.md"]
+
+
+def test_push_scope_draft_refuses_non_plain_text(git_repo_with_remote: Clone) -> None:
+    with pytest.raises(RulingError, match="the draft scope change is not plain text"):
+        push_scope_draft(7, "caf\u00e9\n")
+    assert not _git("ls-remote", "origin", scope_draft_ref(7), cwd=git_repo_with_remote.path)
+
+
+def test_require_remote_is_names_the_command(git_repo_with_remote: Clone) -> None:
+    url = "https://github.com/o/other.git"
+    _git("remote", "set-url", "origin", url, cwd=git_repo_with_remote.path)
+    with pytest.raises(RulingError, match="run vrg-ruling draft-scope in a clone of o/r"):
+        require_remote_is("o/r", command="vrg-ruling draft-scope")
+
+
+def test_fetch_scope_draft_via_rest(fake_gh: FakeGh) -> None:
+    fake_gh.ref("vergil/scope-draft/7", blob_text="Add x.\n")
+    _first(fake_gh, "repos/o/r/git/trees/")["tree"][0].update(path="scope.md")
+    assert fetch_scope_draft("o/r", 7) == "Add x.\n"
+    assert fake_gh.calls[0] == "repos/o/r/git/ref/vergil/scope-draft/7"
+    assert fetch_scope_draft("o/r", 8) is None
+
+
+def test_fetch_scope_draft_refuses_a_reply_file(fake_gh: FakeGh) -> None:
+    # A ref holding reply.md is not a scope change draft.
+    fake_gh.ref("vergil/scope-draft/7", blob_text="Add x.\n")
+    with pytest.raises(RulingError, match="does not hold a single scope.md file"):
+        fetch_scope_draft("o/r", 7)
+
+
+def test_delete_scope_draft_api_deletes_the_ref(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(github, "delete_if_exists", lambda endpoint: calls.append(endpoint) or True)
+    delete_scope_draft_api("o/r", 7)
+    assert calls == ["repos/o/r/git/refs/vergil/scope-draft/7"]

@@ -815,7 +815,11 @@ whose `origin` is the issue's repo, refuses once the request has a reply,
 and posts nothing. `respond` re-runs `read`'s checks and posts the
 response, which records the request and reply comment IDs; a re-run that
 finds its own response already landed reports it and posts nothing. Either
-way `respond` then deletes any leftover draft ref. A security item carries
+way `respond` then deletes any leftover draft ref. `draft-scope` pushes a
+scope change drafted for the human, the text alone, to
+`refs/vergil/scope-draft/<issue>` and prints the human's `vrg-scope-change`
+command; like `draft`, it runs only in a clone whose `origin` is the
+issue's repo and posts nothing. A security item carries
 only its ID: the fixed text `security finding, details given privately` in
 a request, a decision
 (`fix`, `file`, `defer` or `wont-fix`) in a draft, and an outcome
@@ -827,8 +831,8 @@ printable ASCII plus newline. See the
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_ruling` (library: `lib/rulings/`) |
-| Args | `request --issue 'OWNER/REPO#N' --items FILE`; `read --issue 'OWNER/REPO#N' --request ID [--json]`; `draft --issue 'OWNER/REPO#N' --request ID --items FILE`; `respond --issue 'OWNER/REPO#N' --request ID --reply ID --items FILE` |
-| Preconditions | The `user` identity mode; trusted authors list exactly one human login, and `<human>-vergil-user` is on the `agents` list; for `draft`, a clone whose `origin` is the issue's repo |
+| Args | `request --issue 'OWNER/REPO#N' --items FILE`; `read --issue 'OWNER/REPO#N' --request ID [--json]`; `draft --issue 'OWNER/REPO#N' --request ID --items FILE`; `respond --issue 'OWNER/REPO#N' --request ID --reply ID --items FILE`; `draft-scope --issue 'OWNER/REPO#N' --text-file FILE` |
+| Preconditions | The `user` identity mode; trusted authors list exactly one human login, and `<human>-vergil-user` is on the `agents` list; for `draft` and `draft-scope`, a clone whose `origin` is the issue's repo |
 | Failure mode | A refusal or error prints the reason on stderr and exits 1; a fatal turn check names the check and the comment and exits 4. A failed post is never retried: the issue is re-read, and the tool reports the landed comment, says it did not land, or says it cannot tell |
 | Exit codes | 0 success (or a valid reply), 1 refused or error, 2 bad arguments, 3 no reply yet, 4 fatal check |
 | Status | Active |
@@ -860,6 +864,37 @@ See the [vrg-ruling-reply reference](dev/ruling-reply.md) and the
 | Preconditions | The human's own shell (not an agent identity), an interactive terminal, `gh` logged in as the human login; trusted authors list exactly one human login, and `<human>-vergil-user` is on the `agents` list |
 | Failure mode | A refusal, a declined prompt or an error prints the reason on stderr and exits 1, posting nothing; a fatal turn check names the check and the comment and exits 4. A failed post is never retried: the issue is re-read, and the tool reports the landed comment, says it did not land, or says it cannot tell |
 | Exit codes | 0 posted, 1 refused, declined or error, 2 bad arguments, 4 fatal check |
+| Status | Active |
+
+### vrg-scope-change
+
+Posts a scope change on a task issue (an addition to the task's scope, a
+narrowing of it, or a ruling on an item awaiting one) as the human, so merge
+review can count it as the human's. It is a human-only command, run in the
+human's own shell on the host, like `vrg-ruling-reply`, and refuses in an
+agent identity mode, without an interactive terminal, and unless `gh api
+user` reports the one human login of the trusted-authors configuration. It
+refuses while the issue has an open ruling exchange. It reads the text once,
+from the agent's draft (`refs/vergil/scope-draft/<issue>`, pushed by
+`vrg-ruling draft-scope`) or from `--text`, refuses anything but printable
+ASCII plus newline, and renders the comment as the header line
+`Scope change`, a blank line and the text. That header is how a scope
+change is recognised, together with the human login as its author. If the
+human has already posted exactly that comment, it prints its ID and posts
+nothing. Otherwise it prints the comment with its byte length and SHA-256,
+and on confirmation re-reads the issue, refuses if its trusted comments
+changed while the prompt waited, posts exactly the bytes it showed, once,
+prints the comment ID and deletes the draft ref. See the
+[vrg-scope-change reference](dev/scope-change.md) and the
+[Human Replies guide](../guides/human-replies.md#scope-changes).
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_scope_change` (library: `lib/rulings/`) |
+| Args | `--issue 'OWNER/REPO#N' [--text TEXT]` |
+| Preconditions | The human's own shell (not an agent identity), an interactive terminal, `gh` logged in as the human login; trusted authors list exactly one human login, and `<human>-vergil-user` is on the `agents` list; no open ruling exchange on the issue |
+| Failure mode | A refusal, a declined prompt or an error prints the reason on stderr and exits 1, posting nothing. A failed post is never retried: the issue is re-read, and the tool reports the landed comment, says it did not land, or says it cannot tell; a re-run finds a landed comment and posts nothing |
+| Exit codes | 0 posted or already posted, 1 refused, declined or error, 2 bad arguments |
 | Status | Active |
 
 ### vrg-merge-review-check

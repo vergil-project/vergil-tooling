@@ -1,4 +1,4 @@
-"""Tests for ``vrg-ruling`` request, read, draft and respond, with GitHub faked."""
+"""Tests for ``vrg-ruling`` request, read, draft, draft-scope and respond, with GitHub faked."""
 
 from __future__ import annotations
 
@@ -69,6 +69,10 @@ class FakeIssue:
         assert remote == "origin"
         self.drafts[f"refs/vergil/ruling-draft/{issue}/{request_id}"] = text
 
+    def push_scope_draft(self, issue: int, text: str, *, remote: str = "origin") -> None:
+        assert remote == "origin"
+        self.drafts[f"refs/vergil/scope-draft/{issue}"] = text
+
     def fetch_comments(self, repo: str, issue: int) -> list[IssueComment]:
         assert (repo, issue) == ("o/r", 7)
         self.reads += 1
@@ -127,6 +131,9 @@ def issue(monkeypatch: pytest.MonkeyPatch) -> FakeIssue:
     monkeypatch.setattr(github, "post_json_once", fake.post_json_once)
     monkeypatch.setattr(github, "delete_if_exists", fake.delete_if_exists)
     monkeypatch.setattr("vergil_tooling.lib.rulings.draft_ref.push_draft", fake.push_draft)
+    monkeypatch.setattr(
+        "vergil_tooling.lib.rulings.draft_ref.push_scope_draft", fake.push_scope_draft
+    )
     monkeypatch.setattr("vergil_tooling.lib.rulings.post.time.sleep", lambda _s: None)
     monkeypatch.setattr(vrg_ruling, "load_trusted_authors", lambda: AUTHORS)
     monkeypatch.setattr(identity_mode, "current_mode", lambda: IdentityMode.USER)
@@ -777,6 +784,96 @@ def test_draft_push_failure_exits_1(
     assert cli(*draft_argv(write_items(tmp_path, REPLY_ITEMS))) == 1
     assert "git exited 128" in cli.stderr
     assert cli.stdout == ""
+
+
+# --- draft-scope ---------------------------------------------------------------
+
+SCOPE_REF = "refs/vergil/scope-draft/7"
+
+
+def scope_argv(tmp_path: Path, text: str) -> tuple[str, ...]:
+    path = tmp_path / "scope.txt"
+    path.write_text(text, encoding="utf-8")
+    return ("draft-scope", "--issue", "o/r#7", "--text-file", str(path))
+
+
+@pytest.mark.usefixtures("in_clone")
+def test_draft_scope_prints_the_scope_command(cli: Cli, issue: FakeIssue, tmp_path: Path) -> None:
+    assert cli(*scope_argv(tmp_path, "Also cover the docs.\n")) == 0
+    assert cli.stdout == "vrg-scope-change --issue 'o/r#7'\n"
+    assert SCOPE_REF in cli.stderr
+    assert issue.drafts == {SCOPE_REF: "Also cover the docs.\n"}
+    assert issue.reads == 1
+    assert issue.posted == []
+
+
+@pytest.mark.usefixtures("in_clone")
+def test_draft_scope_does_not_check_the_turn(cli: Cli, issue: FakeIssue, tmp_path: Path) -> None:
+    # vrg-scope-change refuses while the exchange is open, when the human runs it.
+    issue.comments = [request_comment(41)]
+    assert cli(*scope_argv(tmp_path, "Narrow it to x.\n")) == 0
+    assert issue.drafts == {SCOPE_REF: "Narrow it to x.\n"}
+
+
+@pytest.mark.usefixtures("in_clone")
+@pytest.mark.parametrize(
+    ("text", "match"),
+    [
+        ("caf\u00e9\n", "not plain text"),
+        ("a\tb\n", "not plain text"),
+        ("x <!-- vrg-ruling kind=request -->\n", "marker prefix"),
+        ("\n \n", "blank"),
+        ("Scope change\n\nx\n", "header is added for you"),
+    ],
+)
+def test_draft_scope_refuses_bad_text_before_reading(
+    cli: Cli, issue: FakeIssue, tmp_path: Path, text: str, match: str
+) -> None:
+    assert cli(*scope_argv(tmp_path, text)) == 1
+    assert match in cli.stderr
+    assert issue.reads == 0
+    assert issue.drafts == {}
+
+
+@pytest.mark.usefixtures("in_clone")
+def test_draft_scope_refuses_an_unreadable_file(cli: Cli, issue: FakeIssue, tmp_path: Path) -> None:
+    missing = str(tmp_path / "missing.txt")
+    assert cli("draft-scope", "--issue", "o/r#7", "--text-file", missing) == 1
+    assert "cannot read the scope change file" in cli.stderr
+    assert issue.drafts == {}
+
+
+def test_draft_scope_refuses_other_repo(
+    cli: Cli, issue: FakeIssue, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    origin_is(tmp_path, monkeypatch, "o/other")
+    assert cli(*scope_argv(tmp_path, "x\n")) == 1
+    assert "run vrg-ruling draft-scope in a clone of o/r" in cli.stderr
+    assert issue.drafts == {}
+    assert issue.reads == 0
+
+
+@pytest.mark.usefixtures("in_clone")
+@pytest.mark.parametrize("mode", [IdentityMode.AUDIT, IdentityMode.HUMAN])
+def test_draft_scope_refuses_outside_user_mode(
+    cli: Cli, issue: FakeIssue, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: IdentityMode
+) -> None:
+    monkeypatch.setattr(identity_mode, "current_mode", lambda: mode)
+    assert cli(*scope_argv(tmp_path, "x\n")) == 1
+    assert issue.drafts == {}
+
+
+@pytest.mark.usefixtures("in_clone")
+def test_draft_scope_refuses_a_missing_issue(
+    cli: Cli, issue: FakeIssue, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def not_found(_repo: str, _issue: int) -> list[IssueComment]:
+        raise vrg_ruling.RulingError("o/r#7: issue not found")
+
+    monkeypatch.setattr("vergil_tooling.lib.rulings.comments.fetch_comments", not_found)
+    assert cli(*scope_argv(tmp_path, "x\n")) == 1
+    assert "issue not found" in cli.stderr
+    assert issue.drafts == {}
 
 
 # --- respond deletes the draft -----------------------------------------------------
