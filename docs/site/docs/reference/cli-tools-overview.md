@@ -1091,6 +1091,14 @@ behind a "0 cruft" message (issue #2347). A merged release or deps
 worktree shows as `merged` in its own section but is not counted as
 `vrg-finalize-pr` cruft.
 
+LAST COMMIT is the age of the worktree's HEAD commit. In the worktree
+sections, a worktree whose branch has no commits beyond the target branch
+(AHEAD 0) shows `-` there instead: its HEAD is still the commit it was
+cut from, whose age says nothing about the work on it (issue #3828).
+LAST MODIFIED is still shown. A detached worktree whose branch cannot be
+recovered also shows AHEAD 0, because there is no branch to count, and
+keeps its LAST COMMIT.
+
 ```text
 Main checkout (integration branch: develop)
 CHECKOUT               BRANCH   DIRTY  LAST COMMIT  STATUS
