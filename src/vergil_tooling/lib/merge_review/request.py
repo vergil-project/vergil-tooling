@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn
 
@@ -31,6 +32,8 @@ if TYPE_CHECKING:
 EXIT_REBASED = 3
 
 _EPIC_TASK_FIELDS = frozenset({"ref", "title"})
+
+_ISSUE_COMMENT_FIELDS = frozenset({"author", "created_at", "body"})
 
 #: A full commit SHA, SHA-1 or SHA-256, as ``git rev-parse`` prints it.
 _COMMIT_SHA_RE = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
@@ -122,6 +125,51 @@ def read_epic_tasks(path: Path) -> list[dict[str, str]]:
         except ValueError:
             refuse(f"the epic tasks file {path}: entry {position}'s ref must be owner/name#N")
     return data
+
+
+def read_issue_comments(path: Path) -> list[dict[str, str]]:
+    """The issue comments file: a JSON list of ``{"author", "created_at", "body"}``.
+
+    Each entry is one comment, kept in the order given, with every field a
+    string: ``author`` a non-empty login, ``created_at`` an ISO 8601
+    timestamp with a time zone (as ``gh`` prints ``createdAt``) and ``body``
+    the comment's text. The caller decides which comments are trusted; this
+    checks only the shape. A refusal names the entry by position and never
+    echoes a value.
+    """
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        refuse(f"cannot read the issue comments file {path}: {exc}")
+    if not isinstance(data, list):
+        refuse(f"the issue comments file {path} must hold a JSON list")
+    for position, comment in enumerate(data, start=1):
+        if (
+            not isinstance(comment, dict)
+            or set(comment) != _ISSUE_COMMENT_FIELDS
+            or not all(isinstance(comment[field], str) for field in _ISSUE_COMMENT_FIELDS)
+        ):
+            refuse(
+                f"the issue comments file {path}: entry {position} must be"
+                " {author, created_at, body} strings"
+            )
+        if not comment["author"]:
+            refuse(f"the issue comments file {path}: entry {position}'s author is empty")
+        if not _is_zoned_timestamp(comment["created_at"]):
+            refuse(
+                f"the issue comments file {path}: entry {position}'s created_at must be"
+                " an ISO 8601 timestamp with a time zone"
+            )
+    return data
+
+
+def _is_zoned_timestamp(text: str) -> bool:
+    """Whether *text* is an ISO 8601 date and time that carries a time zone."""
+    try:
+        stamp = datetime.fromisoformat(text)
+    except ValueError:
+        return False
+    return stamp.tzinfo is not None
 
 
 def design_source_paths(paths: Sequence[str]) -> list[str]:
@@ -243,6 +291,7 @@ class RequestFields:
     step: str
     issue: IssueRef
     issue_body: str
+    issue_comments: list[dict[str, str]]
     base_sha: str
     head_sha: str
     worktree: str
@@ -262,6 +311,7 @@ def build_request(fields: RequestFields, check: CheckFields | None) -> dict[str,
         "repo": f"{fields.issue.owner}/{fields.issue.repo}",
         "issue": fields.issue.slug,
         "issue_body": fields.issue_body,
+        "issue_comments": fields.issue_comments,
         "base_sha": fields.base_sha,
         "head_sha": fields.head_sha,
         "worktree": fields.worktree,

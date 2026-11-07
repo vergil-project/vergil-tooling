@@ -342,6 +342,7 @@ def test_review_request_fields(repo: Path, tmp_path: Path, capsys: Cap) -> None:
         "repo",
         "issue",
         "issue_body",
+        "issue_comments",
         "base_sha",
         "head_sha",
         "worktree",
@@ -357,6 +358,7 @@ def test_review_request_fields(repo: Path, tmp_path: Path, capsys: Cap) -> None:
     assert request["repo"] == "acme/widget"
     assert request["issue"] == ISSUE
     assert request["issue_body"] == "Do the thing.\n"
+    assert request["issue_comments"] == []
     assert request["base_sha"] == _git(repo, "rev-parse", "develop")
     assert request["head_sha"] == _git(repo, "rev-parse", "HEAD")
     assert request["worktree"] == str(repo)
@@ -467,6 +469,95 @@ def test_request_refuses_bad_epic_tasks(
     assert message in err
 
 
+_COMMENTS = [
+    {
+        "author": "maintainer",
+        "created_at": "2026-11-01T09:30:00Z",
+        "body": "Scope: gap 1 only; gap 2 is a later task.",
+    },
+    {"author": "agent", "created_at": "2026-11-02T10:00:00+00:00", "body": "Noted.\n"},
+]
+
+
+def _comments_argv(repo: Path, tmp_path: Path, content: str) -> list[str]:
+    (tmp_path / "comments.json").write_text(content)
+    return _argv(repo, "review", "--issue-comments-file", str(tmp_path / "comments.json"))
+
+
+def test_request_carries_issue_comments(repo: Path, tmp_path: Path, capsys: Cap) -> None:
+    request = _built(_comments_argv(repo, tmp_path, json.dumps(_COMMENTS)), capsys)
+    assert request["issue_comments"] == _COMMENTS
+
+
+def test_request_accepts_no_issue_comments(repo: Path, tmp_path: Path, capsys: Cap) -> None:
+    assert _built(_comments_argv(repo, tmp_path, "[]"), capsys)["issue_comments"] == []
+
+
+def test_check_request_carries_issue_comments(repo: Path, tmp_path: Path, capsys: Cap) -> None:
+    review_head, result = _reviewed(repo, capsys, [_finding("R1")])
+    (tmp_path / "comments.json").write_text(json.dumps(_COMMENTS))
+    argv = _check_argv(repo, review_head, [result], fix=("R1",))
+    argv += ["--issue-comments-file", str(tmp_path / "comments.json")]
+    assert _built(argv, capsys)["issue_comments"] == _COMMENTS
+
+
+_SECRET = "s3cr3t-value"
+
+
+@pytest.mark.parametrize(
+    ("content", "message"),
+    [
+        ("not json", "cannot read the issue comments file"),
+        ('{"author": "a"}', "must hold a JSON list"),
+        (f'["{_SECRET}"]', "entry 1 must be {author, created_at, body} strings"),
+        (
+            f'[{{"author": "a", "created_at": "2026-11-01T09:30:00Z", "body": "{_SECRET}",'
+            ' "extra": 1}]',
+            "entry 1 must be {author, created_at, body} strings",
+        ),
+        (
+            '[{"author": "a", "created_at": "2026-11-01T09:30:00Z"}]',
+            "entry 1 must be {author, created_at, body} strings",
+        ),
+        (
+            f'[{{"author": 7, "created_at": "2026-11-01T09:30:00Z", "body": "{_SECRET}"}}]',
+            "entry 1 must be {author, created_at, body} strings",
+        ),
+        (
+            f'[{{"author": "a", "created_at": "2026-11-01T09:30:00Z", "body": "ok"}},'
+            f' {{"author": "", "created_at": "2026-11-01T09:30:00Z", "body": "{_SECRET}"}}]',
+            "entry 2's author is empty",
+        ),
+        (
+            f'[{{"author": "a", "created_at": "{_SECRET}", "body": "b"}}]',
+            "entry 1's created_at must be an ISO 8601 timestamp with a time zone",
+        ),
+        (
+            '[{"author": "a", "created_at": "2026-11-01T09:30:00", "body": "b"}]',
+            "entry 1's created_at must be an ISO 8601 timestamp with a time zone",
+        ),
+    ],
+)
+def test_request_refuses_bad_issue_comments(
+    repo: Path, tmp_path: Path, capsys: Cap, content: str, message: str
+) -> None:
+    code, out, err = _run(_comments_argv(repo, tmp_path, content), capsys)
+    assert code == 1
+    assert out == ""
+    assert message in err
+    assert _SECRET not in err
+    assert not (_merge_review_dir(repo) / "request-review.json").exists()
+
+
+def test_request_refuses_missing_issue_comments_file(
+    repo: Path, tmp_path: Path, capsys: Cap
+) -> None:
+    argv = _argv(repo, "review", "--issue-comments-file", str(tmp_path / "absent.json"))
+    code, _out, err = _run(argv, capsys)
+    assert code == 1
+    assert "cannot read the issue comments file" in err
+
+
 def test_request_accepts_no_epic_tasks(repo: Path, tmp_path: Path, capsys: Cap) -> None:
     (tmp_path / "tasks.json").write_text("[]")
     assert _built(_argv(repo), capsys)["epic_open_tasks"] == []
@@ -496,6 +587,7 @@ _BUILDING = ["--base", "d", "--issue-body-file", "b", "--epic-tasks-file", "t"]
     [
         ["--ensure-dir", "--step", "review"],
         ["--ensure-dir", "--design-source", "x.md"],
+        ["--ensure-dir", "--issue-comments-file", "c.json"],
         ["--step", "review"],
         [*_BUILDING, "--step", "fix"],
         [*_BUILDING, "--step", "check", "--fix-id", "R1"],

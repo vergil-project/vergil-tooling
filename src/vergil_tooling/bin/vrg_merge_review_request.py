@@ -2,9 +2,10 @@
 
 ``vrg-merge-review-request --issue <owner/name#N> --base <ref> --step
 review|check|check-<k> --issue-body-file <path> --epic-tasks-file <path>
-[--design-source <path>]... [--fix-base <sha> --earlier-result <path>...
---fix-id <ID>... [--ruled-id <ID>]...]`` writes ``request-<step>.json``,
-``diff-<step>.patch`` and, for a check, ``fix-<step>.patch`` into the task's
+[--issue-comments-file <path>] [--design-source <path>]...
+[--fix-base <sha> --earlier-result <path>... --fix-id <ID>... [--ruled-id <ID>]...]``
+writes ``request-<step>.json``, ``diff-<step>.patch`` and, for a check,
+``fix-<step>.patch`` into the task's
 private directory, ``build/.vergil-state/issue-implement/<N>/merge-review/``
 in the main clone, and prints the request's path. See
 ``docs/specs/merge-review-protocol.md``.
@@ -14,6 +15,12 @@ It refuses, naming the reason, unless the worktree is clean and the last
 that started clean at ``HEAD``, exited 0 and passed every stage. The base
 SHA is the merge base of ``--base`` and ``HEAD``; the change class comes
 from the files changed since it, against the allow-list committed there.
+
+``--issue-comments-file`` holds the issue's trusted-author comments, a JSON
+list of ``{"author", "created_at", "body"}`` strings, kept in the order
+given; they become ``issue_comments``, an empty list when the flag is not
+given. The caller decides which comments are trusted; the builder checks
+only their shape.
 
 A check (``check`` or ``check-<k>``) also takes ``--fix-base``, the ``HEAD``
 the previous step judged, refused unless it is the ``head_sha`` of that
@@ -61,6 +68,7 @@ EXIT_OK = 0
 EXIT_ERROR = 1
 
 _CHECK_ONLY = ("fix_base", "earlier_result", "fix_id", "ruled_id")
+_BUILD_OPTIONAL = ("issue_comments_file",)
 
 
 @cli_main
@@ -112,6 +120,11 @@ def _parser() -> argparse.ArgumentParser:
         help='a JSON list of the epic\'s open tasks, each {"ref": "owner/name#N", "title": "..."}',
     )
     parser.add_argument(
+        "--issue-comments-file",
+        help="a JSON list of the issue's trusted-author comments, each"
+        ' {"author": "...", "created_at": "...", "body": "..."}',
+    )
+    parser.add_argument(
         "--design-source", action="append", default=[], help="a design document (repeatable)"
     )
     parser.add_argument("--fix-base", help="a check: the HEAD the previous step judged")
@@ -136,7 +149,9 @@ def _parser() -> argparse.ArgumentParser:
 def _check_usage(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
     building = ("base", "step", "issue_body_file", "epic_tasks_file")
     if args.ensure_dir:
-        given = [name for name in (*building, *_CHECK_ONLY) if getattr(args, name)]
+        given = [
+            name for name in (*building, *_BUILD_OPTIONAL, *_CHECK_ONLY) if getattr(args, name)
+        ]
         if given or args.design_source:
             parser.error("--ensure-dir takes only --issue")
         return
@@ -162,6 +177,11 @@ def _build(args: argparse.Namespace, issue: IssueRef) -> Path:
     req.check_validated(record, head, worktree_clean=git.working_tree_status() == "")
     base_sha, change_class = classify_branch(args.base, head)
     issue_body = req.read_issue_body(Path(args.issue_body_file))
+    issue_comments = (
+        req.read_issue_comments(Path(args.issue_comments_file))
+        if args.issue_comments_file is not None
+        else []
+    )
     epic_tasks = req.read_epic_tasks(Path(args.epic_tasks_file))
     design_sources = req.design_source_paths(args.design_source)
     fix_base_sha = _fix_base(args.fix_base, head) if is_check(step) else None
@@ -189,6 +209,7 @@ def _build(args: argparse.Namespace, issue: IssueRef) -> Path:
             step=step,
             issue=issue,
             issue_body=issue_body,
+            issue_comments=issue_comments,
             base_sha=base_sha,
             head_sha=head,
             worktree=str(worktree),
