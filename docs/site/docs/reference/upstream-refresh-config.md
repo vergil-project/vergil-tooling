@@ -44,8 +44,11 @@ present, `hook` is required, and any other key is an error.
 
 ## The hook contract
 
-The command runs the hook as `bash -c "<hook>"` from the repo root, on a
-clean checkout of the base branch. The hook:
+The command runs the hook as `bash -c "<hook>"` from the root of a
+temporary worktree, detached at `origin/<base>`. That worktree holds the
+base branch's tracked files only, as a fresh CI checkout does: files
+that are ignored or untracked in your checkout are not there, so the
+hook must not rely on them. The hook:
 
 - **Edits tracked files only.** It must not commit, and it must not
   leave new untracked files. If it does, the command fails and names
@@ -61,8 +64,10 @@ clean checkout of the base branch. The hook:
 ## What the command does
 
 `vrg-upstream-refresh` first fetches `origin/<base>` and requires a
-clean working tree with `HEAD` at `origin/<base>`. It then runs the hook
-and asks git what changed. Every run ends in one of these outcomes:
+clean working tree with `HEAD` at `origin/<base>`. It then adds a
+temporary linked worktree at `origin/<base>` outside the checkout, runs
+the hook there and asks git what changed. Every run ends in one of
+these outcomes:
 
 | Outcome | When | What happens |
 |---|---|---|
@@ -86,6 +91,16 @@ A refresh PR is an open PR against the base whose head is
 re-create). When more than one is open, the oldest is kept and
 refreshed. The others are closed with a comment naming it, and their
 branches are deleted.
+
+The hook's edits never reach your checkout. The commit is built in
+the temporary worktree, and fetches and pushes run from your checkout
+with its remote and credentials. The worktree is removed when the run
+ends, whether it succeeded, failed or was a `--dry-run`. So after any
+run the checkout is exactly as the command found it, and
+`git worktree list` no longer shows the temporary worktree. If the
+worktree cannot be removed, the run fails and names the path and the
+`git worktree` commands that remove it. If the run had already failed,
+the cleanup error is printed and the run's own error is reported.
 
 The command works from a shallow, depth-1 checkout, such as the default
 `actions/checkout`. It fetches the refs it needs itself, at depth 1 when

@@ -29,6 +29,7 @@ from vergil_tooling.lib.upstream_refresh import (
     ensure_clean_on_base,
     render_body,
     run_hook,
+    scratch_worktree,
     sync,
 )
 
@@ -55,9 +56,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog=_PROG,
         description=(
-            "Run the repo's [upstream-refresh].hook on a clean checkout of the base "
+            "Run the repo's [upstream-refresh].hook in a scratch worktree of the base "
             "branch, then open, refresh or close the single upstream-refresh PR. "
-            "Never merges."
+            "Never merges, and leaves the checkout exactly as it found it."
         ),
     )
     parser.add_argument(
@@ -90,20 +91,25 @@ def _refresh(args: argparse.Namespace) -> int:
         return 1
     repo = _resolve_repo(args.repo)
     base = args.base or default_branch(repo)
-    ensure_clean_on_base(repo_root, base)
-    with tempfile.TemporaryDirectory(prefix="vrg-upstream-refresh-") as tmp:
+    base_sha = ensure_clean_on_base(repo_root, base)
+    # The hook runs in a scratch worktree outside the checkout (#3812), removed
+    # before the temporary directory is, so the checkout is never touched.
+    with (
+        tempfile.TemporaryDirectory(prefix="vrg-upstream-refresh-") as tmp,
+        scratch_worktree(repo_root, base_sha, Path(tmp) / "tree") as tree,
+    ):
         report = Path(tmp) / "report.txt"
-        print(f"Running [upstream-refresh].hook ({REPORT_ENV}={report}).")
-        notes = run_hook(repo_root, cfg.upstream_refresh.hook, report)
-    paths = changed_paths(repo_root)
-    if args.dry_run:
-        if paths:
-            print(f"Dry run: would open or refresh the refresh PR on {repo} ({base}):\n")
-            print(render_body(notes, paths))
-        else:
-            print(f"Dry run: nothing to refresh on {base}; would close any open refresh PR.")
-        return 0
-    outcome = sync(repo, base, repo_root, notes, paths)
+        print(f"Running [upstream-refresh].hook in {tree} ({REPORT_ENV}={report}).")
+        notes = run_hook(tree, cfg.upstream_refresh.hook, report)
+        paths = changed_paths(tree)
+        if args.dry_run:
+            if paths:
+                print(f"Dry run: would open or refresh the refresh PR on {repo} ({base}):\n")
+                print(render_body(notes, paths))
+            else:
+                print(f"Dry run: nothing to refresh on {base}; would close any open refresh PR.")
+            return 0
+        outcome = sync(repo, base, repo_root, tree, notes, paths)
     print(f"{_PROG}: {outcome}")
     return 0
 
