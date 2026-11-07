@@ -363,7 +363,7 @@ workflow only through `inherit`: an explicit secrets map leaves
 `package-sign` with an empty key (proven by the probe in
 [vergil-project/packages#6](https://github.com/vergil-project/packages/issues/6)).
 The callee is first-party, so the blanket form is an accepted, reviewed
-exception. `vrg-repo-init` generates this caller for `[package]` repos
+exception. `vrg-github-repo-init` generates this caller for `[package]` repos
 ([vergil-project/vergil-tooling#3144](https://github.com/vergil-project/vergil-tooling/issues/3144)).
 See the [CD section of the package config reference](../reference/package-config.md#cd)
 for the full caller.
