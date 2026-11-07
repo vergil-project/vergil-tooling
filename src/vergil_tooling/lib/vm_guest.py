@@ -397,6 +397,17 @@ _PLUGIN_PATH_EXPORT = 'export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"'
 
 _GUEST_SETTINGS = "~/.claude/settings.json"
 
+# The in-guest read of _GUEST_SETTINGS. Like read_fingerprint's, it masks every
+# file condition into a zero exit, here with a status line ("missing",
+# "unreadable", or "ok" followed by the content), so a non-zero exit of the
+# round-trip can only be the transport failing to reach the VM (#3990).
+_READ_GUEST_SETTINGS = (
+    'f="$HOME/.claude/settings.json"; '
+    'if [ ! -e "$f" ]; then echo missing; '
+    'elif content=$(cat "$f" 2>/dev/null); then printf \'ok\\n%s\\n\' "$content"; '
+    "else echo unreadable; fi"
+)
+
 
 def _read_guest_settings(transport: Transport) -> dict[str, Any]:
     """Return the guest ``~/.claude/settings.json`` as a dict.
@@ -407,19 +418,32 @@ def _read_guest_settings(transport: Transport) -> dict[str, Any]:
     vergil-project/.github#760).
 
     Raises:
-        RuntimeError: the file cannot be read. The message names the file.
+        VmUnreachableError: (a ``RuntimeError``) the VM could not be reached,
+            so the file was never looked at. The message names the file.
+        RuntimeError: the file is missing or cannot be read. The message
+            names the file and which of the two it is.
         claude_marketplace.MarketplaceError: (a ``RuntimeError``) the file is
             not valid JSON or not a JSON object. The message names the file.
     """
     try:
-        result = transport.run("bash", "-c", f"cat {_GUEST_SETTINGS}")
+        result = transport.run("bash", "-c", _READ_GUEST_SETTINGS)
     except subprocess.CalledProcessError as exc:
         msg = (
-            f"cannot read the guest {_GUEST_SETTINGS}: it is missing or unreadable "
-            f"(exit status {exc.returncode})"
+            f"cannot read the guest {_GUEST_SETTINGS}: the VM could not be reached "
+            f"({_failure_reason(exc)})"
         )
-        raise RuntimeError(msg) from exc
-    return claude_marketplace.parse_settings(result.stdout, f"the guest {_GUEST_SETTINGS}")
+        raise VmUnreachableError(msg) from exc
+    status, _, content = result.stdout.partition("\n")
+    if status == "missing":
+        msg = f"the guest {_GUEST_SETTINGS} is missing"
+        raise RuntimeError(msg)
+    if status == "unreadable":
+        msg = f"the guest {_GUEST_SETTINGS} exists but cannot be read"
+        raise RuntimeError(msg)
+    if status != "ok":
+        msg = f"cannot read the guest {_GUEST_SETTINGS}: unexpected output {status!r}"
+        raise RuntimeError(msg)
+    return claude_marketplace.parse_settings(content, f"the guest {_GUEST_SETTINGS}")
 
 
 def update_plugins(transport: Transport) -> None:
@@ -438,6 +462,8 @@ def update_plugins(transport: Transport) -> None:
     a local Lima instance or a remote off-platform box.
 
     Raises:
+        VmUnreachableError: (a ``RuntimeError``) the VM could not be reached
+            to read the guest settings.json.
         RuntimeError: the guest settings.json is missing, unreadable or
             invalid, or any step or the verification failed. The message names
             every failure.
@@ -616,7 +642,8 @@ class VmUnreachableError(RuntimeError):
     """Raised when the shell transport to a VM fails (e.g. SSH connection
     refused) — the VM could not be contacted at all.
 
-    Distinct from an absent spec marker: an unreachable VM says nothing about
+    Distinct from an absent spec marker or guest settings.json: an unreachable
+    VM says nothing about whether a file is there, nor about
     whether its spec drifted, so callers must not collapse this into the
     "needs-rebuild" signal. Doing so misreports a reachability failure as spec
     drift and tells the user to rebuild a VM that may just be mid-boot or wedged.
