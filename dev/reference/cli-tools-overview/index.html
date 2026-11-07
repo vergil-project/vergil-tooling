@@ -19416,10 +19416,11 @@ the <a href="../dependency-update-config/">dependency-update reference</a>.</p>
 </tbody>
 </table>
 <h3 id="vrg-upstream-refresh">vrg-upstream-refresh<a class="headerlink" href="#vrg-upstream-refresh" title="Permanent link">&para;</a></h3>
-<p>Run the repo's <code>[upstream-refresh].hook</code> on a clean checkout of the
-base branch, then open, refresh or close the single <code>upstream-refresh</code>
-PR. A no-change run closes any stale refresh PR, or exits quietly when
-there is none. It never merges, and never runs dependency updaters,
+<p>Run the repo's <code>[upstream-refresh].hook</code> in a temporary worktree of
+the base branch, then open, refresh or close the single
+<code>upstream-refresh</code> PR. The checkout it runs from must be clean and on
+the base, and it is left exactly as found. A no-change run closes any
+stale refresh PR, or exits quietly when there is none. It never merges, and never runs dependency updaters,
 validation or a release. It runs from the scheduled
 <code>ops-upstream-refresh</code> workflow under the App token, or by hand as a
 human; it refuses agent identities. See the
