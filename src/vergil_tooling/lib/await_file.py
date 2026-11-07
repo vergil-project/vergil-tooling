@@ -33,12 +33,14 @@ def compute_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def atomic_write(path: Path, data: str) -> None:
+def atomic_write(path: Path, data: str | bytes) -> None:
     """Write ``data`` to ``path`` atomically via a temp file + ``os.replace``.
 
     A reader watching ``path`` never observes a partially written file: the
-    rename is atomic and the content flips in a single step. Parent directories
-    are created as needed, and no temp file is left behind on failure.
+    rename is atomic and the content flips in a single step. The rename
+    replaces whatever held the name, a symlink included, so the write never
+    goes through a link. Parent directories are created as needed, and no
+    temp file is left behind on failure. ``bytes`` are written unchanged.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(
@@ -48,7 +50,7 @@ def atomic_write(path: Path, data: str) -> None:
     )
     tmp_path = Path(tmp)
     try:
-        with os.fdopen(fd, "w") as handle:
+        with os.fdopen(fd, "wb" if isinstance(data, bytes) else "w") as handle:
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())

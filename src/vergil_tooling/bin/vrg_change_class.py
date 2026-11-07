@@ -4,8 +4,9 @@
 changed since its merge base with *base* (``git diff --name-status -M
 <base>...<head>``) and classifies them against the documentation allow-list:
 the built-in paths (``README.md``, ``CHANGELOG.md``) and the repository's own
-``[merge-review]`` ``docs-paths`` from ``vergil.toml``. It prints
-``docs-only`` or ``code`` on stdout and exits 0.
+``[merge-review]`` ``docs-paths`` from ``vergil.toml`` as committed at the
+merge base (never the working tree's copy). It prints ``docs-only`` or
+``code`` on stdout and exits 0.
 
 The change is ``docs-only`` only when every changed file is an addition or
 an edit of an allow-listed path; any deletion, rename or type change, any
@@ -17,7 +18,8 @@ through the request builder, which calls the same classifier. It reads the
 repository and writes nothing.
 
 Exit codes: ``0`` the class was printed, ``1`` an error (an unknown ref, no
-merge base, an invalid ``vergil.toml``), ``2`` a usage error.
+merge base, a merge base with no ``vergil.toml`` or an invalid one), ``2``
+a usage error.
 """
 
 from __future__ import annotations
@@ -26,10 +28,9 @@ import argparse
 import subprocess
 import sys
 
-from vergil_tooling.lib import git
 from vergil_tooling.lib.cli import cli_main
-from vergil_tooling.lib.config import ConfigError, read_config
-from vergil_tooling.lib.merge_review.change_class import allow_list, classify
+from vergil_tooling.lib.config import ConfigError
+from vergil_tooling.lib.merge_review.change_class import classify_branch
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -39,16 +40,14 @@ EXIT_ERROR = 1
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
-        repo_root = git.repo_root()
-        docs_paths = allow_list(read_config(repo_root).merge_review.docs_paths)
-        changes = git.diff_name_status(args.base, args.head)
+        _base_sha, change_class = classify_branch(args.base, args.head)
     except subprocess.CalledProcessError as exc:
         print(f"ERROR: git failed (exit {exc.returncode}): {' '.join(exc.cmd)}", file=sys.stderr)
         return EXIT_ERROR
     except (ConfigError, FileNotFoundError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return EXIT_ERROR
-    print(classify(changes, docs_paths))
+    print(change_class)
     return EXIT_OK
 
 

@@ -9,7 +9,10 @@ for every schema and rule here. The modules:
 - :mod:`.result` parses a reviewer's reply and runs the result check on it,
   against the request it answers (``vrg-merge-review-check``);
 - :mod:`.change_class` classifies a change as ``docs-only`` or ``code`` from
-  its changed files (``vrg-change-class``).
+  its changed files (``vrg-change-class``);
+- :mod:`.state` checks the private directory every file of a run lives in;
+- :mod:`.request` holds the request builder's rules and builds the request
+  (``vrg-merge-review-request``).
 """
 
 from __future__ import annotations

@@ -45,6 +45,23 @@ def test_atomic_write_overwrites_existing(tmp_path: Path) -> None:
     assert target.read_text() == "new"
 
 
+def test_atomic_write_bytes_unchanged(tmp_path: Path) -> None:
+    target = tmp_path / "x.patch"
+    await_file.atomic_write(target, b"\xff\r\n")
+    assert target.read_bytes() == b"\xff\r\n"
+
+
+def test_atomic_write_replaces_a_symlink_not_its_target(tmp_path: Path) -> None:
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.write_text("keep")
+    target = tmp_path / "x.yml"
+    target.symlink_to(elsewhere)
+    await_file.atomic_write(target, "new")
+    assert not target.is_symlink()
+    assert target.read_text() == "new"
+    assert elsewhere.read_text() == "keep"
+
+
 def test_atomic_write_cleans_up_temp_on_failure(tmp_path: Path) -> None:
     target = tmp_path / "x.yml"
     with (

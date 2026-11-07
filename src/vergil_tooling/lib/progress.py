@@ -517,12 +517,17 @@ def run_pipeline(
     args: argparse.Namespace,
     repo_root: Path,
     success_label: Callable[[], str | None] | None = None,
+    results_sink: list[StageResult] | None = None,
 ) -> int:
     """Run *stages* in order with progress rendering and full logging.
 
     *success_label* is called once, after the stages finish, to supply the
     clean-completion label from state a stage produced (e.g. the version
     vrg-release cut). Returning ``None`` keeps the plain *label*.
+
+    *results_sink*, when given, is extended with every stage's
+    :class:`StageResult`, in order, once the stages finish, however they
+    finish (vrg-validate records them for merge-review).
 
     Returns 0 on success, 1 if any fail_defer/fail_fast stage failed,
     130 on KeyboardInterrupt.
@@ -598,6 +603,8 @@ def run_pipeline(
                 results.append(result)
     finally:
         _session = None
+        if results_sink is not None:
+            results_sink.extend(results)
         text = build_summary(
             label,
             results,

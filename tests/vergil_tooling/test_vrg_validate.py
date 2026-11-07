@@ -44,9 +44,12 @@ def _container_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     # GITHUB_ACTIONS=true), and no full run may probe the real test environment.
     for name in ("VRG_TEST_WORKERS", "VRG_TEST_CONTEXT", "GITHUB_ACTIONS"):
         monkeypatch.delenv(name, raising=False)
+    # A run records the commit and tree it judged; the tests' repos are not git.
     with (
         patch(_MOD + "._in_dev_container", return_value=True),
         patch(_MOD + "._probe_xdist", return_value=False),
+        patch(_MOD + ".git.commit_sha", return_value="0" * 40),
+        patch(_MOD + ".git.working_tree_status", return_value=""),
     ):
         yield
 
