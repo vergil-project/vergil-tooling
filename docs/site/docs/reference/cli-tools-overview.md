@@ -914,7 +914,8 @@ one file. Markdown is not documentation by its extension: list only paths
 that hold nothing that controls behaviour. The command is for humans and
 debugging; the merge-review skill gets the class through the request
 builder, which runs the same classifier. It reads the repository and writes
-nothing.
+nothing. See the [Merge Review guide](../guides/merge-review.md) for how the
+class and the three merge-review commands fit together.
 
 | Attribute | Value |
 |---|---|

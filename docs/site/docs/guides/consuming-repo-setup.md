@@ -206,8 +206,10 @@ tables have their own references:
 [`[container]`](../reference/container-config.md),
 [`[test]`](../reference/test-config.md),
 [`[package]`](../reference/package-config.md),
-[`[dependency-update]`](../reference/dependency-update-config.md) and
-[`[vm]`](../reference/vm-spec.md).
+[`[dependency-update]`](../reference/dependency-update-config.md),
+[`[vm]`](../reference/vm-spec.md) and
+[`[merge-review]`](merge-review.md#change-classes-and-the-docs-allow-list)
+(the paths a merge review treats as documentation).
 
 `vrg-validate` validates `vergil.toml` (required keys and enum
 values) and the `README.md` structure with its repo-profile check,
