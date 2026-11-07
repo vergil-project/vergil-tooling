@@ -17268,6 +17268,9 @@ schemas and the result check. In short:</p>
 <h3 id="the-request-builders-refusals">The request builder's refusals<a class="headerlink" href="#the-request-builders-refusals" title="Permanent link">&para;</a></h3>
 <p><code>vrg-merge-review-request</code> refuses, naming the reason, unless:</p>
 <ul>
+<li>the current clone's <code>origin</code> is the repository <code>--issue</code> names (checked
+  first, in either mode, before anything is created or written; the refusal
+  names both repositories),</li>
 <li>the worktree is clean, and</li>
 <li>the last <code>vrg-validate</code> was a <strong>full</strong> run (no <code>--check</code>) that started on a
   clean tree at <code>HEAD</code>, exited 0 and passed every stage.</li>
