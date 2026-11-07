@@ -972,7 +972,10 @@ into the task's private directory,
 and prints the request's path. It writes `request-<step>.json`,
 `diff-<step>.patch` (`git diff <base_sha> <head_sha>`, where `base_sha` is
 the merge base of `--base` and `HEAD`) and, for a check,
-`fix-<step>.patch` (`git diff <fix_base_sha> <head_sha>`). It refuses,
+`fix-<step>.patch` (`git diff <fix_base_sha> <head_sha>`). Before it reads
+or writes anything, with or without `--ensure-dir`, it refuses unless the
+current clone's `origin` is the `--issue` repository (every push URL names
+it on github.com), naming both repositories. It refuses,
 naming the reason, unless the worktree is clean and the last `vrg-validate`
 run (its record, `.vergil/vrg-validate-last.json`) was a full run that
 started clean at `HEAD`, exited 0 and passed every stage; the passed stages

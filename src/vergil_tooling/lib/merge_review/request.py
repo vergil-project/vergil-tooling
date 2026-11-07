@@ -23,6 +23,7 @@ from vergil_tooling.lib.merge_review.result import ResultError, parse_result
 from vergil_tooling.lib.merge_review.schema import REQUEST_SCHEMA, earlier_steps
 from vergil_tooling.lib.rulings import RulingError
 from vergil_tooling.lib.rulings.comments import fetch_comments
+from vergil_tooling.lib.rulings.draft_ref import require_remote_is
 from vergil_tooling.lib.rulings.identity import human_login
 from vergil_tooling.lib.trusted_authors import (
     TrustedAuthorsNotConfiguredError,
@@ -83,6 +84,23 @@ def parse_task_issue(ref: str) -> IssueRef:
     if issue.number < 1:
         refuse(f"--issue must name an issue number of 1 or more, not {ref!r}")
     return issue
+
+
+def check_clone_is_issue_repo(issue: IssueRef) -> None:
+    """Refuse unless the current clone's ``origin`` is *issue*'s repository.
+
+    The private directory is resolved from the current directory's main
+    clone, so a run from a clone of another repository would write there,
+    where a resumed run never looks. The check is
+    :func:`vergil_tooling.lib.rulings.draft_ref.require_remote_is`, the one
+    ``vrg-ruling draft`` makes: every push URL of ``origin`` must name the
+    issue's repository on github.com. The refusal names both repositories
+    and never a URL.
+    """
+    try:
+        require_remote_is(f"{issue.owner}/{issue.repo}", command="vrg-merge-review-request")
+    except RulingError as exc:
+        refuse(str(exc))
 
 
 def check_validated(record: ValidateRecord, head: str, *, worktree_clean: bool) -> None:

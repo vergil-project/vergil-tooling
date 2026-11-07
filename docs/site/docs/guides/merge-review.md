@@ -118,6 +118,9 @@ schemas and the result check. In short:
 
 `vrg-merge-review-request` refuses, naming the reason, unless:
 
+- the current clone's `origin` is the repository `--issue` names (checked
+  first, in either mode, before anything is created or written; the refusal
+  names both repositories),
 - the worktree is clean, and
 - the last `vrg-validate` was a **full** run (no `--check`) that started on a
   clean tree at `HEAD`, exited 0 and passed every stage.

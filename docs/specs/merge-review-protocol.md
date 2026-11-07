@@ -112,6 +112,11 @@ symlink) and mode 700, and the caller refuses otherwise.
 `vrg-merge-review-request --issue <owner/name#N> --ensure-dir` makes these
 checks and prints the directory; the caller runs it before every write it
 makes there and writes only to the path it prints.
+The directory is resolved from the current directory's main clone, so
+`vrg-merge-review-request`, in either mode, first refuses unless that
+clone's `origin` is the repository `--issue` names (every push URL of
+`origin` names it on github.com), before it creates or writes anything.
+The refusal names both repositories.
 
 | File | Written by | Holds |
 |---|---|---|

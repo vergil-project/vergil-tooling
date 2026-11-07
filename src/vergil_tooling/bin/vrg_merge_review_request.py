@@ -10,6 +10,10 @@ private directory, ``build/.vergil-state/issue-implement/<N>/merge-review/``
 in the main clone, and prints the request's path. See
 ``docs/specs/merge-review-protocol.md``.
 
+Before it reads or writes anything, in either mode, it refuses unless the
+current clone's ``origin`` is the ``--issue`` repository (every push URL
+names it on github.com); the refusal names both repositories.
+
 It refuses, naming the reason, unless the worktree is clean and the last
 ``vrg-validate`` run (``.vergil/vrg-validate-last.json``) was a full run
 that started clean at ``HEAD``, exited 0 and passed every stage. The base
@@ -78,6 +82,7 @@ def main(argv: list[str] | None = None) -> int:
     _check_usage(parser, args)
     try:
         issue = req.parse_task_issue(args.issue)
+        req.check_clone_is_issue_repo(issue)
         if args.ensure_dir:
             print(ensure_private_dir(git.main_worktree_root(), issue.number))
             return EXIT_OK
