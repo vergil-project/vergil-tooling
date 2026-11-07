@@ -38,7 +38,7 @@ from vergil_tooling.lib import git, github
 from vergil_tooling.lib.process_errors import error_text
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
 
 REFRESH_BRANCH = "upstream-refresh"
 REPORT_ENV = "VRG_UPSTREAM_REPORT"
@@ -119,7 +119,7 @@ def ensure_clean_on_base(repo_root: Path, base: str) -> str:
 
 
 @contextmanager
-def scratch_worktree(repo_root: Path, base_sha: str, path: Path) -> Iterator[Path]:
+def scratch_worktree(repo_root: Path, base_sha: str, path: Path) -> Generator[Path]:
     """A linked worktree of *repo_root* at *path*, detached at *base_sha*; removed on exit.
 
     The hook runs and the commit is built here, so the user's checkout is never
