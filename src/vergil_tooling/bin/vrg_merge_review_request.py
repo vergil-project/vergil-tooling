@@ -2,9 +2,10 @@
 
 ``vrg-merge-review-request --issue <owner/name#N> --base <ref> --step
 review|check|check-<k> --issue-body-file <path> --epic-tasks-file <path>
-[--issue-comments-file <path>] [--design-source <path>]... [--fix-base <sha> --earlier-result <path>...
---fix-id <ID>... [--ruled-id <ID>]...]`` writes ``request-<step>.json``,
-``diff-<step>.patch`` and, for a check, ``fix-<step>.patch`` into the task's
+[--issue-comments-file <path>] [--design-source <path>]...
+[--fix-base <sha> --earlier-result <path>... --fix-id <ID>... [--ruled-id <ID>]...]``
+writes ``request-<step>.json``, ``diff-<step>.patch`` and, for a check,
+``fix-<step>.patch`` into the task's
 private directory, ``build/.vergil-state/issue-implement/<N>/merge-review/``
 in the main clone, and prints the request's path. See
 ``docs/specs/merge-review-protocol.md``.
