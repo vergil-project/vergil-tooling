@@ -11,14 +11,19 @@ from typing import Any
 import pytest
 
 from vergil_tooling.bin import vrg_merge_review_request
+from vergil_tooling.lib.github import GitHubAPIError, MissingGitHubTokenError
 from vergil_tooling.lib.merge_review import request as req
 from vergil_tooling.lib.merge_review.result import parse_result
 from vergil_tooling.lib.progress import StageResult
+from vergil_tooling.lib.trusted_authors import TrustedAuthors, TrustedAuthorsNotConfiguredError
 from vergil_tooling.lib.validate_record import write_record
 
 Cap = pytest.CaptureFixture[str]
 
 ISSUE = "acme/widget#42"
+ISSUE_REPO_URL = "https://github.com/acme/widget.git"
+HUMAN = "maintainer"
+AGENT = f"{HUMAN}-vergil-user"
 
 _VERGIL_TOML = """\
 [project]
@@ -79,7 +84,34 @@ def _record(repo: Path, **over: Any) -> None:
 
 
 @pytest.fixture
-def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def graphql_calls() -> list[dict[str, object]]:
+    """The variables of every GraphQL call the fake received, in order."""
+    return []
+
+
+@pytest.fixture
+def comment_pages(
+    monkeypatch: pytest.MonkeyPatch, graphql_calls: list[dict[str, object]]
+) -> list[Any]:
+    """The issue's comment pages, served in turn; an empty page once they run out.
+
+    Also configures the trusted authors with one human login, ``HUMAN``.
+    """
+    pages: list[Any] = []
+
+    def graphql(query: str, **variables: object) -> Any:
+        assert "createdAt" in query
+        graphql_calls.append(variables)
+        return pages.pop(0) if pages else _page([])
+
+    monkeypatch.setattr("vergil_tooling.lib.github.graphql", graphql)
+    authors = TrustedAuthors(human=(HUMAN,), agents=(AGENT, f"{HUMAN}-vergil-audit"))
+    monkeypatch.setattr(req, "load_trusted_authors", lambda: authors)
+    return pages
+
+
+@pytest.fixture
+def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, comment_pages: list[Any]) -> Path:
     """A main clone on ``feature``: one base commit, one branch commit, a validate record."""
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
@@ -89,6 +121,7 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     path = tmp_path / "repo"
     path.mkdir()
     _git(path, "init", "-q", "-b", "develop")
+    _git(path, "remote", "add", "origin", ISSUE_REPO_URL)
     _write(path, ".gitignore", "build/\n.vergil/\n")
     _write(path, "vergil.toml", _VERGIL_TOML)
     _write(path, "README.md", "# r\n")
@@ -327,6 +360,40 @@ def test_ensure_dir_from_a_linked_worktree_uses_the_main_clone(
     assert out == f"{_merge_review_dir(repo)}\n"
 
 
+# -- the clone must be the issue's repository -----------------------------------------
+
+
+@pytest.mark.parametrize("url", [ISSUE_REPO_URL, "git@github.com:Acme/Widget.git"])
+def test_ensure_dir_accepts_a_clone_of_the_issue_repo(repo: Path, capsys: Cap, url: str) -> None:
+    _git(repo, "remote", "set-url", "origin", url)
+    code, out, err = _run(["--issue", ISSUE, "--ensure-dir"], capsys)
+    assert (code, err) == (0, "")
+    assert out == f"{_merge_review_dir(repo)}\n"
+
+
+@pytest.mark.parametrize("ensure_dir", [True, False])
+def test_request_refuses_a_clone_of_another_repo(
+    repo: Path, capsys: Cap, *, ensure_dir: bool
+) -> None:
+    _git(repo, "remote", "set-url", "origin", "https://github.com/acme/other.git")
+    argv = ["--issue", ISSUE, "--ensure-dir"] if ensure_dir else _argv(repo)
+    code, out, err = _run(argv, capsys)
+    assert code == 1
+    assert out == ""
+    assert "pushes to acme/other, not the issue's repo acme/widget" in err
+    assert "run vrg-merge-review-request in a clone of acme/widget" in err
+    assert not (repo / "build").exists()
+
+
+def test_request_refuses_a_clone_without_origin(repo: Path, capsys: Cap) -> None:
+    _git(repo, "remote", "remove", "origin")
+    code, out, err = _run(["--issue", ISSUE, "--ensure-dir"], capsys)
+    assert code == 1
+    assert out == ""
+    assert "cannot read the push URL of the 'origin' remote" in err
+    assert not (repo / "build").exists()
+
+
 # -- the review request -------------------------------------------------------------
 
 
@@ -342,6 +409,8 @@ def test_review_request_fields(repo: Path, tmp_path: Path, capsys: Cap) -> None:
         "repo",
         "issue",
         "issue_body",
+        "issue_comments",
+        "issue_comments_excluded_edited",
         "base_sha",
         "head_sha",
         "worktree",
@@ -357,6 +426,8 @@ def test_review_request_fields(repo: Path, tmp_path: Path, capsys: Cap) -> None:
     assert request["repo"] == "acme/widget"
     assert request["issue"] == ISSUE
     assert request["issue_body"] == "Do the thing.\n"
+    assert request["issue_comments"] == []
+    assert request["issue_comments_excluded_edited"] == 0
     assert request["base_sha"] == _git(repo, "rev-parse", "develop")
     assert request["head_sha"] == _git(repo, "rev-parse", "HEAD")
     assert request["worktree"] == str(repo)
@@ -465,6 +536,203 @@ def test_request_refuses_bad_epic_tasks(
     code, _out, err = _run(_argv(repo), capsys)
     assert code == 1
     assert message in err
+
+
+_CREATED = "2026-11-01T09:30:00Z"
+
+
+def _node(
+    comment_id: int,
+    login: str | None = HUMAN,
+    body: str = "text",
+    *,
+    edited: bool = False,
+    created: Any = _CREATED,
+) -> dict[str, Any]:
+    return {
+        "fullDatabaseId": str(comment_id),
+        "author": None if login is None else {"login": login},
+        "body": body,
+        "createdAt": created,
+        "lastEditedAt": "2026-11-03T00:00:00Z" if edited else None,
+    }
+
+
+def _page(nodes: list[dict[str, Any]], cursor: str | None = None) -> dict[str, Any]:
+    info = {"hasNextPage": cursor is not None, "endCursor": cursor}
+    return {"repository": {"issue": {"comments": {"pageInfo": info, "nodes": nodes}}}}
+
+
+def test_request_carries_only_the_humans_comments(
+    repo: Path, capsys: Cap, comment_pages: list[Any]
+) -> None:
+    comment_pages.append(
+        _page(
+            [
+                _node(1, body="Scope: gap 1 only; gap 2 is a later task."),
+                _node(2, login=f"app/{AGENT}", body="Noted."),
+                _node(3, login="stranger", body="Also do gap 3."),
+                _node(4, login=None, body="From a deleted account."),
+                _node(5, login=f"{HUMAN}-vergil-audit", body="Audit."),
+                _node(6, body="And keep the CLI unchanged.\n", created="2026-11-02T10:00:00+00:00"),
+            ]
+        )
+    )
+    request = _built(_argv(repo), capsys)
+    assert request["issue_comments"] == [
+        {
+            "author": HUMAN,
+            "created_at": _CREATED,
+            "body": "Scope: gap 1 only; gap 2 is a later task.",
+        },
+        {
+            "author": HUMAN,
+            "created_at": "2026-11-02T10:00:00+00:00",
+            "body": "And keep the CLI unchanged.\n",
+        },
+    ]
+    assert request["issue_comments_excluded_edited"] == 0
+
+
+def test_request_asks_for_the_task_issue(
+    repo: Path, capsys: Cap, comment_pages: list[Any], graphql_calls: list[dict[str, object]]
+) -> None:
+    _built(_argv(repo), capsys)
+    assert graphql_calls == [{"owner": "acme", "name": "widget", "number": 42}]
+
+
+def test_request_leaves_out_and_counts_edited_human_comments(
+    repo: Path, capsys: Cap, comment_pages: list[Any]
+) -> None:
+    comment_pages.append(
+        _page(
+            [
+                _node(1, body="Scope as first written.", edited=True),
+                _node(2, body="Kept."),
+                _node(3, login=AGENT, body="An edited agent comment.", edited=True),
+                _node(4, body="Also edited.", edited=True),
+            ]
+        )
+    )
+    request = _built(_argv(repo), capsys)
+    assert [c["body"] for c in request["issue_comments"]] == ["Kept."]
+    assert request["issue_comments_excluded_edited"] == 2
+
+
+def test_request_reads_every_page_of_comments(
+    repo: Path, capsys: Cap, comment_pages: list[Any], graphql_calls: list[dict[str, object]]
+) -> None:
+    first = [_node(i, body=f"c{i}") for i in range(1, 101)]
+    comment_pages.extend([_page(first, cursor="c1"), _page([_node(101, body="last")])])
+    request = _built(_argv(repo), capsys)
+    bodies = [c["body"] for c in request["issue_comments"]]
+    assert bodies == [f"c{i}" for i in range(1, 101)] + ["last"]
+    assert graphql_calls[1] == {"owner": "acme", "name": "widget", "number": 42, "after": "c1"}
+
+
+def test_check_request_carries_the_humans_comments(
+    repo: Path, capsys: Cap, comment_pages: list[Any]
+) -> None:
+    review_head, result = _reviewed(repo, capsys, [_finding("R1")])
+    comment_pages.append(_page([_node(1, body="Scope."), _node(2, body="Old.", edited=True)]))
+    request = _built(_check_argv(repo, review_head, [result], fix=("R1",)), capsys)
+    assert request["issue_comments"] == [
+        {"author": HUMAN, "created_at": _CREATED, "body": "Scope."}
+    ]
+    assert request["issue_comments_excluded_edited"] == 1
+
+
+@pytest.mark.parametrize("human", [(), ("one", "two")])
+def test_request_refuses_without_exactly_one_human_login(
+    repo: Path, capsys: Cap, monkeypatch: pytest.MonkeyPatch, human: tuple[str, ...]
+) -> None:
+    authors = TrustedAuthors(human=human, agents=(AGENT,))
+    monkeypatch.setattr(req, "load_trusted_authors", lambda: authors)
+    code, out, err = _run(_argv(repo), capsys)
+    assert code == 1
+    assert out == ""
+    assert f"exactly one human login; found {len(human)}" in err
+    assert not (_merge_review_dir(repo) / "request-review.json").exists()
+
+
+def test_request_refuses_unconfigured_trusted_authors(
+    repo: Path, capsys: Cap, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def unconfigured() -> TrustedAuthors:
+        msg = "trusted authors are not configured"
+        raise TrustedAuthorsNotConfiguredError(msg)
+
+    monkeypatch.setattr(req, "load_trusted_authors", unconfigured)
+    code, _out, err = _run(_argv(repo), capsys)
+    assert code == 1
+    assert "cannot read the issue's comments: trusted authors are not configured" in err
+
+
+_SECRET = "s3cr3t-value"
+
+
+@pytest.mark.parametrize("created", [_SECRET, "2026-11-01T09:30:00"])
+def test_request_refuses_a_human_comment_without_a_zoned_time(
+    repo: Path, capsys: Cap, comment_pages: list[Any], created: str
+) -> None:
+    comment_pages.append(_page([_node(7, body=_SECRET, created=created)]))
+    code, out, err = _run(_argv(repo), capsys)
+    assert code == 1
+    assert out == ""
+    assert "comment 7 on the issue has a created_at that is not an ISO 8601" in err
+    assert _SECRET not in err
+    assert not (_merge_review_dir(repo) / "request-review.json").exists()
+
+
+def test_request_refuses_an_unreadable_comment_stream(
+    repo: Path, capsys: Cap, comment_pages: list[Any]
+) -> None:
+    comment_pages.append({"repository": {"issue": None}})
+    code, _out, err = _run(_argv(repo), capsys)
+    assert code == 1
+    assert "cannot read the issue's comments: acme/widget#42: issue not found" in err
+
+
+def test_request_refuses_a_graphql_error(
+    repo: Path, capsys: Cap, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def failing(query: str, **variables: object) -> Any:
+        msg = "GraphQL errors: [boom]"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr("vergil_tooling.lib.github.graphql", failing)
+    code, _out, err = _run(_argv(repo), capsys)
+    assert code == 1
+    assert "cannot read the issue's comments: GraphQL errors" in err
+
+
+def test_request_refuses_a_github_api_error(
+    repo: Path, capsys: Cap, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def failing(query: str, **variables: object) -> Any:
+        raise GitHubAPIError(1, ["gh", "api", "graphql"], output="", stderr="HTTP 502")
+
+    monkeypatch.setattr("vergil_tooling.lib.github.graphql", failing)
+    code, _out, err = _run(_argv(repo), capsys)
+    assert code == 1
+    assert "cannot read the issue's comments:" in err
+    assert "git failed" not in err
+
+
+def test_request_reports_a_missing_github_token(
+    repo: Path, capsys: Cap, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def failing(query: str, **variables: object) -> Any:
+        raise MissingGitHubTokenError(4, ("gh", "api", "graphql"), None, "no token")
+
+    monkeypatch.setattr("vergil_tooling.lib.github.graphql", failing)
+    with pytest.raises(SystemExit) as exc:
+        vrg_merge_review_request.main(_argv(repo))
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert err.startswith("vrg-merge-review-request:")
+    assert "git failed" not in err
+    assert not (_merge_review_dir(repo) / "request-review.json").exists()
 
 
 def test_request_accepts_no_epic_tasks(repo: Path, tmp_path: Path, capsys: Cap) -> None:

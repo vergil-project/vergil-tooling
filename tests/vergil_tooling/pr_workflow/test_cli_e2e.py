@@ -1138,3 +1138,42 @@ def test_report_ready_warns_for_human(
     assert _run_report_ready() == 0
     assert local_settings.WARNING_TEMPLATE.format(path=path) in capsys.readouterr().err.splitlines()
     assert (in_git_repo / ".vergil" / "pr-workflow.json").exists()
+
+
+# -- a branch with no commits ahead of its base is refused (#3870) -------------
+
+
+def test_report_ready_refuses_branch_with_no_commits_ahead(
+    in_git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A branch with nothing to merge (e.g. a vrg-commit that failed unnoticed)
+    # must not be recorded ready and frozen: refused before any push or write.
+    _git(in_git_repo, "checkout", "-b", "feature/42-empty", "develop")
+    capsys.readouterr()
+
+    with patch("vergil_tooling.bin.vrg_pr_workflow.GitHubTransport") as mock_transport:
+        rc = _run_report_ready()
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    assert "feature/42-empty has no commits ahead of develop" in captured.err
+    assert "nothing was recorded" in captured.err
+    assert not (in_git_repo / ".vergil" / "pr-workflow.json").exists()
+    assert _rev(_origin(in_git_repo), "refs/heads/feature/42-empty") == ""
+    mock_transport.assert_not_called()
+
+
+def test_report_ready_allows_branch_with_commits_ahead(
+    in_git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The fixture branch carries one commit ahead of develop: unaffected.
+    head = _rev(in_git_repo, "HEAD")
+
+    assert _run_report_ready() == 0
+
+    assert json.loads(capsys.readouterr().out) == {"ok": True, "status": "ready"}
+    state = json.loads((in_git_repo / ".vergil" / "pr-workflow.json").read_text())
+    assert state["status"] == "ready"
+    assert state["git"]["head_sha"] == head
+    assert _rev(_origin(in_git_repo), "refs/heads/feature/42-x") == head

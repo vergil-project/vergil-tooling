@@ -59,6 +59,24 @@ def test_gather_populates_timestamps() -> None:
     assert status.last_modified_ts == 1_699_999_999.0
 
 
+def test_gather_no_commits_ahead_shows_no_last_commit() -> None:
+    """A branch with no commits beyond its base (AHEAD 0) has no LAST COMMIT
+    of its own: HEAD is the base commit, so its age is not shown (#3828)."""
+    wt = Worktree(path=Path("/repo/.worktrees/issue-7-foo"), branch="feature/7-foo")
+    with (
+        patch(_MOD + ".git.read_output", return_value=""),
+        patch(_MOD + ".git.commits_ahead", return_value=0),
+        patch(_MOD + ".github.pr_for_branch", return_value=None),
+        patch(_MOD + ".github.closed_pr_for_branch", return_value=None),
+        patch(_MOD + ".git.committer_timestamp", return_value=1_699_900_000),
+        patch(_MOD + "._newest_mtime", return_value=1_699_999_999.0),
+    ):
+        status = gather_worktree_status(wt, target="develop", with_freshness=True)
+    assert status.ahead == 0
+    assert status.last_commit_ts is None
+    assert status.last_modified_ts == 1_699_999_999.0
+
+
 def test_gather_without_freshness_leaves_timestamps_none() -> None:
     wt = Worktree(path=Path("/repo/.worktrees/issue-7-foo"), branch="feature/7-foo")
     with (
@@ -208,6 +226,30 @@ def test_gather_detached_status_falls_back_to_dir_name(tmp_path: Path) -> None:
     assert status.dirty is True
     assert status.detail is not None
     assert "detached HEAD" in status.detail
+
+
+def test_gather_detached_status_last_commit_follows_ahead(tmp_path: Path) -> None:
+    """A detached worktree's LAST COMMIT follows the same AHEAD count: shown
+    when it is ahead of the target, '-' (None) at a measured AHEAD 0, and
+    still shown when there is no branch ref to measure against (#3828)."""
+    git_dir = tmp_path / "gitdir"
+    git_dir.mkdir()
+    raw = RawWorktree(path=Path("/repo/.worktrees/issue-42-widget"), branch=None)
+    cases = ((True, 2, 1_699_900_000), (True, 0, None), (False, 0, 1_699_900_000))
+    for ref_exists, ahead, expected in cases:
+        with (
+            patch(_MOD + ".git.worktree_git_dir", return_value=git_dir),
+            patch(_MOD + ".git.read_output", return_value=""),
+            patch(_MOD + ".git.ref_exists", return_value=ref_exists),
+            patch(_MOD + ".git.commits_ahead", return_value=ahead),
+            patch(_MOD + "._probe_pr_workflow", return_value=(None, None, False)),
+            patch(_MOD + ".git.committer_timestamp", return_value=1_699_900_000),
+            patch(_MOD + "._newest_mtime", return_value=1_699_999_999.0),
+        ):
+            status = gather_detached_status(raw, target="develop", with_freshness=True)
+        assert status.ahead == ahead
+        assert status.last_commit_ts == expected
+        assert status.last_modified_ts == 1_699_999_999.0
 
 
 def test_worktree_for_branch_found() -> None:

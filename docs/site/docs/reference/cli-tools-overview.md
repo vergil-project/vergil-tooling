@@ -154,7 +154,9 @@ so no separate push is needed; a branch already on origin at that commit is a
 no-op push. When the delta touches `.github/workflows/**` GitHub refuses the
 agent push: `report-ready` reports that as expected, records the state anyway,
 and the human's `vrg-submit-pr` pushes the branch. Any other push failure
-fails `report-ready` with no local state and no relay ref written. A re-run on
+fails `report-ready` with no local state and no relay ref written. A branch
+with no commits ahead of `--base` is refused before any push, with nothing
+recorded and no freeze (#3870). A re-run on
 a frozen branch whose HEAD has drifted past the reported commit is refused
 before any push. After a deliberate `unfreeze`, a re-run pushes with
 `--force-with-lease=refs/heads/<branch>:<recorded head_sha>`, so a rebased
@@ -374,10 +376,11 @@ the [dependency-update reference](dependency-update-config.md).
 
 ### vrg-upstream-refresh
 
-Run the repo's `[upstream-refresh].hook` on a clean checkout of the
-base branch, then open, refresh or close the single `upstream-refresh`
-PR. A no-change run closes any stale refresh PR, or exits quietly when
-there is none. It never merges, and never runs dependency updaters,
+Run the repo's `[upstream-refresh].hook` in a temporary worktree of
+the base branch, then open, refresh or close the single
+`upstream-refresh` PR. The checkout it runs from must be clean and on
+the base, and it is left exactly as found. A no-change run closes any
+stale refresh PR, or exits quietly when there is none. It never merges, and never runs dependency updaters,
 validation or a release. It runs from the scheduled
 `ops-upstream-refresh` workflow under the App token, or by hand as a
 human; it refuses agent identities. See the
@@ -812,7 +815,11 @@ whose `origin` is the issue's repo, refuses once the request has a reply,
 and posts nothing. `respond` re-runs `read`'s checks and posts the
 response, which records the request and reply comment IDs; a re-run that
 finds its own response already landed reports it and posts nothing. Either
-way `respond` then deletes any leftover draft ref. A security item carries
+way `respond` then deletes any leftover draft ref. `draft-scope` pushes a
+scope change drafted for the human, the text alone, to
+`refs/vergil/scope-draft/<issue>` and prints the human's `vrg-scope-change`
+command; like `draft`, it runs only in a clone whose `origin` is the
+issue's repo and posts nothing. A security item carries
 only its ID: the fixed text `security finding, details given privately` in
 a request, a decision
 (`fix`, `file`, `defer` or `wont-fix`) in a draft, and an outcome
@@ -824,8 +831,8 @@ printable ASCII plus newline. See the
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_ruling` (library: `lib/rulings/`) |
-| Args | `request --issue 'OWNER/REPO#N' --items FILE`; `read --issue 'OWNER/REPO#N' --request ID [--json]`; `draft --issue 'OWNER/REPO#N' --request ID --items FILE`; `respond --issue 'OWNER/REPO#N' --request ID --reply ID --items FILE` |
-| Preconditions | The `user` identity mode; trusted authors list exactly one human login, and `<human>-vergil-user` is on the `agents` list; for `draft`, a clone whose `origin` is the issue's repo |
+| Args | `request --issue 'OWNER/REPO#N' --items FILE`; `read --issue 'OWNER/REPO#N' --request ID [--json]`; `draft --issue 'OWNER/REPO#N' --request ID --items FILE`; `respond --issue 'OWNER/REPO#N' --request ID --reply ID --items FILE`; `draft-scope --issue 'OWNER/REPO#N' --text-file FILE` |
+| Preconditions | The `user` identity mode; trusted authors list exactly one human login, and `<human>-vergil-user` is on the `agents` list; for `draft` and `draft-scope`, a clone whose `origin` is the issue's repo |
 | Failure mode | A refusal or error prints the reason on stderr and exits 1; a fatal turn check names the check and the comment and exits 4. A failed post is never retried: the issue is re-read, and the tool reports the landed comment, says it did not land, or says it cannot tell |
 | Exit codes | 0 success (or a valid reply), 1 refused or error, 2 bad arguments, 3 no reply yet, 4 fatal check |
 | Status | Active |
@@ -857,6 +864,37 @@ See the [vrg-ruling-reply reference](dev/ruling-reply.md) and the
 | Preconditions | The human's own shell (not an agent identity), an interactive terminal, `gh` logged in as the human login; trusted authors list exactly one human login, and `<human>-vergil-user` is on the `agents` list |
 | Failure mode | A refusal, a declined prompt or an error prints the reason on stderr and exits 1, posting nothing; a fatal turn check names the check and the comment and exits 4. A failed post is never retried: the issue is re-read, and the tool reports the landed comment, says it did not land, or says it cannot tell |
 | Exit codes | 0 posted, 1 refused, declined or error, 2 bad arguments, 4 fatal check |
+| Status | Active |
+
+### vrg-scope-change
+
+Posts a scope change on a task issue (an addition to the task's scope, a
+narrowing of it, or a ruling on an item awaiting one) as the human, so merge
+review can count it as the human's. It is a human-only command, run in the
+human's own shell on the host, like `vrg-ruling-reply`, and refuses in an
+agent identity mode, without an interactive terminal, and unless `gh api
+user` reports the one human login of the trusted-authors configuration. It
+refuses while the issue has an open ruling exchange. It reads the text once,
+from the agent's draft (`refs/vergil/scope-draft/<issue>`, pushed by
+`vrg-ruling draft-scope`) or from `--text`, refuses anything but printable
+ASCII plus newline, and renders the comment as the header line
+`Scope change`, a blank line and the text. That header is how a scope
+change is recognised, together with the human login as its author. If the
+human has already posted exactly that comment, it prints its ID and posts
+nothing. Otherwise it prints the comment with its byte length and SHA-256,
+and on confirmation re-reads the issue, refuses if its trusted comments
+changed while the prompt waited, posts exactly the bytes it showed, once,
+prints the comment ID and deletes the draft ref. See the
+[vrg-scope-change reference](dev/scope-change.md) and the
+[Human Replies guide](../guides/human-replies.md#scope-changes).
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_scope_change` (library: `lib/rulings/`) |
+| Args | `--issue 'OWNER/REPO#N' [--text TEXT]` |
+| Preconditions | The human's own shell (not an agent identity), an interactive terminal, `gh` logged in as the human login; trusted authors list exactly one human login, and `<human>-vergil-user` is on the `agents` list; no open ruling exchange on the issue |
+| Failure mode | A refusal, a declined prompt or an error prints the reason on stderr and exits 1, posting nothing. A failed post is never retried: the issue is re-read, and the tool reports the landed comment, says it did not land, or says it cannot tell; a re-run finds a landed comment and posts nothing |
+| Exit codes | 0 posted or already posted, 1 refused, declined or error, 2 bad arguments |
 | Status | Active |
 
 ### vrg-merge-review-check
@@ -912,7 +950,8 @@ one file. Markdown is not documentation by its extension: list only paths
 that hold nothing that controls behaviour. The command is for humans and
 debugging; the merge-review skill gets the class through the request
 builder, which runs the same classifier. It reads the repository and writes
-nothing.
+nothing. See the [Merge Review guide](../guides/merge-review.md) for how the
+class and the three merge-review commands fit together.
 
 | Attribute | Value |
 |---|---|
@@ -933,13 +972,27 @@ into the task's private directory,
 and prints the request's path. It writes `request-<step>.json`,
 `diff-<step>.patch` (`git diff <base_sha> <head_sha>`, where `base_sha` is
 the merge base of `--base` and `HEAD`) and, for a check,
-`fix-<step>.patch` (`git diff <fix_base_sha> <head_sha>`). It refuses,
+`fix-<step>.patch` (`git diff <fix_base_sha> <head_sha>`). Before it reads
+or writes anything, with or without `--ensure-dir`, it refuses unless the
+current clone's `origin` is the `--issue` repository (every push URL names
+it on github.com), naming both repositories. It refuses,
 naming the reason, unless the worktree is clean and the last `vrg-validate`
 run (its record, `.vergil/vrg-validate-last.json`) was a full run that
 started clean at `HEAD`, exited 0 and passed every stage; the passed stages
 become `validate_stages`. The change class is
 [`vrg-change-class`](#vrg-change-class)'s, with the allow-list committed at
 the merge base.
+
+It reads the comments of the `--issue` itself, every page, and keeps only
+those posted by the one human login of the trusted-authors configuration
+(see [`vrg-trusted-authors`](#vrg-trusted-authors)), oldest first, as
+`issue_comments`, each `{"author", "created_at", "body"}`. Agent and
+third-party comments are dropped. A human comment that has been edited is
+left out and counted in `issue_comments_excluded_edited`. It refuses when
+the configuration lists no human login or several, when the comments
+cannot be read, and when a kept comment's `created_at` is not an ISO 8601
+timestamp with a time zone, naming the comment by ID and never echoing a
+value.
 
 A check takes `--fix-base` (the `HEAD` the previous step judged, refused
 unless it is the `head_sha` of that step's stored request), one
@@ -959,9 +1012,9 @@ makes there, and writes only to the path it prints.
 
 | Attribute | Value |
 |---|---|
-| Source | `vergil_tooling.bin.vrg_merge_review_request` (library: `lib/merge_review/request.py`, `lib/merge_review/state.py`, `lib/build_dir.py`, `lib/validate_record.py`) |
+| Source | `vergil_tooling.bin.vrg_merge_review_request` (library: `lib/merge_review/request.py`, `lib/merge_review/state.py`, `lib/build_dir.py`, `lib/validate_record.py`, `lib/rulings/comments.py`, `lib/rulings/identity.py`) |
 | Args | `--issue OWNER/NAME#N --base REF --step {review,check,check-<k>} --issue-body-file FILE --epic-tasks-file FILE [--design-source FILE]... [--fix-base SHA --earlier-result FILE... --fix-id ID... [--ruled-id ID]...]`, or `--issue OWNER/NAME#N --ensure-dir` |
-| Preconditions | Run inside the task's worktree after `vrg-container-run -- vrg-validate` passed at `HEAD`; `--epic-tasks-file` holds a JSON list of `{"ref", "title"}` |
+| Preconditions | Run inside the task's worktree after `vrg-container-run -- vrg-validate` passed at `HEAD`; `--epic-tasks-file` holds a JSON list of `{"ref", "title"}`; trusted authors are configured with exactly one human login, and GitHub is reachable to read the issue's comments |
 | Failure mode | `ERROR: <reason>` on stderr, nothing on stdout |
 | Exit codes | 0 the path was printed, 1 a refusal or error, 2 bad arguments, 3 a check's `--fix-base` is not an ancestor of `HEAD` (the branch was rebased) |
 | Status | Active |
@@ -1079,6 +1132,14 @@ merged verdict was withheld, issue #1719) is counted under
 behind a "0 cruft" message (issue #2347). A merged release or deps
 worktree shows as `merged` in its own section but is not counted as
 `vrg-finalize-pr` cruft.
+
+LAST COMMIT is the age of the worktree's HEAD commit. In the worktree
+sections, a worktree whose branch has no commits beyond the target branch
+(AHEAD 0) shows `-` there instead: its HEAD is still the commit it was
+cut from, whose age says nothing about the work on it (issue #3828).
+LAST MODIFIED is still shown. A detached worktree whose branch cannot be
+recovered also shows AHEAD 0, because there is no branch to count, and
+keeps its LAST COMMIT.
 
 ```text
 Main checkout (integration branch: develop)

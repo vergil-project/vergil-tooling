@@ -10,7 +10,9 @@ The agent's side of an authenticated ruling on a task issue. It posts the
 **reply** with every turn check, and posts the **response**. Each comment is
 posted exactly once. For the protocol, the checks and recovery, see
 [Human Replies](../../guides/human-replies.md); the human's side is
-[`vrg-ruling-reply`](ruling-reply.md).
+[`vrg-ruling-reply`](ruling-reply.md). It also relays a scope change drafted
+for the human, which the human posts with
+[`vrg-scope-change`](scope-change.md).
 
 ## Usage
 
@@ -19,6 +21,7 @@ vrg-ruling request --issue 'OWNER/REPO#N' --items FILE
 vrg-ruling draft   --issue 'OWNER/REPO#N' --request ID --items FILE
 vrg-ruling read    --issue 'OWNER/REPO#N' --request ID [--json]
 vrg-ruling respond --issue 'OWNER/REPO#N' --request ID --reply ID --items FILE
+vrg-ruling draft-scope --issue 'OWNER/REPO#N' --text-file FILE
 ```
 
 `--issue` is the task issue as `owner/repo#N`. `--request` and `--reply` are
@@ -34,8 +37,8 @@ Every subcommand refuses (exit 1) unless:
   `agents` list.
 
 Every GitHub call is scoped to the issue's owner, whatever the clone's
-`origin` is. `draft` alone also needs a clone whose `origin` is the issue's
-repo.
+`origin` is. `draft` and `draft-scope` also need a clone whose `origin` is
+the issue's repo.
 
 ## Exit codes
 
@@ -135,6 +138,33 @@ Running it again replaces the draft.
 
 The ref is world-readable, so a draft holds only what the reply will make
 public anyway, with security items by ID and decision only.
+
+## draft-scope
+
+Pushes a scope change drafted for the human to the issue's scope draft ref,
+and prints the human's command on stdout:
+
+```text
+vrg-scope-change --issue 'OWNER/REPO#N'
+```
+
+`--text-file` holds the scope change's text alone, without the
+`Scope change` header that `vrg-scope-change` adds. It may run over several
+lines, and must be plain text (printable ASCII plus newline, with no marker
+prefix), not blank, and not start with the header.
+
+In order, it checks the text as `vrg-scope-change` will, refuses unless the
+clone's `origin` pushes to the issue's repo, and reads the issue, refusing
+when it is not found. Only then does it write the text as a single-file
+commit (`scope.md`) with git plumbing and force-push it to
+`refs/vergil/scope-draft/<issue>` on `origin`. It never touches a branch,
+the index or the working tree, and it posts no comment. Running it again
+replaces the draft; an issue has one scope draft at a time.
+
+It does not check the turn: `vrg-scope-change` refuses while a ruling
+exchange on the issue is open, when the human runs it. The ref is
+world-readable, so a draft holds only what the comment will make public
+anyway.
 
 ## read
 

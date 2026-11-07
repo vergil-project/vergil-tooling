@@ -90,6 +90,7 @@ nav:
           - vrg-security-record: reference/dev/security-record.md
           - vrg-ruling: reference/dev/ruling.md
           - vrg-ruling-reply: reference/dev/ruling-reply.md
+          - vrg-scope-change: reference/dev/scope-change.md
   - Standards:
       - Authoring:
           - Markdown Authoring: standards/markdown-authoring.md
@@ -162,6 +163,7 @@ nav:
       - Epic Home Visibility Flips: guides/epic-home-visibility-flip.md
       - Security Records: guides/security-records.md
       - Human Replies: guides/human-replies.md
+      - Merge Review: guides/merge-review.md
       - Consuming Repo Setup: guides/consuming-repo-setup.md
       - CI Architecture: guides/ci-architecture.md
       - CI Evidence Convention: guides/ci-evidence-convention.md

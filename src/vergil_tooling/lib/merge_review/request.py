@@ -13,18 +13,29 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn
 
+from vergil_tooling.lib import github
 from vergil_tooling.lib.epics import parse_issue_ref
 from vergil_tooling.lib.merge_review.result import ResultError, parse_result
 from vergil_tooling.lib.merge_review.schema import REQUEST_SCHEMA, earlier_steps
+from vergil_tooling.lib.rulings import RulingError
+from vergil_tooling.lib.rulings.comments import fetch_comments
+from vergil_tooling.lib.rulings.draft_ref import require_remote_is
+from vergil_tooling.lib.rulings.identity import human_login
+from vergil_tooling.lib.trusted_authors import (
+    TrustedAuthorsNotConfiguredError,
+    load_trusted_authors,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from vergil_tooling.lib.epics import IssueRef
     from vergil_tooling.lib.merge_review.result import Result
+    from vergil_tooling.lib.rulings.comments import IssueComment
     from vergil_tooling.lib.validate_record import ValidateRecord
 
 #: The exit code of a check whose fix base was rebased away (the skill's ``B1``).
@@ -75,6 +86,23 @@ def parse_task_issue(ref: str) -> IssueRef:
     return issue
 
 
+def check_clone_is_issue_repo(issue: IssueRef) -> None:
+    """Refuse unless the current clone's ``origin`` is *issue*'s repository.
+
+    The private directory is resolved from the current directory's main
+    clone, so a run from a clone of another repository would write there,
+    where a resumed run never looks. The check is
+    :func:`vergil_tooling.lib.rulings.draft_ref.require_remote_is`, the one
+    ``vrg-ruling draft`` makes: every push URL of ``origin`` must name the
+    issue's repository on github.com. The refusal names both repositories
+    and never a URL.
+    """
+    try:
+        require_remote_is(f"{issue.owner}/{issue.repo}", command="vrg-merge-review-request")
+    except RulingError as exc:
+        refuse(str(exc))
+
+
 def check_validated(record: ValidateRecord, head: str, *, worktree_clean: bool) -> None:
     """Refuse unless ``HEAD`` is committed and passed a full, clean vrg-validate run."""
     rerun = "run vrg-container-run -- vrg-validate on the committed branch"
@@ -122,6 +150,78 @@ def read_epic_tasks(path: Path) -> list[dict[str, str]]:
         except ValueError:
             refuse(f"the epic tasks file {path}: entry {position}'s ref must be owner/name#N")
     return data
+
+
+@dataclass(frozen=True)
+class HumanComments:
+    """The human's unedited comments on the issue, and how many edited ones were left out."""
+
+    comments: list[dict[str, str]]
+    excluded_edited: int
+
+
+def human_comments(comments: Sequence[IssueComment], human: str) -> HumanComments:
+    """The comments by *human*, oldest first, as ``{"author", "created_at", "body"}``.
+
+    Only a comment authenticated as the human login can amend the scope a
+    merge review judges against, so every other author (an agent, a third
+    party, a deleted account) is dropped. An edited human comment is left
+    out too, as ``vrg-ruling`` refuses an edited reply, and counted. A kept
+    comment whose ``created_at`` is not an ISO 8601 timestamp with a time
+    zone is refused by its comment ID, never echoing a value.
+    """
+    kept: list[dict[str, str]] = []
+    edited = 0
+    for comment in comments:
+        if comment.author != human:
+            continue
+        if comment.edited:
+            edited += 1
+            continue
+        if not _is_zoned_timestamp(comment.created_at):
+            refuse(
+                f"comment {comment.id} on the issue has a created_at that is not"
+                " an ISO 8601 timestamp with a time zone"
+            )
+        kept.append(
+            {"author": comment.author, "created_at": comment.created_at, "body": comment.body}
+        )
+    return HumanComments(comments=kept, excluded_edited=edited)
+
+
+def fetch_human_comments(issue: IssueRef) -> HumanComments:
+    """Read every page of *issue*'s comments and keep the human's unedited ones.
+
+    The human login comes from the trusted-authors configuration, which must
+    list exactly one; the comments come from
+    :func:`vergil_tooling.lib.rulings.comments.fetch_comments`, the reader
+    ``vrg-ruling`` uses. A configuration or read failure is a refusal, but
+    a missing GitHub token propagates to the CLI's auth-error boundary. An
+    invalid configuration's ``ValueError`` propagates too; the CLI reports it.
+    """
+    try:
+        human = human_login(load_trusted_authors())
+        with github.target_org(issue.owner):
+            fetched = fetch_comments(f"{issue.owner}/{issue.repo}", issue.number)
+    except github.MissingGitHubTokenError:
+        raise
+    except (
+        RulingError,
+        TrustedAuthorsNotConfiguredError,
+        github.GitHubAPIError,
+        RuntimeError,  # a GraphQL error response
+    ) as exc:
+        refuse(f"cannot read the issue's comments: {exc}")
+    return human_comments(fetched, human)
+
+
+def _is_zoned_timestamp(text: str) -> bool:
+    """Whether *text* is an ISO 8601 date and time that carries a time zone."""
+    try:
+        stamp = datetime.fromisoformat(text)
+    except ValueError:
+        return False
+    return stamp.tzinfo is not None
 
 
 def design_source_paths(paths: Sequence[str]) -> list[str]:
@@ -243,6 +343,7 @@ class RequestFields:
     step: str
     issue: IssueRef
     issue_body: str
+    issue_comments: HumanComments
     base_sha: str
     head_sha: str
     worktree: str
@@ -262,6 +363,8 @@ def build_request(fields: RequestFields, check: CheckFields | None) -> dict[str,
         "repo": f"{fields.issue.owner}/{fields.issue.repo}",
         "issue": fields.issue.slug,
         "issue_body": fields.issue_body,
+        "issue_comments": fields.issue_comments.comments,
+        "issue_comments_excluded_edited": fields.issue_comments.excluded_edited,
         "base_sha": fields.base_sha,
         "head_sha": fields.head_sha,
         "worktree": fields.worktree,

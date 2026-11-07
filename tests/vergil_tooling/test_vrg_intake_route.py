@@ -14,6 +14,7 @@ from vergil_tooling.lib.intake_route import (
     Defer,
     Drop,
     OneOff,
+    RouteHalfAppliedError,
     RouteRefusedError,
     RouteResult,
     Split,
@@ -178,6 +179,23 @@ def test_main_refusal_exits_1(capsys: pytest.CaptureFixture[str]) -> None:
         rc = main(["org/.github#352", "drop", "--reason", "x"])
     assert rc == 1
     assert capsys.readouterr().err == "vrg-intake-route: org/.github#352 has no parent\n"
+
+
+def test_main_half_applied_route_exits_1_without_routed(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A move whose final parent is not the target epic never prints Routed (#4004).
+    message = (
+        "moved org/.github#352 to org/tool#900, but it is under org/.github#7, not under "
+        "org/.github#11; the route is half-applied. Fix it with: "
+        "vrg-epic-move --task org/tool#900 --epic org/.github#11"
+    )
+    with patch(f"{_MOD}.intake_route.route", side_effect=RouteHalfAppliedError(message)):
+        rc = main(["org/.github#352", "one-off", "--repo", "org/tool"])
+    assert rc == 1
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert err == f"vrg-intake-route: {message}\n"
 
 
 def test_main_no_installation_exits_1(capsys: pytest.CaptureFixture[str]) -> None:

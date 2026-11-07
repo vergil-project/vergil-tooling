@@ -23,6 +23,7 @@ from vergil_tooling.lib.upstream_refresh import (
     open_refresh_prs,
     render_body,
     run_hook,
+    scratch_worktree,
     sync,
 )
 
@@ -136,9 +137,27 @@ def _pr(number: int, head: str = REFRESH_BRANCH) -> dict[str, object]:
 
 def _refresh(env: Env, work: Path | None = None, hook: str = "echo new > data.txt") -> str:
     root = work or env.work
-    ensure_clean_on_base(root, _BASE)
-    notes = run_hook(root, hook, root.parent / "report.txt")
-    return sync(_REPO, _BASE, root, notes, changed_paths(root))
+    base_sha = ensure_clean_on_base(root, _BASE)
+    scratch = root.parent / "scratch"
+    with scratch_worktree(root, base_sha, scratch / "tree") as tree:
+        notes = run_hook(tree, hook, scratch / "report.txt")
+        outcome = sync(_REPO, _BASE, root, tree, notes, changed_paths(tree))
+    _assert_untouched(root)
+    return outcome
+
+
+def _worktrees(root: Path) -> list[str]:
+    return [
+        line.removeprefix("worktree ")
+        for line in _git(root, "worktree", "list", "--porcelain").splitlines()
+        if line.startswith("worktree ")
+    ]
+
+
+def _assert_untouched(root: Path) -> None:
+    """The user's checkout is exactly as found: clean, no worktree left behind (#3812)."""
+    assert _git(root, "status", "--porcelain", "--untracked-files=all", "--ignored") == ""
+    assert _worktrees(root) == [str(root)]
 
 
 # -- the outcomes ----------------------------------------------------------------
@@ -167,9 +186,23 @@ def test_no_change_closes_stale_pr(env: Env) -> None:
     assert env.gh.deletes == [f"repos/{_REPO}/git/refs/heads/{REFRESH_BRANCH}"]
 
 
+def _expected_tree(env: Env, hook: str = "echo new > data.txt") -> str:
+    """The tree the hook's edits make on the base, built in a separate clone."""
+    clone = env.origin.parent / "expected"
+    _git(env.origin.parent, "clone", "-q", "-b", _BASE, str(env.origin), str(clone))
+    subprocess.run(["bash", "-c", hook], cwd=clone, check=True)  # noqa: S607
+    _git(clone, "add", "-A")
+    return _git(clone, "write-tree")
+
+
 def test_change_opens_pr(env: Env) -> None:
+    expected = _expected_tree(env)
     assert _refresh(env) == "opened"
     tip = env.origin_sha(REFRESH_BRANCH)
+    # The same commit as one built in the user's tree: the hook's edits on top
+    # of the base, as one commit with the fixed subject.
+    assert _git(env.origin, "rev-parse", f"{tip}^{{tree}}") == expected
+    assert _git(env.origin, "rev-parse", f"{tip}^") == env.origin_sha(_BASE)
     assert _git(env.origin, "log", "-1", "--format=%s", tip) == COMMIT_SUBJECT
     assert _git(env.origin, "rev-list", "--count", f"{_BASE}..{REFRESH_BRANCH}") == "1"
     assert _git(env.origin, "show", f"{tip}:data.txt") == "new"
@@ -179,9 +212,10 @@ def test_change_opens_pr(env: Env) -> None:
     assert create[create.index("--head") + 1] == REFRESH_BRANCH
     assert create[create.index("--base") + 1] == _BASE
     assert create[create.index("--repo") + 1] == _REPO
-    # HEAD and the local base branch never move; the index is left clean.
+    # HEAD and the local base branch never move, and the hook's edit never
+    # reaches the user's tree (_refresh checks it is clean, too).
     assert _git(env.work, "rev-parse", "HEAD") == env.origin_sha(_BASE)
-    assert _git(env.work, "diff", "--cached", "--name-only") == ""
+    assert (env.work / "data.txt").read_text() == "old\n"
 
 
 def test_change_opens_pr_over_leftover_branch(env: Env) -> None:
@@ -311,6 +345,62 @@ def test_hook_gets_report_env_and_runs_from_root(env: Env) -> None:
     report = env.work.parent / "report.txt"
     notes = run_hook(env.work, f'pwd > "${REPORT_ENV}"', report)
     assert notes == [str(env.work)]
+
+
+def test_hook_runs_in_scratch_worktree_of_base(env: Env) -> None:
+    """The hook's cwd is the scratch worktree, detached at the base, not the user's tree."""
+    base_sha = ensure_clean_on_base(env.work, _BASE)
+    scratch = env.work.parent / "scratch"
+    hook = f'pwd > "${REPORT_ENV}" && git rev-parse HEAD >> "${REPORT_ENV}" && echo x > data.txt'
+    with scratch_worktree(env.work, base_sha, scratch / "tree") as tree:
+        assert _worktrees(env.work) == [str(env.work), str(tree)]
+        notes = run_hook(tree, hook, scratch / "report.txt")
+        assert notes == [str(tree), base_sha]
+        assert changed_paths(tree) == ["data.txt"]
+    assert not tree.exists()
+    _assert_untouched(env.work)
+
+
+def test_scratch_worktree_removed_after_hook_failure(env: Env) -> None:
+    base_sha = ensure_clean_on_base(env.work, _BASE)
+    scratch = env.work.parent / "scratch"
+    with (
+        pytest.raises(UpstreamRefreshError, match=r"failed \(exit 3\)"),
+        scratch_worktree(env.work, base_sha, scratch / "tree") as tree,
+    ):
+        run_hook(tree, "echo half > data.txt && exit 3", scratch / "report.txt")
+    assert not (scratch / "tree").exists()
+    _assert_untouched(env.work)
+
+
+def test_scratch_worktree_cleanup_failure_reported(env: Env) -> None:
+    """A worktree that cannot be removed fails the run and says how to clean up."""
+    base_sha = ensure_clean_on_base(env.work, _BASE)
+    tree_path = env.work.parent / "scratch" / "tree"
+    with (
+        pytest.raises(UpstreamRefreshError, match="could not remove the scratch worktree") as info,
+        scratch_worktree(env.work, base_sha, tree_path) as tree,
+    ):
+        _git(tree, "worktree", "lock", str(tree))
+    assert str(tree_path) in str(info.value)
+    assert "git worktree unlock" in str(info.value)
+
+
+def test_scratch_worktree_cleanup_failure_does_not_mask_error(
+    env: Env, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """When the run already failed, the cleanup failure is printed and the first error raised."""
+    base_sha = ensure_clean_on_base(env.work, _BASE)
+    tree_path = env.work.parent / "scratch" / "tree"
+    with (
+        pytest.raises(UpstreamRefreshError, match=r"failed \(exit 3\)"),
+        scratch_worktree(env.work, base_sha, tree_path) as tree,
+    ):
+        _git(tree, "worktree", "lock", str(tree))
+        run_hook(tree, "exit 3", tree_path.parent / "report.txt")
+    err = capsys.readouterr().err
+    assert "could not remove the scratch worktree" in err
+    assert str(tree_path) in err
 
 
 def test_hook_without_report_has_no_notes(env: Env) -> None:

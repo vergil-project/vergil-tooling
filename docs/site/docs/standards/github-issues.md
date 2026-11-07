@@ -113,9 +113,14 @@ Required configuration:
 
 Create a sub-issue when:
 
-- the parent issue is too large for a single PR
 - the PR will not fully resolve the parent issue
 - the work can be reviewed and merged independently
+
+A task too big for a single PR does not get sub-issues of its own: it is split
+into lettered sibling tasks (`13a`, `13b`, …) under the same epic, each its own
+issue and PR, with their dependencies in the plan's delivery table. The
+[`epic-create` skill](https://github.com/vergil-project/vergil-claude-plugin/blob/develop/skills/epic-create/SKILL.md#task-sizing--split-a-task-too-big-for-one-pr)
+owns that rule.
 
 Sub-issue rules:
 
@@ -350,6 +355,13 @@ implements the issue, validates it green and hands the PR off with
 `report-ready`. The design-review rounds need paad's unattended
 runner, `paad:paad-delegate`, which comes with the installed paad plugin
 ([paad-policy §10](https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-policy.md#10-paad-from-the-fork)).
+
+A plan is edited freely until its first task ships; from then on it evolves
+append-only, each change logged as a dated what/why entry in an `## Evolution
+during execution` section at the bottom of `plan.md`, while the epic's
+sub-issues stay the live task list. The
+[`epic-implement` skill](https://github.com/vergil-project/vergil-claude-plugin/blob/develop/skills/epic-implement/SKILL.md#2-reconstruct-state-from-github-starting-at-the-epic-issue)
+owns that rule.
 
 ### The bookend convention
 

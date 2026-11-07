@@ -33,9 +33,12 @@ the dev-tree override venv.
 | [vrg-version](cli-tools-overview.md#vrg-version) | Print or bump the repo's version |
 | [vrg-update-deps](dev/update-deps.md) | Update dependencies within their declared bounds and merge the result |
 | [vrg-finalize-pr](dev/finalize-pr.md) | Merge a PR and run post-merge cleanup |
-| [vrg-ruling](dev/ruling.md) | The agent's side of an authenticated ruling: post a request, draft the reply, read it, post the response |
+| [vrg-ruling](dev/ruling.md) | The agent's side of an authenticated ruling: post a request, draft the reply, read it, post the response; also draft a scope change |
 | [vrg-ruling-reply](dev/ruling-reply.md) | Post the human's reply to a ruling request, as the human (human-only) |
+| [vrg-scope-change](dev/scope-change.md) | Post a scope change on a task issue, as the human (human-only) |
+| [vrg-merge-review-request](cli-tools-overview.md#vrg-merge-review-request) | Build a merge-review request from a clean, fully validated branch |
 | [vrg-merge-review-check](cli-tools-overview.md#vrg-merge-review-check) | Check a stored merge-review result against the request it answers |
+| [vrg-change-class](cli-tools-overview.md#vrg-change-class) | Print a branch's merge-review change class: `docs-only` or `code` |
 | [vrg-ensure-label](cli-tools-overview.md#vrg-ensure-label) | Ensure GitHub labels exist |
 | [vrg-github-repo-config](config-audit.md) | Audit/reconcile a repo against canonical config |
 | [vrg-dependabot-audit](dependabot-audit.md) | Fail on any open Dependabot alert |

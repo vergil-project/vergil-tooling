@@ -29,7 +29,7 @@ query($owner: String!, $name: String!, $number: Int!, $after: String) {
     issue(number: $number) {
       comments(first: 100, after: $after) {
         pageInfo { hasNextPage endCursor }
-        nodes { fullDatabaseId author { login } body lastEditedAt }
+        nodes { fullDatabaseId author { login } body createdAt lastEditedAt }
       }
     }
   }
@@ -39,12 +39,17 @@ query($owner: String!, $name: String!, $number: Int!, $after: String) {
 
 @dataclass(frozen=True)
 class IssueComment:
-    """One issue comment as the turn checks see it."""
+    """One issue comment as the turn checks see it.
+
+    ``created_at`` is GitHub's ``createdAt``, an ISO 8601 timestamp; it is
+    always set on a fetched comment, and empty only on one built by hand.
+    """
 
     id: int
     author: str
     body: str
     edited: bool
+    created_at: str = ""
 
 
 def parse_issue_ref(ref: str) -> tuple[str, int]:
@@ -69,6 +74,10 @@ def _comment_from_node(node: Any, where: str) -> IssueComment:
     if not isinstance(body, str):
         msg = f"{where}: comment {comment_id} has no body string"
         raise RulingError(msg)
+    created_at = node.get("createdAt")
+    if not isinstance(created_at, str) or not created_at:
+        msg = f"{where}: comment {comment_id} has no createdAt string"
+        raise RulingError(msg)
     author_node = node.get("author")
     login = ""
     if author_node is not None:
@@ -82,6 +91,7 @@ def _comment_from_node(node: Any, where: str) -> IssueComment:
         author=login,
         body=body,
         edited=node.get("lastEditedAt") is not None,
+        created_at=created_at,
     )
 
 

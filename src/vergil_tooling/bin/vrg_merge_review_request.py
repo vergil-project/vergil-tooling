@@ -2,18 +2,30 @@
 
 ``vrg-merge-review-request --issue <owner/name#N> --base <ref> --step
 review|check|check-<k> --issue-body-file <path> --epic-tasks-file <path>
-[--design-source <path>]... [--fix-base <sha> --earlier-result <path>...
---fix-id <ID>... [--ruled-id <ID>]...]`` writes ``request-<step>.json``,
-``diff-<step>.patch`` and, for a check, ``fix-<step>.patch`` into the task's
+[--design-source <path>]...
+[--fix-base <sha> --earlier-result <path>... --fix-id <ID>... [--ruled-id <ID>]...]``
+writes ``request-<step>.json``, ``diff-<step>.patch`` and, for a check,
+``fix-<step>.patch`` into the task's
 private directory, ``build/.vergil-state/issue-implement/<N>/merge-review/``
 in the main clone, and prints the request's path. See
 ``docs/specs/merge-review-protocol.md``.
+
+Before it reads or writes anything, in either mode, it refuses unless the
+current clone's ``origin`` is the ``--issue`` repository (every push URL
+names it on github.com); the refusal names both repositories.
 
 It refuses, naming the reason, unless the worktree is clean and the last
 ``vrg-validate`` run (``.vergil/vrg-validate-last.json``) was a full run
 that started clean at ``HEAD``, exited 0 and passed every stage. The base
 SHA is the merge base of ``--base`` and ``HEAD``; the change class comes
 from the files changed since it, against the allow-list committed there.
+
+The builder reads the comments of the ``--issue`` itself, every page, and
+keeps only those posted by the one human login of the trusted-authors
+configuration, oldest first, as ``issue_comments`` (``{"author",
+"created_at", "body"}``). An edited human comment is left out and counted
+in ``issue_comments_excluded_edited``. It refuses when the configuration
+lists no human login or several, or the comments cannot be read.
 
 A check (``check`` or ``check-<k>``) also takes ``--fix-base``, the ``HEAD``
 the previous step judged, refused unless it is the ``head_sha`` of that
@@ -43,7 +55,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import git
+from vergil_tooling.lib import git, github
 from vergil_tooling.lib.await_file import atomic_write
 from vergil_tooling.lib.build_dir import BuildDirError
 from vergil_tooling.lib.cli import cli_main
@@ -70,6 +82,7 @@ def main(argv: list[str] | None = None) -> int:
     _check_usage(parser, args)
     try:
         issue = req.parse_task_issue(args.issue)
+        req.check_clone_is_issue_repo(issue)
         if args.ensure_dir:
             print(ensure_private_dir(git.main_worktree_root(), issue.number))
             return EXIT_OK
@@ -77,6 +90,9 @@ def main(argv: list[str] | None = None) -> int:
     except req.RequestError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return exc.exit_code
+    except github.MissingGitHubTokenError:
+        # A CalledProcessError too: cli_main reports it, not the git handler.
+        raise
     except subprocess.CalledProcessError as exc:
         print(f"ERROR: git failed (exit {exc.returncode}): {' '.join(exc.cmd)}", file=sys.stderr)
         return EXIT_ERROR
@@ -164,6 +180,7 @@ def _build(args: argparse.Namespace, issue: IssueRef) -> Path:
     issue_body = req.read_issue_body(Path(args.issue_body_file))
     epic_tasks = req.read_epic_tasks(Path(args.epic_tasks_file))
     design_sources = req.design_source_paths(args.design_source)
+    issue_comments = req.fetch_human_comments(issue)
     fix_base_sha = _fix_base(args.fix_base, head) if is_check(step) else None
 
     private_dir = ensure_private_dir(git.main_worktree_root(), issue.number)
@@ -189,6 +206,7 @@ def _build(args: argparse.Namespace, issue: IssueRef) -> Path:
             step=step,
             issue=issue,
             issue_body=issue_body,
+            issue_comments=issue_comments,
             base_sha=base_sha,
             head_sha=head,
             worktree=str(worktree),

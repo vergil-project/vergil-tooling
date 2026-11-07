@@ -68,6 +68,36 @@ def test_child_states_native() -> None:
     ]
 
 
+def test_native_children_reads_only_the_sub_issue_list() -> None:
+    data = {
+        "node": {
+            "subIssues": {
+                "nodes": [
+                    {"number": 101, "state": "CLOSED", "repository": _repo_node("org", "repo-a")},
+                    {"number": 102, "state": "OPEN", "repository": _repo_node("org", "repo-b")},
+                ]
+            }
+        }
+    }
+    with (
+        patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
+        patch("vergil_tooling.lib.github.graphql", return_value=data),
+    ):
+        result = epics.native_children(EPIC)
+    assert result == [IssueRef("org", "repo-a", 101), IssueRef("org", "repo-b", 102)]
+
+
+def test_native_children_has_no_reflink_fallback() -> None:
+    empty = {"node": {"subIssues": {"nodes": []}}}
+    with (
+        patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
+        patch("vergil_tooling.lib.github.graphql", return_value=empty),
+        patch("vergil_tooling.lib.github.read_json") as mock_search,
+    ):
+        assert epics.native_children(EPIC) == []
+    mock_search.assert_not_called()
+
+
 def test_child_states_reflink_fallback_when_native_empty() -> None:
     empty = {"node": {"subIssues": {"nodes": []}}}
     search = [
