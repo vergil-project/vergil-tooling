@@ -267,9 +267,13 @@ with `ERROR: <rule>` on stderr, naming the rule broken. The rules:
    a check, a `C` ID in a review, or a `C<n>` ID in `check-2` is rejected.
 6. **Summaries.** A non-security finding has a `summary` of printable ASCII
    only (U+0020 to U+007E, so no newline, tab or look-alike character), at
-   most 300 characters and not empty. A security finding has no `summary`.
-   A summary can therefore go into a `vrg-ruling` request item unchanged.
-7. **Location.** `location` is non-empty printable ASCII on one line.
+   most 300 characters and not empty. It does not contain the `vrg-ruling`
+   marker prefix `<!-- vrg-ruling` in any letter case, which `vrg-ruling`
+   refuses. A security finding has no `summary`. A summary can therefore go
+   into a `vrg-ruling` request item unchanged.
+7. **Location.** `location` is non-empty printable ASCII on one line. Like a
+   summary, it does not contain the marker prefix `<!-- vrg-ruling` in any
+   letter case.
 8. **Change class.** When the request's `change_class` is `docs-only`, no
    finding's `question` is `production-safety`: a docs-only change gets only
    the merge-quality question.
