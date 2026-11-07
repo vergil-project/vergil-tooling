@@ -941,6 +941,13 @@ become `validate_stages`. The change class is
 [`vrg-change-class`](#vrg-change-class)'s, with the allow-list committed at
 the merge base.
 
+`--issue-comments-file` holds the issue's trusted-author comments, a JSON
+list of `{"author", "created_at", "body"}` strings (`created_at` an ISO 8601
+timestamp with a time zone), kept in the order given; they become
+`issue_comments`, an empty list when the flag is not given. The caller
+decides which comments are trusted; the builder checks only their shape and
+refuses a malformed file by entry position, never echoing a value.
+
 A check takes `--fix-base` (the `HEAD` the previous step judged, refused
 unless it is the `head_sha` of that step's stored request), one
 `--earlier-result` per earlier step in step order, each checked against
@@ -960,8 +967,8 @@ makes there, and writes only to the path it prints.
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_merge_review_request` (library: `lib/merge_review/request.py`, `lib/merge_review/state.py`, `lib/build_dir.py`, `lib/validate_record.py`) |
-| Args | `--issue OWNER/NAME#N --base REF --step {review,check,check-<k>} --issue-body-file FILE --epic-tasks-file FILE [--design-source FILE]... [--fix-base SHA --earlier-result FILE... --fix-id ID... [--ruled-id ID]...]`, or `--issue OWNER/NAME#N --ensure-dir` |
-| Preconditions | Run inside the task's worktree after `vrg-container-run -- vrg-validate` passed at `HEAD`; `--epic-tasks-file` holds a JSON list of `{"ref", "title"}` |
+| Args | `--issue OWNER/NAME#N --base REF --step {review,check,check-<k>} --issue-body-file FILE --epic-tasks-file FILE [--issue-comments-file FILE] [--design-source FILE]... [--fix-base SHA --earlier-result FILE... --fix-id ID... [--ruled-id ID]...]`, or `--issue OWNER/NAME#N --ensure-dir` |
+| Preconditions | Run inside the task's worktree after `vrg-container-run -- vrg-validate` passed at `HEAD`; `--epic-tasks-file` holds a JSON list of `{"ref", "title"}` and `--issue-comments-file` one of `{"author", "created_at", "body"}` |
 | Failure mode | `ERROR: <reason>` on stderr, nothing on stdout |
 | Exit codes | 0 the path was printed, 1 a refusal or error, 2 bad arguments, 3 a check's `--fix-base` is not an ancestor of `HEAD` (the branch was rebased) |
 | Status | Active |
