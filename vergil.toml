@@ -20,6 +20,13 @@ integration-tests = false
 [dependencies]
 vergil = "v2.1"
 
+# The merge-review documentation allow-list (vrg-change-class): a change that
+# only adds or edits files below these directories is classed docs-only.
+# docs/site/ itself is deliberately absent: it holds mkdocs.yml, which
+# controls the site build, so a change to it stays code.
+[merge-review]
+docs-paths = ["docs/site/docs/", "docs/specs/"]
+
 # Publish vergil-tooling as a signed .deb/.rpm (epic vergil-project/.github#356).
 # The python builder installs the venv from uv.lock at
 # /opt/vergil/vergil-tooling/venv against the packaged vergil-python runtime,
