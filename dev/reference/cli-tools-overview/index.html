@@ -20415,7 +20415,8 @@ started clean at <code>HEAD</code>, exited 0 and passed every stage; the passed 
 become <code>validate_stages</code>. The change class is
 <a href="#vrg-change-class"><code>vrg-change-class</code></a>'s, with the allow-list committed at
 the merge base.</p>
-<p>A check takes <code>--fix-base</code> (the <code>HEAD</code> the previous step judged), one
+<p>A check takes <code>--fix-base</code> (the <code>HEAD</code> the previous step judged, refused
+unless it is the <code>head_sha</code> of that step's stored request), one
 <code>--earlier-result</code> per earlier step in step order, each checked against
 that step's stored request, <code>--fix-id</code> for each earlier ID asked to change
 (it becomes <code>earlier_finding_ids</code>) and <code>--ruled-id</code> for each earlier defect
