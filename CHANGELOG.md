@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.288] - 2026-11-07
+
+### Bug fixes
+
+- report a CD run superseded by concurrency as a warning, not a failure (#4016)
+- refuse report-ready on a branch with no commits ahead of its base (#4017)
+- update a PR's branch in the repo the PR lives in (#4021)
+- never report a one-off routed until its parent holds under the target epic (#4022)
+- count a release's changes from the merge base with the previous release (#4025)
+- run the hook in a temporary worktree so the checkout is left untouched (#4026)
+- show - for LAST COMMIT when a branch has no commits of its own (#4027)
+- refuse a clone that is not the --issue repository in vrg-merge-review-request (#4034)
+
+### Chores
+
+- set docs-paths to vergil-tooling's documentation pages (#4023)
+
+### Documentation
+
+- add a Merge Review guide and link merge review across the site docs (#4019)
+- link the plan-evolution and task-sizing rules from the github-issues standard (#4029)
+
+### Features
+
+- carry the issue's trusted-author comments in the request (#4024)
+- add vrg-scope-change, a human-only command to post a scope change on a task issue (#4031)
+- fetch the human's unedited issue comments in vrg-merge-review-request (#4032)
+
 ## [2.1.287] - 2026-11-07
 
 ### Bug fixes
