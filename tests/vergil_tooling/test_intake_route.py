@@ -792,7 +792,10 @@ def test_route_one_off_transfer_still_listed_under_intake_fails_loudly(
         "moved org/.github#352 to org/tool#900, but it is still listed as a sub-issue of "
         "org/.github#7 (its parent reads org/.github#11), not settled under org/.github#11"
     ) in message
-    assert "vrg-epic-move --task org/tool#900 --epic org/.github#11" in message
+    # vrg-epic-move would read the target parent and do nothing: name a real recovery.
+    assert "vrg-epic-move" not in message
+    assert "Re-check with vrg-queue in a minute" in message
+    assert "remove org/tool#900 from the sub-issues of the old epic in the GitHub UI" in message
     err = capsys.readouterr().err
     assert err.count("still listed as a sub-issue of org/.github#7") == intake_route._SETTLE_ROUNDS
     assert "(round 1/4); checking again" in err

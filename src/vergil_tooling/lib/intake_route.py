@@ -27,7 +27,7 @@ routes each container allows:
   unparented and is simply linked. A one-off whose work lands in the item's
   own repo is just reparented. On every path the parent is read back, and one
   other than the target epic fails loudly with :class:`RouteHalfAppliedError`
-  naming the item, where it is and the ``vrg-epic-move`` fix.
+  naming the item, where it is and how to recover it.
 - **planning** — reparent onto the planning epic of the same queue home.
 - **split** — the replacement tasks already exist (made with
   ``vrg-issue-create``); comment the links and the reason, then close.
@@ -540,15 +540,22 @@ def _placement(parent: IssueRef | None) -> str:
 def _parent_mismatch(
     item: IssueRef, epic: IssueRef, task: IssueRef, placement: str
 ) -> RouteHalfAppliedError:
-    """The loud failure for a move whose final parent is not *epic*."""
-    if placement.startswith("still listed"):
-        outcome = f"{placement}, not settled under {epic.slug}"
-    else:
-        outcome = f"{placement}, not under {epic.slug}"
+    """The loud failure for a move whose final parent is not *epic*.
+
+    A still-listed item's parent field already names *epic*, so
+    ``vrg-epic-move`` would report it done and change nothing; its recovery is
+    to re-check the queue and, if the stale listing stays, remove it by hand.
+    """
     moved = f"moved {item.slug} to {task.slug}" if task != item else f"linked {item.slug}"
+    if placement.startswith("still listed"):
+        return RouteHalfAppliedError(
+            f"{moved}, but it is {placement}, not settled under {epic.slug}; the route is "
+            "half-applied. Re-check with vrg-queue in a minute; if it is still listed "
+            f"there, remove {task.slug} from the sub-issues of the old epic in the GitHub UI"
+        )
     return RouteHalfAppliedError(
-        f"{moved}, but it is {outcome}; the route is half-applied. Fix it with: "
-        f"vrg-epic-move --task {task.slug} --epic {epic.slug}"
+        f"{moved}, but it is {placement}, not under {epic.slug}; the route is half-applied. "
+        f"Fix it with: vrg-epic-move --task {task.slug} --epic {epic.slug}"
     )
 
 

@@ -17,8 +17,8 @@ container epic it is in (:data:`intake_route.ROUTES`). A refused route (a
 route its container does not allow, a development-epic task, cross-org, or a
 private item headed somewhere public) exits 1 with the reason on stderr. So
 does a one-off whose item does not end up under its target epic: the message
-names where the item is and the ``vrg-epic-move`` fix, and ``Routed`` is never
-printed for it.
+names where the item is and how to recover (the ``vrg-epic-move`` fix for a
+wrong parent), and ``Routed`` is never printed for it.
 """
 
 from __future__ import annotations
