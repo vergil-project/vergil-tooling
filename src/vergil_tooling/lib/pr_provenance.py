@@ -84,9 +84,14 @@ _EVENT_MAP = {
 
 
 def _collect_actions(pr: str) -> list[Action]:
-    """Collect agent-attributed actions on *pr* from GitHub."""
-    repo = github.current_repo()
-    number = github.read_output("pr", "view", pr, "--json", "number", "--jq", ".number").strip()
+    """Collect agent-attributed actions on *pr* from GitHub.
+
+    The repo and number come from the PR itself, not the current directory's
+    remote: ``vrg-finalize-pr <PR URL>`` run from a checkout of another repo
+    would otherwise check the wrong PR's provenance, or 404 (#4013). A PR whose
+    repo or number cannot be read raises ``github.GitHubAPIError``.
+    """
+    repo, number = github.pr_repo_and_number(pr, "the provenance check")
     actions: list[Action] = []
 
     author = github.read_output(

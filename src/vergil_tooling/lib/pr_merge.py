@@ -132,9 +132,10 @@ def wait_and_merge(
     propagates unchanged.
 
     The base branch's required status checks are resolved once up front (a
-    lookup failure warns and falls back to registered checks only). Whatever
-    waiter runs, the engine re-checks the required set afterwards, so a custom
-    waiter that only watches registered checks still cannot merge early.
+    lookup failure warns and falls back to registered checks only; a PR whose
+    URL names no repo raises). Whatever waiter runs, the engine re-checks the
+    required set afterwards, so a custom waiter that only watches registered
+    checks still cannot merge early.
 
     Raises ``MergeAbortError`` on any unmergeable condition.
     """

@@ -7,8 +7,13 @@ from unittest.mock import patch
 
 import pytest
 
-from vergil_tooling.lib import pr_provenance
+from vergil_tooling.lib import github, pr_provenance
 from vergil_tooling.lib.pr_provenance import Action, Role
+
+
+def _pr_view(number: int, repo: str = "o/r") -> str:
+    """The ``gh pr view --json number,url`` answer for PR *number* of *repo*."""
+    return json.dumps({"number": number, "url": f"https://github.com/{repo}/pull/{number}"})
 
 
 def test_classify_login_user() -> None:
@@ -82,14 +87,17 @@ def test_check_pr_collects_reviews_and_skips_unmapped() -> None:
             return reviews
         if args[:2] == ("api", "--paginate") and "/timeline?" in args[2]:
             return timeline
-        if args[:2] == ("pr", "view") and "number" in args:
-            return "7"
+        if args[:2] == ("pr", "view") and "number,url" in args:
+            return _pr_view(7)
         if args[:2] == ("pr", "view") and "author" in args:
             return ""  # no author login
         raise AssertionError(f"unexpected call: {args}")
 
     with (
-        patch("vergil_tooling.lib.pr_provenance.github.current_repo", return_value="o/r"),
+        patch(
+            "vergil_tooling.lib.pr_provenance.github.current_repo",
+            side_effect=AssertionError("the repo comes from the PR, not the cwd"),
+        ),
         patch(
             "vergil_tooling.lib.pr_provenance.github.read_output",
             side_effect=fake_read_output,
@@ -110,14 +118,17 @@ def test_check_pr_flags_audit_close() -> None:
             return reviews
         if args[:2] == ("api", "--paginate") and "/timeline?" in args[2]:
             return timeline
-        if args[:2] == ("pr", "view") and "number" in args:
-            return "42"
+        if args[:2] == ("pr", "view") and "number,url" in args:
+            return _pr_view(42)
         if args[:2] == ("pr", "view") and "author" in args:
             return "alice"  # human author
         raise AssertionError(f"unexpected call: {args}")
 
     with (
-        patch("vergil_tooling.lib.pr_provenance.github.current_repo", return_value="o/r"),
+        patch(
+            "vergil_tooling.lib.pr_provenance.github.current_repo",
+            side_effect=AssertionError("the repo comes from the PR, not the cwd"),
+        ),
         patch(
             "vergil_tooling.lib.pr_provenance.github.read_output",
             side_effect=fake_read_output,
@@ -142,8 +153,8 @@ def _paged_fake(
             return "".join(json.dumps(page) for page in reviews_pages)
         if args[:2] == ("api", "--paginate") and "/timeline?" in args[2]:
             return "".join(json.dumps(page) for page in timeline_pages)
-        if args[:2] == ("pr", "view") and "number" in args:
-            return "9"
+        if args[:2] == ("pr", "view") and "number,url" in args:
+            return _pr_view(9)
         if args[:2] == ("pr", "view") and "author" in args:
             return "alice"
         raise AssertionError(f"unexpected call: {args}")
@@ -164,7 +175,10 @@ def test_check_pr_evaluates_timeline_event_on_second_page() -> None:
     page2: list[dict[str, object]] = [{"event": "merged", "actor": {"login": "a-vergil-audit"}}]
     calls: list[tuple[str, ...]] = []
     with (
-        patch("vergil_tooling.lib.pr_provenance.github.current_repo", return_value="o/r"),
+        patch(
+            "vergil_tooling.lib.pr_provenance.github.current_repo",
+            side_effect=AssertionError("the repo comes from the PR, not the cwd"),
+        ),
         patch(
             "vergil_tooling.lib.pr_provenance.github.read_output",
             side_effect=_paged_fake([[]], [page1, page2], calls),
@@ -183,7 +197,10 @@ def test_check_pr_evaluates_review_on_second_page() -> None:
     page2: list[dict[str, object]] = [{"state": "APPROVED", "user": {"login": "a-vergil-user"}}]
     calls: list[tuple[str, ...]] = []
     with (
-        patch("vergil_tooling.lib.pr_provenance.github.current_repo", return_value="o/r"),
+        patch(
+            "vergil_tooling.lib.pr_provenance.github.current_repo",
+            side_effect=AssertionError("the repo comes from the PR, not the cwd"),
+        ),
         patch(
             "vergil_tooling.lib.pr_provenance.github.read_output",
             side_effect=_paged_fake([page1, page2], [[]], calls),
@@ -203,12 +220,17 @@ def test_check_pr_malformed_page_fails_closed() -> None:
             return "[]"
         if args[:2] == ("api", "--paginate") and "/timeline?" in args[2]:
             return '[]{"message": "boom"}'
+        if args[:2] == ("pr", "view") and "number,url" in args:
+            return _pr_view(9)
         if args[:2] == ("pr", "view"):
-            return "9"
+            return "alice"
         raise AssertionError(f"unexpected call: {args}")
 
     with (
-        patch("vergil_tooling.lib.pr_provenance.github.current_repo", return_value="o/r"),
+        patch(
+            "vergil_tooling.lib.pr_provenance.github.current_repo",
+            side_effect=AssertionError("the repo comes from the PR, not the cwd"),
+        ),
         patch(
             "vergil_tooling.lib.pr_provenance.github.read_output",
             side_effect=fake_read_output,
@@ -216,3 +238,59 @@ def test_check_pr_malformed_page_fails_closed() -> None:
         pytest.raises(ValueError, match="not a list"),
     ):
         pr_provenance.check_pr("9")
+
+
+def _cross_repo_fake(pr_view: str, calls: list[tuple[str, ...]]) -> object:
+    """A ``read_output`` fake whose cwd (``gh repo view``) is a different repo from the PR's."""
+
+    def fake_read_output(*args: str, **_: object) -> str:
+        calls.append(args)
+        if args[:2] == ("api", "--paginate"):
+            return "[]"
+        if args[:2] == ("pr", "view") and "number,url" in args:
+            return pr_view
+        if args[:2] == ("pr", "view"):
+            return "alice"
+        if args[:2] == ("repo", "view"):
+            return "cwd-org/cwd-repo"
+        raise AssertionError(f"unexpected call: {args}")
+
+    return fake_read_output
+
+
+def test_check_pr_reads_the_prs_own_repo_not_the_cwds() -> None:
+    """#4013: a PR URL from another repo is checked in that repo, not the cwd's."""
+    pr = "https://github.com/acme/repo/pull/42"
+    calls: list[tuple[str, ...]] = []
+    with patch(
+        "vergil_tooling.lib.pr_provenance.github.read_output",
+        side_effect=_cross_repo_fake(_pr_view(42, "acme/repo"), calls),
+    ):
+        result = pr_provenance.check_pr(pr)
+    assert result.ok
+    assert ("pr", "view", pr, "--json", "number,url") in calls
+    assert ("api", "--paginate", "repos/acme/repo/pulls/42/reviews?per_page=100") in calls
+    assert ("api", "--paginate", "repos/acme/repo/issues/42/timeline?per_page=100") in calls
+    assert not [call for call in calls if call[:2] == ("repo", "view")]
+
+
+@pytest.mark.parametrize(
+    "pr_view",
+    [
+        "[]",
+        json.dumps({"number": 42}),
+        json.dumps({"number": 42, "url": "https://example.com/acme/repo/pull/42"}),
+        json.dumps({"url": "https://github.com/acme/repo/pull/42"}),
+    ],
+)
+def test_check_pr_fails_loud_without_the_prs_repo_and_number(pr_view: str) -> None:
+    calls: list[tuple[str, ...]] = []
+    with (
+        patch(
+            "vergil_tooling.lib.pr_provenance.github.read_output",
+            side_effect=_cross_repo_fake(pr_view, calls),
+        ),
+        pytest.raises(github.GitHubAPIError, match="provenance"),
+    ):
+        pr_provenance.check_pr("https://github.com/acme/repo/pull/42")
+    assert not [call for call in calls if call[0] == "api"]

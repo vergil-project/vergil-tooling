@@ -242,17 +242,43 @@ def test_required_check_names_protection_without_checks(
     assert github.required_check_names("12") == frozenset()
 
 
-def test_required_check_names_falls_back_to_current_repo(
+def test_required_check_names_reads_the_prs_own_repo_not_the_cwds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """#4013: a PR URL from another repo is looked up in that repo, not the cwd's."""
     responses = {
-        "pr": {"baseRefName": "main", "url": ""},
-        "repos/x/y/branches/main": {"protection": {}},
-        "repos/x/y/rules/branches/main": [_RULES[-1]],
+        "pr": {"baseRefName": "main", "url": "https://github.com/acme/repo/pull/5"},
+        "repos/acme/repo/branches/main": {"protection": {}},
+        "repos/acme/repo/rules/branches/main": [_RULES[-1]],
     }
     monkeypatch.setattr(github, "read_json", _api(responses))
-    monkeypatch.setattr(github, "current_repo", lambda: "x/y")
-    assert github.required_check_names("5") == {"test / evidence", "quality / evidence"}
+    monkeypatch.setattr(github, "current_repo", lambda: "cwd-org/cwd-repo")
+    assert github.required_check_names("https://github.com/acme/repo/pull/5") == {
+        "test / evidence",
+        "quality / evidence",
+    }
+
+
+@pytest.mark.parametrize(
+    "url", ["", None, "https://example.com/acme/repo/pull/5", "https://github.com/acme/repo"]
+)
+def test_required_check_names_unparseable_pr_url_is_an_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], url: str | None
+) -> None:
+    """#4013: no silent fall back to the cwd's repo, and no downgrade to a warning."""
+    calls: list[tuple[str, ...]] = []
+    fake = _api({"pr": {"baseRefName": "main", "url": url}})
+
+    def recording(*args: str) -> Any:
+        calls.append(args)
+        return fake(*args)
+
+    monkeypatch.setattr(github, "read_json", recording)
+    monkeypatch.setattr(github, "current_repo", lambda: pytest.fail("no fallback to the cwd"))
+    with pytest.raises(github.GitHubAPIError, match="cannot read the repository of PR 5"):
+        github.required_check_names("5")
+    assert [call[0] for call in calls] == ["pr"]
+    assert "Warning" not in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(
