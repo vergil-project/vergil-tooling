@@ -125,7 +125,7 @@ def test_main_skips_gitignored_markdown(tmp_path: Path) -> None:
             return_value=repo,
         ),
         patch(
-            "vergil_tooling.bin.validate_common.vrg_repo_profile.main",
+            "vergil_tooling.bin.validate_common.repo_profile.main",
             return_value=0,
         ),
     ):
@@ -355,7 +355,7 @@ def test_main_all_pass(tmp_path: Path) -> None:
             return_value=tmp_path,
         ),
         patch(
-            "vergil_tooling.bin.validate_common.vrg_repo_profile.main",
+            "vergil_tooling.bin.validate_common.repo_profile.main",
             return_value=0,
         ),
     ):
@@ -369,7 +369,7 @@ def test_main_repo_profile_fails(tmp_path: Path) -> None:
             return_value=tmp_path,
         ),
         patch(
-            "vergil_tooling.bin.validate_common.vrg_repo_profile.main",
+            "vergil_tooling.bin.validate_common.repo_profile.main",
             return_value=1,
         ),
     ):
@@ -388,7 +388,7 @@ def test_main_markdownlint_uses_bundled_config(tmp_path: Path) -> None:
             return_value=tmp_path,
         ),
         patch(
-            "vergil_tooling.bin.validate_common.vrg_repo_profile.main",
+            "vergil_tooling.bin.validate_common.repo_profile.main",
             return_value=0,
         ),
         patch(
@@ -418,7 +418,7 @@ def test_main_markdownlint_ignores_repo_local_config(tmp_path: Path) -> None:
             return_value=tmp_path,
         ),
         patch(
-            "vergil_tooling.bin.validate_common.vrg_repo_profile.main",
+            "vergil_tooling.bin.validate_common.repo_profile.main",
             return_value=0,
         ),
         patch(
@@ -444,7 +444,7 @@ def test_main_markdownlint_fails(tmp_path: Path) -> None:
             return_value=tmp_path,
         ),
         patch(
-            "vergil_tooling.bin.validate_common.vrg_repo_profile.main",
+            "vergil_tooling.bin.validate_common.repo_profile.main",
             return_value=0,
         ),
         patch(
@@ -470,7 +470,7 @@ def test_main_markdownlint_honors_ignore(tmp_path: Path) -> None:
             return_value=tmp_path,
         ),
         patch(
-            "vergil_tooling.bin.validate_common.vrg_repo_profile.main",
+            "vergil_tooling.bin.validate_common.repo_profile.main",
             return_value=0,
         ),
         patch(
@@ -504,7 +504,7 @@ def test_main_markdownlint_two_passes_use_scoped_configs(tmp_path: Path) -> None
             return_value=tmp_path,
         ),
         patch(
-            "vergil_tooling.bin.validate_common.vrg_repo_profile.main",
+            "vergil_tooling.bin.validate_common.repo_profile.main",
             return_value=0,
         ),
         patch(
@@ -544,7 +544,7 @@ def test_main_markdownlint_prose_pass_fails_step(tmp_path: Path) -> None:
             return_value=tmp_path,
         ),
         patch(
-            "vergil_tooling.bin.validate_common.vrg_repo_profile.main",
+            "vergil_tooling.bin.validate_common.repo_profile.main",
             return_value=0,
         ),
         patch(
@@ -584,7 +584,7 @@ def test_main_epics_long_line_passes_md013_relaxed(tmp_path: Path) -> None:
             return_value=tmp_path,
         ),
         patch(
-            "vergil_tooling.bin.validate_common.vrg_repo_profile.main",
+            "vergil_tooling.bin.validate_common.repo_profile.main",
             return_value=0,
         ),
     ):
@@ -610,7 +610,7 @@ def test_main_docs_site_long_line_fails_md013(tmp_path: Path) -> None:
             return_value=tmp_path,
         ),
         patch(
-            "vergil_tooling.bin.validate_common.vrg_repo_profile.main",
+            "vergil_tooling.bin.validate_common.repo_profile.main",
             return_value=0,
         ),
     ):
@@ -629,7 +629,7 @@ def test_main_shellcheck_runs(tmp_path: Path) -> None:
             return_value=tmp_path,
         ),
         patch(
-            "vergil_tooling.bin.validate_common.vrg_repo_profile.main",
+            "vergil_tooling.bin.validate_common.repo_profile.main",
             return_value=0,
         ),
         patch(
@@ -655,7 +655,7 @@ def test_main_shellcheck_fails(tmp_path: Path) -> None:
             return_value=tmp_path,
         ),
         patch(
-            "vergil_tooling.bin.validate_common.vrg_repo_profile.main",
+            "vergil_tooling.bin.validate_common.repo_profile.main",
             return_value=0,
         ),
         patch(
@@ -746,7 +746,7 @@ def test_main_yamllint_uses_bundled_config(tmp_path: Path) -> None:
             return_value=tmp_path,
         ),
         patch(
-            "vergil_tooling.bin.validate_common.vrg_repo_profile.main",
+            "vergil_tooling.bin.validate_common.repo_profile.main",
             return_value=0,
         ),
         patch(
@@ -775,7 +775,7 @@ def test_main_yamllint_ignores_repo_local_config(tmp_path: Path) -> None:
             return_value=tmp_path,
         ),
         patch(
-            "vergil_tooling.bin.validate_common.vrg_repo_profile.main",
+            "vergil_tooling.bin.validate_common.repo_profile.main",
             return_value=0,
         ),
         patch(
@@ -803,7 +803,7 @@ def test_main_yamllint_fails(tmp_path: Path) -> None:
             return_value=tmp_path,
         ),
         patch(
-            "vergil_tooling.bin.validate_common.vrg_repo_profile.main",
+            "vergil_tooling.bin.validate_common.repo_profile.main",
             return_value=0,
         ),
         patch(
@@ -830,7 +830,7 @@ def _run_main_with_dependabot(tmp_path: Path, text: str | None) -> tuple[int, li
             return_value=tmp_path,
         ),
         patch(
-            "vergil_tooling.bin.validate_common.vrg_repo_profile.main",
+            "vergil_tooling.bin.validate_common.repo_profile.main",
             return_value=0,
         ),
         patch(
@@ -945,7 +945,7 @@ def test_main_hadolint_runs(tmp_path: Path) -> None:
             return_value=tmp_path,
         ),
         patch(
-            "vergil_tooling.bin.validate_common.vrg_repo_profile.main",
+            "vergil_tooling.bin.validate_common.repo_profile.main",
             return_value=0,
         ),
         patch(
@@ -968,7 +968,7 @@ def test_main_hadolint_fails(tmp_path: Path) -> None:
             return_value=tmp_path,
         ),
         patch(
-            "vergil_tooling.bin.validate_common.vrg_repo_profile.main",
+            "vergil_tooling.bin.validate_common.repo_profile.main",
             return_value=0,
         ),
         patch(
@@ -994,7 +994,7 @@ def test_main_actionlint_runs(tmp_path: Path) -> None:
             return_value=tmp_path,
         ),
         patch(
-            "vergil_tooling.bin.validate_common.vrg_repo_profile.main",
+            "vergil_tooling.bin.validate_common.repo_profile.main",
             return_value=0,
         ),
         patch(
@@ -1027,7 +1027,7 @@ def test_main_actionlint_fails(tmp_path: Path) -> None:
             return_value=tmp_path,
         ),
         patch(
-            "vergil_tooling.bin.validate_common.vrg_repo_profile.main",
+            "vergil_tooling.bin.validate_common.repo_profile.main",
             return_value=0,
         ),
         patch(
@@ -1124,7 +1124,7 @@ def test_main_ansible_lint_runs_with_bundled_config(tmp_path: Path) -> None:
             return_value=tmp_path,
         ),
         patch(
-            "vergil_tooling.bin.validate_common.vrg_repo_profile.main",
+            "vergil_tooling.bin.validate_common.repo_profile.main",
             return_value=0,
         ),
         patch(
@@ -1150,7 +1150,7 @@ def test_main_ansible_lint_skipped_without_content(tmp_path: Path) -> None:
             return_value=tmp_path,
         ),
         patch(
-            "vergil_tooling.bin.validate_common.vrg_repo_profile.main",
+            "vergil_tooling.bin.validate_common.repo_profile.main",
             return_value=0,
         ),
         patch(
@@ -1173,7 +1173,7 @@ def test_main_ansible_lint_fails(tmp_path: Path) -> None:
             return_value=tmp_path,
         ),
         patch(
-            "vergil_tooling.bin.validate_common.vrg_repo_profile.main",
+            "vergil_tooling.bin.validate_common.repo_profile.main",
             return_value=0,
         ),
         patch(
@@ -1276,7 +1276,7 @@ def test_main_ansible_lint_passes_local_overrides(tmp_path: Path) -> None:
             return_value=tmp_path,
         ),
         patch(
-            "vergil_tooling.bin.validate_common.vrg_repo_profile.main",
+            "vergil_tooling.bin.validate_common.repo_profile.main",
             return_value=0,
         ),
         patch(
@@ -1305,7 +1305,7 @@ def test_main_ansible_lint_no_local_config_no_overrides(tmp_path: Path) -> None:
             return_value=tmp_path,
         ),
         patch(
-            "vergil_tooling.bin.validate_common.vrg_repo_profile.main",
+            "vergil_tooling.bin.validate_common.repo_profile.main",
             return_value=0,
         ),
         patch(
@@ -1329,7 +1329,7 @@ def test_main_ansible_lint_malformed_local_config_fails(tmp_path: Path) -> None:
             return_value=tmp_path,
         ),
         patch(
-            "vergil_tooling.bin.validate_common.vrg_repo_profile.main",
+            "vergil_tooling.bin.validate_common.repo_profile.main",
             return_value=0,
         ),
         patch(

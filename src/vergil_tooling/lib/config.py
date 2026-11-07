@@ -136,6 +136,7 @@ _KNOWN_SECTIONS = frozenset(
         "package",
         "dependency-update",
         "upstream-refresh",
+        "merge-review",
     },
 )
 
@@ -155,6 +156,7 @@ _KNOWN_KEYS: dict[str, frozenset[str]] = {
     "test": frozenset({"parallel", "workers", *TEST_CONTEXTS}),
     "dependency-update": frozenset({"hook"}),
     "upstream-refresh": frozenset({"hook"}),
+    "merge-review": frozenset({"docs-paths"}),
     "package": frozenset(
         {
             "builder",
@@ -292,6 +294,15 @@ class UpstreamRefreshConfig:
     hook: str
 
 
+@dataclass(frozen=True)
+class MergeReviewConfig:
+    # [merge-review] (epic vergil-project/.github#881, spec §4.3): the
+    # repo's own documentation paths, added to the change classifier's
+    # built-in allow-list. An entry ending in "/" covers everything below it;
+    # any other entry is one file. Empty when the table or key is absent.
+    docs_paths: tuple[str, ...] = ()
+
+
 @dataclass
 class CppConfig:
     # The two cheap in-build C++ axes (epic vergil-project/.github#207 §3.3):
@@ -417,6 +428,7 @@ class VergilConfig:
     packages: tuple[PackageConfig, ...] = ()
     dependency_update: DependencyUpdateConfig = field(default_factory=DependencyUpdateConfig)
     upstream_refresh: UpstreamRefreshConfig | None = None
+    merge_review: MergeReviewConfig = field(default_factory=MergeReviewConfig)
 
     @property
     def package(self) -> PackageConfig | None:
@@ -769,6 +781,44 @@ def _parse_upstream_refresh(
         msg = f"{source}: [upstream-refresh].hook is required and must be a non-empty string"
         raise ConfigError(msg)
     return UpstreamRefreshConfig(hook=hook)
+
+
+def _parse_merge_review(raw: dict[str, Any], source: str = CONFIG_FILE) -> MergeReviewConfig:
+    table = raw.get("merge-review")
+    if table is None:
+        return MergeReviewConfig()
+    if not isinstance(table, dict):
+        msg = f"{source}: [merge-review] must be a table"
+        raise ConfigError(msg)
+    paths = table.get("docs-paths", [])
+    if not isinstance(paths, list):
+        msg = f"{source}: [merge-review].docs-paths must be a list of strings"
+        raise ConfigError(msg)
+    for index, entry in enumerate(paths):
+        if not isinstance(entry, str) or not entry:
+            msg = f"{source}: [merge-review].docs-paths[{index}] must be a non-empty string"
+            raise ConfigError(msg)
+        if entry.startswith("/"):
+            # A changed file's path is repo-relative, so this could never match.
+            msg = f"{source}: [merge-review].docs-paths[{index}] must be a repo-relative path"
+            raise ConfigError(msg)
+    return MergeReviewConfig(docs_paths=tuple(paths))
+
+
+def parse_merge_review_toml(text: str, source: str) -> MergeReviewConfig:
+    """Parse the ``[merge-review]`` table of ``vergil.toml`` text read from git.
+
+    The change classifier reads the allow-list as committed at a merge base,
+    not from the working tree, and needs only this table: the rest of that
+    commit's file is not judged by today's rules. *source* labels errors.
+    Raises :class:`ConfigError` for invalid TOML or an invalid table.
+    """
+    try:
+        raw = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        msg = f"{source} is not valid TOML: {exc}"
+        raise ConfigError(msg) from exc
+    return _parse_merge_review(raw, source)
 
 
 def parse_test_workers(value: Any, where: str) -> int | str:
@@ -1263,6 +1313,7 @@ def _parse_raw_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> VergilC
         packages=_parse_packages(raw, source),
         dependency_update=_parse_dependency_update(raw, source),
         upstream_refresh=_parse_upstream_refresh(raw, source),
+        merge_review=_parse_merge_review(raw, source),
     )
 
 

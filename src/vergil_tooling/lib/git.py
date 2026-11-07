@@ -409,6 +409,98 @@ def commits_ahead(base: str, branch: str) -> int:
     return int(read_output("rev-list", "--count", f"{base}..{branch}"))
 
 
+def _check_revs(*revs: str) -> None:
+    """Refuse an empty revision, or one git would read as an option."""
+    for rev in revs:
+        if not rev or rev.startswith("-"):
+            msg = f"not a git revision: {rev!r}"
+            raise ValueError(msg)
+
+
+def merge_base(base: str, head: str) -> str:
+    """Return the SHA of the best common ancestor of *base* and *head*.
+
+    Raises ``CalledProcessError`` when there is none or a ref is unknown, and
+    ``ValueError`` for a revision git would read as an option.
+    """
+    _check_revs(base, head)
+    return read_output("merge-base", base, head)
+
+
+def diff_name_status(base: str, head: str) -> list[tuple[str, str, str | None]]:
+    """Return the files *head* changed since its merge base with *base*.
+
+    Each entry is ``(status, path, new path)``: the ``--name-status`` status
+    (``A``, ``M``, ``D``, ``T``, ``R<score>`` ...), the path, and for a rename
+    or copy the new path (``None`` otherwise). The diff is
+    ``<base>...<head>``, from the merge base, so commits added to *base*
+    after the branch was cut never appear. Renames are detected (``-M``);
+    ``-z`` keeps any path exactly as git stores it. Raises
+    ``CalledProcessError`` when git fails, and ``ValueError`` for a revision
+    git would read as an option or output git did not shape as expected.
+    """
+    _check_revs(base, head)
+    output = read_output(
+        "diff", "--no-ext-diff", "--no-color", "--name-status", "-M", "-z", f"{base}...{head}"
+    )
+    fields = output.removesuffix("\0").split("\0") if output else []
+    changes: list[tuple[str, str, str | None]] = []
+    index = 0
+    while index < len(fields):
+        status = fields[index]
+        paths = 2 if status[:1] in ("R", "C") else 1
+        if index + paths >= len(fields):
+            msg = f"git diff --name-status: truncated {status} entry"
+            raise ValueError(msg)
+        new_path = fields[index + 2] if paths == 2 else None
+        changes.append((status, fields[index + 1], new_path))
+        index += 1 + paths
+    return changes
+
+
+def file_at(commit: str, path: str) -> str | None:
+    """Return the text of *path* as committed in *commit*, or ``None`` when absent.
+
+    Reads the object database only, never the working tree, so uncommitted
+    edits play no part. Raises ``ValueError`` when *path* names something
+    other than a file there (a directory or a submodule) or for a revision
+    git would read as an option, and ``CalledProcessError`` when git fails
+    (an unknown commit).
+    """
+    _check_revs(commit)
+    listing = read_output("ls-tree", "-z", "--full-tree", commit, "--", path)
+    if not listing:
+        return None
+    kind = listing.split(" ", 2)[1]
+    if kind != "blob":
+        msg = f"{path} at {commit} is a {kind}, not a file"
+        raise ValueError(msg)
+    return read_output("cat-file", "blob", f"{commit}:{path}")
+
+
+def diff_patch(base: str, head: str) -> bytes:
+    """Return ``git diff <base> <head>`` exactly as git prints it.
+
+    No external diff driver, text conversion or colour applies, so the patch
+    is the same whatever the user's configuration. Raises
+    ``CalledProcessError`` when git fails, and ``ValueError`` for a revision
+    git would read as an option.
+    """
+    _check_revs(base, head)
+    args = ("diff", "--no-ext-diff", "--no-textconv", "--no-color", base, head)
+    result = subprocess.run(  # noqa: S603
+        ("git", *args),  # noqa: S607
+        check=False,
+        capture_output=True,
+        env=_git_env(args),
+    )
+    if result.returncode != 0:
+        raise subprocess.CalledProcessError(
+            result.returncode, ("git", *args), output=result.stdout, stderr=result.stderr
+        )
+    return result.stdout
+
+
 def _in_repo(repo: Path | None) -> tuple[str, ...]:
     """Return the ``-C <repo>`` prefix that runs git in *repo* (none for the CWD)."""
     return ("-C", str(repo)) if repo is not None else ()

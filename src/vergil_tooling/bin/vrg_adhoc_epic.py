@@ -3,8 +3,7 @@
 The ``Epic (ad hoc): <repo>`` umbrella (labelled ``epic`` + ``ad-hoc``) lives in
 the repo's resolved epic home — ``<org>/.github`` for a public repo, the repo
 itself when private — one per repo. This provisions it before linking
-pre-existing issues — e.g. ``migrate-repo`` step 1,
-which must ensure the epic exists before it can link ad-hoc tasks to it. Routing
+pre-existing issues to it as ad-hoc tasks. Routing
 work to ``adhoc`` (``vrg-issue-create``/``vrg-epic-move --epic adhoc``) also
 ensures it via the same path.
 """

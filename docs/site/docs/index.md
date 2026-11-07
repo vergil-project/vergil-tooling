@@ -11,8 +11,9 @@ commits, PRs, releases, and validation alongside bash validators and git hooks
 `vrg-commit`, `vrg-submit-pr`, `vrg-release`, `vrg-update-deps`,
 `vrg-finalize-pr`, `vrg-validate`
 
-**Lint tools** (installed as `vrg-*`):
-`vrg-repo-profile`, validation drivers
+**Validation checks** (run by `vrg-validate`):
+the [repo-profile](reference/lint/repo-profile.md) check, linters and
+the language validation drivers
 
 **Claude Code hook guard** (`.claude/hooks/`):
 PreToolUse hook that blocks raw `git` and `gh`, routing through `vrg-*` wrappers

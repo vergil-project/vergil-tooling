@@ -74,11 +74,12 @@ repository with no language uses the base image. On top of that image,
 vergil-tooling installed. Set `DOCKER_DEV_IMAGE` to use a different
 image.
 
-`vrg-validate` first runs the common checks: `vrg-repo-profile`,
-markdownlint, shellcheck, yamllint, hadolint, actionlint, and
-ansible-lint when the repository has Ansible content. It then runs the
-language's lint, typecheck, test and audit commands, and last the
-repository's custom validator when it has one. To run one stage, pass
+`vrg-validate` first runs the common checks: the
+[repo-profile](../reference/lint/repo-profile.md) check, markdownlint,
+shellcheck, yamllint, hadolint, actionlint, and ansible-lint when the
+repository has Ansible content. It then runs the language's lint,
+typecheck, test and audit commands, and last the repository's custom
+validator when it has one. To run one stage, pass
 `--check common`, `lint`, `typecheck`, `test`, `audit` or `custom`. The
 [Validation Matrix](validation-matrix.md) lists every check and where
 it runs.
@@ -362,7 +363,7 @@ workflow only through `inherit`: an explicit secrets map leaves
 `package-sign` with an empty key (proven by the probe in
 [vergil-project/packages#6](https://github.com/vergil-project/packages/issues/6)).
 The callee is first-party, so the blanket form is an accepted, reviewed
-exception. `vrg-repo-init` generates this caller for `[package]` repos
+exception. `vrg-github-repo-init` generates this caller for `[package]` repos
 ([vergil-project/vergil-tooling#3144](https://github.com/vergil-project/vergil-tooling/issues/3144)).
 See the [CD section of the package config reference](../reference/package-config.md#cd)
 for the full caller.

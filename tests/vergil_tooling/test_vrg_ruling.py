@@ -178,7 +178,10 @@ def test_request_refuses_open_exchange(cli: Cli, issue: FakeIssue, tmp_path: Pat
     issue.comments = [request_comment(41)]
     items = write_items(tmp_path, REQUEST_ITEMS)
     assert cli("request", "--issue", "o/r#7", "--items", items) == 1
-    assert "open request 41" in cli.stderr
+    assert cli.stderr == (
+        "vrg-ruling: o/r#7 has open request 41; read it with"
+        " vrg-ruling read --issue 'o/r#7' --request 41\n"
+    )
     assert issue.posted == []
 
 
@@ -649,7 +652,7 @@ def draft_argv(items: str, request: str = "41") -> tuple[str, ...]:
 def test_draft_prints_reply_command(cli: Cli, issue: FakeIssue, tmp_path: Path) -> None:
     issue.comments = [request_comment(41)]
     assert cli(*draft_argv(write_items(tmp_path, REPLY_ITEMS))) == 0
-    assert cli.stdout == "vrg-ruling-reply --issue o/r#7 --request 41\n"
+    assert cli.stdout == "vrg-ruling-reply --issue 'o/r#7' --request 41\n"
     assert DRAFT_REF in cli.stderr
     assert issue.drafts == {DRAFT_REF: "R1.1: file it\nR1.S1: fix\n"}
     assert issue.posted == []

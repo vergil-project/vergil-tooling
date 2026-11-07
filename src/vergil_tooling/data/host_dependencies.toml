@@ -139,7 +139,7 @@ method = "brew-formula"
 upgrade = "auto"
 latest = "probe"
 
-# Docker Desktop: vrg-container-run / vrg-container-test exec the `docker` CLI
+# Docker Desktop: vrg-container-run execs the `docker` CLI
 # for every validation run, and Docker Desktop provides that CLI and the engine
 # behind it. The entry tracks the Desktop app, not the CLI (the CLI version,
 # e.g. 29.4.1, is not the Desktop release, e.g. 4.71.0).

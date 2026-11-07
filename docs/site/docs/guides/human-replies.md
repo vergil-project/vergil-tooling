@@ -63,11 +63,11 @@ command shows and confirms it, or passes their own text with
 `--response-text`.
 
 ```text
-agent:  vrg-ruling request --issue OWNER/REPO#N --items request.json   -> request ID
-agent:  vrg-ruling draft --issue OWNER/REPO#N --request ID --items reply.json
-human:  vrg-ruling-reply --issue OWNER/REPO#N --request ID              -> reply posted
-agent:  vrg-ruling read --issue OWNER/REPO#N --request ID               -> reply body
-agent:  vrg-ruling respond --issue OWNER/REPO#N --request ID --reply ID --items response.json
+agent:  vrg-ruling request --issue 'OWNER/REPO#N' --items request.json   -> request ID
+agent:  vrg-ruling draft --issue 'OWNER/REPO#N' --request ID --items reply.json
+human:  vrg-ruling-reply --issue 'OWNER/REPO#N' --request ID              -> reply posted
+agent:  vrg-ruling read --issue 'OWNER/REPO#N' --request ID               -> reply body
+agent:  vrg-ruling respond --issue 'OWNER/REPO#N' --request ID --reply ID --items response.json
 ```
 
 ### Where the response states the agent's reading

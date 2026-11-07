@@ -60,9 +60,19 @@ def draft_ref(issue: int, request_id: int) -> str:
     return f"refs/{_REF_NAMESPACE}/{issue}/{request_id}"
 
 
+def quoted_issue_ref(repo: str, issue: int) -> str:
+    """The issue ref as a paste-ready shell word, ``'owner/repo#N'``.
+
+    Unquoted, the ``#`` is a glob operator in zsh with ``EXTENDED_GLOB`` set,
+    so the pasted command fails with ``no matches found``. The ref's grammar
+    admits no single quote, so plain single quotes are safe.
+    """
+    return f"'{repo}#{issue}'"
+
+
 def reply_command(repo: str, issue: int, request_id: int) -> str:
     """The human's paste-ready command that posts the drafted reply."""
-    return f"vrg-ruling-reply --issue {repo}#{issue} --request {request_id}"
+    return f"vrg-ruling-reply --issue {quoted_issue_ref(repo, issue)} --request {request_id}"
 
 
 def _repo_of_url(url: str) -> str | None:

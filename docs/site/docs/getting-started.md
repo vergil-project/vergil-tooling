@@ -140,7 +140,9 @@ vrg-container-run -- vrg-validate
 vrg-github-repo-config audit
 ```
 
-`vrg-validate` includes `vrg-repo-profile`, which checks `vergil.toml`.
+`vrg-validate` includes the
+[repo-profile check](reference/lint/repo-profile.md), which checks
+`vergil.toml`.
 The hook guard fires on Claude Code `Bash` tool calls; to test it end
 to end, have Claude Code try a raw `git commit` in a session in the
 repository.

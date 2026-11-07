@@ -130,23 +130,6 @@ identities are refused, and agents hand off with
 | Exit codes | 0 success |
 | Status | Active |
 
-### vrg-pr-fix-body
-
-Repair a PR's body by regenerating it from corrected fields through
-the same validated builder as `vrg-submit-pr`, then push an empty
-commit to re-trigger CI. The agent-safe fix path for body-level
-standards failures during the pr-watch reconcile loop (denied to the
-`audit` identity; the `user` identity may only fix its own PR).
-
-| Attribute | Value |
-|---|---|
-| Source | `vergil_tooling.bin.vrg_pr_fix_body` |
-| Args | `pr` (positional, required), `--issue` (required), `--summary` (required), `--linkage` (default: Ref), `--notes`, `--dry-run`, `--no-retrigger` |
-| Preconditions | Git repo, `gh` CLI on PATH, PR open, agent identities on the PR's head branch |
-| Failure mode | `SystemExit`/diagnostic on identity, scope, or state rejection |
-| Exit codes | 0 success, 1 rejection or error |
-| Status | Active |
-
 ### vrg-pr-workflow
 
 Record and manage the PR handoff state in `.vergil/pr-workflow.json` —
@@ -219,21 +202,6 @@ indefinitely by design.
 | Exit codes | 0 settled, 1 error |
 | Status | Active |
 
-### vrg-wait-until-green
-
-Block until a PR's required checks pass and its branch is up to date. When
-the branch is behind its base it updates it and re-polls CI. The wait is
-bounded by `$VRG_CHECKS_TIMEOUT` (default 1800s).
-
-| Attribute | Value |
-|---|---|
-| Source | `vergil_tooling.bin.vrg_wait_until_green` |
-| Args | `pr` (positional, URL or number) |
-| Preconditions | GitHub App credentials for the PR's org |
-| Failure mode | Exits 1 on merge conflicts, failed checks (named on stderr), a branch still behind after repeated updates, or a merge state other than `CLEAN` |
-| Exit codes | 0 every check passed and the PR is mergeable, 1 otherwise |
-| Status | Active |
-
 ### vrg-await
 
 Block until a `.vergil/` channel file appears or changes, then print its
@@ -284,20 +252,6 @@ and the [Releasing guide](../guides/releasing.md).
 | Preconditions | Human identity; on `develop`, clean working tree, local develop matches `origin/develop`; `gh` authenticated and `git-cliff` on PATH |
 | Failure mode | Fail-fast stages stop the run; deferred stages (including `update-deps`) record the failure, let later stages run, and are summarized at the end |
 | Exit codes | 0 success, 1 any failure or refusal, 130 interrupted |
-| Status | Active |
-
-### vrg-changelog
-
-Generate `CHANGELOG.md` and the release notes (`releases/vX.Y.Z.md`) for the
-version in `VERSION`, using `git-cliff`.
-
-| Attribute | Value |
-|---|---|
-| Source | `vergil_tooling.bin.vrg_changelog` |
-| Args | `--changelog-only` or `--notes-only` (default: both) |
-| Preconditions | Run from the repo root; a `VERSION` file; `git-cliff` on PATH |
-| Failure mode | Exits 1 when no `VERSION` file is found |
-| Exit codes | 0 success, 1 error |
 | Status | Active |
 
 ### vrg-promote
@@ -512,8 +466,7 @@ fails after creation, the created issue's URL is reported for recovery with
 
 Create a top-level epic (labelled `epic`, no parent) in its home repo:
 `<org>/.github` for a public target, the target repo itself when private.
-The sanctioned path for creating epics, used by the `epic-create` and
-`migrate-repo` skills.
+The sanctioned path for creating epics, used by the `epic-create` skill.
 
 | Attribute | Value |
 |---|---|
@@ -617,20 +570,6 @@ it.
 | Exit codes | 0 moved or already there, 1 error |
 | Status | Active |
 
-### vrg-epic-unlink
-
-Remove a task's native sub-issue link to its epic. A task with no parent is
-a no-op.
-
-| Attribute | Value |
-|---|---|
-| Source | `vergil_tooling.bin.vrg_epic_unlink` |
-| Args | `--task` (required) |
-| Preconditions | GitHub App credentials for the target org |
-| Failure mode | Error on stderr |
-| Exit codes | 0 unlinked or no parent, 1 error |
-| Status | Active |
-
 ### vrg-epic-rollup
 
 Close a just-closed task's parent epic when the epic is finite and all its
@@ -662,22 +601,6 @@ quarter-named epics to that form; both are dry runs unless `--apply`.
 | Failure mode | Error on stderr |
 | Exit codes | 0 success, 1 error |
 | Status | Active |
-
-### vrg-adhoc-migrate
-
-One-shot migration (epic vergil-project/.github#85): relocate per-repo
-standing epics into the org `.github` ad-hoc model, re-linking their open
-children and closing the old epic. A dry run by default; `--apply` is a
-human action, refused in agent sessions.
-
-| Attribute | Value |
-|---|---|
-| Source | `vergil_tooling.bin.vrg_adhoc_migrate` |
-| Args | `--apply` |
-| Preconditions | Run in a repo whose `origin` names the org; GitHub App credentials |
-| Failure mode | Refuses `--apply` in agent sessions; errors on stderr |
-| Exit codes | 0 success, 1 refusal or error |
-| Status | Active (one-shot migration) |
 
 ### vrg-intake-create
 
@@ -901,7 +824,7 @@ printable ASCII plus newline. See the
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_ruling` (library: `lib/rulings/`) |
-| Args | `request --issue OWNER/REPO#N --items FILE`; `read --issue OWNER/REPO#N --request ID [--json]`; `draft --issue OWNER/REPO#N --request ID --items FILE`; `respond --issue OWNER/REPO#N --request ID --reply ID --items FILE` |
+| Args | `request --issue 'OWNER/REPO#N' --items FILE`; `read --issue 'OWNER/REPO#N' --request ID [--json]`; `draft --issue 'OWNER/REPO#N' --request ID --items FILE`; `respond --issue 'OWNER/REPO#N' --request ID --reply ID --items FILE` |
 | Preconditions | The `user` identity mode; trusted authors list exactly one human login, and `<human>-vergil-user` is on the `agents` list; for `draft`, a clone whose `origin` is the issue's repo |
 | Failure mode | A refusal or error prints the reason on stderr and exits 1; a fatal turn check names the check and the comment and exits 4. A failed post is never retried: the issue is re-read, and the tool reports the landed comment, says it did not land, or says it cannot tell |
 | Exit codes | 0 success (or a valid reply), 1 refused or error, 2 bad arguments, 3 no reply yet, 4 fatal check |
@@ -930,10 +853,117 @@ See the [vrg-ruling-reply reference](dev/ruling-reply.md) and the
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_ruling_reply` (library: `lib/rulings/`) |
-| Args | `--issue OWNER/REPO#N --request ID [--response-text TEXT]` |
+| Args | `--issue 'OWNER/REPO#N' --request ID [--response-text TEXT]` |
 | Preconditions | The human's own shell (not an agent identity), an interactive terminal, `gh` logged in as the human login; trusted authors list exactly one human login, and `<human>-vergil-user` is on the `agents` list |
 | Failure mode | A refusal, a declined prompt or an error prints the reason on stderr and exits 1, posting nothing; a fatal turn check names the check and the comment and exits 4. A failed post is never retried: the issue is re-read, and the tool reports the landed comment, says it did not land, or says it cannot tell |
 | Exit codes | 0 posted, 1 refused, declined or error, 2 bad arguments, 4 fatal check |
+| Status | Active |
+
+### vrg-merge-review-check
+
+The merge-review result check (epic vergil-project/.github#881): it checks
+a reviewer's stored reply against the request it answers, by the rules of
+the [merge-review protocol](https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/merge-review-protocol.md).
+The reply must open, after optional whitespace, with exactly one
+`merge-review-result` fenced block holding one JSON object, with no second
+such block anywhere. The block must carry exactly the schema's fields at
+every level, copy the request's `step` and `request_id`, use only the
+defined questions, kinds and statuses, give each finding an ID with its
+step's prefix, keep every summary and location to one line of printable
+ASCII (a summary at most 300 characters, none on a security finding), raise
+no `production-safety` finding on a `docs-only` change, and, in a check,
+raise no `pre-existing` finding and give exactly one `fix_status` per ID the
+request listed. A summary or location that carries the vrg-ruling marker
+prefix is refused too, so it can go into a `vrg-ruling` item unchanged. On
+success it prints `{"step", "counts", "security", "fix_status"}` as JSON on
+stdout. A refusal names the rule, the finding by ID (or by position when
+the ID is bad) and, for a bad character, its code point and offset; it
+never repeats the refused value. It reads the two files and writes nothing.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_merge_review_check` (library: `lib/merge_review/`) |
+| Args | `--request FILE --result FILE` |
+| Preconditions | None: no identity mode, network or git access |
+| Failure mode | `ERROR: <rule>` on stderr and exit 1, with nothing on stdout |
+| Exit codes | 0 the result passed, 1 it failed or a file could not be read, 2 bad arguments |
+| Status | Active |
+
+### vrg-change-class
+
+The merge-review change classifier (epic vergil-project/.github#881): it
+prints `docs-only` or `code` for the files a branch changed since its merge
+base with `--base` (`git diff --name-status -M <base>...<head>`), so commits
+added to the base after the branch was cut never count. A change is
+`docs-only` only when every changed file is an addition or an edit of a
+path on the documentation allow-list; any deletion, rename or type change,
+any change to `vergil.toml`, and an empty change are `code`. The allow-list
+is `README.md` and `CHANGELOG.md`, plus the repository's own paths from
+`vergil.toml` as committed at the merge base (never the working tree's
+copy):
+
+```toml
+[merge-review]
+docs-paths = ["docs/guides/", "NOTICE.md"]
+```
+
+An entry ending in `/` covers everything below it; any other entry is that
+one file. Markdown is not documentation by its extension: list only paths
+that hold nothing that controls behaviour. The command is for humans and
+debugging; the merge-review skill gets the class through the request
+builder, which runs the same classifier. It reads the repository and writes
+nothing.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_change_class` (library: `lib/merge_review/change_class.py`) |
+| Args | `--base REF [--head REF]` (`--head` defaults to `HEAD`) |
+| Preconditions | Run inside the repository, whose merge base has a valid `vergil.toml` |
+| Failure mode | `ERROR: <message>` on stderr and exit 1 (an unknown ref, no merge base, a merge base with no `vergil.toml` or an invalid one) |
+| Exit codes | 0 the class was printed, 1 error, 2 bad arguments |
+| Status | Active |
+
+### vrg-merge-review-request
+
+The merge-review request builder (epic vergil-project/.github#881): it
+writes a review or check request, by the
+[merge-review protocol](https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/merge-review-protocol.md),
+into the task's private directory,
+`build/.vergil-state/issue-implement/<N>/merge-review/` in the main clone,
+and prints the request's path. It writes `request-<step>.json`,
+`diff-<step>.patch` (`git diff <base_sha> <head_sha>`, where `base_sha` is
+the merge base of `--base` and `HEAD`) and, for a check,
+`fix-<step>.patch` (`git diff <fix_base_sha> <head_sha>`). It refuses,
+naming the reason, unless the worktree is clean and the last `vrg-validate`
+run (its record, `.vergil/vrg-validate-last.json`) was a full run that
+started clean at `HEAD`, exited 0 and passed every stage; the passed stages
+become `validate_stages`. The change class is
+[`vrg-change-class`](#vrg-change-class)'s, with the allow-list committed at
+the merge base.
+
+A check takes `--fix-base` (the `HEAD` the previous step judged, refused
+unless it is the `head_sha` of that step's stored request), one
+`--earlier-result` per earlier step in step order, each checked against
+that step's stored request, `--fix-id` for each earlier ID asked to change
+(it becomes `earlier_finding_ids`) and `--ruled-id` for each earlier defect
+the human excused (not sent to the reviewer). It refuses an ID no earlier
+result raised, an ID given to both, a check with no `--fix-id`, and an
+earlier defect named by neither unless a later result marks it `fixed`.
+
+Before writing, and on its own with `--ensure-dir`, it checks the private
+directory level by level: `build` must be a real directory (it is created
+when absent), and each level from `.vergil-state` down to `merge-review`
+must be a real directory, not a symlink, with mode 700; an absent level is
+created mode 700. The caller runs `--ensure-dir` before every write it
+makes there, and writes only to the path it prints.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_merge_review_request` (library: `lib/merge_review/request.py`, `lib/merge_review/state.py`, `lib/build_dir.py`, `lib/validate_record.py`) |
+| Args | `--issue OWNER/NAME#N --base REF --step {review,check,check-<k>} --issue-body-file FILE --epic-tasks-file FILE [--design-source FILE]... [--fix-base SHA --earlier-result FILE... --fix-id ID... [--ruled-id ID]...]`, or `--issue OWNER/NAME#N --ensure-dir` |
+| Preconditions | Run inside the task's worktree after `vrg-container-run -- vrg-validate` passed at `HEAD`; `--epic-tasks-file` holds a JSON list of `{"ref", "title"}` |
+| Failure mode | `ERROR: <reason>` on stderr, nothing on stdout |
+| Exit codes | 0 the path was printed, 1 a refusal or error, 2 bad arguments, 3 a check's `--fix-base` is not an ancestor of `HEAD` (the branch was rebased) |
 | Status | Active |
 
 ### vrg-epic-audit
@@ -1375,31 +1405,6 @@ absent or `{}` (epic vergil-project/.github#558).
 | Exit codes | 0 (help), 1 error; command exit code after `execvp` |
 | Status | Active |
 
-### vrg-container-test
-
-Run a repository's test suite inside a dev container. The language comes
-from `[project].primary-language` in `vergil.toml`, falling back to
-package-manager markers (`pyproject.toml`, `go.mod`, `Cargo.toml`,
-`pom.xml`/`mvnw`, …) when the repo asserts none; it selects the image and
-the test command. Consuming repos call it directly. Environment overrides:
-
-- `DOCKER_DEV_IMAGE`: the container image.
-- `DOCKER_TEST_CMD`: the test command.
-- `DOCKER_NETWORK`: a Docker network to join, for example for
-  integration tests.
-
-Env-var passthrough is set per repo with `[container].env-prefixes`; see
-[Container Config](container-config.md).
-
-| Attribute | Value |
-|---|---|
-| Source | `vergil_tooling.bin.vrg_container_test` |
-| Args | None |
-| Preconditions | Git repo, Docker daemon running, language detection or `DOCKER_DEV_IMAGE` + `DOCKER_TEST_CMD` |
-| Failure mode | Explicit error for undetected language and unavailable Docker; `git.repo_root()` raises on non-git directory |
-| Exit codes | 0 (help), 1 error; command exit code after `execvp` |
-| Status | Active |
-
 ### vrg-container-docs
 
 Preview or build MkDocs documentation inside a dev container.
@@ -1662,7 +1667,10 @@ one) and then the custom stage; with no custom validator it prints one
 but not an executable regular file fails. PR CI runs each stage through
 the `vergil-actions` reusable workflows, the custom stage as
 `quality / custom`. See the [Validation Matrix](../guides/validation-matrix.md)
-for every check and where it runs.
+for every check and where it runs. Every pipeline run, pass or fail,
+writes `.vergil/vrg-validate-last.json`: the commit at the start, the exit
+code, whether the run was full (no `--check`) and the tree clean at the
+start, and each stage's status. `vrg-merge-review-request` reads it.
 
 | Attribute | Value |
 |---|---|
@@ -1676,9 +1684,10 @@ for every check and where it runs.
 ### validate_common (internal)
 
 Not a command on `PATH`: the module `vrg-validate` runs as its common
-stage. Shared validation checks for all repos: repository profile
-validation, markdownlint on published markdown (`docs/site/**/*.md`
-and `README.md`) using the bundled canonical config, shellcheck on
+stage. Shared validation checks for all repos: the
+[repo-profile](lint/repo-profile.md) check (`vergil.toml` and the
+`README.md` structure), markdownlint on published markdown
+(`docs/site/**/*.md` and `README.md`) using the bundled canonical config, shellcheck on
 `scripts/`, yamllint on `.github/` and `docs/` YAML files, the
 dependabot-limit guard (when `.github/dependabot.yml` exists, every
 `updates` entry must carry `open-pull-requests-limit: 0`, so Dependabot
@@ -1695,23 +1704,6 @@ carries Ansible content.
 | Failure mode | Propagates exit codes from each tool |
 | Exit codes | 0 all passed, non-zero on first failure |
 | Status | Active (called internally by `vrg-validate`) |
-
-### vrg-repo-profile
-
-Validate the repository configuration in `vergil.toml` (required
-keys, enum values, dependencies) and the `README.md` structure
-(exactly one H1, a Table of Contents, no heading-level skips). Run by
-`vrg-validate` as a common check. See the
-[repo-profile reference](lint/repo-profile.md).
-
-| Attribute | Value |
-|---|---|
-| Source | `vergil_tooling.bin.vrg_repo_profile` |
-| Args | None |
-| Preconditions | Run from the repository root; `vergil.toml` exists |
-| Failure mode | Exit 2 if `vergil.toml` is not found; exit 1 for an invalid `vergil.toml` or a `README.md` structure error |
-| Exit codes | 0 valid, 1 invalid, 2 `vergil.toml` not found |
-| Status | Active |
 
 ### vrg-ci-resolve
 
@@ -1869,20 +1861,6 @@ Used by the registry-publish action.
 | Exit codes | 0 success, 1 error |
 | Status | Active |
 
-### vrg-resolve-tooling-version
-
-Resolve the vergil-tooling install tag from `vergil.toml` and write it as
-the `vergil_version` output.
-
-| Attribute | Value |
-|---|---|
-| Source | `vergil_tooling.bin.vrg_resolve_tooling_version` |
-| Args | `--repo-root PATH` (default: the current directory) |
-| Preconditions | `vergil.toml` in the repo root |
-| Failure mode | Exit 1 for a missing or invalid `vergil.toml` |
-| Exit codes | 0 success, 1 error |
-| Status | Active |
-
 ### vrg-release-validate-inputs
 
 Validate release workflow inputs: the language is supported,
@@ -2000,9 +1978,6 @@ messages. Notable gaps:
 - `vrg-submit-pr` does not validate that `gh` is on PATH before
   attempting `git push` and `gh pr create`. Failure surfaces as a
   subprocess error rather than a clear precondition message.
-- `vrg-container-run` checks `GH_TOKEN` explicitly; `vrg-container-test`
-  does not (it will fail inside the container when `gh` commands
-  run without a token, but the error is less clear).
 
 ### Args style
 
@@ -2019,7 +1994,8 @@ interface than argparse would provide. No alignment needed.
 
 - 0: success
 - 1: check failure, validation error, or precondition violation
-- 2: infrastructure error (used by `vrg-repo-profile`)
+- 2: infrastructure error (used by the `vrg-validate` repo-profile
+  check when `vergil.toml` is missing)
 
 The 1-vs-2 distinction is not universal. Tools added before the
 convention was established use 1 for all errors.

@@ -222,11 +222,38 @@ for the selection logic.
 
 ### VRG Tools That Bypass the Wrapper
 
-Mechanized VRG tools (`vrg-submit-pr`, `vrg-release`,
-`vrg-update-deps`, `vrg-ensure-label`, `vrg-github-repo-config`, `vrg-finalize-pr`)
-call `gh` directly in their Python code. They bypass the wrapper
-because they are already validated — the wrapper only constrains
-agent-initiated `gh` calls via the Bash tool.
+Mechanized VRG tools call `gh` and `git` directly in their Python
+code, mostly through the shared `lib/github.py` and `lib/git.py`
+helpers, not through `vrg-gh` and `vrg-git`. They bypass the wrappers
+because they are already validated: the wrappers only constrain
+agent-initiated `gh` and `git` calls via the Bash tool.
+
+These tools call both `gh` and `git`. Most of them call `git` only to
+read the `origin` remote, which resolves the org whose GitHub App
+token `gh` runs with:
+
+`vrg-activity-log`, `vrg-adhoc-epic`, `vrg-audit-approve`,
+`vrg-branch-sweep`, `vrg-ci-evidence`, `vrg-ci-sync`,
+`vrg-container-docs`, `vrg-dependabot-audit`, `vrg-docs-stage`,
+`vrg-ensure-label`, `vrg-epic-audit`, `vrg-epic-create`,
+`vrg-epic-docs`, `vrg-epic-link`, `vrg-epic-move`, `vrg-epic-rollup`,
+`vrg-finalize-pr`, `vrg-fleet-sync`, `vrg-github-repo-config`,
+`vrg-github-repo-init`, `vrg-intake-create`, `vrg-intake-route`,
+`vrg-issue-create`, `vrg-pr-await`, `vrg-pr-workflow`, `vrg-promote`,
+`vrg-queue`, `vrg-release`, `vrg-resolve-tracking-issue`,
+`vrg-roadmap`, `vrg-ruling`, `vrg-ruling-reply`,
+`vrg-security-record`, `vrg-submit-pr`, `vrg-update-deps`,
+`vrg-upstream-refresh`, `vrg-worktree-status` and `vrg-xdist-sync`.
+
+`vrg-package` calls `gh` only: it lists and downloads releases, and
+verifies their attestations, when it builds the package index.
+
+These tools call `git` only: `vrg-commit`, `vrg-container-cache`,
+`vrg-container-run`, `vrg-reword`, `vrg-scorecard`, `vrg-validate`,
+`vrg-version` and `vrg-vm`. `vrg-vm` also runs `git config` inside
+the VM, to set its git identity and HTTPS GitHub access.
+
+The other `vrg-*` tools call neither.
 
 ## Permission Configuration
 

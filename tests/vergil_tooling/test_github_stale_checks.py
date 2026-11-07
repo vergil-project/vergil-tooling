@@ -536,25 +536,12 @@ def test_stale_check_with_unknown_required_set_fails_loudly(
     # pr_merge passes a failed lookup through as None: whether GitHub will block
     # on the stale check is unknown, so it must not be passed.
     _stub(monkeypatch, run_completed=lambda repo, rid: True, job_conclusion=lambda r, j: "success")
-    monkeypatch.setattr(github, "required_check_names", lambda pr: pytest.fail("no second lookup"))
     with pytest.raises(github.OrphanedCheckError) as excinfo:
         github.wait_for_checks("1", poll_interval=5, poll_timeout=1800, required=None)
     msg = str(excinfo.value)
     assert _MATRIX in msg
     assert "required status checks could not be read" in msg
     assert "Close and reopen the PR" in msg
-
-
-def test_self_resolved_lookup_failure_fails_stale_check_loudly(
-    monkeypatch: pytest.MonkeyPatch, clock: _Clock
-) -> None:
-    # The waiter's own lookup (vrg-wait-until-green) failing is "unknown" too.
-    lookups: list[str] = []
-    _stub(monkeypatch, run_completed=lambda repo, rid: True, job_conclusion=lambda r, j: "success")
-    monkeypatch.setattr(github, "required_check_names", lambda pr: bool(lookups.append(pr)) or None)
-    with pytest.raises(github.OrphanedCheckError, match="could not be read"):
-        github.wait_for_checks("1", poll_interval=5, poll_timeout=1800)
-    assert lookups == ["1"]
 
 
 def test_unknown_required_set_keeps_the_registered_checks_fallback(

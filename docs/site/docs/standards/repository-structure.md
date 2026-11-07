@@ -45,8 +45,8 @@ Use `docs/decisions/` for ADRs. Naming and structure:
   ADR that references the original
 
 Each repository declares its repository profile in `vergil.toml` at
-the repository root (the `[project]` table), which `vrg-repo-profile`
-validates. See
+the repository root (the `[project]` table), which the `vrg-validate`
+[repo-profile check](../reference/lint/repo-profile.md) validates. See
 [Consuming Repo Setup](../guides/consuming-repo-setup.md#step-4-vergiltoml-the-repository-profile).
 
 ## Examples

@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
-import enum
 import functools
 import json
 import logging
@@ -1547,33 +1546,26 @@ def _pending_checks(checks: list[dict[str, str]]) -> list[tuple[str, str]]:
     ]
 
 
-class _Resolve(enum.Enum):
-    """Sentinel type for :func:`wait_for_checks`' "look the required set up yourself"."""
-
-    REQUIRED = enum.auto()
-
-
 def wait_for_checks(
     pr: str,
     *,
     poll_interval: int = _POLL_INTERVAL_SECS,
     poll_timeout: int | None = None,
-    required: Collection[str] | None | _Resolve = _Resolve.REQUIRED,
+    required: Collection[str] | None,
 ) -> None:
     """Block until all checks on *pr* reach a terminal state, bounded by a deadline.
 
     The single check waiter behind every merge path — ``vrg-finalize-pr``,
-    ``vrg-release`` (merge-release, back-merge-bump), ``vrg-update-deps`` and
-    ``vrg-wait-until-green``. Polls :func:`pr_checks` (which re-classifies a
+    ``vrg-release`` (merge-release, back-merge-bump) and ``vrg-update-deps``.
+    Polls :func:`pr_checks` (which re-classifies a
     stale check-run GitHub has already concluded, #3170) until every check is
     terminal **and** every required status check of the base branch is
     registered and non-pending (#3061), then returns — leaving ``pr_merge``'s
     ``failed_check_names`` gate to catch any failure. Zero registered checks is
     not terminal (#2623), and the head is re-read on every poll, so a moved head
-    is followed rather than pinned. *required* defaults to
-    :func:`required_check_names` resolved once at entry; a caller that has
-    already resolved it passes that result through unchanged — a collection
-    (empty to disable), or ``None`` when the lookup failed. An unknown set
+    is followed rather than pinned. *required* is the caller's
+    :func:`required_check_names` result, passed through unchanged — a
+    collection (empty to disable), or ``None`` when the lookup failed. An unknown set
     (``None``) falls back to waiting on registered checks only (#3061), but a
     stale check can then never be passed (see below, #3379).
 
@@ -1610,25 +1602,24 @@ def wait_for_checks(
     """
     timeout = checks_timeout_secs() if poll_timeout is None else poll_timeout
     grace = orphan_grace_secs()
-    known = required_check_names(pr) if isinstance(required, _Resolve) else required
     # An unreadable required set gates on registered checks only (#3061); the
     # stale probe still sees it as unknown and refuses to pass a stale check.
-    required = frozenset() if known is None else known
+    gate = frozenset() if required is None else required
     deadline = time.monotonic() + timeout
     announced: dict[str, str] = {}
     first_seen: dict[tuple[str, str], float] = {}
     reported: tuple[tuple[str, str], ...] = ()
     last_report = 0.0
-    stale = _StaleCheckProbe(known, grace)
+    stale = _StaleCheckProbe(required, grace)
     while True:
         checks = pr_checks(pr)
-        if _checks_terminal(checks, required):
+        if _checks_terminal(checks, gate):
             return  # let pr_merge.failed_check_names catch any failure
         now = time.monotonic()
         # At the deadline the orphan backstop below decides instead.
-        if now < deadline and stale.apply(checks, now) and _checks_terminal(checks, required):
+        if now < deadline and stale.apply(checks, now) and _checks_terminal(checks, gate):
             return  # every still-pending check was stale over a successful job
-        outstanding = outstanding_required_checks(checks, required)
+        outstanding = outstanding_required_checks(checks, gate)
         if outstanding and outstanding != announced:
             print(f"Awaiting required checks: {describe_outstanding(outstanding)}")
         announced = outstanding

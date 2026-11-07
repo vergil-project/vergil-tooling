@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.287] - 2026-11-07
+
+### Bug fixes
+
+- quote the issue ref in the commands vrg-ruling prints (#3967)
+
+### Chores
+
+- uv lock --upgrade
+
+### Documentation
+
+- list vrg-ruling and vrg-ruling-reply in the Script Reference index (#3969)
+- complete the Script Reference index and the list of tools that bypass the wrapper (#3972)
+- name vrg-github-repo-init as the tool that generates the package CD caller (#3973)
+- merge-review protocol spec (#3975)
+- name the marker-prefix refusal in result-check rules 6 and 7 (#3999)
+
+### Features
+
+- vrg-merge-review-check, the result check (#3981)
+- vrg-change-class and the merge-review docs-paths key (#3993)
+- validate record and vrg-merge-review-request (#4005)
+- refuse a --fix-base that is not the previous step's head (#4007)
+
+### Refactoring
+
+- remove unused vrg commands (#3964)
+- make wait_for_checks' required set mandatory and drop its self-lookup (#3970)
+- drop the standalone vrg-repo-profile command; vrg-validate runs the check (#3971)
+
 ## [2.1.286] - 2026-11-06
 
 ### Chores

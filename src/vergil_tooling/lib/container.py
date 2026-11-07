@@ -45,25 +45,6 @@ _NPM_GLOBAL_ROOT = "/usr/lib/node_modules"
 # is discarded with the ``--rm`` container.
 PYCACHE_PREFIX = "/tmp/pycache"  # noqa: S108
 
-_DEFAULT_TEST_COMMANDS: dict[str, str] = {
-    "python": "uv sync && uv run pytest tests/ -v",
-    "go": "go test ./...",
-    "rust": "cargo test",
-    "java": "./mvnw verify",
-    "cpp": (
-        # -s build_type=Debug keeps Conan's dep binaries in the same config as
-        # the CMake Debug build below (else: fmt/format.h not found). (#2572)
-        "conan install . -s build_type=Debug --build=missing "
-        "&& cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug "
-        "&& cmake --build build --parallel "
-        "&& ctest --test-dir build --output-on-failure"
-    ),
-    # vrg-container-test runs this via `bash -c`, so `&&` chaining is valid.
-    # `npm ci` installs from the lockfile, then Vitest runs the suite once
-    # under the selected Node image (epic vergil-project/.github#284).
-    "typescript": "npm ci && vitest run",
-}
-
 
 def detect_runtime() -> str:
     """Return 'nerdctl' if available, else 'docker'."""
