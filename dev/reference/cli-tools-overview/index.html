@@ -20589,12 +20589,16 @@ started clean at <code>HEAD</code>, exited 0 and passed every stage; the passed 
 become <code>validate_stages</code>. The change class is
 <a href="#vrg-change-class"><code>vrg-change-class</code></a>'s, with the allow-list committed at
 the merge base.</p>
-<p><code>--issue-comments-file</code> holds the issue's trusted-author comments, a JSON
-list of <code>{"author", "created_at", "body"}</code> strings (<code>created_at</code> an ISO 8601
-timestamp with a time zone), kept in the order given; they become
-<code>issue_comments</code>, an empty list when the flag is not given. The caller
-decides which comments are trusted; the builder checks only their shape and
-refuses a malformed file by entry position, never echoing a value.</p>
+<p>It reads the comments of the <code>--issue</code> itself, every page, and keeps only
+those posted by the one human login of the trusted-authors configuration
+(see <a href="#vrg-trusted-authors"><code>vrg-trusted-authors</code></a>), oldest first, as
+<code>issue_comments</code>, each <code>{"author", "created_at", "body"}</code>. Agent and
+third-party comments are dropped. A human comment that has been edited is
+left out and counted in <code>issue_comments_excluded_edited</code>. It refuses when
+the configuration lists no human login or several, when the comments
+cannot be read, and when a kept comment's <code>created_at</code> is not an ISO 8601
+timestamp with a time zone, naming the comment by ID and never echoing a
+value.</p>
 <p>A check takes <code>--fix-base</code> (the <code>HEAD</code> the previous step judged, refused
 unless it is the <code>head_sha</code> of that step's stored request), one
 <code>--earlier-result</code> per earlier step in step order, each checked against
@@ -20619,15 +20623,15 @@ makes there, and writes only to the path it prints.</p>
 <tbody>
 <tr>
 <td>Source</td>
-<td><code>vergil_tooling.bin.vrg_merge_review_request</code> (library: <code>lib/merge_review/request.py</code>, <code>lib/merge_review/state.py</code>, <code>lib/build_dir.py</code>, <code>lib/validate_record.py</code>)</td>
+<td><code>vergil_tooling.bin.vrg_merge_review_request</code> (library: <code>lib/merge_review/request.py</code>, <code>lib/merge_review/state.py</code>, <code>lib/build_dir.py</code>, <code>lib/validate_record.py</code>, <code>lib/rulings/comments.py</code>, <code>lib/rulings/identity.py</code>)</td>
 </tr>
 <tr>
 <td>Args</td>
-<td><code>--issue OWNER/NAME#N --base REF --step {review,check,check-&lt;k&gt;} --issue-body-file FILE --epic-tasks-file FILE [--issue-comments-file FILE] [--design-source FILE]... [--fix-base SHA --earlier-result FILE... --fix-id ID... [--ruled-id ID]...]</code>, or <code>--issue OWNER/NAME#N --ensure-dir</code></td>
+<td><code>--issue OWNER/NAME#N --base REF --step {review,check,check-&lt;k&gt;} --issue-body-file FILE --epic-tasks-file FILE [--design-source FILE]... [--fix-base SHA --earlier-result FILE... --fix-id ID... [--ruled-id ID]...]</code>, or <code>--issue OWNER/NAME#N --ensure-dir</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>Run inside the task's worktree after <code>vrg-container-run -- vrg-validate</code> passed at <code>HEAD</code>; <code>--epic-tasks-file</code> holds a JSON list of <code>{"ref", "title"}</code> and <code>--issue-comments-file</code> one of <code>{"author", "created_at", "body"}</code></td>
+<td>Run inside the task's worktree after <code>vrg-container-run -- vrg-validate</code> passed at <code>HEAD</code>; <code>--epic-tasks-file</code> holds a JSON list of <code>{"ref", "title"}</code>; trusted authors are configured with exactly one human login, and GitHub is reachable to read the issue's comments</td>
 </tr>
 <tr>
 <td>Failure mode</td>
