@@ -21,6 +21,7 @@ from vergil_tooling.lib.validate_record import write_record
 Cap = pytest.CaptureFixture[str]
 
 ISSUE = "acme/widget#42"
+ISSUE_REPO_URL = "https://github.com/acme/widget.git"
 HUMAN = "maintainer"
 AGENT = f"{HUMAN}-vergil-user"
 
@@ -120,6 +121,7 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, comment_pages: list[An
     path = tmp_path / "repo"
     path.mkdir()
     _git(path, "init", "-q", "-b", "develop")
+    _git(path, "remote", "add", "origin", ISSUE_REPO_URL)
     _write(path, ".gitignore", "build/\n.vergil/\n")
     _write(path, "vergil.toml", _VERGIL_TOML)
     _write(path, "README.md", "# r\n")
@@ -356,6 +358,40 @@ def test_ensure_dir_from_a_linked_worktree_uses_the_main_clone(
     code, out, _err = _run(["--issue", ISSUE, "--ensure-dir"], capsys)
     assert code == 0
     assert out == f"{_merge_review_dir(repo)}\n"
+
+
+# -- the clone must be the issue's repository -----------------------------------------
+
+
+@pytest.mark.parametrize("url", [ISSUE_REPO_URL, "git@github.com:Acme/Widget.git"])
+def test_ensure_dir_accepts_a_clone_of_the_issue_repo(repo: Path, capsys: Cap, url: str) -> None:
+    _git(repo, "remote", "set-url", "origin", url)
+    code, out, err = _run(["--issue", ISSUE, "--ensure-dir"], capsys)
+    assert (code, err) == (0, "")
+    assert out == f"{_merge_review_dir(repo)}\n"
+
+
+@pytest.mark.parametrize("ensure_dir", [True, False])
+def test_request_refuses_a_clone_of_another_repo(
+    repo: Path, capsys: Cap, *, ensure_dir: bool
+) -> None:
+    _git(repo, "remote", "set-url", "origin", "https://github.com/acme/other.git")
+    argv = ["--issue", ISSUE, "--ensure-dir"] if ensure_dir else _argv(repo)
+    code, out, err = _run(argv, capsys)
+    assert code == 1
+    assert out == ""
+    assert "pushes to acme/other, not the issue's repo acme/widget" in err
+    assert "run vrg-merge-review-request in a clone of acme/widget" in err
+    assert not (repo / "build").exists()
+
+
+def test_request_refuses_a_clone_without_origin(repo: Path, capsys: Cap) -> None:
+    _git(repo, "remote", "remove", "origin")
+    code, out, err = _run(["--issue", ISSUE, "--ensure-dir"], capsys)
+    assert code == 1
+    assert out == ""
+    assert "cannot read the push URL of the 'origin' remote" in err
+    assert not (repo / "build").exists()
 
 
 # -- the review request -------------------------------------------------------------
