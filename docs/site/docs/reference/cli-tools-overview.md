@@ -1574,9 +1574,10 @@ for every check and where it runs.
 ### validate_common (internal)
 
 Not a command on `PATH`: the module `vrg-validate` runs as its common
-stage. Shared validation checks for all repos: repository profile
-validation, markdownlint on published markdown (`docs/site/**/*.md`
-and `README.md`) using the bundled canonical config, shellcheck on
+stage. Shared validation checks for all repos: the
+[repo-profile](lint/repo-profile.md) check (`vergil.toml` and the
+`README.md` structure), markdownlint on published markdown
+(`docs/site/**/*.md` and `README.md`) using the bundled canonical config, shellcheck on
 `scripts/`, yamllint on `.github/` and `docs/` YAML files, the
 dependabot-limit guard (when `.github/dependabot.yml` exists, every
 `updates` entry must carry `open-pull-requests-limit: 0`, so Dependabot
@@ -1593,23 +1594,6 @@ carries Ansible content.
 | Failure mode | Propagates exit codes from each tool |
 | Exit codes | 0 all passed, non-zero on first failure |
 | Status | Active (called internally by `vrg-validate`) |
-
-### vrg-repo-profile
-
-Validate the repository configuration in `vergil.toml` (required
-keys, enum values, dependencies) and the `README.md` structure
-(exactly one H1, a Table of Contents, no heading-level skips). Run by
-`vrg-validate` as a common check. See the
-[repo-profile reference](lint/repo-profile.md).
-
-| Attribute | Value |
-|---|---|
-| Source | `vergil_tooling.bin.vrg_repo_profile` |
-| Args | None |
-| Preconditions | Run from the repository root; `vergil.toml` exists |
-| Failure mode | Exit 2 if `vergil.toml` is not found; exit 1 for an invalid `vergil.toml` or a `README.md` structure error |
-| Exit codes | 0 valid, 1 invalid, 2 `vergil.toml` not found |
-| Status | Active |
 
 ### vrg-ci-resolve
 
@@ -1900,7 +1884,8 @@ interface than argparse would provide. No alignment needed.
 
 - 0: success
 - 1: check failure, validation error, or precondition violation
-- 2: infrastructure error (used by `vrg-repo-profile`)
+- 2: infrastructure error (used by the `vrg-validate` repo-profile
+  check when `vergil.toml` is missing)
 
 The 1-vs-2 distinction is not universal. Tools added before the
 convention was established use 1 for all errors.

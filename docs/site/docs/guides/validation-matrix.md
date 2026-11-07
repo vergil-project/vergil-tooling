@@ -15,7 +15,7 @@ where it runs. No git hooks are installed: every check runs inside a
 | Branch and commit context | `vrg-commit` | Yes | -- |
 | No auto-close keyword in the commit body | `vrg-commit` | Yes | -- |
 | PR body issue linkage | `vrg-submit-pr` | Yes | -- |
-| Repository profile | `vrg-repo-profile` (common checks) | Yes | `quality / common` |
+| Repository profile | `vrg-validate` (repo-profile, common checks) | Yes | `quality / common` |
 | Versions resolve against the window; toolchain selection; language floor | `vrg-validate` (config check, before any stage) | Yes | Every `vrg-validate` job |
 | Markdown, shell, YAML, Dockerfile, workflow and Ansible lint | `vrg-validate` (common checks) | Yes | `quality / common` |
 | Lint and typecheck | `vrg-validate` | Yes (primary version) | `quality / lint / <version>`, `quality / typecheck / <version>` |
@@ -115,9 +115,9 @@ dev images come from
 
 `vrg-validate --check common` runs, in order:
 
-1. `vrg-repo-profile`: `vergil.toml` is present and valid, and
+1. repo-profile: `vergil.toml` is present and valid, and
    `README.md` follows the structural conventions. See the
-   [vrg-repo-profile reference](../reference/lint/repo-profile.md).
+   [repo-profile reference](../reference/lint/repo-profile.md).
 2. markdownlint on `docs/site/**/*.md` and `README.md`, with the
    canonical config bundled in vergil-tooling, then on `epics/` with a
    config that relaxes line length. See the
@@ -184,7 +184,7 @@ toolchains are not uv-managed, and their PR-CI matrix stays CI-only.
 ## Exit Codes
 
 Every tool above exits 0 on success and non-zero when a check fails.
-`vrg-repo-profile` distinguishes the two failure cases:
+The repo-profile check distinguishes the two failure cases:
 
 | Code | Meaning |
 | ---- | ------- |

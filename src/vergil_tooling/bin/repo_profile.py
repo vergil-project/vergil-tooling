@@ -45,7 +45,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="vrg-repo-profile",
+        prog="repo-profile",
         description=(
             "Validate the current repository's configuration and README "
             "structure: that vergil.toml is present and valid (required "
