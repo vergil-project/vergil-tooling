@@ -17479,7 +17479,8 @@ No separate push is needed. When the delta touches
 <code>.github/workflows/**</code> GitHub refuses the agent push; <code>report-ready</code>
 says so, records the state anyway, and the human's <code>vrg-submit-pr</code>
 pushes the branch instead. Any other push failure fails <code>report-ready</code>
-with nothing recorded. Recording ready <strong>freezes the branch</strong>: <code>vrg-commit</code>
+with nothing recorded, as does a branch with no commits ahead of its
+base. Recording ready <strong>freezes the branch</strong>: <code>vrg-commit</code>
 and the <code>vrg-git</code> push path refuse further commits/pushes on it,
 because a task is exactly one PR and more work is a new follow-up
 issue. One push stays allowed: an explicit push of the branch while

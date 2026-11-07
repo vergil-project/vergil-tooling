@@ -18964,7 +18964,9 @@ so no separate push is needed; a branch already on origin at that commit is a
 no-op push. When the delta touches <code>.github/workflows/**</code> GitHub refuses the
 agent push: <code>report-ready</code> reports that as expected, records the state anyway,
 and the human's <code>vrg-submit-pr</code> pushes the branch. Any other push failure
-fails <code>report-ready</code> with no local state and no relay ref written. A re-run on
+fails <code>report-ready</code> with no local state and no relay ref written. A branch
+with no commits ahead of <code>--base</code> is refused before any push, with nothing
+recorded and no freeze (#3870). A re-run on
 a frozen branch whose HEAD has drifted past the reported commit is refused
 before any push. After a deliberate <code>unfreeze</code>, a re-run pushes with
 <code>--force-with-lease=refs/heads/&lt;branch&gt;:&lt;recorded head_sha&gt;</code>, so a rebased
