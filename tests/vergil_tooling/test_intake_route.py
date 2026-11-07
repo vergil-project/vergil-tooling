@@ -61,6 +61,9 @@ class Env:
         self.closing_prs: dict[str, str] = {}
         self.public: dict[str, bool] = {}
         self.native_parent: dict[IssueRef, IssueRef | None] = {}
+        # Sub-issue listings GitHub still shows although the child's parent
+        # field says otherwise: epic -> stale children (#4004).
+        self.stale_listing: dict[IssueRef, set[IssueRef]] = {}
         self.epic_state = "open"
         self.transfer: Any = "https://github.com/org/tool/issues/900"
         self.issue_view: dict[str, object] = {
@@ -96,6 +99,11 @@ class Env:
 
     def attach(self, epic: IssueRef, task: IssueRef) -> None:
         self.native_parent[task] = epic
+
+    def native_children(self, epic: IssueRef) -> list[IssueRef]:
+        """The epic's sub-issue list: its children by parent field, plus stale listings."""
+        listed = {task for task, parent in self.native_parent.items() if parent == epic}
+        return sorted(listed | self.stale_listing.get(epic, set()), key=lambda ref: ref.slug)
 
     def queue_kind(self, ref: IssueRef) -> str | None:
         kind = self.kinds.get(ref)
@@ -139,6 +147,7 @@ def env() -> Iterator[Env]:
             f"{_MOD}.epics.native_parent_of",
             side_effect=lambda ref: state.native_parent.get(ref),
         ),
+        patch(f"{_MOD}.epics.native_children", side_effect=state.native_children),
         patch(f"{_MOD}.epics.add_child", state.add_child),
         patch(f"{_MOD}.epics.reparent_child", state.reparent_child),
         patch(f"{_MOD}.epics.ensure_planning_epic", state.ensure_planning_epic),
@@ -644,6 +653,19 @@ def test_route_one_off_same_repo_reparents_only(env: Env) -> None:
     env.create_issue.assert_not_called()
 
 
+def test_route_one_off_same_repo_parent_mismatch_fails_loudly(env: Env) -> None:
+    env.native_parent[ITEM] = INTAKE
+    env.resolve_epic_ref.return_value = ADHOC_DOTGITHUB
+    env.reparent_child.side_effect = None  # the link never takes
+    with pytest.raises(intake_route.RouteHalfAppliedError) as excinfo:
+        route(ITEM, OneOff(repo="org/.github"), today=TODAY)
+    assert str(excinfo.value) == (
+        "linked org/.github#352, but it is under org/.github#7, not under org/.github#9; "
+        "the route is half-applied. Fix it with: "
+        "vrg-epic-move --task org/.github#352 --epic org/.github#9"
+    )
+
+
 def test_route_one_off_transfers_then_links(env: Env) -> None:
     result = route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     new = IssueRef("org", "tool", 900)
@@ -657,7 +679,8 @@ def test_route_one_off_transfers_then_links(env: Env) -> None:
     env.reparent_child.assert_called_once_with(TOOL_ADHOC, new)
     env.add_child.assert_not_called()
     assert env.native_parent[new] == TOOL_ADHOC
-    env.sleep.assert_called_once_with(intake_route._SETTLE_SECONDS)
+    # One settle wait before the first read, one more before the confirming read.
+    assert env.sleep.call_args_list == [call(intake_route._SETTLE_SECONDS)] * 2
     env.create_issue.assert_not_called()
     env.run.assert_not_called()
 
@@ -707,6 +730,87 @@ def test_route_one_off_transfer_parent_mismatch_fails_loudly(
     assert "vrg-epic-move --task org/tool#900 --epic org/.github#11" in message
     assert env.reparent_child.call_count == intake_route._SETTLE_ROUNDS
     assert capsys.readouterr().err.count("replacing the parent") == intake_route._SETTLE_ROUNDS
+
+
+def test_route_one_off_transfer_parent_reverting_after_a_matching_read_is_replaced(
+    env: Env, capsys: pytest.CaptureFixture[str]
+) -> None:
+    new = IssueRef("org", "tool", 900)
+    # The first read after the link sees the target, but the carry-over lands
+    # just after it (#4004): the confirming read catches it and the next round
+    # replaces the parent again.
+    sleeps = iter(range(1, 100))
+
+    def carry_over_after_first_read(*_: object) -> None:
+        if next(sleeps) == 2:
+            env.native_parent[new] = INTAKE
+
+    env.sleep.side_effect = carry_over_after_first_read
+    result = route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    assert result == RouteResult(final=new, moved_by="transfer")
+    assert env.reparent_child.call_args_list == [call(TOOL_ADHOC, new), call(TOOL_ADHOC, new)]
+    assert env.native_parent[new] == TOOL_ADHOC
+    err = capsys.readouterr().err
+    assert "org/tool#900 is under org/.github#7 after linking it under org/.github#11" in err
+    assert "(round 1/4); replacing the parent" in err
+
+
+def test_route_one_off_transfer_parent_that_never_holds_fails_loudly(env: Env) -> None:
+    new = IssueRef("org", "tool", 900)
+    # The silent #4004 failure: every read right after a link sees the target
+    # epic, and every time the intake parent comes back a moment later. A
+    # single matching read must not report the route done.
+    sleeps = iter(range(1, 100))
+
+    def carry_over_after_each_read(*_: object) -> None:
+        if next(sleeps) % 2 == 0:
+            env.native_parent[new] = INTAKE
+
+    env.sleep.side_effect = carry_over_after_each_read
+    with pytest.raises(intake_route.RouteHalfAppliedError) as excinfo:
+        route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    message = str(excinfo.value)
+    assert message.startswith(
+        "moved org/.github#352 to org/tool#900, but it is under org/.github#7"
+    )
+    assert "not under org/.github#11; the route is half-applied" in message
+    assert "vrg-epic-move --task org/tool#900 --epic org/.github#11" in message
+    assert env.reparent_child.call_count == intake_route._SETTLE_ROUNDS
+
+
+def test_route_one_off_transfer_still_listed_under_intake_fails_loudly(
+    env: Env, capsys: pytest.CaptureFixture[str]
+) -> None:
+    new = IssueRef("org", "tool", 900)
+    # The parent field reads the target, but the intake epic's sub-issue list
+    # (what vrg-queue intake reads) still holds the moved item.
+    env.stale_listing[INTAKE] = {new}
+    with pytest.raises(intake_route.RouteHalfAppliedError) as excinfo:
+        route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    message = str(excinfo.value)
+    assert (
+        "moved org/.github#352 to org/tool#900, but it is still listed as a sub-issue of "
+        "org/.github#7 (its parent reads org/.github#11), not settled under org/.github#11"
+    ) in message
+    assert "vrg-epic-move --task org/tool#900 --epic org/.github#11" in message
+    err = capsys.readouterr().err
+    assert err.count("still listed as a sub-issue of org/.github#7") == intake_route._SETTLE_ROUNDS
+    assert "(round 1/4); checking again" in err
+
+
+def test_route_one_off_transfer_stale_listing_that_clears_settles(env: Env) -> None:
+    new = IssueRef("org", "tool", 900)
+    env.stale_listing[INTAKE] = {new}
+    sleeps = iter(range(1, 100))
+
+    def listing_catches_up(*_: object) -> None:
+        if next(sleeps) == 3:
+            env.stale_listing.clear()
+
+    env.sleep.side_effect = listing_catches_up
+    result = route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    assert result == RouteResult(final=new, moved_by="transfer")
+    env.reparent_child.assert_called_once_with(TOOL_ADHOC, new)
 
 
 def test_route_one_off_already_under_epic_is_left(env: Env) -> None:
@@ -953,7 +1057,8 @@ def test_transfer_security_item_retargets_to_final(env: Env) -> None:
     assert result == RouteResult(final=final, moved_by="transfer")
     # The old number is the moved issue itself: rewritten away, never unmarked.
     env.retarget.assert_called_once_with("org/.github", GHSA, (final,), renamed=(ITEM,))
-    assert order == ["settle", "retarget"]
+    # The settle wait and its confirming wait both come before the retarget.
+    assert order == ["settle", "settle", "retarget"]
     # The item was read before the move, while it still had its labels.
     env.read_json.assert_called_once_with(
         "issue", "view", "352", "--repo", "org/.github", "--json", "labels,body"
@@ -976,11 +1081,27 @@ def test_transfer_retarget_failure_reports_moved_not_refused(env: Env) -> None:
 def test_transfer_parent_mismatch_also_names_the_advisory(env: Env) -> None:
     env.make_security_item()
     env.reparent_child.side_effect = None  # the link never takes
-    with pytest.raises(RuntimeError) as excinfo:
+    with pytest.raises(intake_route.RouteHalfAppliedError) as excinfo:
         route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     message = str(excinfo.value)
     assert "half-applied" in message
     assert f"also, advisory {GHSA} was not retargeted" in message
+    assert f"vrg-security-record retarget {GHSA} --to org/tool#900" in message
+    env.retarget.assert_not_called()
+
+
+def test_transfer_link_error_also_names_the_advisory_and_stays_a_runtime_error(
+    env: Env,
+) -> None:
+    env.make_security_item()
+    env.reparent_child.side_effect = RuntimeError("GraphQL errors: [boom]")
+    with pytest.raises(RuntimeError) as excinfo:
+        route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    # Only a settle that read the wrong parent is a half-applied route; a
+    # failed link call keeps its own type, with the advisory recovery added.
+    assert not isinstance(excinfo.value, intake_route.RouteHalfAppliedError)
+    message = str(excinfo.value)
+    assert message.startswith("GraphQL errors: [boom]; also, advisory")
     assert f"vrg-security-record retarget {GHSA} --to org/tool#900" in message
     env.retarget.assert_not_called()
 
