@@ -146,8 +146,8 @@ def wait_and_merge(
 
         def wait(p: str) -> None:
             # Pass the lookup result through as-is: ``None`` tells the waiter
-            # the required set is unknown (no second lookup), so it falls back
-            # to registered checks but never passes a stale check (#3379).
+            # the required set is unknown, so it falls back to registered
+            # checks but never passes a stale check (#3379).
             github.wait_for_checks(p, required=resolved)
 
     updates = 0
