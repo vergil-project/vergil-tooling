@@ -17476,8 +17476,8 @@ while it is in place. A plain <code>vrg-vm update</code> returns the VM to the p
 See <a href="../../reference/vm-spec/#vergil-tooling-inside-the-vm">vergil-tooling inside the VM</a>.</p>
 <h2 id="tag-scheme-whats-user-facing-what-isnt">Tag scheme — what's user-facing, what isn't<a class="headerlink" href="#tag-scheme-whats-user-facing-what-isnt" title="Permanent link">&para;</a></h2>
 <p>Two parallel tag families exist in the repo. Consumers only see and
-use the first; the second is internal scaffolding for the changelog
-flow.</p>
+use the first; the second is an internal marker of where <code>develop</code>
+stood when a release was published.</p>
 <table>
 <thead>
 <tr>
@@ -17503,13 +17503,21 @@ flow.</p>
 <tr>
 <td><code>develop-v1.3.0</code></td>
 <td><code>develop</code></td>
-<td>Boundary marker for <code>git-cliff</code>'s next-changelog scoping</td>
+<td>Marks the <code>develop</code> tip when the release was published</td>
 <td>No — internal</td>
 </tr>
 </tbody>
 </table>
 <p>The <code>develop-</code> prefix is invisible to install / consumption; never
 pin to a <code>develop-v*</code> tag.</p>
+<p>The changelog and release notes do not use the <code>develop-v*</code> tags as
+their boundary. CD places one on the <code>develop</code> tip after the release
+has merged, so a PR merged to <code>develop</code> while the release was in flight
+would sit behind it without having shipped. A release's changes are
+instead the commits since the merge base of the release branch and the
+previous <code>vX.Y.Z</code> tag, so such a PR appears in the next release. The
+new section is added to the top of <code>CHANGELOG.md</code>; the entries of
+earlier releases are kept as they were published.</p>
 <h2 id="patch-release-the-common-path">Patch release — the common path<a class="headerlink" href="#patch-release-the-common-path" title="Permanent link">&para;</a></h2>
 <p>A patch release fixes a bug or refines an existing feature without
 adding new public surface. Versions: <code>v1.3.0</code> → <code>v1.3.1</code>.</p>
