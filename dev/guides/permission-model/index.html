@@ -18080,11 +18080,33 @@ instead of by pair:</p>
 per-command. See <a href="../credential-management/">Credential Management</a>
 for the selection logic.</p>
 <h3 id="vrg-tools-that-bypass-the-wrapper">VRG Tools That Bypass the Wrapper<a class="headerlink" href="#vrg-tools-that-bypass-the-wrapper" title="Permanent link">&para;</a></h3>
-<p>Mechanized VRG tools (<code>vrg-submit-pr</code>, <code>vrg-release</code>,
-<code>vrg-update-deps</code>, <code>vrg-ensure-label</code>, <code>vrg-github-repo-config</code>, <code>vrg-finalize-pr</code>)
-call <code>gh</code> directly in their Python code. They bypass the wrapper
-because they are already validated — the wrapper only constrains
-agent-initiated <code>gh</code> calls via the Bash tool.</p>
+<p>Mechanized VRG tools call <code>gh</code> and <code>git</code> directly in their Python
+code, mostly through the shared <code>lib/github.py</code> and <code>lib/git.py</code>
+helpers, not through <code>vrg-gh</code> and <code>vrg-git</code>. They bypass the wrappers
+because they are already validated: the wrappers only constrain
+agent-initiated <code>gh</code> and <code>git</code> calls via the Bash tool.</p>
+<p>These tools call both <code>gh</code> and <code>git</code>. Most of them call <code>git</code> only to
+read the <code>origin</code> remote, which resolves the org whose GitHub App
+token <code>gh</code> runs with:</p>
+<p><code>vrg-activity-log</code>, <code>vrg-adhoc-epic</code>, <code>vrg-audit-approve</code>,
+<code>vrg-branch-sweep</code>, <code>vrg-ci-evidence</code>, <code>vrg-ci-sync</code>,
+<code>vrg-container-docs</code>, <code>vrg-dependabot-audit</code>, <code>vrg-docs-stage</code>,
+<code>vrg-ensure-label</code>, <code>vrg-epic-audit</code>, <code>vrg-epic-create</code>,
+<code>vrg-epic-docs</code>, <code>vrg-epic-link</code>, <code>vrg-epic-move</code>, <code>vrg-epic-rollup</code>,
+<code>vrg-finalize-pr</code>, <code>vrg-fleet-sync</code>, <code>vrg-github-repo-config</code>,
+<code>vrg-github-repo-init</code>, <code>vrg-intake-create</code>, <code>vrg-intake-route</code>,
+<code>vrg-issue-create</code>, <code>vrg-pr-await</code>, <code>vrg-pr-workflow</code>, <code>vrg-promote</code>,
+<code>vrg-queue</code>, <code>vrg-release</code>, <code>vrg-resolve-tracking-issue</code>,
+<code>vrg-roadmap</code>, <code>vrg-ruling</code>, <code>vrg-ruling-reply</code>,
+<code>vrg-security-record</code>, <code>vrg-submit-pr</code>, <code>vrg-update-deps</code>,
+<code>vrg-upstream-refresh</code>, <code>vrg-worktree-status</code> and <code>vrg-xdist-sync</code>.</p>
+<p><code>vrg-package</code> calls <code>gh</code> only: it lists and downloads releases, and
+verifies their attestations, when it builds the package index.</p>
+<p>These tools call <code>git</code> only: <code>vrg-commit</code>, <code>vrg-container-cache</code>,
+<code>vrg-container-run</code>, <code>vrg-reword</code>, <code>vrg-scorecard</code>, <code>vrg-validate</code>,
+<code>vrg-version</code> and <code>vrg-vm</code>. <code>vrg-vm</code> also runs <code>git config</code> inside
+the VM, to set its git identity and HTTPS GitHub access.</p>
+<p>The other <code>vrg-*</code> tools call neither.</p>
 <h2 id="permission-configuration">Permission Configuration<a class="headerlink" href="#permission-configuration" title="Permanent link">&para;</a></h2>
 <h3 id="project-settings-claudesettingsjson">Project Settings (<code>.claude/settings.json</code>)<a class="headerlink" href="#project-settings-claudesettingsjson" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="p">{</span>

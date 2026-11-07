@@ -16807,12 +16807,24 @@ the dev-tree override venv.</p>
 <td>Reword a branch-local commit message (agent-safe)</td>
 </tr>
 <tr>
+<td><a href="cli-tools-overview/#vrg-git">vrg-git</a></td>
+<td>Policy-enforcing <code>git</code> wrapper for agent sessions</td>
+</tr>
+<tr>
+<td><a href="cli-tools-overview/#vrg-gh">vrg-gh</a></td>
+<td>Identity-aware <code>gh</code> wrapper with a per-identity allowlist</td>
+</tr>
+<tr>
 <td><a href="cli-tools-overview/#vrg-whoami">vrg-whoami</a></td>
 <td>Print the resolved identity role or platform</td>
 </tr>
 <tr>
 <td><a href="cli-tools-overview/#vrg-hook-guard">vrg-hook-guard</a></td>
 <td>Claude Code hook that blocks raw <code>git</code> and <code>gh</code></td>
+</tr>
+<tr>
+<td><a href="cli-tools-overview/#vrg-trusted-authors">vrg-trusted-authors</a></td>
+<td>Print the GitHub logins whose issues and comments automation may trust</td>
 </tr>
 <tr>
 <td><a href="cli-tools-overview/#vrg-resolve-tracking-issue">vrg-resolve-tracking-issue</a></td>
@@ -16823,12 +16835,40 @@ the dev-tree override venv.</p>
 <td>Manage the identity agent VMs</td>
 </tr>
 <tr>
+<td><a href="cli-tools-overview/#vrg-vm-resolve-session">vrg-vm-resolve-session</a></td>
+<td>Pick and start a Claude Code session inside an identity VM (run by <code>vrg-vm session</code>)</td>
+</tr>
+<tr>
 <td><a href="dev/submit-pr/">vrg-submit-pr</a></td>
 <td>Standards-compliant PR submission wrapper</td>
 </tr>
 <tr>
+<td><a href="cli-tools-overview/#vrg-pr-workflow">vrg-pr-workflow</a></td>
+<td>Record and manage the PR handoff state that <code>vrg-submit-pr</code> reads</td>
+</tr>
+<tr>
+<td><a href="cli-tools-overview/#vrg-pr-await">vrg-pr-await</a></td>
+<td>Block until a PR's checks or reviews settle, then print its state</td>
+</tr>
+<tr>
+<td><a href="cli-tools-overview/#vrg-await">vrg-await</a></td>
+<td>Block until a <code>.vergil/</code> channel file appears or changes</td>
+</tr>
+<tr>
+<td><a href="cli-tools-overview/#vrg-audit-approve">vrg-audit-approve</a></td>
+<td>Post the <code>vergil-audit/approved</code> check-run on a PR's head commit</td>
+</tr>
+<tr>
 <td><a href="dev/release/">vrg-release</a></td>
 <td>Run the full release workflow, ending with the dependency update</td>
+</tr>
+<tr>
+<td><a href="cli-tools-overview/#vrg-promote">vrg-promote</a></td>
+<td>Move the rolling <code>vX.Y</code> tag to a release (human-only)</td>
+</tr>
+<tr>
+<td><a href="cli-tools-overview/#vrg-version">vrg-version</a></td>
+<td>Print or bump the repo's version</td>
 </tr>
 <tr>
 <td><a href="dev/update-deps/">vrg-update-deps</a></td>
@@ -16863,6 +16903,38 @@ the dev-tree override venv.</p>
 <td>Bootstrap a new managed repository</td>
 </tr>
 <tr>
+<td><a href="cli-tools-overview/#vrg-gitignore-sync">vrg-gitignore-sync</a></td>
+<td>Check or write a repo's vergil-managed <code>.gitignore</code> block</td>
+</tr>
+<tr>
+<td><a href="cli-tools-overview/#vrg-dependabot-sync">vrg-dependabot-sync</a></td>
+<td>Check or write a repo's canonical report-only <code>dependabot.yml</code></td>
+</tr>
+<tr>
+<td><a href="cli-tools-overview/#vrg-fleet-sync">vrg-fleet-sync</a></td>
+<td>Propagate a managed file across the fleet, one PR per drifted repo</td>
+</tr>
+<tr>
+<td><a href="cli-tools-overview/#vrg-ci-sync">vrg-ci-sync</a></td>
+<td>Fleet sweep that strips retired inputs from each repo's <code>ci.yml</code></td>
+</tr>
+<tr>
+<td><a href="cli-tools-overview/#vrg-xdist-sync">vrg-xdist-sync</a></td>
+<td>Fleet sweep that adds <code>pytest-xdist</code> to each Python repo</td>
+</tr>
+<tr>
+<td><a href="cli-tools-overview/#vrg-upstream-refresh">vrg-upstream-refresh</a></td>
+<td>Run the repo's upstream-refresh hook and open, refresh or close its PR</td>
+</tr>
+<tr>
+<td><a href="dev/branch-sweep/">vrg-branch-sweep</a></td>
+<td>Report, or with <code>--apply</code> delete, a repo's finished remote branches</td>
+</tr>
+<tr>
+<td><a href="cli-tools-overview/#vrg-worktree-status">vrg-worktree-status</a></td>
+<td>Show every worktree in the current repo, grouped by kind</td>
+</tr>
+<tr>
 <td><a href="cli-tools-overview/#vrg-container-run">vrg-container-run</a></td>
 <td>Run commands inside a dev container</td>
 </tr>
@@ -16883,12 +16955,72 @@ the dev-tree override venv.</p>
 <td>Manage the per-branch cached dev image</td>
 </tr>
 <tr>
+<td><a href="cli-tools-overview/#vrg-scorecard">vrg-scorecard</a></td>
+<td>Run OpenSSF Scorecard in a dev container with a GitHub App token</td>
+</tr>
+<tr>
 <td><a href="cli-tools-overview/#vrg-generate-commands">vrg-generate-commands</a></td>
 <td>Generate MQSC command methods</td>
 </tr>
 <tr>
 <td><a href="dev/host/">vrg-host</a></td>
 <td>Report, upgrade and pin the macOS host dependencies</td>
+</tr>
+<tr>
+<td><a href="cli-tools-overview/#vrg-issue-create">vrg-issue-create</a></td>
+<td>Create an issue and link it under an epic in one step</td>
+</tr>
+<tr>
+<td><a href="cli-tools-overview/#vrg-epic-create">vrg-epic-create</a></td>
+<td>Create a top-level epic in its home repo</td>
+</tr>
+<tr>
+<td><a href="cli-tools-overview/#vrg-epic-docs">vrg-epic-docs</a></td>
+<td>Write an epic's Documents section</td>
+</tr>
+<tr>
+<td><a href="cli-tools-overview/#vrg-epic-link">vrg-epic-link</a></td>
+<td>Link a task under an epic as a native sub-issue</td>
+</tr>
+<tr>
+<td><a href="cli-tools-overview/#vrg-epic-move">vrg-epic-move</a></td>
+<td>Move a task under a different epic</td>
+</tr>
+<tr>
+<td><a href="cli-tools-overview/#vrg-epic-rollup">vrg-epic-rollup</a></td>
+<td>Close a finite epic once all its tasks are closed</td>
+</tr>
+<tr>
+<td><a href="cli-tools-overview/#vrg-adhoc-epic">vrg-adhoc-epic</a></td>
+<td>Ensure, archive or normalize a repo's ad-hoc epic</td>
+</tr>
+<tr>
+<td><a href="cli-tools-overview/#vrg-epic-audit">vrg-epic-audit</a></td>
+<td>Report epic/task drift and invariant violations for an org</td>
+</tr>
+<tr>
+<td><a href="cli-tools-overview/#vrg-intake-create">vrg-intake-create</a></td>
+<td>Capture an uncurated item into the intake queue</td>
+</tr>
+<tr>
+<td><a href="cli-tools-overview/#vrg-intake-route">vrg-intake-route</a></td>
+<td>Route an item between the intake, planning, ad-hoc and deferred epics</td>
+</tr>
+<tr>
+<td><a href="dev/security-record/">vrg-security-record</a></td>
+<td>Record a security finding as a private draft advisory with a neutral intake issue</td>
+</tr>
+<tr>
+<td><a href="cli-tools-overview/#vrg-queue">vrg-queue</a></td>
+<td>Read-only view of a standing queue</td>
+</tr>
+<tr>
+<td><a href="cli-tools-overview/#vrg-roadmap">vrg-roadmap</a></td>
+<td>Print the generated project roadmap</td>
+</tr>
+<tr>
+<td><a href="cli-tools-overview/#vrg-activity-log">vrg-activity-log</a></td>
+<td>Print the project activity log of recently closed issues</td>
 </tr>
 </tbody>
 </table>
@@ -16915,8 +17047,52 @@ the dev-tree override venv.</p>
 <td>Build, install-test and index binary OS packages from <code>[package]</code></td>
 </tr>
 <tr>
+<td><a href="cli-tools-overview/#vrg-ci-resolve">vrg-ci-resolve</a></td>
+<td>Resolve the repo's CI versions from the published version window</td>
+</tr>
+<tr>
 <td><a href="cli-tools-overview/#vrg-sarif-filter">vrg-sarif-filter</a></td>
 <td>Drop accepted-suppressed results from a SARIF file before upload</td>
+</tr>
+<tr>
+<td><a href="cli-tools-overview/#vrg-sarif-evaluate">vrg-sarif-evaluate</a></td>
+<td>Report a SARIF file's findings at the chosen severities</td>
+</tr>
+<tr>
+<td><a href="cli-tools-overview/#vrg-semgrep-scan">vrg-semgrep-scan</a></td>
+<td>Run a semgrep scan with language-resolved rulesets and write SARIF</td>
+</tr>
+<tr>
+<td><a href="cli-tools-overview/#vrg-trivy-scan">vrg-trivy-scan</a></td>
+<td>Run a Trivy vulnerability scan and write SARIF</td>
+</tr>
+<tr>
+<td><a href="cli-tools-overview/#vrg-ecosystem-resolve">vrg-ecosystem-resolve</a></td>
+<td>Resolve a language's package build and publish commands</td>
+</tr>
+<tr>
+<td><a href="cli-tools-overview/#vrg-release-validate-inputs">vrg-release-validate-inputs</a></td>
+<td>Validate release workflow inputs</td>
+</tr>
+<tr>
+<td><a href="cli-tools-overview/#vrg-version-divergence">vrg-version-divergence</a></td>
+<td>Fail when the head branch's version was not bumped</td>
+</tr>
+<tr>
+<td><a href="cli-tools-overview/#vrg-freeze-refs">vrg-freeze-refs</a></td>
+<td>Pin internal action references in workflow YAML to a release tag</td>
+</tr>
+<tr>
+<td><a href="cli-tools-overview/#vrg-ci-evidence">vrg-ci-evidence</a></td>
+<td>Harvest and bundle a release's CI evidence</td>
+</tr>
+<tr>
+<td><a href="cli-tools-overview/#vrg-docs-stage">vrg-docs-stage</a></td>
+<td>Stage the changelog and release notes into the docs build</td>
+</tr>
+<tr>
+<td><a href="cli-tools-overview/#vrg-docs-patch-nav">vrg-docs-patch-nav</a></td>
+<td>Add the release version pages to the <code>mkdocs.yml</code> nav</td>
 </tr>
 <tr>
 <td><a href="lint/markdown-standards/">Markdown validation</a></td>
