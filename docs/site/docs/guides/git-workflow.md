@@ -179,7 +179,10 @@ vrg-submit-pr \
 See the [vrg-submit-pr reference](../reference/dev/submit-pr.md).
 
 !!! note "Agent handoff and the post-report-ready freeze"
-    In an agent session, submission is a **human** action. The agent
+    In an agent session, submission is a **human** action. Once the
+    committed branch is green, the agent first runs the
+    [merge review](merge-review.md), the pre-PR judgement check, and
+    carries its eligibility line into the PR notes. The agent then
     runs `vrg-pr-workflow report-ready`, which pushes the branch to origin
     (setting upstream) and then records the PR metadata in
     `.vergil/pr-workflow.json`, and stops; the human runs `vrg-submit-pr`.
