@@ -33,17 +33,26 @@ See [vergil-tooling inside the VM](../reference/vm-spec.md#vergil-tooling-inside
 ## Tag scheme — what's user-facing, what isn't
 
 Two parallel tag families exist in the repo. Consumers only see and
-use the first; the second is internal scaffolding for the changelog
-flow.
+use the first; the second is an internal marker of where `develop`
+stood when a release was published.
 
 | Tag pattern | Where | Purpose | User-facing? |
 |---|---|---|---|
 | `v1.3.0` | `main` | Release tag | Yes — pin in install commands |
 | `v1.3` | `main` | Rolling minor tag (force-updated each patch) | Yes — what consumers actually pin to |
-| `develop-v1.3.0` | `develop` | Boundary marker for `git-cliff`'s next-changelog scoping | No — internal |
+| `develop-v1.3.0` | `develop` | Marks the `develop` tip when the release was published | No — internal |
 
 The `develop-` prefix is invisible to install / consumption; never
 pin to a `develop-v*` tag.
+
+The changelog and release notes do not use the `develop-v*` tags as
+their boundary. CD places one on the `develop` tip after the release
+has merged, so a PR merged to `develop` while the release was in flight
+would sit behind it without having shipped. A release's changes are
+instead the commits since the merge base of the release branch and the
+previous `vX.Y.Z` tag, so such a PR appears in the next release. The
+new section is added to the top of `CHANGELOG.md`; the entries of
+earlier releases are kept as they were published.
 
 ## Patch release — the common path
 

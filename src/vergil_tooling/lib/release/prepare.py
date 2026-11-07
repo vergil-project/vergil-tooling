@@ -145,9 +145,9 @@ def _generate_changelog(ctx: ReleaseContext) -> None:
             phase="prepare",
             command="git-cliff",
             message=(
-                f"No publishable changes since the last release. "
-                f"All commits after develop-v{ctx.version} are filtered "
-                f"by git-cliff."
+                "No publishable changes since the last release. "
+                "Every commit since the previous release is filtered "
+                "by git-cliff."
             ),
         )
     git.run("commit", "-m", f"chore(release): prepare {ctx.version}")
