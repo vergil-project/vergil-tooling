@@ -471,10 +471,12 @@ def copy_claude_config(
     mode is a guard that makes an accidental write fail loudly; it is not a
     security boundary, since the guest user owns the file.
 
-    Each target is made writable (``chmod u+w``) before the overwrite, so a
-    copy locked by an earlier run does not fail the ``cat >`` with "permission
-    denied" (#2436). The ``chmod u+w`` is a harmless no-op on a fresh file
-    (guarded with ``2>/dev/null``).
+    Each file is written atomically (#3987): to a temp file in ``~/.claude``,
+    given its final mode, then renamed into place (see :func:`_atomic_write_cmd`).
+    A concurrent reader never sees an empty or partial file, and a failed copy
+    raises and leaves the existing file as it was. The rename needs only the
+    directory to be writable, so a copy locked by an earlier run is replaced
+    without reopening it (#2436).
 
     With *require_settings* (the update path, which refreshes plugins from the
     copied file right after), a missing host ``settings.json`` is an error
@@ -484,6 +486,8 @@ def copy_claude_config(
     Raises:
         RuntimeError: *require_settings* is set and the host settings.json is
             missing or unusable, or a host file cannot be read.
+        subprocess.CalledProcessError: a guest command failed, such as a copy
+            that could not be written; the guest file it targeted is unchanged.
     """
     settings = claude_dir / "settings.json"
     if require_settings and not settings.is_file():
@@ -519,10 +523,28 @@ def copy_claude_config(
             except claude_marketplace.MarketplaceError as exc:
                 msg = f"the host {source} is unusable: {exc}"
                 raise RuntimeError(msg) from exc
-        cmd = f"chmod u+w {dest} 2>/dev/null; cat > {dest}"
-        if locked:
-            cmd += f" && chmod a-w {dest}"
-        transport.pipe(cmd, content)
+        transport.pipe(_atomic_write_cmd(filename, locked=locked), content)
+
+
+def _atomic_write_cmd(filename: str, *, locked: bool) -> str:
+    """Return the guest command that atomically replaces ``~/.claude/<filename>``.
+
+    Stdin goes to a temp file made by ``mktemp`` in ``~/.claude`` itself, so the
+    final ``mv -f`` is a rename on one filesystem: a reader sees the old file or
+    the new one, never an empty or partial one. The temp file gets its final
+    mode (``644``, then ``a-w`` when *locked*) before the rename. If any step
+    fails, the temp file is removed and the command exits non-zero, so the
+    transport raises and the existing file is left untouched.
+    """
+    dest = f"~/.claude/{filename}"
+    steps = 'cat > "$tmp" && chmod 644 "$tmp"'
+    if locked:
+        steps += ' && chmod a-w "$tmp"'
+    steps += f' && mv -f "$tmp" {dest}'
+    return (
+        f"tmp=$(mktemp ~/.claude/.{filename}.XXXXXX) && "
+        f'{{ {steps} || {{ rm -f "$tmp"; false; }}; }}'
+    )
 
 
 # The agent-VM ~/.claude share set. See

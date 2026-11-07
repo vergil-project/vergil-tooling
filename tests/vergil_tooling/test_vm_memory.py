@@ -40,7 +40,7 @@ def test_project_memory_copies_memory_not_claude_md(tmp_path: Path) -> None:
     vm_memory.project_memory(transport, claude_dir=claude, host_workdir=_WORKDIR)
 
     piped = [c.args[0] for c in transport.pipe.call_args_list]
-    # copy_claude_config idiom: pipe a ``cat > <dest>`` for each file, prefixed
+    # Pipe a ``cat > <dest>`` for each file, prefixed
     # with a chmod that clears any prior read-only lock before overwrite.
     assert any("cat > " in cmd and "/memory/MEMORY.md" in cmd for cmd in piped)
     assert all(cmd.startswith("chmod u+w ") for cmd in piped)
