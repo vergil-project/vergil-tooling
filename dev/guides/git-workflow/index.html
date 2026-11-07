@@ -16419,6 +16419,8 @@
       
         
       
+        
+      
     
     
     
@@ -16851,6 +16853,34 @@
     
   
     Human Replies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../merge-review/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Merge Review
   
 
     
@@ -17471,7 +17501,10 @@ full flag list.</p>
 <p>See the <a href="../../reference/dev/submit-pr/">vrg-submit-pr reference</a>.</p>
 <div class="admonition note">
 <p class="admonition-title">Agent handoff and the post-report-ready freeze</p>
-<p>In an agent session, submission is a <strong>human</strong> action. The agent
+<p>In an agent session, submission is a <strong>human</strong> action. Once the
+committed branch is green, the agent first runs the
+<a href="../merge-review/">merge review</a>, the pre-PR judgement check, and
+carries its eligibility line into the PR notes. The agent then
 runs <code>vrg-pr-workflow report-ready</code>, which pushes the branch to origin
 (setting upstream) and then records the PR metadata in
 <code>.vergil/pr-workflow.json</code>, and stops; the human runs <code>vrg-submit-pr</code>.

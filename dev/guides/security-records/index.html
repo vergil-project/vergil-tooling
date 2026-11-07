@@ -16419,6 +16419,8 @@
       
         
       
+        
+      
     
     
     
@@ -16812,6 +16814,34 @@
     
   
     Human Replies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../merge-review/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Merge Review
   
 
     
@@ -17228,7 +17258,8 @@ extended to several advisories per issue by epic
 <ul>
 <li><strong>Every security finding gets one record</strong>, except a security
   follow-up that <code>issue-implement</code> finds and the human does not rule
-  <code>record</code> (it is fixed on the branch, or rejected; see
+  <code>record</code> (it is fixed on the branch, or rejected), and a merge-review
+  security finding the human rules <code>fix</code> or <code>wont-fix</code> (see
   <a href="#recording-findings-from-a-review">Recording findings from a review</a>).
   A record is one pair (an issue may name several advisories, one per
   finding; see <a href="#the-two-reference-lines">The two reference lines</a>):</li>
@@ -17483,9 +17514,10 @@ of them until the plan exists.</p>
   would close the remaining advisories with the fix unwritten.</p>
 <h2 id="recording-findings-from-a-review">Recording findings from a review<a class="headerlink" href="#recording-findings-from-a-review" title="Permanent link">&para;</a></h2>
 <p>Security findings can surface while the work is still being designed or
-built. Two recipes cover the findings raised inside the epic/task
-framework: design review during <code>epic-create</code>, and the security
-follow-ups <code>issue-implement</code> finds. Both use <code>create</code>; design review
+built. Three recipes cover the findings raised inside the epic/task
+framework: design review during <code>epic-create</code>, the security
+follow-ups <code>issue-implement</code> finds, and the security findings of a
+task's merge review. All use <code>create</code>; design review
 also uses <code>retarget</code>, through <code>epic-create</code>'s step 9. As everywhere on
 this page, the refs and GHSA IDs are placeholders, not a real finding.</p>
 <p><strong>Design review, during <code>epic-create</code>.</strong> The review runs in rounds
@@ -17534,6 +17566,21 @@ with plain <code>create</code> and no <code>--issue</code>: a record on the task
 task publicly, pointing from the shipped diff to the open record. The
 rules are in the
 <a href="https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-review-doctrine.md#17-creating-issues">paad review doctrine §1.7</a>.</p>
+<p><strong>Security findings, during a merge review.</strong> A security finding the
+<a href="../merge-review/#security-findings">merge review</a> raises keeps its
+details in the task's private directory,
+<code>build/.vergil-state/issue-implement/&lt;N&gt;/merge-review/security-&lt;ID&gt;.md</code>,
+and every public record names it by ID or count only. The human rules on
+it through <code>vrg-ruling</code> (see <a href="../human-replies/#security-items">Human Replies</a>):</p>
+<ul>
+<li><strong><code>fix</code></strong>: fixed on the branch and not recorded, as for a follow-up;</li>
+<li><strong><code>file</code></strong> or <strong><code>defer</code></strong>: recorded with plain <code>create</code> and no
+  <code>--issue</code>, before the ruling's response is posted, so the response's
+  <code>filed</code> or <code>deferred</code> outcome is real. The merge review does not hand
+  off while any such finding is still unrecorded;</li>
+<li><strong><code>wont-fix</code></strong>: an accepted risk, with no record. The task's closing
+  comment and the PR notes give only the count, as <code>accepted-risk</code>.</li>
+</ul>
 <h2 id="checking-existing-records-after-the-several-advisories-change">Checking existing records after the several-advisories change<a class="headerlink" href="#checking-existing-records-after-the-several-advisories-change" title="Permanent link">&para;</a></h2>
 <p>An issue naming one advisory is a valid case of the several-advisories
 form, so existing records need no converting and there is no migration
