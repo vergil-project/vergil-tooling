@@ -483,7 +483,6 @@ def _stub_checks(monkeypatch: pytest.MonkeyPatch, terminal: Callable[[], bool]) 
     """Drive wait_for_checks' terminal verdict directly; no required checks."""
     monkeypatch.setattr(github, "pr_checks", lambda pr: [])
     monkeypatch.setattr(github, "_checks_terminal", lambda checks, required: terminal())
-    monkeypatch.setattr(github, "required_check_names", lambda pr: frozenset())
 
 
 def test_wait_for_checks_returns_when_all_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -494,7 +493,7 @@ def test_wait_for_checks_returns_when_all_terminal(monkeypatch: pytest.MonkeyPat
         "orphaned_check_names",
         lambda pr: pytest.fail("orphan check must not run when all terminal"),
     )
-    assert github.wait_for_checks("934", poll_timeout=0, poll_interval=0) is None
+    assert github.wait_for_checks("934", poll_timeout=0, poll_interval=0, required=()) is None
 
 
 def test_wait_for_checks_raises_on_orphan(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -502,7 +501,7 @@ def test_wait_for_checks_raises_on_orphan(monkeypatch: pytest.MonkeyPatch) -> No
     _stub_checks(monkeypatch, lambda: False)
     monkeypatch.setattr(github, "orphaned_check_names", lambda pr: ["docs / docs"])
     with pytest.raises(github.OrphanedCheckError, match="docs / docs"):
-        github.wait_for_checks("934", poll_timeout=0, poll_interval=0)
+        github.wait_for_checks("934", poll_timeout=0, poll_interval=0, required=())
 
 
 def test_wait_for_checks_timeout_without_orphan_raises_api_error(
@@ -512,7 +511,7 @@ def test_wait_for_checks_timeout_without_orphan_raises_api_error(
     _stub_checks(monkeypatch, lambda: False)
     monkeypatch.setattr(github, "orphaned_check_names", lambda pr: [])
     with pytest.raises(github.GitHubAPIError, match="still pending"):
-        github.wait_for_checks("934", poll_timeout=0, poll_interval=0)
+        github.wait_for_checks("934", poll_timeout=0, poll_interval=0, required=())
 
 
 def test_wait_for_checks_polls_until_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -520,7 +519,7 @@ def test_wait_for_checks_polls_until_terminal(monkeypatch: pytest.MonkeyPatch) -
     sleeps: list[int] = []
     _stub_checks(monkeypatch, lambda: next(terminal_states))
     monkeypatch.setattr(github.time, "sleep", lambda s: sleeps.append(s))
-    github.wait_for_checks("934", poll_interval=7, poll_timeout=1000)
+    github.wait_for_checks("934", poll_interval=7, poll_timeout=1000, required=())
     assert sleeps == [7, 7]
 
 
@@ -544,7 +543,7 @@ def test_wait_for_checks_default_ceiling_is_1800_and_polls_past_180(
     sleeps: list[int] = []
     monkeypatch.setattr(github.time, "sleep", lambda s: sleeps.append(s))
     with pytest.raises(github.GitHubAPIError, match="still pending after 1800s"):
-        github.wait_for_checks("934")
+        github.wait_for_checks("934", required=())
     # Exactly one poll happened after crossing 180s and before the 1800s
     # deadline — the old ceiling would have raised at that first check instead.
     assert sleeps == [github._POLL_INTERVAL_SECS]
@@ -3027,7 +3026,7 @@ def test_wait_for_checks_deadline_comes_from_env(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(github.time, "monotonic", lambda: next(clock))
     monkeypatch.setattr(github.time, "sleep", lambda s: None)
     with pytest.raises(github.ChecksTimeoutError, match="after 90s"):
-        github.wait_for_checks("934")
+        github.wait_for_checks("934", required=())
 
 
 def test_wait_for_checks_reports_pending_durations(

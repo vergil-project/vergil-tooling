@@ -127,29 +127,6 @@ def test_wait_for_checks_waits_for_unregistered_required_checks(
     ]
 
 
-def test_wait_for_checks_resolves_required_when_not_given(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    seen: list[str] = []
-    monkeypatch.setattr(
-        github, "required_check_names", lambda pr: seen.append(pr) or frozenset({"gate"})
-    )
-    batches = iter([[_check("other", "pass")], [_check("other", "pass"), _check("gate", "pass")]])
-    monkeypatch.setattr(github, "pr_checks", lambda pr: next(batches))
-    monkeypatch.setattr(github.time, "sleep", lambda s: None)
-    github.wait_for_checks("7", poll_interval=1, poll_timeout=1000)
-    assert seen == ["7"]
-
-
-def test_wait_for_checks_lookup_failure_falls_back_to_registered(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(github, "required_check_names", lambda pr: None)
-    monkeypatch.setattr(github, "pr_checks", lambda pr: [_check("other", "pass")])
-    monkeypatch.setattr(github.time, "sleep", lambda s: pytest.fail("must not wait"))
-    github.wait_for_checks("7", poll_interval=1, poll_timeout=1000)
-
-
 def test_wait_for_checks_timeout_names_outstanding_required_checks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
