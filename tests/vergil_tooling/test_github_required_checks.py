@@ -337,8 +337,11 @@ def test_required_check_names_warning_with_empty_error_text(
     assert "(_Blank)" in capsys.readouterr().err
 
 
-def test_required_check_names_missing_token_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("failing", ["pr", "repos/o/r/branches/develop"])
+def test_required_check_names_missing_token_propagates(
+    monkeypatch: pytest.MonkeyPatch, failing: str
+) -> None:
     exc = github.MissingGitHubTokenError(1, "gh", stderr="set the GH_TOKEN environment variable")
-    monkeypatch.setattr(github, "read_json", _api({"pr": exc}))
+    monkeypatch.setattr(github, "read_json", _api({"pr": _PR_VIEW, failing: exc}))
     with pytest.raises(github.MissingGitHubTokenError):
         github.required_check_names("12")
