@@ -155,6 +155,10 @@ A check (`check` or `check-<k>`) adds:
 | `earlier_result_paths` | list of strings | Absolute paths of every earlier step's result, in step order: `result-review.md`, then `result-check.md` for a `check-2`, and so on. |
 | `earlier_finding_ids` | list of strings | The earlier finding IDs the implementer was asked to change: every defect, and each item whose ruling calls for a code change. |
 
+`vrg-merge-review-request` refuses a `--fix-base` that is not the `head_sha`
+of the previous step's stored `request-<step>.json`, so the fix diff always
+starts where the judged change ended.
+
 Pre-existing notes and items ruled keep, file, defer or wont-fix are not in
 `earlier_finding_ids`; their rulings and lookups record them, and the check
 is not asked about them.

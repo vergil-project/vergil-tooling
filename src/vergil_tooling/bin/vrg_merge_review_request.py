@@ -16,7 +16,8 @@ SHA is the merge base of ``--base`` and ``HEAD``; the change class comes
 from the files changed since it, against the allow-list committed there.
 
 A check (``check`` or ``check-<k>``) also takes ``--fix-base``, the ``HEAD``
-the previous step judged; one ``--earlier-result`` per earlier step, in
+the previous step judged, refused unless it is the ``head_sha`` of that
+step's stored request; one ``--earlier-result`` per earlier step, in
 step order, each checked against that step's stored request; ``--fix-id``
 for each earlier ID asked to change; and ``--ruled-id`` for each earlier
 defect the human excused, which is not sent to the reviewer. It refuses an
@@ -170,6 +171,7 @@ def _build(args: argparse.Namespace, issue: IssueRef) -> Path:
     fix_patch = b""
     if fix_base_sha is not None:
         earlier = req.read_earlier_results(private_dir, step, args.earlier_result)
+        req.check_fix_base(private_dir, step, fix_base_sha)
         finding_ids = req.earlier_finding_ids(
             [result for _path, result in earlier], args.fix_id, args.ruled_id
         )
