@@ -1370,6 +1370,8 @@
       
         
       
+        
+      
     
     
     
@@ -1422,6 +1424,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.287/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.287
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13506,8 +13536,6 @@
       
         
       
-        
-      
     
     
     
@@ -13596,34 +13624,6 @@
     
   
     vrg-submit-pr
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../reference/dev/pr-fix-body/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    vrg-pr-fix-body
   
 
     
@@ -17413,11 +17413,12 @@ repository with no language uses the base image. On top of that image,
 <code>vrg-container-run</code> builds a per-branch cached image with
 vergil-tooling installed. Set <code>DOCKER_DEV_IMAGE</code> to use a different
 image.</p>
-<p><code>vrg-validate</code> first runs the common checks: <code>vrg-repo-profile</code>,
-markdownlint, shellcheck, yamllint, hadolint, actionlint, and
-ansible-lint when the repository has Ansible content. It then runs the
-language's lint, typecheck, test and audit commands, and last the
-repository's custom validator when it has one. To run one stage, pass
+<p><code>vrg-validate</code> first runs the common checks: the
+<a href="../../reference/lint/repo-profile/">repo-profile</a> check, markdownlint,
+shellcheck, yamllint, hadolint, actionlint, and ansible-lint when the
+repository has Ansible content. It then runs the language's lint,
+typecheck, test and audit commands, and last the repository's custom
+validator when it has one. To run one stage, pass
 <code>--check common</code>, <code>lint</code>, <code>typecheck</code>, <code>test</code>, <code>audit</code> or <code>custom</code>. The
 <a href="../validation-matrix/">Validation Matrix</a> lists every check and where
 it runs.</p>
@@ -17685,7 +17686,7 @@ workflow only through <code>inherit</code>: an explicit secrets map leaves
 <code>package-sign</code> with an empty key (proven by the probe in
 <a href="https://github.com/vergil-project/packages/issues/6">vergil-project/packages#6</a>).
 The callee is first-party, so the blanket form is an accepted, reviewed
-exception. <code>vrg-repo-init</code> generates this caller for <code>[package]</code> repos
+exception. <code>vrg-github-repo-init</code> generates this caller for <code>[package]</code> repos
 (<a href="https://github.com/vergil-project/vergil-tooling/issues/3144">vergil-project/vergil-tooling#3144</a>).
 See the <a href="../../reference/package-config/#cd">CD section of the package config reference</a>
 for the full caller.</p>

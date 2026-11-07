@@ -1459,6 +1459,8 @@
       
         
       
+        
+      
     
     
     
@@ -1511,6 +1513,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="releases/v2.1.287/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.287
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13595,8 +13625,6 @@
       
         
       
-        
-      
     
     
     
@@ -13685,34 +13713,6 @@
     
   
     vrg-submit-pr
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="reference/dev/pr-fix-body/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    vrg-pr-fix-body
   
 
     
@@ -16906,8 +16906,9 @@ commits, PRs, releases, and validation alongside bash validators and git hooks
 <p><strong>Python CLI tools</strong> (<code>src/vergil_tooling/</code>):
 <code>vrg-commit</code>, <code>vrg-submit-pr</code>, <code>vrg-release</code>, <code>vrg-update-deps</code>,
 <code>vrg-finalize-pr</code>, <code>vrg-validate</code></p>
-<p><strong>Lint tools</strong> (installed as <code>vrg-*</code>):
-<code>vrg-repo-profile</code>, validation drivers</p>
+<p><strong>Validation checks</strong> (run by <code>vrg-validate</code>):
+the <a href="reference/lint/repo-profile/">repo-profile</a> check, linters and
+the language validation drivers</p>
 <p><strong>Claude Code hook guard</strong> (<code>.claude/hooks/</code>):
 PreToolUse hook that blocks raw <code>git</code> and <code>gh</code>, routing through <code>vrg-*</code> wrappers</p>
 <h2 id="design-principles">Design Principles<a class="headerlink" href="#design-principles" title="Permanent link">&para;</a></h2>
