@@ -14,6 +14,7 @@ import pytest
 
 from vergil_tooling.bin.vrg_finalize_pr import (
     CDRunProblem,
+    CDRunSuperseded,
     FinalizeContext,
     FinalizeError,
     _clean_branch_images,
@@ -31,6 +32,7 @@ from vergil_tooling.bin.vrg_finalize_pr import (
     _stage_provenance,
     _stage_provision,
     _stage_validation,
+    _supersede_group,
     _wait_for_cd_run,
     _worktree_is_dirty,
     build_stages,
@@ -665,6 +667,229 @@ def test_wait_handles_run_without_url() -> None:
         ),
     ):
         assert _wait_for_cd_run("develop", _HEAD_SHA) is None
+
+
+# -- cancelled CD runs: concurrency supersede vs. any other cancel (issue #3834) --
+
+_RUN_URL = "https://github.com/o/r/actions/runs/12345"
+_SUPERSEDE_MSG = "Canceling since a higher priority waiting request for docker-publish-dev exists"
+
+
+def _job(job_id: int, conclusion: str) -> dict:
+    return {"databaseId": job_id, "name": f"job {job_id}", "conclusion": conclusion}
+
+
+def _annotations(*messages: str) -> list[dict]:
+    return [
+        {"annotation_level": "failure", "path": ".github", "start_line": 1, "message": m}
+        for m in messages
+    ]
+
+
+class _FakeRunApi:
+    """A ``github.read_json`` fake serving a run's jobs and each job's annotations."""
+
+    def __init__(self, jobs: list[dict], annotations: dict[int, list[dict]]) -> None:
+        self.jobs = jobs
+        self.annotations = annotations
+        self.calls: list[tuple[str, ...]] = []
+
+    def __call__(self, *args: str) -> object:
+        self.calls.append(args)
+        if args[:2] == ("run", "view"):
+            return {"jobs": self.jobs}
+        if args[0] == "api":
+            return self.annotations[int(args[1].split("/")[-2])]
+        msg = f"unexpected gh call {args!r}"
+        raise AssertionError(msg)
+
+
+def test_supersede_group_reads_the_concurrency_annotation() -> None:
+    # Shaped on vergil-containers run 40695987450: the docs and lint jobs pass,
+    # release is skipped, every publish job is cancelled by the concurrency group.
+    jobs = [_job(1, "success"), _job(2, "skipped"), _job(3, "cancelled"), _job(4, "cancelled")]
+    fake = _FakeRunApi(
+        jobs,
+        {
+            3: _annotations(_SUPERSEDE_MSG),
+            4: _annotations(_SUPERSEDE_MSG, "The operation was canceled."),
+        },
+    )
+    with patch(_MOD + ".github.read_json", side_effect=fake):
+        assert _supersede_group(12345, _RUN_URL) == "docker-publish-dev"
+    assert ("run", "view", "12345", "--repo", "o/r", "--json", "jobs") in fake.calls
+    assert ("api", "repos/o/r/check-runs/3/annotations") in fake.calls
+    assert ("api", "repos/o/r/check-runs/4/annotations") in fake.calls
+    # Jobs that were not cancelled are not looked up.
+    assert ("api", "repos/o/r/check-runs/1/annotations") not in fake.calls
+
+
+def test_supersede_group_accepts_a_quoted_group() -> None:
+    quoted = "Canceling since a higher priority waiting request for 'CD-refs/heads/develop' exists"
+    fake = _FakeRunApi([_job(3, "cancelled")], {3: _annotations(quoted)})
+    with patch(_MOD + ".github.read_json", side_effect=fake):
+        assert _supersede_group(12345, _RUN_URL) == "CD-refs/heads/develop"
+
+
+def test_supersede_group_none_for_a_human_cancel() -> None:
+    fake = _FakeRunApi(
+        [_job(3, "cancelled")],
+        {3: _annotations("The run was canceled by @someone.", "The operation was canceled.")},
+    )
+    with patch(_MOD + ".github.read_json", side_effect=fake):
+        assert _supersede_group(12345, _RUN_URL) is None
+
+
+def test_supersede_group_none_when_any_cancelled_job_lacks_the_annotation() -> None:
+    fake = _FakeRunApi(
+        [_job(3, "cancelled"), _job(4, "cancelled")],
+        {3: _annotations(_SUPERSEDE_MSG), 4: _annotations("The operation was canceled.")},
+    )
+    with patch(_MOD + ".github.read_json", side_effect=fake):
+        assert _supersede_group(12345, _RUN_URL) is None
+
+
+def test_supersede_group_none_when_another_job_failed() -> None:
+    # A real failure alongside the supersede is still a failure.
+    fake = _FakeRunApi(
+        [_job(2, "failure"), _job(3, "cancelled")], {3: _annotations(_SUPERSEDE_MSG)}
+    )
+    with patch(_MOD + ".github.read_json", side_effect=fake):
+        assert _supersede_group(12345, _RUN_URL) is None
+    assert not any(call[0] == "api" for call in fake.calls)
+
+
+def test_supersede_group_none_when_no_job_was_cancelled() -> None:
+    # A run cancelled before any job started has no job to carry the annotation.
+    fake = _FakeRunApi([], {})
+    with patch(_MOD + ".github.read_json", side_effect=fake):
+        assert _supersede_group(12345, _RUN_URL) is None
+
+
+def test_supersede_group_rejects_an_unreadable_run_url() -> None:
+    with pytest.raises(ValueError, match="cannot read the repository"):
+        _supersede_group(12345, "")
+
+
+def test_supersede_group_rejects_a_malformed_jobs_payload() -> None:
+    with (
+        patch(_MOD + ".github.read_json", return_value={"jobs": "nope"}),
+        pytest.raises(ValueError, match="jobs"),
+    ):
+        _supersede_group(12345, _RUN_URL)
+
+
+def test_supersede_group_rejects_a_job_that_is_not_an_object() -> None:
+    with (
+        patch(_MOD + ".github.read_json", return_value={"jobs": ["nope"]}),
+        pytest.raises(ValueError, match="not an object"),
+    ):
+        _supersede_group(12345, _RUN_URL)
+
+
+def test_supersede_group_rejects_a_malformed_annotations_payload() -> None:
+    fake = _FakeRunApi([_job(3, "cancelled")], {3: {"message": _SUPERSEDE_MSG}})  # type: ignore[dict-item]
+    with (
+        patch(_MOD + ".github.read_json", side_effect=fake),
+        pytest.raises(ValueError, match="annotations"),
+    ):
+        _supersede_group(12345, _RUN_URL)
+
+
+def _wait_with_conclusion(conclusion: str, *, group: object = None) -> object:
+    """Run :func:`_wait_for_cd_run` to a completed run, faking the supersede lookup."""
+    if isinstance(group, Exception):
+        lookup = patch(_MOD + "._supersede_group", side_effect=group)
+    else:
+        lookup = patch(_MOD + "._supersede_group", return_value=group)
+    with (
+        patch(_MOD + ".time.sleep"),
+        patch(
+            _MOD + ".subprocess.run",
+            side_effect=[
+                _cd_list_resp([_cd_run(run_id=12345)]),
+                _cd_view_resp("completed", conclusion, url=_RUN_URL),
+            ],
+        ),
+        lookup as supersede,
+    ):
+        result = _wait_for_cd_run("develop", _HEAD_SHA)
+    if conclusion == "cancelled":
+        supersede.assert_called_once_with(12345, _RUN_URL)
+    else:
+        supersede.assert_not_called()
+    return result
+
+
+def test_wait_outcome_success() -> None:
+    assert _wait_with_conclusion("success") is None
+
+
+def test_wait_outcome_failure() -> None:
+    result = _wait_with_conclusion("failure")
+    assert isinstance(result, CDRunProblem)
+    assert result.conclusion == "failure"
+
+
+def test_wait_outcome_superseded_is_not_a_problem() -> None:
+    result = _wait_with_conclusion("cancelled", group="docker-publish-dev")
+    assert isinstance(result, CDRunSuperseded)
+    assert result.group == "docker-publish-dev"
+    msg = result.describe()
+    assert "CD workflow run 12345 on develop (abc123d)" in msg
+    assert "superseded" in msg
+    assert "docker-publish-dev" in msg
+    assert _RUN_URL in msg
+
+
+def test_wait_outcome_human_cancel_is_a_failure() -> None:
+    result = _wait_with_conclusion("cancelled", group=None)
+    assert isinstance(result, CDRunProblem)
+    assert result.conclusion == "cancelled"
+    msg = result.describe()
+    assert "ended with conclusion 'cancelled'." in msg
+    assert "could not tell" not in msg
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        subprocess.CalledProcessError(1, ["gh", "api"], stderr="HTTP 502"),
+        json.JSONDecodeError("bad", "x", 0),
+        ValueError("cannot read the repository of CD run URL ''"),
+    ],
+)
+def test_wait_outcome_unreadable_cancel_is_a_failure_that_says_why(error: Exception) -> None:
+    result = _wait_with_conclusion("cancelled", group=error)
+    assert isinstance(result, CDRunProblem)
+    assert result.conclusion == "cancelled"
+    msg = result.describe()
+    assert "ended with conclusion 'cancelled'." in msg
+    assert "could not tell whether a concurrency supersede cancelled it" in msg
+
+
+def test_stage_cd_check_superseded_warns_and_does_not_fail(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ctx = _stage_ctx([], root=tmp_path)
+    ctx.merge_commit_sha = _HEAD_SHA
+    outcome = CDRunSuperseded(12345, "develop", _HEAD_SHA, _RUN_URL, "docker-publish-dev")
+    with (
+        patch(_MOD + "._wait_for_cd_run", return_value=outcome),
+        patch(_MOD + ".progress.mark_warn") as mark_warn,
+    ):
+        _stage_cd_check(ctx)  # must not raise
+    err = capsys.readouterr().err
+    assert "WARNING: the CD workflow run triggered by this merge was superseded" in err
+    assert _RUN_URL in err
+    assert "docker-publish-dev" in err
+    assert "not confirmed" in err
+    assert "did not succeed" not in err
+    mark_warn.assert_called_once()
+    reason = mark_warn.call_args.args[0]
+    assert "12345" in reason
+    assert "superseded" in reason
+    assert "docker-publish-dev" in reason
 
 
 def test_main_returns_one_on_docs_failure(
