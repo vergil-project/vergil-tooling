@@ -13460,6 +13460,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-scope-change" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-scope-change
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-merge-review-check" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -14531,6 +14542,8 @@
       
         
       
+        
+      
     
     
     
@@ -14846,6 +14859,34 @@
     
   
     vrg-ruling-reply
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/scope-change/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-scope-change
   
 
     
@@ -18151,6 +18192,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-scope-change" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-scope-change
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-merge-review-check" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -20261,7 +20313,11 @@ whose <code>origin</code> is the issue's repo, refuses once the request has a re
 and posts nothing. <code>respond</code> re-runs <code>read</code>'s checks and posts the
 response, which records the request and reply comment IDs; a re-run that
 finds its own response already landed reports it and posts nothing. Either
-way <code>respond</code> then deletes any leftover draft ref. A security item carries
+way <code>respond</code> then deletes any leftover draft ref. <code>draft-scope</code> pushes a
+scope change drafted for the human, the text alone, to
+<code>refs/vergil/scope-draft/&lt;issue&gt;</code> and prints the human's <code>vrg-scope-change</code>
+command; like <code>draft</code>, it runs only in a clone whose <code>origin</code> is the
+issue's repo and posts nothing. A security item carries
 only its ID: the fixed text <code>security finding, details given privately</code> in
 a request, a decision
 (<code>fix</code>, <code>file</code>, <code>defer</code> or <code>wont-fix</code>) in a draft, and an outcome
@@ -20283,11 +20339,11 @@ printable ASCII plus newline. See the
 </tr>
 <tr>
 <td>Args</td>
-<td><code>request --issue 'OWNER/REPO#N' --items FILE</code>; <code>read --issue 'OWNER/REPO#N' --request ID [--json]</code>; <code>draft --issue 'OWNER/REPO#N' --request ID --items FILE</code>; <code>respond --issue 'OWNER/REPO#N' --request ID --reply ID --items FILE</code></td>
+<td><code>request --issue 'OWNER/REPO#N' --items FILE</code>; <code>read --issue 'OWNER/REPO#N' --request ID [--json]</code>; <code>draft --issue 'OWNER/REPO#N' --request ID --items FILE</code>; <code>respond --issue 'OWNER/REPO#N' --request ID --reply ID --items FILE</code>; <code>draft-scope --issue 'OWNER/REPO#N' --text-file FILE</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>The <code>user</code> identity mode; trusted authors list exactly one human login, and <code>&lt;human&gt;-vergil-user</code> is on the <code>agents</code> list; for <code>draft</code>, a clone whose <code>origin</code> is the issue's repo</td>
+<td>The <code>user</code> identity mode; trusted authors list exactly one human login, and <code>&lt;human&gt;-vergil-user</code> is on the <code>agents</code> list; for <code>draft</code> and <code>draft-scope</code>, a clone whose <code>origin</code> is the issue's repo</td>
 </tr>
 <tr>
 <td>Failure mode</td>
@@ -20348,6 +20404,60 @@ See the <a href="../dev/ruling-reply/">vrg-ruling-reply reference</a> and the
 <tr>
 <td>Exit codes</td>
 <td>0 posted, 1 refused, declined or error, 2 bad arguments, 4 fatal check</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-scope-change">vrg-scope-change<a class="headerlink" href="#vrg-scope-change" title="Permanent link">&para;</a></h3>
+<p>Posts a scope change on a task issue (an addition to the task's scope, a
+narrowing of it, or a ruling on an item awaiting one) as the human, so merge
+review can count it as the human's. It is a human-only command, run in the
+human's own shell on the host, like <code>vrg-ruling-reply</code>, and refuses in an
+agent identity mode, without an interactive terminal, and unless <code>gh api
+user</code> reports the one human login of the trusted-authors configuration. It
+refuses while the issue has an open ruling exchange. It reads the text once,
+from the agent's draft (<code>refs/vergil/scope-draft/&lt;issue&gt;</code>, pushed by
+<code>vrg-ruling draft-scope</code>) or from <code>--text</code>, refuses anything but printable
+ASCII plus newline, and renders the comment as the header line
+<code>Scope change</code>, a blank line and the text. That header is how a scope
+change is recognised, together with the human login as its author. If the
+human has already posted exactly that comment, it prints its ID and posts
+nothing. Otherwise it prints the comment with its byte length and SHA-256,
+and on confirmation re-reads the issue, refuses if its trusted comments
+changed while the prompt waited, posts exactly the bytes it showed, once,
+prints the comment ID and deletes the draft ref. See the
+<a href="../dev/scope-change/">vrg-scope-change reference</a> and the
+<a href="../../guides/human-replies/#scope-changes">Human Replies guide</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_scope_change</code> (library: <code>lib/rulings/</code>)</td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>--issue 'OWNER/REPO#N' [--text TEXT]</code></td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>The human's own shell (not an agent identity), an interactive terminal, <code>gh</code> logged in as the human login; trusted authors list exactly one human login, and <code>&lt;human&gt;-vergil-user</code> is on the <code>agents</code> list; no open ruling exchange on the issue</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td>A refusal, a declined prompt or an error prints the reason on stderr and exits 1, posting nothing. A failed post is never retried: the issue is re-read, and the tool reports the landed comment, says it did not land, or says it cannot tell; a re-run finds a landed comment and posts nothing</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 posted or already posted, 1 refused, declined or error, 2 bad arguments</td>
 </tr>
 <tr>
 <td>Status</td>

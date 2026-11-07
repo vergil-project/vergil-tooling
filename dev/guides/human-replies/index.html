@@ -13536,6 +13536,8 @@
       
         
       
+        
+      
     
     
     
@@ -13848,6 +13850,34 @@
     
   
     vrg-ruling-reply
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/dev/scope-change/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-scope-change
   
 
     
@@ -16753,6 +16783,45 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#scope-changes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scope changes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Scope changes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-scope-comments-marker" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The scope comment's marker
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#posting-it-exactly-once" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Posting it exactly once
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#security-items" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17151,6 +17220,45 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#scope-changes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scope changes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Scope changes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-scope-comments-marker" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The scope comment's marker
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#posting-it-exactly-once" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Posting it exactly once
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#security-items" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17237,6 +17345,9 @@ run reads the issue itself.</p>
 <li><a href="../../reference/dev/ruling-reply/"><code>vrg-ruling-reply</code></a>, run by the human:
   it posts the reply as the human.</li>
 </ul>
+<p>A third, <a href="../../reference/dev/scope-change/"><code>vrg-scope-change</code></a>, also run by
+the human, posts a <a href="#scope-changes">scope change</a> on a task issue as the
+human, outside any round.</p>
 <p>The review that uses this channel is the <a href="../merge-review/">merge review</a>:
 every stop it makes for the human is one request on the task issue.</p>
 <p>The task issue is the unit of record. A task is closed by one PR, and its
@@ -17330,6 +17441,16 @@ never by guessing.</p>
 <td>Shows the reply, asks for confirmation, and posts it as the human.</td>
 <td>0, 1, 2, 4</td>
 </tr>
+<tr>
+<td><code>vrg-ruling draft-scope</code></td>
+<td>Pushes a scope change drafted for the human to the issue's scope draft ref and prints the human's command. Posts nothing.</td>
+<td>0, 1, 2</td>
+</tr>
+<tr>
+<td><code>vrg-scope-change</code></td>
+<td>Shows the scope change, asks for confirmation, and posts it as the human.</td>
+<td>0, 1, 2</td>
+</tr>
 </tbody>
 </table>
 <p>The codes mean the same in both tools:</p>
@@ -17347,7 +17468,7 @@ never by guessing.</p>
 </tr>
 <tr>
 <td>1</td>
-<td>A refusal or an error, including a declined prompt in <code>vrg-ruling-reply</code></td>
+<td>A refusal or an error, including a declined prompt in <code>vrg-ruling-reply</code> or <code>vrg-scope-change</code></td>
 </tr>
 <tr>
 <td>2</td>
@@ -17408,9 +17529,9 @@ to make a comment uneditable. The record is as trustworthy as the people
 with write access. The tools guarantee only that the decision the agent acts
 on is the human's, unaltered.</p>
 <h2 id="the-plain-text-rule">The plain-text rule<a class="headerlink" href="#the-plain-text-rule" title="Permanent link">&para;</a></h2>
-<p>Every piece of text either tool handles (item IDs, item text and
-recommendations, requests, responses, drafts, <code>--response-text</code> and the reply
-as read from the issue) is printable ASCII, U+0020 to U+007E, plus newline.
+<p>Every piece of text the tools handle (item IDs, item text and
+recommendations, requests, responses, drafts, <code>--response-text</code>, the reply
+as read from the issue, and a scope change's text) is printable ASCII, U+0020 to U+007E, plus newline.
 Anything else, tab and carriage return included, is refused, naming the
 character's code point and its offset, and is never converted. Plain ASCII
 has no invisible or look-alike characters, so what is on screen is all that
@@ -17420,6 +17541,57 @@ letter case, is refused too, so text can never carry or imitate a marker.</p>
 items file holds at least one item, every ID in it is unique, and every item
 text and recommendation is a single line, so each item renders as exactly one
 line of the comment.</p>
+<h2 id="scope-changes">Scope changes<a class="headerlink" href="#scope-changes" title="Permanent link">&para;</a></h2>
+<p>A maintainer's change to a task's scope (an addition, a narrowing, or a
+ruling on an item awaiting one) is posted on the task issue <strong>as the human</strong>,
+with <a href="../../reference/dev/scope-change/"><code>vrg-scope-change</code></a>. Merge review
+counts only scope the human posted as themselves: the implementing agent
+shares the agent identity, so a scope comment posted by an agent login could
+be the agent widening its own scope.</p>
+<p>The flow follows a round's reply. The human and the agent agree the change
+in the terminal; the agent drafts it with <code>vrg-ruling draft-scope</code>, which
+pushes the text to the <a href="#the-draft-relay">draft relay</a> and prints a
+<code>vrg-scope-change</code> command with the issue filled in. The human reads the
+comment that command shows and confirms it, or passes their own text with
+<code>--text</code>.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>agent:  vrg-ruling draft-scope --issue 'OWNER/REPO#N' --text-file scope.txt
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>human:  vrg-scope-change --issue 'OWNER/REPO#N'                           -&gt; scope change posted
+</code></pre></div>
+<p>A scope change is not part of a round. <code>vrg-scope-change</code> refuses while the
+issue has an open exchange (a request that no response names yet), because
+the only human comment allowed there is the reply. It posts between rounds.</p>
+<h3 id="the-scope-comments-marker">The scope comment's marker<a class="headerlink" href="#the-scope-comments-marker" title="Permanent link">&para;</a></h3>
+<p>The posted comment is a fixed, visible header line, a blank line and the
+text:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>Scope change
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>&lt;the text&gt;
+</code></pre></div>
+<p>The header <code>Scope change</code> is the scope comment's marker. It is visible,
+not a hidden <code>&lt;!-- vrg-ruling</code> marker: the human's comment is plain text,
+so what the human confirms on screen is all that is posted, and a hidden
+marker counts only on an agent comment anyway. Like every marker, it says
+what kind of comment it is, never who wrote it.</p>
+<p>A comment is a <strong>scope change</strong> when, and only when:</p>
+<ul>
+<li>its author is the human login (after a leading <code>app/</code> is stripped);</li>
+<li>its first line, with trailing whitespace stripped, is exactly
+  <code>Scope change</code>.</li>
+</ul>
+<p>A comment with that header by any other login, an agent login included, is
+not a scope change. Whether the comment has been edited is left to the
+reader. <code>is_scope_change</code> in <code>vergil_tooling.lib.rulings.scope</code> applies this
+rule. A reader that selects the human's comments for a reviewer needs no
+marker to trust them, since the author is what makes them the human's; the
+header only tells a scope change apart from a ruling reply.</p>
+<h3 id="posting-it-exactly-once">Posting it exactly once<a class="headerlink" href="#posting-it-exactly-once" title="Permanent link">&para;</a></h3>
+<p>A scope change has no turn to refuse a duplicate, so <code>vrg-scope-change</code>
+checks for one: before showing anything, it looks for a comment by the human
+whose body is exactly the comment it would post. If there is one, it prints
+that comment's ID, deletes the draft ref when the text came from it, posts
+nothing and exits 0. That is how a re-run settles a post whose outcome could
+not be told, and how it retries a draft ref deletion that failed after the
+post.</p>
 <h2 id="security-items">Security items<a class="headerlink" href="#security-items" title="Permanent link">&para;</a></h2>
 <p>A security finding's details never appear in a public record. Its decision
 still goes through the request and the reply, by ID:</p>
@@ -17460,6 +17632,11 @@ relay mechanism of <code>vrg-pr-workflow report-ready</code>:</p>
 <li>After posting a reply, <code>vrg-ruling-reply</code> deletes the request's draft ref.
   A reply declined at the prompt keeps it, so the command can be run again.
   <code>vrg-ruling respond</code> also deletes any draft ref left for its request.</li>
+<li>A scope change travels the same way: <code>vrg-ruling draft-scope</code> pushes the
+  text alone as a single-file commit (<code>scope.md</code>) to
+  <code>refs/vergil/scope-draft/&lt;issue&gt;</code>, one per issue, and <code>vrg-scope-change</code>
+  reads it once, shows it under its header, and deletes the ref after
+  posting it.</li>
 </ul>
 <h2 id="posting-exactly-once">Posting exactly once<a class="headerlink" href="#posting-exactly-once" title="Permanent link">&para;</a></h2>
 <p><code>request</code>, <code>respond</code> and <code>vrg-ruling-reply</code> each post with no retry, because
@@ -17492,6 +17669,7 @@ and stopping; it is expected to be rare.</p>
 <ul>
 <li><a href="../../reference/dev/ruling/"><code>vrg-ruling</code> reference</a></li>
 <li><a href="../../reference/dev/ruling-reply/"><code>vrg-ruling-reply</code> reference</a></li>
+<li><a href="../../reference/dev/scope-change/"><code>vrg-scope-change</code> reference</a></li>
 <li><a href="../account-setup/#trusted-authors">Identity Setup: trusted authors</a></li>
 <li><a href="../merge-review/">Merge Review</a></li>
 <li><a href="../security-records/">Security Records</a></li>

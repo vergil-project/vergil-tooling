@@ -13549,6 +13549,8 @@
       
         
       
+        
+      
     
     
     
@@ -13954,6 +13956,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#draft-scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        draft-scope
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#read" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -14027,6 +14040,34 @@
     
   
     vrg-ruling-reply
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scope-change/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-scope-change
   
 
     
@@ -17023,6 +17064,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#draft-scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        draft-scope
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#read" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17098,12 +17150,15 @@
 <strong>reply</strong> with every turn check, and posts the <strong>response</strong>. Each comment is
 posted exactly once. For the protocol, the checks and recovery, see
 <a href="../../../guides/human-replies/">Human Replies</a>; the human's side is
-<a href="../ruling-reply/"><code>vrg-ruling-reply</code></a>.</p>
+<a href="../ruling-reply/"><code>vrg-ruling-reply</code></a>. It also relays a scope change drafted
+for the human, which the human posts with
+<a href="../scope-change/"><code>vrg-scope-change</code></a>.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>vrg-ruling request --issue 'OWNER/REPO#N' --items FILE
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>vrg-ruling draft   --issue 'OWNER/REPO#N' --request ID --items FILE
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>vrg-ruling read    --issue 'OWNER/REPO#N' --request ID [--json]
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>vrg-ruling respond --issue 'OWNER/REPO#N' --request ID --reply ID --items FILE
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>vrg-ruling draft-scope --issue 'OWNER/REPO#N' --text-file FILE
 </code></pre></div>
 <p><code>--issue</code> is the task issue as <code>owner/repo#N</code>. <code>--request</code> and <code>--reply</code> are
 comment IDs, positive integers with no leading zero.</p>
@@ -17116,8 +17171,8 @@ comment IDs, positive integers with no leading zero.</p>
   <code>agents</code> list.</li>
 </ul>
 <p>Every GitHub call is scoped to the issue's owner, whatever the clone's
-<code>origin</code> is. <code>draft</code> alone also needs a clone whose <code>origin</code> is the issue's
-repo.</p>
+<code>origin</code> is. <code>draft</code> and <code>draft-scope</code> also need a clone whose <code>origin</code> is
+the issue's repo.</p>
 <h2 id="exit-codes">Exit codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -17267,6 +17322,26 @@ touches a branch, the index or the working tree, and it posts no comment.
 Running it again replaces the draft.</p>
 <p>The ref is world-readable, so a draft holds only what the reply will make
 public anyway, with security items by ID and decision only.</p>
+<h2 id="draft-scope">draft-scope<a class="headerlink" href="#draft-scope" title="Permanent link">&para;</a></h2>
+<p>Pushes a scope change drafted for the human to the issue's scope draft ref,
+and prints the human's command on stdout:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>vrg-scope-change --issue 'OWNER/REPO#N'
+</code></pre></div>
+<p><code>--text-file</code> holds the scope change's text alone, without the
+<code>Scope change</code> header that <code>vrg-scope-change</code> adds. It may run over several
+lines, and must be plain text (printable ASCII plus newline, with no marker
+prefix), not blank, and not start with the header.</p>
+<p>In order, it checks the text as <code>vrg-scope-change</code> will, refuses unless the
+clone's <code>origin</code> pushes to the issue's repo, and reads the issue, refusing
+when it is not found. Only then does it write the text as a single-file
+commit (<code>scope.md</code>) with git plumbing and force-push it to
+<code>refs/vergil/scope-draft/&lt;issue&gt;</code> on <code>origin</code>. It never touches a branch,
+the index or the working tree, and it posts no comment. Running it again
+replaces the draft; an issue has one scope draft at a time.</p>
+<p>It does not check the turn: <code>vrg-scope-change</code> refuses while a ruling
+exchange on the issue is open, when the human runs it. The ref is
+world-readable, so a draft holds only what the comment will make public
+anyway.</p>
 <h2 id="read">read<a class="headerlink" href="#read" title="Permanent link">&para;</a></h2>
 <p>Reads the human's reply to a request, running every turn check (see
 <a href="../../../guides/human-replies/#the-checks">The checks</a>).</p>
@@ -17310,7 +17385,7 @@ public anyway, with security items by ID and decision only.</p>
 reply's comment ID is only on stderr.</p>
 <h3 id="-json">--json<a class="headerlink" href="#-json" title="Permanent link">&para;</a></h3>
 <p>With <code>--json</code>, stdout on a valid reply (exit 0) is exactly one JSON object:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="p">{</span><span class="nt">"request"</span><span class="p">:</span><span class="w"> </span><span class="mi">4123456789</span><span class="p">,</span><span class="w"> </span><span class="nt">"reply"</span><span class="p">:</span><span class="w"> </span><span class="mi">4123456790</span><span class="p">,</span><span class="w"> </span><span class="nt">"body"</span><span class="p">:</span><span class="w"> </span><span class="s2">"F1: fix it\nF2: defer"</span><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="p">{</span><span class="nt">"request"</span><span class="p">:</span><span class="w"> </span><span class="mi">4123456789</span><span class="p">,</span><span class="w"> </span><span class="nt">"reply"</span><span class="p">:</span><span class="w"> </span><span class="mi">4123456790</span><span class="p">,</span><span class="w"> </span><span class="nt">"body"</span><span class="p">:</span><span class="w"> </span><span class="s2">"F1: fix it\nF2: defer"</span><span class="p">}</span>
 </code></pre></div>
 <table>
 <thead>
