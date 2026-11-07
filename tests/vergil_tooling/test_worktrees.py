@@ -230,15 +230,17 @@ def test_gather_detached_status_falls_back_to_dir_name(tmp_path: Path) -> None:
 
 def test_gather_detached_status_last_commit_follows_ahead(tmp_path: Path) -> None:
     """A detached worktree's LAST COMMIT follows the same AHEAD count: shown
-    when it is ahead of the target, '-' (None) at AHEAD 0 (#3828)."""
+    when it is ahead of the target, '-' (None) at a measured AHEAD 0, and
+    still shown when there is no branch ref to measure against (#3828)."""
     git_dir = tmp_path / "gitdir"
     git_dir.mkdir()
     raw = RawWorktree(path=Path("/repo/.worktrees/issue-42-widget"), branch=None)
-    for ahead, expected in ((2, 1_699_900_000), (0, None)):
+    cases = ((True, 2, 1_699_900_000), (True, 0, None), (False, 0, 1_699_900_000))
+    for ref_exists, ahead, expected in cases:
         with (
             patch(_MOD + ".git.worktree_git_dir", return_value=git_dir),
             patch(_MOD + ".git.read_output", return_value=""),
-            patch(_MOD + ".git.ref_exists", return_value=True),
+            patch(_MOD + ".git.ref_exists", return_value=ref_exists),
             patch(_MOD + ".git.commits_ahead", return_value=ahead),
             patch(_MOD + "._probe_pr_workflow", return_value=(None, None, False)),
             patch(_MOD + ".git.committer_timestamp", return_value=1_699_900_000),

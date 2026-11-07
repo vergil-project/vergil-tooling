@@ -1092,10 +1092,12 @@ worktree shows as `merged` in its own section but is not counted as
 `vrg-finalize-pr` cruft.
 
 LAST COMMIT is the age of the worktree's HEAD commit. In the worktree
-sections, a worktree with no commits beyond the target branch (AHEAD 0)
-shows `-` there instead: its HEAD is still the commit it was cut from,
-whose age says nothing about the work on it (issue #3828). LAST MODIFIED
-is still shown.
+sections, a worktree whose branch has no commits beyond the target branch
+(AHEAD 0) shows `-` there instead: its HEAD is still the commit it was
+cut from, whose age says nothing about the work on it (issue #3828).
+LAST MODIFIED is still shown. A detached worktree whose branch cannot be
+recovered also shows AHEAD 0, because there is no branch to count, and
+keeps its LAST COMMIT.
 
 ```text
 Main checkout (integration branch: develop)
@@ -1108,7 +1110,7 @@ issue-315-deps-security-bump  feature/315-deps-security-bump  -   no-pr  ready  
 
 Other / unknown
 WORKTREE         BRANCH      PR  STATE     WORKFLOW  AHEAD  DIRTY  LAST COMMIT  LAST MODIFIED
-tmp-wheel-build  (detached)  -   detached  -         0      -      -            82d ago
+tmp-wheel-build  (detached)  -   detached  -         0      -      82d ago      82d ago
   note: tmp-wheel-build (detached): detached HEAD — no branch checked out; check out a branch to resume work
 
 3 worktrees: main checkout (ok), 1 development, 0 release and dependency machinery, 1 other / unknown.

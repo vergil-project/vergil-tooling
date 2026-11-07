@@ -586,10 +586,18 @@ def gather_detached_status(
     # The branch ref still points at its pre-rebase tip during a rebase, so
     # commits-ahead is meaningful — but only when the resolved branch actually
     # exists; a name recovered solely from the directory may not.
-    ahead = git.commits_ahead(target, branch) if branch and git.ref_exists(branch) else 0
+    if branch and git.ref_exists(branch):
+        ahead = git.commits_ahead(target, branch)
+        measured = True
+    else:
+        ahead = 0
+        measured = False
     workflow_status, workflow_error, pr_prepared = _probe_pr_workflow(worktree)
-    # As in gather_worktree_status: at AHEAD 0, LAST COMMIT is left unset (#3828).
-    last_commit_ts = git.committer_timestamp(raw.path) if with_freshness and ahead > 0 else None
+    # As in gather_worktree_status: at a measured AHEAD 0, LAST COMMIT is left
+    # unset (#3828). An unmeasured 0 (no branch ref) says nothing about HEAD's
+    # own commits, so HEAD's age is still shown there.
+    show_last_commit = with_freshness and (ahead > 0 or not measured)
+    last_commit_ts = git.committer_timestamp(raw.path) if show_last_commit else None
     last_modified_ts = _newest_mtime(raw.path) if with_freshness else None
 
     if rebasing:
