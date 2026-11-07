@@ -1152,6 +1152,77 @@ def test_find_epic_by_title_uses_supplied_labels() -> None:
     assert "archive" in args and "ad-hoc" in args and "epic" not in args
 
 
+def _fake_issue_list(rows: list[dict]):
+    """A ``gh issue list`` stand-in that pages like gh: newest first, ``--limit`` rows.
+
+    gh returns at most 30 rows when no ``--limit`` is passed (#3822).
+    """
+
+    def fake(*args: str) -> list[dict]:
+        limit = int(args[args.index("--limit") + 1]) if "--limit" in args else 30
+        newest_first = sorted(rows, key=lambda r: int(r["number"]), reverse=True)
+        return newest_first[:limit]
+
+    return fake
+
+
+def test_find_epic_by_title_sees_an_epic_past_row_30() -> None:
+    # 31 open ad-hoc epics; the one we want is the oldest, so it sits at row 31
+    # of gh's newest-first list and a default-30 page never shows it.
+    target = {"number": 100, "title": "Epic (ad hoc): tooling"}
+    newer = [{"number": 200 + i, "title": f"Epic (ad hoc): repo-{i}"} for i in range(30)]
+    fake_list = _fake_issue_list([target, *newer])
+    with patch("vergil_tooling.lib.github.read_json", side_effect=fake_list):
+        got = epics._find_epic_by_title("org/.github", "Epic (ad hoc): tooling")
+    assert got == IssueRef("org", ".github", 100)
+
+
+def test_ensure_standing_epic_reuses_an_epic_past_row_30() -> None:
+    # The duplicate the paging bug causes: an existing epic past row 30 must be
+    # reused, never shadowed by a freshly created one.
+    target = {"number": 100, "title": "Epic (ad hoc): tooling"}
+    newer = [{"number": 200 + i, "title": f"Epic (ad hoc): repo-{i}"} for i in range(30)]
+    fake_list = _fake_issue_list([target, *newer])
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=fake_list),
+        patch("vergil_tooling.lib.github.create_issue") as mock_create,
+    ):
+        got = epics.ensure_standing_epic(epics.ADHOC, "org/.github", "tooling")
+    assert got == IssueRef("org", ".github", 100)
+    mock_create.assert_not_called()
+
+
+def test_find_epic_by_title_refuses_a_list_that_may_be_truncated() -> None:
+    # A result as long as the limit may hide further rows, so "not found" cannot
+    # be trusted: the lookup fails loudly instead of returning None.
+    limit = epics.EPIC_TITLE_LIST_LIMIT
+    rows = [{"number": i, "title": f"Epic (ad hoc): repo-{i}"} for i in range(1, limit + 1)]
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=_fake_issue_list(rows)),
+        pytest.raises(epics.EpicListTruncatedError, match=rf"{limit}\+ open"),
+    ):
+        epics._find_epic_by_title("org/.github", "Epic (ad hoc): tooling")
+
+
+def test_find_epic_by_title_refuses_truncation_even_when_the_title_is_listed() -> None:
+    # A match in a full page does not rule out a same-titled duplicate beyond it.
+    limit = epics.EPIC_TITLE_LIST_LIMIT
+    rows = [{"number": i, "title": f"Epic (ad hoc): repo-{i}"} for i in range(1, limit)]
+    rows.append({"number": limit, "title": "Epic (ad hoc): tooling"})
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=_fake_issue_list(rows)),
+        pytest.raises(epics.EpicListTruncatedError),
+    ):
+        epics._find_epic_by_title("org/.github", "Epic (ad hoc): tooling")
+
+
+def test_find_epic_by_title_accepts_a_list_one_short_of_the_limit() -> None:
+    limit = epics.EPIC_TITLE_LIST_LIMIT
+    rows = [{"number": i, "title": f"Epic (ad hoc): repo-{i}"} for i in range(1, limit)]
+    with patch("vergil_tooling.lib.github.read_json", side_effect=_fake_issue_list(rows)):
+        assert epics._find_epic_by_title("org/.github", "Epic (ad hoc): tooling") is None
+
+
 # -- archive rename: rollup no-ops under a converted archive parent (Task 3) ---
 
 
