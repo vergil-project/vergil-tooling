@@ -13452,6 +13452,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-merge-review-request" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-merge-review-request
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-epic-audit" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18102,6 +18113,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-merge-review-request" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-merge-review-request
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-epic-audit" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -20332,7 +20354,8 @@ added to the base after the branch was cut never count. A change is
 path on the documentation allow-list; any deletion, rename or type change,
 any change to <code>vergil.toml</code>, and an empty change are <code>code</code>. The allow-list
 is <code>README.md</code> and <code>CHANGELOG.md</code>, plus the repository's own paths from
-<code>vergil.toml</code>:</p>
+<code>vergil.toml</code> as committed at the merge base (never the working tree's
+copy):</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">[merge-review]</span>
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">docs-paths</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"docs/guides/"</span><span class="p">,</span><span class="w"> </span><span class="s2">"NOTICE.md"</span><span class="p">]</span>
 </code></pre></div>
@@ -20360,15 +20383,78 @@ nothing.</p>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>Run inside the repository's worktree, which has a valid <code>vergil.toml</code></td>
+<td>Run inside the repository, whose merge base has a valid <code>vergil.toml</code></td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td><code>ERROR: &lt;message&gt;</code> on stderr and exit 1 (an unknown ref, no merge base, an invalid <code>vergil.toml</code>)</td>
+<td><code>ERROR: &lt;message&gt;</code> on stderr and exit 1 (an unknown ref, no merge base, a merge base with no <code>vergil.toml</code> or an invalid one)</td>
 </tr>
 <tr>
 <td>Exit codes</td>
 <td>0 the class was printed, 1 error, 2 bad arguments</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-merge-review-request">vrg-merge-review-request<a class="headerlink" href="#vrg-merge-review-request" title="Permanent link">&para;</a></h3>
+<p>The merge-review request builder (epic vergil-project/.github#881): it
+writes a review or check request, by the
+<a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/merge-review-protocol.md">merge-review protocol</a>,
+into the task's private directory,
+<code>build/.vergil-state/issue-implement/&lt;N&gt;/merge-review/</code> in the main clone,
+and prints the request's path. It writes <code>request-&lt;step&gt;.json</code>,
+<code>diff-&lt;step&gt;.patch</code> (<code>git diff &lt;base_sha&gt; &lt;head_sha&gt;</code>, where <code>base_sha</code> is
+the merge base of <code>--base</code> and <code>HEAD</code>) and, for a check,
+<code>fix-&lt;step&gt;.patch</code> (<code>git diff &lt;fix_base_sha&gt; &lt;head_sha&gt;</code>). It refuses,
+naming the reason, unless the worktree is clean and the last <code>vrg-validate</code>
+run (its record, <code>.vergil/vrg-validate-last.json</code>) was a full run that
+started clean at <code>HEAD</code>, exited 0 and passed every stage; the passed stages
+become <code>validate_stages</code>. The change class is
+<a href="#vrg-change-class"><code>vrg-change-class</code></a>'s, with the allow-list committed at
+the merge base.</p>
+<p>A check takes <code>--fix-base</code> (the <code>HEAD</code> the previous step judged), one
+<code>--earlier-result</code> per earlier step in step order, each checked against
+that step's stored request, <code>--fix-id</code> for each earlier ID asked to change
+(it becomes <code>earlier_finding_ids</code>) and <code>--ruled-id</code> for each earlier defect
+the human excused (not sent to the reviewer). It refuses an ID no earlier
+result raised, an ID given to both, a check with no <code>--fix-id</code>, and an
+earlier defect named by neither unless a later result marks it <code>fixed</code>.</p>
+<p>Before writing, and on its own with <code>--ensure-dir</code>, it checks the private
+directory level by level: <code>build</code> must be a real directory (it is created
+when absent), and each level from <code>.vergil-state</code> down to <code>merge-review</code>
+must be a real directory, not a symlink, with mode 700; an absent level is
+created mode 700. The caller runs <code>--ensure-dir</code> before every write it
+makes there, and writes only to the path it prints.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_merge_review_request</code> (library: <code>lib/merge_review/request.py</code>, <code>lib/merge_review/state.py</code>, <code>lib/build_dir.py</code>, <code>lib/validate_record.py</code>)</td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>--issue OWNER/NAME#N --base REF --step {review,check,check-&lt;k&gt;} --issue-body-file FILE --epic-tasks-file FILE [--design-source FILE]... [--fix-base SHA --earlier-result FILE... --fix-id ID... [--ruled-id ID]...]</code>, or <code>--issue OWNER/NAME#N --ensure-dir</code></td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>Run inside the task's worktree after <code>vrg-container-run -- vrg-validate</code> passed at <code>HEAD</code>; <code>--epic-tasks-file</code> holds a JSON list of <code>{"ref", "title"}</code></td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td><code>ERROR: &lt;reason&gt;</code> on stderr, nothing on stdout</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 the path was printed, 1 a refusal or error, 2 bad arguments, 3 a check's <code>--fix-base</code> is not an ancestor of <code>HEAD</code> (the branch was rebased)</td>
 </tr>
 <tr>
 <td>Status</td>
@@ -21587,7 +21673,10 @@ one) and then the custom stage; with no custom validator it prints one
 but not an executable regular file fails. PR CI runs each stage through
 the <code>vergil-actions</code> reusable workflows, the custom stage as
 <code>quality / custom</code>. See the <a href="../../guides/validation-matrix/">Validation Matrix</a>
-for every check and where it runs.</p>
+for every check and where it runs. Every pipeline run, pass or fail,
+writes <code>.vergil/vrg-validate-last.json</code>: the commit at the start, the exit
+code, whether the run was full (no <code>--check</code>) and the tree clean at the
+start, and each stage's status. <code>vrg-merge-review-request</code> reads it.</p>
 <table>
 <thead>
 <tr>
