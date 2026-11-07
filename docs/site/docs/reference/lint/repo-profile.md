@@ -1,19 +1,19 @@
-# vrg-repo-profile
+# repo-profile
 
-**Installed as:** `vrg-repo-profile` (Python console script)
+The repo-profile check validates the repository configuration in
+`vergil.toml` and the structure of `README.md`. It is not a command of
+its own: it is the first step of the common stage of `vrg-validate`,
+which runs it in process (`vergil_tooling.bin.repo_profile`) before the
+other common checks. A failure stops the common stage.
 
-Validates the repository configuration in `vergil.toml` and the
-structure of `README.md`. `vrg-validate` runs it as part of its
-common checks.
-
-## Usage
+Run it through validation:
 
 ```bash
-vrg-repo-profile
+vrg-container-run -- vrg-validate
 ```
 
-Run from the repository root. The script reads `vergil.toml` and
-`README.md` relative to the current directory.
+The check reads `vergil.toml` and `README.md` from the repository
+root.
 
 ## `vergil.toml` checks
 
@@ -69,7 +69,7 @@ Each violation is an error. `[ci].primary-version`, when set, must
 name a resolved version; without it the primary is the newest resolved
 version.
 
-`vrg-repo-profile` checks only the shape of these keys. The window
+The repo-profile check covers only the shape of these keys. The window
 rules are enforced by the resolver (`lib/versions/resolve.py`), which
 `vrg-validate`, `vrg-container-run` and the CI setup step
 (`vrg-ci-resolve`) all run.
@@ -83,6 +83,9 @@ When `README.md` exists, outside fenced code blocks it must have:
 3. no heading-level skips (for example, `##` followed by `####`).
 
 ## Exit Codes
+
+The check returns these codes to the common stage, which stops on any
+non-zero code:
 
 | Code | Meaning |
 | ---- | ------- |

@@ -1,10 +1,10 @@
-"""Tests for vergil_tooling.bin.vrg_repo_profile."""
+"""Tests for vergil_tooling.bin.repo_profile."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from vergil_tooling.bin.vrg_repo_profile import _structural_check, main
+from vergil_tooling.bin.repo_profile import _structural_check, main
 
 if TYPE_CHECKING:
     from pathlib import Path

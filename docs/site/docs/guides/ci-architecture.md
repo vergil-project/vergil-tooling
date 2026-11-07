@@ -74,11 +74,12 @@ repository with no language uses the base image. On top of that image,
 vergil-tooling installed. Set `DOCKER_DEV_IMAGE` to use a different
 image.
 
-`vrg-validate` first runs the common checks: `vrg-repo-profile`,
-markdownlint, shellcheck, yamllint, hadolint, actionlint, and
-ansible-lint when the repository has Ansible content. It then runs the
-language's lint, typecheck, test and audit commands, and last the
-repository's custom validator when it has one. To run one stage, pass
+`vrg-validate` first runs the common checks: the
+[repo-profile](../reference/lint/repo-profile.md) check, markdownlint,
+shellcheck, yamllint, hadolint, actionlint, and ansible-lint when the
+repository has Ansible content. It then runs the language's lint,
+typecheck, test and audit commands, and last the repository's custom
+validator when it has one. To run one stage, pass
 `--check common`, `lint`, `typecheck`, `test`, `audit` or `custom`. The
 [Validation Matrix](validation-matrix.md) lists every check and where
 it runs.

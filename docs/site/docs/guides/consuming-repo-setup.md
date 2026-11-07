@@ -209,9 +209,9 @@ tables have their own references:
 [`[dependency-update]`](../reference/dependency-update-config.md) and
 [`[vm]`](../reference/vm-spec.md).
 
-`vrg-repo-profile` validates `vergil.toml` (required keys and enum
-values) and the `README.md` structure; `vrg-validate` runs it as part
-of its common checks. See the
+`vrg-validate` validates `vergil.toml` (required keys and enum
+values) and the `README.md` structure with its repo-profile check,
+the first of its common checks. See the
 [repo-profile reference](../reference/lint/repo-profile.md).
 
 ## Step 5: Claude Code hook guard and settings
@@ -564,7 +564,7 @@ Once the repo is bootstrapped, sanity-check each layer:
 vrg-container-run --help
 
 # 2. Full validation inside the dev container, including
-#    vrg-repo-profile against vergil.toml
+#    the repo-profile check of vergil.toml
 vrg-container-run -- vrg-validate
 
 # 3. Config audit — local files and GitHub settings
