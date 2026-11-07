@@ -90,6 +90,7 @@ nav:
           - vrg-security-record: reference/dev/security-record.md
           - vrg-ruling: reference/dev/ruling.md
           - vrg-ruling-reply: reference/dev/ruling-reply.md
+          - vrg-scope-change: reference/dev/scope-change.md
   - Standards:
       - Authoring:
           - Markdown Authoring: standards/markdown-authoring.md

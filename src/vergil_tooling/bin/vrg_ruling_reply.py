@@ -38,13 +38,12 @@ reply is posted, ``1`` any refusal or error (a declined prompt included),
 from __future__ import annotations
 
 import argparse
-import hashlib
 import sys
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import confirm, github, identity_mode
 from vergil_tooling.lib.cli import cli_main
-from vergil_tooling.lib.rulings import RulingError, comments, draft_ref
+from vergil_tooling.lib.rulings import RulingError, comments, draft_ref, human_post
 from vergil_tooling.lib.rulings.exchange import FatalCheck, open_request, read_reply
 from vergil_tooling.lib.rulings.identity import human_login
 from vergil_tooling.lib.rulings.plain_text import check_plain_text
@@ -125,29 +124,8 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_ERROR
 
 
-def _is_interactive() -> bool:
-    """Whether stdin and stdout are both terminals."""
-    return sys.stdin.isatty() and sys.stdout.isatty()
-
-
-def _require_login(human: str) -> None:
-    """Refuse unless the credentials in this shell post as ``human``."""
-    try:
-        login = github.read_output("api", "user", "--jq", ".login")
-    except github.MissingGitHubTokenError:
-        raise
-    except github.GitHubAPIError as exc:
-        msg = (
-            "cannot read the login these credentials post as (gh api user failed;"
-            f" run {_PROG} in the human's own shell, logged in to gh): {exc}"
-        )
-        raise RulingError(msg) from exc
-    if login != human:
-        msg = (
-            f"these credentials post as a login other than the human login {human};"
-            f" run {_PROG} in the human's own shell, logged in to gh as {human}"
-        )
-        raise RulingError(msg)
+# The terminal check, named here so the tests can stand in for a terminal.
+_is_interactive = human_post.is_interactive
 
 
 class _Issue:
@@ -222,21 +200,6 @@ def _read_reply_once(ctx: _Issue, response_text: str | None) -> str:
     return reply
 
 
-def _show(reply: str) -> None:
-    """Print the reply exactly as it will be posted, with its length and hash."""
-    data = reply.encode("ascii")
-    print("----- the reply, exactly as it will be posted -----")
-    sys.stdout.write(reply)
-    if not reply.endswith("\n"):
-        print()
-        print("----- end of the reply (it has no final newline) -----")
-    else:
-        print("----- end of the reply -----")
-    print(f"bytes: {len(data)}")
-    print(f"sha256: {hashlib.sha256(data).hexdigest()}")
-    sys.stdout.flush()
-
-
 def _reply(
     authors: TrustedAuthors,
     human: str,
@@ -245,12 +208,12 @@ def _reply(
     request_id: int,
     response_text: str | None,
 ) -> int:
-    _require_login(human)
+    human_post.require_login(human, _PROG)
     ctx = _Issue(authors, human, repo, issue, request_id)
     shown_stream, all_ids = ctx.fetch()
     ctx.check_turn(shown_stream, all_ids)
     reply = _read_reply_once(ctx, response_text)
-    _show(reply)
+    human_post.show(reply, "the reply")
     if not confirm.confirm(f"Post this reply as {human}?", assume_yes=False):
         print(f"{_PROG}: declined; nothing was posted and the draft is kept", file=sys.stderr)
         return EXIT_ERROR
