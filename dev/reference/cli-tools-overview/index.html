@@ -13430,6 +13430,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-merge-review-check" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-merge-review-check
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-epic-audit" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18058,6 +18069,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-merge-review-check" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-merge-review-check
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-epic-audit" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -20219,6 +20241,59 @@ See the <a href="../dev/ruling-reply/">vrg-ruling-reply reference</a> and the
 <tr>
 <td>Exit codes</td>
 <td>0 posted, 1 refused, declined or error, 2 bad arguments, 4 fatal check</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-merge-review-check">vrg-merge-review-check<a class="headerlink" href="#vrg-merge-review-check" title="Permanent link">&para;</a></h3>
+<p>The merge-review result check (epic vergil-project/.github#881): it checks
+a reviewer's stored reply against the request it answers, by the rules of
+the <a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/merge-review-protocol.md">merge-review protocol</a>.
+The reply must open, after optional whitespace, with exactly one
+<code>merge-review-result</code> fenced block holding one JSON object, with no second
+such block anywhere. The block must carry exactly the schema's fields at
+every level, copy the request's <code>step</code> and <code>request_id</code>, use only the
+defined questions, kinds and statuses, give each finding an ID with its
+step's prefix, keep every summary and location to one line of printable
+ASCII (a summary at most 300 characters, none on a security finding), raise
+no <code>production-safety</code> finding on a <code>docs-only</code> change, and, in a check,
+raise no <code>pre-existing</code> finding and give exactly one <code>fix_status</code> per ID the
+request listed. A summary or location that carries the vrg-ruling marker
+prefix is refused too, so it can go into a <code>vrg-ruling</code> item unchanged. On
+success it prints <code>{"step", "counts", "security", "fix_status"}</code> as JSON on
+stdout. A refusal names the rule, the finding by ID (or by position when
+the ID is bad) and, for a bad character, its code point and offset; it
+never repeats the refused value. It reads the two files and writes nothing.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_merge_review_check</code> (library: <code>lib/merge_review/</code>)</td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>--request FILE --result FILE</code></td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>None: no identity mode, network or git access</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td><code>ERROR: &lt;rule&gt;</code> on stderr and exit 1, with nothing on stdout</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 the result passed, 1 it failed or a file could not be read, 2 bad arguments</td>
 </tr>
 <tr>
 <td>Status</td>
