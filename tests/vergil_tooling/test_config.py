@@ -22,6 +22,7 @@ from vergil_tooling.lib.config import (
     CppConfig,
     DependencyUpdateConfig,
     MarkdownlintConfig,
+    MergeReviewConfig,
     TestConfig,
     TypeScriptConfig,
     ValidationConfig,
@@ -988,6 +989,48 @@ def test_dependency_update_unknown_key_warns(
     (tmp_path / "vergil.toml").write_text(toml)
     read_config(tmp_path)
     assert "unrecognized key 'schedule' in [dependency-update]" in capsys.readouterr().err
+
+
+# -- [merge-review] section (epic vergil-project/.github#881) -----------------
+
+
+def test_merge_review_absent_gives_no_paths(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    assert read_config(tmp_path).merge_review == MergeReviewConfig(docs_paths=())
+
+
+def test_merge_review_without_docs_paths_gives_no_paths(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML + "\n[merge-review]\n")
+    assert read_config(tmp_path).merge_review.docs_paths == ()
+
+
+def test_merge_review_docs_paths_parsed(tmp_path: Path) -> None:
+    toml = _VALID_TOML + '\n[merge-review]\ndocs-paths = ["docs/guide/", "NOTICE.md"]\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    assert read_config(tmp_path).merge_review.docs_paths == ("docs/guide/", "NOTICE.md")
+
+
+@pytest.mark.parametrize(
+    ("toml", "match"),
+    [
+        (_VALID_TOML + '\n[merge-review]\ndocs-paths = "docs/"\n', "must be a list of strings"),
+        (_VALID_TOML + "\n[merge-review]\ndocs-paths = [3]\n", r"docs-paths\[0\] must be a non"),
+        (_VALID_TOML + '\n[merge-review]\ndocs-paths = ["a/", ""]\n', r"docs-paths\[1\] must be"),
+        (_VALID_TOML + '\n[merge-review]\ndocs-paths = ["/docs/"]\n', "repo-relative path"),
+        ('merge-review = "x"\n' + _VALID_TOML, r"\[merge-review\] must be a table"),
+    ],
+)
+def test_merge_review_invalid(tmp_path: Path, toml: str, match: str) -> None:
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=match):
+        read_config(tmp_path)
+
+
+def test_merge_review_unknown_key_warns(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    toml = _VALID_TOML + '\n[merge-review]\ndocs-paths = []\nexclude = ["x"]\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    read_config(tmp_path)
+    assert "unrecognized key 'exclude' in [merge-review]" in capsys.readouterr().err
 
 
 # -- [upstream-refresh] section (epic vergil-project/.github#472) -------------

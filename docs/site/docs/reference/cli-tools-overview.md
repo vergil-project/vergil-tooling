@@ -889,6 +889,39 @@ never repeats the refused value. It reads the two files and writes nothing.
 | Exit codes | 0 the result passed, 1 it failed or a file could not be read, 2 bad arguments |
 | Status | Active |
 
+### vrg-change-class
+
+The merge-review change classifier (epic vergil-project/.github#881): it
+prints `docs-only` or `code` for the files a branch changed since its merge
+base with `--base` (`git diff --name-status -M <base>...<head>`), so commits
+added to the base after the branch was cut never count. A change is
+`docs-only` only when every changed file is an addition or an edit of a
+path on the documentation allow-list; any deletion, rename or type change,
+any change to `vergil.toml`, and an empty change are `code`. The allow-list
+is `README.md` and `CHANGELOG.md`, plus the repository's own paths from
+`vergil.toml`:
+
+```toml
+[merge-review]
+docs-paths = ["docs/guides/", "NOTICE.md"]
+```
+
+An entry ending in `/` covers everything below it; any other entry is that
+one file. Markdown is not documentation by its extension: list only paths
+that hold nothing that controls behaviour. The command is for humans and
+debugging; the merge-review skill gets the class through the request
+builder, which runs the same classifier. It reads the repository and writes
+nothing.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_change_class` (library: `lib/merge_review/change_class.py`) |
+| Args | `--base REF [--head REF]` (`--head` defaults to `HEAD`) |
+| Preconditions | Run inside the repository's worktree, which has a valid `vergil.toml` |
+| Failure mode | `ERROR: <message>` on stderr and exit 1 (an unknown ref, no merge base, an invalid `vergil.toml`) |
+| Exit codes | 0 the class was printed, 1 error, 2 bad arguments |
+| Status | Active |
+
 ### vrg-epic-audit
 
 Report epic/task drift and invariant violations for an org, as Markdown on
