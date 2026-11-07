@@ -294,8 +294,12 @@ def gather_worktree_status(
     workflow_status, workflow_error, pr_prepared = _probe_pr_workflow(worktree)
     # Freshness is opt-in: only vrg-worktree-status needs it. The finalize
     # straggler sweep also drives this function and must not pay for (or be
-    # broken by) the extra git log + filesystem walk.
-    last_commit_ts = git.committer_timestamp(worktree.path) if with_freshness else None
+    # broken by) the extra git log + filesystem walk. At AHEAD 0 the branch has
+    # no commits of its own: HEAD is the base commit, whose age says nothing
+    # about the branch, so LAST COMMIT is left unset (shown '-', #3828).
+    last_commit_ts = (
+        git.committer_timestamp(worktree.path) if with_freshness and ahead > 0 else None
+    )
     last_modified_ts = _newest_mtime(worktree.path) if with_freshness else None
 
     def _with_workflow(status: WorktreeStatus) -> WorktreeStatus:
@@ -584,7 +588,8 @@ def gather_detached_status(
     # exists; a name recovered solely from the directory may not.
     ahead = git.commits_ahead(target, branch) if branch and git.ref_exists(branch) else 0
     workflow_status, workflow_error, pr_prepared = _probe_pr_workflow(worktree)
-    last_commit_ts = git.committer_timestamp(raw.path) if with_freshness else None
+    # As in gather_worktree_status: at AHEAD 0, LAST COMMIT is left unset (#3828).
+    last_commit_ts = git.committer_timestamp(raw.path) if with_freshness and ahead > 0 else None
     last_modified_ts = _newest_mtime(raw.path) if with_freshness else None
 
     if rebasing:
