@@ -987,13 +987,50 @@ def test_route_one_off_duplicate_refusal_that_persists_fails_cleanly(
     assert capsys.readouterr().err.count("replacing the parent") == intake_route._SETTLE_ROUNDS
 
 
-def test_route_one_off_other_link_error_is_not_recovered(env: Env) -> None:
+def test_route_one_off_other_link_error_fails_cleanly(env: Env) -> None:
     env.native_parent[ITEM] = INTAKE
     env.resolve_epic_ref.return_value = ADHOC_DOTGITHUB
     env.reparent_child.side_effect = github.GitHubAPIError(1, ["gh"], "", "gh: HTTP 502")
-    with pytest.raises(github.GitHubAPIError):
+    with pytest.raises(intake_route.RouteHalfAppliedError) as excinfo:
         route(ITEM, OneOff(repo="org/.github"), today=TODAY)
+    message = str(excinfo.value)
+    assert message.startswith(
+        "org/.github#352: linking org/.github#352 under org/.github#9 or reading its "
+        "parent back failed ("
+    )
+    assert "gh: HTTP 502" in message
+    # The pasted command quotes its refs: zsh EXTENDED_GLOB reads an unquoted #.
+    assert message.endswith(
+        "); the route is half-applied. Check where it is with vrg-queue, then fix it "
+        "with: vrg-epic-move --task 'org/.github#352' --epic 'org/.github#9'"
+    )
     env.remove_child.assert_not_called()
+
+
+def test_route_one_off_transfer_read_back_error_fails_cleanly(env: Env) -> None:
+    new = IssueRef("org", "tool", 900)
+    # The link lands, but reading the old epic's sub-issues back fails.
+    with (
+        patch(
+            f"{_MOD}.epics.native_children",
+            side_effect=github.GitHubAPIError(1, ["gh"], "", "gh: HTTP 502"),
+        ),
+        pytest.raises(intake_route.RouteHalfAppliedError) as excinfo,
+    ):
+        route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    message = str(excinfo.value)
+    assert message.startswith(
+        "moved org/.github#352 to org/tool#900, but linking org/tool#900 under "
+        "org/.github#11 or reading its parent back failed ("
+    )
+    assert message.endswith("vrg-epic-move --task 'org/tool#900' --epic 'org/.github#11'")
+    assert env.native_parent[new] == TOOL_ADHOC
+
+
+def test_route_one_off_missing_token_is_left_as_it_came(env: Env) -> None:
+    env.reparent_child.side_effect = github.MissingGitHubTokenError(1, ["gh"], "", "no token")
+    with pytest.raises(github.MissingGitHubTokenError):
+        route(ITEM, OneOff(repo="org/tool"), today=TODAY)
 
 
 def test_route_planning_duplicate_refusal_is_not_recovered(env: Env) -> None:
@@ -1282,18 +1319,19 @@ def test_transfer_parent_mismatch_also_names_the_advisory(env: Env) -> None:
     env.retarget.assert_not_called()
 
 
-def test_transfer_link_error_also_names_the_advisory_and_stays_a_runtime_error(
-    env: Env,
-) -> None:
+def test_transfer_link_error_is_half_applied_and_names_the_advisory(env: Env) -> None:
     env.make_security_item()
     env.reparent_child.side_effect = RuntimeError("GraphQL errors: [boom]")
-    with pytest.raises(RuntimeError) as excinfo:
+    with pytest.raises(intake_route.RouteHalfAppliedError) as excinfo:
         route(ITEM, OneOff(repo="org/tool"), today=TODAY)
-    # Only a settle that read the wrong parent is a half-applied route; a
-    # failed link call keeps its own type, with the advisory recovery added.
-    assert not isinstance(excinfo.value, intake_route.RouteHalfAppliedError)
+    # The item has moved, so a failed link leaves the route half-applied
+    # (#3839): it names that state, with the advisory recovery added.
     message = str(excinfo.value)
-    assert message.startswith("GraphQL errors: [boom]; also, advisory")
+    assert message.startswith(
+        "moved org/.github#352 to org/tool#900, but linking org/tool#900 under "
+        "org/.github#11 or reading its parent back failed (GraphQL errors: [boom])"
+    )
+    assert f"; also, advisory {GHSA} was not retargeted" in message
     assert f"vrg-security-record retarget {GHSA} --to org/tool#900" in message
     env.retarget.assert_not_called()
 

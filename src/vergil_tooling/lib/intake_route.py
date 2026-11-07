@@ -30,7 +30,8 @@ routes each container allows:
   issue starts unparented and is simply linked. A one-off whose work lands in the item's
   own repo is just reparented. On every path the parent is read back, and one
   other than the target epic fails loudly with :class:`RouteHalfAppliedError`
-  naming the item, where it is and how to recover it.
+  naming the item, where it is and how to recover it, as does a link or
+  read-back that fails outright.
 - **planning** — reparent onto the planning epic of the same queue home.
 - **split** — the replacement tasks already exist (made with
   ``vrg-issue-create``); comment the links and the reason, then close.
@@ -57,19 +58,24 @@ owner's App token (:func:`github.target_org`).
 
 from __future__ import annotations
 
+import contextlib
 import re
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
 from datetime import date
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from vergil_tooling.lib import epics, github, security_records
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.labels import RETIRED_LABELS, ensure_labels, load_labels
 from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.queue_view import parse_planning_markers
+from vergil_tooling.lib.rulings.draft_ref import quoted_issue_ref
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
 
 DROP_COMMENT = "Dropped in {queue} review: {reason}"
 DEFER_COMMENT = "Deferred {day}: {reason}\nRevisit when: {revisit_when}"
@@ -382,15 +388,14 @@ def _one_off(ref: IssueRef, action: OneOff, old_parent: IssueRef | None) -> Rout
         return RouteResult(final=new, moved_by="recreate")
     final = _transferred_ref(ref, dest, epic, output)
     if not ghsas:
-        _settle_parent(ref, epic, final, old_parent)
+        with _half_applied_on_error(ref, epic, final):
+            _settle_parent(ref, epic, final, old_parent)
         return RouteResult(final=final, moved_by="transfer")
     try:
-        _settle_parent(ref, epic, final, old_parent)
-    except RuntimeError as exc:
-        detail = f"{exc}; also, {_transfer_recovery(ghsas, final)}"
-        if isinstance(exc, RouteHalfAppliedError):
-            raise RouteHalfAppliedError(detail) from exc
-        raise RuntimeError(detail) from exc
+        with _half_applied_on_error(ref, epic, final):
+            _settle_parent(ref, epic, final, old_parent)
+    except RouteHalfAppliedError as exc:
+        raise RouteHalfAppliedError(f"{exc}; also, {_transfer_recovery(ghsas, final)}") from exc
     for index, ghsa in enumerate(ghsas):
         try:
             # The old number is the same issue: rewrite its tracking line, never unmark it.
@@ -536,10 +541,34 @@ def _link_and_check(
     One read is enough for a plain link; one that had to clear a duplicate
     sub-issue link (#3839) gets the settle loop's two reads and old-parent check.
     """
-    if _link(epic, task, item=item):
-        _settle_parent(item, epic, task, old_parent)
-    else:
-        _check_parent(item, epic, task)
+    with _half_applied_on_error(item, epic, task):
+        if _link(epic, task, item=item):
+            _settle_parent(item, epic, task, old_parent)
+        else:
+            _check_parent(item, epic, task)
+
+
+@contextlib.contextmanager
+def _half_applied_on_error(item: IssueRef, epic: IssueRef, task: IssueRef) -> Generator[None]:
+    """Turn a failed link or read-back of a one-off into :class:`RouteHalfAppliedError`.
+
+    By then the item may already be moved, so a raw API error would leave it
+    half-routed with nothing saying so (#3839). A missing token is a
+    configuration error, not a routing state, and is left as it came.
+    """
+    try:
+        yield
+    except (RouteHalfAppliedError, github.MissingGitHubTokenError):
+        raise
+    except (github.GitHubAPIError, RuntimeError) as exc:
+        lead = f"moved {item.slug} to {task.slug}, but" if task != item else f"{item.slug}:"
+        task_ref = quoted_issue_ref(_repo_of(task), task.number)
+        epic_ref = quoted_issue_ref(_repo_of(epic), epic.number)
+        raise RouteHalfAppliedError(
+            f"{lead} linking {task.slug} under {epic.slug} or reading its parent back failed "
+            f"({error_text(exc)}); the route is half-applied. Check where it is with "
+            f"vrg-queue, then fix it with: vrg-epic-move --task {task_ref} --epic {epic_ref}"
+        ) from exc
 
 
 def _check_parent(item: IssueRef, epic: IssueRef, task: IssueRef) -> None:
