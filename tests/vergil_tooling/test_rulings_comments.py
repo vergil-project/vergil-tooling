@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+import vergil_tooling.lib.github
 from vergil_tooling.lib.rulings import RulingError
 from vergil_tooling.lib.rulings.comments import (
     IssueComment,
@@ -31,8 +32,12 @@ def _node(
         "fullDatabaseId": comment_id,
         "author": None if login is None else {"login": login},
         "body": body,
+        "createdAt": _CREATED,
         "lastEditedAt": edited,
     }
+
+
+_CREATED = "2026-11-01T09:30:00Z"
 
 
 def _page(nodes: list[Any], cursor: str | None = None) -> dict[str, Any]:
@@ -125,7 +130,24 @@ def test_fetch_comments_keeps_a_deleted_author_as_empty(
     fake_graphql: Callable[[Pages], list[dict[str, object]]],
 ) -> None:
     fake_graphql([_page([_node("5", login=None)])])
-    assert fetch_comments("o/r", 7) == [IssueComment(5, "", "text", False)]
+    assert fetch_comments("o/r", 7) == [IssueComment(5, "", "text", False, _CREATED)]
+
+
+def test_fetch_comments_asks_for_and_keeps_created_at(
+    fake_graphql: Callable[[Pages], list[dict[str, object]]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    queries: list[str] = []
+    fake_graphql([_page([_node("5")])])
+    installed = vergil_tooling.lib.github.graphql
+
+    def spy(query: str, **variables: object) -> Any:
+        queries.append(query)
+        return installed(query, **variables)
+
+    monkeypatch.setattr("vergil_tooling.lib.github.graphql", spy)
+    assert fetch_comments("o/r", 7)[0].created_at == _CREATED
+    assert "createdAt" in queries[0]
 
 
 def test_fetch_comments_of_an_issue_with_none(
@@ -149,6 +171,8 @@ def test_fetch_comments_of_an_issue_with_none(
         (_page([_node("12", login="")]), "comment 12 has an author with no login"),
         (_page([{**_node("12"), "author": "h"}]), "comment 12 has an author with no login"),
         (_page([{**_node("12"), "body": None}]), "comment 12 has no body string"),
+        (_page([{**_node("12"), "createdAt": None}]), "comment 12 has no createdAt string"),
+        (_page([{**_node("12"), "createdAt": ""}]), "comment 12 has no createdAt string"),
         (_page([{**_node("1"), "fullDatabaseId": 12}]), "no usable fullDatabaseId"),
         (_page([_node("0")]), "no usable fullDatabaseId"),
         (_page([_node("012")]), "no usable fullDatabaseId"),

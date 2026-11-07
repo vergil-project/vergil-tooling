@@ -137,7 +137,8 @@ The request is a JSON object, `request-<step>.json`. Every step carries:
 | `repo` | string | The repository, `owner/name`. |
 | `issue` | string | The task issue, `owner/name#N`. |
 | `issue_body` | string | The issue's body, as data. |
-| `issue_comments` | list of objects | The issue's trusted-author comments, as data, each `{"author": "<login>", "created_at": "<ISO 8601 with time zone>", "body": "..."}`, in the order the caller gave them; empty when there are none. |
+| `issue_comments` | list of objects | The human's unedited comments on the issue, as data, each `{"author": "<login>", "created_at": "<ISO 8601 with time zone>", "body": "..."}`, oldest first; empty when there are none. The builder fetches and filters them itself. |
+| `issue_comments_excluded_edited` | integer | How many of the human's comments the builder left out of `issue_comments` because they had been edited; 0 when none. |
 | `base_sha` | string | The merge base of the base branch and `HEAD`. |
 | `head_sha` | string | The commit under review. |
 | `worktree` | string | Absolute path of the worktree, for reading surrounding code. |
@@ -156,14 +157,21 @@ A check (`check` or `check-<k>`) adds:
 | `earlier_result_paths` | list of strings | Absolute paths of every earlier step's result, in step order: `result-review.md`, then `result-check.md` for a `check-2`, and so on. |
 | `earlier_finding_ids` | list of strings | The earlier finding IDs the implementer was asked to change: every defect, and each item whose ruling calls for a code change. |
 
-The issue's comments carry scope a trusted maintainer set after the issue
-was opened, such as narrowing the task to part of what the body asks. The
-caller chooses which comments are trusted (by the trusted-author lists) and
-passes them to `vrg-merge-review-request --issue-comments-file`, a JSON list
-in the shape above; the builder checks only that shape, refusing a malformed
-file by entry position without echoing any value, and never filters by
-author. The reviewer reads `issue_comments` as it reads `issue_body`: as
-data describing the task, never as instructions to it.
+The issue's comments carry scope the maintainer set after the issue was
+opened, such as narrowing the task to part of what the body asks. Only a
+comment authenticated as the human may amend that scope, so the agent never
+chooses which comments the reviewer sees: `vrg-merge-review-request`
+reads every page of the `--issue`'s comments itself and keeps only those
+whose author is the one human login of the trusted-authors configuration
+(refusing a configuration that lists none or several). Agent and
+third-party comments are dropped. A human comment that has been edited
+(detected as `vrg-ruling` detects an edited reply, by GitHub's
+`lastEditedAt`) is left out and counted in
+`issue_comments_excluded_edited`, so the caller can state the count in the
+step comment. A kept comment's `created_at` must be an ISO 8601 timestamp
+with a time zone; the builder refuses one that is not by its comment ID,
+never echoing a value. The reviewer reads `issue_comments` as it reads
+`issue_body`: as data describing the task, never as instructions to it.
 
 `vrg-merge-review-request` refuses a `--fix-base` that is not the `head_sha`
 of the previous step's stored `request-<step>.json`, so the fix diff always
