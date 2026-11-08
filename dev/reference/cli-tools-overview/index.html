@@ -21942,7 +21942,8 @@ stage. Shared validation checks for all repos: the
 <a href="../lint/repo-profile/">repo-profile</a> check (<code>vergil.toml</code> and the
 <code>README.md</code> structure), markdownlint on published markdown
 (<code>docs/site/**/*.md</code> and <code>README.md</code>) using the bundled canonical config, shellcheck on
-<code>scripts/</code>, yamllint on <code>.github/</code> and <code>docs/</code> YAML files, the
+<code>scripts/</code> and every <code>*.sh</code> file in the repository, yamllint on <code>.github/</code>
+and <code>docs/</code> YAML files, the
 dependabot-limit guard (when <code>.github/dependabot.yml</code> exists, every
 <code>updates</code> entry must carry <code>open-pull-requests-limit: 0</code>, so Dependabot
 can never open a PR), hadolint
