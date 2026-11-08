@@ -374,6 +374,67 @@ class TestRefresh:
             refresh(run, settings, "")
         assert run.calls == []
 
+    def test_undeclared_marketplaces_fail_before_any_claude_call(self) -> None:
+        # #3995: every offending plugin is named with its marketplace, by the
+        # refresh and by the pre-copy check alike, and nothing has run.
+        settings = {
+            "extraKnownMarketplaces": SETTINGS_V21["extraKnownMarketplaces"],
+            "enabledPlugins": {
+                "vergil@vergil-marketplace": True,
+                "paad@paad": True,
+                "old@standard-tooling-marketplace": True,
+                "off@elsewhere": False,
+            },
+        }
+        named = (
+            r"old@standard-tooling-marketplace \(marketplace standard-tooling-marketplace\), "
+            r"paad@paad \(marketplace paad\)$"
+        )
+        with pytest.raises(MarketplaceError, match=named):
+            validate_settings(settings)
+        run = FakeRun()
+        with pytest.raises(MarketplaceError, match=named):
+            refresh(run, settings, "")
+        assert run.calls == []
+
+    def test_the_fleet_settings_shape_passes(self) -> None:
+        # The fleet's settings declare paad, vergil-marketplace and
+        # claude-plugins-official, and enable a plugin from each.
+        settings = {
+            "extraKnownMarketplaces": {
+                "vergil-marketplace": SETTINGS_V21["extraKnownMarketplaces"]["vergil-marketplace"],
+                "paad": {"source": {"source": "github", "repo": "o/paad"}},
+                "claude-plugins-official": {
+                    "source": {"source": "github", "repo": "anthropics/claude-plugins-official"}
+                },
+            },
+            "enabledPlugins": {
+                "vergil@vergil-marketplace": True,
+                "paad@paad": True,
+                "superpowers@claude-plugins-official": True,
+            },
+        }
+        validate_settings(settings)
+        assert [name for name, _ in _marketplace_adds(settings)] == [
+            "vergil-marketplace",
+            "paad",
+            "claude-plugins-official",
+        ]
+
+    @pytest.mark.parametrize(
+        "enabled",
+        [
+            # The refresh adds and updates the official marketplace itself (#2029).
+            {"superpowers@claude-plugins-official": True},
+            # An id with no marketplace suffix names no marketplace.
+            {"bare-id": True},
+            # A disabled plugin is not enabled from anywhere.
+            {"thing@some-third-party": False},
+        ],
+    )
+    def test_plugins_that_need_no_declaration_pass(self, enabled: dict[str, bool]) -> None:
+        validate_settings({"enabledPlugins": enabled})
+
     def test_refresh_raises_on_malformed_listing(self) -> None:
         with pytest.raises(MarketplaceError):
             refresh(FakeRun(marketplace_list='{"not": "a list"}'), SETTINGS_V21, "")
@@ -576,10 +637,20 @@ class TestMarketplaceAdds:
         }
         assert _marketplace_adds(settings) == [("anthropic", "anthropics/claude-plugins-official")]
 
-    def test_undecidable_undeclared_marketplace_is_not_added(self) -> None:
+    def test_a_plugin_from_an_undeclared_marketplace_is_an_error(self) -> None:
+        # #3995: its catalog would never be refreshed, so the plugin could stay
+        # stale while the refresh reports success. The error names it.
         enabled = {"thing@some-third-party": True}
         settings = {"extraKnownMarketplaces": {}, "enabledPlugins": enabled}
-        assert _marketplace_adds(settings) == []
+        with pytest.raises(
+            MarketplaceError,
+            match=(
+                r"^settings\.json enabledPlugins enables a plugin from a marketplace "
+                r"extraKnownMarketplaces does not declare: "
+                r"thing@some-third-party \(marketplace some-third-party\)$"
+            ),
+        ):
+            _marketplace_adds(settings)
 
     def test_enabled_id_without_marketplace_suffix_is_skipped(self) -> None:
         settings = {"extraKnownMarketplaces": {}, "enabledPlugins": {"bare-id": True}}

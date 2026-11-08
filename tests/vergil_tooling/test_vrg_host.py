@@ -1190,7 +1190,8 @@ _PLUGIN_SETTINGS = {
                 "repo": "vergil-project/vergil-claude-plugin",
                 "ref": "v2.1",
             }
-        }
+        },
+        "paad": {"source": {"source": "github", "repo": "o/paad"}},
     },
     "enabledPlugins": {"vergil@vergil-marketplace": True, "paad@paad": True},
 }
@@ -1202,7 +1203,8 @@ _REGISTERED_V21 = json.dumps(
             "source": "github",
             "repo": "vergil-project/vergil-claude-plugin",
             "ref": "v2.1",
-        }
+        },
+        {"name": "paad", "source": "github", "repo": "o/paad"},
     ]
 )
 
@@ -1283,7 +1285,9 @@ def test_plugins_runs_refresh(host_claude: Path, local_run: _LocalRun) -> None:
     assert all(c[:2] == ("bash", "-c") for c in local_run.calls)
     assert [c[-1] for c in local_run.calls] == [
         "claude plugin marketplace add vergil-project/vergil-claude-plugin@v2.1",
+        "claude plugin marketplace add o/paad",
         "claude plugin marketplace update vergil-marketplace",
+        "claude plugin marketplace update paad",
         "claude plugin list --json",
         "claude plugin update paad@paad --scope user",
         "claude plugin update vergil@vergil-marketplace --scope user",
@@ -1300,6 +1304,22 @@ def test_plugins_exits_2_naming_each_failure(
     err = capsys.readouterr().err
     assert "paad@paad (user)" in err
     assert "vergil@vergil-marketplace (user)" in err
+
+
+def test_plugins_exits_2_on_a_plugin_from_an_undeclared_marketplace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    local_run: _LocalRun,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # #3995: its catalog would never be refreshed, so the refresh refuses
+    # before any claude call, naming the plugin and its marketplace.
+    settings = tmp_path / "settings.json"
+    settings.write_text(json.dumps({"enabledPlugins": {"paad@paad": True}}))
+    monkeypatch.setattr(vrg_host, "_host_settings_path", lambda: settings)
+    assert vrg_host.main(["plugins"]) == 2
+    assert local_run.calls == []
+    assert "paad@paad (marketplace paad)" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("content", [None, "{not json", "[]"])

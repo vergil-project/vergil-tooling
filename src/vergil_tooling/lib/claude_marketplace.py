@@ -7,8 +7,12 @@ those same marketplaces, then the per-install ``claude plugin update``. Only
 the marketplaces the refresh adds are updated: the declared ones, plus
 ``claude-plugins-official`` when an enabled plugin needs it and the settings do
 not declare it. Any other registered marketplace is not the fleet's to manage,
-so it is never touched (vergil-project/vergil-tooling#3879); a plugin enabled
-from one is still updated, from that marketplace's catalog as it stands.
+so it is never touched (vergil-project/vergil-tooling#3879). The fleet owns
+``settings.json``, so it must declare the marketplace of every plugin it
+enables (``claude-plugins-official`` aside): a plugin enabled from any other
+marketplace is an error, raised before any ``claude`` call, that names the
+plugin and its marketplace (vergil-project/vergil-tooling#3995). No enabled
+plugin is updated from a catalog the refresh did not refresh first.
 Once ``settings.json`` declares a new ref, the re-add re-clones the
 marketplace at that ref and rewrites its registration, which is how a machine
 switches ref (proven on Claude Code 2.1.312 by
@@ -263,18 +267,53 @@ def _enabled_plugin_ids(settings: dict[str, Any]) -> set[str]:
     return enabled
 
 
-def validate_settings(settings: dict[str, Any]) -> None:
-    """Check *settings* has the shape the refresh reads, before any ``claude`` call.
+def _check_enabled_marketplaces(
+    declared: list[tuple[str, dict[str, Any]]], enabled: set[str]
+) -> None:
+    """Refuse an enabled plugin whose marketplace *declared* does not name.
 
-    Runs the same ``extraKnownMarketplaces`` and ``enabledPlugins`` checks the
-    refresh runs, so a caller (``vrg-vm update``) can reject a misshapen file
-    before copying it anywhere.
+    The refresh updates only the marketplaces it adds, so a plugin from any
+    other marketplace would be updated from a catalog nobody refreshed and
+    could stay stale while the refresh reports success. The fleet owns
+    ``settings.json``, so it must declare every marketplace it enables a
+    plugin from (vergil-project/vergil-tooling#3995). The one exception is
+    ``claude-plugins-official``: the refresh adds and updates it itself, from
+    its known Anthropic source, whenever an enabled plugin needs it (#2029).
+    An id with no ``@marketplace`` suffix names no marketplace, so it is not
+    checked here.
 
     Raises:
-        MarketplaceError: either section has the wrong shape.
+        MarketplaceError: one or more enabled plugins come from an undeclared
+            marketplace; the message names each plugin and its marketplace.
     """
-    _declared_sources(settings)
-    _enabled_plugin_ids(settings)
+    names = {name for name, _ in declared}
+    undeclared = []
+    for pid in sorted(enabled):
+        if "@" not in pid:
+            continue
+        market = pid.split("@", 1)[1]
+        if market not in names and market != _OFFICIAL_MARKETPLACE:
+            undeclared.append(f"{pid} (marketplace {market})")
+    if undeclared:
+        msg = (
+            "settings.json enabledPlugins enables a plugin from a marketplace "
+            "extraKnownMarketplaces does not declare: " + ", ".join(undeclared)
+        )
+        raise MarketplaceError(msg)
+
+
+def validate_settings(settings: dict[str, Any]) -> None:
+    """Check *settings* is what the refresh reads, before any ``claude`` call.
+
+    Runs the same ``extraKnownMarketplaces`` and ``enabledPlugins`` checks the
+    refresh runs, so a caller (``vrg-vm update``) can reject a misshapen or
+    incomplete file before copying it anywhere.
+
+    Raises:
+        MarketplaceError: either section has the wrong shape, or an enabled
+            plugin comes from an undeclared marketplace.
+    """
+    _check_enabled_marketplaces(_declared_sources(settings), _enabled_plugin_ids(settings))
 
 
 def _marketplace_adds(settings: dict[str, Any]) -> list[tuple[str, str]]:
@@ -287,14 +326,19 @@ def _marketplace_adds(settings: dict[str, Any]) -> list[tuple[str, str]]:
     Each declared value is quoted on its own, so ``repo@ref`` stays one shell
     word.
 
-    Hardening (#2029): an enabled plugin can reference a marketplace not
-    declared in ``extraKnownMarketplaces``, notably the built-in
-    ``claude-plugins-official``, which is not always listed. For such a
-    plugin, derive a source where we can (official -> its Anthropic repo); an
-    undecidable third-party marketplace has no derivable source and is left
-    for the install to surface, never invented.
+    Hardening (#2029): an enabled plugin of the built-in
+    ``claude-plugins-official``, which the settings do not always declare,
+    gets that marketplace added from its Anthropic repo. An enabled plugin of
+    any other undeclared marketplace is an error, raised here before any
+    ``claude`` call (vergil-project/vergil-tooling#3995).
+
+    Raises:
+        MarketplaceError: the settings have the wrong shape, or an enabled
+            plugin comes from an undeclared marketplace.
     """
     declared = _declared_sources(settings)
+    enabled = _enabled_plugin_ids(settings)
+    _check_enabled_marketplaces(declared, enabled)
     extra = {name for name, _ in declared}
     adds: list[tuple[str, str]] = []
     for name, src in declared:
@@ -316,7 +360,7 @@ def _marketplace_adds(settings: dict[str, Any]) -> list[tuple[str, str]]:
             arg = f"{arg}{sep}{shlex.quote(ref)}"
         adds.append((name, arg))
     official = (_OFFICIAL_MARKETPLACE, _OFFICIAL_MARKETPLACE_SOURCE)
-    for pid in _enabled_plugin_ids(settings):
+    for pid in enabled:
         if "@" not in pid:
             continue
         market = pid.split("@", 1)[1]
@@ -528,7 +572,9 @@ def refresh(run: Run, settings: dict[str, Any], prefix: str) -> list[str]:
     GitHub marketplace is registered at its declared repo and ref.
 
     Raises:
-        MarketplaceError: a ``list --json`` output is malformed, or a
+        MarketplaceError: the settings are misshapen or enable a plugin from
+            an undeclared marketplace (raised before any ``claude`` call), a
+            ``list --json`` output is malformed, or a
             ``list --json`` step raised after an earlier step had already
             failed. Then the message names the step's error and every earlier
             failure label, and the error is chained from the step's exception
