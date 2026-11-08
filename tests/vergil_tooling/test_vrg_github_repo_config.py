@@ -235,9 +235,7 @@ def test_audit_not_checked_without_drift_exits_two(capsys: pytest.CaptureFixture
     captured = capsys.readouterr()
     assert "o/r: NOT FULLY AUDITED" in captured.out
     assert "o/r: compliant" not in captured.out
-    assert (
-        "security.vulnerability_alerts: not checked (needs administration=read)" in captured.out
-    )
+    assert "security.vulnerability_alerts: not checked (needs administration=read)" in captured.out
     assert "classic_protection.develop: not checked (needs administration=read)" in captured.out
     assert "Could not fully audit o/r: 2 setting(s) not checked" in captured.err
     assert "administration=read" in captured.err
