@@ -26,6 +26,7 @@ from vergil_tooling.lib import epics, github
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.labels import ensure_labels_or_report
 from vergil_tooling.lib.process_errors import error_text
+from vergil_tooling.lib.shell_ref import quoted_slug
 
 _PROG = "vrg-intake-create"
 
@@ -77,7 +78,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(
                     f"{_PROG}: created {url} but it is not linked under intake epic "
                     f"{intake.slug}: {error_text(exc)}. Link it with: "
-                    f"vrg-epic-move --task {created.slug} --epic {intake.slug}",
+                    f"vrg-epic-move --task {quoted_slug(created)} --epic {quoted_slug(intake)}",
                     file=sys.stderr,
                 )
                 return 1

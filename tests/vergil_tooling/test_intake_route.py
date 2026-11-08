@@ -691,7 +691,7 @@ def test_route_one_off_same_repo_parent_mismatch_fails_loudly(env: Env) -> None:
     assert str(excinfo.value) == (
         "linked org/.github#352, but it is under org/.github#7, not under org/.github#9; "
         "the route is half-applied. Fix it with: "
-        "vrg-epic-move --task org/.github#352 --epic org/.github#9"
+        "vrg-epic-move --task 'org/.github#352' --epic 'org/.github#9'"
     )
 
 
@@ -756,7 +756,7 @@ def test_route_one_off_transfer_parent_mismatch_fails_loudly(
     message = str(excinfo.value)
     assert "but it is under org/.github#7, not under org/.github#11" in message
     assert "half-applied" in message
-    assert "vrg-epic-move --task org/tool#900 --epic org/.github#11" in message
+    assert "vrg-epic-move --task 'org/tool#900' --epic 'org/.github#11'" in message
     assert env.reparent_child.call_count == intake_route._SETTLE_ROUNDS
     assert capsys.readouterr().err.count("replacing the parent") == intake_route._SETTLE_ROUNDS
 
@@ -803,7 +803,7 @@ def test_route_one_off_transfer_parent_that_never_holds_fails_loudly(env: Env) -
         "moved org/.github#352 to org/tool#900, but it is under org/.github#7"
     )
     assert "not under org/.github#11; the route is half-applied" in message
-    assert "vrg-epic-move --task org/tool#900 --epic org/.github#11" in message
+    assert "vrg-epic-move --task 'org/tool#900' --epic 'org/.github#11'" in message
     assert env.reparent_child.call_count == intake_route._SETTLE_ROUNDS
 
 
@@ -1271,7 +1271,7 @@ def test_recreate_security_item_retarget_failure_leaves_original_open(env: Env) 
     message = str(excinfo.value)
     assert f"recreated org/.github#352 as org/tool#901, but advisory {GHSA}" in message
     assert "org/.github#352 is left open" in message
-    assert f"vrg-security-record retarget {GHSA} --to org/tool#901" in message
+    assert f"vrg-security-record retarget {GHSA} --to 'org/tool#901'" in message
     env.run.assert_not_called()
     env.add_child.assert_not_called()
 
@@ -1302,7 +1302,7 @@ def test_transfer_retarget_failure_reports_moved_not_refused(env: Env) -> None:
     assert not isinstance(excinfo.value, RouteRefusedError)
     assert str(excinfo.value) == (
         f"org/.github#352 moved to org/tool#900, but advisory {GHSA} was not retargeted; "
-        f"run: vrg-security-record retarget {GHSA} --to org/tool#900"
+        f"run: vrg-security-record retarget {GHSA} --to 'org/tool#900'"
     )
     assert excinfo.value.__cause__ is RETARGET_FAILED
 
@@ -1315,7 +1315,7 @@ def test_transfer_parent_mismatch_also_names_the_advisory(env: Env) -> None:
     message = str(excinfo.value)
     assert "half-applied" in message
     assert f"also, advisory {GHSA} was not retargeted" in message
-    assert f"vrg-security-record retarget {GHSA} --to org/tool#900" in message
+    assert f"vrg-security-record retarget {GHSA} --to 'org/tool#900'" in message
     env.retarget.assert_not_called()
 
 
@@ -1332,7 +1332,7 @@ def test_transfer_link_error_is_half_applied_and_names_the_advisory(env: Env) ->
         "org/.github#11 or reading its parent back failed (GraphQL errors: [boom])"
     )
     assert f"; also, advisory {GHSA} was not retargeted" in message
-    assert f"vrg-security-record retarget {GHSA} --to org/tool#900" in message
+    assert f"vrg-security-record retarget {GHSA} --to 'org/tool#900'" in message
     env.retarget.assert_not_called()
 
 
@@ -1415,7 +1415,7 @@ def test_transfer_retarget_failure_names_every_pending_advisory(env: Env) -> Non
     # The first advisory was retargeted; only the second is left, with its command.
     assert str(excinfo.value) == (
         f"org/.github#352 moved to org/tool#900, but advisory {GHSA_B} was not retargeted; "
-        f"run: vrg-security-record retarget {GHSA_B} --to org/tool#900"
+        f"run: vrg-security-record retarget {GHSA_B} --to 'org/tool#900'"
     )
     assert excinfo.value.__cause__ is RETARGET_FAILED
 
@@ -1427,8 +1427,8 @@ def test_transfer_first_retarget_failure_names_both_advisories(env: Env) -> None
         route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     assert str(excinfo.value) == (
         f"org/.github#352 moved to org/tool#900, but advisories {GHSA}, {GHSA_B} were not "
-        f"retargeted; run: vrg-security-record retarget {GHSA} --to org/tool#900, then "
-        f"vrg-security-record retarget {GHSA_B} --to org/tool#900"
+        f"retargeted; run: vrg-security-record retarget {GHSA} --to 'org/tool#900', then "
+        f"vrg-security-record retarget {GHSA_B} --to 'org/tool#900'"
     )
     env.retarget.assert_called_once()
 
@@ -1440,7 +1440,7 @@ def test_transfer_parent_mismatch_names_every_advisory(env: Env) -> None:
         route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     message = str(excinfo.value)
     assert f"also, advisories {GHSA}, {GHSA_B} were not retargeted" in message
-    assert f"vrg-security-record retarget {GHSA_B} --to org/tool#900" in message
+    assert f"vrg-security-record retarget {GHSA_B} --to 'org/tool#900'" in message
     env.retarget.assert_not_called()
 
 
@@ -1468,7 +1468,7 @@ def test_recreate_second_retarget_failure_leaves_original_open(env: Env) -> None
         route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     message = str(excinfo.value)
     assert f"recreated org/.github#352 as org/tool#901, but advisory {GHSA_B} was not" in message
-    assert f"vrg-security-record retarget {GHSA_B} --to org/tool#901" in message
+    assert f"vrg-security-record retarget {GHSA_B} --to 'org/tool#901'" in message
     assert f"retarget {GHSA} " not in message
     assert "org/.github#352 is left open" in message
     env.run.assert_not_called()

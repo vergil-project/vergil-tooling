@@ -116,13 +116,19 @@ def freetext_linkage_error(found: str, primary_issue: str) -> str:
     Rejects rather than strips: a keyword the agent typed is a signal that a real
     relationship exists, so the message redirects that reasoning to a lossless
     home — a comment on the primary issue — instead of discarding it.
+
+    *primary_issue* is ``N``, ``#N`` or ``owner/repo#N``. The printed command
+    names the issue by number, with ``--repo`` for a cross-repo ref, so it
+    carries no ``#`` for the shell to read as a comment or a glob (#3966).
     """
+    repo_part, _, number = primary_issue.rpartition("#")
+    target = f"{number} --repo {repo_part}" if repo_part else number
     return (
         f"notes/summary must not contain an issue-linkage keyword (found {found!r}). "
         "A PR links exactly one task, and that link is added for you automatically. "
         "If this change genuinely relates to another issue, record it — and why — "
         "as a comment on the primary issue: "
-        f'vrg-gh issue comment {primary_issue} --body "Related to #N — <the reason>". '
+        f'vrg-gh issue comment {target} --body "Related to #N — <the reason>". '
         "Don't encode it as a bare linkage in notes, where the reasoning is lost."
     )
 

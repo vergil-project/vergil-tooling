@@ -188,7 +188,7 @@ def test_main_half_applied_route_exits_1_without_routed(
     message = (
         "moved org/.github#352 to org/tool#900, but it is under org/.github#7, not under "
         "org/.github#11; the route is half-applied. Fix it with: "
-        "vrg-epic-move --task org/tool#900 --epic org/.github#11"
+        "vrg-epic-move --task 'org/tool#900' --epic 'org/.github#11'"
     )
     with patch(f"{_MOD}.intake_route.route", side_effect=RouteHalfAppliedError(message)):
         rc = main(["org/.github#352", "one-off", "--repo", "org/tool"])

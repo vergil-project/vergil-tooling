@@ -39,6 +39,7 @@ from typing import Any
 from vergil_tooling.lib import git, github
 from vergil_tooling.lib.rulings import RulingError
 from vergil_tooling.lib.rulings.plain_text import check_plain_text
+from vergil_tooling.lib.shell_ref import quoted_issue_ref
 
 DRAFT_FILE = "reply.md"
 _REF_NAMESPACE = "vergil/ruling-draft"
@@ -66,16 +67,6 @@ _GITHUB_REPO_URL_RE = re.compile(
 def draft_ref(issue: int, request_id: int) -> str:
     """The reserved ref carrying the draft reply to request ``request_id``."""
     return f"refs/{_REF_NAMESPACE}/{issue}/{request_id}"
-
-
-def quoted_issue_ref(repo: str, issue: int) -> str:
-    """The issue ref as a paste-ready shell word, ``'owner/repo#N'``.
-
-    Unquoted, the ``#`` is a glob operator in zsh with ``EXTENDED_GLOB`` set,
-    so the pasted command fails with ``no matches found``. The ref's grammar
-    admits no single quote, so plain single quotes are safe.
-    """
-    return f"'{repo}#{issue}'"
 
 
 def reply_command(repo: str, issue: int, request_id: int) -> str:

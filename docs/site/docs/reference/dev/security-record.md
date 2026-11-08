@@ -19,7 +19,7 @@ vrg-security-record create --repo OWNER/NAME --title TEXT --body-file FILE
                            [--summary TEXT] [--issue OWNER/REPO#N] [--resume GHSA-ID]
 vrg-security-record list [--repo OWNER/NAME] [--state {draft,closed,all}] [--details]
 vrg-security-record show (GHSA-ID | OWNER/REPO#N)
-vrg-security-record retarget GHSA-ID --to OWNER/REPO#N [--to OWNER/REPO#N ...]
+vrg-security-record retarget GHSA-ID --to 'OWNER/REPO#N' [--to 'OWNER/REPO#N' ...]
 ```
 
 ## Output rule
@@ -170,12 +170,17 @@ it.
 
 ```bash
 vrg-security-record retarget GHSA-xxxx-xxxx-xxxx \
-  --to vergil-project/vergil-tooling#101 --to vergil-project/vergil-tooling#102
+  --to 'vergil-project/vergil-tooling#101' --to 'vergil-project/vergil-tooling#102'
 ```
 
 Every `--to` must be a full `owner/repo#N` ref, and all of them must be
-in one org. The steps run in order, and each starts only once the one
-before it succeeded:
+in one org. The refs are single-quoted so the command pastes into any
+shell: unquoted, the `#` is a glob operator in zsh with `EXTENDED_GLOB`
+set. The `retarget` commands that `vrg-intake-route` prints for an
+advisory it could not retarget are quoted the same way.
+
+The steps run in order, and each starts only once the one before it
+succeeded:
 
 1. **Mark** each target: ensure the `security` label in its repo, add it
    to the issue, and append the `Security advisory:` line (skipped when
