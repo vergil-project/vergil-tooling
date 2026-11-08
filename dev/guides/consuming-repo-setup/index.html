@@ -17856,8 +17856,10 @@ that is not running; a single-VM <code>vrg-vm update</code> on one fails with ex
 A skipped Lima VM's next <code>vrg-vm start</code> refreshes its plugins, but on start
 a failed refresh or verification is only a warning: check the start output
 for an <code>update-plugins</code> warning, or run <code>vrg-vm update</code> on that VM once it is
-up. An off-platform (cloud) box does not support <code>vrg-vm start</code>; run
-<code>vrg-vm update</code> on it once it is running again.</p>
+up. An off-platform (cloud) box does not support <code>vrg-vm start</code>. Bring a
+stopped one back with <code>vrg-vm rebuild &lt;org&gt;/&lt;repo&gt; --identity &lt;identity&gt;</code>,
+which replaces the disposable VM and reattaches its persistent volume, then
+run <code>vrg-vm update</code> on it.</p>
 <p>Restart Claude Code afterwards: a running session keeps the plugin version
 it loaded.</p>
 <p>Both commands are human actions. <code>vrg-host plugins</code> and every <code>vrg-vm</code>
