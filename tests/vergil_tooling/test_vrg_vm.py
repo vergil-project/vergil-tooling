@@ -1658,6 +1658,29 @@ class TestUpdate:
         assert manager.copy.call_args.args[0] is manager.plugins.call_args.args[0]
         _assert_transport(manager.copy, "vergil-agent")
 
+    @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
+    def test_update_says_it_copies_config_before_plugins(
+        self,
+        _status: MagicMock,
+        _ver: MagicMock,
+        config_file: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # #3835: the output tells the human the update syncs the user config,
+        # announced before the copy runs and before the plugin refresh.
+        order: list[str] = []
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_vm.copy_claude_config",
+                side_effect=lambda *_a: order.append(capsys.readouterr().out),
+            ),
+            patch("vergil_tooling.bin.vrg_vm.update_plugins"),
+        ):
+            assert main(["update", "--config", str(config_file)]) == 0
+        assert len(order) == 1
+        assert order[0].endswith("  Copying host Claude config (CLAUDE.md, settings.json)...\n")
+
     @pytest.mark.parametrize("flags", [[], ["--all"]])
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
     @patch("vergil_tooling.bin.vrg_vm.list_vms")
