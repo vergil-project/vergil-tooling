@@ -1374,6 +1374,8 @@
       
         
       
+        
+      
     
     
     
@@ -1426,6 +1428,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.289/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.289
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17342,9 +17372,9 @@ session refreshes it. Before opening the session, <code>vrg-vm</code>:</p>
    symlink onto the <code>/vergil</code> checkout) so Claude derives the <strong>same
    memory slug</strong> as the host and finds the projected memory;</li>
 <li>copies that repo's <code>memory/</code> + <code>MEMORY.md</code> from the host over the
-   established transport idiom (the same
-   <code>cat &gt; &lt;file&gt;</code> mechanism <code>copy_claude_config</code> uses — there is no
-   <code>rsync</code> over the transport);</li>
+   established transport idiom (a <code>cat &gt; &lt;file&gt;</code> piped through
+   <code>transport.pipe</code>, the transport <code>copy_claude_config</code> also uses — there
+   is no <code>rsync</code> over the transport);</li>
 <li>re-applies <strong>surgical</strong> read-only permissions — locking <code>memory/</code> and
    <code>MEMORY.md</code> while leaving the session-transcript
    <code>.jsonl</code> files writable (a blanket <code>chmod</code> of <code>projects/&lt;slug&gt;/</code>
