@@ -2070,7 +2070,8 @@ def _first_pr_for_branch(branch: str, state: str) -> dict[str, str] | None:
     or a first PR with no number, URL or head commit, raises
     :class:`GitHubAPIError` rather than read as "no PR" or blank fields (#4058).
     """
-    cmd = ("pr", "list", "--head", branch, "--state", state, "--json", "number,url,title,headRefOid")
+    fields = "number,url,title,headRefOid"
+    cmd = ("pr", "list", "--head", branch, "--state", state, "--json", fields)
     result = read_json(*cmd)
     if not isinstance(result, list):
         raise _shape_error(("gh", *cmd), f"the PR list is {type(result).__name__}")
