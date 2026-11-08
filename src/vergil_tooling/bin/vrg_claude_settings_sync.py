@@ -112,7 +112,7 @@ def _run_write(repo_root: Path) -> int:
 
 
 def _atomic_write(path: Path, text: str) -> None:
-    """Write ``text`` to ``path`` via a temp file in the same directory and ``os.replace``.
+    """Write ``text`` to ``path`` via a temp file in the same directory and a rename.
 
     ``mkstemp`` creates the temp file ``0600``; it is given the replaced file's
     mode, or ``0644`` for a new file, so the write never narrows permissions.
@@ -124,7 +124,7 @@ def _atomic_write(path: Path, text: str) -> None:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(text)
         tmp.chmod(mode)
-        os.replace(tmp, path)
+        tmp.replace(path)
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise

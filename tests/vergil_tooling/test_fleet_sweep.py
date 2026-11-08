@@ -976,9 +976,7 @@ def test_fleet_target_claude_settings_spec(monkeypatch: pytest.MonkeyPatch) -> N
 
     monkeypatch.setattr(vrg_fleet_sync.subprocess, "run", fake_proc_run)
 
-    assert applicator(Path("/w")) == AppResult(
-        changed=True, summary="wrote .claude/settings.json"
-    )
+    assert applicator(Path("/w")) == AppResult(changed=True, summary="wrote .claude/settings.json")
     assert proc_calls[-1] == ["vrg-claude-settings-sync", "--write", "--repo", "/w"]
     assert applicator(Path("/w")) == AppResult(changed=False, summary="already in sync")
     assert applicator(Path("/w"), check=True) == AppResult(changed=False, summary="already in sync")

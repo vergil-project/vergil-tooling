@@ -126,10 +126,10 @@ def test_write_failure_keeps_original_and_removes_temp(
     """A failed replace leaves the old file intact, no temp file behind, and raises."""
     path = _settings(tmp_path, "{}")
 
-    def failing_replace(src: object, dst: object) -> None:
+    def failing_replace(self: object, target: object) -> None:
         raise OSError("disk full")
 
-    monkeypatch.setattr(vrg_claude_settings_sync.os, "replace", failing_replace)
+    monkeypatch.setattr(vrg_claude_settings_sync.Path, "replace", failing_replace)
     with pytest.raises(OSError, match="disk full"):
         vrg_claude_settings_sync._run_write(tmp_path)
     assert path.read_text(encoding="utf-8") == "{}"
