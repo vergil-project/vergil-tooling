@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shlex
 import subprocess
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
@@ -7,6 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from vergil_tooling.lib import vm_packages
+from vergil_tooling.lib.atomic_write import atomic_write_cmd
 from vergil_tooling.lib.package import PackageError
 
 if TYPE_CHECKING:
@@ -134,7 +136,9 @@ class TestPackagedInstall:
         assert run is t.run
         assert org.vendor == "vergil"
         assert (fmt, suite, sudo) == ("deb", "noble", True)
-        assert _piped(t) == ["sudo tee /etc/apt/preferences.d/vergil-tooling >/dev/null"]
+        # The pin is replaced atomically as root, never truncated in place (#4035).
+        write_pin = atomic_write_cmd("/etc/apt/preferences.d/vergil-tooling", 0o644)
+        assert _piped(t) == [f"sudo bash -c {shlex.quote(write_pin)}"]
         assert t.pipe.call_args[0][1] == vm_packages.apt_pin("v2.1")
         assert _INSTALL in flat
         # Order: pin, refresh, candidate check, install.
@@ -455,7 +459,7 @@ class TestDevInstall:
             and "git+https://github.com/vergil-project/vergil-tooling@develop" in c
             for c in flat
         )
-        assert _piped(t) == ["cat > ~/.config/vergil/tooling-dev-ref"]
+        assert _piped(t) == [atomic_write_cmd("~/.config/vergil/tooling-dev-ref", 0o644)]
         assert t.pipe.call_args[0][1] == "develop\n"
         assert _index(flat, "uv tool install") < _index(flat, "mkdir -p")
 

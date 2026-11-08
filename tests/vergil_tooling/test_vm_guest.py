@@ -9,7 +9,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.vergil_tooling.conftest import failing_command, shell_transport
 from vergil_tooling.lib import vm_packages
+from vergil_tooling.lib.atomic_write import atomic_write_cmd
 from vergil_tooling.lib.identity import Identity
 from vergil_tooling.lib.trusted_authors import TrustedAuthors, parse_trusted_authors
 from vergil_tooling.lib.vm_guest import (
@@ -48,34 +50,6 @@ def _transport(stdout: str = "") -> MagicMock:
     t = MagicMock()
     t.run.return_value = _ok(stdout)
     t.pipe.return_value = None
-    return t
-
-
-def _shell_transport(home: Path, fake_bin: Path | None = None) -> MagicMock:
-    """A Transport double that runs the guest commands in a real local bash.
-
-    ``~`` is *home*; *fake_bin*, when given, is first on ``PATH`` so a test can
-    shadow a guest command with one that fails.
-    """
-    path = "/usr/bin:/bin" if fake_bin is None else f"{fake_bin}:/usr/bin:/bin"
-    env = {"HOME": str(home), "PATH": path}
-
-    def run(*args: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(list(args), capture_output=True, text=True, check=True, env=env)  # noqa: S603
-
-    def pipe(cmd: str, input_data: str) -> None:
-        subprocess.run(  # noqa: S603
-            ["bash", "-c", cmd],  # noqa: S607
-            input=input_data,
-            capture_output=True,
-            text=True,
-            check=True,
-            env=env,
-        )
-
-    t = MagicMock()
-    t.run.side_effect = run
-    t.pipe.side_effect = pipe
     return t
 
 
@@ -355,6 +329,97 @@ class TestInjectCredentials:
         transport.pipe.assert_not_called()
         mock_id.assert_not_called()
 
+    @staticmethod
+    def _full_identity(tmp_path: Path) -> Identity:
+        host = tmp_path / "host"
+        host.mkdir()
+        (host / "app.pem").write_text("-----BEGIN RSA PRIVATE KEY-----\nnewkey\n")
+        (host / "claude-token").write_text("claude-tok\n")
+        (host / "conan-token").write_text("conan-tok\n")
+        return Identity(
+            vm_instance="vergil-agent",
+            mode="user",
+            app_id="12345",
+            private_key_path=str(host / "app.pem"),
+            claude_token_path=str(host / "claude-token"),
+            conan_audit_token_path=str(host / "conan-token"),
+        )
+
+    @patch("vergil_tooling.lib.vm_guest._inject_host_git_identity")
+    def test_real_shell_writes_every_file_with_its_mode(
+        self, _mock_id: MagicMock, tmp_path: Path
+    ) -> None:
+        # #4035: the real commands in bash, over a guest that already holds a
+        # read-only app.pem (a cat > could not even open it). Every file is
+        # replaced whole with its final mode, and no temp file is left behind.
+        identity = self._full_identity(tmp_path)
+        home = tmp_path / "guest"
+        config = home / ".config" / "vergil"
+        config.mkdir(parents=True)
+        (config / "app.pem").write_text("old key\n")
+        (config / "app.pem").chmod(0o400)
+
+        transport = shell_transport(home)
+        real_run = transport.run.side_effect
+        # The git config calls are not under test; keep them off the real git.
+        transport.run.side_effect = lambda *a: _ok() if a[0] == "git" else real_run(*a)
+        inject_credentials(transport, identity)
+
+        expected = {
+            config / "app.pem": ("-----BEGIN RSA PRIVATE KEY-----\nnewkey\n", 0o600),
+            config / "app.env": ("APP_ID=12345\n", 0o600),
+            config / "identity-mode": ("user\n", 0o600),
+            config / "claude.env": ("export CLAUDE_CODE_OAUTH_TOKEN=claude-tok\n", 0o600),
+            config / "conan.env": (
+                "export CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER=conan-tok\n",
+                0o600,
+            ),
+            home / ".claude" / ".credentials.json": (
+                '{"claudeAiOauth": {"accessToken": "claude-tok"}}\n',
+                0o600,
+            ),
+            home / ".claude.json": ('{"hasCompletedOnboarding": true}\n', 0o644),
+        }
+        for path, (content, mode) in expected.items():
+            assert path.read_text() == content, path
+            assert path.stat().st_mode & 0o777 == mode, path
+        assert sorted(p.name for p in config.iterdir()) == [
+            "app.env",
+            "app.pem",
+            "claude.env",
+            "conan.env",
+            "identity-mode",
+        ]
+        assert [p.name for p in (home / ".claude").iterdir()] == [".credentials.json"]
+        assert sorted(p.name for p in home.iterdir()) == [
+            ".bashrc",
+            ".claude",
+            ".claude.json",
+            ".config",
+        ]
+
+    @patch("vergil_tooling.lib.vm_guest._inject_host_git_identity")
+    def test_failed_write_leaves_the_original_and_no_temp_file(
+        self, _mock_id: MagicMock, tmp_path: Path
+    ) -> None:
+        # A write that breaks before the rename fails loudly and keeps the guest
+        # file exactly as it was, with no temp file beside it.
+        identity = self._full_identity(tmp_path)
+        home = tmp_path / "guest"
+        config = home / ".config" / "vergil"
+        config.mkdir(parents=True)
+        (config / "app.pem").write_text("old key\n")
+        (config / "app.pem").chmod(0o600)
+        fake_bin = tmp_path / "bin"
+        failing_command(fake_bin, "mv")
+
+        with pytest.raises(subprocess.CalledProcessError):
+            inject_credentials(shell_transport(home, fake_bin), identity)
+
+        assert (config / "app.pem").read_text() == "old key\n"
+        assert (config / "app.pem").stat().st_mode & 0o777 == 0o600
+        assert [p.name for p in config.iterdir()] == ["app.pem"]
+
 
 class TestInjectTrustedAuthors:
     def test_inject_trusted_authors_writes_vm_file(self) -> None:
@@ -365,8 +430,7 @@ class TestInjectTrustedAuthors:
 
         transport.pipe.assert_called_once()
         cmd, content = transport.pipe.call_args.args
-        assert "cat > ~/.config/vergil/trusted-authors.toml" in cmd
-        assert "chmod 600 ~/.config/vergil/trusted-authors.toml" in cmd
+        assert cmd == atomic_write_cmd("~/.config/vergil/trusted-authors.toml", 0o600)
         assert parse_trusted_authors(tomllib.loads(content)) == authors
         transport.run.assert_called_once_with("bash", "-c", "mkdir -p ~/.config/vergil")
 
@@ -379,6 +443,21 @@ class TestInjectTrustedAuthors:
         transport.run.assert_called_once_with(
             "bash", "-c", "rm -f ~/.config/vergil/trusted-authors.toml"
         )
+
+    def test_real_shell_replaces_the_vm_file(self, tmp_path: Path) -> None:
+        # #4035: written whole with mode 600 over an earlier copy, no temp file.
+        home = tmp_path / "guest"
+        config = home / ".config" / "vergil"
+        config.mkdir(parents=True)
+        (config / "trusted-authors.toml").write_text("stale\n")
+        authors = TrustedAuthors(human=("example-human",), agents=("example-agent",))
+
+        inject_trusted_authors(shell_transport(home), authors)
+
+        written = config / "trusted-authors.toml"
+        assert parse_trusted_authors(tomllib.loads(written.read_text())) == authors
+        assert written.stat().st_mode & 0o777 == 0o600
+        assert [p.name for p in config.iterdir()] == ["trusted-authors.toml"]
 
 
 class TestReadHostGitConfig:
@@ -497,6 +576,22 @@ class TestInstallTooling:
         with pytest.raises(SystemExit):
             install_tooling(transport, "v2.2")
         transport.pipe.assert_not_called()
+
+    def test_real_shell_writes_the_tag_marker(
+        self, installs: list[tuple[str, str]], tmp_path: Path
+    ) -> None:
+        # #4035: the marker is replaced whole (mode 644), with no temp file left.
+        home = tmp_path / "guest"
+        config = home / ".config" / "vergil"
+        config.mkdir(parents=True)
+        (config / "tooling-tag").write_text("v1.0\n")
+
+        install_tooling(shell_transport(home), "v2.0")
+
+        assert (config / "tooling-tag").read_text() == "v2.0\n"
+        assert (config / "tooling-tag").stat().st_mode & 0o777 == 0o644
+        assert [p.name for p in config.iterdir()] == ["tooling-tag"]
+        assert installs == [("packaged", "v2.0")]
 
 
 class TestUpdateTooling:
@@ -630,7 +725,7 @@ class TestCopyClaudeConfig:
         # (#2436), since it needs only the directory to be writable.
         assert md_call[0][0] == (
             'tmp=$(mktemp ~/.claude/.CLAUDE.md.XXXXXX) && { cat > "$tmp"'
-            ' && chmod 644 "$tmp" && chmod a-w "$tmp"'
+            ' && chmod 444 "$tmp"'
             ' && mv -f "$tmp" ~/.claude/CLAUDE.md || { rm -f "$tmp"; false; }; }'
         )
         assert settings_call[0][0] == (
@@ -654,11 +749,11 @@ class TestCopyClaudeConfig:
         piped = [c.args[0] for c in transport.pipe.call_args_list]
         md = next(cmd for cmd in piped if "~/.claude/CLAUDE.md" in cmd)
         # The lock is applied to the temp file, before it is moved into place.
-        assert md.index('chmod a-w "$tmp"') < md.index('mv -f "$tmp" ~/.claude/CLAUDE.md')
+        assert md.index('chmod 444 "$tmp"') < md.index('mv -f "$tmp" ~/.claude/CLAUDE.md')
         others = [cmd for cmd in piped if cmd != md]
         others += [c.args[-1] for c in transport.run.call_args_list]
         assert others
-        assert not any("chmod a-w" in cmd for cmd in others)
+        assert not any("chmod 444" in cmd or "a-w" in cmd for cmd in others)
 
     def test_real_shell_replaces_both_files_with_their_final_modes(self, tmp_path: Path) -> None:
         # The real commands in bash, over a guest whose CLAUDE.md an earlier copy
@@ -675,7 +770,7 @@ class TestCopyClaudeConfig:
         (guest / "CLAUDE.md").chmod(0o444)
         (guest / "settings.json").write_text('{"old": true}\n')
 
-        copy_claude_config(_shell_transport(home), claude_dir)
+        copy_claude_config(shell_transport(home), claude_dir)
 
         assert (guest / "CLAUDE.md").read_text() == "# new prefs\n"
         assert (guest / "settings.json").read_text() == '{"new": true}\n'
@@ -704,13 +799,10 @@ class TestCopyClaudeConfig:
         original.write_text("original\n")
         original.chmod(0o444)
         fake_bin = tmp_path / "bin"
-        fake_bin.mkdir()
-        fake = fake_bin / failing
-        fake.write_text("#!/bin/sh\nprintf partial\nexit 1\n")
-        fake.chmod(0o755)
+        failing_command(fake_bin, failing)
 
         with pytest.raises(subprocess.CalledProcessError):
-            copy_claude_config(_shell_transport(home, fake_bin), claude_dir)
+            copy_claude_config(shell_transport(home, fake_bin), claude_dir)
 
         assert original.read_text() == "original\n"
         assert original.stat().st_mode & 0o777 == 0o444
@@ -768,7 +860,7 @@ class TestCopyClaudeConfig:
         (guest / "settings.json").write_text('{"old": true}\n')
 
         with pytest.raises(RuntimeError, match="settings.json is missing"):
-            copy_claude_config(_shell_transport(home), claude_dir)
+            copy_claude_config(shell_transport(home), claude_dir)
 
         assert (guest / "CLAUDE.md").read_text() == "# old prefs\n"
         assert (guest / "settings.json").read_text() == '{"old": true}\n'
@@ -791,11 +883,34 @@ class TestCopyClaudeConfig:
         claude_dir.mkdir()
         (claude_dir / "settings.json").write_text(content)
 
+        (claude_dir / "CLAUDE.md").write_text("# prefs\n")
+
         transport = _transport()
         with pytest.raises(RuntimeError, match=r"the host .*settings\.json is unusable"):
             copy_claude_config(transport, claude_dir)
-        piped = [c.args[0] for c in transport.pipe.call_args_list]
-        assert not any("settings.json" in cmd for cmd in piped)
+        # Refused before anything is written to the guest: not even CLAUDE.md,
+        # which is copied first.
+        transport.run.assert_not_called()
+        transport.pipe.assert_not_called()
+
+    def test_unusable_settings_leaves_the_guest_untouched(self, tmp_path: Path) -> None:
+        # The real commands in bash: a host settings.json that fails the content
+        # check leaves the guest's CLAUDE.md and settings.json as they were.
+        claude_dir = tmp_path / "host" / ".claude"
+        claude_dir.mkdir(parents=True)
+        (claude_dir / "CLAUDE.md").write_text("# new prefs\n")
+        (claude_dir / "settings.json").write_text("{not json")
+        home = tmp_path / "guest"
+        guest = home / ".claude"
+        guest.mkdir(parents=True)
+        (guest / "CLAUDE.md").write_text("# old prefs\n")
+        (guest / "settings.json").write_text('{"old": true}\n')
+
+        with pytest.raises(RuntimeError, match="unusable"):
+            copy_claude_config(shell_transport(home), claude_dir)
+
+        assert (guest / "CLAUDE.md").read_text() == "# old prefs\n"
+        assert (guest / "settings.json").read_text() == '{"old": true}\n'
 
     def test_unreadable_host_file_is_a_named_error(self, tmp_path: Path) -> None:
         claude_dir = tmp_path / ".claude"
@@ -804,8 +919,11 @@ class TestCopyClaudeConfig:
         # A directory where the file should be: read_text raises an OSError.
         (claude_dir / "CLAUDE.md").mkdir()
 
+        transport = _transport()
         with pytest.raises(RuntimeError, match=r"cannot read the host .*CLAUDE\.md"):
-            copy_claude_config(_transport(), claude_dir)
+            copy_claude_config(transport, claude_dir)
+        transport.run.assert_not_called()
+        transport.pipe.assert_not_called()
 
 
 class TestLinkClaudeDirs:

@@ -31,6 +31,7 @@ import subprocess
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
+from vergil_tooling.lib.atomic_write import atomic_write_cmd
 from vergil_tooling.lib.package import PackageError
 
 if TYPE_CHECKING:
@@ -310,9 +311,11 @@ def bootstrap(run: Run, org: OrgRepo, fmt: str, suite: str, *, sudo: bool) -> No
             raise PackageError(msg)
 
         # Only now, with the key verified, does anything touch the package sources.
+        # The source is replaced atomically (#4035): apt and dnf never read the
+        # temp file beside it, whose name ends in mktemp's random suffix.
         script = (
             f"umask 022 && install -D -m 0644 {shlex.quote(key_tmp)} {shlex.quote(key)}"
-            f" && printf %s {shlex.quote(content)} > {shlex.quote(src)}"
+            f" && printf %s {shlex.quote(content)} | {{ {atomic_write_cmd(src, 0o644)}; }}"
         )
         try:
             run(*s, "bash", "-c", script)
