@@ -175,23 +175,33 @@ _SOURCE_STRINGS = ("source", "repo", "url", "path", "ref")
 def _declared_sources(settings: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
     """Return each ``extraKnownMarketplaces`` entry's name and ``source`` object.
 
-    An entry with no ``source`` yields ``{}``. An empty ``ref`` reads as no ref.
+    Every returned source has a non-empty ``repo``, ``url`` or ``path``, and a
+    ``github`` source has a ``repo``, so each entry is one the refresh can add
+    (and, for a ``github`` source, verify). An empty ``ref`` reads as no ref.
+
+    A null or sourceless entry is an error, never read as empty: an entry the
+    refresh skipped would be silently neither added nor verified
+    (vergil-project/vergil-tooling#3992).
 
     Raises:
         MarketplaceError: an entry, its ``source``, or one of the source's
-            string fields has the wrong JSON type.
+            string fields has the wrong JSON type; an entry or its ``source``
+            is null or missing; the source has no ``repo``, ``url`` or
+            ``path``; or a ``github`` source has no ``repo``.
     """
     entries: list[tuple[str, dict[str, Any]]] = []
     for name, spec in _section(settings, "extraKnownMarketplaces").items():
         where = f"settings.json extraKnownMarketplaces.{name}"
         if spec is None:
-            spec = {}
+            msg = f"{where} is null"
+            raise MarketplaceError(msg)
         if not isinstance(spec, dict):
             msg = f"{where} is not a JSON object"
             raise MarketplaceError(msg)
         src = spec.get("source")
         if src is None:
-            src = {}
+            msg = f"{where} has no source"
+            raise MarketplaceError(msg)
         if not isinstance(src, dict):
             msg = f"{where}.source is not a JSON object"
             raise MarketplaceError(msg)
@@ -199,6 +209,12 @@ def _declared_sources(settings: dict[str, Any]) -> list[tuple[str, dict[str, Any
             if src.get(field) is not None and not isinstance(src[field], str):
                 msg = f"{where}.source.{field} is not a string"
                 raise MarketplaceError(msg)
+        if src.get("source") == "github" and not src.get("repo"):
+            msg = f"{where}.source is a github source with no repo"
+            raise MarketplaceError(msg)
+        if not (src.get("repo") or src.get("url") or src.get("path")):
+            msg = f"{where}.source has no repo, url or path"
+            raise MarketplaceError(msg)
         entries.append((name, {**src, "ref": src.get("ref") or None}))
     return entries
 
@@ -206,17 +222,18 @@ def _declared_sources(settings: dict[str, Any]) -> list[tuple[str, dict[str, Any
 def declared_marketplaces(settings: dict[str, Any]) -> list[Declared]:
     """Return the GitHub marketplaces ``extraKnownMarketplaces`` declares.
 
-    Only a ``github`` source with a ``repo`` is returned: that is the source
-    shape whose registration ``marketplace list --json`` reports as a repo and
-    ref, so it is the one the refresh can verify. An empty ``ref`` reads as no
-    ref, as it does for the add.
+    Only a ``github`` source is returned (it always has a ``repo``; one
+    without is an error): that is the source shape whose registration
+    ``marketplace list --json`` reports as a repo and ref, so it is the one
+    the refresh can verify. An empty ``ref`` reads as no ref, as it does for
+    the add.
 
     Raises:
         MarketplaceError: ``extraKnownMarketplaces`` has the wrong shape.
     """
     declared: list[Declared] = []
     for name, src in _declared_sources(settings):
-        if src.get("source") != "github" or not src.get("repo"):
+        if src.get("source") != "github":
             continue
         declared.append(Declared(name, src["repo"], src["ref"]))
     return declared
@@ -285,16 +302,15 @@ def _marketplace_adds(settings: dict[str, Any]) -> list[tuple[str, str]]:
         # does not match the extraKnownMarketplaces entry (failureCode
         # "declared"). A github repo pins with `@ref` (the form `marketplace
         # list` shows); a git URL pins with `#ref` (Claude Code docs, "Add a
-        # marketplace"). A path has no ref.
+        # marketplace"). A path has no ref. `_declared_sources` guarantees one
+        # of repo, url or path (#3992).
         ref = src["ref"]
         if src.get("repo"):
             base, sep = src["repo"], "@"
         elif src.get("url"):
             base, sep = src["url"], "#"
-        elif src.get("path"):
-            base, sep = src["path"], ""
         else:
-            continue
+            base, sep = src["path"], ""
         arg = shlex.quote(base)
         if ref and sep:
             arg = f"{arg}{sep}{shlex.quote(ref)}"

@@ -22,6 +22,7 @@ from vergil_tooling.lib.claude_marketplace import (
     registered_marketplaces,
     shell,
     update_installed_plugins,
+    validate_settings,
     verify,
 )
 
@@ -342,10 +343,36 @@ class TestRefresh:
         assert refresh(run, settings, "") == []
         assert "claude plugin marketplace add vergil-project/vergil-claude-plugin" in run.cmds
 
-    def test_null_entries_read_as_empty(self) -> None:
-        settings = {"extraKnownMarketplaces": {"a": None, "b": {"source": None}}}
-        assert _marketplace_adds(settings) == []
-        assert declared_marketplaces(settings) == []
+    @pytest.mark.parametrize(
+        ("entry", "problem"),
+        [
+            (None, "extraKnownMarketplaces.a is null"),
+            ({"source": None}, "extraKnownMarketplaces.a has no source"),
+            ({}, "extraKnownMarketplaces.a has no source"),
+            (
+                {"source": {"source": "github"}},
+                "extraKnownMarketplaces.a.source is a github source with no repo",
+            ),
+            (
+                {"source": {"source": "github", "repo": "", "url": "https://x/m.git"}},
+                "extraKnownMarketplaces.a.source is a github source with no repo",
+            ),
+        ],
+    )
+    def test_null_entries_and_repoless_github_sources_are_errors(
+        self, entry: Any, problem: str
+    ) -> None:
+        # #3992: such an entry was read as empty or skipped, so it was silently
+        # neither added nor verified. Each is now a named error, raised before
+        # any claude call and by the pre-copy check.
+        settings = {"extraKnownMarketplaces": {"a": entry}}
+        for read in (_marketplace_adds, declared_marketplaces, validate_settings):
+            with pytest.raises(MarketplaceError, match=f"^settings\\.json {problem}$"):
+                read(settings)
+        run = FakeRun()
+        with pytest.raises(MarketplaceError, match=problem):
+            refresh(run, settings, "")
+        assert run.calls == []
 
     def test_refresh_raises_on_malformed_listing(self) -> None:
         with pytest.raises(MarketplaceError):
@@ -508,16 +535,26 @@ class TestMarketplaceAdds:
             ("p", "./local-mp"),
         ]
 
-    def test_skips_sourceless_entries(self) -> None:
+    @pytest.mark.parametrize(
+        ("name", "entry", "problem"),
+        [
+            ("empty", {"source": {}}, "empty.source has no repo, url or path"),
+            ("blank", {"source": {"source": "git", "url": ""}}, "blank.source has no repo"),
+            ("nosrc", {}, "nosrc has no source"),
+        ],
+    )
+    def test_sourceless_entries_are_errors(self, name: str, entry: Any, problem: str) -> None:
+        # #3992: a sourceless entry was skipped, so the marketplace was never
+        # added. The error names the marketplace even beside a good entry.
         settings = {
             "extraKnownMarketplaces": {
                 "u": {"source": {"source": "git", "url": "https://example.com/y.git"}},
-                "empty": {"source": {}},
-                "nosrc": {},
+                name: entry,
             },
             "enabledPlugins": {},
         }
-        assert _marketplace_adds(settings) == [("u", "https://example.com/y.git")]
+        with pytest.raises(MarketplaceError, match=f"extraKnownMarketplaces\\.{problem}"):
+            _marketplace_adds(settings)
 
     def test_derives_official_marketplace_when_undeclared(self) -> None:
         settings = {
