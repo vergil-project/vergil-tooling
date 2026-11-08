@@ -875,7 +875,16 @@ class TestCopyClaudeConfig:
         piped = [c.args[0] for c in transport.pipe.call_args_list]
         assert any("~/.claude/settings.json" in cmd for cmd in piped)
 
-    @pytest.mark.parametrize("content", ["{not json", "[]", '{"enabledPlugins": {"x@y": "true"}}'])
+    @pytest.mark.parametrize(
+        "content",
+        [
+            "{not json",
+            "[]",
+            '{"enabledPlugins": {"x@y": "true"}}',
+            # #3995: a plugin enabled from a marketplace the file does not declare.
+            '{"enabledPlugins": {"x@y": true}}',
+        ],
+    )
     def test_rejects_an_unusable_host_settings_file(self, content: str, tmp_path: Path) -> None:
         # The text about to be piped is checked as the refresh will read it, so
         # a host file changed after a pre-flight is never copied into a VM.

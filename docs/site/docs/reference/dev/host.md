@@ -210,7 +210,11 @@ vrg-host plugins
 
 Refreshes the host's Claude Code plugins from `~/.claude/settings.json` and
 verifies the result. It runs the same sequence `vrg-vm update` runs inside each
-VM (`lib/claude_marketplace.py`):
+VM (`lib/claude_marketplace.py`). Before any `claude` command, it checks that
+`extraKnownMarketplaces` declares the marketplace of every plugin
+`enabledPlugins` enables, `claude-plugins-official` aside. A plugin enabled from
+an undeclared marketplace would be updated from a catalog nobody refreshed, so
+it is an error that names the plugin and its marketplace, and nothing runs.
 
 1. `claude plugin marketplace add <repo>@<ref>` for each marketplace the
    settings declare in `extraKnownMarketplaces`. Once the settings declare a
@@ -220,12 +224,14 @@ VM (`lib/claude_marketplace.py`):
    marketplace added when the settings do not declare it.
 2. `claude plugin marketplace update <name>` for each marketplace step 1
    added. Any other marketplace registered on the machine is not the fleet's
-   to manage, so it is never updated and cannot fail the refresh; a plugin
-   enabled from one is still updated in step 3, from that marketplace's
-   catalog as it stands. A marketplace whose update fails is a failure that
-   names it.
+   to manage, so it is never updated and cannot fail the refresh. A
+   marketplace whose update fails is a failure that names it.
 3. `claude plugin update` for every install of an enabled plugin, at its own
    scope, and `claude plugin install` for an enabled plugin with no install.
+   First, an install that `claude plugin list --json` reports enabled from a
+   marketplace the settings do not declare (one a project's own settings
+   enable, say) is an error that names the install and its marketplace, and
+   no plugin is updated.
 4. A verification: each declared GitHub marketplace must be registered, as
    `claude plugin marketplace list --json` reports it, at the declared repo and
    ref. A different repo or ref (including no registered ref when the settings

@@ -1747,6 +1747,8 @@ class TestUpdate:
             # Valid JSON objects the refresh would reject: the shape is checked too.
             b'{"enabledPlugins": {"x@y": "true"}}',
             b'{"extraKnownMarketplaces": {"m": {"source": "github"}}}',
+            # #3995: a plugin enabled from a marketplace the file does not declare.
+            b'{"enabledPlugins": {"x@y": true}}',
         ],
     )
     def test_require_host_settings_rejects_an_invalid_host_file(
