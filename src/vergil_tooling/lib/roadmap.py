@@ -40,10 +40,11 @@ def _open_epics(home: str) -> list[Any]:
         "--state",
         "open",
         "--limit",
-        "200",
+        str(epics.LISTING_LIMIT),
         "--json",
         "number,title,createdAt,milestone,labels,url,body",
     )
+    epics.refuse_truncated(raw, epics.LISTING_LIMIT, f"the open epics of {home}")
     return raw if isinstance(raw, list) else []
 
 

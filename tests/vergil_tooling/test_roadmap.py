@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from unittest.mock import patch
+
+import pytest
 
 from vergil_tooling.lib import epics, roadmap
 from vergil_tooling.lib.roadmap import EpicSummary
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 def _child(owner: str, repo: str, number: int, state: str) -> epics.ChildState:
@@ -169,6 +175,35 @@ def test_gather_skips_release_tracking_issue() -> None:
 def test_gather_returns_empty_on_non_list() -> None:
     with patch("vergil_tooling.lib.github.read_json", return_value={"unexpected": True}):
         assert roadmap.gather("vergil-project") == []
+
+
+def _limited(rows: list[dict[str, object]]) -> Callable[..., list[dict[str, object]]]:
+    """A ``gh issue list`` stand-in that returns at most ``--limit`` rows."""
+
+    def fake(*args: str) -> list[dict[str, object]]:
+        return rows[: int(args[args.index("--limit") + 1])]
+
+    return fake
+
+
+def _epics(count: int) -> list[dict[str, object]]:
+    return [{"number": i, "title": f"Epic {i}", "labels": []} for i in range(1, count + 1)]
+
+
+def test_open_epics_sees_an_epic_past_row_200() -> None:
+    with patch("vergil_tooling.lib.github.read_json", side_effect=_limited(_epics(201))):
+        assert len(roadmap._open_epics("org/.github")) == 201
+
+
+def test_open_epics_refuses_a_list_that_may_be_truncated() -> None:
+    with (
+        patch(
+            "vergil_tooling.lib.github.read_json",
+            side_effect=_limited(_epics(epics.LISTING_LIMIT)),
+        ),
+        pytest.raises(epics.EpicListTruncatedError, match="open epics of org/.github"),
+    ):
+        roadmap._open_epics("org/.github")
 
 
 def test_render_empty() -> None:
