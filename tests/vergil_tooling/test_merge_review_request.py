@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from vergil_tooling.bin import vrg_merge_review_request
+from vergil_tooling.lib import github
 from vergil_tooling.lib.github import GitHubAPIError, MissingGitHubTokenError
 from vergil_tooling.lib.merge_review import request as req
 from vergil_tooling.lib.merge_review.result import parse_result
@@ -85,24 +86,105 @@ def _record(repo: Path, **over: Any) -> None:
 
 @pytest.fixture
 def graphql_calls() -> list[dict[str, object]]:
-    """The variables of every GraphQL call the fake received, in order."""
+    """The variables of every comments query the fake received, in order."""
     return []
 
 
 @pytest.fixture
+def task_calls() -> list[tuple[str, dict[str, object]]]:
+    """Every task or sub-issues query the fake received, ``(kind, variables)``, in order."""
+    return []
+
+
+EPIC = "acme/.github#7"
+
+
+def _task(body: Any = "Do the thing.\n", parent: Any = "default") -> dict[str, Any]:
+    """A task query response; *parent* defaults to ``EPIC``, labelled ``epic``."""
+    if parent == "default":
+        parent = _parent()
+    return {"repository": {"issue": {"body": body, "parent": parent}}}
+
+
+def _parent(
+    ref: str = EPIC, labels: tuple[str, ...] = ("epic",), total: int | None = None
+) -> dict[str, Any]:
+    repo, number = ref.split("#")
+    return {
+        "number": int(number),
+        "repository": {"nameWithOwner": repo},
+        "labels": {
+            "totalCount": len(labels) if total is None else total,
+            "nodes": [{"name": name} for name in labels],
+        },
+    }
+
+
+def _sub(ref: str, title: str = "t", state: str = "OPEN") -> dict[str, Any]:
+    repo, number = ref.split("#")
+    return {
+        "number": int(number),
+        "state": state,
+        "title": title,
+        "repository": {"nameWithOwner": repo},
+    }
+
+
+def _subs(nodes: list[dict[str, Any]], cursor: str | None = None) -> dict[str, Any]:
+    info = {"hasNextPage": cursor is not None, "endCursor": cursor}
+    return {"repository": {"issue": {"subIssues": {"pageInfo": info, "nodes": nodes}}}}
+
+
+@pytest.fixture
+def task_pages() -> dict[str, Any]:
+    """The task query's response, and the epic's sub-issue pages served in turn.
+
+    By default the task is under ``EPIC``, whose open sub-issues are
+    ``acme/widget#43`` and the task itself.
+    """
+    return {
+        "task": _task(),
+        "subs": [
+            _subs(
+                [
+                    _sub("acme/widget#43", "The next task"),
+                    _sub(ISSUE, "This task"),
+                    _sub("acme/widget#44", "A done task", state="CLOSED"),
+                ]
+            )
+        ],
+    }
+
+
+@pytest.fixture
 def comment_pages(
-    monkeypatch: pytest.MonkeyPatch, graphql_calls: list[dict[str, object]]
+    monkeypatch: pytest.MonkeyPatch,
+    graphql_calls: list[dict[str, object]],
+    task_calls: list[tuple[str, dict[str, object]]],
+    task_pages: dict[str, Any],
 ) -> list[Any]:
     """The issue's comment pages, served in turn; an empty page once they run out.
 
-    Also configures the trusted authors with one human login, ``HUMAN``.
+    The fake also serves the task and sub-issues queries from *task_pages*,
+    and configures the trusted authors with one human login, ``HUMAN``.
     """
     pages: list[Any] = []
+    served = 0
 
     def graphql(query: str, **variables: object) -> Any:
-        assert "createdAt" in query
-        graphql_calls.append(variables)
-        return pages.pop(0) if pages else _page([])
+        nonlocal served
+        if "createdAt" in query:
+            graphql_calls.append(variables)
+            return pages.pop(0) if pages else _page([])
+        kind = "subs" if "subIssues" in query else "task"
+        assert kind == "subs" or "parent" in query
+        task_calls.append((kind, variables))
+        if kind == "task":
+            return task_pages["task"]
+        # The pages repeat, so every build in a test reads the same sub-issues.
+        page = task_pages["subs"][served % len(task_pages["subs"])]
+        served += 1
+        return page
 
     monkeypatch.setattr("vergil_tooling.lib.github.graphql", graphql)
     authors = TrustedAuthors(human=(HUMAN,), agents=(AGENT, f"{HUMAN}-vergil-audit"))
@@ -132,9 +214,6 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, comment_pages: list[An
     _write(path, "src/x.py", "x = 2\n")
     _commit(path, "branch")
     _record(path)
-    (tmp_path / "body.md").write_text("Do the thing.\n")
-    tasks = [{"ref": "acme/widget#43", "title": "The next task"}]
-    (tmp_path / "tasks.json").write_text(json.dumps(tasks))
     monkeypatch.chdir(path)
     return path
 
@@ -144,7 +223,6 @@ def _merge_review_dir(repo: Path) -> Path:
 
 
 def _argv(repo: Path, step: str = "review", *extra: str, base: str = "develop") -> list[str]:
-    files = repo.parent
     return [
         "--issue",
         ISSUE,
@@ -152,10 +230,6 @@ def _argv(repo: Path, step: str = "review", *extra: str, base: str = "develop") 
         base,
         "--step",
         step,
-        "--issue-body-file",
-        str(files / "body.md"),
-        "--epic-tasks-file",
-        str(files / "tasks.json"),
         *extra,
     ]
 
@@ -510,32 +584,6 @@ def test_request_unknown_base(repo: Path, capsys: Cap) -> None:
     assert "ERROR: git failed" in err
 
 
-def test_request_refuses_unreadable_issue_body(repo: Path, tmp_path: Path, capsys: Cap) -> None:
-    (tmp_path / "body.md").unlink()
-    code, _out, err = _run(_argv(repo), capsys)
-    assert code == 1
-    assert "cannot read the issue body file" in err
-
-
-@pytest.mark.parametrize(
-    ("content", "message"),
-    [
-        ("not json", "cannot read the epic tasks file"),
-        ('{"ref": "acme/widget#1"}', "must hold a JSON list"),
-        ('[{"ref": "acme/widget#1"}]', "entry 1 must be {ref, title} strings"),
-        ('[{"ref": 1, "title": "t"}]', "entry 1 must be {ref, title} strings"),
-        ('[{"ref": "acme/widget#1", "title": 2}]', "entry 1 must be {ref, title} strings"),
-        ('["acme/widget#1"]', "entry 1 must be {ref, title} strings"),
-        ('[{"ref": "#1", "title": "t"}]', "entry 1's ref must be owner/name#N"),
-    ],
-)
-def test_request_refuses_bad_epic_tasks(
-    repo: Path, tmp_path: Path, capsys: Cap, content: str, message: str
-) -> None:
-    (tmp_path / "tasks.json").write_text(content)
-    code, _out, err = _run(_argv(repo), capsys)
-    assert code == 1
-    assert message in err
 
 
 _CREATED = "2026-11-01T09:30:00Z"
@@ -696,7 +744,11 @@ def test_request_refuses_an_unreadable_comment_stream(
 def test_request_refuses_a_graphql_error(
     repo: Path, capsys: Cap, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    fake = github.graphql
+
     def failing(query: str, **variables: object) -> Any:
+        if "createdAt" not in query:
+            return fake(query, **variables)
         msg = "GraphQL errors: [boom]"
         raise RuntimeError(msg)
 
@@ -709,7 +761,11 @@ def test_request_refuses_a_graphql_error(
 def test_request_refuses_a_github_api_error(
     repo: Path, capsys: Cap, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    fake = github.graphql
+
     def failing(query: str, **variables: object) -> Any:
+        if "createdAt" not in query:
+            return fake(query, **variables)
         raise GitHubAPIError(1, ["gh", "api", "graphql"], output="", stderr="HTTP 502")
 
     monkeypatch.setattr("vergil_tooling.lib.github.graphql", failing)
@@ -735,10 +791,183 @@ def test_request_reports_a_missing_github_token(
     assert not (_merge_review_dir(repo) / "request-review.json").exists()
 
 
-def test_request_accepts_no_epic_tasks(repo: Path, tmp_path: Path, capsys: Cap) -> None:
-    (tmp_path / "tasks.json").write_text("[]")
-    assert _built(_argv(repo), capsys)["epic_open_tasks"] == []
+# -- the issue body and the epic's open tasks ---------------------------------------
 
+
+def test_request_takes_the_body_from_github(
+    repo: Path, capsys: Cap, task_pages: dict[str, Any], task_calls: list[Any]
+) -> None:
+    task_pages["task"] = _task(body="The task's own body.\n")
+    request = _built(_argv(repo), capsys)
+    assert request["issue_body"] == "The task's own body.\n"
+    assert task_calls[0] == ("task", {"owner": "acme", "name": "widget", "number": 42})
+
+
+def test_request_keeps_an_empty_body(repo: Path, capsys: Cap, task_pages: dict[str, Any]) -> None:
+    task_pages["task"] = _task(body="")
+    assert _built(_argv(repo), capsys)["issue_body"] == ""
+
+
+def test_task_under_an_epic_lists_its_other_open_tasks(
+    repo: Path, capsys: Cap, task_pages: dict[str, Any], task_calls: list[Any]
+) -> None:
+    task_pages["task"] = _task(parent=_parent(labels=("epic", "enhancement")))
+    task_pages["subs"] = [
+        _subs(
+            [
+                _sub("acme/widget#43", "The next task"),
+                _sub("Acme/Widget#42", "This task, its owner cased differently"),
+                _sub("acme/.github#9", "Docs task in another repo"),
+                _sub("acme/widget#44", "Done", state="CLOSED"),
+            ]
+        )
+    ]
+    request = _built(_argv(repo), capsys)
+    assert request["epic_open_tasks"] == [
+        {"ref": "acme/widget#43", "title": "The next task"},
+        {"ref": "acme/.github#9", "title": "Docs task in another repo"},
+    ]
+    assert task_calls[1] == ("subs", {"owner": "acme", "name": ".github", "number": 7})
+
+
+def test_task_under_an_epic_reads_every_page_of_sub_issues(
+    repo: Path, capsys: Cap, task_pages: dict[str, Any], task_calls: list[Any]
+) -> None:
+    first = [_sub(f"acme/widget#{n}", f"t{n}") for n in range(100, 200)]
+    task_pages["subs"] = [_subs(first, cursor="s1"), _subs([_sub("acme/widget#200", "last")])]
+    request = _built(_argv(repo), capsys)
+    assert [t["title"] for t in request["epic_open_tasks"]] == [
+        *(f"t{n}" for n in range(100, 200)),
+        "last",
+    ]
+    assert task_calls[2] == (
+        "subs",
+        {"owner": "acme", "name": ".github", "number": 7, "after": "s1"},
+    )
+
+
+@pytest.mark.parametrize(
+    "parent",
+    [
+        None,
+        _parent(labels=("epic", "ad-hoc")),
+        _parent(labels=("bug",)),
+        _parent(labels=()),
+    ],
+    ids=["no-parent", "ad-hoc", "not-an-epic", "unlabelled"],
+)
+def test_task_outside_an_epic_has_no_epic_tasks(
+    repo: Path, capsys: Cap, task_pages: dict[str, Any], task_calls: list[Any], parent: Any
+) -> None:
+    task_pages["task"] = _task(parent=parent)
+    assert _built(_argv(repo), capsys)["epic_open_tasks"] == []
+    assert [kind for kind, _vars in task_calls] == ["task"]
+
+
+def test_check_request_takes_the_body_and_tasks_from_github(
+    repo: Path, capsys: Cap, task_pages: dict[str, Any]
+) -> None:
+    review_head, result = _reviewed(repo, capsys, [_finding("R1")])
+    task_pages["task"] = _task(body="Narrowed.\n")
+    task_pages["subs"] = [_subs([])]
+    request = _built(_check_argv(repo, review_head, [result], fix=("R1",)), capsys)
+    assert request["issue_body"] == "Narrowed.\n"
+    assert request["epic_open_tasks"] == []
+
+
+@pytest.mark.parametrize(
+    ("task", "subs", "message"),
+    [
+        ({"repository": {"issue": None}}, None, "acme/widget#42: issue not found"),
+        ({"repository": None}, None, "acme/widget#42: issue not found"),
+        (_task(body=None), None, "acme/widget#42: the issue has no body string"),
+        (_task(parent="x"), None, "acme/widget#42: its parent is not an object"),
+        (
+            _task(parent={"number": "7", "repository": {"nameWithOwner": "acme/.github"}}),
+            None,
+            "an issue has no number or repository",
+        ),
+        (
+            _task(parent={"number": 7, "repository": {"nameWithOwner": "acme"}}),
+            None,
+            "an issue has no usable ref",
+        ),
+        (_task(parent=_parent(total=101)), None, f"{EPIC}: its labels are incomplete"),
+        (
+            _task(parent={**_parent(), "labels": {"totalCount": 1, "nodes": [{}]}}),
+            None,
+            f"{EPIC}: a label has no name",
+        ),
+        (_task(), {"repository": {"issue": None}}, f"{EPIC}: issue not found"),
+        (
+            _task(),
+            {"repository": {"issue": {"subIssues": None}}},
+            f"{EPIC}: the sub-issues page is malformed",
+        ),
+        (_task(), _subs(["x"]), f"{EPIC}: a sub-issue is not an object"),
+        (
+            _task(),
+            _subs([{**_sub("acme/widget#43"), "title": None}]),
+            "acme/widget#43 has no state or title",
+        ),
+        (
+            _task(),
+            {
+                "repository": {
+                    "issue": {
+                        "subIssues": {"pageInfo": {"hasNextPage": True}, "nodes": []},
+                    }
+                }
+            },
+            f"{EPIC}: more sub-issues but no cursor",
+        ),
+    ],
+)
+def test_request_refuses_a_malformed_issue_or_epic(
+    repo: Path, capsys: Cap, task_pages: dict[str, Any], task: Any, subs: Any, message: str
+) -> None:
+    task_pages["task"] = task
+    if subs is not None:
+        task_pages["subs"] = [subs]
+    code, out, err = _run(_argv(repo), capsys)
+    assert code == 1
+    assert out == ""
+    assert f"ERROR: cannot read the issue or its epic: {message}" in err
+    assert not (_merge_review_dir(repo) / "request-review.json").exists()
+
+
+@pytest.mark.parametrize("failing_kind", ["task", "subs"])
+@pytest.mark.parametrize(
+    ("error", "message"),
+    [
+        (RuntimeError("GraphQL errors: [boom]"), "GraphQL errors: [boom]"),
+        (GitHubAPIError(1, ["gh", "api", "graphql"], output="", stderr="HTTP 502"), "HTTP 502"),
+    ],
+)
+def test_request_refuses_a_failed_fetch(
+    repo: Path,
+    capsys: Cap,
+    monkeypatch: pytest.MonkeyPatch,
+    failing_kind: str,
+    error: Exception,
+    message: str,
+) -> None:
+    fake = github.graphql
+
+    def failing(query: str, **variables: object) -> Any:
+        kind = "subs" if "subIssues" in query else "task"
+        if "createdAt" not in query and kind == failing_kind:
+            raise error
+        return fake(query, **variables)
+
+    monkeypatch.setattr("vergil_tooling.lib.github.graphql", failing)
+    code, out, err = _run(_argv(repo), capsys)
+    assert code == 1
+    assert out == ""
+    assert "ERROR: cannot read the issue or its epic:" in err
+    assert message in err
+    assert "git failed" not in err
+    assert not (_merge_review_dir(repo) / "request-review.json").exists()
 
 def test_request_refuses_missing_design_source(repo: Path, tmp_path: Path, capsys: Cap) -> None:
     argv = _argv(repo, "review", "--design-source", str(tmp_path / "nope.md"))
@@ -756,7 +985,7 @@ def test_request_refuses_bad_issue(issue: str, capsys: Cap) -> None:
 
 # -- usage --------------------------------------------------------------------------
 
-_BUILDING = ["--base", "d", "--issue-body-file", "b", "--epic-tasks-file", "t"]
+_BUILDING = ["--base", "d"]
 
 
 @pytest.mark.parametrize(
