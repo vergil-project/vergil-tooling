@@ -651,13 +651,58 @@ class TestUpdateInstalledPlugins:
         assert label == "vergil@vergil-marketplace (project: <no projectPath>)"
         assert run.calls == []
 
-    def test_id_installed_only_at_project_scope_is_not_reinstalled(self) -> None:
+    @pytest.mark.parametrize("scope", ["project", "local"])
+    def test_id_installed_only_at_project_scope_gets_a_user_install(self, scope: str) -> None:
+        # The #578 probe: vergil came back at project scope only (#3836).
+        pid = "vergil@vergil-marketplace"
+        listing = json.dumps(
+            [{"id": pid, "scope": scope, "enabled": True, "projectPath": "/p/tooling"}]
+        )
+        run = FakeRun(plugin_list=listing)
+        assert update_installed_plugins(run, {"enabledPlugins": {pid: True}}, "") == []
+        update = f"cd /p/tooling && claude plugin update {pid} --scope {scope}"
+        install = f"claude plugin install {pid} --scope user"
+        assert run.cmds.count(install) == 1
+        assert run.cmds.index(update) < run.cmds.index(install)
+
+    def test_failed_user_install_beside_a_project_install_is_named(self) -> None:
+        pid = "vergil@vergil-marketplace"
+        listing = json.dumps(
+            [{"id": pid, "scope": "project", "enabled": True, "projectPath": "/p/tooling"}]
+        )
+        run = FakeRun(plugin_list=listing, fail_on=(f"claude plugin install {pid}",))
+        assert update_installed_plugins(run, {"enabledPlugins": {pid: True}}, "") == [
+            f"{pid} (user)"
+        ]
+
+    def test_id_with_user_and_project_installs_is_not_reinstalled(self) -> None:
+        pid = "vergil@vergil-marketplace"
+        listing = json.dumps(
+            [
+                {"id": pid, "scope": "project", "enabled": True, "projectPath": "/p/tooling"},
+                {"id": pid, "scope": "user", "enabled": True},
+            ]
+        )
+        run = FakeRun(plugin_list=listing)
+        assert update_installed_plugins(run, {"enabledPlugins": {pid: True}}, "") == []
+        assert not any("claude plugin install" in c for c in run.cmds)
+
+    def test_entry_without_a_scope_counts_as_a_user_install(self) -> None:
+        pid = "vergil@vergil-marketplace"
+        run = FakeRun(plugin_list=json.dumps([{"id": pid, "enabled": True}]))
+        assert update_installed_plugins(run, {"enabledPlugins": {pid: True}}, "") == []
+        assert f"claude plugin update {pid} --scope user" in run.cmds
+        assert not any("claude plugin install" in c for c in run.cmds)
+
+    def test_project_install_of_an_id_the_settings_do_not_enable_gets_no_user_install(
+        self,
+    ) -> None:
         pid = "vergil@vergil-marketplace"
         listing = json.dumps(
             [{"id": pid, "scope": "project", "enabled": True, "projectPath": "/p/tooling"}]
         )
         run = FakeRun(plugin_list=listing)
-        update_installed_plugins(run, {"enabledPlugins": {pid: True}}, "")
+        assert update_installed_plugins(run, {"enabledPlugins": {pid: False}}, "") == []
         assert not any("claude plugin install" in c for c in run.cmds)
 
     def test_installs_enabled_plugins_not_yet_installed(self) -> None:

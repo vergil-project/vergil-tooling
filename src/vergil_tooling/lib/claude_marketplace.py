@@ -481,8 +481,11 @@ def update_installed_plugins(run: Run, settings: dict[str, Any], prefix: str) ->
     install, so one id can appear at user scope and again at project scope for
     each project (#3764). Every install entry is updated at its own scope; a
     project-scope entry is updated from inside its ``projectPath``. An enabled
-    id with no install entry at any scope is installed at user scope (it comes
-    from the user settings.json).
+    id with no **user-scope** install entry is installed at user scope, even
+    when it has a project- or local-scope install: *settings* is the user
+    settings.json, and the user file owns plugin installation, so a project
+    install never stands in for the user one (#3836). An entry with no
+    ``scope`` reads as user scope, as in the update.
 
     Best-effort across the set: one failure does not block the others.
     Returns the failure labels, naming each entry's scope and project.
@@ -491,7 +494,7 @@ def update_installed_plugins(run: Run, settings: dict[str, Any], prefix: str) ->
     desired = _enabled_plugin_ids(settings)
     # One entry per INSTALL, not per id (#3764): never key by id.
     entries = _installed_entries(run, prefix)
-    installed_ids = {entry["id"] for entry in entries}
+    user_installed_ids = {e["id"] for e in entries if e.get("scope", "user") == "user"}
 
     # Refresh every install of a declared-enabled id, plus any install that is
     # itself enabled (the pre-#2006 behaviour), each at its own scope/project.
@@ -501,7 +504,7 @@ def update_installed_plugins(run: Run, settings: dict[str, Any], prefix: str) ->
         if failure:
             failures.append(failure)
 
-    for pid in sorted(desired - installed_ids):
+    for pid in sorted(desired - user_installed_ids):
         label = f"{pid} (user)"
         print(f"    install {label}...")
         try:

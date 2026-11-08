@@ -91,7 +91,9 @@ separately, and each one is updated. The CLI has no project flag, and takes
 the project from the working directory, so a project install is updated from
 inside its `projectPath`. If that directory no longer exists in the VM, the
 install is reported as a failure that names its scope and project. An enabled
-plugin with no install at any scope is installed at user scope. Last, it
+plugin with no user-scope install is installed at user scope, even when a
+project-scope install of it exists: the user `settings.json` owns plugin
+installation, so a project install never stands in for the user one. Last, it
 **verifies** that each declared GitHub marketplace is registered, as `claude
 plugin marketplace list --json` reports it, at the declared repo and ref; a
 mismatch (including no registered ref when the settings declare one) or a
