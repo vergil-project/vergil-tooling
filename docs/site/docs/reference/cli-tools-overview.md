@@ -1387,6 +1387,30 @@ or PR knowledge.
 | Exit codes | 0 ok, 1 `--check` drift, 2 usage error or a `vergil.toml` that fails to load (the config error is printed to stderr; nothing is written) |
 | Status | Active |
 
+### vrg-claude-settings-sync
+
+Single-repo applicator for the managed `.claude/settings.json`
+([#4056](https://github.com/vergil-project/vergil-tooling/issues/4056)).
+It checks (default) or writes the packaged template as rendered by
+`repo_init.render_claude_settings()`, the same render
+`vrg-github-repo-init` writes. The file is **fully managed**: `--check`
+uses the config audit's comparison (equal to the template after JSON
+parsing, so key order and whitespace don't count), and `--write`
+replaces the whole file, atomically, never merging keys. A repo with no
+`.claude/settings.json` gets one. A file already equal after parsing is
+left untouched, so `--check` drifts exactly when `--write` would change
+the file, and after `--write` the audit's `_check_claude_settings`
+passes. It owns **only** the file change and has no git or PR knowledge.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_claude_settings_sync` |
+| Args | `--repo PATH` (default: CWD); mutually exclusive `--check` (default) \| `--write` |
+| Preconditions | None beyond a repository root; `vergil.toml` is not read |
+| Failure mode | `--check` prints `missing .claude/settings.json`, `.claude/settings.json is not valid JSON (…)` or `.claude/settings.json differs from the template` to stderr; `--write` prints `already in sync` or `wrote .claude/settings.json` |
+| Exit codes | 0 ok, 1 `--check` drift, 2 usage error |
+| Status | Active |
+
 ### vrg-fleet-sync
 
 Propagate a vergil-managed file across a fleet of repositories, opening
@@ -1394,7 +1418,11 @@ Propagate a vergil-managed file across a fleet of repositories, opening
 `gitignore` (default) syncs the managed `.gitignore` block via
 `vrg-gitignore-sync --write`; `dependabot` writes the report-only
 `.github/dependabot.yml` via `vrg-dependabot-sync --write` (branch slug
-`dependabot-config`, filed under epic vergil-project/.github#420). A
+`dependabot-config`, filed under epic vergil-project/.github#420);
+`claude-settings` replaces `.claude/settings.json` with the packaged
+template via `vrg-claude-settings-sync --write` (branch slug
+`claude-settings-sync`), so a template change can be rolled out to every
+repo the config audit would otherwise fail. A
 target's epic links only repos in the epic's own org: a repo in another
 org (read from the clone with `gh repo view`) is filed under its own
 ad-hoc epic, and the issue body still names the target's epic, because
@@ -1407,14 +1435,15 @@ human. `--dry-run` reports the verdict a live run would reach per repo
 (would change, naming the epic it would be filed under, or skip) from a
 disposable probe worktree, without opening an issue, branch, commit, or
 PR. Each target previews with its applicator's `--check`
-(`vrg-gitignore-sync --check` or `vrg-dependabot-sync --check`), whose
+(`vrg-gitignore-sync --check`, `vrg-dependabot-sync --check` or
+`vrg-claude-settings-sync --check`), whose
 drift verdict is exactly the change `--write` would make.
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_fleet_sync` |
-| Args | `--repos PATH [PATH …]` (required, local clone paths); `--target {dependabot,gitignore}` (default `gitignore`); `--dry-run` |
-| Preconditions | The target's applicator (`vrg-gitignore-sync` or `vrg-dependabot-sync`) on PATH; each `--repos` path a local clone; git/`gh` credentials for the sweep |
+| Args | `--repos PATH [PATH …]` (required, local clone paths); `--target {claude-settings,dependabot,gitignore}` (default `gitignore`); `--dry-run` |
+| Preconditions | The target's applicator (`vrg-gitignore-sync`, `vrg-dependabot-sync` or `vrg-claude-settings-sync`) on PATH; each `--repos` path a local clone; git/`gh` credentials for the sweep |
 | Failure mode | Any repo that errors is recorded and reported in the per-repo status lines |
 | Exit codes | 0 all repos ok, 1 one or more repos errored |
 | Status | Active |
