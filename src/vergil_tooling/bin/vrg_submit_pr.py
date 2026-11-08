@@ -1109,7 +1109,10 @@ def _require_local_head(branch: str, expected: str, *, worktree: Path | None = N
             f"vrg-submit-pr: refusing to submit '{branch}': its checked-out HEAD"
             f"{location} ({actual[:12]}) is not the head the latest report-ready "
             f"recorded ({expected[:12]}). The branch moved after report-ready, or "
-            "the ready-state is stale. Re-run `vrg-pr-workflow report-ready` at "
+            "the ready-state is stale (a batch item that failed after its rebase "
+            "leaves the worktree rebased). The freeze refuses a plain report-ready "
+            "re-run on a moved HEAD, so recover from the branch's worktree with "
+            "`vrg-pr-workflow unfreeze`, then `vrg-pr-workflow report-ready` at "
             "the commit to submit. Nothing was pushed or opened."
         )
 

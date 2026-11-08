@@ -2848,8 +2848,15 @@ def test_require_local_head_refuses_a_moved_head() -> None:
         pytest.raises(SystemExit, match=r"HEAD \(258cf59aaaaa\) is not the head") as exc,
     ):
         _require_local_head("feature/x", "e4570bebbbbb")
-    assert "e4570bebbbbb" in str(exc.value.code)
-    assert "Nothing was pushed or opened" in str(exc.value.code)
+    message = str(exc.value.code)
+    assert "e4570bebbbbb" in message
+    assert "Nothing was pushed or opened" in message
+    # A frozen branch whose HEAD moved (e.g. a batch item that failed after its
+    # rebase) cannot simply re-run report-ready: the freeze refuses it. The
+    # refusal names the real recovery, unfreeze then report-ready, in order.
+    unfreeze = message.index("`vrg-pr-workflow unfreeze`")
+    report = message.index("`vrg-pr-workflow report-ready` at the commit to submit")
+    assert unfreeze < report
 
 
 def test_require_local_head_refuses_a_missing_record() -> None:
