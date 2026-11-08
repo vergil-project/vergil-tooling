@@ -19370,9 +19370,13 @@ local tags with origin's.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>origin: vergil-project/vergil-claude-plugin
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>v2.1 1a2b3c4d5e6f -&gt; v2.1.50 fc17882a9b0c
 </code></pre></div>
-<p><code>--dry-run</code> prints the same lines, after the same target check, and stops.
-Otherwise it asks <code>Move vX.Y on &lt;repo&gt;? [y/N]</code> on the terminal, and moves
-the tag only on <code>y</code> or <code>yes</code>. With no terminal to confirm on, it refuses.
+<p><code>--dry-run</code> prints the same lines, after the same target check, and stops
+(with <code>--yes</code> too). <code>--yes</code> prints them and moves the tag with no prompt, so
+it needs no terminal and can run from a script. Otherwise it prints them to
+stderr, asks <code>Move vX.Y on &lt;repo&gt;? [y/N]</code> there, and moves the tag only on
+<code>y</code> or <code>yes</code>; the move and the prompt go to stderr so a redirected stdout
+cannot hide them. It refuses to prompt unless both stdin and stderr are
+terminals: with no terminal to confirm on, it refuses and names <code>--yes</code>.
 Before it pushes it re-resolves the move and refuses if anything changed
 since it was confirmed, and resolves the local release tag once and checks
 that it is the confirmed commit. It then pushes that tag object, by its id,
@@ -19406,15 +19410,15 @@ as done.</p>
 </tr>
 <tr>
 <td>Args</td>
-<td><code>version</code> (positional, default: the <code>VERSION</code> file), <code>--dry-run</code></td>
+<td><code>version</code> (positional, default: the <code>VERSION</code> file), <code>--dry-run</code>, <code>--yes</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>Human identity; run in the repo's checkout; a terminal to confirm on; push access to origin</td>
+<td>Human identity; run in the repo's checkout; a terminal to confirm on, unless <code>--yes</code> is given; push access to origin</td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>Exit 1 with a message on stderr. An agent identity, a run with no terminal, a declined or unanswered confirmation, and a missing <code>VERSION</code> file each print their own <code>vrg-promote:</code> or plain message; a refused target, a move that changed since it was confirmed, an unreadable <code>VERSION</code> file, and a failed git or GitHub call print <code>Error: …</code>; a missing GitHub token or unusable GitHub App credentials print the guided <code>vrg-promote:</code> message</td>
+<td>Exit 1 with a message on stderr. An agent identity, a run with no terminal and no <code>--yes</code>, a declined or unanswered confirmation, and a missing <code>VERSION</code> file each print their own <code>vrg-promote:</code> or plain message; a refused target, a move that changed since it was confirmed, an unreadable <code>VERSION</code> file, and a failed git or GitHub call print <code>Error: …</code>; a missing GitHub token or unusable GitHub App credentials print the guided <code>vrg-promote:</code> message</td>
 </tr>
 <tr>
 <td>Exit codes</td>
