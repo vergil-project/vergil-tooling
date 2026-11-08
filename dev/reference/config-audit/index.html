@@ -13223,6 +13223,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#settings-the-identity-cannot-read" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Settings the identity cannot read
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -17145,6 +17156,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#settings-the-identity-cannot-read" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Settings the identity cannot read
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -17375,7 +17397,7 @@ two independent halves:</p>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 compliant, 1 non-compliant (drift), 2 audit could not complete</td>
+<td>0 compliant, 1 non-compliant (drift), 2 audit could not complete (including settings <a href="#settings-the-identity-cannot-read">not checked</a>)</td>
 </tr>
 <tr>
 <td>Status</td>
@@ -17398,6 +17420,33 @@ workflow on a daily schedule. That job runs
 fatal where it fires: a non-conforming repo cannot silently persist.</p>
 <p><code>vrg-release</code> also gates on the GitHub half of this audit, so a repo
 whose required-check set has drifted cannot release until reconciled.</p>
+<h3 id="settings-the-identity-cannot-read">Settings the identity cannot read<a class="headerlink" href="#settings-the-identity-cannot-read" title="Permanent link">&para;</a></h3>
+<p>Several GitHub reads need the <code>administration=read</code> repository
+permission: <code>vulnerability-alerts</code>, the three <code>actions/permissions</code>
+endpoints, classic branch protection, and the <code>security_and_analysis</code>
+block of the repo object (GitHub leaves the block out for an identity
+without admin access). The agent App does not hold that permission
+(#3816). When a read fails with a 403 naming a missing permission, the
+audit does not guess the value. It reports the setting as not checked:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>  vergil-project/vergil-tooling: NOT FULLY AUDITED (no drift in the settings read; 10 not checked)
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    security.vulnerability_alerts: not checked (needs administration=read)
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    classic_protection.develop: not checked (needs administration=read)
+</code></pre></div>
+<ul>
+<li><strong>It is not drift.</strong> An unread setting is never compared, so it never
+  shows up as a <code>DiffItem</code>.</li>
+<li><strong>It is not a pass.</strong> <code>audit</code> exits 2 with a one-line error naming
+  the permission, unless it also found drift in the settings it did
+  read, in which case it exits 1. It never exits 0 while any setting
+  is not checked.</li>
+<li><strong><code>apply</code> refuses.</strong> It exits 2 and writes nothing, since it would
+  converge settings it could not read.</li>
+<li>A setting the desired state leaves unmanaged (secret scanning on a
+  private repo without GHAS) is skipped as before, not listed as not
+  checked.</li>
+<li>A 403 that names no missing permission (a rate limit, for example) is
+  still an error, as is any other unexpected status.</li>
+</ul>
 <h2 id="local-checks">Local checks<a class="headerlink" href="#local-checks" title="Permanent link">&para;</a></h2>
 <p><code>audit_local_config</code> runs the following, appending a <code>DiffItem</code> for each
 divergence:</p>
@@ -17570,8 +17619,8 @@ repos) and the one-time rollout (existing repos).</p>
 <h2 id="the-composed-managed-fence">The composed managed fence<a class="headerlink" href="#the-composed-managed-fence" title="Permanent link">&para;</a></h2>
 <p>The source of truth for the fleet's ignore vocabulary is a set of
 packaged data-asset <strong>fragments</strong>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>src/vergil_tooling/data/gitignore/base        # language-agnostic
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>src/vergil_tooling/data/gitignore/&lt;language&gt;  # one per managed language
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>src/vergil_tooling/data/gitignore/base        # language-agnostic
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>src/vergil_tooling/data/gitignore/&lt;language&gt;  # one per managed language
 </code></pre></div>
 <p>They are loaded at runtime via <code>importlib.resources</code> — the same idiom
 used for the <code>CLAUDE.md</code> and <code>.claude/settings.json</code> templates — and
@@ -17696,7 +17745,9 @@ separately, by <code>open-pull-requests-limit: 0</code> in the canonical
 <code>.github/dependabot.yml</code>, which <code>_check_dependabot_yml</code> enforces (see
 <a href="#local-checks">Local checks</a>).</p>
 <p>Alerts are read from <code>GET /repos/{repo}/vulnerability-alerts</code> (204 means
-on, 404 means off). Any other status is an error, never a silent "off".
+on, 404 means off). A 403 for a missing permission is reported as
+<a href="#settings-the-identity-cannot-read">not checked</a>; any other status is an
+error, never a silent "off".
 <code>apply</code> turns alerts on with <code>PUT</code> on that endpoint (or off with
 <code>DELETE</code>), and sets <code>dependabot_security_updates</code> through the repo's
 <code>security_and_analysis</code> settings. <code>apply</code> is a human action: it needs
@@ -17822,8 +17873,8 @@ rule (#2860). When a live rule carries a parameter key that the desired
 rule of the same <code>type</code> does not declare, the audit reports it as an
 <strong>undeclared parameter</strong>, separately from value mismatches. The message
 names the ruleset, the rule type, the key, and the live value:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>UNDECLARED PARAMETER: rulesets.Branch protection rule 'pull_request' has
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>'require_extra_approval_for_unattributed_changes' = True live, ...
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>UNDECLARED PARAMETER: rulesets.Branch protection rule 'pull_request' has
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>'require_extra_approval_for_unattributed_changes' = True live, ...
 </code></pre></div>
 <ul>
 <li><strong>It is non-compliant.</strong> The live ruleset enforces a setting the spec
