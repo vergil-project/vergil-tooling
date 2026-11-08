@@ -17424,8 +17424,12 @@ VM on 2026-10-28
 (<a href="https://github.com/vergil-project/.github/issues/578">vergil-project/.github#578</a>),
 settings alone brought all three plugins back without <code>vm_guest</code>'s
 reconcile step, but <code>vergil</code> came back at project scope rather than user
-scope. The reconcile step stays until that difference is understood
-(<a href="https://github.com/vergil-project/.github/issues/675">vergil-project/.github#675</a>).</p>
+scope. The reconcile step stays
+(<a href="https://github.com/vergil-project/.github/issues/675">vergil-project/.github#675</a>):
+it is the step that installs, at user scope, every plugin the user file
+enables that has no user-scope install, even when a project-scope install
+exists, because plugin installation belongs to the user file
+(<a href="https://github.com/vergil-project/vergil-tooling/issues/3836">vergil-project/vergil-tooling#3836</a>).</p>
 <h2 id="unused-scopes">Unused scopes<a class="headerlink" href="#unused-scopes" title="Permanent link">&para;</a></h2>
 <p><strong>Managed settings are unused, deliberately.</strong> They are the only scope a
 repo-local file cannot override, but nothing needs them yet, and they raise
