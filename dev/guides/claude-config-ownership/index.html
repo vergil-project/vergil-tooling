@@ -17474,7 +17474,9 @@ It checks the following, each a hard failure with no transition window:</p>
 <li>the repo <code>CLAUDE.md</code> is at most 200 lines;</li>
 <li>the template markers are present;</li>
 <li>no <code>AGENTS.md</code> exists;</li>
-<li><code>.claude/settings.json</code> equals the template after JSON parsing;</li>
+<li><code>.claude/settings.json</code> equals the template after JSON parsing (after
+  a template change, <code>vrg-fleet-sync --target claude-settings</code> brings
+  every repo back in line, one PR per drifted repo);</li>
 <li>the <code>paad-policy.md</code> pointer is present (it is in the template region, so
   the template check covers it).</li>
 </ul>

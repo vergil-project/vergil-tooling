@@ -17468,8 +17468,11 @@ Its empty-string form is required: <code>attribution: false</code> needs a newer
 Claude Code and makes older versions skip the whole settings file.</p>
 <p>Any other content is one
 <code>DiffItem(field="local.claude_settings", ...)</code> whose actual value names
-each top-level key that is missing, unexpected or different. Fix it by
-copying the template into the repo.</p>
+each top-level key that is missing, unexpected or different. Fix it with
+<code>vrg-claude-settings-sync --write</code>, which replaces the file with the
+template for one repo; <code>vrg-fleet-sync --target claude-settings</code> does the
+same across the fleet, one PR per drifted repo (see the
+<a href="../cli-tools-overview/#vrg-claude-settings-sync">CLI Tools Overview</a>).</p>
 <h3 id="claudemd-and-agentsmd-the-instruction-file"><code>CLAUDE.md</code> and <code>AGENTS.md</code> — the instruction file<a class="headerlink" href="#claudemd-and-agentsmd-the-instruction-file" title="Permanent link">&para;</a></h3>
 <p><code>CLAUDE.md</code> must hold exactly one pair of template markers,
 <code>&lt;!-- vergil:template:claude-md:begin --&gt;</code> and
