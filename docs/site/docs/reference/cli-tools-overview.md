@@ -79,13 +79,18 @@ report-ready freeze. Remote operations run with the GitHub App installation
 token for the resolved identity (see [`vrg-whoami`](#vrg-whoami)). It is not
 a drop-in replacement for `git`; `vrg-git --help` lists the full policy.
 
+The global `-C <path>` option (repeatable, as in git) changes directory
+before any check runs, so every check, and the org of the identity token,
+applies to the `-C` repo exactly as after a `cd`. No other global git option
+is accepted.
+
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_git` |
-| Args | `<subcommand> [args...]`, forwarded to `git` |
+| Args | `[-C <path>]... <subcommand> [args...]`, forwarded to `git` |
 | Preconditions | Git on PATH |
 | Failure mode | A refused command prints the reason on stderr |
-| Exit codes | 0 success; 1 refusal; 2 no subcommand; otherwise git's exit code |
+| Exit codes | 0 success; 1 refusal; 2 no subcommand or a `-C` with no path; 128 a `-C` path that cannot be entered; otherwise git's exit code |
 | Status | Active |
 
 ### vrg-gh
