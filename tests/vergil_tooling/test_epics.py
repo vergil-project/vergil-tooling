@@ -2476,6 +2476,70 @@ def test_ensure_standing_epic_duplicates_without_created_ref_say_it_is_unlisted(
     assert excinfo.value.others == (IssueRef("org", ".github", 8), IssueRef("org", ".github", 9))
 
 
+@pytest.mark.parametrize(
+    ("failure", "detail"),
+    [
+        (
+            github.GitHubAPIError(1, ["gh", "issue", "list"], "", "HTTP 502: Bad Gateway"),
+            "HTTP 502: Bad Gateway",
+        ),
+        (
+            subprocess.CalledProcessError(1, ["gh", "issue", "list"], "", "connection reset"),
+            "connection reset",
+        ),
+        (ValueError("Expecting value: line 1 column 1 (char 0)"), "Expecting value"),
+    ],
+    ids=["api-error", "process-error", "bad-json"],
+)
+def test_ensure_standing_epic_read_failure_after_create_names_created_ref(
+    failure: Exception, detail: str
+) -> None:
+    # A poll read that fails after the create must not drop the new epic's ref:
+    # a re-run in the list-lag window would create a duplicate (#3820).
+    fake = _FakeClock()
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=[[], [], failure]),
+        patch("vergil_tooling.lib.epics.ensure_labels"),
+        patch("vergil_tooling.lib.github.create_issue", return_value=_DEFERRED_URL),
+        pytest.raises(epics.StandingEpicNotVisibleError) as excinfo,
+    ):
+        epics.ensure_standing_epic(
+            epics.DEFERRED, "org/.github", "org", sleep=fake.sleep, clock=fake.clock
+        )
+    exc = excinfo.value
+    assert type(exc) is epics.StandingEpicNotVisibleError
+    assert exc.__cause__ is failure
+    message = str(exc)
+    assert message.startswith(
+        "created deferred epic org/.github#10 ('Epic (deferred): org') but checking that "
+        "it is listed in org/.github failed: "
+    )
+    assert detail in message
+    assert message.endswith("check org/.github#10 before retrying")
+    # The failure stops the wait at once rather than polling on.
+    assert len(fake.sleeps) == 1
+
+
+def test_ensure_standing_epic_truncated_list_after_create_names_created_ref() -> None:
+    # A post-create listing at its row limit cannot confirm the new epic either.
+    fake = _FakeClock()
+    full = [{"number": n, "title": f"t{n}"} for n in range(epics.EPIC_TITLE_LIST_LIMIT)]
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=[[], full]),
+        patch("vergil_tooling.lib.epics.ensure_labels"),
+        patch("vergil_tooling.lib.github.create_issue", return_value=_DEFERRED_URL),
+        pytest.raises(
+            epics.StandingEpicNotVisibleError,
+            match=r"epic org/\.github#10 .* failed: org/\.github has 1000\+ open issues",
+        ) as excinfo,
+    ):
+        epics.ensure_standing_epic(
+            epics.DEFERRED, "org/.github", "org", sleep=fake.sleep, clock=fake.clock
+        )
+    assert isinstance(excinfo.value.__cause__, epics.EpicListTruncatedError)
+    assert "check org/.github#10 before retrying" in str(excinfo.value)
+
+
 def test_ensure_standing_epic_back_to_back_creates_exactly_one() -> None:
     # Regression for vergil-project/.github#531/#532: an eventually consistent
     # list hides a new issue for a few reads. Two back-to-back ensures must

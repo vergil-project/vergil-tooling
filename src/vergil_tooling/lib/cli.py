@@ -68,9 +68,11 @@ def _auth_error_message(prog: str, exc: Exception) -> str | None:
         return github.missing_token_message(prog)
     # An unresolvable epic home is not an auth error, but it carries a complete
     # one-line message and is raised from many commands' resolution paths
-    # (#3603), so it gets the same clean exit.
+    # (#3603), so it gets the same clean exit. So does a standing epic created
+    # but not confirmed listed: its message names the new epic to check before
+    # retrying, and every command that can create one lets it reach here (#3820).
     from vergil_tooling.lib import epics
 
-    if isinstance(exc, epics.EpicHomeError):
+    if isinstance(exc, (epics.EpicHomeError, epics.StandingEpicNotVisibleError)):
         return f"{prog}: {exc}"
     return None

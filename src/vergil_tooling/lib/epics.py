@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any
 from vergil_tooling.lib import github, release, remote_config, retry
 from vergil_tooling.lib.config import CONFIG_FILE
 from vergil_tooling.lib.labels import ensure_labels
+from vergil_tooling.lib.process_errors import error_text
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Sequence
@@ -781,7 +782,12 @@ STANDING_EPIC_VISIBILITY_BUDGET_SECS = retry.KNOWN_RESOURCE_BUDGET_SECS
 
 
 class StandingEpicNotVisibleError(RuntimeError):
-    """A standing epic was created but never became visible to the title lookup."""
+    """A standing epic was created but the title lookup never confirmed it is listed.
+
+    Either the lookup kept missing it until the budget ran out, or a lookup
+    failed (the error is chained as ``__cause__``). The message always names
+    the created epic, so a caller can check it rather than create a duplicate.
+    """
 
 
 class StandingEpicDuplicateError(StandingEpicNotVisibleError):
@@ -817,7 +823,11 @@ def _await_listed(
     by one final look. Raises :class:`StandingEpicNotVisibleError` naming
     *created* and what the lookup last saw if the budget runs out. A lookup
     that sees two or more same-titled epics stops the wait at once with
-    :class:`StandingEpicDuplicateError`, naming *created* and the others.
+    :class:`StandingEpicDuplicateError`, naming *created* and the others. A
+    lookup that fails any other way (a ``gh`` read the retry layer gave up on,
+    unparseable output, a truncated list) stops the wait at once with
+    :class:`StandingEpicNotVisibleError` naming *created*, chained from the
+    failure (#3820).
     """
     deadline = clock() + STANDING_EPIC_VISIBILITY_BUDGET_SECS
     attempt = 0
@@ -833,6 +843,14 @@ def _await_listed(
                 f"keep one and close the rest before retrying",
                 created,
                 others,
+            ) from exc
+        except Exception as exc:
+            # Whatever the cause, the epic exists now: an error that dropped its
+            # ref would let a re-run in the list-lag window create a duplicate.
+            raise StandingEpicNotVisibleError(
+                f"created {kind.key} epic {created.slug} ({title!r}) but checking that it "
+                f"is listed in {home} failed: {error_text(exc)}; a later lookup could "
+                f"create a duplicate — check {created.slug} before retrying"
             ) from exc
         if seen == created:
             return
@@ -870,9 +888,9 @@ def ensure_standing_epic(
     new epic (see :func:`_await_listed`), so a back-to-back caller finds it
     rather than creating a duplicate; it raises
     :class:`StandingEpicNotVisibleError` if that never happens within
-    :data:`STANDING_EPIC_VISIBILITY_BUDGET_SECS`, or its
-    :class:`StandingEpicDuplicateError` subclass, naming the new epic, if the
-    lookup lists another epic with the same title. *sleep* and *clock* default to
+    :data:`STANDING_EPIC_VISIBILITY_BUDGET_SECS` or a lookup fails, or its
+    :class:`StandingEpicDuplicateError` subclass if the lookup lists another
+    epic with the same title; each names the new epic. *sleep* and *clock* default to
     :func:`time.sleep`/:func:`time.monotonic` (resolved at call time) and are
     injectable for tests.
     """
