@@ -17,7 +17,8 @@ from unittest.mock import patch
 import pytest
 
 from vergil_tooling.bin import vrg_git
-from vergil_tooling.bin.vrg_git import _diagnose_workflow_refusal, _diff_workflow_files, main
+from vergil_tooling.bin.vrg_git import _diagnose_workflow_refusal, main
+from vergil_tooling.lib import git as git_lib
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -191,13 +192,13 @@ def test_no_merge_base_is_unknown(repo: Path, monkeypatch: pytest.MonkeyPatch) -
 
 def test_failed_diff_reads_as_none(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(repo)
-    assert _diff_workflow_files("no-such-ref", "HEAD") is None
+    assert git_lib.diff_workflow_files("no-such-ref", "HEAD") is None
 
 
 def test_failed_own_diff_is_unknown(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # An own diff that fails is never read as "no workflow change": unknown.
     monkeypatch.chdir(repo)
-    with patch.object(vrg_git, "_diff_workflow_files", side_effect=[None]):
+    with patch.object(git_lib, "diff_workflow_files", side_effect=[None]):
         diagnosis = _diagnose_workflow_refusal(["origin", "feature/1-x"])
     assert diagnosis.kind == "unknown"
     assert diagnosis.reason == "could not diff HEAD against its merge-base with origin/develop"
@@ -209,7 +210,7 @@ def test_failed_upstream_diff_is_stale_and_says_so(
     # The own diff is known empty, so the branch is stale; the failed listing
     # of upstream files is carried in the reason, not dropped.
     monkeypatch.chdir(repo)
-    with patch.object(vrg_git, "_diff_workflow_files", side_effect=[(), None]):
+    with patch.object(git_lib, "diff_workflow_files", side_effect=[(), None]):
         diagnosis = _diagnose_workflow_refusal(["origin", "feature/1-x"])
     assert diagnosis.kind == "stale"
     assert diagnosis.files == ()
@@ -276,7 +277,7 @@ def test_failed_upstream_listing_is_named_in_the_stale_guidance(
     repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.chdir(repo)
-    with patch.object(vrg_git, "_diff_workflow_files", side_effect=[(), None]):
+    with patch.object(git_lib, "diff_workflow_files", side_effect=[(), None]):
         assert _push(["push", "-u", "origin", "feature/1-x"]) == 1
     err = capsys.readouterr().err
     assert "does not show which (could not diff HEAD against origin/develop)," in err

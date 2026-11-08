@@ -12,7 +12,8 @@ import pytest
 
 from tests.vergil_tooling.conftest import local_settings_violation
 from vergil_tooling.bin import vrg_pr_workflow
-from vergil_tooling.lib import local_settings
+from vergil_tooling.bin.vrg_git import _diagnose_workflow_refusal
+from vergil_tooling.lib import git, local_settings
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
@@ -951,10 +952,116 @@ def test_report_ready_workflow_push_refusal_is_expected_and_still_records(
     assert json.loads(captured.out) == {"ok": True, "status": "ready"}
     assert "EXPECTED" in captured.err
     assert "vrg-submit-pr" in captured.err
+    # No origin/HEAD here, so the cause cannot be told: the hand-off stands,
+    # claiming no own workflow change, with how to check by hand (#4077).
+    assert "This branch's own commits change" not in captured.err
+    assert "report-ready could not check the branch's own diff" in captured.err
     assert _rev(_origin(in_git_repo), "refs/heads/feature/42-x") == ""
     state = json.loads((in_git_repo / ".vergil" / "pr-workflow.json").read_text())
     assert state["status"] == "ready"
     mock_transport.return_value.write.assert_called_once()
+
+
+_WORKFLOW_REFUSAL_HOOK = (
+    'echo "refusing to allow a GitHub App to create or update workflow '
+    "'.github/workflows/ci.yml' without 'workflows' permission\" >&2\nexit 1"
+)
+
+
+def _commit_file(repo: Path, rel: str, text: str) -> None:
+    path = repo / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+    _git(repo, "add", rel)
+    _git(repo, "commit", "-m", f"change {rel}")
+
+
+def _track_origin_default(repo: Path, *, advance_with_workflow: bool = False) -> None:
+    """Make ``origin/develop`` the known default branch (``origin/HEAD``), as a clone has.
+
+    With *advance_with_workflow*, ``develop`` first gains a workflow change the
+    feature branch lacks, so the branch is stale against a fetched base.
+    """
+    if advance_with_workflow:
+        _git(repo, "checkout", "-q", "develop")
+        _commit_file(repo, ".github/workflows/ci.yml", "on: push\n")
+        _git(repo, "checkout", "-q", "feature/42-x")
+    _git(repo, "update-ref", "refs/remotes/origin/develop", "develop")
+    _git(repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/develop")
+
+
+def test_report_ready_own_workflow_change_keeps_the_hand_off(
+    in_git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The branch's own commits change a workflow file: the refusal is the
+    # documented hand-off, so the state is recorded and the files are named.
+    _commit_file(in_git_repo, ".github/workflows/ci.yml", "on: push\n")
+    _track_origin_default(in_git_repo)
+    _install_pre_receive(_origin(in_git_repo), _WORKFLOW_REFUSAL_HOOK)
+    with patch("vergil_tooling.bin.vrg_pr_workflow.GitHubTransport") as mock_transport:
+        rc = _run_report_ready()
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert json.loads(captured.out) == {"ok": True, "status": "ready"}
+    assert "EXPECTED" in captured.err
+    assert "own commits change .github/workflows/** (.github/workflows/ci.yml)" in captured.err
+    assert "could not check the branch's own diff" not in captured.err
+    assert "STALE" not in captured.err
+    state = json.loads((in_git_repo / ".vergil" / "pr-workflow.json").read_text())
+    assert state["status"] == "ready"
+    mock_transport.return_value.write.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("advance_with_workflow", "upstream"),
+    [
+        (True, "origin/develop changed .github/workflows/ci.yml since the branch's base"),
+        (False, "does not show which,"),
+    ],
+)
+def test_report_ready_stale_branch_is_refused_and_records_nothing(
+    in_git_repo: Path,
+    capsys: pytest.CaptureFixture[str],
+    advance_with_workflow: bool,  # noqa: FBT001
+    upstream: str,
+) -> None:
+    # The branch's own commits change no workflow file, so the refusal means
+    # it is stale: no hand-off message, nothing recorded, rebase steps given.
+    _track_origin_default(in_git_repo, advance_with_workflow=advance_with_workflow)
+    _install_pre_receive(_origin(in_git_repo), _WORKFLOW_REFUSAL_HOOK)
+    with patch("vergil_tooling.bin.vrg_pr_workflow.GitHubTransport") as mock_transport:
+        rc = _run_report_ready()
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    assert "STALE" in captured.err
+    assert upstream in captured.err
+    assert "vrg-git fetch origin" in captured.err
+    assert "vrg-git rebase origin/develop" in captured.err
+    assert "Nothing was recorded" in captured.err
+    assert "EXPECTED" not in captured.err
+    assert "Recording the ready state" not in captured.err
+    assert not (in_git_repo / ".vergil" / "pr-workflow.json").exists()
+    mock_transport.return_value.write.assert_not_called()
+
+
+def test_report_ready_and_vrg_git_give_the_same_diagnosis(
+    in_git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Both read the refusal through lib.git.diagnose_workflow_refusal, so the
+    # same stale branch gets the same diagnosis and the same explanation.
+    _track_origin_default(in_git_repo, advance_with_workflow=True)
+    ref = "refs/heads/feature/42-x"
+    from_vrg_git = _diagnose_workflow_refusal(["-u", "origin", f"{ref}:{ref}"])
+    from_lib = git.diagnose_workflow_refusal("origin")
+    assert from_vrg_git == from_lib
+    assert from_lib.kind == "stale"
+    _install_pre_receive(_origin(in_git_repo), _WORKFLOW_REFUSAL_HOOK)
+    with patch("vergil_tooling.bin.vrg_pr_workflow.GitHubTransport"):
+        assert _run_report_ready() == 1
+    assert git.stale_workflow_refusal_text(from_lib) in capsys.readouterr().err
 
 
 def test_report_ready_push_failure_records_nothing(
