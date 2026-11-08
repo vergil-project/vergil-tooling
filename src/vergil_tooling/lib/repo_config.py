@@ -243,27 +243,67 @@ def _check_claude_md(repo_root: Path, items: list[DiffItem]) -> None:
         )
         return
 
-    content = claude_md.read_text(encoding="utf-8")
-    template = _load_template()
-    lines = content.splitlines()
-    begins = [i for i, line in enumerate(lines) if line.strip() == CLAUDE_MD_MARKER_BEGIN]
-    ends = [i for i, line in enumerate(lines) if line.strip() == CLAUDE_MD_MARKER_END]
-
-    malformed = _marker_structure_error(begins, ends)
-    if malformed is not None:
+    lines = claude_md.read_text(encoding="utf-8").splitlines()
+    try:
+        begin, end = claude_md_marker_lines(lines)
+    except ClaudeMdMarkerError as exc:
         items.append(
             DiffItem(
                 field="local.claude_md",
                 expected="well-formed template markers",
-                actual=malformed,
+                actual=str(exc),
             )
         )
         return
 
-    start, stop = _region_bounds(lines, begins[0], ends[0])
+    divergence = claude_md_region_divergence(lines, begin, end)
+    if divergence is not None:
+        items.append(divergence)
+
+
+class ClaudeMdMarkerError(ValueError):
+    """A CLAUDE.md whose template markers are absent or malformed.
+
+    The message is the diagnostic the audit reports as the actual value, for
+    example ``"no template markers"`` or ``"multiple begin markers"``.
+    """
+
+
+def load_claude_md_template() -> str:
+    """Return the packaged consumer template that the marked region must carry."""
+    return _load_template()
+
+
+def claude_md_marker_lines(lines: list[str]) -> tuple[int, int]:
+    """Return the indexes of the begin and end marker lines in ``lines``.
+
+    ``lines`` is the CLAUDE.md text split with :meth:`str.splitlines`. A
+    marker line matches after stripping surrounding whitespace. Raises
+    :class:`ClaudeMdMarkerError` unless there is exactly one begin marker
+    followed by exactly one end marker. This is the one marker parser: the
+    audit and ``vrg-claude-md-sync`` both use it.
+    """
+    begins = [i for i, line in enumerate(lines) if line.strip() == CLAUDE_MD_MARKER_BEGIN]
+    ends = [i for i, line in enumerate(lines) if line.strip() == CLAUDE_MD_MARKER_END]
+    malformed = _marker_structure_error(begins, ends)
+    if malformed is not None:
+        raise ClaudeMdMarkerError(malformed)
+    return begins[0], ends[0]
+
+
+def claude_md_region_divergence(lines: list[str], begin: int, end: int) -> DiffItem | None:
+    """Describe where the marked region leaves the template, or ``None`` when it matches.
+
+    ``begin`` and ``end`` are the marker line indexes from
+    :func:`claude_md_marker_lines`. Leading and trailing blank lines inside
+    the markers are ignored; every other line must equal the template's.
+    """
+    template_lines = _load_template().splitlines()
+    start, stop = _region_bounds(lines, begin, end)
     region = lines[start:stop]
-    if region != template.splitlines():
-        items.append(_first_divergence(region, start, stop, template.splitlines()))
+    if region == template_lines:
+        return None
+    return _first_divergence(region, start, stop, template_lines)
 
 
 def _check_claude_md_length(repo_root: Path, items: list[DiffItem]) -> None:

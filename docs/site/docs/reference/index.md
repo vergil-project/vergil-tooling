@@ -46,6 +46,7 @@ the dev-tree override venv.
 | [vrg-gitignore-sync](cli-tools-overview.md#vrg-gitignore-sync) | Check or write a repo's vergil-managed `.gitignore` block |
 | [vrg-dependabot-sync](cli-tools-overview.md#vrg-dependabot-sync) | Check or write a repo's canonical report-only `dependabot.yml` |
 | [vrg-claude-settings-sync](cli-tools-overview.md#vrg-claude-settings-sync) | Check or write a repo's managed `.claude/settings.json` |
+| [vrg-claude-md-sync](cli-tools-overview.md#vrg-claude-md-sync) | Check or write the template region of a repo's `CLAUDE.md` |
 | [vrg-fleet-sync](cli-tools-overview.md#vrg-fleet-sync) | Propagate a managed file across the fleet, one PR per drifted repo |
 | [vrg-ci-sync](cli-tools-overview.md#vrg-ci-sync) | Fleet sweep that strips retired inputs from each repo's `ci.yml` |
 | [vrg-xdist-sync](cli-tools-overview.md#vrg-xdist-sync) | Fleet sweep that adds `pytest-xdist` to each Python repo |

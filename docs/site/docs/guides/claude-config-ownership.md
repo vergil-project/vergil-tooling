@@ -251,7 +251,10 @@ and what needs judgment.
 It checks the following, each a hard failure with no transition window:
 
 - the repo `CLAUDE.md` is at most 200 lines;
-- the template markers are present;
+- the template markers are present, and the region between them is the
+  template verbatim (after a template change,
+  `vrg-fleet-sync --target claude-md` brings every repo back in line, one
+  PR per drifted repo);
 - no `AGENTS.md` exists;
 - `.claude/settings.json` equals the template after JSON parsing (after
   a template change, `vrg-fleet-sync --target claude-settings` brings
