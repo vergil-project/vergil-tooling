@@ -42,8 +42,13 @@ def main(argv: list[str] | None = None) -> int:
         ref = epics.parse_issue_ref(args.issue, default_repo=default_repo)
         action = _action(args, item_repo=f"{ref.owner}/{ref.repo}")
         result = intake_route.route(ref, action)
-    except (ValueError, intake_route.RouteHalfAppliedError) as exc:
-        # A half-applied route already names the item's state and the fix.
+    except (
+        ValueError,
+        intake_route.RouteHalfAppliedError,
+        epics.StandingEpicNotVisibleError,
+    ) as exc:
+        # A half-applied route already names the item's state and the fix; a
+        # queue epic created but not confirmed names the new epic to check.
         print(f"{_PROG}: {exc}", file=sys.stderr)
         return 1
     except github.NoInstallationError as exc:

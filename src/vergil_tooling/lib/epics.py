@@ -665,6 +665,18 @@ class EpicListTruncatedError(ValueError):
     """A listing reached its limit, so a row the caller needs may lie beyond it."""
 
 
+class EpicTitleAmbiguousError(ValueError):
+    """More than one open epic carries the title :func:`_find_epic_by_title` looked up.
+
+    *refs* are the matching epics, lowest number first, so a caller that knows
+    which one it created can name the others.
+    """
+
+    def __init__(self, message: str, refs: Sequence[IssueRef]) -> None:
+        super().__init__(message)
+        self.refs = tuple(refs)
+
+
 def refuse_truncated(rows: object, limit: int, what: str) -> None:
     """Raise :class:`EpicListTruncatedError` if *rows* is a list *limit* long or more.
 
@@ -730,8 +742,12 @@ def _find_epic_by_title(
             return IssueRef(owner=owner, repo=home_repo, number=oldest)
         nums = ", ".join(f"#{r['number']}" for r in rows)
         kind = labels[-1]
-        raise ValueError(
-            f"multiple {kind} epics titled {title!r} in {home} ({nums}) — pass an explicit --epic"
+        raise EpicTitleAmbiguousError(
+            f"multiple {kind} epics titled {title!r} in {home} ({nums}) — pass an explicit --epic",
+            [
+                IssueRef(owner=owner, repo=home_repo, number=number)
+                for number in sorted(int(r["number"]) for r in rows)
+            ],
         )
     if rows:
         return IssueRef(owner=owner, repo=home_repo, number=int(rows[0]["number"]))
@@ -768,6 +784,21 @@ class StandingEpicNotVisibleError(RuntimeError):
     """A standing epic was created but never became visible to the title lookup."""
 
 
+class StandingEpicDuplicateError(StandingEpicNotVisibleError):
+    """A standing epic was created but the title lookup lists another epic with its title.
+
+    Raised by :func:`_await_listed` in place of the lookup's
+    :class:`EpicTitleAmbiguousError`, so the error names the epic this run
+    created (*created*) and the other same-titled epics (*others*), which only
+    this run can tell apart.
+    """
+
+    def __init__(self, message: str, created: IssueRef, others: Sequence[IssueRef]) -> None:
+        super().__init__(message)
+        self.created = created
+        self.others = tuple(others)
+
+
 def _await_listed(
     kind: StandingKind,
     home: str,
@@ -785,12 +816,24 @@ def _await_listed(
     jittered backoff, the last sleep clamped to land on the deadline, followed
     by one final look. Raises :class:`StandingEpicNotVisibleError` naming
     *created* and what the lookup last saw if the budget runs out. A lookup
-    that sees two same-titled epics raises its own ambiguity error at once.
+    that sees two or more same-titled epics stops the wait at once with
+    :class:`StandingEpicDuplicateError`, naming *created* and the others.
     """
     deadline = clock() + STANDING_EPIC_VISIBILITY_BUDGET_SECS
     attempt = 0
     while True:
-        seen = _find_epic_by_title(home, title, labels=kind.labels)
+        try:
+            seen = _find_epic_by_title(home, title, labels=kind.labels)
+        except EpicTitleAmbiguousError as exc:
+            others = [ref for ref in exc.refs if ref != created]
+            listed = "" if len(others) < len(exc.refs) else f"; {created.slug} is not listed yet"
+            raise StandingEpicDuplicateError(
+                f"created {kind.key} epic {created.slug} ({title!r}) but {home} also has "
+                f"open epics with that title: {', '.join(ref.slug for ref in others)}{listed}; "
+                f"keep one and close the rest before retrying",
+                created,
+                others,
+            ) from exc
         if seen == created:
             return
         remaining = deadline - clock()
@@ -827,7 +870,9 @@ def ensure_standing_epic(
     new epic (see :func:`_await_listed`), so a back-to-back caller finds it
     rather than creating a duplicate; it raises
     :class:`StandingEpicNotVisibleError` if that never happens within
-    :data:`STANDING_EPIC_VISIBILITY_BUDGET_SECS`. *sleep* and *clock* default to
+    :data:`STANDING_EPIC_VISIBILITY_BUDGET_SECS`, or its
+    :class:`StandingEpicDuplicateError` subclass, naming the new epic, if the
+    lookup lists another epic with the same title. *sleep* and *clock* default to
     :func:`time.sleep`/:func:`time.monotonic` (resolved at call time) and are
     injectable for tests.
     """

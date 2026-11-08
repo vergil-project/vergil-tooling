@@ -945,6 +945,20 @@ def test_ensure_adhoc_epic_multiple_same_title_raises() -> None:
         epics.ensure_adhoc_epic("org/tooling")
 
 
+def test_find_epic_by_title_ambiguity_names_every_match_lowest_first() -> None:
+    # The ambiguity error is still a ValueError, and carries the matching refs.
+    with (
+        patch(
+            "vergil_tooling.lib.github.read_json",
+            return_value=[_adhoc_row(7), _adhoc_row(3)],
+        ),
+        pytest.raises(epics.EpicTitleAmbiguousError, match=r"\(#7, #3\)") as excinfo,
+    ):
+        epics._find_epic_by_title("org/.github", "Epic (ad hoc): tooling")
+    assert isinstance(excinfo.value, ValueError)
+    assert excinfo.value.refs == (IssueRef("org", ".github", 3), IssueRef("org", ".github", 7))
+
+
 def test_resolve_epic_ref_explicit_validates_epic() -> None:
     with patch("vergil_tooling.lib.epics.is_epic", return_value=True):
         assert epics.resolve_epic_ref("org/.github#40", repo="org/repo") == IssueRef(
@@ -2408,6 +2422,58 @@ def test_ensure_standing_epic_never_visible_names_other_epic_seen() -> None:
         epics.ensure_standing_epic(
             epics.DEFERRED, "org/.github", "org", sleep=fake.sleep, clock=fake.clock
         )
+
+
+def test_ensure_standing_epic_duplicate_after_create_names_created_ref() -> None:
+    # A concurrent creator (or a create the first lookup missed) leaves two
+    # same-titled epics: stop at once, naming the one this run created (#3819).
+    fake = _FakeClock()
+    both = [{"number": 9, "title": "Epic (deferred): org"}, _DEFERRED_ROW]
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=[[], both]),
+        patch("vergil_tooling.lib.epics.ensure_labels"),
+        patch("vergil_tooling.lib.github.create_issue", return_value=_DEFERRED_URL),
+        pytest.raises(epics.StandingEpicDuplicateError) as excinfo,
+    ):
+        epics.ensure_standing_epic(
+            epics.DEFERRED, "org/.github", "org", sleep=fake.sleep, clock=fake.clock
+        )
+    exc = excinfo.value
+    assert isinstance(exc, epics.StandingEpicNotVisibleError)
+    assert isinstance(exc.__cause__, epics.EpicTitleAmbiguousError)
+    assert exc.created == IssueRef("org", ".github", 10)
+    assert exc.others == (IssueRef("org", ".github", 9),)
+    assert str(exc) == (
+        "created deferred epic org/.github#10 ('Epic (deferred): org') but org/.github also "
+        "has open epics with that title: org/.github#9; keep one and close the rest before "
+        "retrying"
+    )
+    assert fake.sleeps == []
+
+
+def test_ensure_standing_epic_duplicates_without_created_ref_say_it_is_unlisted() -> None:
+    # Two other same-titled epics are listed and ours is not yet: name them all.
+    fake = _FakeClock()
+    others = [
+        {"number": 8, "title": "Epic (deferred): org"},
+        {"number": 9, "title": "Epic (deferred): org"},
+    ]
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=[[], others]),
+        patch("vergil_tooling.lib.epics.ensure_labels"),
+        patch("vergil_tooling.lib.github.create_issue", return_value=_DEFERRED_URL),
+        pytest.raises(
+            epics.StandingEpicDuplicateError,
+            match=(
+                r"epic org/\.github#10 .* org/\.github#8, org/\.github#9; "
+                r"org/\.github#10 is not listed yet;"
+            ),
+        ) as excinfo,
+    ):
+        epics.ensure_standing_epic(
+            epics.DEFERRED, "org/.github", "org", sleep=fake.sleep, clock=fake.clock
+        )
+    assert excinfo.value.others == (IssueRef("org", ".github", 8), IssueRef("org", ".github", 9))
 
 
 def test_ensure_standing_epic_back_to_back_creates_exactly_one() -> None:
