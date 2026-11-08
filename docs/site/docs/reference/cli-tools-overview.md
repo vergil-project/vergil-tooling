@@ -983,6 +983,12 @@ become `validate_stages`. The change class is
 [`vrg-change-class`](#vrg-change-class)'s, with the allow-list committed at
 the merge base.
 
+It reads the body of the `--issue` itself, as `issue_body`, and derives
+`epic_open_tasks` from the issue's native parent: when the parent carries
+`epic` and not `ad-hoc`, its open sub-issues, every page, as
+`{"ref", "title"}`, without the issue itself; otherwise `[]`. It refuses
+when the issue, its parent's labels or the sub-issues cannot be read.
+
 It reads the comments of the `--issue` itself, every page, and keeps only
 those posted by the one human login of the trusted-authors configuration
 (see [`vrg-trusted-authors`](#vrg-trusted-authors)), oldest first, as
@@ -1013,8 +1019,8 @@ makes there, and writes only to the path it prints.
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_merge_review_request` (library: `lib/merge_review/request.py`, `lib/merge_review/state.py`, `lib/build_dir.py`, `lib/validate_record.py`, `lib/rulings/comments.py`, `lib/rulings/identity.py`) |
-| Args | `--issue OWNER/NAME#N --base REF --step {review,check,check-<k>} --issue-body-file FILE --epic-tasks-file FILE [--design-source FILE]... [--fix-base SHA --earlier-result FILE... --fix-id ID... [--ruled-id ID]...]`, or `--issue OWNER/NAME#N --ensure-dir` |
-| Preconditions | Run inside the task's worktree after `vrg-container-run -- vrg-validate` passed at `HEAD`; `--epic-tasks-file` holds a JSON list of `{"ref", "title"}`; trusted authors are configured with exactly one human login, and GitHub is reachable to read the issue's comments |
+| Args | `--issue OWNER/NAME#N --base REF --step {review,check,check-<k>} [--design-source FILE]... [--fix-base SHA --earlier-result FILE... --fix-id ID... [--ruled-id ID]...]`, or `--issue OWNER/NAME#N --ensure-dir` |
+| Preconditions | Run inside the task's worktree after `vrg-container-run -- vrg-validate` passed at `HEAD`; trusted authors are configured with exactly one human login, and GitHub is reachable to read the issue, its comments and its epic's sub-issues |
 | Failure mode | `ERROR: <reason>` on stderr, nothing on stdout |
 | Exit codes | 0 the path was printed, 1 a refusal or error, 2 bad arguments, 3 a check's `--fix-base` is not an ancestor of `HEAD` (the branch was rebased) |
 | Status | Active |

@@ -1,8 +1,7 @@
 """Build a merge-review request from a clean, fully validated branch.
 
 ``vrg-merge-review-request --issue <owner/name#N> --base <ref> --step
-review|check|check-<k> --issue-body-file <path> --epic-tasks-file <path>
-[--design-source <path>]...
+review|check|check-<k> [--design-source <path>]...
 [--fix-base <sha> --earlier-result <path>... --fix-id <ID>... [--ruled-id <ID>]...]``
 writes ``request-<step>.json``, ``diff-<step>.patch`` and, for a check,
 ``fix-<step>.patch`` into the task's
@@ -20,7 +19,13 @@ that started clean at ``HEAD``, exited 0 and passed every stage. The base
 SHA is the merge base of ``--base`` and ``HEAD``; the change class comes
 from the files changed since it, against the allow-list committed there.
 
-The builder reads the comments of the ``--issue`` itself, every page, and
+The builder reads the body of the ``--issue`` itself, and derives the
+epic's open tasks from its native parent: when the parent carries ``epic``
+and not ``ad-hoc``, its open sub-issues, every page, as ``{"ref",
+"title"}``, without the task; otherwise none. It refuses when either cannot
+be read.
+
+It also reads the comments of the ``--issue`` itself, every page, and
 keeps only those posted by the one human login of the trusted-authors
 configuration, oldest first, as ``issue_comments`` (``{"author",
 "created_at", "body"}``). An edited human comment is left out and counted
@@ -122,11 +127,6 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--base", help="the base branch, such as origin/develop")
     parser.add_argument("--step", help="review, check or check-<k> (k from 2 to 9)")
-    parser.add_argument("--issue-body-file", help="a file holding the issue's body")
-    parser.add_argument(
-        "--epic-tasks-file",
-        help='a JSON list of the epic\'s open tasks, each {"ref": "owner/name#N", "title": "..."}',
-    )
     parser.add_argument(
         "--design-source", action="append", default=[], help="a design document (repeatable)"
     )
@@ -150,7 +150,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _check_usage(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
-    building = ("base", "step", "issue_body_file", "epic_tasks_file")
+    building = ("base", "step")
     if args.ensure_dir:
         given = [name for name in (*building, *_CHECK_ONLY) if getattr(args, name)]
         if given or args.design_source:
@@ -177,8 +177,7 @@ def _build(args: argparse.Namespace, issue: IssueRef) -> Path:
     record = read_record(worktree)
     req.check_validated(record, head, worktree_clean=git.working_tree_status() == "")
     base_sha, change_class = classify_branch(args.base, head)
-    issue_body = req.read_issue_body(Path(args.issue_body_file))
-    epic_tasks = req.read_epic_tasks(Path(args.epic_tasks_file))
+    task = req.fetch_task_context(issue)
     design_sources = req.design_source_paths(args.design_source)
     issue_comments = req.fetch_human_comments(issue)
     fix_base_sha = _fix_base(args.fix_base, head) if is_check(step) else None
@@ -205,7 +204,7 @@ def _build(args: argparse.Namespace, issue: IssueRef) -> Path:
             request_id=secrets.token_hex(16),
             step=step,
             issue=issue,
-            issue_body=issue_body,
+            issue_body=task.issue_body,
             issue_comments=issue_comments,
             base_sha=base_sha,
             head_sha=head,
@@ -214,7 +213,7 @@ def _build(args: argparse.Namespace, issue: IssueRef) -> Path:
             change_class=change_class,
             design_sources=design_sources,
             validate_stages=list(record.passed),
-            epic_open_tasks=epic_tasks,
+            epic_open_tasks=task.epic_open_tasks,
         ),
         check,
     )

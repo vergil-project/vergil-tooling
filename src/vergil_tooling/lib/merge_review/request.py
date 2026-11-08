@@ -15,7 +15,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, NoReturn
+from typing import TYPE_CHECKING, Any, NoReturn
 
 from vergil_tooling.lib import github
 from vergil_tooling.lib.epics import parse_issue_ref
@@ -41,8 +41,6 @@ if TYPE_CHECKING:
 #: The exit code of a check whose fix base was rebased away (the skill's ``B1``).
 EXIT_REBASED = 3
 
-_EPIC_TASK_FIELDS = frozenset({"ref", "title"})
-
 #: A full commit SHA, SHA-1 or SHA-256, as ``git rev-parse`` prints it.
 _COMMIT_SHA_RE = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
 
@@ -58,6 +56,11 @@ class RequestError(Exception):
 def refuse(message: str, exit_code: int = 1) -> NoReturn:
     """Raise the builder's one refusal, :class:`RequestError`."""
     raise RequestError(message, exit_code)
+
+
+def _unreadable(detail: str) -> NoReturn:
+    """Refuse because the issue or its epic could not be read as expected."""
+    refuse(f"cannot read the issue or its epic: {detail}")
 
 
 def request_file(step: str) -> str:
@@ -121,35 +124,148 @@ def check_validated(record: ValidateRecord, head: str, *, worktree_clean: bool) 
         refuse(f"the last vrg-validate run did not pass every stage ({names}): {rerun}")
 
 
-def read_issue_body(path: Path) -> str:
-    """The issue body file's text, refusing an unreadable file."""
-    try:
-        return path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as exc:
-        refuse(f"cannot read the issue body file {path}: {exc}")
+@dataclass(frozen=True)
+class TaskContext:
+    """What GitHub holds about the task: its body and its epic's other open tasks."""
+
+    issue_body: str
+    epic_open_tasks: list[dict[str, str]]
 
 
-def read_epic_tasks(path: Path) -> list[dict[str, str]]:
-    """The epic tasks file: a JSON list of ``{"ref": "owner/name#N", "title": "..."}``."""
+def fetch_task_context(issue: IssueRef) -> TaskContext:
+    """Read *issue*'s body and derive its epic's open tasks, both from GitHub.
+
+    The task is **under an epic** when its native parent carries the ``epic``
+    label and not ``ad-hoc``; its open tasks are then the parent's open
+    sub-issues, every page, as ``{"ref": "owner/name#N", "title": "..."}``,
+    leaving out the task itself. A task with no native parent, or whose parent
+    is not such an epic, has none. Nothing is taken from a file the agent
+    wrote. A read failure or an unexpected shape is a refusal, never an empty
+    body or an empty list; a missing GitHub token propagates to the CLI's
+    auth-error boundary.
+    """
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        refuse(f"cannot read the epic tasks file {path}: {exc}")
-    if not isinstance(data, list):
-        refuse(f"the epic tasks file {path} must hold a JSON list")
-    for position, task in enumerate(data, start=1):
-        if (
-            not isinstance(task, dict)
-            or set(task) != _EPIC_TASK_FIELDS
-            or not isinstance(task["ref"], str)
-            or not isinstance(task["title"], str)
-        ):
-            refuse(f"the epic tasks file {path}: entry {position} must be {{ref, title}} strings")
-        try:
-            parse_issue_ref(task["ref"], default_repo="")
-        except ValueError:
-            refuse(f"the epic tasks file {path}: entry {position}'s ref must be owner/name#N")
-    return data
+        with github.target_org(issue.owner):
+            body, parent = _fetch_task(issue)
+            tasks = [] if parent is None else _open_sub_issues(parent, issue)
+    except github.MissingGitHubTokenError:
+        raise
+    except (github.GitHubAPIError, RuntimeError) as exc:  # RuntimeError: a GraphQL error
+        _unreadable(str(exc))
+    return TaskContext(issue_body=body, epic_open_tasks=tasks)
+
+
+_TASK_QUERY = """
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    issue(number: $number) {
+      body
+      parent {
+        number
+        repository { nameWithOwner }
+        labels(first: 100) { totalCount nodes { name } }
+      }
+    }
+  }
+}
+"""
+
+_SUB_ISSUES_QUERY = """
+query($owner: String!, $name: String!, $number: Int!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    issue(number: $number) {
+      subIssues(first: 100, after: $after) {
+        pageInfo { hasNextPage endCursor }
+        nodes { number state title repository { nameWithOwner } }
+      }
+    }
+  }
+}
+"""
+
+
+def _issue_node(data: object, where: str) -> dict[str, Any]:
+    """The ``repository.issue`` object of a GraphQL response, refusing any other shape."""
+    repository = data.get("repository") if isinstance(data, dict) else None
+    node = repository.get("issue") if isinstance(repository, dict) else None
+    if not isinstance(node, dict):
+        _unreadable(f"{where}: issue not found")
+    return node
+
+
+def _ref_of(number: object, repository: object, where: str) -> IssueRef:
+    """An ``IssueRef`` from a GraphQL ``number`` and ``repository { nameWithOwner }``."""
+    name = repository.get("nameWithOwner") if isinstance(repository, dict) else None
+    if not isinstance(number, int) or isinstance(number, bool) or not isinstance(name, str):
+        _unreadable(f"{where}: an issue has no number or repository")
+    try:
+        return parse_issue_ref(f"{name}#{number}", default_repo="")
+    except ValueError:
+        _unreadable(f"{where}: an issue has no usable ref")
+
+
+def _fetch_task(issue: IssueRef) -> tuple[str, IssueRef | None]:
+    """*issue*'s body and, when it is under an epic, that epic's ref."""
+    where = issue.slug
+    data = github.graphql(_TASK_QUERY, owner=issue.owner, name=issue.repo, number=issue.number)
+    node = _issue_node(data, where)
+    body = node.get("body")
+    if not isinstance(body, str):
+        _unreadable(f"{where}: the issue has no body string")
+    parent = node.get("parent")
+    if parent is None:
+        return body, None
+    if not isinstance(parent, dict):
+        _unreadable(f"{where}: its parent is not an object")
+    parent_ref = _ref_of(parent.get("number"), parent.get("repository"), where)
+    labels = parent.get("labels")
+    nodes = labels.get("nodes") if isinstance(labels, dict) else None
+    total = labels.get("totalCount") if isinstance(labels, dict) else None
+    if not isinstance(nodes, list) or not isinstance(total, int) or total != len(nodes):
+        _unreadable(f"{parent_ref.slug}: its labels are incomplete")
+    names: set[str] = set()
+    for label in nodes:
+        name = label.get("name") if isinstance(label, dict) else None
+        if not isinstance(name, str):
+            _unreadable(f"{parent_ref.slug}: a label has no name")
+        names.add(name)
+    under_epic = "epic" in names and "ad-hoc" not in names
+    return body, parent_ref if under_epic else None
+
+
+def _open_sub_issues(epic: IssueRef, task: IssueRef) -> list[dict[str, str]]:
+    """*epic*'s open sub-issues, every page, as ``{ref, title}``, without *task*."""
+    where = epic.slug
+    tasks: list[dict[str, str]] = []
+    after: str | None = None
+    while True:
+        variables: dict[str, object] = {
+            "owner": epic.owner,
+            "name": epic.repo,
+            "number": epic.number,
+        }
+        if after is not None:
+            variables["after"] = after
+        page = _issue_node(github.graphql(_SUB_ISSUES_QUERY, **variables), where).get("subIssues")
+        nodes = page.get("nodes") if isinstance(page, dict) else None
+        info = page.get("pageInfo") if isinstance(page, dict) else None
+        if not isinstance(nodes, list) or not isinstance(info, dict):
+            _unreadable(f"{where}: the sub-issues page is malformed")
+        for node in nodes:
+            if not isinstance(node, dict):
+                _unreadable(f"{where}: a sub-issue is not an object")
+            ref = _ref_of(node.get("number"), node.get("repository"), where)
+            state, title = node.get("state"), node.get("title")
+            if not isinstance(state, str) or not isinstance(title, str):
+                _unreadable(f"{ref.slug} has no state or title")
+            if state.upper() == "OPEN" and ref.slug.lower() != task.slug.lower():
+                tasks.append({"ref": ref.slug, "title": title})
+        if not info.get("hasNextPage"):
+            return tasks
+        cursor = info.get("endCursor")
+        if not isinstance(cursor, str) or not cursor:
+            _unreadable(f"{where}: more sub-issues but no cursor")
+        after = cursor
 
 
 @dataclass(frozen=True)
