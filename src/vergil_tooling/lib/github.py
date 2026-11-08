@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from vergil_tooling.lib import retry
 from vergil_tooling.lib.process_errors import error_text, failure_detail, failure_message
+from vergil_tooling.lib.ref_refusal import ruleset_hint
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Generator, Iterator, Sequence
@@ -555,10 +556,16 @@ def _gh_env() -> dict[str, str] | None:
 
 
 class GitHubAPIError(subprocess.CalledProcessError):
-    """``CalledProcessError`` that includes captured API output in its message."""
+    """``CalledProcessError`` that includes captured API output in its message.
+
+    A REST refs write refused with a bare 422 also gets
+    :func:`~vergil_tooling.lib.ref_refusal.ruleset_hint`'s note (#3997).
+    """
 
     def __str__(self) -> str:
-        return failure_detail(self)
+        hint = ruleset_hint(self)
+        detail = failure_detail(self)
+        return f"{detail}\n{hint}" if hint else detail
 
 
 # gh in a GitHub Actions runner exits non-zero with this guidance when no auth
