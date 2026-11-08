@@ -17699,8 +17699,8 @@ own <code>vergil-project/vergil-actions@v2.1</code> references are a <strong>per
 exception — they are our release line, not a mutable third-party tag.
 Every other semgrep rule stays enforced.</p>
 <h4 id="suppressing-a-reviewed-finding-in-source">Suppressing a reviewed finding in source<a class="headerlink" href="#suppressing-a-reviewed-finding-in-source" title="Permanent link">&para;</a></h4>
-<p>The SARIF gate (<code>vrg-sarif-evaluate</code>, and the <code>vrg-semgrep-scan</code> /
-<code>vrg-trivy-scan</code> wrappers, all backed by <code>src/vergil_tooling/lib/sarif.py</code>)
+<p>The SARIF gate (<code>vrg-sarif-evaluate</code>, and the <code>vrg-semgrep-scan</code> wrapper,
+both backed by <code>src/vergil_tooling/lib/sarif.py</code>)
 honors SARIF result <strong>suppressions</strong>. A result does <strong>not</strong> fail the gate
 when its <code>suppressions</code> array holds an entry with:</p>
 <ul>

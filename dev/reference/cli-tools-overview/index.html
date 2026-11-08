@@ -13933,17 +13933,6 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#vrg-trivy-scan" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        vrg-trivy-scan
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#vrg-ecosystem-resolve" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18687,17 +18676,6 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#vrg-trivy-scan" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        vrg-trivy-scan
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#vrg-ecosystem-resolve" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -22435,43 +22413,6 @@ the CI security workflow.</p>
 <tr>
 <td>Failure mode</td>
 <td>Exit 2 when semgrep itself fails</td>
-</tr>
-<tr>
-<td>Exit codes</td>
-<td>0 no findings, 1 findings, 2 scan failed</td>
-</tr>
-<tr>
-<td>Status</td>
-<td>Active</td>
-</tr>
-</tbody>
-</table>
-<h3 id="vrg-trivy-scan">vrg-trivy-scan<a class="headerlink" href="#vrg-trivy-scan" title="Permanent link">&para;</a></h3>
-<p>Run a Trivy vulnerability scan of a filesystem or image, writing SARIF and
-table output, report findings, and optionally write a CycloneDX SBOM.</p>
-<table>
-<thead>
-<tr>
-<th>Attribute</th>
-<th>Value</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Source</td>
-<td><code>vergil_tooling.bin.vrg_trivy_scan</code></td>
-</tr>
-<tr>
-<td>Args</td>
-<td><code>--type {filesystem,image}</code> (required), <code>--target</code> (required), <code>--output-dir</code> (required), <code>--trivyignore</code>, <code>--sbom</code>, <code>--severity</code> (default <code>MEDIUM,HIGH,CRITICAL</code>)</td>
-</tr>
-<tr>
-<td>Preconditions</td>
-<td><code>trivy</code> on PATH</td>
-</tr>
-<tr>
-<td>Failure mode</td>
-<td>Exit 2 when trivy itself fails</td>
 </tr>
 <tr>
 <td>Exit codes</td>
