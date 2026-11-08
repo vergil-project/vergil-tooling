@@ -21772,11 +21772,11 @@ instead and flags it with a <code>DEV tooling</code> banner, and a plain
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>Run by the human (any agent identity is refused, exit 1); host with Lima (local VMs) or the off-platform backend configured; <code>identities.toml</code></td>
+<td>Run by the human (any agent identity is refused, exit 1); host with Lima (local VMs) or the off-platform backend configured; <code>identities.toml</code>; a valid host <code>~/.claude/settings.json</code> for <code>start</code>, <code>rebuild</code>, <code>session</code>, <code>update</code> and an off-platform <code>create</code></td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>Error on stderr; an agent identity is refused before any work; <code>update --all</code> attempts every box and reports each failure</td>
+<td>Error on stderr; an agent identity is refused before any work; a missing or invalid host <code>~/.claude/settings.json</code> is refused, naming the file, before any VM is touched; <code>update --all</code> attempts every box and reports each failure</td>
 </tr>
 <tr>
 <td>Exit codes</td>

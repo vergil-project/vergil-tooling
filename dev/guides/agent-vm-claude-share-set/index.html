@@ -17218,8 +17218,11 @@ projection</a>.</p>
 </table>
 <p><code>copy_claude_config</code> additionally copies <code>CLAUDE.md</code> and <code>settings.json</code>
 into each VM on every start, rebuild and session, on cloud create, and on
-every <code>vrg-vm update</code> (which requires the host <code>settings.json</code> and fails,
-naming it, when it is missing). The guest <code>CLAUDE.md</code> is a read-only copy of
+every <code>vrg-vm update</code>. The host <code>settings.json</code> is required on every one of
+these paths: each command checks it before touching any VM and refuses,
+naming the file, when it is missing or is not valid settings, rather than
+leaving an earlier guest copy in place. It is the single source of the guest
+copy, even though provisioning writes an initial one. The guest <code>CLAUDE.md</code> is a read-only copy of
 the host's on every transport: <code>copy_claude_config</code> is the sole owner of its
 file mode and runs <code>chmod a-w</code> on it after each copy, and removes the guest
 copy when the host has none. The mode makes an accidental write fail loudly;
