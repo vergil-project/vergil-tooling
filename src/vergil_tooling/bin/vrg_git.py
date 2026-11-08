@@ -12,6 +12,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import NamedTuple
 
 from vergil_tooling.lib import branch_names, epics, github, retry
 from vergil_tooling.lib.cli import cli_main
@@ -296,7 +297,14 @@ def _run(argv: list[str]) -> int:
             # at submit time. Warn and report success so the agent proceeds to
             # report-ready instead of mistreating a normal case as a failure
             # (#2540). Any other push failure keeps its original returncode.
-            _print_workflow_push_guidance()
+            # A stale branch, whose own commits change no workflow file but
+            # whose tree carries an outdated one, is refused the same way; its
+            # remedy is a rebase, not report-ready, so it stays a failure (#3814).
+            diagnosis = _diagnose_workflow_refusal(argv[1:])
+            if diagnosis.kind == "stale":
+                _print_stale_workflow_push_guidance(diagnosis)
+                return net_result.returncode
+            _print_workflow_push_guidance(diagnosis)
             return 0
         return net_result.returncode
 
@@ -884,17 +892,180 @@ def _check_frozen_push(args: list[str]) -> str | None:
     )
 
 
-def _print_workflow_push_guidance() -> None:
+_WORKFLOWS_PATH = ".github/workflows/"
+
+# Push flags that leave the pushed commits as named by the refspecs, so the
+# refused push is still "this branch at HEAD" and its workflow refusal can be
+# diagnosed against the branch's own diff. Any other flag (``--all``,
+# ``--mirror``, ``--tags``, ``-o``, ...) leaves the diagnosis unknown (#3814).
+_DIAGNOSABLE_PUSH_FLAGS = _PUBLISH_SAFE_PUSH_FLAGS | {
+    "--force-with-lease",
+    "--force-if-includes",
+    "--no-verify",
+    "--atomic",
+}
+
+
+class _WorkflowRefusal(NamedTuple):
+    """Why GitHub refused a push for ``.github/workflows/**`` changes (#3814).
+
+    *kind* is ``own`` when the branch's own commits (since its merge-base with
+    the remote's default branch) change a workflow file, ``stale`` when they
+    change none but the default branch changed one since that merge-base, and
+    ``unknown`` when vrg-git could not tell (*reason* says why).
+    """
+
+    kind: str
+    base: str = ""
+    files: tuple[str, ...] = ()
+    reason: str = ""
+
+
+def _git_read(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(  # noqa: S603
+        ["git", *args],  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def _pushed_remote_if_head_only(args: list[str]) -> tuple[str, str | None]:
+    """Return ``(remote, None)`` when ``git push *args`` pushes only HEAD, else a reason.
+
+    A bare push (or one naming only the remote) pushes the current branch
+    under the default ``push.default``; an explicit refspec must take its
+    source from HEAD or the current branch. Fail-closed: anything else is
+    reported as undiagnosable rather than guessed.
+    """
+    positionals: list[str] = []
+    for arg in args:
+        if arg.startswith("-"):
+            if arg not in _DIAGNOSABLE_PUSH_FLAGS and not arg.startswith("--force-with-lease="):
+                return "", f"the push uses {arg}"
+        else:
+            positionals.append(arg)
+    remote = positionals[0] if positionals else "origin"
+    refspecs = positionals[1:]
+    if not refspecs:
+        return remote, None
+    current = _git_read("symbolic-ref", "--quiet", "--short", "HEAD")
+    branch = current.stdout.strip() if current.returncode == 0 else ""
+    names = {"HEAD"} | ({branch, f"refs/heads/{branch}"} if branch else set())
+    for refspec in refspecs:
+        src = refspec.removeprefix("+").partition(":")[0]
+        if src not in names:
+            return "", f"the push names {refspec!r}, not the current branch"
+    return remote, None
+
+
+def _diff_workflow_files(left: str, right: str) -> tuple[str, ...] | None:
+    """The ``.github/workflows/**`` files that differ between two commits, or None."""
+    result = _git_read("diff", "--name-only", left, right, "--", _WORKFLOWS_PATH)
+    if result.returncode != 0:
+        return None
+    return tuple(line for line in result.stdout.splitlines() if line)
+
+
+def _diagnose_workflow_refusal(args: list[str]) -> _WorkflowRefusal:
+    """Tell a branch that changes a workflow file from one that is only stale (#3814).
+
+    GitHub refuses an agent push whose tree differs from the default branch in
+    a workflow file, even when the branch's own commits never touched it: a
+    branch based on an older default branch carries the old copy. Only the
+    branch's own diff (merge-base to HEAD) says which case this is. Read-only:
+    nothing is fetched, so ``stale`` is reported only when the local refs show
+    both halves (no own workflow change, and a workflow difference from the
+    default branch); every other outcome keeps the usual hand-off guidance.
+    """
+    remote, not_head = _pushed_remote_if_head_only(args)
+    if not_head is not None:
+        return _WorkflowRefusal("unknown", reason=not_head)
+    head_ref = _git_read("symbolic-ref", "--quiet", f"refs/remotes/{remote}/HEAD")
+    if head_ref.returncode != 0 or not head_ref.stdout.strip():
+        return _WorkflowRefusal(
+            "unknown",
+            reason=(
+                f"{remote}'s default branch is not known locally "
+                f"(refs/remotes/{remote}/HEAD is not set)"
+            ),
+        )
+    base = head_ref.stdout.strip().removeprefix("refs/remotes/")
+    merge_base = _git_read("merge-base", base, "HEAD")
+    if merge_base.returncode != 0 or not merge_base.stdout.strip():
+        return _WorkflowRefusal("unknown", base=base, reason=f"HEAD has no merge-base with {base}")
+    own = _diff_workflow_files(merge_base.stdout.strip(), "HEAD")
+    if own is None:
+        return _WorkflowRefusal(
+            "unknown", base=base, reason=f"could not diff HEAD against its merge-base with {base}"
+        )
+    if own:
+        return _WorkflowRefusal("own", base=base, files=own)
+    upstream = _diff_workflow_files("HEAD", base)
+    if upstream is None:
+        return _WorkflowRefusal("unknown", base=base, reason=f"could not diff HEAD against {base}")
+    if upstream:
+        return _WorkflowRefusal("stale", base=base, files=upstream)
+    return _WorkflowRefusal(
+        "unknown",
+        base=base,
+        reason=(
+            f"neither the branch's own commits nor its difference from {base} "
+            f"touch {_WORKFLOWS_PATH} ({base} may be out of date locally)"
+        ),
+    )
+
+
+def _print_workflow_push_guidance(diagnosis: _WorkflowRefusal) -> None:
+    if diagnosis.kind == "own":
+        cause = (
+            f"  This branch's own commits change {_WORKFLOWS_PATH}** "
+            f"({', '.join(diagnosis.files)}),\n"
+            "  which an agent is not permitted to push;\n"
+        )
+    else:
+        cause = (
+            f"  GitHub refused it for {_WORKFLOWS_PATH}** changes, which an agent is"
+            " not permitted to push;\n"
+        )
     print(
         "\nvrg-git: warning: push skipped for workflow-file changes — this is"
         " EXPECTED and NOT an error.\n"
-        "  This branch touches .github/workflows/**, which an agent is not"
-        " permitted to push;\n"
+        f"{cause}"
         "  it does not need an agent push. The human's vrg-submit-pr pushes"
         " the branch at\n"
         "  submit time. PROCEED AS USUAL — run `vrg-pr-workflow report-ready`"
         " to hand off.\n"
         "  Do NOT remove the workflow files from the commit to force a push.",
+        file=sys.stderr,
+    )
+    if diagnosis.kind == "unknown":
+        base = diagnosis.base or "<default-branch>"
+        print(
+            f"  vrg-git could not check the branch's own diff: {diagnosis.reason}.\n"
+            f"  If `vrg-git diff {base}...HEAD -- {_WORKFLOWS_PATH}` is empty, the"
+            " branch is stale\n"
+            "  instead: rebase it onto the default branch rather than handing it off.",
+            file=sys.stderr,
+        )
+
+
+def _print_stale_workflow_push_guidance(diagnosis: _WorkflowRefusal) -> None:
+    remote = diagnosis.base.partition("/")[0]
+    print(
+        "\nvrg-git: error: push refused because the branch is STALE, not because it"
+        " changes workflows.\n"
+        f"  The branch's own commits change no {_WORKFLOWS_PATH}** file, but"
+        f" {diagnosis.base} changed\n"
+        f"  {', '.join(diagnosis.files)} since the branch's base, so its tree"
+        " carries an outdated copy\n"
+        "  and GitHub refuses the push. Update the branch onto the default branch:\n"
+        f"    vrg-git fetch {remote}\n"
+        f"    vrg-git rebase {diagnosis.base}\n"
+        "  then re-run `vrg-container-run -- vrg-validate` and push again"
+        " (with --force-with-lease\n"
+        "  if the branch is already on the remote). Do NOT hand this off with"
+        " `vrg-pr-workflow report-ready`.",
         file=sys.stderr,
     )
 
