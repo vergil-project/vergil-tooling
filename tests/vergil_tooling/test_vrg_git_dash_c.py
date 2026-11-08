@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
 _REAL_RUN = subprocess.run
-_OPEN_TASK = {"state": "OPEN", "labels": [{"name": "enhancement"}]}
+_OPEN_TASK: dict[str, object] = {"state": "OPEN", "labels": [{"name": "enhancement"}]}
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -280,9 +280,7 @@ def test_freeze_check_reads_the_dash_c_worktree(
 
 
 @pytest.mark.parametrize("subcmd", ["push", "fetch", "pull", "ls-remote"])
-def test_token_org_follows_the_dash_c_repo(
-    layout: Layout, run_vrg_git: Any, subcmd: str
-) -> None:
+def test_token_org_follows_the_dash_c_repo(layout: Layout, run_vrg_git: Any, subcmd: str) -> None:
     via_dash_c = run_vrg_git(layout.other, ["-C", str(layout.worktree), subcmd, "origin"])
     via_cd = run_vrg_git(layout.worktree, [subcmd, "origin"])
     from_start = run_vrg_git(layout.other, [subcmd, "origin"])
