@@ -2091,10 +2091,9 @@ class TestGenerateJwt:
         padding = 4 - len(payload_b64) % 4
         payload = json.loads(base64.urlsafe_b64decode(payload_b64 + "=" * padding))
         assert payload["iat"] == 1_000_000 - 60
-        assert payload["exp"] == 1_000_000 + 540
         # A local clock up to 60 s fast still keeps exp within GitHub's
         # 10-minute ceiling; one up to 60 s slow still keeps iat in the past.
-        assert payload["exp"] + 60 - 1_000_000 <= 600
+        assert payload["exp"] == 1_000_000 + 540
 
 
 class TestDetectOrg:
@@ -2832,6 +2831,20 @@ class TestGetInstallationToken:
         assert excinfo.value.detail == (
             "HTTP Error 401: Unauthorized on /app/installations "
             "(response body unreadable: connection reset)"
+        )
+
+    def test_jwt_http_error_detail_reports_truncated_body(self) -> None:
+        err = urllib.error.HTTPError(
+            "https://api.github.com/app/installations",
+            401,
+            "Unauthorized",
+            http.client.HTTPMessage(),
+            None,
+        )
+        with patch.object(err, "read", side_effect=http.client.IncompleteRead(b"{", 10)):
+            detail = github._jwt_http_error_detail(err)
+        assert detail.startswith(
+            "HTTP Error 401: Unauthorized on /app/installations (response body unreadable: "
         )
 
     def test_jwt_http_error_detail_truncates_long_message(self) -> None:

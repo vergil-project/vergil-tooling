@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 import contextvars
 import functools
+import http.client
 import json
 import logging
 import os
@@ -364,7 +365,7 @@ def _jwt_http_error_detail(exc: urllib.error.HTTPError) -> str:
     base = f"{exc} on {path}"
     try:
         body = exc.read()
-    except OSError as read_exc:
+    except (OSError, http.client.HTTPException) as read_exc:
         return f"{base} (response body unreadable: {read_exc})"
     try:
         data = json.loads(body)
