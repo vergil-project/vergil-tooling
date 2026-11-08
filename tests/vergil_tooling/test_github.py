@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vergil_tooling.lib import github
+from vergil_tooling.lib import epics, github
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -1106,21 +1106,88 @@ def test_list_org_repos_non_list_is_empty() -> None:
         assert github.list_org_repos("org") == []
 
 
-def test_list_project_repos() -> None:
-    with patch(
-        "vergil_tooling.lib.github.read_output",
-        return_value="acme/repo-b\nacme/repo-a\nacme/repo-a\n",
+def test_list_org_repos_passes_the_listing_limit() -> None:
+    with patch("vergil_tooling.lib.github.read_json", return_value=[]) as mock_read:
+        github.list_org_repos("org")
+    args = mock_read.call_args.args
+    assert args[args.index("--limit") + 1] == str(epics.LISTING_LIMIT)
+
+
+def test_list_org_repos_below_the_limit_is_returned() -> None:
+    rows = [{"name": f"r{i}"} for i in range(epics.LISTING_LIMIT - 1)]
+    with patch("vergil_tooling.lib.github.read_json", return_value=rows):
+        assert len(github.list_org_repos("org")) == epics.LISTING_LIMIT - 1
+
+
+def test_list_org_repos_refuses_a_listing_at_the_limit() -> None:
+    rows = [{"name": f"r{i}"} for i in range(epics.LISTING_LIMIT)]
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=rows),
+        pytest.raises(epics.EpicListTruncatedError, match="repo list of org"),
     ):
+        github.list_org_repos("org")
+
+
+def _project_row(name: str, *numbers: int) -> dict[str, object]:
+    return {
+        "nameWithOwner": name,
+        "projectsV2": {"Nodes": [{"number": n} for n in numbers]},
+    }
+
+
+def test_list_project_repos() -> None:
+    rows = [
+        _project_row("acme/repo-b", 5),
+        _project_row("acme/repo-a", 3, 5),
+        _project_row("acme/other", 3),
+        _project_row("acme/none"),
+        {"nameWithOwner": "acme/no-projects"},
+        "not-a-row",
+    ]
+    with patch("vergil_tooling.lib.github.read_json", return_value=rows) as mock_read:
         repos = github.list_project_repos("acme", "5")
     assert repos == ["acme/repo-a", "acme/repo-b"]
+    args = mock_read.call_args.args
+    assert args[:3] == ("repo", "list", "acme")
+    assert args[args.index("--limit") + 1] == str(epics.LISTING_LIMIT)
+    assert "--jq" not in args
 
 
 def test_list_project_repos_empty() -> None:
-    with patch(
-        "vergil_tooling.lib.github.read_output",
-        return_value="",
-    ):
+    with patch("vergil_tooling.lib.github.read_json", return_value=[]):
         assert github.list_project_repos("acme", "5") == []
+
+
+def test_list_project_repos_below_the_limit_is_returned() -> None:
+    rows = [_project_row(f"acme/r{i}", 5) for i in range(epics.LISTING_LIMIT - 1)]
+    with patch("vergil_tooling.lib.github.read_json", return_value=rows):
+        assert len(github.list_project_repos("acme", "5")) == epics.LISTING_LIMIT - 1
+
+
+def test_list_project_repos_refuses_a_listing_at_the_limit() -> None:
+    rows = [_project_row(f"acme/r{i}") for i in range(epics.LISTING_LIMIT)]
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=rows),
+        pytest.raises(epics.EpicListTruncatedError, match="repo list of acme"),
+    ):
+        github.list_project_repos("acme", "5")
+
+
+def test_list_project_repos_rejects_a_non_list() -> None:
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value={"unexpected": True}),
+        pytest.raises(TypeError, match="expected a list"),
+    ):
+        github.list_project_repos("acme", "5")
+
+
+def test_list_project_repos_rejects_a_non_numeric_project() -> None:
+    with (
+        patch("vergil_tooling.lib.github.read_json") as mock_read,
+        pytest.raises(ValueError, match="GitHub Project number"),
+    ):
+        github.list_project_repos("acme", "5) or (true")
+    mock_read.assert_not_called()
 
 
 def test_read_json_returns_parsed_dict() -> None:
