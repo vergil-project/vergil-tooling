@@ -5,6 +5,7 @@ Enforces a subcommand allowlist and flag deny lists.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import subprocess
@@ -123,8 +124,56 @@ def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
 
+    targets, argv = _split_dash_c(argv)
+    if targets is None:
+        print("vrg-git: option '-C' requires a value", file=sys.stderr)
+        return 2
+    if not targets:
+        return _run(argv)
+    # Apply each `-C <path>` the way git does (each relative to the one before,
+    # an empty one a no-op) by changing into it *before* any check runs, so
+    # every cwd-derived check and the token's org follow the -C repo exactly as
+    # they would follow a `cd` (#3737). The -C options are not forwarded: git
+    # already runs in the target, and re-applying a relative path would land
+    # elsewhere. The previous cwd is restored on return for in-process callers.
+    with contextlib.ExitStack() as stack:
+        for target in targets:
+            if not target:
+                continue
+            try:
+                stack.enter_context(contextlib.chdir(target))
+            except OSError as exc:
+                print(
+                    f"vrg-git: cannot change to '{target}': {exc.strerror or exc}",
+                    file=sys.stderr,
+                )
+                return 128
+        return _run(argv)
+
+
+def _split_dash_c(argv: list[str]) -> tuple[list[str] | None, list[str]]:
+    """Split the leading global ``-C <path>`` options off *argv*.
+
+    Returns ``(paths, rest)``: the ``-C`` paths in order and the remaining
+    arguments, starting at the subcommand. ``paths`` is None when a ``-C`` has
+    no value. Only the separate ``-C <path>`` form is git's (``-C<path>`` is
+    not), and only before the subcommand; any other global option stays an
+    unrecognized subcommand and is refused.
+    """
+    paths: list[str] = []
+    index = 0
+    while index < len(argv) and argv[index] == "-C":
+        if index + 1 >= len(argv):
+            return None, []
+        paths.append(argv[index + 1])
+        index += 2
+    return paths, argv[index:]
+
+
+def _run(argv: list[str]) -> int:
+    """Check *argv* against the policy in the current directory and run it."""
     if not argv:
-        print("usage: vrg-git <subcommand> [args...]", file=sys.stderr)
+        print("usage: vrg-git [-C <path>]... <subcommand> [args...]", file=sys.stderr)
         return 2
 
     if argv[0] in ("-h", "--help"):
@@ -890,10 +939,15 @@ def _print_help() -> None:
     """Print vrg-git's own help — what the wrapper enforces before forwarding."""
     denied = ", ".join(sorted(_DENIED))
     print(
-        "usage: vrg-git <subcommand> [args...]\n"
+        "usage: vrg-git [-C <path>]... <subcommand> [args...]\n"
         "\n"
         "A safe git wrapper for agent sessions: it forwards to git only after\n"
         "enforcing policy, so it is not a drop-in replacement for git.\n"
+        "\n"
+        "-C <path> runs as if started in <path> (repeatable, each relative to\n"
+        "the one before, as in git). It changes directory before any check,\n"
+        "so every check below, and the org of the identity token, applies to\n"
+        "the -C repo. No other global git option is accepted.\n"
         "\n"
         "What it enforces:\n"
         "  - Subcommand allowlist: read-only inspection commands plus a vetted\n"
