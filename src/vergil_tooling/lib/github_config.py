@@ -14,6 +14,7 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
+    import subprocess
     from collections.abc import Iterable, Sequence
 
     from vergil_tooling.lib.config import CiConfig, ProjectConfig, VergilConfig
@@ -83,11 +84,29 @@ class DesiredState:
     publish: DesiredPublishConfig
 
 
+@dataclass(frozen=True)
+class NotChecked:
+    """A setting the audit's identity could not read (#3816).
+
+    *field* is the dotted diff path (``security.vulnerability_alerts``) or,
+    for classic branch protection, ``classic_protection.<branch>``.
+    *permission* names what the read needs (``administration=read``). Such a
+    setting is neither drift nor compliant: it is reported as "not checked",
+    and an audit that has any is never a clean result.
+    """
+
+    field: str
+    permission: str
+
+
 @dataclass
 class FetchResult:
     state: DesiredState
     visibility: str
     owner_type: str
+    # Settings the token could not read. Their values in *state* are
+    # placeholders that compute_diff must never compare (#3816).
+    not_checked: list[NotChecked] = field(default_factory=list)
 
 
 _BASE_ACTION_PATTERNS = [
@@ -798,25 +817,97 @@ def compute_desired_state(
 # ---------------------------------------------------------------------------
 
 
-def _fetch_vulnerability_alerts(repo: str) -> bool:
+# The repository permission GitHub names (in ``X-Accepted-GitHub-Permissions``)
+# for every admin-scoped read the audit makes: vulnerability-alerts, the three
+# actions/permissions endpoints, classic branch protection, and the repo's
+# ``security_and_analysis`` block. The agent App does not hold it (#3816).
+ADMIN_READ = "administration=read"
+
+# Phrases GitHub puts on a 403 that means "this identity lacks the permission":
+# an App token gets the first, a user token without admin the second. A 403
+# without one (a rate limit, an SSO block) is not a permission gap and raises.
+_PERMISSION_GAP_PHRASES = ("resource not accessible by integration", "must have admin rights")
+
+
+def _is_permission_gap_text(text: str) -> bool:
+    lowered = text.lower()
+    return "403" in lowered and any(p in lowered for p in _PERMISSION_GAP_PHRASES)
+
+
+def _is_permission_gap(exc: github.GitHubAPIError) -> bool:
+    """True when a failed read is a 403 for a permission the token lacks."""
+    return _is_permission_gap_text(f"{exc.stderr or ''}\n{exc.stdout or ''}")
+
+
+def _is_permission_gap_result(result: subprocess.CompletedProcess[str]) -> bool:
+    """:func:`_is_permission_gap` for a ``gh api -i`` result that was not raised."""
+    status = github.http_status_line(result)
+    return "403" in status and _is_permission_gap_text(f"{result.stderr}\n{result.stdout}")
+
+
+def _without_headers(stdout: str | None) -> str:
+    """A ``gh api -i`` output with its response headers dropped (#3816).
+
+    Keeps the status line and the body, which say what failed; the header
+    block is noise in an error message.
+    """
+    if not stdout:
+        return ""
+    lines = stdout.split("\n")
+    if not lines[0].startswith("HTTP/"):
+        return stdout
+    _, _, body = stdout.partition("\n\n")
+    return f"{lines[0]}\n{body}".strip()
+
+
+def _fetch_vulnerability_alerts(repo: str) -> bool | None:
     """Check if vulnerability alerts are enabled (204 = enabled, 404 = disabled).
 
-    Transient GitHub errors are retried; any other status raises instead of
-    silently reading as "disabled" (#3151).
+    Returns ``None`` when the token lacks the permission to read them (a 403
+    naming a permission gap): the caller reports the setting as not checked
+    (#3816). Transient GitHub errors are retried; any other status raises
+    instead of silently reading as "disabled" (#3151).
     """
     cmd = ("gh", "api", f"repos/{repo}/vulnerability-alerts", "-i")
-    result = github.run_tolerating(cmd, is_answer=github.is_http_404)
+    try:
+        result = github.run_tolerating(
+            cmd,
+            is_answer=lambda r: github.is_http_404(r) or _is_permission_gap_result(r),
+        )
+    except github.GitHubAPIError as exc:
+        # Same error type (a MissingGitHubTokenError stays one), headers dropped.
+        raise type(exc)(exc.returncode, exc.cmd, _without_headers(exc.stdout), exc.stderr) from exc
     status = github.http_status_line(result)
     if "204" in status:
         return True
     if "404" in status:
         return False
+    if _is_permission_gap_result(result):
+        return None
     raise github.GitHubAPIError(
         result.returncode or 1,
         cmd,
-        result.stdout,
+        _without_headers(result.stdout),
         f"unexpected vulnerability-alerts status: {status!r}",
     )
+
+
+def _read_admin_json(
+    endpoint: str, fields: Sequence[str], not_checked: list[NotChecked]
+) -> dict[str, object] | list[object] | None:
+    """Read an admin-scoped endpoint, or record *fields* as not checked.
+
+    A 403 for a permission the token lacks returns ``None`` and appends a
+    :class:`NotChecked` for each of *fields* (#3816). Any other error
+    propagates.
+    """
+    try:
+        return github.read_json("api", endpoint)
+    except github.GitHubAPIError as exc:
+        if not _is_permission_gap(exc):
+            raise
+    not_checked.extend(NotChecked(field=f, permission=ADMIN_READ) for f in fields)
+    return None
 
 
 # API-default fields GitHub injects into rule parameters that the desired state
@@ -928,29 +1019,27 @@ def _preserved_classic_settings(protection: dict[str, object]) -> list[str]:
     ]
 
 
-def _classic_protection_absent_or_forbidden(exc: github.GitHubAPIError) -> bool:
-    """True when a classic-protection read failed with 404 (none) or 403 (perm).
+def _classic_protection_absent(exc: github.GitHubAPIError) -> bool:
+    """True when a classic-protection read failed with 404: the branch has none.
 
-    Both mean "nothing to read here", not a tooling fault: a branch with no
-    classic protection returns 404, and a token without admin scope returns 403.
-    Any other status is a real failure that must propagate — a fail-soft that
-    swallowed it would let genuine drift go unseen.
+    A 403 is not "none": it means the token cannot read the protection, so
+    the error propagates and the audit reports the branch as not checked
+    rather than as unprotected (#3816). Any other status is a real failure
+    that must propagate too.
     """
-    stderr = exc.stderr or ""
-    return "HTTP 404" in stderr or "HTTP 403" in stderr
+    return "HTTP 404" in (exc.stderr or "")
 
 
 def _read_classic_protection(repo: str, branch: str) -> dict[str, object] | None:
-    """Read a branch's classic protection, fail-soft on 404/permission.
+    """Read a branch's classic protection, ``None`` when the branch has none (404).
 
-    Returns the protection object, or ``None`` when the branch has no classic
-    protection or the token cannot read it. Any other API error propagates.
+    Any other API error propagates, a 403 included (#3816).
     """
     endpoint = f"repos/{repo}/branches/{branch}/protection"
     try:
         data = github.read_json("api", endpoint)
     except github.GitHubAPIError as exc:
-        if _classic_protection_absent_or_forbidden(exc):
+        if _classic_protection_absent(exc):
             return None
         raise
     return data if isinstance(data, dict) else None
@@ -1014,14 +1103,19 @@ def _stale_classic_ruleset(branch: str, stale_contexts: list[str]) -> DesiredRul
 
 
 def _classic_protection_drift(
-    repo: str, default_branch: str, rulesets: list[DesiredRuleset]
+    repo: str,
+    default_branch: str,
+    rulesets: list[DesiredRuleset],
+    not_checked: list[NotChecked],
 ) -> list[DesiredRuleset]:
     """Synthetic rulesets surfacing stale classic-protection CI legs as drift.
 
     Inspects the default branch plus every branch covered by an actual
     branch-target ruleset. For each that still enforces a stale version-suffixed
     CI leg via classic protection, emits a synthetic ruleset so the audit flags
-    it. Fail-soft: a branch with no classic protection contributes nothing.
+    it. A branch with no classic protection (404) contributes nothing; one the
+    token cannot read (a permission-gap 403) is recorded in *not_checked* as
+    ``classic_protection.<branch>``, never read as unprotected (#3816).
     """
     inspect: set[str] = set(_ruleset_branches(rulesets))
     if default_branch:
@@ -1029,7 +1123,15 @@ def _classic_protection_drift(
 
     synthetic: list[DesiredRuleset] = []
     for branch in sorted(inspect):
-        protection = _read_classic_protection(repo, branch)
+        try:
+            protection = _read_classic_protection(repo, branch)
+        except github.GitHubAPIError as exc:
+            if not _is_permission_gap(exc):
+                raise
+            not_checked.append(
+                NotChecked(field=f"classic_protection.{branch}", permission=ADMIN_READ)
+            )
+            continue
         if protection is None:
             continue
         stale = [c for c in _classic_required_contexts(protection) if _is_stale_ci_context(c)]
@@ -1052,8 +1154,21 @@ def fetch_actual_state(repo: str) -> FetchResult:
     )
     owner_type = str(owner.get("type", "User"))
 
+    not_checked: list[NotChecked] = []
+
     sa_raw = repo_data.get("security_and_analysis") if isinstance(repo_data, dict) else None
     sa: dict[str, object] = cast("dict[str, object]", sa_raw) if isinstance(sa_raw, dict) else {}
+    if isinstance(repo_data, dict) and repo_data.get("security_and_analysis") is None:
+        # GitHub returns this block only to an identity with admin access; its
+        # absence means "unreadable", never "all disabled" (#3816).
+        not_checked.extend(
+            NotChecked(field=f"security.{name}", permission=ADMIN_READ)
+            for name in (
+                "secret_scanning",
+                "secret_scanning_push_protection",
+                "dependabot_security_updates",
+            )
+        )
 
     repo_settings = DesiredRepoSettings(
         default_branch=str(repo_data.get("default_branch", ""))
@@ -1117,22 +1232,41 @@ def fetch_actual_state(repo: str) -> FetchResult:
     dsu = cast("dict[str, object]", dsu_raw) if isinstance(dsu_raw, dict) else {}
     dsu_status = str(dsu.get("status", "disabled"))
 
+    alerts = _fetch_vulnerability_alerts(repo)
+    if alerts is None:
+        not_checked.append(NotChecked(field="security.vulnerability_alerts", permission=ADMIN_READ))
     security = DesiredSecuritySettings(
         secret_scanning=ss_status,
         secret_scanning_push_protection=sspp_status,
-        vulnerability_alerts=_fetch_vulnerability_alerts(repo),
+        # False is a placeholder when unreadable; compute_diff skips it.
+        vulnerability_alerts=bool(alerts),
         dependabot_security_updates=dsu_status,
     )
 
-    actions_perm = github.read_json("api", f"repos/{repo}/actions/permissions")
-    actions_workflow = github.read_json("api", f"repos/{repo}/actions/permissions/workflow")
+    actions_perm = _read_admin_json(
+        f"repos/{repo}/actions/permissions",
+        ("actions_permissions.allowed_actions", "actions_permissions.patterns_allowed"),
+        not_checked,
+    )
+    actions_workflow = _read_admin_json(
+        f"repos/{repo}/actions/permissions/workflow",
+        (
+            "actions_permissions.default_workflow_permissions",
+            "actions_permissions.can_approve_pull_request_reviews",
+        ),
+        not_checked,
+    )
 
     patterns: list[str] = []
     allowed_actions = (
         actions_perm.get("allowed_actions") if isinstance(actions_perm, dict) else None
     )
     if allowed_actions == "selected":
-        selected = github.read_json("api", f"repos/{repo}/actions/permissions/selected-actions")
+        selected = _read_admin_json(
+            f"repos/{repo}/actions/permissions/selected-actions",
+            ("actions_permissions.patterns_allowed",),
+            not_checked,
+        )
         if isinstance(selected, dict):
             raw_patterns = selected.get("patterns_allowed")
             if isinstance(raw_patterns, list):
@@ -1197,7 +1331,9 @@ def fetch_actual_state(repo: str) -> FetchResult:
 
     # Fold any stale version-suffixed CI legs still enforced via classic branch
     # protection into the actual state so the audit flags them as drift (#338).
-    rulesets.extend(_classic_protection_drift(repo, repo_settings.default_branch, rulesets))
+    rulesets.extend(
+        _classic_protection_drift(repo, repo_settings.default_branch, rulesets, not_checked)
+    )
 
     return FetchResult(
         state=DesiredState(
@@ -1209,6 +1345,7 @@ def fetch_actual_state(repo: str) -> FetchResult:
         ),
         visibility=visibility,
         owner_type=owner_type,
+        not_checked=not_checked,
     )
 
 
@@ -1317,12 +1454,22 @@ class ConfigDiff:
     skipped: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     undeclared: list[UndeclaredParam] = field(default_factory=list)
+    # Settings the identity could not read (#3816): neither drift nor clean.
+    not_checked: list[NotChecked] = field(default_factory=list)
+
+    def has_drift(self) -> bool:
+        """True when a checked setting differs from the desired state.
+
+        An undeclared parameter is drift: the live ruleset enforces a knob
+        the spec never chose (#3548).
+        """
+        return len(self.items) != 0 or len(self.undeclared) != 0
 
     def is_compliant(self) -> bool:
-        # Warnings are advisory and deliberately do not affect compliance.
-        # An undeclared parameter does: the live ruleset enforces a knob the
-        # spec never chose (#3548).
-        return len(self.items) == 0 and len(self.undeclared) == 0
+        # Warnings are advisory and deliberately do not affect compliance. A
+        # setting that was not checked does: an audit that could not read it
+        # is never a clean result (#3816).
+        return not self.has_drift() and len(self.not_checked) == 0
 
 
 def _canonical_key(obj: object) -> str:
@@ -1509,8 +1656,29 @@ def _diff_producibility(
         )
 
 
-def compute_diff(*, desired: DesiredState, actual: DesiredState) -> ConfigDiff:
-    """Compare desired vs actual state and return structured diff."""
+def compute_diff(
+    *,
+    desired: DesiredState,
+    actual: DesiredState,
+    not_checked: Sequence[NotChecked] = (),
+) -> ConfigDiff:
+    """Compare desired vs actual state and return structured diff.
+
+    *not_checked* names the settings the fetch could not read
+    (:attr:`FetchResult.not_checked`). Their placeholder actual values are
+    never compared: they are carried into the diff's ``not_checked`` instead,
+    except a setting the desired state leaves unmanaged (skipped), which was
+    never going to be checked (#3816).
+    """
+    diff = _compute_checked_diff(desired=desired, actual=actual)
+    unread = {nc.field for nc in not_checked}
+    diff.items = [item for item in diff.items if item.field not in unread]
+    skipped = set(diff.skipped)
+    diff.not_checked = [nc for nc in not_checked if nc.field not in skipped]
+    return diff
+
+
+def _compute_checked_diff(*, desired: DesiredState, actual: DesiredState) -> ConfigDiff:
     items: list[DiffItem] = []
     skipped: list[str] = []
     undeclared: list[UndeclaredParam] = []
@@ -1694,7 +1862,7 @@ def _cleanup_classic_branch_protection(
     """Strip stale CI legs from classic protection on ruleset-covered branches.
 
     For each branch a branch-target ruleset now owns, reads the classic
-    ``branches/<b>/protection`` object (fail-soft on 404/permission) and removes
+    ``branches/<b>/protection`` object (a 404 means none; a 403 raises) and removes
     **only** the stale version-suffixed CI contexts the evidence ruleset now
     aggregates — via a scoped PATCH of ``required_status_checks``. The whole
     protection object is never deleted: every other setting is preserved and

@@ -30,6 +30,7 @@ from vergil_tooling.lib.github_config import (
     DesiredRuleset,
     EvidenceGate,
     FetchResult,
+    NotChecked,
     UndeclaredParam,
     _apply_actions_permissions,
     _apply_repo_settings,
@@ -46,6 +47,7 @@ from vergil_tooling.lib.github_config import (
     _preserved_classic_settings,
     _read_classic_protection,
     _ruleset_body,
+    _without_headers,
     apply_desired_state,
     assert_ci_gates_producible,
     classify_evidence_gate,
@@ -1827,6 +1829,68 @@ def test_fetch_vulnerability_alerts_raises_on_unexpected_status() -> None:
 
 
 @pytest.mark.usefixtures("_ambient_gh_auth")
+def test_fetch_vulnerability_alerts_none_when_permission_missing() -> None:
+    # The agent App lacks administration=read: report "not checked", no retry (#3816).
+    cp = subprocess.CompletedProcess(
+        args=[],
+        returncode=1,
+        stdout=(
+            "HTTP/2.0 403 Forbidden\nX-Accepted-Github-Permissions: administration=read\n\n"
+            '{"message":"Resource not accessible by integration"}'
+        ),
+        stderr="gh: Resource not accessible by integration (HTTP 403)",
+    )
+    with (
+        patch("vergil_tooling.lib.github.subprocess.run", return_value=cp) as mock_run,
+        patch("vergil_tooling.lib.github.time.sleep") as mock_sleep,
+    ):
+        assert _fetch_vulnerability_alerts("o/r") is None
+    assert mock_run.call_count == 1
+    mock_sleep.assert_not_called()
+
+
+@pytest.mark.usefixtures("_ambient_gh_auth")
+def test_fetch_vulnerability_alerts_error_drops_headers() -> None:
+    cp = subprocess.CompletedProcess(
+        args=[],
+        returncode=1,
+        stdout=(
+            "HTTP/2.0 403 Forbidden\nX-Github-Request-Id: ABC\n\n"
+            '{"message":"API rate limit exceeded"}'
+        ),
+        stderr="gh: API rate limit exceeded (HTTP 403)",
+    )
+    with (
+        patch("vergil_tooling.lib.github.subprocess.run", return_value=cp),
+        pytest.raises(GitHubAPIError) as excinfo,
+    ):
+        _fetch_vulnerability_alerts("o/r")
+    message = str(excinfo.value)
+    assert "API rate limit exceeded" in message
+    assert "HTTP/2.0 403 Forbidden" in message
+    assert "X-Github-Request-Id" not in message
+
+
+@pytest.mark.usefixtures("_ambient_gh_auth")
+def test_fetch_vulnerability_alerts_unexpected_status_drops_headers() -> None:
+    cp = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout="HTTP/2.0 200 OK\nServer: github.com\n\n{}", stderr=""
+    )
+    with (
+        patch("vergil_tooling.lib.github.subprocess.run", return_value=cp),
+        pytest.raises(GitHubAPIError) as excinfo,
+    ):
+        _fetch_vulnerability_alerts("o/r")
+    assert "Server: github.com" not in str(excinfo.value)
+
+
+def test_without_headers_keeps_non_http_output() -> None:
+    assert _without_headers("plain text") == "plain text"
+    assert _without_headers("") == ""
+    assert _without_headers(None) == ""
+
+
+@pytest.mark.usefixtures("_ambient_gh_auth")
 def test_fetch_vulnerability_alerts_raises_on_unexpected_success_status() -> None:
     cp = subprocess.CompletedProcess(args=[], returncode=0, stdout="HTTP/2.0 200 OK\n", stderr="")
     with (
@@ -2774,16 +2838,182 @@ def test_read_classic_protection_none_on_non_dict() -> None:
         assert _read_classic_protection("o/r", "develop") is None
 
 
-@pytest.mark.parametrize("status", ["404", "403"])
-def test_read_classic_protection_fail_soft_on_absent_or_forbidden(status: str) -> None:
+def test_read_classic_protection_none_when_absent() -> None:
     err = GitHubAPIError(
         1,
         ("gh", "api", "repos/o/r/branches/develop/protection"),
         "",
-        f"gh: message (HTTP {status})",
+        "gh: Branch not protected (HTTP 404)",
     )
     with patch("vergil_tooling.lib.github_config.github.read_json", side_effect=err):
         assert _read_classic_protection("o/r", "develop") is None
+
+
+def test_read_classic_protection_raises_on_forbidden() -> None:
+    # A 403 is "cannot read", never "unprotected" (#3816).
+    err = _forbidden("repos/o/r/branches/develop/protection")
+    with (
+        patch("vergil_tooling.lib.github_config.github.read_json", side_effect=err),
+        pytest.raises(GitHubAPIError, match="403"),
+    ):
+        _read_classic_protection("o/r", "develop")
+
+
+def _forbidden(
+    endpoint: str, message: str = "Resource not accessible by integration"
+) -> GitHubAPIError:
+    return GitHubAPIError(1, ("gh", "api", endpoint), "", f"gh: {message} (HTTP 403)")
+
+
+def _admin_gap_read_json(repo_json: dict[str, object]) -> Callable[..., object]:
+    """read_json for an App with metadata but no administration access."""
+
+    def read_json(*args: str) -> dict[str, object] | list[object]:
+        endpoint = args[1]
+        if endpoint == "repos/o/r":
+            return repo_json
+        if endpoint == "repos/o/r/rulesets":
+            return []
+        raise _forbidden(endpoint)
+
+    return read_json
+
+
+def test_fetch_actual_state_records_unreadable_admin_settings() -> None:
+    # Under the agent App every admin-scoped read is a 403 and the repo object
+    # carries no security_and_analysis block (#3816, #3869).
+    repo_json: dict[str, object] = {"default_branch": "develop", "visibility": "public"}
+    with (
+        patch(
+            "vergil_tooling.lib.github_config.github.read_json",
+            side_effect=_admin_gap_read_json(repo_json),
+        ),
+        patch(
+            "vergil_tooling.lib.github_config._fetch_vulnerability_alerts",
+            return_value=None,
+        ),
+    ):
+        result = fetch_actual_state("o/r")
+    assert {nc.field for nc in result.not_checked} == {
+        "security.secret_scanning",
+        "security.secret_scanning_push_protection",
+        "security.dependabot_security_updates",
+        "security.vulnerability_alerts",
+        "actions_permissions.allowed_actions",
+        "actions_permissions.patterns_allowed",
+        "actions_permissions.default_workflow_permissions",
+        "actions_permissions.can_approve_pull_request_reviews",
+        "classic_protection.develop",
+    }
+    assert {nc.permission for nc in result.not_checked} == {"administration=read"}
+
+    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    diff = compute_diff(desired=desired, actual=result.state, not_checked=result.not_checked)
+    # The placeholders are never compared, so nothing unread reads as drift...
+    assert not any(item.field.startswith(("security.", "actions_")) for item in diff.items)
+    assert len(diff.not_checked) == len(result.not_checked)
+    # ...and an audit with unread settings is never compliant.
+    assert not diff.is_compliant()
+
+
+def test_fetch_actual_state_selected_actions_unreadable() -> None:
+    def read_json(*args: str) -> dict[str, object] | list[object]:
+        endpoint = args[1]
+        if endpoint == "repos/o/r":
+            return {"default_branch": "", "security_and_analysis": {}}
+        if endpoint == "repos/o/r/rulesets":
+            return []
+        if endpoint == "repos/o/r/actions/permissions":
+            return {"allowed_actions": "selected"}
+        if endpoint == "repos/o/r/actions/permissions/workflow":
+            return {"default_workflow_permissions": "read"}
+        raise _forbidden(endpoint)
+
+    with (
+        patch("vergil_tooling.lib.github_config.github.read_json", side_effect=read_json),
+        patch("vergil_tooling.lib.github_config._fetch_vulnerability_alerts", return_value=True),
+    ):
+        result = fetch_actual_state("o/r")
+    assert [nc.field for nc in result.not_checked] == ["actions_permissions.patterns_allowed"]
+
+
+def test_fetch_actual_state_non_permission_403_propagates() -> None:
+    # A 403 that names no missing permission (a rate limit) is a real failure.
+    def read_json(*args: str) -> dict[str, object] | list[object]:
+        endpoint = args[1]
+        if endpoint == "repos/o/r":
+            return {"default_branch": "develop", "security_and_analysis": {}}
+        raise _forbidden(endpoint, "API rate limit exceeded")
+
+    with (
+        patch("vergil_tooling.lib.github_config.github.read_json", side_effect=read_json),
+        patch("vergil_tooling.lib.github_config._fetch_vulnerability_alerts", return_value=True),
+        pytest.raises(GitHubAPIError, match="rate limit"),
+    ):
+        fetch_actual_state("o/r")
+
+
+def test_fetch_actual_state_classic_non_permission_403_propagates() -> None:
+    def read_json(*args: str) -> dict[str, object] | list[object]:
+        endpoint = args[1]
+        if endpoint == "repos/o/r":
+            return {"default_branch": "develop", "security_and_analysis": {}}
+        if endpoint == "repos/o/r/rulesets":
+            return []
+        if endpoint.endswith("/protection"):
+            raise _forbidden(endpoint, "API rate limit exceeded")
+        return {}
+
+    with (
+        patch("vergil_tooling.lib.github_config.github.read_json", side_effect=read_json),
+        patch("vergil_tooling.lib.github_config._fetch_vulnerability_alerts", return_value=True),
+        pytest.raises(GitHubAPIError, match="rate limit"),
+    ):
+        fetch_actual_state("o/r")
+
+
+def test_fetch_actual_state_readable_records_nothing_unread() -> None:
+    result = _fetch_with_classic_protection({})
+    assert result.not_checked == []
+
+
+def test_compute_diff_not_checked_drops_unmanaged_fields() -> None:
+    # A private repo without GHAS leaves secret scanning unmanaged (skipped),
+    # so its unreadability is not reported as "not checked".
+    desired = compute_desired_state(_vergil_config(), visibility="private", is_org=True)
+    actual = compute_desired_state(_vergil_config(), visibility="private", is_org=True)
+    actual.security.vulnerability_alerts = False
+    unread = [
+        NotChecked(field="security.secret_scanning", permission="administration=read"),
+        NotChecked(field="security.vulnerability_alerts", permission="administration=read"),
+    ]
+    diff = compute_diff(desired=desired, actual=actual, not_checked=unread)
+    assert diff.items == []
+    assert [nc.field for nc in diff.not_checked] == ["security.vulnerability_alerts"]
+    assert not diff.has_drift()
+    assert not diff.is_compliant()
+
+
+def test_compute_diff_without_not_checked_is_compliant() -> None:
+    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    actual = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    diff = compute_diff(desired=desired, actual=actual)
+    assert diff.not_checked == []
+    assert diff.is_compliant()
+
+
+def test_cleanup_raises_on_forbidden_classic_protection() -> None:
+    rulesets = [desired_branch_protection_ruleset()]
+    with (
+        patch(
+            "vergil_tooling.lib.github_config.github.read_json",
+            side_effect=_forbidden("repos/o/r/branches/develop/protection"),
+        ),
+        patch("vergil_tooling.lib.github_config.github.write_json") as mock_write,
+        pytest.raises(GitHubAPIError, match="403"),
+    ):
+        _cleanup_classic_branch_protection("o/r", rulesets)
+    mock_write.assert_not_called()
 
 
 def test_read_classic_protection_reraises_unrelated_error() -> None:
