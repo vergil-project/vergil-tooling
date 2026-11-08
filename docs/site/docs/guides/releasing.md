@@ -365,7 +365,8 @@ published GitHub Release. `vrg-promote` refuses, with exit 1:
 
 - any other target;
 - an agent identity;
-- a run with no terminal to confirm on (from a script, CI or a pipe);
+- a run with no terminal to confirm on (from a script, CI or a pipe),
+  unless it is given `--yes`, which moves the tag with no prompt;
 - a declined or unanswered confirmation;
 - a move that changed on origin after you confirmed it.
 

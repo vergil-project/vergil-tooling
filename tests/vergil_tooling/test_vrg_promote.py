@@ -17,7 +17,7 @@ from tests.vergil_tooling.test_promote import (  # noqa: F401 (autouse fixture)
     _git_responses,
     _no_installation_token,
 )
-from vergil_tooling.bin.vrg_promote import main
+from vergil_tooling.bin.vrg_promote import _can_prompt, main
 from vergil_tooling.lib import github
 
 if TYPE_CHECKING:
@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 
 _RUN = "vergil_tooling.lib.promote.subprocess.run"
 _READ = "vergil_tooling.lib.promote.github.read_output"
+_CAN_PROMPT = "vergil_tooling.bin.vrg_promote._can_prompt"
 _LEASE = f"--force-with-lease=refs/tags/v2.1:{OLD_REF}"
 
 
@@ -108,12 +109,14 @@ def test_refuses_without_tty(capsys: pytest.CaptureFixture[str]) -> None:
         patch("sys.argv", ["vrg-promote", "2.1.50"]),
         patch(_RUN, side_effect=_git_responses()) as mock_run,
         patch(_READ, return_value="false"),
-        patch("sys.stdin.isatty", return_value=False),
+        patch(_CAN_PROMPT, return_value=False),
         patch("builtins.input", side_effect=_never_prompt),
     ):
         assert main() == 1
     assert _pushes(mock_run) == []
-    assert "without a terminal" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "without a terminal" in err
+    assert "--yes" in err
 
 
 def test_declined_confirmation_pushes_nothing() -> None:
@@ -121,7 +124,7 @@ def test_declined_confirmation_pushes_nothing() -> None:
         patch("sys.argv", ["vrg-promote", "2.1.50"]),
         patch(_RUN, side_effect=_git_responses()) as mock_run,
         patch(_READ, return_value="false"),
-        patch("sys.stdin.isatty", return_value=True),
+        patch(_CAN_PROMPT, return_value=True),
         patch("builtins.input", return_value="n"),
     ):
         assert main() == 1
@@ -133,7 +136,7 @@ def test_eof_at_prompt_pushes_nothing() -> None:
         patch("sys.argv", ["vrg-promote", "2.1.50"]),
         patch(_RUN, side_effect=_git_responses()) as mock_run,
         patch(_READ, return_value="false"),
-        patch("sys.stdin.isatty", return_value=True),
+        patch(_CAN_PROMPT, return_value=True),
         patch("builtins.input", side_effect=EOFError),
     ):
         assert main() == 1
@@ -145,16 +148,79 @@ def test_confirmed_run_promotes(capsys: pytest.CaptureFixture[str]) -> None:
         patch("sys.argv", ["vrg-promote", "2.1.50"]),
         patch(_RUN, side_effect=_git_responses()) as mock_run,
         patch(_READ, return_value="false"),
-        patch("sys.stdin.isatty", return_value=True),
+        patch(_CAN_PROMPT, return_value=True),
         patch("builtins.input", return_value="y") as mock_input,
     ):
         assert main() == 0
     refspec = f"{NEW_TAG_OBJ}:refs/tags/v2.1"
     assert _pushes(mock_run) == [["git", "push", "origin", refspec, _LEASE]]
+    assert mock_input.call_args.args == ()
+    captured = capsys.readouterr()
+    # The move and the prompt go to stderr, so a redirected stdout cannot hide them.
     prompt = "Move v2.1 on vergil-project/vergil-claude-plugin? [y/N] "
-    assert mock_input.call_args.args[0] == prompt
-    out = capsys.readouterr().out
+    move = f"v2.1 {OLD[:12]} -> v2.1.50 {NEW[:12]}"
+    assert captured.err.index("origin: vergil-project/vergil-claude-plugin") < captured.err.index(
+        move
+    )
+    assert captured.err.index(move) < captured.err.index(prompt)
+    assert "origin:" not in captured.out
+    assert "Promoted" in captured.out
+
+
+def test_yes_promotes_without_prompt_or_terminal(capsys: pytest.CaptureFixture[str]) -> None:
+    with (
+        patch("sys.argv", ["vrg-promote", "--yes", "2.1.50"]),
+        patch(_RUN, side_effect=_git_responses()) as mock_run,
+        patch(_READ, return_value="false"),
+        patch("sys.stdin.isatty", return_value=False),
+        patch("sys.stderr.isatty", return_value=False),
+        patch("builtins.input", side_effect=_never_prompt),
+    ):
+        assert main() == 0
+    refspec = f"{NEW_TAG_OBJ}:refs/tags/v2.1"
+    assert _pushes(mock_run) == [["git", "push", "origin", refspec, _LEASE]]
+    captured = capsys.readouterr()
+    assert "[y/N]" not in captured.err
+    out = captured.out
     assert out.index("origin: vergil-project/vergil-claude-plugin") < out.index("Promoted")
+
+
+def test_yes_still_refuses_bad_target(capsys: pytest.CaptureFixture[str]) -> None:
+    with (
+        patch("sys.argv", ["vrg-promote", "--yes", "2.1.50"]),
+        patch(_RUN, side_effect=_git_responses(on_main=1)) as mock_run,
+        patch(_READ, return_value="false"),
+        patch("builtins.input", side_effect=_never_prompt),
+    ):
+        assert main() == 1
+    assert _mutations(mock_run) == []
+    assert "not on origin/main" in capsys.readouterr().err
+
+
+def test_yes_with_dry_run_moves_nothing(capsys: pytest.CaptureFixture[str]) -> None:
+    with (
+        patch("sys.argv", ["vrg-promote", "--yes", "--dry-run", "2.1.50"]),
+        patch(_RUN, side_effect=_git_responses()) as mock_run,
+        patch(_READ, return_value="false"),
+        patch("builtins.input", side_effect=_never_prompt),
+    ):
+        assert main() == 0
+    assert _mutations(mock_run) == []
+    assert f"v2.1 {OLD[:12]} -> v2.1.50 {NEW[:12]}" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("stdin_tty", "stderr_tty", "expected"),
+    [(True, True, True), (False, True, False), (True, False, False), (False, False, False)],
+)
+def test_can_prompt_needs_stdin_and_stderr_terminals(
+    *, stdin_tty: bool, stderr_tty: bool, expected: bool
+) -> None:
+    with (
+        patch("sys.stdin.isatty", return_value=stdin_tty),
+        patch("sys.stderr.isatty", return_value=stderr_tty),
+    ):
+        assert _can_prompt() is expected
 
 
 def test_confirmed_run_refuses_when_origin_moved(capsys: pytest.CaptureFixture[str]) -> None:
@@ -163,7 +229,7 @@ def test_confirmed_run_refuses_when_origin_moved(capsys: pytest.CaptureFixture[s
         patch("sys.argv", ["vrg-promote", "2.1.50"]),
         patch(_RUN, side_effect=_git_responses(rolling_seq=[(OLD_REF, OLD), (c, c)])) as mock_run,
         patch(_READ, return_value="false"),
-        patch("sys.stdin.isatty", return_value=True),
+        patch(_CAN_PROMPT, return_value=True),
         patch("builtins.input", return_value="yes"),
     ):
         assert main() == 1
@@ -176,7 +242,7 @@ def test_already_promoted_exits_without_prompt(capsys: pytest.CaptureFixture[str
         patch("sys.argv", ["vrg-promote", "2.1.50"]),
         patch(_RUN, side_effect=_git_responses(rolling=NEW, rolling_raw=NEW)) as mock_run,
         patch(_READ, return_value="false"),
-        patch("sys.stdin.isatty", return_value=False),
+        patch(_CAN_PROMPT, return_value=False),
         patch("builtins.input", side_effect=_never_prompt),
     ):
         assert main() == 0
@@ -189,7 +255,7 @@ def test_promote_explicit_version(capsys: pytest.CaptureFixture[str]) -> None:
         patch("sys.argv", ["vrg-promote", "2.1.50"]),
         patch(_RUN, side_effect=_git_responses()),
         patch(_READ, return_value="false"),
-        patch("sys.stdin.isatty", return_value=True),
+        patch(_CAN_PROMPT, return_value=True),
         patch("builtins.input", return_value="y"),
     ):
         result = main()
@@ -205,7 +271,7 @@ def test_promote_from_version_file(tmp_path: Path, capsys: pytest.CaptureFixture
         patch("sys.argv", ["vrg-promote"]),
         patch(_RUN, side_effect=_git_responses()) as mock_run,
         patch(_READ, return_value="false"),
-        patch("sys.stdin.isatty", return_value=True),
+        patch(_CAN_PROMPT, return_value=True),
         patch("builtins.input", return_value="y"),
     ):
         result = main()
@@ -230,7 +296,7 @@ def test_interrupt_at_prompt_pushes_nothing(capsys: pytest.CaptureFixture[str]) 
         patch("sys.argv", ["vrg-promote", "2.1.50"]),
         patch(_RUN, side_effect=_git_responses()) as mock_run,
         patch(_READ, return_value="false"),
-        patch("sys.stdin.isatty", return_value=True),
+        patch(_CAN_PROMPT, return_value=True),
         patch("builtins.input", side_effect=KeyboardInterrupt),
     ):
         assert main() == 1
@@ -269,7 +335,7 @@ def test_push_failure_reports_error(capsys: pytest.CaptureFixture[str]) -> None:
         patch("sys.argv", ["vrg-promote", "2.1.50"]),
         patch(_RUN, side_effect=_git_responses(fail={"push": err})),
         patch(_READ, return_value="false"),
-        patch("sys.stdin.isatty", return_value=True),
+        patch(_CAN_PROMPT, return_value=True),
         patch("builtins.input", return_value="y"),
     ):
         assert main() == 1
