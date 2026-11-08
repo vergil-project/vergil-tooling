@@ -80,6 +80,30 @@ class TestCliMain:
         err = _exit_message(exc, capsys)
         assert err == f"{_PROG}: cannot resolve the epic home of org/repo: HTTP 502\n"
 
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            epics.StandingEpicNotVisibleError(
+                "created intake epic org/.github#10 ('Epic (intake): org') but checking "
+                "that it is listed in org/.github failed: HTTP 502"
+            ),
+            epics.StandingEpicDuplicateError(
+                "created intake epic org/.github#10 ('Epic (intake): org') but org/.github "
+                "also has open epics with that title: org/.github#9",
+                epics.IssueRef("org", ".github", 10),
+                [epics.IssueRef("org", ".github", 9)],
+            ),
+        ],
+        ids=["not-visible", "duplicate"],
+    )
+    def test_standing_epic_not_visible_is_a_clean_message(
+        self, exc: Exception, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # Every command that can create a standing epic reports one created but
+        # not confirmed, naming it, rather than a traceback (#3820).
+        err = _exit_message(exc, capsys)
+        assert err == f"{_PROG}: {exc}\n"
+
     def test_other_exceptions_propagate_unchanged(self, capsys: pytest.CaptureFixture[str]) -> None:
         exc = RuntimeError("boom")
         with pytest.raises(RuntimeError) as excinfo:
