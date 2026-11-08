@@ -20775,8 +20775,17 @@ writing, the ad-hoc and queue-epic drains and the security-records pass that
 flag). <code>--repo OWNER/NAME</code> audits that repo's resolved epic home instead of
 the org's <code>.github</code>, so a private repo that self-homes its epics can be
 audited; the home-scoped checks (epic drift, stray issues, operation-pending
-epics, and the <code>--close</code> drift closes) then target it.
-<code>--epic REF</code> is a separate read-only mode: it prints one epic's children as
+epics, and the <code>--close</code> drift closes) then target it.</p>
+<p>Every read runs under the audited org's token, wherever the command is run
+from. Before any check, the audit confirms that this token sees every repo in
+the org: an App token must belong to an installation on that org with access
+to all repositories, and a human's own <code>gh</code> login must be an owner of the org
+(or the org must be that login's own account). If it does not, the audit
+names the gap on stderr. The read-only report then opens with an
+<strong>Incomplete coverage</strong> section and exits 1, and <code>--close</code> is refused before
+any write. A full preview therefore needs the org's App installation with
+access to all repositories, or an org owner's own login.</p>
+<p><code>--epic REF</code> is a separate read-only mode: it prints one epic's children as
 JSON (<code>{"epic": &lt;slug&gt;, "children": [{repo, number, title, state}, …]}</code>) and
 skips the drift audit. A bare <code>#N</code> resolves against the current repo's epic
 home.</p>
@@ -20822,11 +20831,11 @@ which sets <code>VRG_EPIC_SWEEP=1</code>. Other invariant violations stay report
 </tr>
 <tr>
 <td>Failure mode</td>
-<td><code>--close</code> in an agent session is refused before any network call; a <code>--repo</code> without <code>/</code>, an org that cannot be detected, or an org with no <code>.github</code> home exits 1. A full intake epic stops the orphan pass, listing what it did not attach; a broken security pair or a failed security pass exits 1 after the rest of the run. With <code>--epic</code>, a ref that is not an epic exits 1</td>
+<td><code>--close</code> in an agent session is refused before any network call; a <code>--repo</code> without <code>/</code>, an org that cannot be detected, or an org with no <code>.github</code> home exits 1. A token that cannot see every repo in the org exits 1: the report is marked partial and <code>--close</code> is refused before any write. A full intake epic stops the orphan pass, listing what it did not attach; a broken security pair or a failed security pass exits 1 after the rest of the run. With <code>--epic</code>, a ref that is not an epic exits 1</td>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 success (the read-only report exits 0 even when it finds drift), 1 refused, a pass failed, or error, 2 bad arguments</td>
+<td>0 success (the read-only report exits 0 even when it finds drift), 1 refused, incomplete coverage, a pass failed, or error, 2 bad arguments</td>
 </tr>
 <tr>
 <td>Status</td>
