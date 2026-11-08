@@ -174,6 +174,16 @@ def parse_advisory_refs(issue_body: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(match.group(2) for match in _ADVISORY_RE.finditer(issue_body)))
 
 
+def parse_advisory_lines(issue_body: str) -> tuple[tuple[str, str], ...]:
+    """Every ``(org, GHSA ID)`` the exact ``Security advisory:`` lines name, in order, no repeats.
+
+    :func:`parse_advisory_refs` keeps the GHSA IDs only; this keeps the org of
+    each line's ``<org>/.github`` too, for a caller that checks it.
+    """
+    pairs = ((match.group(1), match.group(2)) for match in _ADVISORY_RE.finditer(issue_body))
+    return tuple(dict.fromkeys(pairs))
+
+
 def parse_tracking(description: str) -> tuple[IssueRef, ...]:
     """Every issue the exact ``Tracking issue:`` lines name, in order, without repeats."""
     refs = (

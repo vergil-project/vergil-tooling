@@ -283,7 +283,8 @@ of them until the plan exists.
   shipped code has it. A finding about shipped behaviour always goes to a
   fix task that changes the code.
 - **The guard.** `vrg-queue planning` never shows a planning issue as
-  `ready-to-close` while **any** advisory it names still tracks it. It
+  `ready-to-close` while **any** advisory still tracks it, whether or not
+  its body names that advisory. It
   shows it as `in-progress` with a note that counts the advisories still
   tracking it and names them by GHSA ID only:
 

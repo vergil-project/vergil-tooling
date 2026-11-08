@@ -2,12 +2,21 @@
 
 ``vrg-queue intake`` lists the open items under the intake queue epic, oldest
 first. ``vrg-queue planning`` lists the open items under the planning queue
-epic with their state: waiting, in-progress, or ready-to-close.
+epic with their state: waiting, in-progress, or ready-to-close. A planning
+item that would be ready-to-close is held at in-progress, with a ``held:``
+note, while any advisory still tracks it; reading the advisories needs
+Repository security advisories access on the org's ``.github``.
 ``vrg-queue deferred`` lists the open items under the deferred queue epic,
 least recently deferred first, each noted with its latest deferral (see
 :mod:`vergil_tooling.lib.queue_view`). A bare ``vrg-queue`` lists all three
 queues in that order; there, a queue whose epic does not exist yet is reported
 as ``no queue yet`` instead of failing the run.
+
+A queue that cannot be read (a failed GitHub call, an advisory home that is
+not public, an advisory line naming another org, a malformed response) is
+named on stderr with the reason and the run exits 1. A bare text run still
+lists the queues it could read; a bare ``--json`` run prints nothing on
+stdout, so a partial object is never taken for the whole.
 
 The default home is the current org's ``.github`` pair; ``--repo OWNER/REPO``
 selects that repo's queue home, which for a self-homed private repo is its own
@@ -22,7 +31,7 @@ import sys
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import epics, github, queue_view
+from vergil_tooling.lib import epics, github, queue_view, security_records
 from vergil_tooling.lib.cli import cli_main
 
 if TYPE_CHECKING:
@@ -34,6 +43,13 @@ _VIEWS = {
     "planning": queue_view.planning_items,
     "deferred": queue_view.deferred_items,
 }
+
+# What a view can raise reading GitHub, besides a missing queue epic: a failed
+# ``gh`` call, an advisory home that is not public, or a malformed response or
+# an advisory line naming another org (both ``ValueError``s; #3826). A missing
+# token is not among them: it reaches ``cli_main``'s guided message. Each is
+# reported, never shown as an empty queue.
+_VIEW_ERRORS = (github.GitHubAPIError, security_records.PrivateHomeError, ValueError)
 
 
 @cli_main
@@ -49,6 +65,8 @@ def main(argv: list[str] | None = None) -> int:
     owner = target.split("/", 1)[0]
     # Bare mode: None marks a queue whose epic does not exist yet.
     results: dict[str, list[QueueItem] | None] = {}
+    # Bare mode: the queues that could not be read, and why.
+    failures: dict[str, Exception] = {}
     # Scope the App token to the target's owner, not the cwd org (#3409).
     with github.target_org(owner):
         if args.repo is None:
@@ -61,12 +79,21 @@ def main(argv: list[str] | None = None) -> int:
             except queue_view.QueueNotFoundError as exc:
                 print(f"vrg-queue: {exc}", file=sys.stderr)
                 return 1
+            except github.MissingGitHubTokenError:
+                raise
+            except _VIEW_ERRORS as exc:
+                _report_failure(args.queue, home, name, exc)
+                return 1
         else:
             for queue, view in _VIEWS.items():
                 try:
                     results[queue] = view(home, name)
                 except queue_view.QueueNotFoundError:
                     results[queue] = None
+                except github.MissingGitHubTokenError:
+                    raise
+                except _VIEW_ERRORS as exc:
+                    failures[queue] = exc
     if args.queue is not None:
         if args.json:
             print(json.dumps(queue_view.to_json(items), indent=2))
@@ -74,17 +101,33 @@ def main(argv: list[str] | None = None) -> int:
             _print_queue(args.queue, home, name, items)
         return 0
     if args.json:
+        if failures:
+            # Never a partial object: a failed queue must not read as present or as null.
+            for queue, failure in failures.items():
+                _report_failure(queue, home, name, failure)
+            return 1
         payload = {q: None if v is None else queue_view.to_json(v) for q, v in results.items()}
         print(json.dumps(payload, indent=2))
         return 0
-    for index, (queue, found) in enumerate(results.items()):
+    for index, queue in enumerate(_VIEWS):
         if index:
             print()
-        if found is None:
+        if queue in failures:
+            print(f"{queue} queue for {name} in {home}: not shown (failed; see stderr)")
+            _report_failure(queue, home, name, failures[queue])
+        elif (found := results[queue]) is None:
             print(f"{queue} queue for {name} in {home}: no queue yet")
         else:
             _print_queue(queue, home, name, found)
-    return 0
+    return 1 if failures else 0
+
+
+def _report_failure(queue: str, home: str, name: str, exc: Exception) -> None:
+    """Name the queue that could not be read, and why, on stderr."""
+    print(
+        f"vrg-queue: {queue} queue for {name} in {home} could not be read: {exc}",
+        file=sys.stderr,
+    )
 
 
 def _print_queue(queue: str, home: str, name: str, items: list[QueueItem]) -> None:

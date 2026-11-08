@@ -19,11 +19,19 @@ Its note is the latest deferral comment (``Deferred <day>: <reason>`` with its
 refreshed item sinks to the bottom. An item with no deferral comment (moved by
 hand, or legacy) has an empty note and sorts first.
 
-A ``security`` planning issue is never ``ready-to-close`` while any advisory
-its body names still tracks it: it stays ``in-progress``, with a note naming
-those advisories (by GHSA ID only) and saying to retarget each to the fix
-task(s) first. Advisories are listed once per view, and only when some item's
-body carries a ``Security advisory:`` line.
+A planning issue is never ``ready-to-close`` while any advisory still tracks
+it (names it on a ``Tracking issue:`` line), whether or not its body names
+that advisory: it stays ``in-progress``, with a note naming those advisories
+(by GHSA ID only) and saying to retarget each to the fix task(s) first. The
+``security`` label plays no part: an item is a security item by its body's
+``Security advisory:`` line alone, since holding is the safe direction and
+``vrg-epic-audit`` reports a line without its label as a broken pair. A line
+naming an org other than the issue's own is refused
+(:class:`AdvisoryLineError`), never ignored.
+
+Advisories are listed once per org per view. An org with no public
+``.github`` holds no advisories, so its listing is skipped, unless one of its
+items names an advisory: then the home is resolved anyway and refused loudly.
 
 Nothing here mutates GitHub: the queue epic is looked up with
 :func:`epics.find_standing_epic` (never created), and a missing queue epic is
@@ -42,6 +50,8 @@ from vergil_tooling.lib.epics import IssueRef
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+    from vergil_tooling.lib.security_records import Advisory
 
 # Progress-marker line prefixes. ``epic-create`` writes the first three as lines
 # in planning-issue comments and the last in the new epic's body; the skill
@@ -66,6 +76,10 @@ QueueState = Literal["waiting", "in-progress", "ready-to-close"]
 
 class QueueNotFoundError(LookupError):
     """The home has no live queue epic of the requested kind."""
+
+
+class AdvisoryLineError(ValueError):
+    """A planning item's ``Security advisory:`` line names an org other than its own."""
 
 
 @dataclass(frozen=True)
@@ -232,44 +246,75 @@ def _held_note(ghsa_ids: tuple[str, ...]) -> str:
     )
 
 
-def _tracked_by(home: str, named: set[str]) -> dict[str, tuple[IssueRef, ...]]:
-    """Each named advisory's tracked issues; empty, with no lookup, when none is named.
+def _names_advisory(ref: IssueRef, body: str) -> bool:
+    """Whether *body* has a ``Security advisory:`` line; refuse one naming another org.
 
-    The advisory home is resolved and the advisories listed only when some item
-    names one, so the view works unchanged for an org without security items.
+    The line always names an advisory in the issue's own org's ``.github``;
+    one naming any other org is refused with :class:`AdvisoryLineError`,
+    never ignored. Org names compare case-insensitively, as GitHub's do.
     """
-    if not named:
-        return {}
-    advisory_home = security_records.advisory_home(home.split("/", 1)[0])
-    return {
-        advisory.ghsa_id: advisory.tracking
-        for advisory in security_records.list_advisories(advisory_home)
-        if advisory.ghsa_id in named
-    }
+    lines = security_records.parse_advisory_lines(body)
+    foreign = [
+        f"{org}/.github {ghsa}" for org, ghsa in lines if org.casefold() != ref.owner.casefold()
+    ]
+    if foreign:
+        raise AdvisoryLineError(
+            f"{ref.slug}: its Security advisory: line names {', '.join(foreign)}, "
+            f"not an advisory in {ref.owner}/.github, the issue's own org; "
+            "correct the line before the planning queue can be read"
+        )
+    return bool(lines)
+
+
+def _org_advisories(org: str, *, named: bool) -> list[Advisory]:
+    """Every advisory in *org*'s advisory home, or none when the org can hold none.
+
+    Security records live only in a public ``<org>/.github``. When an item of
+    *org* names an advisory, the home is resolved with
+    :func:`security_records.advisory_home`, which refuses a home that is not
+    public loudly. When none does, an org whose ``.github`` is absent or not
+    public holds no advisory that could track an item, so nothing is listed;
+    any failed GitHub call propagates.
+    """
+    if not named and not (
+        github.repo_exists(org, ".github") and github.is_public(f"{org}/.github")
+    ):
+        return []
+    return security_records.list_advisories(security_records.advisory_home(org))
+
+
+def _tracking(views: Sequence[tuple[IssueRef, dict[str, Any]]]) -> dict[IssueRef, tuple[str, ...]]:
+    """Each item's tracking advisories (GHSA IDs, in listing order), listed once per org."""
+    named: dict[str, bool] = {}
+    for ref, view in views:
+        names = _names_advisory(ref, str(view.get("body") or ""))
+        named[ref.owner] = named.get(ref.owner, False) or names
+    held: dict[IssueRef, list[str]] = {}
+    for org, any_named in named.items():
+        for advisory in _org_advisories(org, named=any_named):
+            for ref in advisory.tracking:
+                held.setdefault(ref, []).append(advisory.ghsa_id)
+    return {ref: tuple(dict.fromkeys(ghsas)) for ref, ghsas in held.items()}
 
 
 def planning_items(home: str, name: str) -> list[QueueItem]:
     """The open planning items under *home*'s planning epic for *name*, oldest first.
 
-    An item is held back from ``ready-to-close`` while any advisory its body
-    names still tracks it (spec 4.4b of epic vergil-project/.github#517, spec
-    4.2 of #573).
+    An item is held back from ``ready-to-close`` while any advisory still
+    tracks it, whether or not its body names that advisory (spec 4.4b of epic
+    vergil-project/.github#517, spec 4.2 of #573; #3826).
     """
     views = [
         (ref, _view(ref, "title,createdAt,labels,comments,body"))
         for ref in _open_children(epics.PLANNING, home, name)
     ]
-    ghsa_ids = {
-        ref: security_records.parse_advisory_refs(str(view.get("body") or ""))
-        for ref, view in views
-    }
-    tracked = _tracked_by(home, {ghsa for named in ghsa_ids.values() for ghsa in named})
+    tracking = _tracking(views)
     items: list[QueueItem] = []
     for ref, view in views:
         comments = _comment_bodies(view)
         markers = parse_planning_markers(comments)
         labels = {str(lbl.get("name") or "") for lbl in view.get("labels") or []}
-        holding = tuple(ghsa for ghsa in ghsa_ids[ref] if ref in tracked.get(ghsa, ()))
+        holding = tracking.get(ref, ())
         state, demoted = _planning_state(labels, markers, advisory_held=bool(holding))
         items.append(
             QueueItem(

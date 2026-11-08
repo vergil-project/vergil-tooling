@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vergil_tooling.bin.vrg_queue import main, parse_args
-from vergil_tooling.lib import github, queue_view
+from vergil_tooling.lib import github, queue_view, security_records
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.queue_view import QueueItem
 
@@ -135,6 +135,115 @@ def test_vrg_queue_bare_lists_all_three_and_tolerates_missing(
     assert data["intake"] == queue_view.to_json([_ITEM])
     assert data["planning"] is None
     assert data["deferred"] == queue_view.to_json([_DEFERRED_ITEM])
+
+
+def _failing(exc: Exception) -> object:
+    def view(_home: str, _name: str) -> list[QueueItem]:
+        raise exc
+
+    return view
+
+
+_PRIVATE_HOME = security_records.PrivateHomeError(
+    "vrg-security-record: org/.github is not public; security records need a "
+    "public org .github (private orgs are unsupported)"
+)
+
+
+@pytest.mark.parametrize(
+    ("exc", "reason"),
+    [
+        (_PRIVATE_HOME, "org/.github is not public"),
+        (github.GitHubAPIError(1, ["gh", "api"], "", "HTTP 403: Forbidden"), "HTTP 403"),
+        (ValueError("advisory list row lacks a ghsa_id or state"), "lacks a ghsa_id"),
+    ],
+)
+def test_vrg_queue_named_queue_read_failure_is_reported(
+    capsys: pytest.CaptureFixture[str], exc: Exception, reason: str
+) -> None:
+    # An advisory-lookup failure is one clear line and exit 1, never a traceback (#3826).
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
+        patch(f"{_MOD}.epics.queue_home", return_value=("org/.github", "org")),
+        patch.dict(f"{_MOD}._VIEWS", {"planning": _failing(exc)}),
+    ):
+        rc = main(["planning"])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith(
+        "vrg-queue: planning queue for org in org/.github could not be read: "
+    )
+    assert reason in captured.err
+
+
+@pytest.mark.parametrize("argv", [["planning"], []])
+def test_vrg_queue_missing_token_keeps_the_guided_message(
+    capsys: pytest.CaptureFixture[str], argv: list[str]
+) -> None:
+    exc = github.MissingGitHubTokenError(1, ["gh", "api"], "", "no token")
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
+        patch(f"{_MOD}.epics.queue_home", return_value=("org/.github", "org")),
+        patch.dict(f"{_MOD}._VIEWS", {"planning": _failing(exc)}, clear=True),
+        pytest.raises(SystemExit) as excinfo,
+    ):
+        main(argv)
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert err.startswith("vrg-queue: no GitHub token available.")
+    assert "could not be read" not in err
+
+
+def test_vrg_queue_bare_text_keeps_other_queues_when_one_fails(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    views = {
+        "intake": lambda _h, _n: [_ITEM],
+        "planning": _failing(_PRIVATE_HOME),
+        "deferred": lambda _h, _n: [_DEFERRED_ITEM],
+    }
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
+        patch(f"{_MOD}.epics.queue_home", return_value=("org/.github", "org")),
+        patch.dict(f"{_MOD}._VIEWS", views),
+    ):
+        rc = main([])
+    assert rc == 1
+    captured = capsys.readouterr()
+    lines = captured.out.splitlines()
+    assert lines[0] == "intake queue for org in org/.github: 1 open item(s)"
+    assert lines[1].startswith("org/.github#5  ")
+    assert lines[3] == "planning queue for org in org/.github: not shown (failed; see stderr)"
+    assert lines[5] == "deferred queue for org in org/.github: 1 open item(s)"
+    assert lines[6].startswith("org/tool#7  ")
+    assert len(lines) == 7
+    assert captured.err == (
+        f"vrg-queue: planning queue for org in org/.github could not be read: {_PRIVATE_HOME}\n"
+    )
+
+
+def test_vrg_queue_bare_json_prints_no_partial_object(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    views = {
+        "intake": lambda _h, _n: [_ITEM],
+        "planning": _failing(_PRIVATE_HOME),
+        "deferred": _failing(ValueError("bad row")),
+    }
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
+        patch(f"{_MOD}.epics.queue_home", return_value=("org/.github", "org")),
+        patch.dict(f"{_MOD}._VIEWS", views),
+    ):
+        rc = main(["--json"])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.splitlines() == [
+        f"vrg-queue: planning queue for org in org/.github could not be read: {_PRIVATE_HOME}",
+        "vrg-queue: deferred queue for org in org/.github could not be read: bad row",
+    ]
 
 
 def test_vrg_queue_json_output(capsys: pytest.CaptureFixture[str]) -> None:
