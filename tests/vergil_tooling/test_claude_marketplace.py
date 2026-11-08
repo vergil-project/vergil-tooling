@@ -14,7 +14,7 @@ from vergil_tooling.lib import claude_marketplace
 from vergil_tooling.lib.claude_marketplace import (
     Declared,
     MarketplaceError,
-    _marketplace_sources,
+    _marketplace_adds,
     _update_plugin_entry,
     declared_marketplaces,
     local_run,
@@ -320,7 +320,7 @@ class TestRefresh:
 
     def test_null_entries_read_as_empty(self) -> None:
         settings = {"extraKnownMarketplaces": {"a": None, "b": {"source": None}}}
-        assert _marketplace_sources(settings) == []
+        assert _marketplace_adds(settings) == []
         assert declared_marketplaces(settings) == []
 
     def test_refresh_raises_on_malformed_listing(self) -> None:
@@ -441,9 +441,10 @@ class TestShell:
         assert capsys.readouterr().err == ""
 
 
-class TestMarketplaceSources:
-    # Moved from test_vm_guest with _marketplace_sources (#2021, #2029, #3751).
-    def test_marketplace_sources_keeps_github_ref(self) -> None:
+class TestMarketplaceAdds:
+    # Moved from test_vm_guest as _marketplace_sources tests (#2021, #2029, #3751),
+    # then pointed at _marketplace_adds, the list refresh runs (#3991).
+    def test_marketplace_adds_keeps_github_ref(self) -> None:
         settings = {
             "extraKnownMarketplaces": {
                 "vergil-marketplace": {
@@ -457,12 +458,12 @@ class TestMarketplaceSources:
             },
             "enabledPlugins": {},
         }
-        assert _marketplace_sources(settings) == [
-            "vergil-project/vergil-claude-plugin@main",
-            "Ovid/paad",
+        assert _marketplace_adds(settings) == [
+            ("vergil-marketplace", "vergil-project/vergil-claude-plugin@main"),
+            ("paad", "Ovid/paad"),
         ]
 
-    def test_marketplace_sources_keeps_git_url_ref(self) -> None:
+    def test_marketplace_adds_keeps_git_url_ref(self) -> None:
         settings = {
             "extraKnownMarketplaces": {
                 "pinned": {
@@ -477,10 +478,10 @@ class TestMarketplaceSources:
             },
             "enabledPlugins": {},
         }
-        assert _marketplace_sources(settings) == [
-            "https://example.com/y.git#v1.0.0",
-            "https://example.com/z.git",
-            "./local-mp",
+        assert _marketplace_adds(settings) == [
+            ("pinned", "https://example.com/y.git#v1.0.0"),
+            ("bare", "https://example.com/z.git"),
+            ("p", "./local-mp"),
         ]
 
     def test_skips_sourceless_entries(self) -> None:
@@ -492,14 +493,16 @@ class TestMarketplaceSources:
             },
             "enabledPlugins": {},
         }
-        assert _marketplace_sources(settings) == ["https://example.com/y.git"]
+        assert _marketplace_adds(settings) == [("u", "https://example.com/y.git")]
 
     def test_derives_official_marketplace_when_undeclared(self) -> None:
         settings = {
             "extraKnownMarketplaces": {},
             "enabledPlugins": {"superpowers@claude-plugins-official": True},
         }
-        assert _marketplace_sources(settings) == ["anthropics/claude-plugins-official"]
+        assert _marketplace_adds(settings) == [
+            ("claude-plugins-official", "anthropics/claude-plugins-official")
+        ]
 
     def test_official_repo_declared_under_another_name_is_added_once(self) -> None:
         settings = {
@@ -510,16 +513,16 @@ class TestMarketplaceSources:
             },
             "enabledPlugins": {"superpowers@claude-plugins-official": True},
         }
-        assert _marketplace_sources(settings) == ["anthropics/claude-plugins-official"]
+        assert _marketplace_adds(settings) == [("anthropic", "anthropics/claude-plugins-official")]
 
     def test_undecidable_undeclared_marketplace_is_not_added(self) -> None:
         enabled = {"thing@some-third-party": True}
         settings = {"extraKnownMarketplaces": {}, "enabledPlugins": enabled}
-        assert _marketplace_sources(settings) == []
+        assert _marketplace_adds(settings) == []
 
     def test_enabled_id_without_marketplace_suffix_is_skipped(self) -> None:
         settings = {"extraKnownMarketplaces": {}, "enabledPlugins": {"bare-id": True}}
-        assert _marketplace_sources(settings) == []
+        assert _marketplace_adds(settings) == []
 
 
 class TestUpdateInstalledPlugins:

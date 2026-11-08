@@ -260,14 +260,6 @@ def validate_settings(settings: dict[str, Any]) -> None:
     _enabled_plugin_ids(settings)
 
 
-def _marketplace_sources(settings: dict[str, Any]) -> list[str]:
-    """Return the ``marketplace add`` arguments needed for the enabled plugins, quoted.
-
-    The arguments of :func:`_marketplace_adds`, without their names.
-    """
-    return [arg for _, arg in _marketplace_adds(settings)]
-
-
 def _marketplace_adds(settings: dict[str, Any]) -> list[tuple[str, str]]:
     """Return ``(marketplace name, quoted add-arg)`` for each marketplace to add.
 
