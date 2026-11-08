@@ -110,10 +110,9 @@ def _audit(args: argparse.Namespace, org: str) -> int:
     since = (datetime.now(UTC) - timedelta(days=args.window_days)).date().isoformat()
     tasks = epic_audit.task_drift(since, org=org)
     epics_drift = epic_audit.epic_drift(org, home=home)
-    # One listing of the home's epics feeds both per-epic checks (epic .github#819),
-    # read under the home owner's App token, as epic_documents reads its links.
-    with github.target_org(home.split("/", 1)[0]):
-        home_epics = epic_audit.list_home_epics(home)
+    # One listing of the home's epics feeds both per-epic checks (epic .github#819).
+    # The home is always in the audited org, so the org's token reads it.
+    home_epics = epic_audit.list_home_epics(home)
     closed_epic_open_children = epic_audit.closed_epic_open_child(
         org, home=home, listing=home_epics
     )
@@ -123,17 +122,15 @@ def _audit(args: argparse.Namespace, org: str) -> int:
         # each epic that was wrongly closed while a child was still open.
         reopened = epic_audit.reopen_epics_with_open_children(closed_epic_open_children)
         # Backstop ad-hoc drain (epic #238): drain closed children of every live
-        # ad-hoc epic into per-quarter archives and close past archives. main() has
-        # no other org scope, so scope the App token to the org before this
-        # mutation (spec §7), matching vrg-adhoc-epic and vrg-epic-move.
-        # The intake, planning and deferred queue epics drain the same way (epic
-        # vergil-project/.github#176), under the same org scope.
+        # ad-hoc epic into per-quarter archives and close past archives, under the
+        # org's token that main() scopes the whole audit to (spec §7), matching
+        # vrg-adhoc-epic and vrg-epic-move. The intake, planning and deferred
+        # queue epics drain the same way (epic vergil-project/.github#176).
         now = datetime.now(UTC)
-        with github.target_org(org):
-            drained = epics.drain_adhoc_org(org, apply=True, now=now)
-            queue_drained = epics.drain_standing_org(org, apply=True, now=now)
-            # One org-wide enumeration feeds every orphan-pass check.
-            issues = epic_audit.open_issues(org)
+        drained = epics.drain_adhoc_org(org, apply=True, now=now)
+        queue_drained = epics.drain_standing_org(org, apply=True, now=now)
+        # One org-wide enumeration feeds every orphan-pass check.
+        issues = epic_audit.open_issues(org)
         moved = sum(len(p.moves) for p in drained)
         closed_archives = sum(len(p.close) for p in drained)
         print(
@@ -164,7 +161,8 @@ def _audit(args: argparse.Namespace, org: str) -> int:
     pending_operational = epic_audit.operational_pending(org, home=home)
     closed_operational_no_success = epic_audit.closed_operational_without_success(org)
     # Read-only preview of the ad-hoc drain the --close sweep would perform (epic
-    # #238): apply=False mutates nothing, so no org scope is needed.
+    # #238): apply=False mutates nothing. It reads under the org's token, as
+    # every read here does (#3513).
     now = datetime.now(UTC)
     preview = epics.drain_adhoc_org(org, apply=False, now=now)
     pmoved = sum(len(p.moves) for p in preview)
@@ -223,18 +221,17 @@ def _security_pass(org: str, *, apply: bool) -> int:
     """
     mode = "" if apply else " (preview)"
     try:
-        with github.target_org(org):
-            issues = security_records.security_issues(org)
-            if not issues and not github.repo_exists(org, ".github"):
-                print(f"Security records{mode}: none.")
-                return 0
-            home = security_records.advisory_home(org)
-            advisories = security_records.list_advisories(home)
-            result = security_records.classify(advisories, issues)
-            if apply:
-                synced = security_records.sync_states(home, result, issues)
-            else:
-                synced = len(security_records.pending_syncs(result, issues))
+        issues = security_records.security_issues(org)
+        if not issues and not github.repo_exists(org, ".github"):
+            print(f"Security records{mode}: none.")
+            return 0
+        home = security_records.advisory_home(org)
+        advisories = security_records.list_advisories(home)
+        result = security_records.classify(advisories, issues)
+        if apply:
+            synced = security_records.sync_states(home, result, issues)
+        else:
+            synced = len(security_records.pending_syncs(result, issues))
     except github.MissingGitHubTokenError:
         raise
     except (github.GitHubAPIError, security_records.PrivateHomeError) as exc:
@@ -258,27 +255,25 @@ def _apply_orphan_pass(org: str, issues: list[epic_audit.OpenIssue]) -> int:
     """Apply the orphan pass (epic .github#176) after the existing ``--close`` passes.
 
     Order: nativize body-only ``Parent:`` links -> strip retired kind labels ->
-    move now-public repos' queue items -> attach orphans to intake. Every write is
-    scoped to the org's token. A full queue epic stops the pass with the
-    unlinked items on stderr and exit 1 — never a silent skip.
+    move now-public repos' queue items -> attach orphans to intake. Every write
+    runs under the org's token that main() scopes the whole audit to. A full
+    queue epic stops the pass with the unlinked items on stderr and exit 1 —
+    never a silent skip.
     """
-    with github.target_org(org):
-        nativized = epic_audit.nativize_parents(epic_audit.body_only_parents(org, issues=issues))
-        print(f"Body-only Parent: links nativized: {nativized}.")
-        stripped = epic_audit.strip_retired_labels(
-            epic_audit.retired_label_drift(org, issues=issues)
+    nativized = epic_audit.nativize_parents(epic_audit.body_only_parents(org, issues=issues))
+    print(f"Body-only Parent: links nativized: {nativized}.")
+    stripped = epic_audit.strip_retired_labels(epic_audit.retired_label_drift(org, issues=issues))
+    print(f"Retired kind labels stripped: {stripped} issue(s).")
+    try:
+        moved = epic_audit.move_public_queues(
+            epic_audit.public_self_homed_queues(org, issues=issues), org=org
         )
-        print(f"Retired kind labels stripped: {stripped} issue(s).")
-        try:
-            moved = epic_audit.move_public_queues(
-                epic_audit.public_self_homed_queues(org, issues=issues), org=org
-            )
-            print(f"Public-repo queue items moved to {org}/.github: {moved}.")
-            attached = epic_audit.attach_orphans(epic_audit.orphan_drift(org, issues=issues))
-        except epic_audit.StandingEpicFull as exc:
-            print(f"vrg-epic-audit: {exc}", file=sys.stderr)
-            return 1
-        print(f"Orphans attached to intake: {attached}.")
+        print(f"Public-repo queue items moved to {org}/.github: {moved}.")
+        attached = epic_audit.attach_orphans(epic_audit.orphan_drift(org, issues=issues))
+    except epic_audit.StandingEpicFull as exc:
+        print(f"vrg-epic-audit: {exc}", file=sys.stderr)
+        return 1
+    print(f"Orphans attached to intake: {attached}.")
     return 0
 
 

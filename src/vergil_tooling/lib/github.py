@@ -392,9 +392,10 @@ def get_installation_token(
     the requested owner's private repos, so silently falling back
     would mask the failure as a missing grant. Without it, a
     no-installation org still returns ``None`` (with a warning): the
-    cwd-scoped callers (#2070 kept ``vrg-epic-audit`` and
-    ``vrg-finalize-pr`` on it deliberately, and anonymous ``git fetch``
-    of public repos) depend on that path. Without App credentials
+    cwd-scoped callers (#2070 kept ``vrg-finalize-pr`` on it
+    deliberately, and anonymous ``git fetch`` of public repos) depend on
+    that path; ``vrg-epic-audit`` left it in #3513 and scopes every read
+    to the audited org. Without App credentials
     configured, ``None`` is returned (ambient gh auth is the human-mode
     path and is not installation-scoped).
 

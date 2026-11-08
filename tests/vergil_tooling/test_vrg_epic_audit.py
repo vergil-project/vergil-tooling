@@ -542,8 +542,7 @@ def test_close_sweep_also_drains_adhoc(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_close_sweep_drain_scoped_to_org(capsys: pytest.CaptureFixture[str]) -> None:
     # The write-path drain mutates issues in the org's home, so its token must be
-    # scoped to the org (spec §7) — main() has no other org scope, so the drain
-    # must be wrapped explicitly.
+    # scoped to the org (spec §7); main() scopes the whole audit to it (#3513).
     order: list[str] = []
     scope = MagicMock()
     scope.return_value.__enter__ = lambda *_: order.append("enter")
@@ -571,23 +570,8 @@ def test_close_sweep_drain_scoped_to_org(capsys: pytest.CaptureFixture[str]) -> 
         rc = main(["--close"])
     assert rc == 0
     assert scope.call_args.args[0] == "org"
-    # The outer block scopes the whole audit to the org (#3513). Inside it, the
-    # first scoped block lists the home's epics, the second drains, the third
-    # is the orphan pass (no-op on an empty org), the fourth the
-    # security-records pass.
-    assert order == [
-        "enter",
-        "enter",
-        "exit",
-        "enter",
-        "drain",
-        "exit",
-        "enter",
-        "exit",
-        "enter",
-        "exit",
-        "exit",
-    ]
+    # One block scopes the whole audit, the drain included, to the org (#3513).
+    assert order == ["enter", "drain", "exit"]
 
 
 def test_close_sweep_drain_summary(capsys: pytest.CaptureFixture[str]) -> None:
@@ -691,22 +675,9 @@ def test_epic_audit_close_runs_standing_drain(
     ):
         rc = main(["--close"])
     assert rc == 0
-    # After the home's epic listing and the drains, the orphan pass and the
-    # security-records pass, each in its own block, all inside the outer block
-    # that scopes the whole audit to the org (#3513).
-    assert order[0] == "enter"
-    assert order[-1] == "exit"
-    assert order[1:-1] == [
-        "enter",
-        "exit",
-        "enter",
-        "standing",
-        "exit",
-        "enter",
-        "exit",
-        "enter",
-        "exit",
-    ]
+    # The drains run inside the one block that scopes the whole audit to the
+    # org (#3513).
+    assert order == ["enter", "standing", "exit"]
     assert standing_drain.call_args.args[0] == "org"
     assert standing_drain.call_args.kwargs["apply"] is True
     out = capsys.readouterr().out
@@ -843,26 +814,9 @@ def test_vrg_epic_audit_close_applies_in_order(capsys: pytest.CaptureFixture[str
     ):
         rc = main(["--close"])
     assert rc == 0
-    # The home's epic listing runs in the first org-scoped block and the existing
-    # passes in the second; the orphan pass applies in its own, in the order
-    # nativize -> strip -> move -> attach; the security-records pass runs last,
-    # in its own block. The outer block scopes the whole audit to the org (#3513).
-    assert order[0] == "enter"
-    assert order[-1] == "exit"
-    assert order[1:-1] == [
-        "enter",
-        "exit",
-        "enter",
-        "exit",
-        "enter",
-        "nativize",
-        "strip",
-        "move",
-        "attach",
-        "exit",
-        "enter",
-        "exit",
-    ]
+    # One block scopes the whole audit to the org (#3513); inside it the orphan
+    # pass applies in the order nativize -> strip -> move -> attach.
+    assert order == ["enter", "nativize", "strip", "move", "attach", "exit"]
     writers["nativize_parents"].assert_called_once_with([_BODY_ONLY])
     writers["strip_retired_labels"].assert_called_once_with([_RETIRED])
     writers["move_public_queues"].assert_called_once_with([_PUBLIC_QUEUE], org="org")
