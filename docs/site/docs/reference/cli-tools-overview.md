@@ -1996,20 +1996,6 @@ the CI security workflow.
 | Exit codes | 0 no findings, 1 findings, 2 scan failed |
 | Status | Active |
 
-### vrg-trivy-scan
-
-Run a Trivy vulnerability scan of a filesystem or image, writing SARIF and
-table output, report findings, and optionally write a CycloneDX SBOM.
-
-| Attribute | Value |
-|---|---|
-| Source | `vergil_tooling.bin.vrg_trivy_scan` |
-| Args | `--type {filesystem,image}` (required), `--target` (required), `--output-dir` (required), `--trivyignore`, `--sbom`, `--severity` (default `MEDIUM,HIGH,CRITICAL`) |
-| Preconditions | `trivy` on PATH |
-| Failure mode | Exit 2 when trivy itself fails |
-| Exit codes | 0 no findings, 1 findings, 2 scan failed |
-| Status | Active |
-
 ### vrg-ecosystem-resolve
 
 Resolve a language's package build command, publish command and credential
