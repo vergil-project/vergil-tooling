@@ -4984,13 +4984,15 @@ class TestCloudUpdate:
         self, _cloud_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         # In-place update needs IAP reachability, so a non-running box is refused with
-        # an identity-qualified start hint (two identities can share one org/repo).
-        with _CloudPatches(tmp_path / "state", status="") as m:
+        # an identity-qualified rebuild hint (two identities can share one org/repo).
+        # The hint never names `vrg-vm start`, which refuses off-platform boxes (#3994).
+        with _CloudPatches(tmp_path / "state", status="Stopped") as m:
             result = main(["update", "lmf/cloud", "--config", str(_cloud_repo)])
         assert result == 1
         err = capsys.readouterr().err
-        assert "is not running" in err
-        assert "vrg-vm start lmf/cloud --identity vergil-user" in err
+        assert "is not running (status: Stopped)" in err
+        assert "vrg-vm rebuild lmf/cloud --identity vergil-user" in err
+        assert "vrg-vm start" not in err
         m["destroy_vm"].assert_not_called()
         m["apply_vm"].assert_not_called()
 
@@ -7035,7 +7037,52 @@ class TestCmdCp:
         monkeypatch.setattr(vrg_vm.vm_cloud, "ensure_host_path", lambda *a, **k: None)
 
         assert vrg_vm._cmd_cp(_cp_args([str(src)])) == 1
-        assert "reachable" in capsys.readouterr().err.lower()
+        err = capsys.readouterr().err
+        assert "reachable" in err.lower()
+        assert "Start it with: vrg-vm start acme/widgets" in err
+
+    def test_copy_failure_off_platform_hints_rebuild(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # An off-platform box has no `vrg-vm start` (#3994): the hint names rebuild.
+        from vergil_tooling.bin import vrg_vm
+
+        src = tmp_path / "a.pdf"
+        src.write_text("x")
+        transport = MagicMock()
+        transport.copy_to.side_effect = subprocess.CalledProcessError(1, "scp")
+        target = _cp_target(off_platform=True, transport=transport)
+        monkeypatch.setattr(vrg_vm, "_resolve_target", lambda args, **k: target)
+        monkeypatch.setattr(vrg_vm.vm_cloud, "ensure_host_path", lambda *a, **k: None)
+
+        assert vrg_vm._cmd_cp(_cp_args([str(src)])) == 1
+        err = capsys.readouterr().err
+        assert "reachable" in err.lower()
+        assert "Bring it back with: vrg-vm rebuild acme/widgets --identity vergil-user" in err
+        assert "vrg-vm start" not in err
+
+    def test_missing_off_platform_vm_hints_rebuild(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # A session never creates an off-platform box, so the hint names rebuild.
+        from vergil_tooling.bin import vrg_vm
+
+        src = tmp_path / "a.pdf"
+        src.write_text("x")
+
+        def _boom(instance: object = None) -> object:
+            msg = "zone not persisted"
+            raise RuntimeError(msg)
+
+        target = _cp_target(off_platform=True, transport=None)
+        target.backend = types.SimpleNamespace(transport=_boom)
+        monkeypatch.setattr(vrg_vm, "_resolve_target", lambda args, **k: target)
+
+        assert vrg_vm._cmd_cp(_cp_args([str(src)])) == 1
+        err = capsys.readouterr().err
+        assert "does not exist" in err.lower()
+        assert "create it with: vrg-vm rebuild acme/widgets --identity vergil-user" in err
+        assert "vrg-vm session" not in err
 
     def test_missing_vm_reports_clearly(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -7054,7 +7101,9 @@ class TestCmdCp:
         monkeypatch.setattr(vrg_vm, "_resolve_target", lambda args, **k: target)
 
         assert vrg_vm._cmd_cp(_cp_args([str(src)])) == 1
-        assert "does not exist" in capsys.readouterr().err.lower()
+        err = capsys.readouterr().err
+        assert "does not exist" in err.lower()
+        assert "create it with: vrg-vm session acme/widgets" in err
 
     def test_main_dispatches_cp_and_reports_plan_errors(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
