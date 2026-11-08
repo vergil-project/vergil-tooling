@@ -137,6 +137,13 @@ fails loudly if a required flag is missing; run
 [CLI Tools Overview](../reference/cli-tools-overview.md#vrg-github-repo-init)
 covers the born-green language skeleton.
 
+A resumed run reads step 3's answers back from the committed
+`vergil.toml`. It stops if that file is missing or invalid, or if a
+flag you pass contradicts it. `vergil.toml` does not record the
+license or the initial version, so a run that resumes before step 4
+asks for them again; under `--non-interactive` it needs `--license`
+and `--initial-version`.
+
 ### An existing repository
 
 From the root of the repo's clone, on a feature branch:
