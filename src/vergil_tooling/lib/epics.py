@@ -247,9 +247,12 @@ def _reflink_child_states(epic: IssueRef) -> list[ChildState]:
         f"Parent: {epic.slug}",
         "--owner",
         epic.owner,
+        "--limit",
+        str(LISTING_LIMIT),
         "--json",
         "number,state,title,closedAt,repository,body",
     )
+    refuse_truncated(results, LISTING_LIMIT, f"the Parent: {epic.slug} reflink search")
     states: list[ChildState] = []
     for item in results if isinstance(results, list) else []:
         name_with_owner = str((item.get("repository") or {}).get("nameWithOwner", ""))
@@ -652,8 +655,26 @@ _LEGACY_ADHOC_ARCHIVE_RE = re.compile(
 EPIC_TITLE_LIST_LIMIT = 1000
 
 
+#: Upper bound on the other ``gh issue list`` / ``gh search`` lookups here
+#: (#4038). ``gh search`` returns at most 1000 results however many pages it
+#: follows, so a search can never usefully ask for more.
+LISTING_LIMIT = 1000
+
+
 class EpicListTruncatedError(ValueError):
-    """The title lookup's listing reached its limit, so a match may lie beyond it."""
+    """A listing reached its limit, so a row the caller needs may lie beyond it."""
+
+
+def refuse_truncated(rows: object, limit: int, what: str) -> None:
+    """Raise :class:`EpicListTruncatedError` if *rows* is a list *limit* long or more.
+
+    gh stops at ``--limit`` without saying so, so a result that long may be cut
+    off and nothing read from it, absence above all, can be trusted.
+    """
+    if isinstance(rows, list) and len(rows) >= limit:
+        raise EpicListTruncatedError(
+            f"{what} reached its {limit}-row limit; refusing to act on a possibly truncated list"
+        )
 
 
 def _find_epic_by_title(
@@ -1123,8 +1144,13 @@ def _open_standing_archive_rows(kind: StandingKind, home: str) -> list[tuple[int
         *[arg for label in kind.archive_labels for arg in ("--label", label)],
         "--state",
         "open",
+        "--limit",
+        str(LISTING_LIMIT),
         "--json",
         "number,title",
+    )
+    refuse_truncated(
+        raw, LISTING_LIMIT, f"the open {' + '.join(kind.archive_labels)} archives of {home}"
     )
     pattern = archive_re(kind)
     out: list[tuple[int, re.Match[str]]] = []
@@ -1482,10 +1508,11 @@ def plan_normalize_adhoc(org: str) -> list[ArchiveConversion]:
             "--state",
             "all",
             "--limit",
-            "500",
+            str(LISTING_LIMIT),
             "--json",
             "number,title",
         )
+        refuse_truncated(raw, LISTING_LIMIT, f"the epic + ad-hoc issues of {home}")
         for item in raw if isinstance(raw, list) else []:
             if not isinstance(item, dict):
                 continue

@@ -499,6 +499,34 @@ def test_find_open_fix_task_none_for_other_version_or_kind(monkeypatch) -> None:
     assert pr.find_open_fix_task("o/r", "2.1.243", "update") is None
 
 
+def _limited(rows):
+    """A ``gh issue list`` stand-in that returns at most ``--limit`` rows (30 without one)."""
+
+    def fake(*args):
+        return rows[: int(args[args.index("--limit") + 1]) if "--limit" in args else 30]
+
+    return fake
+
+
+def _other_tasks(count: int) -> list[dict[str, object]]:
+    title = "Fix failed dependency update for 2.1.24"
+    return [_task(100 + i, title, "update") for i in range(count)]
+
+
+def test_find_open_fix_task_sees_a_task_past_row_30(monkeypatch) -> None:
+    rows = [*_other_tasks(30), _task(27, "Fix failed dependency update for 2.1.243", "update")]
+    monkeypatch.setattr(_MOD + ".github.read_json", _limited(rows))
+    assert pr.find_open_fix_task("o/r", "2.1.243", "update") == "https://github.com/o/r/issues/27"
+
+
+def test_find_open_fix_task_refuses_a_search_that_may_be_truncated(monkeypatch) -> None:
+    # A matching task past the limit would be filed again, so a full page refuses.
+    rows = _other_tasks(pr._FIX_TASK_SEARCH_LIMIT)
+    monkeypatch.setattr(_MOD + ".github.read_json", _limited(rows))
+    with pytest.raises(UpdateDepsError, match="may be truncated; no fix task was filed"):
+        pr.find_open_fix_task("o/r", "2.1.243", "update")
+
+
 def test_find_open_fix_task_fails_loud_when_lookup_fails(monkeypatch) -> None:
     # Never guess: a failed lookup must not silently file a possible duplicate.
     def _fail(*args):

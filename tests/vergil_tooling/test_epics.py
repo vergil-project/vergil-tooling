@@ -1223,6 +1223,96 @@ def test_find_epic_by_title_accepts_a_list_one_short_of_the_limit() -> None:
         assert epics._find_epic_by_title("org/.github", "Epic (ad hoc): tooling") is None
 
 
+# -- the other bounded lookups (#4038) -----------------------------------------
+
+
+def test_refuse_truncated_passes_a_list_one_short_of_the_limit() -> None:
+    epics.refuse_truncated([{}] * 4, 5, "the listing")
+
+
+def test_refuse_truncated_raises_at_the_limit() -> None:
+    with pytest.raises(epics.EpicListTruncatedError, match="the listing reached its 5-row limit"):
+        epics.refuse_truncated([{}] * 5, 5, "the listing")
+
+
+def _archive_rows(count: int) -> list[dict]:
+    return [
+        {"number": i, "title": f"Archive (ad hoc): repo-{i} — 2026-Q3"} for i in range(1, count + 1)
+    ]
+
+
+def test_open_standing_archive_rows_sees_an_archive_past_row_30() -> None:
+    fake_list = _fake_issue_list(_archive_rows(31))
+    with patch("vergil_tooling.lib.github.read_json", side_effect=fake_list):
+        rows = epics._open_standing_archive_rows(epics.ADHOC, "org/.github")
+    assert sorted(number for number, _ in rows) == list(range(1, 32))
+
+
+def test_open_standing_archive_rows_refuses_a_list_that_may_be_truncated() -> None:
+    fake_list = _fake_issue_list(_archive_rows(epics.LISTING_LIMIT))
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=fake_list),
+        pytest.raises(epics.EpicListTruncatedError, match="archives of org/.github"),
+    ):
+        epics._open_standing_archive_rows(epics.ADHOC, "org/.github")
+
+
+def _reflink_hits(count: int) -> list[dict]:
+    return [
+        {
+            "number": i,
+            "state": "OPEN",
+            "repository": {"nameWithOwner": "org/repo-a"},
+            "body": f"Parent: {EPIC.slug}",
+        }
+        for i in range(1, count + 1)
+    ]
+
+
+def test_reflink_child_states_sees_a_child_past_hit_30() -> None:
+    fake_search = _fake_issue_list(_reflink_hits(31))
+    with patch("vergil_tooling.lib.github.read_json", side_effect=fake_search):
+        states = epics._reflink_child_states(EPIC)
+    assert sorted(s.ref.number for s in states) == list(range(1, 32))
+
+
+def test_reflink_child_states_refuses_a_search_that_may_be_truncated() -> None:
+    hits = _reflink_hits(epics.LISTING_LIMIT)
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=_fake_issue_list(hits)),
+        pytest.raises(epics.EpicListTruncatedError, match="reflink search"),
+    ):
+        epics._reflink_child_states(EPIC)
+
+
+def _legacy_archives(count: int) -> list[dict]:
+    return [
+        {"number": i, "title": f"Epic (ad hoc): repo-{i} — 2026-Q1"} for i in range(1, count + 1)
+    ]
+
+
+def test_plan_normalize_adhoc_sees_an_archive_past_row_500() -> None:
+    with (
+        patch("vergil_tooling.lib.github.list_org_repos", return_value=[]),
+        patch(
+            "vergil_tooling.lib.github.read_json",
+            side_effect=_fake_issue_list(_legacy_archives(501)),
+        ),
+    ):
+        plan = epics.plan_normalize_adhoc("org")
+    assert sorted(c.ref.number for c in plan) == list(range(1, 502))
+
+
+def test_plan_normalize_adhoc_refuses_a_list_that_may_be_truncated() -> None:
+    rows = _legacy_archives(epics.LISTING_LIMIT)
+    with (
+        patch("vergil_tooling.lib.github.list_org_repos", return_value=[]),
+        patch("vergil_tooling.lib.github.read_json", side_effect=_fake_issue_list(rows)),
+        pytest.raises(epics.EpicListTruncatedError, match="ad-hoc issues of org/.github"),
+    ):
+        epics.plan_normalize_adhoc("org")
+
+
 # -- archive rename: rollup no-ops under a converted archive parent (Task 3) ---
 
 

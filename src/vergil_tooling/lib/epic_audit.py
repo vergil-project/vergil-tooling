@@ -20,6 +20,7 @@ import json
 import re
 import sys
 from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from vergil_tooling.lib import epic_docs, epics, github, linkage, release, roadmap
@@ -40,22 +41,60 @@ class TaskDrift:
     pr_url: str
 
 
-def task_drift(since: str, *, org: str) -> list[TaskDrift]:
-    """Merged PRs (since *since*) whose ``Ref``'d task is still open."""
-    raw: Any = github.read_json(
-        "search",
-        "prs",
-        "--owner",
-        org,
-        # The --merged flag silently matches nothing; the merged:>= query term works.
-        f"merged:>={since}",
-        "--limit",
-        "100",
-        "--json",
-        "number,repository,url,body",
-    )
+#: Days in each merged-PR search of :func:`task_drift`. The org merges several
+#: hundred PRs a month, close to search's 1000-result cap, so the window is
+#: searched a week at a time and each week is held to the cap (#4038).
+_DRIFT_SLICE_DAYS = 7
+
+
+def _merged_qualifiers(since: str, today: date) -> list[str]:
+    """``merged:`` search terms that cover *since* onward in week-long slices.
+
+    The slices are disjoint and inclusive; the last is open-ended
+    (``merged:>=``) so a PR merged today, in any time zone, is never missed.
+    """
+    start = date.fromisoformat(since)
+    step = timedelta(days=_DRIFT_SLICE_DAYS)
+    qualifiers: list[str] = []
+    while start + step <= today:
+        end = start + step - timedelta(days=1)
+        qualifiers.append(f"merged:{start.isoformat()}..{end.isoformat()}")
+        start = end + timedelta(days=1)
+    qualifiers.append(f"merged:>={start.isoformat()}")
+    return qualifiers
+
+
+def _merged_prs(since: str, *, org: str, today: date) -> list[Any]:
+    """Every PR in *org* merged on or after *since*, refusing a truncated slice."""
+    prs: list[Any] = []
+    for qualifier in _merged_qualifiers(since, today):
+        raw: Any = github.read_json(
+            "search",
+            "prs",
+            "--owner",
+            org,
+            # The --merged flag silently matches nothing; the merged: query term works.
+            qualifier,
+            "--limit",
+            str(epics.LISTING_LIMIT),
+            "--json",
+            "number,repository,url,body",
+        )
+        epics.refuse_truncated(raw, epics.LISTING_LIMIT, f"the {org} PR search for {qualifier}")
+        prs.extend(raw if isinstance(raw, list) else [])
+    return prs
+
+
+def task_drift(since: str, *, org: str, today: date | None = None) -> list[TaskDrift]:
+    """Merged PRs (since *since*) whose ``Ref``'d task is still open.
+
+    *today* (default: the current UTC date) only sets where the week-long
+    search slices end.
+    """
+    if today is None:
+        today = datetime.now(UTC).date()
     drift: list[TaskDrift] = []
-    for entry in raw if isinstance(raw, list) else []:
+    for entry in _merged_prs(since, org=org, today=today):
         pr_repo = str((entry.get("repository") or {}).get("nameWithOwner", ""))
         if not pr_repo:
             continue
@@ -257,8 +296,13 @@ def closed_operational_without_success(org: str) -> list[str]:
             label,
             "--state",
             "closed",
+            "--limit",
+            str(epics.LISTING_LIMIT),
             "--json",
             "number,repository",
+        )
+        epics.refuse_truncated(
+            raw, epics.LISTING_LIMIT, f"the {org} search for closed {label} issues"
         )
         for item in raw if isinstance(raw, list) else []:
             name_with_owner = str((item.get("repository") or {}).get("nameWithOwner", ""))
@@ -295,9 +339,12 @@ def epic_outside_dotgithub(org: str) -> list[str]:
         "epic",
         "--state",
         "open",
+        "--limit",
+        str(epics.LISTING_LIMIT),
         "--json",
         "number,repository",
     )
+    epics.refuse_truncated(raw, epics.LISTING_LIMIT, f"the {org} search for open epics")
     dotgithub = f"{org}/.github"
     violations: list[str] = []
     for item in raw if isinstance(raw, list) else []:
@@ -334,10 +381,11 @@ def stray_dotgithub_issue(org: str, *, home: str | None = None) -> list[str]:
         "--state",
         "open",
         "--limit",
-        "500",
+        str(epics.LISTING_LIMIT),
         "--json",
         "number,labels",
     )
+    epics.refuse_truncated(raw, epics.LISTING_LIMIT, f"the open issues of {home}")
     strays: list[str] = []
     for item in raw if isinstance(raw, list) else []:
         labels = {str((label or {}).get("name", "")) for label in (item.get("labels") or [])}

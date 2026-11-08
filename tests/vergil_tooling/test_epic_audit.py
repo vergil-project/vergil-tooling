@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, date, datetime
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -10,6 +11,10 @@ import pytest
 
 from vergil_tooling.lib import epic_audit, epic_docs, epics, github, roadmap
 from vergil_tooling.lib.epic_audit import TaskDrift
+
+# The day the task_drift tests run on: inside the first week of their 2026-06-01
+# window, so the merged-PR search is a single open-ended slice.
+_TODAY = date(2026, 6, 1)
 
 
 def test_task_drift_flags_open_task_behind_merged_pr() -> None:
@@ -52,7 +57,7 @@ def test_task_drift_flags_open_task_behind_merged_pr() -> None:
         patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json),
         patch("vergil_tooling.lib.epics.parent_of", return_value=None),
     ):
-        result = epic_audit.task_drift("2026-06-01", org="vergil-project")
+        result = epic_audit.task_drift("2026-06-01", today=_TODAY, org="vergil-project")
     assert result == [TaskDrift("vergil-project/vergil-tooling", 1947, 1948, "u1948")]
 
 
@@ -78,7 +83,7 @@ def test_task_drift_skips_release_tracking_issue() -> None:
         }
 
     with patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json):
-        result = epic_audit.task_drift("2026-06-01", org="vergil-project")
+        result = epic_audit.task_drift("2026-06-01", today=_TODAY, org="vergil-project")
     assert result == []
 
 
@@ -105,7 +110,7 @@ def test_task_drift_resolves_cross_repo_ref() -> None:
         patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json),
         patch("vergil_tooling.lib.epics.parent_of", return_value=None),
     ):
-        result = epic_audit.task_drift("2026-06-01", org="vergil-project")
+        result = epic_audit.task_drift("2026-06-01", today=_TODAY, org="vergil-project")
     assert looked_up["repo"] == "vergil-project/vergil-tooling"
     assert result == [TaskDrift("vergil-project/vergil-tooling", 42, 7, "u7")]
 
@@ -128,7 +133,7 @@ def test_task_drift_skips_unresolvable_task(capsys: pytest.CaptureFixture[str]) 
         raise github.GitHubAPIError(1, ["gh"], "", "GraphQL: Could not resolve to an issue")
 
     with patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json):
-        result = epic_audit.task_drift("2026-06-01", org="logical-minds-foundry")
+        result = epic_audit.task_drift("2026-06-01", today=_TODAY, org="logical-minds-foundry")
     assert result == []
     assert "skipping vergil-project/vergil-tooling#2105" in capsys.readouterr().err
 
@@ -156,7 +161,7 @@ def test_task_drift_skips_epic_ref() -> None:
         }
 
     with patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json):
-        assert epic_audit.task_drift("2026-06-01", org="logical-minds-foundry") == []
+        assert epic_audit.task_drift("2026-06-01", today=_TODAY, org="logical-minds-foundry") == []
 
 
 def test_task_drift_skips_operational_refs() -> None:
@@ -181,7 +186,7 @@ def test_task_drift_skips_operational_refs() -> None:
         patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json),
         patch("vergil_tooling.lib.epics.parent_of") as parent,
     ):
-        assert epic_audit.task_drift("2026-06-01", org="org") == []
+        assert epic_audit.task_drift("2026-06-01", today=_TODAY, org="org") == []
     parent.assert_not_called()
 
 
@@ -206,13 +211,13 @@ def test_task_drift_still_flags_labelled_plain_task() -> None:
         patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json),
         patch("vergil_tooling.lib.epics.parent_of", return_value=None),
     ):
-        result = epic_audit.task_drift("2026-06-01", org="org")
+        result = epic_audit.task_drift("2026-06-01", today=_TODAY, org="org")
     assert result == [TaskDrift("org/repo", 41, 40, "u40")]
 
 
 def test_task_drift_returns_empty_on_non_list() -> None:
     with patch("vergil_tooling.lib.github.read_json", return_value={"x": 1}):
-        assert epic_audit.task_drift("2026-06-01", org="vergil-project") == []
+        assert epic_audit.task_drift("2026-06-01", today=_TODAY, org="vergil-project") == []
 
 
 def test_task_drift_skips_when_issue_view_is_not_an_object() -> None:
@@ -231,7 +236,7 @@ def test_task_drift_skips_when_issue_view_is_not_an_object() -> None:
         return prs if args[0] == "search" else ["unexpected"]
 
     with patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json):
-        assert epic_audit.task_drift("2026-06-01", org="vergil-project") == []
+        assert epic_audit.task_drift("2026-06-01", today=_TODAY, org="vergil-project") == []
 
 
 def test_epic_drift_flags_all_done_open_epics() -> None:
@@ -1377,7 +1382,7 @@ def test_task_drift_skips_pr_ref_to_queue_item() -> None:
         patch("vergil_tooling.lib.epics.parent_of", return_value=intake) as parent,
         patch("vergil_tooling.lib.epics.queue_kind", return_value="intake"),
     ):
-        assert epic_audit.task_drift("2026-06-01", org="org") == []
+        assert epic_audit.task_drift("2026-06-01", today=_TODAY, org="org") == []
     parent.assert_called_once_with(epics.IssueRef("org", "repo", 8))
 
 
@@ -1395,7 +1400,8 @@ def test_task_drift_flags_task_under_finite_epic() -> None:
         ),
         patch("vergil_tooling.lib.epics.queue_kind", return_value=None),
     ):
-        assert epic_audit.task_drift("2026-06-01", org="org") == [TaskDrift("org/repo", 8, 31, "u")]
+        result = epic_audit.task_drift("2026-06-01", today=_TODAY, org="org")
+    assert result == [TaskDrift("org/repo", 8, 31, "u")]
 
 
 def test_stray_check_allows_queue_items_without_kind_labels() -> None:
@@ -1762,3 +1768,141 @@ def test_render_without_epic_documents_findings_has_no_section() -> None:
     out = epic_audit.render([], [], org="org", window_days=30, epic_docs_findings=[])
     assert "Epic documents" not in out
     assert "No drift" in out
+
+
+# -- bounded searches and lists (#4038) ----------------------------------------
+
+
+def _limited(rows: list[dict[str, Any]]) -> Any:
+    """A gh list/search stand-in that returns at most ``--limit`` rows (30 without one)."""
+
+    def fake(*args: str) -> list[dict[str, Any]]:
+        limit = int(args[args.index("--limit") + 1]) if "--limit" in args else 30
+        return rows[:limit]
+
+    return fake
+
+
+def test_merged_qualifiers_slice_the_window_by_week_and_end_open() -> None:
+    assert epic_audit._merged_qualifiers("2026-06-01", date(2026, 6, 20)) == [
+        "merged:2026-06-01..2026-06-07",
+        "merged:2026-06-08..2026-06-14",
+        "merged:>=2026-06-15",
+    ]
+
+
+def test_merged_qualifiers_within_a_week_is_one_open_slice() -> None:
+    assert epic_audit._merged_qualifiers("2026-06-01", date(2026, 6, 7)) == ["merged:>=2026-06-01"]
+
+
+def test_task_drift_slices_end_today_by_default() -> None:
+    since = datetime.now(UTC).date().isoformat()
+    with patch("vergil_tooling.lib.github.read_json", return_value=[]) as search:
+        assert epic_audit.task_drift(since, org="org") == []
+    search.assert_called_once()
+    assert f"merged:>={since}" in search.call_args.args
+
+
+def _merged(count: int) -> list[dict[str, Any]]:
+    return [
+        {"number": i, "repository": {"nameWithOwner": "org/repo"}, "url": f"u{i}", "body": ""}
+        for i in range(1, count + 1)
+    ]
+
+
+def test_merged_prs_sees_a_pr_past_row_100_and_reads_every_slice() -> None:
+    calls: list[tuple[str, ...]] = []
+
+    def fake(*args: str) -> list[dict[str, Any]]:
+        calls.append(args)
+        return _limited(_merged(101))(*args)
+
+    with patch("vergil_tooling.lib.github.read_json", side_effect=fake):
+        prs = epic_audit._merged_prs("2026-06-01", org="org", today=date(2026, 6, 8))
+    assert len(prs) == 202  # two slices of 101 each
+    assert [c[4] for c in calls] == ["merged:2026-06-01..2026-06-07", "merged:>=2026-06-08"]
+
+
+def test_task_drift_refuses_a_slice_that_may_be_truncated() -> None:
+    with (
+        patch(
+            "vergil_tooling.lib.github.read_json",
+            side_effect=_limited(_merged(epics.LISTING_LIMIT)),
+        ),
+        pytest.raises(epics.EpicListTruncatedError, match="merged:>=2026-06-01"),
+    ):
+        epic_audit.task_drift("2026-06-01", today=_TODAY, org="org")
+
+
+def _closed_operational(count: int) -> list[dict[str, Any]]:
+    return [{"number": i, "repository": {"nameWithOwner": "org/repo"}} for i in range(1, count + 1)]
+
+
+def test_closed_operational_without_success_sees_an_issue_past_row_30() -> None:
+    search = _limited(_closed_operational(31))
+
+    def fake(*args: str) -> object:
+        if args[0] == "search":
+            return search(*args) if args[5] == "validation" else []
+        return {"comments": []}
+
+    with patch("vergil_tooling.lib.github.read_json", side_effect=fake):
+        result = epic_audit.closed_operational_without_success("org")
+    assert len(result) == 31
+
+
+def test_closed_operational_without_success_refuses_a_search_that_may_be_truncated() -> None:
+    with (
+        patch(
+            "vergil_tooling.lib.github.read_json",
+            side_effect=_limited(_closed_operational(epics.LISTING_LIMIT)),
+        ),
+        pytest.raises(epics.EpicListTruncatedError, match="closed .* issues"),
+    ):
+        epic_audit.closed_operational_without_success("org")
+
+
+def _public_epics(count: int) -> list[dict[str, Any]]:
+    return [{"number": i, "repository": {"nameWithOwner": "org/repo"}} for i in range(1, count + 1)]
+
+
+def test_epic_outside_dotgithub_sees_an_epic_past_row_30() -> None:
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=_limited(_public_epics(31))),
+        patch("vergil_tooling.lib.github.is_public", return_value=True),
+    ):
+        assert len(epic_audit.epic_outside_dotgithub("org")) == 31
+
+
+def test_epic_outside_dotgithub_refuses_a_search_that_may_be_truncated() -> None:
+    with (
+        patch(
+            "vergil_tooling.lib.github.read_json",
+            side_effect=_limited(_public_epics(epics.LISTING_LIMIT)),
+        ),
+        pytest.raises(epics.EpicListTruncatedError, match="open epics"),
+    ):
+        epic_audit.epic_outside_dotgithub("org")
+
+
+def _unlabelled(count: int) -> list[dict[str, Any]]:
+    return [{"number": i, "labels": []} for i in range(1, count + 1)]
+
+
+def test_stray_dotgithub_issue_sees_a_stray_past_row_500() -> None:
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=_limited(_unlabelled(501))),
+        patch("vergil_tooling.lib.epics.parent_of", return_value=None),
+    ):
+        assert len(epic_audit.stray_dotgithub_issue("org", home="org/.github")) == 501
+
+
+def test_stray_dotgithub_issue_refuses_a_list_that_may_be_truncated() -> None:
+    with (
+        patch(
+            "vergil_tooling.lib.github.read_json",
+            side_effect=_limited(_unlabelled(epics.LISTING_LIMIT)),
+        ),
+        pytest.raises(epics.EpicListTruncatedError, match="open issues of org/.github"),
+    ):
+        epic_audit.stray_dotgithub_issue("org", home="org/.github")
