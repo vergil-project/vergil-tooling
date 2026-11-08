@@ -81,6 +81,23 @@ def _settings_with_ref(ref: str) -> dict[str, Any]:
 SETTINGS_V21 = _settings_with_ref("v2.1")
 
 
+def _declaring(
+    names: tuple[str, ...] = ("paad", "vergil-marketplace"),
+    enabled: dict[str, bool] | None = None,
+) -> dict[str, Any]:
+    """Settings that declare *names* (GitHub sources) and enable *enabled*."""
+    return {
+        "extraKnownMarketplaces": {
+            name: {"source": {"source": "github", "repo": f"o/{name}"}} for name in names
+        },
+        "enabledPlugins": enabled or {},
+    }
+
+
+# Declares the marketplaces of the installs the listing tests report enabled.
+_DECLARED = _declaring()
+
+
 class FakeRun:
     """A ``Run`` that records each argv and answers the two ``--json`` listings."""
 
@@ -674,7 +691,7 @@ class TestUpdateInstalledPlugins:
 
     def test_updates_enabled_installs_and_leaves_disabled_alone(self) -> None:
         run = FakeRun(plugin_list=self._LISTING)
-        assert update_installed_plugins(run, {}, "") == []
+        assert update_installed_plugins(run, _DECLARED, "") == []
         assert "claude plugin update paad@paad --scope user" in run.cmds
         assert (
             "cd /p/tooling && claude plugin update vergil@vergil-marketplace --scope project"
@@ -692,7 +709,7 @@ class TestUpdateInstalledPlugins:
             ]
         )
         run = FakeRun(plugin_list=listing)
-        update_installed_plugins(run, {}, "")
+        update_installed_plugins(run, _DECLARED, "")
         updates = [c for c in run.cmds if f"claude plugin update {pid}" in c]
         assert len(updates) == 3
         assert f"claude plugin update {pid} --scope user" in updates
@@ -711,7 +728,7 @@ class TestUpdateInstalledPlugins:
             ]
         )
         run = FakeRun(plugin_list=listing, fail_on=("cd /p/gone",))
-        assert update_installed_plugins(run, {}, "") == [f"{pid} (project: /p/gone)"]
+        assert update_installed_plugins(run, _DECLARED, "") == [f"{pid} (project: /p/gone)"]
         assert any("cd /p/here && claude plugin update" in c for c in run.cmds)
         assert f"claude plugin update {pid} --scope user" in run.cmds
 
@@ -730,7 +747,7 @@ class TestUpdateInstalledPlugins:
             [{"id": pid, "scope": scope, "enabled": True, "projectPath": "/p/tooling"}]
         )
         run = FakeRun(plugin_list=listing)
-        assert update_installed_plugins(run, {"enabledPlugins": {pid: True}}, "") == []
+        assert update_installed_plugins(run, _declaring(enabled={pid: True}), "") == []
         update = f"cd /p/tooling && claude plugin update {pid} --scope {scope}"
         install = f"claude plugin install {pid} --scope user"
         assert run.cmds.count(install) == 1
@@ -742,7 +759,7 @@ class TestUpdateInstalledPlugins:
             [{"id": pid, "scope": "project", "enabled": True, "projectPath": "/p/tooling"}]
         )
         run = FakeRun(plugin_list=listing, fail_on=(f"claude plugin install {pid}",))
-        assert update_installed_plugins(run, {"enabledPlugins": {pid: True}}, "") == [
+        assert update_installed_plugins(run, _declaring(enabled={pid: True}), "") == [
             f"{pid} (user)"
         ]
 
@@ -755,13 +772,13 @@ class TestUpdateInstalledPlugins:
             ]
         )
         run = FakeRun(plugin_list=listing)
-        assert update_installed_plugins(run, {"enabledPlugins": {pid: True}}, "") == []
+        assert update_installed_plugins(run, _declaring(enabled={pid: True}), "") == []
         assert not any("claude plugin install" in c for c in run.cmds)
 
     def test_entry_without_a_scope_counts_as_a_user_install(self) -> None:
         pid = "vergil@vergil-marketplace"
         run = FakeRun(plugin_list=json.dumps([{"id": pid, "enabled": True}]))
-        assert update_installed_plugins(run, {"enabledPlugins": {pid: True}}, "") == []
+        assert update_installed_plugins(run, _declaring(enabled={pid: True}), "") == []
         assert f"claude plugin update {pid} --scope user" in run.cmds
         assert not any("claude plugin install" in c for c in run.cmds)
 
@@ -773,11 +790,11 @@ class TestUpdateInstalledPlugins:
             [{"id": pid, "scope": "project", "enabled": True, "projectPath": "/p/tooling"}]
         )
         run = FakeRun(plugin_list=listing)
-        assert update_installed_plugins(run, {"enabledPlugins": {pid: False}}, "") == []
+        assert update_installed_plugins(run, _declaring(enabled={pid: False}), "") == []
         assert not any("claude plugin install" in c for c in run.cmds)
 
     def test_installs_enabled_plugins_not_yet_installed(self) -> None:
-        settings = {"enabledPlugins": {"superpowers@official": True, "paad@paad": True}}
+        settings = _declaring(enabled={"superpowers@official": True, "paad@paad": True})
         listing = json.dumps([{"id": "paad@paad", "scope": "user", "enabled": True}])
         run = FakeRun(plugin_list=listing)
         assert update_installed_plugins(run, settings, "") == []
@@ -792,8 +809,58 @@ class TestUpdateInstalledPlugins:
 
     def test_attempts_all_when_one_fails(self) -> None:
         run = FakeRun(plugin_list=self._LISTING, fail_on=("claude plugin update paad@paad",))
-        assert update_installed_plugins(run, {}, "") == ["paad@paad (user)"]
+        assert update_installed_plugins(run, _DECLARED, "") == ["paad@paad (user)"]
         assert any("claude plugin update vergil@vergil-marketplace" in c for c in run.cmds)
+
+    def test_enabled_install_from_an_undeclared_marketplace_is_fatal(self) -> None:
+        # #3995 N1: a project's own settings can enable an install whose
+        # marketplace the user settings.json does not declare; its catalog was
+        # never refreshed, so the refresh stops before any update or install.
+        listing = json.dumps(
+            [
+                {"id": "paad@paad", "scope": "user", "enabled": True},
+                {"id": "x@proj-market", "scope": "project", "enabled": True, "projectPath": "/p"},
+                {"id": "y@other", "scope": "user", "enabled": True},
+                {"id": "z@unused", "scope": "user", "enabled": False},
+            ]
+        )
+        run = FakeRun(plugin_list=listing)
+        settings = _declaring(enabled={"new@paad": True})
+        with pytest.raises(
+            MarketplaceError,
+            match=(
+                r"^claude plugin list --json reports an enabled install from a marketplace "
+                r"settings\.json extraKnownMarketplaces does not declare: "
+                r"x@proj-market \(project: /p\) \(marketplace proj-market\), "
+                r"y@other \(user\) \(marketplace other\)$"
+            ),
+        ):
+            update_installed_plugins(run, settings, "")
+        assert run.cmds == ["claude plugin list --json"]
+
+    def test_official_install_counts_only_when_the_refresh_refreshed_it(self) -> None:
+        listing = json.dumps(
+            [{"id": "s@claude-plugins-official", "scope": "user", "enabled": True}]
+        )
+        with pytest.raises(MarketplaceError, match=r"\(marketplace claude-plugins-official\)$"):
+            update_installed_plugins(FakeRun(plugin_list=listing), _DECLARED, "")
+        # A settings plugin from it makes the refresh add and update it.
+        settings = _declaring(enabled={"other@claude-plugins-official": True})
+        run = FakeRun(plugin_list=listing)
+        assert update_installed_plugins(run, settings, "") == []
+        assert "claude plugin update s@claude-plugins-official --scope user" in run.cmds
+
+    def test_enabled_install_without_a_marketplace_suffix_is_not_checked(self) -> None:
+        run = FakeRun(plugin_list=json.dumps([{"id": "bare", "scope": "user", "enabled": True}]))
+        assert update_installed_plugins(run, {}, "") == []
+        assert "claude plugin update bare --scope user" in run.cmds
+
+    def test_refresh_stops_on_an_undeclared_enabled_install(self) -> None:
+        listing = json.dumps([{"id": "y@other", "scope": "user", "enabled": True}])
+        run = FakeRun(plugin_list=listing)
+        with pytest.raises(MarketplaceError, match=r"y@other \(user\) \(marketplace other\)$"):
+            refresh(run, SETTINGS_V21, "")
+        assert not any("plugin update" in c or "plugin install" in c for c in run.cmds)
 
     @pytest.mark.parametrize("stdout", ["nope", '{"id": "x"}', '[{"scope": "user"}]'])
     def test_malformed_plugin_list_raises(self, stdout: str) -> None:
@@ -818,7 +885,7 @@ class TestUpdateInstalledPlugins:
         entry[field] = value
         run = FakeRun(plugin_list=json.dumps([entry]))
         with pytest.raises(MarketplaceError, match=field):
-            update_installed_plugins(run, {"enabledPlugins": {entry["id"]: True}}, "")
+            update_installed_plugins(run, _declaring(enabled={entry["id"]: True}), "")
         assert not any("claude plugin update" in c for c in run.cmds)
 
 

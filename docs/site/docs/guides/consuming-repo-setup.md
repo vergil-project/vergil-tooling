@@ -343,7 +343,10 @@ the refresh. So the settings must declare the marketplace of every plugin
 they enable, `claude-plugins-official` aside: a plugin enabled from an
 undeclared marketplace is an error, raised before any `claude` command runs,
 that names the plugin and its marketplace (its catalog would otherwise never
-be refreshed). It then verifies that each declared
+be refreshed). So is an install that `claude plugin list --json` reports
+enabled from such a marketplace, for example one a project's own settings
+enable: the refresh stops before updating any plugin. It then verifies
+that each declared
 GitHub marketplace is registered, as
 `claude plugin marketplace list --json` reports it, at the declared repo
 and ref. A mismatch or a missing registration is a reported failure:

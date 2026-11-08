@@ -228,6 +228,10 @@ it is an error that names the plugin and its marketplace, and nothing runs.
    marketplace whose update fails is a failure that names it.
 3. `claude plugin update` for every install of an enabled plugin, at its own
    scope, and `claude plugin install` for an enabled plugin with no install.
+   First, an install that `claude plugin list --json` reports enabled from a
+   marketplace the settings do not declare (one a project's own settings
+   enable, say) is an error that names the install and its marketplace, and
+   no plugin is updated.
 4. A verification: each declared GitHub marketplace must be registered, as
    `claude plugin marketplace list --json` reports it, at the declared repo and
    ref. A different repo or ref (including no registered ref when the settings

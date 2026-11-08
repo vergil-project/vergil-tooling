@@ -1219,8 +1219,9 @@ _INSTALLS = json.dumps(
 class _LocalRun:
     """Stands in for ``claude_marketplace.local_run``; records every argv."""
 
-    def __init__(self, fail_on: tuple[str, ...] = ()) -> None:
+    def __init__(self, fail_on: tuple[str, ...] = (), installs: str = _INSTALLS) -> None:
         self.fail_on = fail_on
+        self.installs = installs
         self.calls: list[tuple[str, ...]] = []
 
     def __call__(self, *argv: str) -> subprocess.CompletedProcess[str]:
@@ -1232,7 +1233,7 @@ class _LocalRun:
         if "marketplace list --json" in cmd:
             out = _REGISTERED_V21
         elif "plugin list --json" in cmd:
-            out = _INSTALLS
+            out = self.installs
         return subprocess.CompletedProcess(list(argv), 0, stdout=out, stderr="")
 
 
@@ -1320,6 +1321,18 @@ def test_plugins_exits_2_on_a_plugin_from_an_undeclared_marketplace(
     assert vrg_host.main(["plugins"]) == 2
     assert local_run.calls == []
     assert "paad@paad (marketplace paad)" in capsys.readouterr().err
+
+
+def test_plugins_exits_2_on_an_enabled_install_from_an_undeclared_marketplace(
+    monkeypatch: pytest.MonkeyPatch, host_claude: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # #3995 N1: an install the listing reports enabled, from a marketplace the
+    # settings do not declare, stops the refresh before any plugin update.
+    run = _LocalRun(installs=json.dumps([{"id": "y@other", "scope": "user", "enabled": True}]))
+    monkeypatch.setattr(vrg_host.claude_marketplace, "local_run", run)
+    assert vrg_host.main(["plugins"]) == 2
+    assert not any("plugin update" in c[-1] for c in run.calls)
+    assert "y@other (user) (marketplace other)" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("content", [None, "{not json", "[]"])

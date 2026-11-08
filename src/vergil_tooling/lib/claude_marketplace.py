@@ -11,8 +11,11 @@ so it is never touched (vergil-project/vergil-tooling#3879). The fleet owns
 ``settings.json``, so it must declare the marketplace of every plugin it
 enables (``claude-plugins-official`` aside): a plugin enabled from any other
 marketplace is an error, raised before any ``claude`` call, that names the
-plugin and its marketplace (vergil-project/vergil-tooling#3995). No enabled
-plugin is updated from a catalog the refresh did not refresh first.
+plugin and its marketplace (vergil-project/vergil-tooling#3995). Likewise an
+install that ``claude plugin list --json`` reports enabled from such a
+marketplace (one enabled by a project's own settings, say) is a fatal error,
+raised before any plugin update. No enabled plugin is updated from a catalog
+the refresh did not refresh first.
 Once ``settings.json`` declares a new ref, the re-add re-clones the
 marketplace at that ref and rewrites its registration, which is how a machine
 switches ref (proven on Claude Code 2.1.312 by
@@ -267,6 +270,24 @@ def _enabled_plugin_ids(settings: dict[str, Any]) -> set[str]:
     return enabled
 
 
+def _marketplace_of(pid: str) -> str | None:
+    """Return the marketplace a ``name@marketplace`` id names, or None without one."""
+    return pid.split("@", 1)[1] if "@" in pid else None
+
+
+def _refreshed_names(declared: list[tuple[str, dict[str, Any]]], enabled: set[str]) -> set[str]:
+    """Return the marketplace names whose plugins the refresh may update.
+
+    The declared names, plus ``claude-plugins-official`` when a plugin in
+    *enabled* comes from it: the refresh then adds and updates it itself,
+    from its known Anthropic source (#2029), so its catalog is refreshed.
+    """
+    names = {name for name, _ in declared}
+    if any(_marketplace_of(pid) == _OFFICIAL_MARKETPLACE for pid in enabled):
+        names.add(_OFFICIAL_MARKETPLACE)
+    return names
+
+
 def _check_enabled_marketplaces(
     declared: list[tuple[str, dict[str, Any]]], enabled: set[str]
 ) -> None:
@@ -277,27 +298,55 @@ def _check_enabled_marketplaces(
     could stay stale while the refresh reports success. The fleet owns
     ``settings.json``, so it must declare every marketplace it enables a
     plugin from (vergil-project/vergil-tooling#3995). The one exception is
-    ``claude-plugins-official``: the refresh adds and updates it itself, from
-    its known Anthropic source, whenever an enabled plugin needs it (#2029).
-    An id with no ``@marketplace`` suffix names no marketplace, so it is not
-    checked here.
+    ``claude-plugins-official`` (see :func:`_refreshed_names`). An id with no
+    ``@marketplace`` suffix names no marketplace, so it is not checked here.
 
     Raises:
         MarketplaceError: one or more enabled plugins come from an undeclared
             marketplace; the message names each plugin and its marketplace.
     """
-    names = {name for name, _ in declared}
+    names = _refreshed_names(declared, enabled)
     undeclared = []
     for pid in sorted(enabled):
-        if "@" not in pid:
-            continue
-        market = pid.split("@", 1)[1]
-        if market not in names and market != _OFFICIAL_MARKETPLACE:
+        market = _marketplace_of(pid)
+        if market is not None and market not in names:
             undeclared.append(f"{pid} (marketplace {market})")
     if undeclared:
         msg = (
             "settings.json enabledPlugins enables a plugin from a marketplace "
             "extraKnownMarketplaces does not declare: " + ", ".join(undeclared)
+        )
+        raise MarketplaceError(msg)
+
+
+def _check_enabled_installs(settings: dict[str, Any], entries: list[dict[str, Any]]) -> None:
+    """Refuse an install the listing reports enabled from an unrefreshed marketplace.
+
+    ``claude plugin list --json`` can report an install as enabled that
+    ``settings.json`` does not enable (a project-scope install enabled by a
+    project's own settings, say). The refresh updates every enabled install,
+    so one whose marketplace ``settings.json`` does not declare would be
+    updated from a catalog nobody refreshed. The fleet owns this config, so
+    such stray state is a fatal error, never left to a stale catalog
+    (vergil-project/vergil-tooling#3995). ``claude-plugins-official`` counts
+    only when the refresh refreshed it, that is when ``settings.json``
+    declares it or enables a plugin from it.
+
+    Raises:
+        MarketplaceError: one or more enabled installs come from such a
+            marketplace; the message names each install, by id and scope,
+            and its marketplace.
+    """
+    names = _refreshed_names(_declared_sources(settings), _enabled_plugin_ids(settings))
+    undeclared = []
+    for entry in sorted(entries, key=_plugin_entry_label):
+        market = _marketplace_of(entry["id"])
+        if entry.get("enabled") and market is not None and market not in names:
+            undeclared.append(f"{_plugin_entry_label(entry)} (marketplace {market})")
+    if undeclared:
+        msg = (
+            "claude plugin list --json reports an enabled install from a marketplace "
+            "settings.json extraKnownMarketplaces does not declare: " + ", ".join(undeclared)
         )
         raise MarketplaceError(msg)
 
@@ -533,11 +582,20 @@ def update_installed_plugins(run: Run, settings: dict[str, Any], prefix: str) ->
 
     Best-effort across the set: one failure does not block the others.
     Returns the failure labels, naming each entry's scope and project.
+
+    Raises:
+        MarketplaceError: the listing is malformed, or it reports an enabled
+            install from a marketplace *settings* does not declare (see
+            :func:`_check_enabled_installs`). Either is raised before any
+            update or install runs.
     """
     failures: list[str] = []
     desired = _enabled_plugin_ids(settings)
     # One entry per INSTALL, not per id (#3764): never key by id.
     entries = _installed_entries(run, prefix)
+    # Before any update: an enabled install from a marketplace the refresh did
+    # not refresh is fatal (#3995).
+    _check_enabled_installs(settings, entries)
     user_installed_ids = {e["id"] for e in entries if e.get("scope", "user") == "user"}
 
     # Refresh every install of a declared-enabled id, plus any install that is
@@ -573,8 +631,10 @@ def refresh(run: Run, settings: dict[str, Any], prefix: str) -> list[str]:
 
     Raises:
         MarketplaceError: the settings are misshapen or enable a plugin from
-            an undeclared marketplace (raised before any ``claude`` call), a
-            ``list --json`` output is malformed, or a
+            an undeclared marketplace (raised before any ``claude`` call),
+            ``claude plugin list --json`` reports an enabled install from a
+            marketplace the settings do not declare (raised before any plugin
+            update), a ``list --json`` output is malformed, or a
             ``list --json`` step raised after an earlier step had already
             failed. Then the message names the step's error and every earlier
             failure label, and the error is chained from the step's exception
