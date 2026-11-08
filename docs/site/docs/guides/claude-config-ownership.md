@@ -180,8 +180,12 @@ VM on 2026-10-28
 ([vergil-project/.github#578](https://github.com/vergil-project/.github/issues/578)),
 settings alone brought all three plugins back without `vm_guest`'s
 reconcile step, but `vergil` came back at project scope rather than user
-scope. The reconcile step stays until that difference is understood
-([vergil-project/.github#675](https://github.com/vergil-project/.github/issues/675)).
+scope. The reconcile step stays
+([vergil-project/.github#675](https://github.com/vergil-project/.github/issues/675)):
+it is the step that installs, at user scope, every plugin the user file
+enables that has no user-scope install, even when a project-scope install
+exists, because plugin installation belongs to the user file
+([vergil-project/vergil-tooling#3836](https://github.com/vergil-project/vergil-tooling/issues/3836)).
 
 ## Unused scopes
 
