@@ -13905,10 +13905,21 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#1a-explicit-target-cleanup-pr-mode-only" class="md-nav__link">
+  <a href="#1a-close-issues-github-left-open-pr-mode-only" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1a. Explicit-Target Cleanup (PR mode only)
+        1a. Close Issues GitHub Left Open (PR mode only)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1b-explicit-target-cleanup-pr-mode-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1b. Explicit-Target Cleanup (PR mode only)
       
     </span>
   </a>
@@ -17208,10 +17219,21 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#1a-explicit-target-cleanup-pr-mode-only" class="md-nav__link">
+  <a href="#1a-close-issues-github-left-open-pr-mode-only" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1a. Explicit-Target Cleanup (PR mode only)
+        1a. Close Issues GitHub Left Open (PR mode only)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1b-explicit-target-cleanup-pr-mode-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1b. Explicit-Target Cleanup (PR mode only)
       
     </span>
   </a>
@@ -17563,11 +17585,28 @@ followed by the usual sweep, pull, and prune.</p>
 before any waiting. Advisories are printed but do not block.
 Violations abort the merge unless <code>--allow-provenance-violation</code>
 is given. If the PR is already merged, the merge step is skipped and
-finalize proceeds straight to cleanup. Otherwise the wait-for-green
-loop runs (see <em>Waiting for green</em>) and the PR is merged with the
-selected strategy. <code>--dry-run</code> skips the wait and prints what it
-would do.</p>
-<h3 id="1a-explicit-target-cleanup-pr-mode-only">1a. Explicit-Target Cleanup (PR mode only)<a class="headerlink" href="#1a-explicit-target-cleanup-pr-mode-only" title="Permanent link">&para;</a></h3>
+finalize goes straight on to the closing-reference check (1a) and
+cleanup. Otherwise the wait-for-green loop runs (see <em>Waiting for
+green</em>) and the PR is merged with the selected strategy. <code>--dry-run</code>
+skips the wait and prints what it would do.</p>
+<h3 id="1a-close-issues-github-left-open-pr-mode-only">1a. Close Issues GitHub Left Open (PR mode only)<a class="headerlink" href="#1a-close-issues-github-left-open-pr-mode-only" title="Permanent link">&para;</a></h3>
+<p>GitHub sometimes skips the closing-keyword auto-close, which leaves a
+merged task open and blocks epic rollup (issue #4002). Once the merge is
+confirmed, finalize reads the PR's <code>closingIssuesReferences</code>: the issues
+GitHub itself lists as closed by the PR, through a closing keyword or a
+Development link. It never parses the PR text, so an issue the PR only
+mentions (<code>Ref</code> linkage) is never touched. If any listed issue is still
+open, finalize waits 10 seconds for an auto-close still in flight, reads
+again, then closes each one still open with reason <code>completed</code> and the
+comment "Completed by PR <code>&lt;owner&gt;/&lt;repo&gt;#N</code> (merged <code>&lt;time&gt;</code>); GitHub
+did not auto-close it." Each closed issue is reported in the output.
+This also runs when the PR was already merged, so re-running
+<code>vrg-finalize-pr &lt;PR&gt;</code> closes an issue an earlier merge left open.</p>
+<p>A failure to read the references, or to close any issue, fails the
+stage and finalize exits 1. Every close is tried first, and the error
+names each issue still open. The cleanup below still runs, because the
+PR is already merged. <code>--dry-run</code> reads and closes nothing.</p>
+<h3 id="1b-explicit-target-cleanup-pr-mode-only">1b. Explicit-Target Cleanup (PR mode only)<a class="headerlink" href="#1b-explicit-target-cleanup-pr-mode-only" title="Permanent link">&para;</a></h3>
 <p>The just-merged PR branch and its <code>.worktrees/</code> worktree are deleted
 by name. The default squash strategy rewrites history onto the
 target, so the branch is never an ancestor and the merged-branch
@@ -17601,7 +17640,7 @@ target's tip as merged:</p>
   manual cleanup.</li>
 </ul>
 <p>Both guards gate the worktree removal as strictly as the branch
-deletion. The explicit-target cleanup (step 1a) is unaffected — the
+deletion. The explicit-target cleanup (step 1b) is unaffected — the
 just-merged PR branch has merge evidence by construction.</p>
 <h4 id="stuck-merged-worktrees-are-surfaced-not-buried">Stuck merged worktrees are surfaced, not buried<a class="headerlink" href="#stuck-merged-worktrees-are-surfaced-not-buried" title="Permanent link">&para;</a></h4>
 <p>A merged/closed worktree the sweep cannot remove — its tree is dirty,
@@ -17751,7 +17790,7 @@ release — the batch runs those once at the end.</p>
 </tr>
 <tr>
 <td>1</td>
-<td>Provenance violation, unmergeable PR (draft, conflicts, failed checks, stuck behind, orphaned check-run, or wait timeout), not run from main worktree, non-TTY stdin or stdout in inference mode, dirty working tree, failed validation, failed CD run, CD watch timeout (result unknown), or a batch item failed</td>
+<td>Provenance violation, unmergeable PR (draft, conflicts, failed checks, stuck behind, orphaned check-run, or wait timeout), not run from main worktree, non-TTY stdin or stdout in inference mode, dirty working tree, a closing-reference issue that could not be read or closed, failed validation, failed CD run, CD watch timeout (result unknown), or a batch item failed</td>
 </tr>
 </tbody>
 </table>
