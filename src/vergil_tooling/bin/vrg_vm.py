@@ -1506,6 +1506,18 @@ _EPHEMERAL_MSG = (
 )
 
 
+def _off_platform_revive_cmd(target: Target) -> str:
+    """The command that brings back a stopped or absent off-platform box (#3994).
+
+    An off-platform box has no ``vrg-vm start`` (``_EPHEMERAL_MSG``): its VM is
+    disposable, and ``vrg-vm rebuild`` tears down whatever is left of it (a no-op
+    when none is) and re-applies it with the persistent volume reattached. The
+    command carries ``--identity`` because two off-platform boxes can share an
+    org/repo, one per identity (#1812).
+    """
+    return f"vrg-vm rebuild {target.org}/{target.repo} --identity {target.identity_name}"
+
+
 def _reject_if_off_platform(args: argparse.Namespace) -> bool:
     """Print the ephemeral-VM error and return True when the target is off-platform.
 
@@ -1642,12 +1654,9 @@ def _cmd_update_off_platform(target: Target, args: argparse.Namespace) -> int:
     status = backend.status()
     if status != "Running":
         effective = status or "Not Created"
-        # Identity-qualified hint: two off-platform boxes can share an org/repo
-        # (one per identity), so the start command must carry --identity (#1812).
-        start_ref = f"{target.org}/{target.repo} --identity {target.identity_name}"
         print(
             f"ERROR: off-platform VM '{backend.name}' is not running (status: {effective}).\n"
-            f"Start it first: vrg-vm start {start_ref}",
+            f"Bring it back first: {_off_platform_revive_cmd(target)}",
             file=sys.stderr,
         )
         return 1
@@ -3197,12 +3206,19 @@ def _cmd_cp(args: argparse.Namespace) -> int:
     )
     plan = plan_copy(args.paths, workspace_abs)
 
+    off_platform = target.spec.off_platform
     try:
         transport = target.backend.transport(target.instance)
     except RuntimeError:
+        # An off-platform box is never created by a session: rebuild it (#3994).
+        create_cmd = (
+            _off_platform_revive_cmd(target)
+            if off_platform
+            else f"vrg-vm session {_target_ref(target)}"
+        )
         print(
             f"ERROR: VM for {_target_ref(target)} does not exist yet — "
-            f"create it with: vrg-vm session {_target_ref(target)}",
+            f"create it with: {create_cmd}",
             file=sys.stderr,
         )
         return 1
@@ -3212,9 +3228,13 @@ def _cmd_cp(args: argparse.Namespace) -> int:
             return _cp_push(target, transport, plan)
         return _cp_pull(transport, plan)
     except subprocess.CalledProcessError:
+        start_hint = (
+            f"Bring it back with: {_off_platform_revive_cmd(target)}"
+            if off_platform
+            else f"Start it with: vrg-vm start {_target_ref(target)}"
+        )
         print(
-            f"ERROR: copy failed — is the VM running and reachable? "
-            f"Start it with: vrg-vm start {_target_ref(target)}",
+            f"ERROR: copy failed — is the VM running and reachable? {start_hint}",
             file=sys.stderr,
         )
         return 1
