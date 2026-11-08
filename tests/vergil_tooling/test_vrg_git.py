@@ -834,6 +834,26 @@ def test_returns_subprocess_exit_code() -> None:
         (["--depth", "1", "https://github.com/myorg/myrepo.git"], "myorg"),
         (["/local/path", "/dest"], None),
         (["https://gitlab.com/myorg/myrepo.git"], None),
+        # #4088: the forms the shared github_remote_repo parser adds.
+        (["http://github.com/myorg/myrepo.git"], "myorg"),
+        (["https://x-access-token:secret@github.com/myorg/myrepo.git"], "myorg"),
+        (["HTTPS://GitHub.COM/MyOrg/MyRepo"], "MyOrg"),
+        (["ssh://git@github.com/myorg/myrepo.git"], "myorg"),
+        (["ssh://git@github.com:22/myorg/myrepo.git"], "myorg"),
+        (["git+ssh://git@github.com/myorg/myrepo.git"], "myorg"),
+        (["git://github.com/myorg/myrepo.git"], "myorg"),
+        (["github.com:myorg/myrepo.git"], "myorg"),
+        (["deploy@github.com:myorg/myrepo.git"], "myorg"),
+        (["git@github.com:/myorg/myrepo.git"], "myorg"),
+        # #4088: the forms it refuses, including two the old prefix regex took.
+        (["https://github.com/myorg/myrepo/tree/main"], None),
+        (["https://github.com/myorg/"], None),
+        (["https://github.com/myorg"], None),
+        (["https://github.com.evil.example/myorg/myrepo.git"], None),
+        (["https://evil.example#@github.com/myorg/myrepo.git"], None),
+        (["ftp://github.com/myorg/myrepo.git"], None),
+        # The first arg naming a github.com repo wins; a refused one is skipped.
+        (["https://github.com/myorg/myrepo/tree/main", "git@github.com:other/r.git"], "other"),
     ],
 )
 def test_org_from_clone_url(args: list[str], expected: str | None) -> None:
