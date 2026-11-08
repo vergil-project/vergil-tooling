@@ -5,9 +5,10 @@ spec Component 3). The physical host is the single source of truth for agent
 memory; a cloud VM is a projection of it. Before a cloud session opens, the host
 copies that repo's memory subset — the per-repo ``memory/`` directory (including
 ``MEMORY.md``) — into the guest at the
-slug Claude derives from the host project path, file-by-file over the
-established ``transport.pipe`` (``cat > <dest>``) idiom (``copy_claude_config`` pipes
-through the same transport; there is no ``rsync`` over the transport).
+slug Claude derives from the host project path, file-by-file over
+``transport.pipe``, each file written atomically with
+:func:`~vergil_tooling.lib.atomic_write.atomic_write_cmd` (``copy_claude_config``
+pipes through the same transport; there is no ``rsync`` over the transport).
 
 Once the copy completes, the projection is frozen read-only by
 ``lock_projection`` (issue #2412), which ``project_memory`` calls at the end so a
@@ -19,6 +20,8 @@ from __future__ import annotations
 
 import subprocess
 from typing import TYPE_CHECKING
+
+from vergil_tooling.lib.atomic_write import atomic_write_cmd
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -56,10 +59,11 @@ def project_memory(transport: Transport, *, claude_dir: Path, host_workdir: str)
     file under the host ``memory/`` directory (including ``MEMORY.md``) to the
     matching guest path under ``~/.claude/projects/<slug>/memory/``. Before the
     copy the whole guest memory subtree is
-    reopened for writing (``chmod -R u+w``) so a re-projection can both overwrite
-    existing files *and* create new ones into a directory a prior
-    ``lock_projection`` froze read-only (issue #2591); each pipe additionally
-    clears the per-file lock (``chmod u+w`` before ``cat >``). If the host has no
+    reopened for writing (``chmod -R u+w``) so a re-projection can both replace
+    existing files *and* create new ones in a directory a prior
+    ``lock_projection`` froze read-only (issue #2591). Each file is written to a
+    temp file in its own directory and renamed into place (#4035), so a failed
+    copy leaves the existing file whole, never truncated. If the host has no
     memory directory for this repo yet, the guest memory
     directory is still created and the memory copy is skipped (not an error — a
     repo may have no memory yet).
@@ -69,8 +73,8 @@ def project_memory(transport: Transport, *, claude_dir: Path, host_workdir: str)
     vergil-project/.github#760, spec §6).
 
     After the copy, ``lock_projection`` freezes the projected canonical set
-    read-only. Re-projection is safe: each pipe above clears the lock
-    (``chmod u+w``) before overwriting, and the lock is re-applied here.
+    read-only. Re-projection is safe: the subtree is reopened before the copy,
+    and the lock is re-applied here.
     """
     slug = host_slug(host_workdir)
     guest_memory_dir = f"{_GUEST_CLAUDE_DIR}/projects/{slug}/memory"
@@ -91,15 +95,15 @@ def project_memory(transport: Transport, *, claude_dir: Path, host_workdir: str)
         dest = f"{guest_memory_dir}/{rel}"
         guest_dirs.add(dest.rsplit("/", 1)[0])
         copies.append((dest, src))
-    # Reopen the whole memory subtree for writing *before* the copy so a *new*
-    # memory file can be created into a previously-locked projection (issue #2591).
-    # A prior ``lock_projection`` froze the directory itself read-only
-    # (``chmod -R a-w``), and that lock survives a VM rebuild on a persistent guest
-    # disk; the per-file ``chmod u+w`` below only reopens files that *already*
-    # exist, so without this the first host-added-since-last-projection file dies
-    # with EACCES (``cat >`` cannot create it in a ``dr-xr-xr-x`` dir). ``chmod``
-    # runs after ``mkdir`` so the target always exists; on a first projection the
-    # freshly-created dir is already writable and the ``chmod`` is a harmless no-op.
+    # Reopen the whole memory subtree for writing *before* the copy, so files can be
+    # replaced and created in a previously-locked projection (issue #2591). A prior
+    # ``lock_projection`` froze the directory itself read-only (``chmod -R a-w``),
+    # and that lock survives a VM rebuild on a persistent guest disk. Each atomic
+    # write creates a temp file in the directory and renames it into place, so
+    # without this every copy dies with EACCES (neither can be done in a
+    # ``dr-xr-xr-x`` dir). ``chmod`` runs after ``mkdir`` so the target always
+    # exists; on a first projection the freshly-created dir is already writable
+    # and the ``chmod`` is a harmless no-op.
     transport.run(
         "bash",
         "-c",
@@ -107,7 +111,7 @@ def project_memory(transport: Transport, *, claude_dir: Path, host_workdir: str)
     )
 
     for dest, src in copies:
-        transport.pipe(f"chmod u+w {dest} 2>/dev/null; cat > {dest}", src.read_text())
+        transport.pipe(atomic_write_cmd(dest, 0o644), src.read_text())
 
     # Freeze the projection read-only. ``$HOME`` (not ``~``) is used because the
     # lock paths are double-quoted to survive the slug's characters, and ``~``
@@ -150,7 +154,7 @@ def lock_projection(
     Each ``chmod`` is guarded by an ``[ -e ]`` existence test so a missing
     optional file is a no-op, not an error, and the ``if … then … fi`` form always
     exits 0 (re-locking after a re-projection is safe — ``project_memory``
-    ``chmod u+w``s before overwriting).
+    reopens the subtree before replacing its files).
     """
     memory_dir = f'"{claude_dir_guest}/projects/{slug}/memory"'
     memory_md = f'"{claude_dir_guest}/projects/{slug}/memory/MEMORY.md"'

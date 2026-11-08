@@ -8,7 +8,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests.vergil_tooling.conftest import failing_command, shell_transport
 from vergil_tooling.lib import vm_memory
+from vergil_tooling.lib.atomic_write import atomic_write_cmd
 
 _SLUG = "-Users-me-dev-projects-org-repo"
 _WORKDIR = "/Users/me/dev/projects/org/repo"
@@ -40,10 +42,9 @@ def test_project_memory_copies_memory_not_claude_md(tmp_path: Path) -> None:
     vm_memory.project_memory(transport, claude_dir=claude, host_workdir=_WORKDIR)
 
     piped = [c.args[0] for c in transport.pipe.call_args_list]
-    # Pipe a ``cat > <dest>`` for each file, prefixed
-    # with a chmod that clears any prior read-only lock before overwrite.
-    assert any("cat > " in cmd and "/memory/MEMORY.md" in cmd for cmd in piped)
-    assert all(cmd.startswith("chmod u+w ") for cmd in piped)
+    # Each file is written atomically (#4035): to a temp file beside it, then
+    # renamed into place.
+    assert piped == [atomic_write_cmd(f"~/.claude/projects/{_SLUG}/memory/MEMORY.md", 0o644)]
     # The global CLAUDE.md is copy_claude_config's, never written here.
     assert not any("CLAUDE.md" in cmd for cmd in piped)
     contents = [c.args[1] for c in transport.pipe.call_args_list]
@@ -78,12 +79,11 @@ def test_project_memory_mkdirs_guest_memory_dir(tmp_path: Path) -> None:
 def test_project_memory_restores_dir_write_before_copy(tmp_path: Path) -> None:
     # Regression (#2591): a prior projection locked the *directory* read-only
     # (``lock_projection`` runs ``chmod -R a-w <memory_dir>``), and on a persistent
-    # guest disk that lock survives a VM rebuild. The re-projection restores write
-    # per *file* (``chmod u+w {dest}``) but that only reopens files that already
-    # exist — creating a *new* host-added memory file needs write on the *parent
-    # directory*, which is still ``dr-xr-xr-x``. So the setup step must reopen the
-    # whole memory subtree for writing *before* the copy loop, or the first new
-    # file aborts the cloud session with EACCES.
+    # guest disk that lock survives a VM rebuild. Each atomic write creates a temp
+    # file in the *parent directory* and renames it there, which needs write on a
+    # directory that is still ``dr-xr-xr-x``. So the setup step must reopen the
+    # whole memory subtree for writing *before* the copy loop, or the first copy
+    # aborts the cloud session with EACCES.
     transport = MagicMock()
     claude = tmp_path / ".claude"
     _seed_memory(claude)
@@ -145,6 +145,57 @@ def test_project_memory_without_global_claude_md(tmp_path: Path) -> None:
     # Memory is copied; CLAUDE.md is not (it does not exist on the host).
     assert any("/memory/MEMORY.md" in cmd for cmd in piped)
     assert not any(cmd.endswith("/CLAUDE.md") for cmd in piped)
+
+
+def _locked_guest_projection(home: Path) -> Path:
+    """A guest memory dir left read-only by an earlier projection; return it."""
+    guest_memory = home / ".claude" / "projects" / _SLUG / "memory"
+    guest_memory.mkdir(parents=True)
+    (guest_memory / "MEMORY.md").write_text("old")
+    (guest_memory / "MEMORY.md").chmod(0o444)
+    guest_memory.chmod(0o555)
+    return guest_memory
+
+
+def test_project_memory_real_shell_replaces_a_locked_projection(tmp_path: Path) -> None:
+    # #4035: the real commands in bash, over a projection an earlier run locked.
+    # Every file lands whole, the new one included, the projection is locked
+    # again, and no temp file is left behind.
+    claude = tmp_path / "host" / ".claude"
+    memory = _seed_memory(claude)
+    (memory / "new.md").write_text("added")
+    home = tmp_path / "guest"
+    guest_memory = _locked_guest_projection(home)
+
+    vm_memory.project_memory(shell_transport(home), claude_dir=claude, host_workdir=_WORKDIR)
+
+    assert (guest_memory / "MEMORY.md").read_text() == "m"
+    assert (guest_memory / "new.md").read_text() == "added"
+    assert sorted(p.name for p in guest_memory.iterdir()) == ["MEMORY.md", "new.md"]
+    assert (guest_memory / "MEMORY.md").stat().st_mode & 0o777 == 0o444
+    assert (guest_memory / "new.md").stat().st_mode & 0o777 == 0o444
+
+
+@pytest.mark.parametrize("failing", ["cat", "chmod", "mv"])
+def test_project_memory_failed_write_leaves_the_original(failing: str, tmp_path: Path) -> None:
+    # A copy that breaks part-way fails loudly, keeps the guest file's content,
+    # and removes its temp file.
+    claude = tmp_path / "host" / ".claude"
+    _seed_memory(claude)
+    home = tmp_path / "guest"
+    guest_memory = _locked_guest_projection(home)
+    fake_bin = tmp_path / "bin"
+    failing_command(fake_bin, failing)
+    transport = shell_transport(home, fake_bin)
+    # The setup reopens the locked projection with chmod; only the copy may fail.
+    real_run = shell_transport(home).run.side_effect
+    transport.run.side_effect = real_run
+
+    with pytest.raises(subprocess.CalledProcessError):
+        vm_memory.project_memory(transport, claude_dir=claude, host_workdir=_WORKDIR)
+
+    assert (guest_memory / "MEMORY.md").read_text() == "old"
+    assert [p.name for p in guest_memory.iterdir()] == ["MEMORY.md"]
 
 
 def test_lock_projection_locks_memory_not_transcripts() -> None:
