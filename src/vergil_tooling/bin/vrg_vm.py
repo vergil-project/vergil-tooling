@@ -1608,7 +1608,9 @@ def _update_over_transport(
 
     # Deliver the host's current settings.json (and the read-only CLAUDE.md)
     # before the refresh, so a running VM follows a changed marketplace ref
-    # without a restart (epic vergil-project/.github#760, spec §6).
+    # without a restart (epic vergil-project/.github#760, spec §6). Say so, so
+    # the human sees that an update syncs the user config (#3835).
+    print("  Copying host Claude config (CLAUDE.md, settings.json)...")
     copy_claude_config(transport, Path.home() / ".claude")
     update_plugins(transport)
 
