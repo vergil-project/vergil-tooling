@@ -349,6 +349,19 @@ order:
   that mode it checks each ruleset's includes, enforcement and rules but not
   its bypass actors, and lists the skipped `rulesets.<name>.bypass_actors`
   fields instead. This holds for every ruleset above.
+- **A REST refs write refused by a ruleset gives no rule text.** When a
+  ruleset blocks a create, update or delete made through the REST refs API
+  (`POST`, `PATCH` or `DELETE` on `repos/{owner}/{repo}/git/refs…`), GitHub
+  answers only `422 Reference update failed`. The same write done as a
+  `git push` names the rule (`GH013: Repository rule violations found for
+  refs/heads/v0.0. - Cannot create ref due to creations being restricted.`).
+  The 422 is generic, since a stale SHA gives the same answer, so every tool
+  that calls the API through `lib/github.py` adds a note to such a failure: it
+  names the ruleset as the likely cause, the ref and the repo, and how to see
+  the rules (`gh api repos/{owner}/{repo}/rules/branches/{branch}` for a
+  branch, `gh api repos/{owner}/{repo}/rulesets`, or this audit). The error is
+  still raised. To diagnose a refusal, or to probe whether a ruleset blocks a
+  write, use `git push`, which prints the rule.
 
 ## GitHub checks — the required-status-check set
 
