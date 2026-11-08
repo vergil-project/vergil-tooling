@@ -189,7 +189,10 @@ See the [vrg-submit-pr reference](../reference/dev/submit-pr.md).
     No separate push is needed. When the delta touches
     `.github/workflows/**` GitHub refuses the agent push; `report-ready`
     says so, records the state anyway, and the human's `vrg-submit-pr`
-    pushes the branch instead. Any other push failure fails `report-ready`
+    pushes the branch instead. A stale branch, whose own commits change no
+    workflow file but whose tree carries an outdated one, gets the same
+    refusal; `report-ready` tells it apart as `vrg-git push` does and fails
+    with the rebase steps, recording nothing. Any other push failure fails `report-ready`
     with nothing recorded, as does a branch with no commits ahead of its
     base. Recording ready **freezes the branch**: `vrg-commit`
     and the `vrg-git` push path refuse further commits/pushes on it,

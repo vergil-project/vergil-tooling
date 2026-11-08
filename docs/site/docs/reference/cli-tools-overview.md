@@ -165,7 +165,10 @@ follow-up issue (epic #146). `report-ready` pushes the branch itself, to
 so no separate push is needed; a branch already on origin at that commit is a
 no-op push. When the delta touches `.github/workflows/**` GitHub refuses the
 agent push: `report-ready` reports that as expected, records the state anyway,
-and the human's `vrg-submit-pr` pushes the branch. Any other push failure
+and the human's `vrg-submit-pr` pushes the branch. A stale branch, whose own
+commits change no workflow file but whose tree carries an outdated one, gets
+the same refusal: `report-ready` tells it apart as `vrg-git push` does and
+fails with the rebase steps, recording nothing (#4077). Any other push failure
 fails `report-ready` with no local state and no relay ref written. A branch
 with no commits ahead of `--base` is refused before any push, with nothing
 recorded and no freeze (#3870). A re-run on
