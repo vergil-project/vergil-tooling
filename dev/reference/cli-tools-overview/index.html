@@ -13685,6 +13685,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-claude-md-sync" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-claude-md-sync
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-fleet-sync" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18428,6 +18439,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-claude-md-sync" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-claude-md-sync
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-fleet-sync" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -21396,6 +21418,57 @@ passes. It owns <strong>only</strong> the file change and has no git or PR knowl
 </tr>
 </tbody>
 </table>
+<h3 id="vrg-claude-md-sync">vrg-claude-md-sync<a class="headerlink" href="#vrg-claude-md-sync" title="Permanent link">&para;</a></h3>
+<p>Single-repo applicator for the template region of <code>CLAUDE.md</code>
+(<a href="https://github.com/vergil-project/vergil-tooling/issues/3868">#3868</a>).
+Only the lines between <code>&lt;!-- vergil:template:claude-md:begin --&gt;</code> and
+<code>&lt;!-- vergil:template:claude-md:end --&gt;</code> are managed. It checks (default)
+or writes that region against the packaged
+<code>claude_md_consumer.md</code> template, using the config audit's own marker
+parser and comparison (blank lines next to the markers don't count).
+<code>--write</code> replaces the lines between the two marker lines with the
+template, verbatim and atomically, and leaves every byte outside them
+alone, the marker lines and their line ends included. A region already in
+sync is left untouched, so <code>--check</code> drifts exactly when <code>--write</code> would
+change the file, and after <code>--write</code> the audit's <code>_check_claude_md</code>
+passes. A <code>CLAUDE.md</code> that is missing, has no markers, or has malformed
+or duplicated markers is an error in both modes, naming the cause, and
+nothing is written: the tool never guesses where the region belongs. It
+owns <strong>only</strong> the file change and has no git or PR knowledge.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_claude_md_sync</code></td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>--repo PATH</code> (default: CWD); mutually exclusive <code>--check</code> (default) | <code>--write</code></td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>A <code>CLAUDE.md</code> with exactly one begin marker followed by one end marker; <code>vergil.toml</code> is not read</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td><code>--check</code> prints <code>CLAUDE.md template region differs from the template (expected …; found …)</code> to stderr; <code>--write</code> prints <code>already in sync</code> or <code>wrote the CLAUDE.md template region</code>; either mode prints <code>cannot sync: missing CLAUDE.md</code> or <code>cannot sync: CLAUDE.md has &lt;marker problem&gt;</code> to stderr and exits 2</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 ok, 1 <code>--check</code> drift, 2 usage error or a <code>CLAUDE.md</code> that is missing or has no well-formed marker pair</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
 <h3 id="vrg-fleet-sync">vrg-fleet-sync<a class="headerlink" href="#vrg-fleet-sync" title="Permanent link">&para;</a></h3>
 <p>Propagate a vergil-managed file across a fleet of repositories, opening
 <strong>one PR per repo whose file drifts</strong>. <code>--target</code> picks the file:
@@ -21406,7 +21479,12 @@ passes. It owns <strong>only</strong> the file change and has no git or PR knowl
 <code>claude-settings</code> replaces <code>.claude/settings.json</code> with the packaged
 template via <code>vrg-claude-settings-sync --write</code> (branch slug
 <code>claude-settings-sync</code>), so a template change can be rolled out to every
-repo the config audit would otherwise fail. A
+repo the config audit would otherwise fail; <code>claude-md</code> replaces the
+marked template region of <code>CLAUDE.md</code> with the packaged template via
+<code>vrg-claude-md-sync --write</code> (branch slug <code>claude-md-sync</code>), leaving
+everything outside the markers alone. A repo whose <code>CLAUDE.md</code> is missing
+or has no well-formed marker pair is an error for that repo, never a
+skip. A
 target's epic links only repos in the epic's own org: a repo in another
 org (read from the clone with <code>gh repo view</code>) is filed under its own
 ad-hoc epic, and the issue body still names the target's epic, because
@@ -21419,8 +21497,8 @@ human. <code>--dry-run</code> reports the verdict a live run would reach per rep
 (would change, naming the epic it would be filed under, or skip) from a
 disposable probe worktree, without opening an issue, branch, commit, or
 PR. Each target previews with its applicator's <code>--check</code>
-(<code>vrg-gitignore-sync --check</code>, <code>vrg-dependabot-sync --check</code> or
-<code>vrg-claude-settings-sync --check</code>), whose
+(<code>vrg-gitignore-sync --check</code>, <code>vrg-dependabot-sync --check</code>,
+<code>vrg-claude-settings-sync --check</code> or <code>vrg-claude-md-sync --check</code>), whose
 drift verdict is exactly the change <code>--write</code> would make.</p>
 <table>
 <thead>
@@ -21436,11 +21514,11 @@ drift verdict is exactly the change <code>--write</code> would make.</p>
 </tr>
 <tr>
 <td>Args</td>
-<td><code>--repos PATH [PATH …]</code> (required, local clone paths); <code>--target {claude-settings,dependabot,gitignore}</code> (default <code>gitignore</code>); <code>--dry-run</code></td>
+<td><code>--repos PATH [PATH …]</code> (required, local clone paths); <code>--target {claude-md,claude-settings,dependabot,gitignore}</code> (default <code>gitignore</code>); <code>--dry-run</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>The target's applicator (<code>vrg-gitignore-sync</code>, <code>vrg-dependabot-sync</code> or <code>vrg-claude-settings-sync</code>) on PATH; each <code>--repos</code> path a local clone; git/<code>gh</code> credentials for the sweep</td>
+<td>The target's applicator (<code>vrg-gitignore-sync</code>, <code>vrg-dependabot-sync</code>, <code>vrg-claude-settings-sync</code> or <code>vrg-claude-md-sync</code>) on PATH; each <code>--repos</code> path a local clone; git/<code>gh</code> credentials for the sweep</td>
 </tr>
 <tr>
 <td>Failure mode</td>

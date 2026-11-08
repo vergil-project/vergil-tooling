@@ -17540,7 +17540,12 @@ verbatim. Content outside the markers belongs to the repo and is never
 compared. A file with no markers fails with
 <code>DiffItem(field="local.claude_md", expected="well-formed template markers",
 actual="no template markers")</code>; a region that differs names the first
-divergent template line and <code>CLAUDE.md</code> line.</p>
+divergent template line and <code>CLAUDE.md</code> line. Fix a differing region
+with <code>vrg-claude-md-sync --write</code>, which replaces only the marked region
+with the template for one repo; <code>vrg-fleet-sync --target claude-md</code> does
+the same across the fleet, one PR per drifted repo (see the
+<a href="../cli-tools-overview/#vrg-claude-md-sync">CLI Tools Overview</a>). Neither
+repairs missing or malformed markers: that stays a hand fix.</p>
 <p><code>CLAUDE.md</code> is held to a line budget of <strong>200 lines</strong>, counted as
 <code>len(text.splitlines())</code> over the whole file, template region included: a
 file of exactly 200 lines passes, 201 fails, and a trailing newline is not
