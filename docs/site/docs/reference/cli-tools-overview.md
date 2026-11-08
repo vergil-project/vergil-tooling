@@ -1069,6 +1069,17 @@ flag). `--repo OWNER/NAME` audits that repo's resolved epic home instead of
 the org's `.github`, so a private repo that self-homes its epics can be
 audited; the home-scoped checks (epic drift, stray issues, operation-pending
 epics, and the `--close` drift closes) then target it.
+
+Every read runs under the audited org's token, wherever the command is run
+from. Before any check, the audit confirms that this token sees every repo in
+the org: an App token must belong to an installation on that org with access
+to all repositories, and a human's own `gh` login must be an owner of the org
+(or the org must be that login's own account). If it does not, the audit
+names the gap on stderr. The read-only report then opens with an
+**Incomplete coverage** section and exits 1, and `--close` is refused before
+any write. A full preview therefore needs the org's App installation with
+access to all repositories, or an org owner's own login.
+
 `--epic REF` is a separate read-only mode: it prints one epic's children as
 JSON (`{"epic": <slug>, "children": [{repo, number, title, state}, …]}`) and
 skips the drift audit. A bare `#N` resolves against the current repo's epic
@@ -1100,8 +1111,8 @@ which sets `VRG_EPIC_SWEEP=1`. Other invariant violations stay report-only.
 | Source | `vergil_tooling.bin.vrg_epic_audit` (checks and passes: `lib/epic_audit.py`; security pass: `lib/security_records.py`) |
 | Args | `--window-days N` (positive; default 30), `--repo OWNER/NAME`, `--epic REF`, `--close` |
 | Preconditions | Run inside a repo in the target org; GitHub App credentials for that org. `--close` needs a human identity or `VRG_EPIC_SWEEP=1`. The security-records pass needs Repository security advisories: Read and write |
-| Failure mode | `--close` in an agent session is refused before any network call; a `--repo` without `/`, an org that cannot be detected, or an org with no `.github` home exits 1. A full intake epic stops the orphan pass, listing what it did not attach; a broken security pair or a failed security pass exits 1 after the rest of the run. With `--epic`, a ref that is not an epic exits 1 |
-| Exit codes | 0 success (the read-only report exits 0 even when it finds drift), 1 refused, a pass failed, or error, 2 bad arguments |
+| Failure mode | `--close` in an agent session is refused before any network call; a `--repo` without `/`, an org that cannot be detected, or an org with no `.github` home exits 1. A token that cannot see every repo in the org exits 1: the report is marked partial and `--close` is refused before any write. A full intake epic stops the orphan pass, listing what it did not attach; a broken security pair or a failed security pass exits 1 after the rest of the run. With `--epic`, a ref that is not an epic exits 1 |
+| Exit codes | 0 success (the read-only report exits 0 even when it finds drift), 1 refused, incomplete coverage, a pass failed, or error, 2 bad arguments |
 | Status | Active |
 
 ### vrg-worktree-status

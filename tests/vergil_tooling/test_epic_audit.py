@@ -963,14 +963,173 @@ def test_open_issues_fails_loud_on_label_overflow() -> None:
         epic_audit.open_issues("org")
 
 
-def test_open_issues_tolerates_empty_repository_payload() -> None:
+@pytest.mark.parametrize("payload", [{}, {"repository": None}])
+def test_open_issues_fails_loud_on_unreadable_repository(payload: dict[str, object]) -> None:
+    # A listed repo whose issues the token cannot read is never counted as
+    # empty: that would under-report it silently (#3513).
     with (
         patch("vergil_tooling.lib.github.list_org_repos", return_value=["tool"]),
         patch("vergil_tooling.lib.epics.is_managed_repo", return_value=True),
         patch("vergil_tooling.lib.github.is_public", return_value=True),
-        patch("vergil_tooling.lib.github.graphql", return_value={}),
+        patch("vergil_tooling.lib.github.graphql", return_value=payload),
+        pytest.raises(RuntimeError, match="org/tool is listed but its issues cannot be read"),
+    ):
+        epic_audit.open_issues("org")
+
+
+def test_open_issues_reads_a_repository_with_no_issues() -> None:
+    with (
+        patch("vergil_tooling.lib.github.list_org_repos", return_value=["tool"]),
+        patch("vergil_tooling.lib.epics.is_managed_repo", return_value=True),
+        patch("vergil_tooling.lib.github.is_public", return_value=True),
+        patch("vergil_tooling.lib.github.graphql", return_value={"repository": {"issues": {}}}),
     ):
         assert epic_audit.open_issues("org") == []
+
+
+def _installation(selection: str = "all", *, account: str | None = "org") -> dict[str, object]:
+    rows = [] if account is None else [{"name": "r", "owner": {"login": account}}]
+    return {"total_count": len(rows), "repository_selection": selection, "repositories": rows}
+
+
+def _api_error(stderr: str) -> github.GitHubAPIError:
+    return github.GitHubAPIError(1, ["gh", "api"], output="", stderr=stderr)
+
+
+_NOT_INSTALLATION = _api_error(
+    "gh: You must authenticate with an installation access token in order to list "
+    "repositories for an installation. (HTTP 403)"
+)
+
+
+def _fake_api(responses: dict[str, object]) -> Any:
+    def fake(*args: str) -> object:
+        assert args[0] == "api"
+        answer = responses[args[1]]
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    return fake
+
+
+_INSTALLATION_PATH = "installation/repositories?per_page=1"
+
+
+def test_coverage_gap_none_for_an_all_repos_installation_on_the_org() -> None:
+    api = _fake_api({_INSTALLATION_PATH: _installation(account="ORG")})
+    with patch("vergil_tooling.lib.github.read_json", side_effect=api):
+        assert epic_audit.coverage_gap("org") is None
+
+
+@pytest.mark.parametrize("account", ["other-org", None])
+def test_coverage_gap_names_a_token_not_installed_on_the_org(account: str | None) -> None:
+    # The #3513 cause: a token minted for the cwd repo's org lists only the
+    # audited org's public repos.
+    api = _fake_api({_INSTALLATION_PATH: _installation(account=account)})
+    with patch("vergil_tooling.lib.github.read_json", side_effect=api):
+        assert epic_audit.coverage_gap("org") == (
+            "the GitHub App token in use is not installed on org"
+        )
+
+
+def test_coverage_gap_names_a_selected_repos_installation() -> None:
+    api = _fake_api({_INSTALLATION_PATH: _installation("selected")})
+    with patch("vergil_tooling.lib.github.read_json", side_effect=api):
+        assert epic_audit.coverage_gap("org") == (
+            "the GitHub App installation on org covers only selected repositories "
+            "(repository_selection: selected)"
+        )
+
+
+def test_coverage_gap_rejects_a_malformed_installation_response() -> None:
+    api = _fake_api({_INSTALLATION_PATH: []})
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=api),
+        pytest.raises(RuntimeError, match="unexpected /installation/repositories response"),
+    ):
+        epic_audit.coverage_gap("org")
+
+
+def test_coverage_gap_propagates_other_installation_errors() -> None:
+    api = _fake_api({_INSTALLATION_PATH: _api_error("gh: Bad credentials (HTTP 401)")})
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=api),
+        pytest.raises(github.GitHubAPIError, match="Bad credentials"),
+    ):
+        epic_audit.coverage_gap("org")
+
+
+@pytest.mark.parametrize(
+    ("membership", "expected"),
+    [
+        ({"state": "active", "role": "admin"}, None),
+        (
+            {"state": "active", "role": "member"},
+            "the GitHub login in use is not an owner of org, so it may not see every repo",
+        ),
+        (
+            {"state": "pending", "role": "admin"},
+            "the GitHub login in use is not an owner of org, so it may not see every repo",
+        ),
+    ],
+)
+def test_coverage_gap_for_a_login_checks_org_ownership(
+    membership: dict[str, str], expected: str | None
+) -> None:
+    api = _fake_api(
+        {_INSTALLATION_PATH: _NOT_INSTALLATION, "user/memberships/orgs/org": membership}
+    )
+    with patch("vergil_tooling.lib.github.read_json", side_effect=api):
+        assert epic_audit.coverage_gap("org") == expected
+
+
+@pytest.mark.parametrize(
+    ("login", "expected"),
+    [("Org", None), ("someone", "the GitHub login in use is not a member of org")],
+)
+def test_coverage_gap_for_a_login_outside_any_membership(login: str, expected: str | None) -> None:
+    # No membership: a user-owned account is covered by its own login only.
+    api = _fake_api(
+        {
+            _INSTALLATION_PATH: _NOT_INSTALLATION,
+            "user/memberships/orgs/org": _api_error("gh: Not Found (HTTP 404)"),
+            "user": {"login": login},
+        }
+    )
+    with patch("vergil_tooling.lib.github.read_json", side_effect=api):
+        assert epic_audit.coverage_gap("org") == expected
+
+
+def test_coverage_gap_propagates_other_membership_errors() -> None:
+    api = _fake_api(
+        {
+            _INSTALLATION_PATH: _NOT_INSTALLATION,
+            "user/memberships/orgs/org": _api_error("gh: rate limited (HTTP 403)"),
+        }
+    )
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=api),
+        pytest.raises(github.GitHubAPIError, match="rate limited"),
+    ):
+        epic_audit.coverage_gap("org")
+
+
+def test_render_marks_a_clean_partial_report_as_partial() -> None:
+    out = epic_audit.render(
+        [], [], org="org", window_days=30, coverage_gap="the token is not installed on org"
+    )
+    assert "## Incomplete coverage" in out
+    assert "**This report is partial:** the token is not installed on org." in out
+    assert "_No drift in the repos this identity can see; the report is partial._" in out
+    assert "everything that should be closed is closed" not in out
+
+
+def test_render_opens_a_partial_report_with_the_coverage_gap() -> None:
+    drift = TaskDrift("org/r", 5, 6, "u6")
+    out = epic_audit.render([drift], [], org="org", window_days=30, coverage_gap="gap")
+    assert out.index("## Incomplete coverage") < out.index("## Task drift")
+    assert "- org/r#5 — open; PR [#6](u6) merged" in out
 
 
 @pytest.mark.parametrize(

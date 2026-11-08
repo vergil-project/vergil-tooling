@@ -69,11 +69,10 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 1
-        owner, bare = args.repo.split("/", 1)
-        org, home = owner, epics.resolve_epic_home(owner, bare)
+        org = args.repo.split("/", 1)[0]
     else:
-        org = github.detect_org()
-        if org is None:
+        detected = github.detect_org()
+        if detected is None:
             print(
                 "vrg-epic-audit: could not determine the GitHub org from this "
                 "repo's 'origin' remote; run it from inside a repo in the org you "
@@ -81,8 +80,33 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 1
+        org = detected
+    # Every read runs under the audited org's token, never the cwd repo's: a
+    # token minted for another org lists only the audited org's public repos,
+    # which silently under-reported its private work (#3513).
+    with github.target_org(org):
+        return _audit(args, org)
+
+
+def _audit(args: argparse.Namespace, org: str) -> int:
+    """The drift audit (and, with ``--close``, its passes) of *org*, under its token."""
+    if args.repo:
+        home = epics.resolve_epic_home(org, args.repo.split("/", 1)[1])
+    else:
         # An owner with no .github has no org-wide home to audit (#3613).
         home = epics.require_org_home(org)
+    # Refuse a partial result as complete: a token that cannot see every repo
+    # stops --close before any write and marks the preview partial (#3513).
+    gap = epic_audit.coverage_gap(org)
+    if gap is not None:
+        print(f"vrg-epic-audit: incomplete coverage: {gap}", file=sys.stderr)
+        if args.close:
+            print(
+                "vrg-epic-audit: --close refused: it would act on a partial view "
+                "of the org; run it as an identity that sees every repo.",
+                file=sys.stderr,
+            )
+            return 1
     since = (datetime.now(UTC) - timedelta(days=args.window_days)).date().isoformat()
     tasks = epic_audit.task_drift(since, org=org)
     epics_drift = epic_audit.epic_drift(org, home=home)
@@ -171,9 +195,11 @@ def main(argv: list[str] | None = None) -> int:
             public_queues=epic_audit.public_self_homed_queues(org, issues=issues),
             private_under_public=epic_audit.private_under_public_epic(org, issues=issues),
             epic_docs_findings=epic_audit.epic_documents(org, home=home, listing=home_epics),
+            coverage_gap=gap,
         )
     )
-    return security_rc
+    # A partial preview never exits clean (#3513).
+    return 1 if gap is not None else security_rc
 
 
 def _apply_security_pass(org: str) -> int:
@@ -274,7 +300,9 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         epilog=(
             "Scope: the org is auto-detected from this repo's 'origin' remote, "
             "so run it from inside a repo in the org you want to audit (there is "
-            "no --org flag). Output is Markdown on stdout."
+            "no --org flag). Output is Markdown on stdout. Every read runs under "
+            "the audited org's token; if that token cannot see every repo in the "
+            "org, the report is marked partial and exits 1, and --close is refused."
         ),
     )
     parser.add_argument(

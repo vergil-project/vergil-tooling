@@ -38,6 +38,7 @@ def standing_drain() -> Iterator[MagicMock]:
     with (
         patch(f"{_MOD}.epics.drain_standing_org", return_value=[]) as mock_drain,
         patch(f"{_MOD}.epic_audit.open_issues", return_value=[]),
+        patch(f"{_MOD}.epic_audit.coverage_gap", return_value=None),
         patch(f"{_MOD}.epic_audit.list_home_epics", return_value=[]),
         patch(f"{_MOD}.epic_audit.epic_documents", return_value=[]),
         patch(f"{_MOD}.epics.github.repo_exists", return_value=True),
@@ -185,6 +186,80 @@ def test_main_lists_home_epics_under_the_home_owner_token() -> None:
     ):
         assert main(["--repo", "lab-org/lab"]) == 0
     assert seen == ["lab-org"]
+
+
+def test_main_reads_the_whole_audit_under_the_audited_org_token() -> None:
+    # Run from a repo in another org, every read still uses the audited org's
+    # token: a cwd-scoped token lists only its public repos (#3513).
+    seen: dict[str, str | None] = {}
+
+    def record(name: str, value: Any) -> Any:
+        def fake(*_args: object, **_kwargs: object) -> Any:
+            seen[name] = github._target_org.get()
+            return value
+
+        return fake
+
+    with (
+        patch(f"{_MOD}.epics.resolve_epic_home", side_effect=record("home", "lab-org/.github")),
+        patch(f"{_MOD}.epic_audit.coverage_gap", side_effect=record("coverage", None)),
+        patch(f"{_MOD}.epic_audit.task_drift", side_effect=record("tasks", [])),
+        patch(f"{_MOD}.epic_audit.epic_drift", side_effect=record("epics", [])),
+        patch(f"{_MOD}.epic_audit.open_issues", side_effect=record("issues", [])),
+        patch(f"{_MOD}.epic_audit.operational_pending", return_value=[]),
+        patch(f"{_MOD}.epic_audit.closed_operational_without_success", return_value=[]),
+        patch(f"{_MOD}.epic_audit.epic_outside_dotgithub", side_effect=record("outside", [])),
+        patch(f"{_MOD}.epic_audit.stray_dotgithub_issue", return_value=[]),
+        patch(f"{_MOD}.epic_audit.closed_epic_open_child", return_value=[]),
+        patch(f"{_MOD}.epics.drain_adhoc_org", side_effect=record("drain", [])),
+    ):
+        assert main(["--repo", "lab-org/lab"]) == 0
+    assert seen == dict.fromkeys(
+        ("home", "coverage", "tasks", "epics", "outside", "drain", "issues"), "lab-org"
+    )
+
+
+def test_main_preview_with_a_coverage_gap_is_partial_and_exits_1(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with (
+        _patched(_report_patches()),
+        patch(f"{_MOD}.epic_audit.closed_epic_open_child", return_value=[]),
+        patch(f"{_MOD}.epic_audit.coverage_gap", return_value="the token is not installed on org"),
+    ):
+        rc = main([])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert captured.err == (
+        "vrg-epic-audit: incomplete coverage: the token is not installed on org\n"
+    )
+    assert "## Incomplete coverage" in captured.out
+    assert "the report is partial" in captured.out
+    assert "everything that should be closed is closed" not in captured.out
+
+
+def test_close_with_a_coverage_gap_is_refused_before_any_write(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    close_drift = MagicMock(return_value=[])
+    with (
+        patch(f"{_MOD}.identity_mode.is_human", return_value=True),
+        patch(f"{_MOD}.github.detect_org", return_value="org"),
+        patch(f"{_MOD}.epic_audit.coverage_gap", return_value="gap"),
+        patch(f"{_MOD}.epic_audit.task_drift") as drift,
+        patch(f"{_MOD}.epic_audit.close_drift", close_drift),
+        patch(f"{_MOD}.epics.drain_adhoc_org") as drain,
+    ):
+        rc = main(["--close"])
+    assert rc == 1
+    drift.assert_not_called()
+    close_drift.assert_not_called()
+    drain.assert_not_called()
+    assert capsys.readouterr().err == (
+        "vrg-epic-audit: incomplete coverage: gap\n"
+        "vrg-epic-audit: --close refused: it would act on a partial view of the "
+        "org; run it as an identity that sees every repo.\n"
+    )
 
 
 def test_close_does_not_run_the_epic_documents_check() -> None:
@@ -496,10 +571,23 @@ def test_close_sweep_drain_scoped_to_org(capsys: pytest.CaptureFixture[str]) -> 
         rc = main(["--close"])
     assert rc == 0
     assert scope.call_args.args[0] == "org"
-    # The first scoped block lists the home's epics, the second drains, the
-    # third is the orphan pass (no-op on an empty org), the fourth the
+    # The outer block scopes the whole audit to the org (#3513). Inside it, the
+    # first scoped block lists the home's epics, the second drains, the third
+    # is the orphan pass (no-op on an empty org), the fourth the
     # security-records pass.
-    assert order == ["enter", "exit", "enter", "drain", "exit", "enter", "exit", "enter", "exit"]
+    assert order == [
+        "enter",
+        "enter",
+        "exit",
+        "enter",
+        "drain",
+        "exit",
+        "enter",
+        "exit",
+        "enter",
+        "exit",
+        "exit",
+    ]
 
 
 def test_close_sweep_drain_summary(capsys: pytest.CaptureFixture[str]) -> None:
@@ -604,8 +692,21 @@ def test_epic_audit_close_runs_standing_drain(
         rc = main(["--close"])
     assert rc == 0
     # After the home's epic listing and the drains, the orphan pass and the
-    # security-records pass, each in its own block.
-    assert order == ["enter", "exit", "enter", "standing", "exit", "enter", "exit", "enter", "exit"]
+    # security-records pass, each in its own block, all inside the outer block
+    # that scopes the whole audit to the org (#3513).
+    assert order[0] == "enter"
+    assert order[-1] == "exit"
+    assert order[1:-1] == [
+        "enter",
+        "exit",
+        "enter",
+        "standing",
+        "exit",
+        "enter",
+        "exit",
+        "enter",
+        "exit",
+    ]
     assert standing_drain.call_args.args[0] == "org"
     assert standing_drain.call_args.kwargs["apply"] is True
     out = capsys.readouterr().out
@@ -745,8 +846,10 @@ def test_vrg_epic_audit_close_applies_in_order(capsys: pytest.CaptureFixture[str
     # The home's epic listing runs in the first org-scoped block and the existing
     # passes in the second; the orphan pass applies in its own, in the order
     # nativize -> strip -> move -> attach; the security-records pass runs last,
-    # in its own block.
-    assert order == [
+    # in its own block. The outer block scopes the whole audit to the org (#3513).
+    assert order[0] == "enter"
+    assert order[-1] == "exit"
+    assert order[1:-1] == [
         "enter",
         "exit",
         "enter",
