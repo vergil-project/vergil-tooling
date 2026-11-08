@@ -117,6 +117,18 @@ def test_read_reply_request_by_an_untrusted_author() -> None:
     _fatal([reply(2)], "request-author", 1, extra=(1,))
 
 
+def test_read_reply_deleted_untrusted_comment_is_not_fatal() -> None:
+    # Epic 889 spec §12: the untrusted comment 2, posted after the request and
+    # then deleted, is in neither the trusted stream nor all_ids.
+    stream = [request(1), reply(3)]
+    assert _read(stream) == reply(3)
+    ids = frozenset(c.id for c in stream)
+    assert (
+        check_respond(stream, request_id=1, reply_id=3, agent=AGENT, human=HUMAN, all_ids=ids)
+        is None
+    )
+
+
 def test_read_reply_request_without_a_request_marker() -> None:
     _fatal([agent_note(1), reply(2)], "request-author", 1)
     _fatal([response(1, 7, 8), reply(2)], "request-author", 1)

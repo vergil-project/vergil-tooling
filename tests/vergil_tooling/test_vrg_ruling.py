@@ -280,6 +280,19 @@ def test_read_no_reply_yet(cli: Cli, issue: FakeIssue) -> None:
     assert "no reply yet to request 41" in cli.stderr
 
 
+def test_read_deleted_untrusted_comment_is_not_fatal(cli: Cli, issue: FakeIssue) -> None:
+    # Epic 889 spec §12: an untrusted comment lies outside the turn checks, so
+    # deleting one between the request and the reply trips no fatal check.
+    issue.comments = [request_comment(41), IssueComment(42, "stranger", "hello", False)]
+    assert cli("read", "--issue", "o/r#7", "--request", "41") == 3
+    assert "no reply yet to request 41" in cli.stderr
+    issue.comments = [request_comment(41), reply_comment(43, "R1.1: fix")]
+    assert cli("read", "--issue", "o/r#7", "--request", "41") == 0
+    assert cli.stdout == "R1.1: fix\n"
+    assert "reply 43 to request 41" in cli.stderr
+    assert "fatal check" not in cli.stderr
+
+
 @pytest.mark.parametrize(
     ("comments", "check", "comment_id"),
     [
