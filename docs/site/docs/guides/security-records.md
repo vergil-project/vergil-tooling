@@ -267,10 +267,10 @@ of them until the plan exists.
 
   ```bash
   vrg-security-record retarget GHSA-xxxx-xxxx-xxxx \
-    --to vergil-project/vergil-tooling#101 \
-    --to vergil-project/vergil-tooling#102
+    --to 'vergil-project/vergil-tooling#101' \
+    --to 'vergil-project/vergil-tooling#102'
   vrg-security-record retarget GHSA-yyyy-yyyy-yyyy \
-    --to vergil-project/vergil-tooling#103
+    --to 'vergil-project/vergil-tooling#103'
   ```
 
   From then on, the PRs that close those tasks are what close each

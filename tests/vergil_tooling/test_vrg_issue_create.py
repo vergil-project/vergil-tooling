@@ -557,7 +557,11 @@ def test_main_link_failure_reports_created_issue(capsys: pytest.CaptureFixture[s
         rc = main(["--epic", "adhoc", "--title", "T"])
     assert rc == 1
     err = capsys.readouterr().err
-    assert "123" in err  # orphan-safe: the created issue is surfaced
+    assert _URL in err  # orphan-safe: the created issue is surfaced
+    # The fix names both refs in full, single-quoted for the shell (#3966).
+    assert err.rstrip().endswith(
+        "Link it with: vrg-epic-move --task 'org/repo#123' --epic 'org/repo#710'"
+    )
 
 
 def test_main_scopes_token_to_repo_owner() -> None:

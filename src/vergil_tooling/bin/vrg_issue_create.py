@@ -27,6 +27,7 @@ from vergil_tooling.lib import epics, github
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.labels import ensure_labels_or_report
 from vergil_tooling.lib.process_errors import error_text
+from vergil_tooling.lib.shell_ref import quoted_slug
 
 
 @cli_main
@@ -165,7 +166,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(
                     f"vrg-issue-create: created {url} but failed to link it under epic "
                     f"{epic.slug}: {error_text(exc)}. Link it with: "
-                    f"vrg-epic-move --task #{task.number} --epic {epic.slug}",
+                    f"vrg-epic-move --task {quoted_slug(task)} --epic {quoted_slug(epic)}",
                     file=sys.stderr,
                 )
                 return 1

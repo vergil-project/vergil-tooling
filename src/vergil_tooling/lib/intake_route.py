@@ -72,7 +72,7 @@ from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.labels import RETIRED_LABELS, ensure_labels, load_labels
 from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.queue_view import parse_planning_markers
-from vergil_tooling.lib.rulings.draft_ref import quoted_issue_ref
+from vergil_tooling.lib.shell_ref import quoted_slug
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -417,7 +417,7 @@ def _not_retargeted(ghsas: tuple[str, ...]) -> str:
 def _retarget_commands(ghsas: tuple[str, ...], target: IssueRef) -> str:
     """One ``vrg-security-record retarget`` recovery command per advisory, in order."""
     return ", then ".join(
-        f"vrg-security-record retarget {ghsa} --to {target.slug}" for ghsa in ghsas
+        f"vrg-security-record retarget {ghsa} --to {quoted_slug(target)}" for ghsa in ghsas
     )
 
 
@@ -562,12 +562,11 @@ def _half_applied_on_error(item: IssueRef, epic: IssueRef, task: IssueRef) -> Ge
         raise
     except (github.GitHubAPIError, RuntimeError) as exc:
         lead = f"moved {item.slug} to {task.slug}, but" if task != item else f"{item.slug}:"
-        task_ref = quoted_issue_ref(_repo_of(task), task.number)
-        epic_ref = quoted_issue_ref(_repo_of(epic), epic.number)
         raise RouteHalfAppliedError(
             f"{lead} linking {task.slug} under {epic.slug} or reading its parent back failed "
             f"({error_text(exc)}); the route is half-applied. Check where it is with "
-            f"vrg-queue, then fix it with: vrg-epic-move --task {task_ref} --epic {epic_ref}"
+            f"vrg-queue, then fix it with: "
+            f"vrg-epic-move --task {quoted_slug(task)} --epic {quoted_slug(epic)}"
         ) from exc
 
 
@@ -615,7 +614,7 @@ def _parent_mismatch(
         )
     return RouteHalfAppliedError(
         f"{moved}, but it is {placement}, not under {epic.slug}; the route is half-applied. "
-        f"Fix it with: vrg-epic-move --task {task.slug} --epic {epic.slug}"
+        f"Fix it with: vrg-epic-move --task {quoted_slug(task)} --epic {quoted_slug(epic)}"
     )
 
 
