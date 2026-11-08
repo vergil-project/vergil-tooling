@@ -71,6 +71,10 @@ class Env:
         # field says otherwise: epic -> stale children (#4004).
         self.stale_listing: dict[IssueRef, set[IssueRef]] = {}
         self.epic_state = "open"
+        # REST issue endpoint -> state, for the epics an Epic: marker names.
+        self.api_states: dict[str, str] = {}
+        # The 'gh search issues' rows for a planning item's Planning: line.
+        self.search_results: Any = []
         self.transfer: Any = "https://github.com/org/tool/issues/900"
         self.issue_view: dict[str, object] = {
             "title": "Make the thing faster",
@@ -135,6 +139,10 @@ class Env:
 
     def _read_json(self, *args: str) -> object:
         fields = args[-1]
+        if args[:2] == ("search", "issues"):
+            if isinstance(self.search_results, BaseException):
+                raise self.search_results
+            return self.search_results
         if fields == "labels,comments":
             return {
                 "labels": [{"name": name} for name in self.labels],
@@ -157,6 +165,8 @@ class Env:
             return self.closing_prs[args[2]]
         assert args[0] == "api"
         assert args[-1] == ".state"
+        if args[1] in self.api_states:
+            return self.api_states[args[1]]
         return self.epic_state
 
 
@@ -331,21 +341,147 @@ def test_route_defer_refuses_unparented(env: Env) -> None:
     env.ensure_deferred_epic.assert_not_called()
 
 
-@pytest.mark.parametrize(
-    "action", [Defer(reason="r", revisit_when="w"), Drop(reason="no longer needed")]
-)
-def test_route_planning_with_epic_marker_refuses_defer_and_drop(
-    env: Env, action: Defer | Drop
-) -> None:
-    env.parent = PLANNING
-    env.native_parent[ITEM] = PLANNING
-    env.labels = ["in-progress"]
-    env.comments = ["Epic: org/.github#600\nDocs task: org/.github#601"]
-    with pytest.raises(RouteRefusedError, match=r"has a development epic \(org/\.github#600\)"):
-        route(ITEM, action, today=TODAY)
+def _assert_untouched(env: Env) -> None:
     env.run.assert_not_called()
     env.reparent_child.assert_not_called()
     env.ensure_deferred_epic.assert_not_called()
+
+
+def _planning_item(env: Env) -> None:
+    env.parent = PLANNING
+    env.native_parent[ITEM] = PLANNING
+    env.labels = ["in-progress"]
+
+
+def _epic_hit(number: int, state: str, body: str = "Planning: org/.github#352") -> dict[str, Any]:
+    return {
+        "number": number,
+        "state": state,
+        "repository": {"nameWithOwner": "org/.github"},
+        "body": f"An epic.\n\n{body}\n",
+    }
+
+
+def test_route_planning_with_epic_marker_refuses_drop(env: Env) -> None:
+    _planning_item(env)
+    env.comments = ["Epic: org/.github#600\nDocs task: org/.github#601"]
+    with pytest.raises(RouteRefusedError, match=r"has a development epic \(org/\.github#600\)"):
+        route(ITEM, Drop(reason="no longer needed"), today=TODAY)
+    _assert_untouched(env)
+
+
+def test_route_defer_planning_refuses_open_marker_epic(env: Env) -> None:
+    _planning_item(env)
+    env.comments = ["Epic: org/.github#600\nDocs task: org/.github#601"]
+    with pytest.raises(
+        RouteRefusedError, match=r"has an open development epic \(org/\.github#600\)"
+    ):
+        route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
+    _assert_untouched(env)
+
+
+def test_route_defer_planning_refuses_an_earlier_open_marker_epic(env: Env) -> None:
+    # Only the latest marker counted before #4001; every epic named must be closed.
+    _planning_item(env)
+    env.comments = ["Epic: org/.github#600", "Epic: org/.github#610"]
+    env.api_states = {
+        "repos/org/.github/issues/600": "open",
+        "repos/org/.github/issues/610": "closed",
+    }
+    with pytest.raises(RouteRefusedError, match=r"\(org/\.github#600\)"):
+        route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
+    _assert_untouched(env)
+
+
+def test_route_defer_planning_with_all_epics_closed_moves(env: Env) -> None:
+    _planning_item(env)
+    env.comments = ["Epic: org/.github#600\nDocs task: org/.github#601"]
+    env.api_states = {"repos/org/.github/issues/600": "closed"}
+    env.search_results = [_epic_hit(600, "CLOSED"), _epic_hit(648, "CLOSED")]
+    route(ITEM, Defer(reason="on hold", revisit_when="the design settles"), today=TODAY)
+    env.reparent_child.assert_called_once_with(DEFERRED, ITEM)
+    assert _comment_calls(env)[0].args[-1] == (
+        "Deferred 2026-10-23: on hold\nRevisit when: the design settles\n"
+        "Deferred from: org/.github#8"
+    )
+    [search] = [c for c in env.read_json.call_args_list if c.args[:2] == ("search", "issues")]
+    assert search.args == (
+        "search",
+        "issues",
+        "Planning: org/.github#352",
+        "--owner",
+        "org",
+        "--label",
+        "epic",
+        "--limit",
+        str(epics.LISTING_LIMIT),
+        "--json",
+        "number,state,repository,body",
+    )
+
+
+def test_route_defer_planning_refuses_open_epic_found_by_planning_line(env: Env) -> None:
+    # #848 in the #4001 report: an epic with no Epic: marker, only its Planning: line.
+    _planning_item(env)
+    env.comments = ["Epic: org/.github#600"]
+    env.api_states = {"repos/org/.github/issues/600": "closed"}
+    env.search_results = [_epic_hit(600, "CLOSED"), _epic_hit(648, "OPEN")]
+    with pytest.raises(
+        RouteRefusedError, match=r"has an open development epic \(org/\.github#648\)"
+    ):
+        route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
+    _assert_untouched(env)
+
+
+def test_route_defer_planning_ignores_hit_without_the_exact_planning_line(env: Env) -> None:
+    _planning_item(env)
+    env.search_results = [
+        _epic_hit(700, "OPEN", body="Planning: org/.github#3520"),
+        _epic_hit(701, "OPEN", body="See Planning: org/.github#352 for context"),
+    ]
+    route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
+    env.reparent_child.assert_called_once_with(DEFERRED, ITEM)
+
+
+def test_route_defer_planning_refuses_a_truncated_search(env: Env) -> None:
+    _planning_item(env)
+    env.search_results = [_epic_hit(600, "CLOSED")] * epics.LISTING_LIMIT
+    with pytest.raises(epics.EpicListTruncatedError, match="possibly truncated"):
+        route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
+    _assert_untouched(env)
+
+
+def test_route_defer_planning_search_failure_raises(env: Env) -> None:
+    _planning_item(env)
+    env.search_results = github.GitHubAPIError(1, ["gh"], "", "HTTP 502")
+    with pytest.raises(github.GitHubAPIError):
+        route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
+    _assert_untouched(env)
+
+
+def test_route_defer_planning_state_read_failure_raises(env: Env) -> None:
+    _planning_item(env)
+    env.comments = ["Epic: org/.github#600"]
+    env.read_output.side_effect = github.GitHubAPIError(1, ["gh"], "", "HTTP 404")
+    with pytest.raises(github.GitHubAPIError):
+        route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
+    _assert_untouched(env)
+
+
+@pytest.mark.parametrize(
+    ("results", "match"),
+    [
+        ({"items": []}, "unexpected 'gh search issues' response"),
+        ([_epic_hit(600, "MERGED")], r"unexpected state 'MERGED' for org/\.github#600"),
+        ([{**_epic_hit(600, "OPEN"), "repository": {}}], "has no repository"),
+    ],
+)
+def test_route_defer_planning_refuses_malformed_search(env: Env, results: Any, match: str) -> None:
+    _planning_item(env)
+    env.search_results = results
+    with pytest.raises(RuntimeError, match=match):
+        route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
+    _assert_untouched(env)
 
 
 def test_route_drop_planning_without_marker_closes(env: Env) -> None:

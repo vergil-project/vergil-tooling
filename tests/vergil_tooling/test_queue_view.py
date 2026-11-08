@@ -87,6 +87,22 @@ def test_parse_planning_markers_lines_within_a_multiline_comment() -> None:
     )
 
 
+def test_parse_epic_markers_lists_every_epic_once_in_order() -> None:
+    refs = queue_view.parse_epic_markers(
+        [
+            "Epic: org/.github#10\nDocs task: org/.github#11",
+            "note\n  Epic: org/tool#12  ",
+            "Epic: org/.github#10",
+            "Epic: not-a-ref",
+        ]
+    )
+    assert refs == (IssueRef("org", ".github", 10), IssueRef("org", "tool", 12))
+
+
+def test_parse_epic_markers_empty() -> None:
+    assert queue_view.parse_epic_markers(["Just a note."]) == ()
+
+
 def test_parse_planning_markers_tasks_filed_latest_no_overrides_yes() -> None:
     m = queue_view.parse_planning_markers(["Tasks filed: yes", "Tasks filed: no"])
     assert not m.tasks_filed
