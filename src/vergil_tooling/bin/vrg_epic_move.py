@@ -65,7 +65,8 @@ def main(argv: list[str] | None = None) -> int:
             # The epic-home visibility probes run under the task owner's token.
             try:
                 epic = epics.resolve_epic_ref(args.epic, repo=task_repo)
-            except ValueError as exc:
+            except (ValueError, epics.StandingEpicNotVisibleError) as exc:
+                # A standing epic created but not confirmed names the new epic.
                 print(f"vrg-epic-move: {exc}", file=sys.stderr)
                 return 1
             if epics.queue_kind(epic) == epics.DEFERRED.key:
