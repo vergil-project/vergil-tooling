@@ -50,7 +50,9 @@ advisories alone.
 A task in a development epic, an epic, and an unparented issue are refused
 (``planning`` alone accepts an unparented issue: the ``epic-create`` free-text
 path), the refusal naming the parent. A planning item whose ``epic-create``
-session already recorded an ``Epic:`` marker refuses defer and drop, and an
+session already recorded an ``Epic:`` marker refuses drop, and refuses defer
+while any of its development epics is open (one an ``Epic:`` marker names, or
+one whose body carries a ``Planning:`` line for it; #4001). An
 ad-hoc item refuses defer while an open PR would close it. A private repo's item
 is never routed to a public repo or epic. The whole route runs under the item
 owner's App token (:func:`github.target_org`).
@@ -71,7 +73,11 @@ from vergil_tooling.lib import epics, github, security_records
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.labels import RETIRED_LABELS, ensure_labels, load_labels
 from vergil_tooling.lib.process_errors import error_text
-from vergil_tooling.lib.queue_view import parse_planning_markers
+from vergil_tooling.lib.queue_view import (
+    PLANNING_MARKER,
+    parse_epic_markers,
+    parse_planning_markers,
+)
 from vergil_tooling.lib.shell_ref import quoted_slug
 
 if TYPE_CHECKING:
@@ -278,6 +284,66 @@ def _guard_planning_epic(ref: IssueRef, view: dict[str, Any], doing: str) -> Non
         )
 
 
+def _planning_epic_states(ref: IssueRef, view: dict[str, Any]) -> dict[IssueRef, str]:
+    """Each development epic of the planning item *ref* and its state, OPEN or CLOSED.
+
+    The epics are those an ``Epic:`` marker in *view*'s comments names, plus
+    every ``epic`` issue in *ref*'s org whose body carries a ``Planning: <ref>``
+    line (``epic-create`` writes that line into each epic it creates, while the
+    marker names only one). The search is full text, so each hit's body is
+    checked for the exact line. A search that reaches its limit, a state that
+    is neither OPEN nor CLOSED, or a failed read raises: nothing is assumed
+    closed.
+    """
+    comments = [str(c.get("body") or "") for c in view.get("comments") or []]
+    states: dict[IssueRef, str] = {}
+    for epic in parse_epic_markers(comments):
+        states[epic] = github.read_output(
+            "api", f"repos/{_repo_of(epic)}/issues/{epic.number}", "--jq", ".state"
+        ).upper()
+    results: Any = github.read_json(
+        "search",
+        "issues",
+        f"{PLANNING_MARKER} {ref.slug}",
+        "--owner",
+        ref.owner,
+        "--label",
+        "epic",
+        "--limit",
+        str(epics.LISTING_LIMIT),
+        "--json",
+        "number,state,repository,body",
+    )
+    if not isinstance(results, list):
+        raise RuntimeError(f"unexpected 'gh search issues' response for {ref.slug}: {results!r}")
+    epics.refuse_truncated(results, epics.LISTING_LIMIT, f"the {PLANNING_MARKER} {ref.slug} search")
+    line = re.compile(rf"^{re.escape(PLANNING_MARKER)}\s*{re.escape(ref.slug)}\s*$", re.MULTILINE)
+    for item in results:
+        if not line.search(str(item.get("body") or "")):
+            continue
+        name_with_owner = str((item.get("repository") or {}).get("nameWithOwner") or "")
+        if name_with_owner.count("/") != 1:
+            raise RuntimeError(f"search hit for {ref.slug} has no repository: {item!r}")
+        owner, repo = name_with_owner.split("/")
+        states.setdefault(IssueRef(owner, repo, int(item["number"])), str(item["state"]).upper())
+    for epic, state in states.items():
+        if state not in ("OPEN", "CLOSED"):
+            raise RuntimeError(f"unexpected state {state!r} for {epic.slug}")
+    return states
+
+
+def _guard_open_planning_epics(ref: IssueRef, view: dict[str, Any]) -> None:
+    """Refuse deferring a planning item while any of its development epics is open."""
+    open_epics = [
+        epic.slug for epic, state in _planning_epic_states(ref, view).items() if state == "OPEN"
+    ]
+    if open_epics:
+        raise RouteRefusedError(
+            f"{ref.slug} has an open development epic ({', '.join(open_epics)}); deferring "
+            "it would orphan that epic. Close every development epic first"
+        )
+
+
 def _guard_open_closing_pr(ref: IssueRef) -> None:
     """Refuse deferring an ad-hoc item that an open PR would close (it would strand the PR)."""
     view = _view(ref, "closedByPullRequestsReferences")
@@ -303,7 +369,7 @@ def _defer(ref: IssueRef, action: Defer, kind: str | None, parent: IssueRef, day
         return
     view = _view(ref, "labels,comments")
     if kind == epics.PLANNING.key:
-        _guard_planning_epic(ref, view, "deferring")
+        _guard_open_planning_epics(ref, view)
     if kind == epics.ADHOC.key:
         _guard_open_closing_pr(ref)
     deferred = epics.ensure_deferred_epic(_repo_of(ref))

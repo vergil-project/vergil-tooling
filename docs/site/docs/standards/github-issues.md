@@ -657,9 +657,11 @@ nobody can act on, and so every parked item says what would bring it back.
 planning or ad-hoc epic can be deferred (an already-deferred item can be
 refreshed). A task in a development (finite) epic cannot: deferring one task
 would in effect suspend its whole epic, so the tool refuses it, naming the
-parent. A planning item is refused once its `epic-create` session has recorded
-an `Epic:` marker (the development epic already exists), and an ad-hoc item is
-refused while an open PR would close it.
+parent. A planning item is refused while any of its development epics is open:
+one an `Epic:` marker in its comments names, or one whose body carries a
+`Planning:` line for it. Once every such epic is closed, nothing is left to
+orphan and the item can be deferred. An ad-hoc item is refused while an open
+PR would close it.
 
 **Every deferral records why, and what to check.** `--reason` and
 `--revisit-when` are both required:

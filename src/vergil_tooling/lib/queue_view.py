@@ -139,6 +139,20 @@ def parse_planning_markers(comments: Sequence[str]) -> PlanningMarkers:
     return PlanningMarkers(epic=epic, docs_task=docs_task, tasks_filed=tasks_filed)
 
 
+def parse_epic_markers(comments: Sequence[str]) -> tuple[IssueRef, ...]:
+    """Every epic an ``Epic:`` line in *comments* names, first mention first, no repeats.
+
+    :func:`parse_planning_markers` keeps only the latest; a planning issue that
+    grew several epics names each of them in turn.
+    """
+    found: dict[IssueRef, None] = {}
+    for comment in comments:
+        for raw in comment.splitlines():
+            if m := _EPIC_RE.match(raw.strip()):
+                found.setdefault(_ref(m), None)
+    return tuple(found)
+
+
 def _view(ref: IssueRef, fields: str) -> dict[str, Any]:
     raw = github.read_json(
         "issue", "view", str(ref.number), "--repo", f"{ref.owner}/{ref.repo}", "--json", fields
