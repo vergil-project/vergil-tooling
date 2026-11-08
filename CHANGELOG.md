@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.289] - 2026-11-08
+
+### Bug fixes
+
+- list up to 1000 rows in _find_epic_by_title and refuse a truncated list (#4040)
+- recover a one-off re-link refused as a duplicate sub-issue and report link failures cleanly (#4043)
+- write the guest ~/.claude config atomically in copy_claude_config (#4044)
+- tell an unreachable VM apart from a missing guest settings.json (#4045)
+- resolve the PR's own repo in the provenance check and the required-check lookup (#4046)
+
+### Features
+
+- shellcheck every *.sh file in the repository, not only scripts/ (#4042)
+- fetch the issue body and the epic's open tasks in vrg-merge-review-request (#4047)
+
 ## [2.1.288] - 2026-11-07
 
 ### Bug fixes
