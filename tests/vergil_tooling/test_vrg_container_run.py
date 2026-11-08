@@ -60,6 +60,9 @@ def test_help_flag(capsys: pytest.CaptureFixture[str]) -> None:
     out = capsys.readouterr().out
     assert "usage: vrg-container-run" in out
     assert "GH_TOKEN" not in out
+    # The no-language fallback is the prod-prefixed base image by default (#3833).
+    assert "<prefix>-base:latest: prod-base:latest" in out
+    assert "falls back to dev-base" not in out
 
 
 def test_h_flag(capsys: pytest.CaptureFixture[str]) -> None:

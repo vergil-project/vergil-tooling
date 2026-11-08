@@ -1,9 +1,11 @@
 """Run an arbitrary command inside a dev container.
 
 Auto-detects the project language to select a default container image.
-Falls back to dev-base:latest when no language is detected and
-DOCKER_DEV_IMAGE is not set.  The command to run is taken from CLI
-arguments after ``--``.
+When the repo has no language (none declared in ``vergil.toml`` and none
+detected) and DOCKER_DEV_IMAGE is not set, the image is
+``<prefix>-base:latest``: ``prod-base:latest`` by default, or
+``dev-base:latest`` with ``--prefix dev``.  The command to run is taken
+from CLI arguments after ``--``.
 """
 
 from __future__ import annotations
@@ -55,8 +57,9 @@ usage: vrg-container-run [--prefix <dev|prod>] [--] <command> [args...]
 
 Run a command inside the project's dev container.
 
-The project language is auto-detected to select the right container image;
-falls back to dev-base:latest when detection fails.
+The project language is auto-detected to select the right container image.
+A repo with no language uses <prefix>-base:latest: prod-base:latest by
+default, or dev-base:latest with --prefix dev.
 
 options:
   -h, --help              show this help message and exit
