@@ -646,6 +646,16 @@ _LEGACY_ADHOC_ARCHIVE_RE = re.compile(
 )
 
 
+#: Upper bound on the open issues :func:`_find_epic_by_title` lists. gh returns
+#: only 30 rows without ``--limit`` (#3822). Reaching the bound is an error, not
+#: a silent truncation: an unseen older epic could carry the title.
+EPIC_TITLE_LIST_LIMIT = 1000
+
+
+class EpicListTruncatedError(ValueError):
+    """The title lookup's listing reached its limit, so a match may lie beyond it."""
+
+
 def _find_epic_by_title(
     home: str,
     title: str,
@@ -663,6 +673,10 @@ def _find_epic_by_title(
     *prefer_oldest* is True the lowest-numbered match is returned instead: archive
     resolution tolerates the transient duplicate archives produced by the
     list-consistency race (#2698) and reuses the oldest.
+
+    The listing asks for up to :data:`EPIC_TITLE_LIST_LIMIT` rows and raises
+    :class:`EpicListTruncatedError` when it gets that many, since the list may
+    then be truncated and neither "absent" nor a single match can be trusted.
     """
     owner, home_repo = home.split("/", 1)
     raw: Any = github.read_json(
@@ -673,9 +687,17 @@ def _find_epic_by_title(
         *[arg for label in labels for arg in ("--label", label)],
         "--state",
         "open",
+        "--limit",
+        str(EPIC_TITLE_LIST_LIMIT),
         "--json",
         "number,title",
     )
+    if isinstance(raw, list) and len(raw) >= EPIC_TITLE_LIST_LIMIT:
+        raise EpicListTruncatedError(
+            f"{home} has {EPIC_TITLE_LIST_LIMIT}+ open issues labelled "
+            f"{' + '.join(labels)}; refusing to look up {title!r} on a possibly "
+            "truncated list — pass an explicit --epic"
+        )
     rows = (
         [r for r in raw if isinstance(r, dict) and r.get("title") == title]
         if isinstance(raw, list)
