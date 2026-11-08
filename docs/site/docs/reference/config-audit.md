@@ -84,8 +84,11 @@ Claude Code and makes older versions skip the whole settings file.
 
 Any other content is one
 `DiffItem(field="local.claude_settings", ...)` whose actual value names
-each top-level key that is missing, unexpected or different. Fix it by
-copying the template into the repo.
+each top-level key that is missing, unexpected or different. Fix it with
+`vrg-claude-settings-sync --write`, which replaces the file with the
+template for one repo; `vrg-fleet-sync --target claude-settings` does the
+same across the fleet, one PR per drifted repo (see the
+[CLI Tools Overview](cli-tools-overview.md#vrg-claude-settings-sync)).
 
 ### `CLAUDE.md` and `AGENTS.md` — the instruction file
 

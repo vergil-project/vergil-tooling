@@ -947,6 +947,47 @@ def test_fleet_dependabot_check_previews_with_check_flag(monkeypatch: pytest.Mon
     assert all("--write" not in call for call in proc_calls)
 
 
+def test_fleet_target_claude_settings_spec(monkeypatch: pytest.MonkeyPatch) -> None:
+    """--target claude-settings builds its SweepSpec and shells out to its applicator (#4056)."""
+    spec, applicator = _capture_main(
+        monkeypatch, ["--repos", "/clones/x", "--target", "claude-settings"]
+    )
+    assert spec.repos == ["/clones/x"]
+    assert spec.branch_slug == "claude-settings-sync"
+    assert spec.commit_type == "chore"
+    assert spec.commit_scope == "claude"
+    assert spec.epic is None
+    assert spec.title == "chore(claude): sync the managed .claude/settings.json"
+    assert "never merged" in spec.body
+
+    proc_calls: list[list[str]] = []
+    procs = iter(
+        [
+            _FakeProc(stdout="wrote .claude/settings.json\n"),
+            _FakeProc(stdout="already in sync\n"),
+            _FakeProc(returncode=0),
+            _FakeProc(returncode=1, stderr="missing .claude/settings.json\n"),
+        ]
+    )
+
+    def fake_proc_run(args, **kwargs):  # noqa: ANN001, ANN003
+        proc_calls.append(list(args))
+        return next(procs)
+
+    monkeypatch.setattr(vrg_fleet_sync.subprocess, "run", fake_proc_run)
+
+    assert applicator(Path("/w")) == AppResult(
+        changed=True, summary="wrote .claude/settings.json"
+    )
+    assert proc_calls[-1] == ["vrg-claude-settings-sync", "--write", "--repo", "/w"]
+    assert applicator(Path("/w")) == AppResult(changed=False, summary="already in sync")
+    assert applicator(Path("/w"), check=True) == AppResult(changed=False, summary="already in sync")
+    assert proc_calls[-1] == ["vrg-claude-settings-sync", "--check", "--repo", "/w"]
+    assert applicator(Path("/w"), check=True) == AppResult(
+        changed=True, summary="would sync (missing .claude/settings.json)"
+    )
+
+
 def test_fleet_gitignore_check_previews_with_check_flag(monkeypatch: pytest.MonkeyPatch) -> None:
     """check=True runs ``vrg-gitignore-sync --check``, never ``--write`` (#3568)."""
     _spec_unused, applicator = _capture_main(monkeypatch, ["--repos", "/clones/x"])
