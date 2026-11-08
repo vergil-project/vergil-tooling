@@ -732,6 +732,46 @@ def test_unfreeze_with_no_file_errors(
     assert "no workflow file" in capsys.readouterr().err.lower()
 
 
+def test_unfreeze_retracts_the_ready_relay_ref(
+    in_git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Issue #3815: the relay ref still says ready at the reported head after an
+    # unfreeze unless unfreeze rewrites it. unfreeze publishes the reopened
+    # (implementing) state to the relay ref, so a named-branch vrg-submit-pr
+    # refuses instead of opening the PR at the pre-unfreeze head.
+    _report_ready()
+    reported = json.loads((in_git_repo / ".vergil" / "pr-workflow.json").read_text())
+    capsys.readouterr()
+    with patch("vergil_tooling.bin.vrg_pr_workflow.GitHubTransport") as mock_transport:
+        rc = vrg_pr_workflow.main(["--base", "develop", "unfreeze"])
+    assert rc == 0
+    mock_transport.assert_called_once_with(reported["branch"], base="develop")
+    (pushed_state,) = mock_transport.return_value.write.call_args.args
+    assert pushed_state.status == "implementing"
+    assert pushed_state.git["head_sha"] == reported["git"]["head_sha"]
+
+
+def test_unfreeze_relay_failure_changes_nothing(
+    in_git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A relay ref that cannot be retracted would leave origin saying ready at
+    # the old head; unfreeze then fails with the branch still frozen (#3815).
+    _report_ready()
+    capsys.readouterr()
+    with patch("vergil_tooling.bin.vrg_pr_workflow.GitHubTransport") as mock_transport:
+        mock_transport.return_value.ref = "refs/vergil/pr-workflow/feature/42-x"
+        mock_transport.return_value.write.side_effect = subprocess.CalledProcessError(
+            1, ("git", "push")
+        )
+        rc = vrg_pr_workflow.main(["--base", "develop", "unfreeze"])
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "could not update the pr-workflow relay ref" in captured.err
+    assert "branch stays frozen" in captured.err
+    persisted = json.loads((in_git_repo / ".vergil" / "pr-workflow.json").read_text())
+    assert persisted["status"] == "ready"
+
+
 def test_report_ready_after_unfreeze_refreezes(
     in_git_repo: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

@@ -44,15 +44,18 @@ def _pr_number_from_url(pr_url: str) -> int | None:
 
 def read_pr_fields(worktree_root: Path) -> dict[str, str]:
     """Return the PR submission fields (``issue``/``title``/``summary``/``notes``/
-    ``linkage``/``base``) from the workflow state file.
+    ``linkage``/``base``/``head_sha``) from the workflow state file.
 
     The ``base`` key carries the base ref the oracle recorded for this branch
     (e.g. ``origin/develop``) so submission targets the branch the agent
-    intended rather than re-inferring it from the branch name.
+    intended rather than re-inferring it from the branch name. ``head_sha`` is
+    the commit the latest ``report-ready`` recorded: ``vrg-submit-pr`` refuses
+    to open the PR at any other head (issue #3815).
 
     Raises ``FileNotFoundError`` if the state file does not exist,
     ``AlreadySubmittedError`` if it is marked submitted (its PR is in flight),
-    and ``WorkflowError`` if it is not in the ready state — either it carries no
+    and ``WorkflowError`` if it records no reported head or is not in the ready
+    state — either it carries no
     PR metadata yet, or it was deliberately reopened via ``vrg-pr-workflow
     unfreeze`` (``status == "implementing"``) even though it still retains PR
     metadata from an earlier ``report-ready``. The ready gate here is
@@ -87,6 +90,12 @@ def read_pr_fields(worktree_root: Path) -> dict[str, str]:
             "(a branch reopened with `vrg-pr-workflow unfreeze` is back in "
             "`implementing` and stays excluded until it is reported ready again)"
         )
+    head_sha = state.git.get("head_sha")
+    if not head_sha:
+        raise WorkflowError(
+            "the workflow records no reported head_sha; the USER agent must re-run "
+            "`report-ready` so the commit to submit is recorded"
+        )
     return {
         "issue": state.issue,
         "title": meta["title"],
@@ -94,6 +103,7 @@ def read_pr_fields(worktree_root: Path) -> dict[str, str]:
         "notes": meta.get("notes", ""),
         "linkage": meta.get("linkage", "Ref"),
         "base": state.base,
+        "head_sha": str(head_sha),
     }
 
 
