@@ -2072,6 +2072,29 @@ class TestGenerateJwt:
         assert "iat" in payload
         assert "exp" in payload
 
+    def test_claims_allow_clock_skew_both_ways(self, tmp_path: Path) -> None:
+        # #3825: an exp of exactly now + 600 failed with a bare 401 whenever
+        # the local clock ran even slightly ahead of GitHub's.
+        import base64
+
+        key_path = tmp_path / "test.pem"
+        key_path.write_text("fake-key\n")
+        with (
+            patch("vergil_tooling.lib.github.subprocess.run") as mock_run,
+            patch("vergil_tooling.lib.github.time.time", return_value=1_000_000.9),
+        ):
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=b"\x00" * 256
+            )
+            jwt_str = github._generate_jwt("12345", key_path)
+        payload_b64 = jwt_str.split(".")[1]
+        padding = 4 - len(payload_b64) % 4
+        payload = json.loads(base64.urlsafe_b64decode(payload_b64 + "=" * padding))
+        assert payload["iat"] == 1_000_000 - 60
+        # A local clock up to 60 s fast still keeps exp within GitHub's
+        # 10-minute ceiling; one up to 60 s slow still keeps iat in the past.
+        assert payload["exp"] == 1_000_000 + 540
+
 
 class TestDetectOrg:
     def test_parses_ssh_remote(self) -> None:
@@ -2739,6 +2762,102 @@ class TestGetInstallationToken:
         ):
             github.get_installation_token(org="test-org")
         assert "401" in excinfo.value.detail
+
+    @pytest.mark.parametrize(
+        ("body", "expected"),
+        [
+            (
+                b"{\"message\": \"'Expiration time' claim ('exp') is too far in the future\"}",
+                "HTTP Error 401: Unauthorized on /app/installations/67890/access_tokens: "
+                "GitHub said: 'Expiration time' claim ('exp') is too far in the future",
+            ),
+            (
+                b"<html>oops</html>",
+                "on /app/installations/67890/access_tokens (response body was not JSON)",
+            ),
+            (b'{"documentation_url": "x"}', "on /app/installations/67890/access_tokens"),
+            (b"", "on /app/installations/67890/access_tokens"),
+        ],
+    )
+    def test_token_exchange_401_detail_names_endpoint_and_github_message(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        body: bytes,
+        expected: str,
+    ) -> None:
+        _configure_app(tmp_path, monkeypatch)
+        err = urllib.error.HTTPError(
+            "https://api.github.com/app/installations/67890/access_tokens",
+            401,
+            "Unauthorized",
+            http.client.HTTPMessage(),
+            io.BytesIO(body),
+        )
+        with (
+            patch("vergil_tooling.lib.github._generate_jwt", return_value="fake-jwt"),
+            patch(
+                "vergil_tooling.lib.github._resolve_installations",
+                return_value={"test-org": "67890"},
+            ),
+            patch("vergil_tooling.lib.github._jwt_api_request", side_effect=err),
+            pytest.raises(github.AppAuthError) as excinfo,
+        ):
+            github.get_installation_token(org="test-org")
+        assert expected in excinfo.value.detail
+        assert "fake-jwt" not in excinfo.value.detail
+        assert github._token_cache == {}
+
+    def test_token_exchange_401_unreadable_body_is_reported(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _configure_app(tmp_path, monkeypatch)
+        err = urllib.error.HTTPError(
+            "https://api.github.com/app/installations",
+            401,
+            "Unauthorized",
+            http.client.HTTPMessage(),
+            None,
+        )
+        with (
+            patch("vergil_tooling.lib.github._generate_jwt", return_value="fake-jwt"),
+            patch("vergil_tooling.lib.github._resolve_installations", side_effect=err),
+            patch.object(err, "read", side_effect=OSError("connection reset")),
+            pytest.raises(github.AppAuthError) as excinfo,
+        ):
+            github.get_installation_token(org="test-org")
+        assert excinfo.value.detail == (
+            "HTTP Error 401: Unauthorized on /app/installations "
+            "(response body unreadable: connection reset)"
+        )
+
+    def test_jwt_http_error_detail_reports_truncated_body(self) -> None:
+        err = urllib.error.HTTPError(
+            "https://api.github.com/app/installations",
+            401,
+            "Unauthorized",
+            http.client.HTTPMessage(),
+            None,
+        )
+        with patch.object(err, "read", side_effect=http.client.IncompleteRead(b"{", 10)):
+            detail = github._jwt_http_error_detail(err)
+        assert detail.startswith(
+            "HTTP Error 401: Unauthorized on /app/installations (response body unreadable: "
+        )
+
+    def test_jwt_http_error_detail_truncates_long_message(self) -> None:
+        long = "x" * 1000
+        err = urllib.error.HTTPError(
+            "https://api.github.com/app/installations",
+            401,
+            "Unauthorized",
+            http.client.HTTPMessage(),
+            io.BytesIO(json.dumps({"message": long}).encode()),
+        )
+        detail = github._jwt_http_error_detail(err)
+        assert detail.endswith("GitHub said: " + "x" * 300)
 
     def test_raises_app_auth_error_when_openssl_not_found(
         self,
