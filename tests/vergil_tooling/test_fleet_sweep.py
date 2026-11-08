@@ -986,6 +986,67 @@ def test_fleet_target_claude_settings_spec(monkeypatch: pytest.MonkeyPatch) -> N
     )
 
 
+def test_fleet_target_claude_md_spec(monkeypatch: pytest.MonkeyPatch) -> None:
+    """--target claude-md builds its SweepSpec and shells out to its applicator (#3868)."""
+    spec, applicator = _capture_main(monkeypatch, ["--repos", "/clones/x", "--target", "claude-md"])
+    assert spec.repos == ["/clones/x"]
+    assert spec.branch_slug == "claude-md-sync"
+    assert spec.commit_type == "chore"
+    assert spec.commit_scope == "claude"
+    assert spec.epic is None
+    assert spec.title == "chore(claude): sync the CLAUDE.md template region"
+    assert "outside the markers is left unchanged" in spec.body
+
+    proc_calls: list[list[str]] = []
+    procs = iter(
+        [
+            _FakeProc(stdout="wrote the CLAUDE.md template region\n"),
+            _FakeProc(stdout="already in sync\n"),
+            _FakeProc(returncode=0),
+            _FakeProc(returncode=1, stderr="CLAUDE.md template region differs\n"),
+        ]
+    )
+
+    def fake_proc_run(args, **kwargs):  # noqa: ANN001, ANN003
+        proc_calls.append(list(args))
+        return next(procs)
+
+    monkeypatch.setattr(vrg_fleet_sync.subprocess, "run", fake_proc_run)
+
+    assert applicator(Path("/w")) == AppResult(
+        changed=True, summary="wrote the CLAUDE.md template region"
+    )
+    assert proc_calls[-1] == ["vrg-claude-md-sync", "--write", "--repo", "/w"]
+    assert applicator(Path("/w")) == AppResult(changed=False, summary="already in sync")
+    assert applicator(Path("/w"), check=True) == AppResult(changed=False, summary="already in sync")
+    assert proc_calls[-1] == ["vrg-claude-md-sync", "--check", "--repo", "/w"]
+    assert applicator(Path("/w"), check=True) == AppResult(
+        changed=True, summary="would sync (CLAUDE.md template region differs)"
+    )
+
+
+@pytest.mark.parametrize("check", [False, True])
+def test_fleet_claude_md_cannot_sync_is_an_error(
+    monkeypatch: pytest.MonkeyPatch, *, check: bool
+) -> None:
+    """A CLAUDE.md the applicator cannot sync (exit 2) raises, naming the cause (#3868).
+
+    The sweep records a raise as that repo's ``error`` status, so a missing file
+    or malformed markers is never skipped as in sync and never drift to write.
+    """
+    _spec_unused, applicator = _capture_main(
+        monkeypatch, ["--repos", "/clones/x", "--target", "claude-md"]
+    )
+    message = "vrg-claude-md-sync: cannot sync: CLAUDE.md has multiple begin markers\n"
+    monkeypatch.setattr(
+        vrg_fleet_sync.subprocess,
+        "run",
+        lambda *_a, **_k: _FakeProc(returncode=2, stderr=message),
+    )
+    with pytest.raises(RuntimeError, match=r"exit 2\): .*CLAUDE.md has multiple begin markers"):
+        applicator(Path("/w"), check=check)
+
+
 def test_fleet_gitignore_check_previews_with_check_flag(monkeypatch: pytest.MonkeyPatch) -> None:
     """check=True runs ``vrg-gitignore-sync --check``, never ``--write`` (#3568)."""
     _spec_unused, applicator = _capture_main(monkeypatch, ["--repos", "/clones/x"])

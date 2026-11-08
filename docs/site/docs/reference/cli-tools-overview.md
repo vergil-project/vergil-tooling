@@ -1445,6 +1445,34 @@ passes. It owns **only** the file change and has no git or PR knowledge.
 | Exit codes | 0 ok, 1 `--check` drift, 2 usage error |
 | Status | Active |
 
+### vrg-claude-md-sync
+
+Single-repo applicator for the template region of `CLAUDE.md`
+([#3868](https://github.com/vergil-project/vergil-tooling/issues/3868)).
+Only the lines between `<!-- vergil:template:claude-md:begin -->` and
+`<!-- vergil:template:claude-md:end -->` are managed. It checks (default)
+or writes that region against the packaged
+`claude_md_consumer.md` template, using the config audit's own marker
+parser and comparison (blank lines next to the markers don't count).
+`--write` replaces the lines between the two marker lines with the
+template, verbatim and atomically, and leaves every byte outside them
+alone, the marker lines and their line ends included. A region already in
+sync is left untouched, so `--check` drifts exactly when `--write` would
+change the file, and after `--write` the audit's `_check_claude_md`
+passes. A `CLAUDE.md` that is missing, has no markers, or has malformed
+or duplicated markers is an error in both modes, naming the cause, and
+nothing is written: the tool never guesses where the region belongs. It
+owns **only** the file change and has no git or PR knowledge.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_claude_md_sync` |
+| Args | `--repo PATH` (default: CWD); mutually exclusive `--check` (default) \| `--write` |
+| Preconditions | A `CLAUDE.md` with exactly one begin marker followed by one end marker; `vergil.toml` is not read |
+| Failure mode | `--check` prints `CLAUDE.md template region differs from the template (expected …; found …)` to stderr; `--write` prints `already in sync` or `wrote the CLAUDE.md template region`; either mode prints `cannot sync: missing CLAUDE.md` or `cannot sync: CLAUDE.md has <marker problem>` to stderr and exits 2 |
+| Exit codes | 0 ok, 1 `--check` drift, 2 usage error or a `CLAUDE.md` that is missing or has no well-formed marker pair |
+| Status | Active |
+
 ### vrg-fleet-sync
 
 Propagate a vergil-managed file across a fleet of repositories, opening
@@ -1456,7 +1484,12 @@ Propagate a vergil-managed file across a fleet of repositories, opening
 `claude-settings` replaces `.claude/settings.json` with the packaged
 template via `vrg-claude-settings-sync --write` (branch slug
 `claude-settings-sync`), so a template change can be rolled out to every
-repo the config audit would otherwise fail. A
+repo the config audit would otherwise fail; `claude-md` replaces the
+marked template region of `CLAUDE.md` with the packaged template via
+`vrg-claude-md-sync --write` (branch slug `claude-md-sync`), leaving
+everything outside the markers alone. A repo whose `CLAUDE.md` is missing
+or has no well-formed marker pair is an error for that repo, never a
+skip. A
 target's epic links only repos in the epic's own org: a repo in another
 org (read from the clone with `gh repo view`) is filed under its own
 ad-hoc epic, and the issue body still names the target's epic, because
@@ -1469,15 +1502,15 @@ human. `--dry-run` reports the verdict a live run would reach per repo
 (would change, naming the epic it would be filed under, or skip) from a
 disposable probe worktree, without opening an issue, branch, commit, or
 PR. Each target previews with its applicator's `--check`
-(`vrg-gitignore-sync --check`, `vrg-dependabot-sync --check` or
-`vrg-claude-settings-sync --check`), whose
+(`vrg-gitignore-sync --check`, `vrg-dependabot-sync --check`,
+`vrg-claude-settings-sync --check` or `vrg-claude-md-sync --check`), whose
 drift verdict is exactly the change `--write` would make.
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_fleet_sync` |
-| Args | `--repos PATH [PATH …]` (required, local clone paths); `--target {claude-settings,dependabot,gitignore}` (default `gitignore`); `--dry-run` |
-| Preconditions | The target's applicator (`vrg-gitignore-sync`, `vrg-dependabot-sync` or `vrg-claude-settings-sync`) on PATH; each `--repos` path a local clone; git/`gh` credentials for the sweep |
+| Args | `--repos PATH [PATH …]` (required, local clone paths); `--target {claude-md,claude-settings,dependabot,gitignore}` (default `gitignore`); `--dry-run` |
+| Preconditions | The target's applicator (`vrg-gitignore-sync`, `vrg-dependabot-sync`, `vrg-claude-settings-sync` or `vrg-claude-md-sync`) on PATH; each `--repos` path a local clone; git/`gh` credentials for the sweep |
 | Failure mode | Any repo that errors is recorded and reported in the per-repo status lines |
 | Exit codes | 0 all repos ok, 1 one or more repos errored |
 | Status | Active |
