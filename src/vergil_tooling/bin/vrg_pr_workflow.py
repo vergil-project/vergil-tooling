@@ -18,6 +18,9 @@ frozen branch whose HEAD has drifted past the reported commit is refused before
 anything is pushed. A re-run after a deliberate
 ``unfreeze`` pushes with a lease on the recorded head, so a rebased branch
 replaces the reported commit but an unexpectedly moved origin is refused (#3783).
+``unfreeze`` overwrites the relay ref with the reopened state before it
+reopens the local one, and fails with nothing changed if it cannot, so no
+``vrg-submit-pr`` can still read the branch as ready at its old head (#3815).
 """
 
 from __future__ import annotations
@@ -403,12 +406,39 @@ def cmd_report_ready(args: argparse.Namespace, transport: LocalFileTransport) ->
     return 0
 
 
-def cmd_unfreeze(_args: argparse.Namespace, transport: LocalFileTransport) -> int:
+def _retract_relay_ref(state: WorkflowState, base: str) -> None:
+    """Publish the unfrozen state to the relay ref, before the local write.
+
+    The relay ref still carries the ``ready`` state the last ``report-ready``
+    pushed. Left in place, a named-branch ``vrg-submit-pr`` on another machine
+    would read it as ready and open the PR at the head reported before the
+    unfreeze, dropping every commit made since (issue #3815). Overwriting it
+    with the ``implementing`` state makes that submit refuse. This runs before
+    the local file is written, and a failure fails the unfreeze with nothing
+    changed: the branch stays frozen rather than reopened with a stale ready
+    relay ref still on origin.
+    """
+    relay = GitHubTransport(state.branch, base=base)
+    try:
+        relay.write(state)
+    except (subprocess.CalledProcessError, OSError) as exc:
+        raise WorkflowError(
+            f"unfreeze: could not update the pr-workflow relay ref {relay.ref} "
+            f"({error_text(exc)}); nothing changed and the branch stays frozen. "
+            "The relay ref still says ready at the reported head, so reopening "
+            "without it would let vrg-submit-pr open the PR at that stale head. "
+            "Fix the push and re-run unfreeze."
+        ) from exc
+
+
+def cmd_unfreeze(args: argparse.Namespace, transport: LocalFileTransport) -> int:
     """Deliberately reopen a frozen (reported-ready) branch for more commits.
 
     The sanctioned escape hatch from the post-report-ready freeze: it is a
     distinct, explicit subcommand precisely so reopening a branch is never a
-    silent side effect of another action.
+    silent side effect of another action. The relay ref is updated to the
+    reopened state first (:func:`_retract_relay_ref`), so no submit anywhere
+    can still see the branch as ready at its old head.
     """
     state = transport.read()
     if state is None:
@@ -416,6 +446,7 @@ def cmd_unfreeze(_args: argparse.Namespace, transport: LocalFileTransport) -> in
             "no workflow file to unfreeze; run report-ready first (there is nothing frozen here)."
         )
     engine.apply_unfreeze(state, now=_now())
+    _retract_relay_ref(state, args.base)
     transport.write(state)
     _emit({"ok": True, "status": state.status})
     return 0

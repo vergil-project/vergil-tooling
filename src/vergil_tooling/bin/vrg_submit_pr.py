@@ -25,6 +25,16 @@ Supports three modes:
   batch semantics as the local worktree batch — finalize each PR, then a
   single validation and **one** release (issue #2398).
 
+Every mode driven by a ``report-ready`` state (template, batch and named
+branch) opens the PR only at the ``head_sha`` the latest ``report-ready``
+recorded, and refuses loudly rather than pick another head (issue #3815):
+the checked-out HEAD of a local worktree must be that commit, a named
+branch reopened by ``vrg-pr-workflow unfreeze`` and not re-reported is
+refused, a local state and relay ref that disagree are refused, and
+origin's tip is held to the recorded head immediately before ``gh pr
+create``. The batch checks each worktree before its rebase onto the base,
+since the rebase rewrites the reported commits onto the new base.
+
 The template and CLI modes push the branch using the human's host
 credentials before creating the PR. Because the human is the superset
 of any agent's rights, this carries workflow-touching pushes that the
@@ -70,7 +80,7 @@ from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.confirm import add_yes_argument, confirm
 from vergil_tooling.lib.linkage import ALLOWED_LINKAGES, normalize_linkage
 from vergil_tooling.lib.pr_body import build_pr_body, resolve_issue_ref
-from vergil_tooling.lib.pr_workflow import batch, submission
+from vergil_tooling.lib.pr_workflow import batch, freeze, submission
 from vergil_tooling.lib.pr_workflow.errors import AlreadySubmittedError, WorkflowError
 from vergil_tooling.lib.pr_workflow.github_transport import GitHubTransport
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
@@ -643,6 +653,14 @@ def _run_submit_batch(
     main_root = git.main_worktree_root()
 
     def _process(wt: worktrees.Worktree) -> None:
+        # Hold the worktree to the head report-ready recorded *before* the
+        # rebase rewrites it: the rebase replays exactly the reported commits
+        # onto the new base, so checking afterwards could not tell a reported
+        # branch from one that moved after report-ready (issue #3815).
+        try:
+            _require_reported_head(wt)
+        except SystemExit as exc:
+            raise batch.BatchAbortError(str(exc.code)) from exc
         try:
             worktrees.rebase_onto(wt, base)
         except worktrees.MergeCommitsError as exc:
@@ -704,6 +722,17 @@ def _run_submit_batch(
     return 0 if report.all_completed and report.post_failure is None else 1
 
 
+def _require_reported_head(wt: worktrees.Worktree) -> None:
+    """Refuse a batch worktree whose HEAD is not the head report-ready recorded.
+
+    Reads the worktree's ready-state (``submission.read_pr_fields``; the batch
+    selector already proved it readable) and holds the worktree's checked-out
+    HEAD to its ``head_sha`` (issue #3815).
+    """
+    fields = submission.read_pr_fields(wt.path)
+    _require_local_head(wt.branch, fields.get("head_sha", ""), worktree=wt.path)
+
+
 def _push_create_record(
     *,
     worktree_root: Path,
@@ -711,16 +740,19 @@ def _push_create_record(
     target: str,
     title: str,
     pr_body: str,
+    expected_head: str,
 ) -> str:
-    """Push the branch, create the PR, record submission, return the URL.
+    """Push the branch, check origin holds *expected_head*, create the PR,
+    record submission, return the URL.
 
-    The shared submit tail used by both single-PR template mode and the batch
-    ``_submit_one``. Pushes with the human's host credentials (the superset of
-    any agent's rights) so a branch touching ``.github/workflows/`` still
-    pushes.
+    The single-PR template mode's submit tail. Pushes with the human's host
+    credentials (the superset of any agent's rights) so a branch touching
+    ``.github/workflows/`` still pushes, then refuses to open the PR unless
+    origin's tip is the recorded head (issue #3815).
     """
     print(f"Ensuring branch '{branch}' is pushed to origin...")
     _push_branch(branch)
+    _require_origin_head(branch, expected_head)
     print("Creating PR...")
     pr_url = _create_pr(target_branch=target, title=title, pr_body=pr_body)
     submission.record_submission(worktree_root, pr_url=pr_url)
@@ -734,6 +766,7 @@ def _open_pr(
     metadata: dict[str, str],
     *,
     push: bool,
+    expected_head: str,
     dry_run: bool = False,
     assume_yes: bool = False,
 ) -> str | None:
@@ -750,7 +783,13 @@ def _open_pr(
     is already on origin, and passes ``--head`` so ``gh`` opens the PR for the
     right branch from outside its worktree.
 
-    Raises ``SystemExit`` on a forbidden linkage or a declined confirm.
+    *expected_head* is the commit the PR must open at. Immediately before
+    ``gh pr create`` (after any push and after the confirm prompt) origin's tip
+    is held to it, since the PR opens at whatever origin holds: a mismatch is
+    refused, never opened (issue #3815).
+
+    Raises ``SystemExit`` on a forbidden linkage, a declined confirm, or an
+    origin tip other than *expected_head*.
     """
     issue_ref = resolve_issue_ref(metadata["issue"])
     _reject_if_cross_repo(issue_ref)
@@ -780,6 +819,7 @@ def _open_pr(
     if push:
         print(f"Ensuring branch '{branch}' is pushed to origin...")
         _push_branch(branch)
+    _require_origin_head(branch, expected_head)
     print("Creating PR...")
     pr_url = _create_pr(target_branch=base, title=metadata["title"], pr_body=pr_body, head=branch)
     print(f"PR created: {pr_url}")
@@ -798,11 +838,22 @@ def _submit_one(worktree_root: Path, *, base_override: str | None, assume_yes: b
     confirm. The per-PR confirm is pre-answered when *assume_yes* — the batch
     path passes True so the single up-front batch confirm is the only gate
     (issue #1673).
+
+    The batch has already held the worktree to its recorded head and rebased
+    it onto the base, so the head the PR must open at is the rebased local
+    HEAD this call pushes: :func:`_open_pr` refuses if origin does not hold it.
     """
     fields = submission.read_pr_fields(worktree_root)
     branch = git.current_branch()
     target = _target_branch(base_override, fields.get("base"))
-    pr_url = _open_pr(branch, target, fields, push=True, assume_yes=assume_yes)
+    pr_url = _open_pr(
+        branch,
+        target,
+        fields,
+        push=True,
+        expected_head=git.commit_sha("HEAD"),
+        assume_yes=assume_yes,
+    )
     if pr_url is None:  # pragma: no cover - the batch path never dry-runs
         raise SystemExit("vrg-submit-pr: internal error: _open_pr returned no URL")
     submission.record_submission(worktree_root, pr_url=pr_url)
@@ -857,6 +908,12 @@ def _run_template_mode(args: argparse.Namespace) -> int:
 
     issue_ref = resolve_issue_ref(fields["issue"])
     branch = git.current_branch()
+    # Hold the worktree to the head the latest report-ready recorded before
+    # anything is previewed or pushed: the push publishes the checked-out
+    # branch, so a HEAD that moved after report-ready would otherwise become
+    # the PR head unreported (issue #3815).
+    expected_head = fields.get("head_sha", "")
+    _require_local_head(branch, expected_head)
     target = _target_branch(args.base, fields.get("base"))
     title = fields["title"]
     notes = fields.get("notes", "")
@@ -903,6 +960,7 @@ def _run_template_mode(args: argparse.Namespace) -> int:
         target=target,
         title=title,
         pr_body=pr_body,
+        expected_head=expected_head,
     )
     if args.finalize:
         rc = _chain_finalize(pr_url, release=args.release, install=args.install)
@@ -971,7 +1029,34 @@ def _verify_origin_tip(branch: str, state: WorkflowState) -> None:
     tip, so the submission would be stale. Fail loudly rather than open a PR for
     the wrong commit.
     """
-    expected = state.git.get("head_sha")
+    _check_origin_tip(branch, _recorded_head(state, branch))
+
+
+def _recorded_head(state: WorkflowState, branch: str) -> str:
+    """Return the ``head_sha`` the latest ``report-ready`` recorded for *branch*.
+
+    Refuses a state with none: without it there is nothing to hold the
+    submitted head to, and guessing one is how a stale head slips through
+    (issue #3815).
+    """
+    recorded = state.git.get("head_sha")
+    if not recorded:
+        raise SystemExit(
+            f"vrg-submit-pr: the ready-state for '{branch}' records no head_sha; "
+            "re-run `vrg-pr-workflow report-ready` so the commit to submit is "
+            "recorded. Nothing was pushed or opened."
+        )
+    return str(recorded)
+
+
+def _check_origin_tip(branch: str, expected: str) -> None:
+    """Refuse unless origin's tip of *branch* is exactly *expected*.
+
+    The shared core of :func:`_verify_origin_tip` (the relay path's early
+    check) and :func:`_require_origin_head` (the last check before every PR
+    open). ``gh pr create --head`` opens the PR at whatever origin's branch
+    holds, so this is the check that ties the PR to the recorded head.
+    """
     listing = git.read_output("ls-remote", "origin", f"refs/heads/{branch}")
     if not listing:
         raise SystemExit(
@@ -982,9 +1067,98 @@ def _verify_origin_tip(branch: str, state: WorkflowState) -> None:
     if origin_sha != expected:
         raise SystemExit(
             f"vrg-submit-pr: origin/{branch} tip ({origin_sha[:12]}) does not "
-            f"match the ready-state head_sha ({str(expected)[:12]}). The branch "
+            f"match the ready-state head_sha ({expected[:12]}). The branch "
             "moved since `report-ready`; re-run `report-ready` on the current tip "
-            "(or fetch and reconcile) before relaying."
+            "(or fetch and reconcile) before submitting. No PR was opened."
+        )
+
+
+def _require_origin_head(branch: str, expected: str) -> None:
+    """The last check before a PR is opened: origin holds the recorded head.
+
+    Runs after any push and after the confirm prompt, immediately before
+    ``gh pr create``, on every report-ready-driven path (template, batch and
+    named-branch). The PR opens at origin's tip, so a branch that moved on
+    origin, or a push that published something other than the recorded
+    commit, is refused here rather than opened at the wrong head (#3815).
+    """
+    _check_origin_tip(branch, expected)
+
+
+def _require_local_head(branch: str, expected: str, *, worktree: Path | None = None) -> None:
+    """Refuse unless the checked-out HEAD of *branch* is the recorded head.
+
+    *worktree* names the worktree to read (``git -C``); ``None`` reads the
+    process CWD. A worktree checked out on the branch whose HEAD is not the
+    commit the latest ``report-ready`` recorded means the ready-state is stale
+    or the branch moved after it: submitting either would open a PR at a
+    head nobody reported (the silent drop of issue #3815). Refuse loudly
+    instead of picking one.
+    """
+    if not expected:
+        raise SystemExit(
+            f"vrg-submit-pr: the ready-state for '{branch}' records no head_sha; "
+            "re-run `vrg-pr-workflow report-ready` so the commit to submit is "
+            "recorded. Nothing was pushed or opened."
+        )
+    where = ("-C", str(worktree)) if worktree is not None else ()
+    actual = git.read_output(*where, "rev-parse", "HEAD")
+    if actual != expected:
+        location = f" in {worktree}" if worktree is not None else ""
+        raise SystemExit(
+            f"vrg-submit-pr: refusing to submit '{branch}': its checked-out HEAD"
+            f"{location} ({actual[:12]}) is not the head the latest report-ready "
+            f"recorded ({expected[:12]}). The branch moved after report-ready, or "
+            "the ready-state is stale (a batch item that failed after its rebase "
+            "leaves the worktree rebased). The freeze refuses a plain report-ready "
+            "re-run on a moved HEAD, so recover from the branch's worktree with "
+            "`vrg-pr-workflow unfreeze`, then `vrg-pr-workflow report-ready` at "
+            "the commit to submit. Nothing was pushed or opened."
+        )
+
+
+def _require_ready(state: WorkflowState, branch: str) -> None:
+    """Refuse a named-branch submit whose ready-state is not ``ready``.
+
+    A branch reopened with ``vrg-pr-workflow unfreeze`` drops back to
+    ``implementing`` but keeps its PR metadata and its old ``head_sha``.
+    Submitting it would open the PR at the head reported *before* the
+    unfreeze and drop every commit made since (issue #3815). The worktree
+    paths already gate on :func:`freeze.is_frozen` in
+    ``submission.read_pr_fields``; this is the same gate for the named-branch
+    path, which reads the state directly.
+    """
+    if not freeze.is_frozen(state):
+        raise SystemExit(
+            f"vrg-submit-pr: branch '{branch}' is not ready (status={state.status!r}); "
+            "it was reopened with `vrg-pr-workflow unfreeze` and has not been "
+            "reported ready since. Re-run `vrg-pr-workflow report-ready` at the "
+            "commit to submit. No PR was opened."
+        )
+
+
+def _require_relay_agrees(branch: str, local: WorkflowState) -> None:
+    """Refuse when the relay ref disagrees with the local ready-state.
+
+    The local worktree file is preferred over the relay ref, but the two are
+    written separately and a relay push can fail with only a warning. When
+    they disagree on the status or the recorded head, one of them is stale and
+    there is no safe way to pick: refuse and say how to republish both. An
+    absent relay ref is not a disagreement (a branch whose relay push never
+    landed has only the local state).
+    """
+    remote = GitHubTransport(branch).read()
+    if remote is None:
+        return
+    local_head = local.git.get("head_sha")
+    remote_head = remote.git.get("head_sha")
+    if remote.status != local.status or remote_head != local_head:
+        raise SystemExit(
+            f"vrg-submit-pr: refusing to submit '{branch}': the local ready-state "
+            f"(status={local.status!r}, head {str(local_head)[:12]}) and the relay "
+            f"ref (status={remote.status!r}, head {str(remote_head)[:12]}) disagree, "
+            "so one of them is stale. Re-run `vrg-pr-workflow report-ready` from "
+            "the branch's worktree to republish both. No PR was opened."
         )
 
 
@@ -1043,21 +1217,43 @@ def _relay_open(
     ``status == "ready"`` with no submission, so the freeze would refuse every
     pr-watch fix. A branch with no local worktree has nothing to mark, and a
     failed open raises before anything is recorded.
+
+    The PR opens only at the ``head_sha`` the latest ``report-ready``
+    recorded (issue #3815). A state that is not ``ready`` (reopened by
+    ``unfreeze``) is refused; with a local ready worktree its HEAD must be the
+    recorded head and the relay ref, when present, must agree with the local
+    state; and origin's tip is checked against the recorded head again right
+    before the PR is created. Each mismatch is refused with nothing opened.
     """
     state = _resolve_ready_state(root, branch)
     if state.submitted is not None:
         return None, state.submitted.get("pr_url", "")
+    # The PR may only open at the head the latest report-ready recorded, and
+    # every way the resolved state could be stale is refused here rather than
+    # silently submitted (issue #3815): a branch reopened by unfreeze and not
+    # re-reported, a local worktree whose HEAD moved past the record, and a
+    # local state and relay ref that disagree.
+    _require_ready(state, branch)
+    expected_head = _recorded_head(state, branch)
     metadata = _metadata_from_state(state, branch)
     base = _target_branch(args.base, state.base)
+    wt_path = _local_worktree_with_state(root, branch)
+    if wt_path is not None:
+        _require_local_head(branch, expected_head, worktree=wt_path)
+        _require_relay_agrees(branch, state)
 
     if args.dry_run:
-        return _open_pr(branch, base, metadata, push=False, dry_run=True), None
+        return (
+            _open_pr(branch, base, metadata, push=False, expected_head=expected_head, dry_run=True),
+            None,
+        )
 
-    wt_path = _local_worktree_with_state(root, branch)
     push = wt_path is not None and not _origin_has_branch(branch)
     if not push:
         _verify_origin_tip(branch, state)
-    pr_url = _open_pr(branch, base, metadata, push=push, assume_yes=assume_yes)
+    pr_url = _open_pr(
+        branch, base, metadata, push=push, expected_head=expected_head, assume_yes=assume_yes
+    )
     if pr_url is None:  # pragma: no cover - a live open always yields a URL
         raise SystemExit("vrg-submit-pr: internal error: live submit returned no PR URL")
     if wt_path is not None:

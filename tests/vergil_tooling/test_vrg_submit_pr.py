@@ -19,6 +19,11 @@ from vergil_tooling.bin.vrg_submit_pr import (
     _reject_if_non_task,
     _reject_if_operational_task,
     _reject_if_queue_item,
+    _require_local_head,
+    _require_origin_head,
+    _require_ready,
+    _require_relay_agrees,
+    _require_reported_head,
     _resolve_linkage,
     _resolve_ready_state,
     _run_submit_batch,
@@ -108,6 +113,24 @@ def _state_submitted(root: Path) -> bool:
 
     path = root / ".vergil" / "pr-workflow.json"
     return path.is_file() and WorkflowState.from_json(path.read_text()).submitted is not None
+
+
+@pytest.fixture(autouse=True)
+def _heads_match() -> Iterator[None]:
+    """Neutralize the recorded-head checks (issue #3815) for submit-flow tests.
+
+    They read real git state (``rev-parse``, ``ls-remote``) and the relay ref.
+    The dedicated tests below call the imported functions directly, or re-patch
+    the module attribute with the real function to exercise a refusal end to
+    end; the module-attr patches here don't shadow the imported names.
+    """
+    with (
+        patch(_MOD + "._require_local_head"),
+        patch(_MOD + "._require_origin_head"),
+        patch(_MOD + "._require_relay_agrees"),
+        patch(_MOD + "._require_reported_head"),
+    ):
+        yield
 
 
 @pytest.fixture(autouse=True)
@@ -1474,6 +1497,7 @@ def test_submit_one_pushes_creates_records_and_returns_url() -> None:
     with (
         patch(_MOD + ".submission.read_pr_fields", return_value=fields),
         patch(_MOD + ".git.current_branch", return_value="feature/1673-x"),
+        patch(_MOD + ".git.commit_sha", return_value="h0"),
         patch(_MOD + "._push_branch") as push,
         patch(_MOD + "._create_pr", return_value="https://example/pull/9") as create,
         patch(_MOD + ".submission.record_submission") as record,
@@ -1682,6 +1706,7 @@ def test_submit_one_bad_linkage_exits() -> None:
         patch(_MOD + ".submission.read_pr_fields", return_value=fields),
         patch(_MOD + ".resolve_issue_ref", return_value="#1"),
         patch(_MOD + ".git.current_branch", return_value="feature/1-x"),
+        patch(_MOD + ".git.commit_sha", return_value="h0"),
         pytest.raises(SystemExit, match="bare keyword"),
     ):
         _submit_one(Path("/r"), base_override=None, assume_yes=True)
@@ -1696,6 +1721,7 @@ def test_submit_one_strips_issue_number_from_linkage_and_warns(
         patch(_MOD + ".submission.read_pr_fields", return_value=fields),
         patch(_MOD + ".resolve_issue_ref", return_value="#1"),
         patch(_MOD + ".git.current_branch", return_value="feature/1-x"),
+        patch(_MOD + ".git.commit_sha", return_value="h0"),
         patch(_MOD + ".build_pr_body", return_value="BODY") as build,
         patch(_MOD + ".confirm", return_value=True),
         patch(_MOD + "._push_branch"),
@@ -1714,6 +1740,7 @@ def test_submit_one_declined_exits() -> None:
         patch(_MOD + ".submission.read_pr_fields", return_value=fields),
         patch(_MOD + ".resolve_issue_ref", return_value="#1"),
         patch(_MOD + ".git.current_branch", return_value="feature/1-x"),
+        patch(_MOD + ".git.commit_sha", return_value="h0"),
         patch(_MOD + ".build_pr_body", return_value="BODY"),
         patch(_MOD + ".confirm", return_value=False),
         pytest.raises(SystemExit, match="declined"),
@@ -1965,7 +1992,9 @@ def test_open_pr_refuses_queue_item() -> None:
         patch(_MOD + ".github.create_pr") as create,
         pytest.raises(SystemExit, match="queued"),
     ):
-        _open_pr("feature/x", "develop", metadata, push=True, assume_yes=True)
+        _open_pr(
+            "feature/x", "develop", metadata, push=True, expected_head="abc123", assume_yes=True
+        )
     guard.assert_called_once_with("#42")
     push.assert_not_called()
     create.assert_not_called()
@@ -2072,7 +2101,9 @@ def test_open_pr_relay_opens_without_pushing() -> None:
         patch(_MOD + "._push_branch") as push,
         patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/9") as create,
     ):
-        url = _open_pr("feature/x", "develop", metadata, push=False, assume_yes=True)
+        url = _open_pr(
+            "feature/x", "develop", metadata, push=False, expected_head="abc123", assume_yes=True
+        )
     assert url == "https://github.com/pr/9"
     push.assert_not_called()
     assert create.call_args.kwargs["head"] == "feature/x"
@@ -2088,7 +2119,9 @@ def test_open_pr_local_pushes_before_creating() -> None:
         patch(_MOD + "._push_branch") as push,
         patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/9"),
     ):
-        url = _open_pr("feature/x", "develop", metadata, push=True, assume_yes=True)
+        url = _open_pr(
+            "feature/x", "develop", metadata, push=True, expected_head="abc123", assume_yes=True
+        )
     assert url == "https://github.com/pr/9"
     push.assert_called_once_with("feature/x")
 
@@ -2101,7 +2134,9 @@ def test_open_pr_dry_run_previews_without_opening() -> None:
         patch(_MOD + "._push_branch") as push,
         patch(_MOD + ".github.create_pr") as create,
     ):
-        url = _open_pr("feature/x", "develop", metadata, push=False, dry_run=True)
+        url = _open_pr(
+            "feature/x", "develop", metadata, push=False, expected_head="abc123", dry_run=True
+        )
     assert url is None
     push.assert_not_called()
     create.assert_not_called()
@@ -2789,3 +2824,316 @@ def test_no_arg_local_path_unchanged_regression(tmp_path: Path) -> None:
     git_run.assert_called_once_with("push", "--force-with-lease", "-u", "origin", "feature/x")
     create.assert_called_once()
     assert _state_submitted(tmp_path)
+
+
+# -- the PR opens only at the head the latest report-ready recorded (#3815) ---
+
+
+def test_require_local_head_passes_on_match() -> None:
+    with patch(_MOD + ".git.read_output", return_value="abc123") as read:
+        _require_local_head("feature/x", "abc123")
+    read.assert_called_once_with("rev-parse", "HEAD")
+
+
+def test_require_local_head_reads_the_named_worktree() -> None:
+    wt = Path("/repo/.worktrees/issue-42-x")
+    with patch(_MOD + ".git.read_output", return_value="abc123") as read:
+        _require_local_head("feature/x", "abc123", worktree=wt)
+    read.assert_called_once_with("-C", str(wt), "rev-parse", "HEAD")
+
+
+def test_require_local_head_refuses_a_moved_head() -> None:
+    with (
+        patch(_MOD + ".git.read_output", return_value="258cf59aaaaa"),
+        pytest.raises(SystemExit, match=r"HEAD \(258cf59aaaaa\) is not the head") as exc,
+    ):
+        _require_local_head("feature/x", "e4570bebbbbb")
+    message = str(exc.value.code)
+    assert "e4570bebbbbb" in message
+    assert "Nothing was pushed or opened" in message
+    # A frozen branch whose HEAD moved (e.g. a batch item that failed after its
+    # rebase) cannot simply re-run report-ready: the freeze refuses it. The
+    # refusal names the real recovery, unfreeze then report-ready, in order.
+    unfreeze = message.index("`vrg-pr-workflow unfreeze`")
+    report = message.index("`vrg-pr-workflow report-ready` at the commit to submit")
+    assert unfreeze < report
+
+
+def test_require_local_head_refuses_a_missing_record() -> None:
+    with (
+        patch(_MOD + ".git.read_output") as read,
+        pytest.raises(SystemExit, match="records no head_sha"),
+    ):
+        _require_local_head("feature/x", "")
+    read.assert_not_called()
+
+
+def test_require_origin_head_passes_on_match() -> None:
+    with patch(_MOD + ".git.read_output", return_value="abc123\trefs/heads/feature/x"):
+        _require_origin_head("feature/x", "abc123")  # no raise
+
+
+def test_require_origin_head_refuses_a_moved_origin() -> None:
+    with (
+        patch(_MOD + ".git.read_output", return_value="deadbeef\trefs/heads/feature/x"),
+        pytest.raises(SystemExit, match="does not match the ready-state head_sha"),
+    ):
+        _require_origin_head("feature/x", "abc123")
+
+
+def test_verify_origin_tip_refuses_a_state_with_no_head() -> None:
+    state = _ready_state(head_sha="abc123")
+    state.git.pop("head_sha")
+    with (
+        patch(_MOD + ".git.read_output") as read,
+        pytest.raises(SystemExit, match="records no head_sha"),
+    ):
+        _verify_origin_tip("feature/x", state)
+    read.assert_not_called()
+
+
+def test_require_ready_passes_a_ready_state() -> None:
+    _require_ready(_ready_state(), "feature/x")  # no raise
+
+
+def test_require_ready_refuses_an_unfrozen_state() -> None:
+    state = _ready_state(head_sha="e4570be")
+    engine.apply_unfreeze(state, now="2026-06-08T00:00:00Z")
+    with pytest.raises(SystemExit, match="status='implementing'"):
+        _require_ready(state, "feature/x")
+
+
+def test_require_relay_agrees_passes_without_a_relay_ref() -> None:
+    transport = MagicMock()
+    transport.read.return_value = None
+    with patch(_MOD + ".GitHubTransport", return_value=transport):
+        _require_relay_agrees("feature/x", _ready_state())  # no raise
+
+
+def test_require_relay_agrees_passes_when_they_match() -> None:
+    transport = MagicMock()
+    transport.read.return_value = _ready_state(head_sha="abc123")
+    with patch(_MOD + ".GitHubTransport", return_value=transport):
+        _require_relay_agrees("feature/x", _ready_state(head_sha="abc123"))  # no raise
+
+
+def test_require_relay_agrees_refuses_a_different_head() -> None:
+    transport = MagicMock()
+    transport.read.return_value = _ready_state(head_sha="e4570be")
+    with (
+        patch(_MOD + ".GitHubTransport", return_value=transport),
+        pytest.raises(SystemExit, match="disagree"),
+    ):
+        _require_relay_agrees("feature/x", _ready_state(head_sha="258cf59"))
+
+
+def test_require_relay_agrees_refuses_a_different_status() -> None:
+    relay = _ready_state(head_sha="abc123")
+    engine.apply_unfreeze(relay, now="2026-06-08T00:00:00Z")
+    transport = MagicMock()
+    transport.read.return_value = relay
+    with (
+        patch(_MOD + ".GitHubTransport", return_value=transport),
+        pytest.raises(SystemExit, match="disagree"),
+    ):
+        _require_relay_agrees("feature/x", _ready_state(head_sha="abc123"))
+
+
+def test_require_reported_head_holds_the_worktree_to_its_record(tmp_path: Path) -> None:
+    _write_workflow_state(tmp_path)  # records head_sha "h0"
+    wt = Worktree(path=tmp_path, branch="feature/x")
+    with (
+        patch(_MOD + "._require_local_head", _require_local_head),
+        patch(_MOD + ".git.read_output", return_value="h1"),
+        pytest.raises(SystemExit, match=r"HEAD in .* \(h1\) is not the head"),
+    ):
+        _require_reported_head(wt)
+
+
+def test_open_pr_refuses_when_origin_is_not_the_expected_head() -> None:
+    """The last check before `gh pr create`: a push that left origin at another
+    commit (or an origin that moved during the prompt) opens nothing."""
+    metadata = {"issue": "42", "title": "fix: bug", "summary": "s", "notes": "", "linkage": "Ref"}
+    with (
+        patch(_MOD + "._require_origin_head", _require_origin_head),
+        patch(_MOD + ".resolve_issue_ref", return_value="#42"),
+        patch(_MOD + ".build_pr_body", return_value="BODY"),
+        patch(_MOD + "._push_branch") as push,
+        patch(_MOD + ".git.read_output", return_value="e4570be\trefs/heads/feature/x"),
+        patch(_MOD + ".github.create_pr") as create,
+        pytest.raises(SystemExit, match="does not match"),
+    ):
+        _open_pr(
+            "feature/x", "develop", metadata, push=True, expected_head="258cf59", assume_yes=True
+        )
+    push.assert_called_once_with("feature/x")
+    create.assert_not_called()
+
+
+def test_template_refuses_a_head_other_than_the_recorded_one(tmp_path: Path) -> None:
+    _write_workflow_state(tmp_path)  # records head_sha "h0"
+    with (
+        patch(_MOD + "._require_local_head", _require_local_head),
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".git.current_branch", return_value="feature/x"),
+        patch(_MOD + ".git.read_output", return_value="h1"),
+        patch(_MOD + ".git.run") as git_run,
+        patch(_MOD + ".github.create_pr") as create,
+        patch("builtins.input", return_value="y"),
+        pytest.raises(SystemExit, match="is not the head the latest report-ready recorded"),
+    ):
+        main([])
+    git_run.assert_not_called()
+    create.assert_not_called()
+    assert not _state_submitted(tmp_path)
+
+
+def test_template_holds_origin_to_the_recorded_head(tmp_path: Path) -> None:
+    _write_workflow_state(tmp_path)  # records head_sha "h0"
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".git.current_branch", return_value="feature/x"),
+        patch(_MOD + ".git.run"),
+        patch(_MOD + "._require_origin_head") as origin_check,
+        patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/1"),
+        patch("builtins.input", return_value="y"),
+    ):
+        assert main([]) == 0
+    origin_check.assert_called_once_with("feature/x", "h0")
+
+
+def test_submit_batch_refuses_a_worktree_off_its_recorded_head(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    wt = _batch_wt("issue-1-a")
+    with (
+        patch(
+            _MOD + "._require_reported_head",
+            side_effect=SystemExit("vrg-submit-pr: refusing to submit 'feature/1-x'"),
+        ),
+        patch(_MOD + ".worktrees.rebase_onto") as rebase,
+        patch(_MOD + ".os.chdir"),
+        patch(_MOD + ".git.main_worktree_root", return_value=Path("/repo")),
+        patch(_MOD + "._submit_one") as submit,
+        patch(_MOD + ".confirm", return_value=True),
+    ):
+        rc = _run_submit_batch(
+            [wt], base="develop", finalize=False, release=False, install=False, assume_yes=True
+        )
+    assert rc == 1
+    rebase.assert_not_called()
+    submit.assert_not_called()
+    assert "refusing to submit 'feature/1-x'" in capsys.readouterr().out
+
+
+def test_submit_one_holds_origin_to_the_pushed_head() -> None:
+    fields = {"issue": "1", "title": "T", "summary": "s", "notes": "", "linkage": "Ref"}
+    with (
+        patch(_MOD + ".submission.read_pr_fields", return_value=fields),
+        patch(_MOD + ".resolve_issue_ref", return_value="#1"),
+        patch(_MOD + ".git.current_branch", return_value="feature/1-x"),
+        patch(_MOD + ".git.commit_sha", return_value="rebased1"),
+        patch(_MOD + ".build_pr_body", return_value="BODY"),
+        patch(_MOD + "._push_branch"),
+        patch(_MOD + "._require_origin_head") as origin_check,
+        patch(_MOD + "._create_pr", return_value="https://example/pull/1"),
+        patch(_MOD + ".submission.record_submission"),
+    ):
+        _submit_one(Path("/r"), base_override=None, assume_yes=True)
+    origin_check.assert_called_once_with("feature/1-x", "rebased1")
+
+
+class TestRelayRecordedHead:
+    """Named-branch submit opens only at the latest report-ready's head (#3815)."""
+
+    @pytest.fixture(autouse=True)
+    def _human_mode(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("VRG_IDENTITY_MODE", raising=False)
+        monkeypatch.delenv("VRG_APP_ID", raising=False)
+
+    def test_stale_relay_ref_after_unfreeze_is_refused(self) -> None:
+        """The incident: report-ready at e4570be, then unfreeze. The relay ref
+        unfreeze now publishes says implementing, so the submit refuses instead
+        of opening the PR at e4570be while origin still holds it."""
+        relay = _ready_state(branch="feature/x", head_sha="e4570be")
+        engine.apply_unfreeze(relay, now="2026-06-08T00:00:00Z")
+        transport = MagicMock()
+        transport.read.return_value = relay
+        with (
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
+            patch(_MOD + ".GitHubTransport", return_value=transport),
+            patch(_MOD + ".git.read_output", return_value="e4570be\trefs/heads/feature/x"),
+            patch(_MOD + "._push_branch") as push,
+            patch(_MOD + ".github.create_pr") as create,
+            pytest.raises(SystemExit, match="not ready"),
+        ):
+            main(["feature/x", "--yes"])
+        push.assert_not_called()
+        create.assert_not_called()
+
+    def test_unfrozen_local_worktree_is_refused(self, tmp_path: Path) -> None:
+        state = _ready_state(branch="feature/x", head_sha="e4570be")
+        engine.apply_unfreeze(state, now="2026-06-08T00:00:00Z")
+        LocalFileTransport(tmp_path).write(state)
+        wt = Worktree(path=tmp_path, branch="feature/x")
+        with (
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[wt]),
+            patch(_MOD + ".git.read_output", return_value="e4570be\trefs/heads/feature/x"),
+            patch(_MOD + ".github.create_pr") as create,
+            pytest.raises(SystemExit, match="not ready"),
+        ):
+            main(["feature/x", "--yes"])
+        create.assert_not_called()
+
+    def test_local_worktree_past_its_recorded_head_is_refused(self) -> None:
+        wt = Worktree(path=Path("/repo/.worktrees/issue-42-x"), branch="feature/x")
+        local = MagicMock()
+        local.read.return_value = _ready_state(branch="feature/x", head_sha="e4570be")
+        with (
+            patch(_MOD + "._require_local_head", _require_local_head),
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[wt]),
+            patch(_MOD + ".LocalFileTransport", return_value=local),
+            patch(_MOD + ".git.read_output", return_value="258cf59"),
+            patch(_MOD + "._push_branch") as push,
+            patch(_MOD + ".github.create_pr") as create,
+            pytest.raises(SystemExit, match="is not the head the latest report-ready recorded"),
+        ):
+            main(["feature/x", "--yes"])
+        push.assert_not_called()
+        create.assert_not_called()
+
+    def test_local_state_and_relay_ref_that_disagree_are_refused(self) -> None:
+        wt = Worktree(path=Path("/repo/.worktrees/issue-42-x"), branch="feature/x")
+        local = MagicMock()
+        local.read.return_value = _ready_state(branch="feature/x", head_sha="258cf59")
+        relay = MagicMock()
+        relay.read.return_value = _ready_state(branch="feature/x", head_sha="e4570be")
+        with (
+            patch(_MOD + "._require_relay_agrees", _require_relay_agrees),
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[wt]),
+            patch(_MOD + ".LocalFileTransport", return_value=local),
+            patch(_MOD + ".GitHubTransport", return_value=relay),
+            patch(_MOD + ".git.read_output", return_value="258cf59\trefs/heads/feature/x"),
+            patch(_MOD + ".github.create_pr") as create,
+            pytest.raises(SystemExit, match="disagree"),
+        ):
+            main(["feature/x", "--yes"])
+        create.assert_not_called()
+
+    def test_relay_open_holds_origin_to_the_recorded_head(self) -> None:
+        transport = MagicMock()
+        transport.read.return_value = _ready_state(branch="feature/x", head_sha="abc123")
+        with (
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
+            patch(_MOD + ".GitHubTransport", return_value=transport),
+            patch(_MOD + ".git.read_output", return_value="abc123\trefs/heads/feature/x"),
+            patch(_MOD + "._require_origin_head") as origin_check,
+            patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/5"),
+        ):
+            assert main(["feature/x", "--yes"]) == 0
+        origin_check.assert_called_once_with("feature/x", "abc123")
