@@ -160,12 +160,49 @@ def _load_app_config() -> tuple[str, Path] | None:
     return app_id, key_file
 
 
+# The github.com part of a remote URL, in the forms git accepts: a URL
+# (``https``, ``http``, ``ssh``, ``git``, ``git+ssh`` or ``ssh+git``, with an
+# optional user and port) or scp-style ``[user@]github.com:``. The user part
+# excludes ``@``, ``/``, ``?``, ``#``, ``\`` and whitespace, so the host matched
+# is the host a URL parser sees (``https://evil.example#@github.com/o/r`` is on
+# evil.example, not github.com).
+_GITHUB_URL_HOST = r"(?:https?|ssh|git|git\+ssh|ssh\+git)://(?:[^@/?#\\\s]+@)?github\.com(?::\d+)?"
+_GITHUB_SCP_HOST = r"(?:[^@/:?#\\\s]+@)?github\.com:"
+# A remote URL on github.com, whatever its path.
+_GITHUB_HOST_RE = re.compile(rf"^(?:{_GITHUB_URL_HOST}(?:/|$)|{_GITHUB_SCP_HOST})", re.IGNORECASE)
+# A remote URL naming one repo on github.com: the path is exactly
+# ``<owner>/<repo>``, with an optional ``.git`` and trailing slash (and, in the
+# scp form, an optional leading slash, which GitHub serves too).
+_GITHUB_REMOTE_RE = re.compile(
+    rf"^(?:{_GITHUB_URL_HOST}/|{_GITHUB_SCP_HOST}/?)"
+    r"(?P<owner>[A-Za-z0-9_.-]+)/(?P<repo>[A-Za-z0-9_.-]+?)(?:\.git)?/?$",
+    re.IGNORECASE,
+)
+
+
+def github_remote_repo(url: str) -> str | None:
+    """``owner/repo`` of a github.com remote *url*, or ``None`` if it names none.
+
+    The one parser of GitHub remote URLs, shared with :func:`is_github_url`
+    (which reads the same host grammar) and used by :func:`detect_org` and
+    ``vrg-promote``, so they agree on which URLs are on github.com. It never
+    echoes *url*, which can carry credentials; a caller refusing a ``None``
+    must not echo it either.
+    """
+    m = _GITHUB_REMOTE_RE.match(url.strip())
+    if m is None:
+        return None
+    return f"{m.group('owner')}/{m.group('repo')}"
+
+
 def detect_org(*, cwd: str | Path | None = None) -> str | None:
     """Detect the GitHub org from a checkout's ``origin`` remote.
 
     *cwd* names the checkout to read (default: the current directory), so a
     caller acting on another clone resolves that clone's org rather than the
-    org of the directory it was started in (#3463).
+    org of the directory it was started in (#3463). ``None`` when origin
+    cannot be read or is not a repo on github.com (see
+    :func:`github_remote_repo`).
     """
     try:
         result = subprocess.run(  # noqa: S603
@@ -177,27 +214,21 @@ def detect_org(*, cwd: str | Path | None = None) -> str | None:
         )
     except (subprocess.CalledProcessError, FileNotFoundError):
         return None
-    url = result.stdout.strip()
-    # git@github.com:ORG/REPO.git or https://github.com/ORG/REPO.git
-    for prefix in ("git@github.com:", "https://github.com/", "ssh://git@github.com/"):
-        if url.startswith(prefix):
-            remainder = url[len(prefix) :]
-            org = remainder.split("/")[0]
-            if org:
-                return org
-    return None
-
-
-# A remote URL on github.com, in any form git accepts: ``https://`` (optionally
-# with a user), ``ssh://`` (optionally with a port) or scp-style ``git@github.com:``.
-_GITHUB_URL_RE = re.compile(
-    r"^(?:[a-z][a-z0-9+.-]*://)?(?:[^@/]+@)?github\.com(?:[:/]|$)", re.IGNORECASE
-)
+    repo = github_remote_repo(result.stdout)
+    if repo is None:
+        return None
+    return repo.split("/", 1)[0]
 
 
 def is_github_url(url: str) -> bool:
-    """True when the remote *url* points at github.com."""
-    return bool(_GITHUB_URL_RE.match(url.strip()))
+    """True when the remote *url* points at github.com, whatever its path.
+
+    Broader than :func:`github_remote_repo` on purpose: a remote on github.com
+    whose path names no ``owner/repo`` still counts, so :func:`has_github_remote`
+    fails closed on it rather than hand it to ambient auth (#3217). The host
+    grammar is the same, so the two never disagree on the host.
+    """
+    return bool(_GITHUB_HOST_RE.match(url.strip()))
 
 
 def has_github_remote(*, cwd: str | Path) -> bool:

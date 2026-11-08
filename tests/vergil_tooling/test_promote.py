@@ -211,6 +211,12 @@ def test_plan_promotion_fetches_main_explicitly_and_checks_qualified_ref() -> No
         f"org-123@github.com:{_REPO}.git",
         f"ssh://git@github.com/{_REPO}.git",
         f"ssh://git@github.com:22/{_REPO}.git",
+        # #3984: the forms the shared github_remote_repo parser adds.
+        f"https://github.com:443/{_REPO}.git",
+        f"http://github.com/{_REPO}.git",
+        f"github.com:{_REPO}.git",
+        f"git@github.com:/{_REPO}.git",
+        f"git+ssh://git@github.com/{_REPO}.git",
     ],
 )
 def test_plan_promotion_normalizes_origin(url: str) -> None:
