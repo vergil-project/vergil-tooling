@@ -140,7 +140,11 @@ The rulesets are declared by `compute_desired_state()` in
 [rulesets table](../reference/config-audit.md#github-checks-rulesets) lists
 each one's includes, rules and bypass.
 
-**Library repositories** require four rulesets:
+Every repository requires the same four rulesets, whatever its
+`repository-type`: `compute_desired_state()` does not vary them by type, and
+only the CI gates' required checks differ from one repository to another. A
+repository that publishes no tags still carries Tag protection and Rolling tag
+branch names, so a tag or branch of either shape can never appear unprotected.
 
 1. **Branch protection** (targets: `main`, `develop`)
    - Prevent branch deletion
@@ -166,14 +170,6 @@ each one's includes, rules and bypass.
    - Prevent updating or force-pushing such a branch
    - No deletion restriction, so a stray branch of that shape can be removed
    - No bypass
-
-**Documentation repositories** require two rulesets:
-
-1. **Branch protection** (targets: eternal branches only)
-   - Same rules as library repositories
-
-2. **CI gates** (targets: eternal branches only)
-   - Required checks are repo-specific
 
 Rulesets are managed via the GitHub API or the repository settings UI. When
 creating or updating rulesets, verify the configuration by checking an open PR
