@@ -141,7 +141,7 @@ The request is a JSON object, `request-<step>.json`. Every step carries:
 | `step` | string | `review`, `check` or `check-<k>`. |
 | `repo` | string | The repository, `owner/name`. |
 | `issue` | string | The task issue, `owner/name#N`. |
-| `issue_body` | string | The issue's body, as data. |
+| `issue_body` | string | The issue's body as GitHub holds it, as data. The builder fetches it itself. |
 | `issue_comments` | list of objects | The human's unedited comments on the issue, as data, each `{"author": "<login>", "created_at": "<ISO 8601 with time zone>", "body": "..."}`, oldest first; empty when there are none. The builder fetches and filters them itself. |
 | `issue_comments_excluded_edited` | integer | How many of the human's comments the builder left out of `issue_comments` because they had been edited; 0 when none. |
 | `base_sha` | string | The merge base of the base branch and `HEAD`. |
@@ -151,7 +151,7 @@ The request is a JSON object, `request-<step>.json`. Every step carries:
 | `change_class` | string | `"docs-only"` or `"code"`. |
 | `design_sources` | list of strings | Absolute paths of the design documents the issue's epic lists, such as its spec and plan; empty when there are none. |
 | `validate_stages` | list of strings | The `vrg-validate` stages that passed at `head_sha`. |
-| `epic_open_tasks` | list of objects | The open tasks of the issue's epic, each `{"ref": "owner/name#N", "title": "..."}`; empty outside an epic. |
+| `epic_open_tasks` | list of objects | The open tasks of the issue's epic, each `{"ref": "owner/name#N", "title": "..."}`, without the issue itself; empty outside an epic. The builder derives them itself. |
 
 A check (`check` or `check-<k>`) adds:
 
@@ -161,6 +161,17 @@ A check (`check` or `check-<k>`) adds:
 | `fix_diff_path` | string | Absolute path of `fix-<step>.patch`. |
 | `earlier_result_paths` | list of strings | Absolute paths of every earlier step's result, in step order: `result-review.md`, then `result-check.md` for a `check-2`, and so on. |
 | `earlier_finding_ids` | list of strings | The earlier finding IDs the implementer was asked to change: every defect, and each item whose ruling calls for a code change. |
+
+What the reviewer is told the task is is never chosen by the agent whose
+work is under review. `vrg-merge-review-request` reads the `--issue`'s body
+itself, and derives `epic_open_tasks` from the issue's native parent: when
+the parent carries the `epic` label and not `ad-hoc`, the issue is under an
+epic, and its open tasks are the parent's open sub-issues, every page, less
+the issue itself; a task with no native parent, or under any other parent,
+has none. A failure to read the issue, its parent's labels or the sub-issues
+is a refusal, never an empty body or an empty list. The design sources stay
+files: the caller fetches them from the epic's Documents section and names
+each with `--design-source`.
 
 The issue's comments carry scope the maintainer set after the issue was
 opened, such as narrowing the task to part of what the body asks. Only a

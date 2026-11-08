@@ -15,6 +15,7 @@ from vergil_tooling.lib.trusted_authors import TrustedAuthors, parse_trusted_aut
 from vergil_tooling.lib.vm_guest import (
     _PLUGIN_PATH_EXPORT,
     _PRUNE_PROBE,
+    _READ_GUEST_SETTINGS,
     VmUnreachableError,
     _inject_host_git_identity,
     _read_host_git_config,
@@ -47,6 +48,34 @@ def _transport(stdout: str = "") -> MagicMock:
     t = MagicMock()
     t.run.return_value = _ok(stdout)
     t.pipe.return_value = None
+    return t
+
+
+def _shell_transport(home: Path, fake_bin: Path | None = None) -> MagicMock:
+    """A Transport double that runs the guest commands in a real local bash.
+
+    ``~`` is *home*; *fake_bin*, when given, is first on ``PATH`` so a test can
+    shadow a guest command with one that fails.
+    """
+    path = "/usr/bin:/bin" if fake_bin is None else f"{fake_bin}:/usr/bin:/bin"
+    env = {"HOME": str(home), "PATH": path}
+
+    def run(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(list(args), capture_output=True, text=True, check=True, env=env)  # noqa: S603
+
+    def pipe(cmd: str, input_data: str) -> None:
+        subprocess.run(  # noqa: S603
+            ["bash", "-c", cmd],  # noqa: S607
+            input=input_data,
+            capture_output=True,
+            text=True,
+            check=True,
+            env=env,
+        )
+
+    t = MagicMock()
+    t.run.side_effect = run
+    t.pipe.side_effect = pipe
     return t
 
 
@@ -594,16 +623,20 @@ class TestCopyClaudeConfig:
         assert "settings.json" in settings_call[0][0]
         assert '"key"' in settings_call[0][1]
 
-        # #2436: the target must be made writable before the overwrite, because
-        # an earlier copy left CLAUDE.md read-only, so a plain `cat >` on a later
-        # session would fail with "permission denied". Guard both files against a
-        # non-chmod regression.
-        assert md_call[0][0].startswith(
-            "chmod u+w ~/.claude/CLAUDE.md 2>/dev/null; cat > ~/.claude/CLAUDE.md"
+        # #3987: each file is written to a temp file in ~/.claude (so the mv is a
+        # rename on one filesystem), given its final mode there, then moved into
+        # place; a failure removes the temp file and leaves the original alone.
+        # The rename also replaces a read-only CLAUDE.md without reopening it
+        # (#2436), since it needs only the directory to be writable.
+        assert md_call[0][0] == (
+            'tmp=$(mktemp ~/.claude/.CLAUDE.md.XXXXXX) && { cat > "$tmp"'
+            ' && chmod 644 "$tmp" && chmod a-w "$tmp"'
+            ' && mv -f "$tmp" ~/.claude/CLAUDE.md || { rm -f "$tmp"; false; }; }'
         )
-        assert (
-            settings_call[0][0]
-            == "chmod u+w ~/.claude/settings.json 2>/dev/null; cat > ~/.claude/settings.json"
+        assert settings_call[0][0] == (
+            'tmp=$(mktemp ~/.claude/.settings.json.XXXXXX) && { cat > "$tmp"'
+            ' && chmod 644 "$tmp"'
+            ' && mv -f "$tmp" ~/.claude/settings.json || { rm -f "$tmp"; false; }; }'
         )
 
     def test_copy_claude_config_locks_claude_md(self, tmp_path: Path) -> None:
@@ -619,11 +652,66 @@ class TestCopyClaudeConfig:
         copy_claude_config(transport, claude_dir)
 
         piped = [c.args[0] for c in transport.pipe.call_args_list]
-        md = next(cmd for cmd in piped if "cat > ~/.claude/CLAUDE.md" in cmd)
-        assert md.index("cat > ~/.claude/CLAUDE.md") < md.index("chmod a-w ~/.claude/CLAUDE.md")
-        assert md.endswith("cat > ~/.claude/CLAUDE.md && chmod a-w ~/.claude/CLAUDE.md")
-        every = " ".join(piped) + " ".join(c.args[-1] for c in transport.run.call_args_list)
-        assert "chmod a-w ~/.claude/settings.json" not in every
+        md = next(cmd for cmd in piped if "~/.claude/CLAUDE.md" in cmd)
+        # The lock is applied to the temp file, before it is moved into place.
+        assert md.index('chmod a-w "$tmp"') < md.index('mv -f "$tmp" ~/.claude/CLAUDE.md')
+        others = [cmd for cmd in piped if cmd != md]
+        others += [c.args[-1] for c in transport.run.call_args_list]
+        assert others
+        assert not any("chmod a-w" in cmd for cmd in others)
+
+    def test_real_shell_replaces_both_files_with_their_final_modes(self, tmp_path: Path) -> None:
+        # The real commands in bash, over a guest whose CLAUDE.md an earlier copy
+        # left read-only (#2436): both files are replaced, CLAUDE.md is locked,
+        # settings.json is not, and no temp file is left behind.
+        claude_dir = tmp_path / "host" / ".claude"
+        claude_dir.mkdir(parents=True)
+        (claude_dir / "CLAUDE.md").write_text("# new prefs\n")
+        (claude_dir / "settings.json").write_text('{"new": true}\n')
+        home = tmp_path / "guest"
+        guest = home / ".claude"
+        guest.mkdir(parents=True)
+        (guest / "CLAUDE.md").write_text("# old prefs\n")
+        (guest / "CLAUDE.md").chmod(0o444)
+        (guest / "settings.json").write_text('{"old": true}\n')
+
+        copy_claude_config(_shell_transport(home), claude_dir)
+
+        assert (guest / "CLAUDE.md").read_text() == "# new prefs\n"
+        assert (guest / "settings.json").read_text() == '{"new": true}\n'
+        assert (guest / "CLAUDE.md").stat().st_mode & 0o777 == 0o444
+        assert (guest / "settings.json").stat().st_mode & 0o777 == 0o644
+        assert sorted(p.name for p in guest.iterdir()) == ["CLAUDE.md", "settings.json"]
+
+    @pytest.mark.parametrize("failing", ["cat", "chmod", "mv"])
+    @pytest.mark.parametrize("filename", ["CLAUDE.md", "settings.json"])
+    def test_failed_write_leaves_the_original_and_no_temp_file(
+        self, failing: str, filename: str, tmp_path: Path
+    ) -> None:
+        # A write that breaks part-way (a fake command that writes a fragment,
+        # then fails) must fail loudly, keep the guest file exactly as it was,
+        # mode included, and remove its temp file.
+        claude_dir = tmp_path / "host" / ".claude"
+        claude_dir.mkdir(parents=True)
+        (claude_dir / filename).write_text("new content that never lands\n")
+        home = tmp_path / "guest"
+        guest = home / ".claude"
+        guest.mkdir(parents=True)
+        original = guest / filename
+        original.write_text("original\n")
+        original.chmod(0o444)
+        fake_bin = tmp_path / "bin"
+        fake_bin.mkdir()
+        fake = fake_bin / failing
+        fake.write_text("#!/bin/sh\nprintf partial\nexit 1\n")
+        fake.chmod(0o755)
+
+        with pytest.raises(subprocess.CalledProcessError):
+            copy_claude_config(_shell_transport(home, fake_bin), claude_dir)
+
+        assert original.read_text() == "original\n"
+        assert original.stat().st_mode & 0o777 == 0o444
+        assert [p.name for p in guest.iterdir()] == [filename]
 
     def test_skips_missing_files(self, tmp_path: Path) -> None:
         claude_dir = tmp_path / ".claude"
@@ -663,7 +751,7 @@ class TestCopyClaudeConfig:
         transport = _transport()
         copy_claude_config(transport, claude_dir, require_settings=True)
         piped = [c.args[0] for c in transport.pipe.call_args_list]
-        assert any("cat > ~/.claude/settings.json" in cmd for cmd in piped)
+        assert any("~/.claude/settings.json" in cmd for cmd in piped)
 
     @pytest.mark.parametrize("content", ["{not json", "[]", '{"enabledPlugins": {"x@y": "true"}}'])
     def test_require_settings_rejects_an_unusable_host_file(
@@ -690,7 +778,7 @@ class TestCopyClaudeConfig:
         transport = _transport()
         copy_claude_config(transport, claude_dir)
         piped = [c.args[0] for c in transport.pipe.call_args_list]
-        assert any("cat > ~/.claude/settings.json" in cmd for cmd in piped)
+        assert any("~/.claude/settings.json" in cmd for cmd in piped)
 
     def test_unreadable_host_file_is_a_named_error(self, tmp_path: Path) -> None:
         claude_dir = tmp_path / ".claude"
@@ -908,13 +996,15 @@ class TestUpdatePlugins:
         registered_ref: str = "v2.1",
         fail_on: str = "",
     ) -> MagicMock:
-        settings_out = self._SETTINGS if settings is None else settings
+        # *settings* is the guest read's raw stdout (status line first) or the
+        # exception the transport raises; the default is a readable file.
+        settings_out = f"ok\n{self._SETTINGS}" if settings is None else settings
 
         def side_effect(*args: str, **_kw: object) -> MagicMock:
             cmd = args[-1]
             if fail_on and fail_on in cmd:
                 raise subprocess.CalledProcessError(1, "bash")
-            if "cat ~/.claude/settings.json" in cmd:
+            if cmd == _READ_GUEST_SETTINGS:
                 if isinstance(settings_out, Exception):
                     raise settings_out
                 out = settings_out
@@ -954,21 +1044,45 @@ class TestUpdatePlugins:
             update_plugins(transport)
 
     @pytest.mark.parametrize(
-        "settings",
+        ("settings", "expected"),
         [
-            pytest.param(subprocess.CalledProcessError(1, "cat"), id="missing"),
-            pytest.param(subprocess.CalledProcessError(126, "cat"), id="unreadable"),
-            pytest.param("{not valid json", id="invalid"),
-            pytest.param("[]", id="not-an-object"),
+            pytest.param("missing\n", r"settings\.json is missing", id="missing"),
+            pytest.param(
+                "unreadable\n", r"settings\.json exists but cannot be read", id="unreadable"
+            ),
+            pytest.param("ok\n{not valid json", r"settings\.json", id="invalid"),
+            pytest.param("ok\n[]", r"settings\.json", id="not-an-object"),
+            pytest.param("", r"unexpected output", id="no-status-line"),
+            pytest.param("garbage\n{}", r"unexpected output", id="unknown-status"),
         ],
     )
     def test_update_plugins_fails_on_missing_unreadable_or_invalid_guest_settings(
-        self, settings: str | Exception
+        self, settings: str, expected: str
     ) -> None:
         transport = self._fake_transport(settings=settings)
-        with pytest.raises(RuntimeError, match=r"~/\.claude/settings\.json"):
+        with pytest.raises(RuntimeError, match=expected) as excinfo:
             update_plugins(transport)
+        # A file problem is never reported as an unreachable VM.
+        assert not isinstance(excinfo.value, VmUnreachableError)
+        assert "~/.claude/settings.json" in str(excinfo.value)
         # Nothing ran against claude before the failure.
+        assert not any("claude " in c.args[-1] for c in transport.run.call_args_list)
+
+    @pytest.mark.parametrize("returncode", [255, 1])
+    def test_update_plugins_reports_an_unreachable_vm_not_a_missing_file(
+        self, returncode: int
+    ) -> None:
+        # The guest read masks every file condition into a zero exit, so any
+        # failed round-trip (ssh's 255 after the connect retries, or limactl
+        # failing to reach a stopped instance) is the connection, not the file.
+        transport = self._fake_transport(settings=subprocess.CalledProcessError(returncode, "ssh"))
+        with pytest.raises(VmUnreachableError) as excinfo:
+            update_plugins(transport)
+        message = str(excinfo.value)
+        assert "could not be reached" in message
+        assert f"exit status {returncode}" in message
+        assert "~/.claude/settings.json" in message
+        assert "missing" not in message
         assert not any("claude " in c.args[-1] for c in transport.run.call_args_list)
 
     def test_raises_naming_every_failure_after_attempting_all(self) -> None:
@@ -984,6 +1098,44 @@ class TestUpdatePlugins:
         transport = self._fake_transport(fail_on="marketplace add")
         with pytest.raises(RuntimeError, match="marketplace:vergil-marketplace"):
             update_plugins(transport)
+
+
+class TestReadGuestSettingsScript:
+    """The in-guest read, run for real under bash against a scratch HOME.
+
+    Every file condition must exit 0 with a status line, so a non-zero exit
+    can only ever mean the transport failed.
+    """
+
+    @staticmethod
+    def _run(home: Path) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(  # noqa: S603
+            ["bash", "-c", _READ_GUEST_SETTINGS],  # noqa: S607
+            capture_output=True,
+            text=True,
+            check=False,
+            env={"HOME": str(home), "PATH": "/usr/bin:/bin"},
+        )
+
+    def test_readable_file_is_ok_then_content(self, tmp_path: Path) -> None:
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".claude" / "settings.json").write_text('{"a": 1}\n')
+        result = self._run(tmp_path)
+        assert result.returncode == 0
+        assert result.stdout == 'ok\n{"a": 1}\n'
+
+    def test_missing_file_is_missing(self, tmp_path: Path) -> None:
+        result = self._run(tmp_path)
+        assert result.returncode == 0
+        assert result.stdout == "missing\n"
+
+    def test_unreadable_file_is_unreadable(self, tmp_path: Path) -> None:
+        # A directory in the file's place cannot be read even as root, unlike
+        # a mode-000 file, so the case holds wherever the tests run.
+        (tmp_path / ".claude" / "settings.json").mkdir(parents=True)
+        result = self._run(tmp_path)
+        assert result.returncode == 0
+        assert result.stdout == "unreadable\n"
 
 
 class TestPruneCacheImages:

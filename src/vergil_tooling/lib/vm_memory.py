@@ -6,8 +6,8 @@ memory; a cloud VM is a projection of it. Before a cloud session opens, the host
 copies that repo's memory subset — the per-repo ``memory/`` directory (including
 ``MEMORY.md``) — into the guest at the
 slug Claude derives from the host project path, file-by-file over the
-established ``transport.pipe`` (``cat > <dest>``) idiom (the same mechanism
-``copy_claude_config`` uses; there is no ``rsync`` over the transport).
+established ``transport.pipe`` (``cat > <dest>``) idiom (``copy_claude_config`` pipes
+through the same transport; there is no ``rsync`` over the transport).
 
 Once the copy completes, the projection is frozen read-only by
 ``lock_projection`` (issue #2412), which ``project_memory`` calls at the end so a
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from vergil_tooling.lib.vm_transport import Transport
 
 # The guest ``~/.claude`` root. ``~`` is deliberately left unquoted so the guest
-# shell expands it, matching the ``copy_claude_config`` idiom (``cat > ~/.claude/…``).
+# shell expands it, as in ``copy_claude_config``'s ``~/.claude/…`` paths.
 _GUEST_CLAUDE_DIR = "~/.claude"
 
 

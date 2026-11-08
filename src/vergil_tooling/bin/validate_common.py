@@ -5,7 +5,8 @@ Runs inside the dev container via ``vrg-container-run``:
   2. markdownlint on published markdown, in two passes: docs/site/ +
      README.md against the strict bundled config, and epics/ against a
      prose-relaxed config that disables MD013 line-length (issue #2803)
-  3. shellcheck on all shell scripts under ``scripts/``
+  3. shellcheck on all shell scripts under ``scripts/`` and every ``*.sh``
+     file elsewhere in the repository (issue #3830)
   4. yamllint on YAML files under ``.github/`` and ``docs/`` using
      the bundled canonical config (issue #302, #590)
   5. dependabot-limit: every ``.github/dependabot.yml`` ``updates`` entry
@@ -84,7 +85,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
 
     shell_files = _drop_gitignored(repo_root, _find_shell_files(repo_root))
     if shell_files:
-        print(f"Running: shellcheck ({len(shell_files)} files in scripts/)")
+        print(f"Running: shellcheck ({len(shell_files)} files in scripts/, *.sh repo-wide)")
         result = subprocess.run(  # noqa: S603
             ["shellcheck", *shell_files],  # noqa: S607
             check=False,
@@ -188,18 +189,54 @@ def _check_dependabot_limit(repo_root: Path) -> int:
 
 
 def _find_shell_files(repo_root: Path) -> list[str]:
-    """Discover shell files under scripts/."""
-    scripts_dir = repo_root / "scripts"
-    if not scripts_dir.is_dir():
-        return []
+    """Discover shell files: everything under scripts/ that looks like a
+    script, plus every ``*.sh`` file anywhere in the repository.
 
-    found: list[str] = []
-    for path in scripts_dir.rglob("*"):
-        if not path.is_file():
-            continue
-        if path.suffix == ".sh" or "git-hooks" in path.parts or "bin" in path.parts:
-            found.append(str(path))
+    Under ``scripts/``, extensionless executables in ``bin/`` and
+    ``git-hooks/`` count as shell too. Outside it only the ``.sh`` suffix
+    marks a shell file, found by :func:`_find_repo_sh_files`, so scripts
+    kept elsewhere (a plugin's ``hooks/``, an action's step scripts, a
+    repo's ``tests/``) are linted as well (issue #3830).
+    """
+    found: set[str] = set(_find_repo_sh_files(repo_root))
+    scripts_dir = repo_root / "scripts"
+    if scripts_dir.is_dir():
+        for path in scripts_dir.rglob("*"):
+            if not path.is_file():
+                continue
+            if path.suffix == ".sh" or "git-hooks" in path.parts or "bin" in path.parts:
+                found.add(str(path))
     return sorted(found)
+
+
+def _find_repo_sh_files(repo_root: Path) -> list[str]:
+    """Return every ``*.sh`` file in the repository, tracked or untracked,
+    leaving out what ``.gitignore`` excludes (issue #3830).
+
+    ``git ls-files`` lists them without walking ignored trees such as
+    ``.worktrees/``, ``.venv/`` or ``node_modules/``. A tracked file deleted
+    from the working tree is dropped, since there is nothing to lint. A git
+    failure raises rather than linting less.
+    """
+    output = git.read_output(
+        "-C",
+        str(repo_root),
+        "ls-files",
+        "-z",
+        "--cached",
+        "--others",
+        "--exclude-standard",
+        "--",
+        "*.sh",
+    )
+    found: list[str] = []
+    for rel in output.split("\0"):
+        if not rel:
+            continue
+        path = repo_root / rel
+        if path.is_file():
+            found.append(str(path))
+    return found
 
 
 def _find_strict_markdown_files(repo_root: Path, ignore: list[str] | None = None) -> list[str]:

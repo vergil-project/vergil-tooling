@@ -1417,6 +1417,43 @@ def required_checks_outstanding(pr: str, required: Collection[str]) -> dict[str,
 _PR_URL_REPO_RE = re.compile(r"github\.com/([^/]+/[^/]+)/pull/\d+")
 
 
+def _repo_of_pr_url(url: object, pr: str, purpose: str) -> str:
+    """Return ``OWNER/REPO`` from *pr*'s own URL, as ``gh pr view`` resolved it.
+
+    A PR given by URL may live in another repo than the current directory's,
+    so its repo is never guessed from the cwd's remote (#3976, #4013). A URL
+    that does not parse raises :class:`GitHubAPIError` naming *purpose*.
+    """
+    match = _PR_URL_REPO_RE.search(url) if isinstance(url, str) else None
+    if match is None:
+        raise GitHubAPIError(
+            1,
+            ("gh", "pr", "view", pr),
+            stderr=f"cannot read the repository of PR {pr} from its URL {url!r} for {purpose}",
+        )
+    return match.group(1)
+
+
+def pr_repo_and_number(pr: str, purpose: str) -> tuple[str, int]:
+    """Return the ``OWNER/REPO`` and number of *pr*, read from the PR itself.
+
+    *pr* is anything ``gh pr view`` accepts (a URL, a number, a branch). The
+    repo comes from the PR's own URL, not the current directory's remote
+    (#3976, #4013). A PR whose repo or number cannot be read raises
+    :class:`GitHubAPIError` naming *purpose*, rather than guessing.
+    """
+    info = read_json("pr", "view", pr, "--json", "number,url")
+    fields: dict[str, object] = info if isinstance(info, dict) else {}
+    number = fields.get("number")
+    if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
+        raise GitHubAPIError(
+            1,
+            ("gh", "pr", "view", pr),
+            stderr=f"cannot read the number of PR {pr} for {purpose}",
+        )
+    return _repo_of_pr_url(fields.get("url"), pr, purpose), number
+
+
 def _as_obj(value: object) -> dict[str, Any]:
     """*value* as a JSON object, or an empty one when it is not a dict."""
     return cast("dict[str, Any]", value) if isinstance(value, dict) else {}
@@ -1472,27 +1509,18 @@ def required_check_names(pr: str) -> frozenset[str] | None:
 
     The union of classic branch protection (:func:`_protection_required_checks`)
     and repository rulesets (:func:`_ruleset_required_checks`) — repos may use
-    either or both. The repo is taken from the PR's own URL, falling back to the
-    current directory's remote.
+    either or both. The repo is taken from the PR's own URL, never the current
+    directory's remote: a PR given by URL may live in another repo (#4013).
 
     A lookup failure (permissions, API error, unexpected payload) is **not**
     fatal: it prints a visible warning and returns ``None`` so callers fall back
-    to waiting on registered checks only (the pre-#3061 behaviour). A missing
-    auth token is a configuration error and propagates.
+    to waiting on registered checks only (the pre-#3061 behaviour). Two errors
+    propagate instead: a missing auth token (a configuration error), and a PR
+    whose URL names no repo (:class:`GitHubAPIError`) — there is no repo to look
+    in, and guessing the cwd's would read another repo's rules.
     """
-    try:
-        info = read_json("pr", "view", pr, "--json", "baseRefName,url")
-        if not isinstance(info, dict) or not info.get("baseRefName"):
-            raise GitHubAPIError(
-                1, ("gh", "pr", "view", pr), stderr="no baseRefName in pr view response"
-            )
-        branch = str(info["baseRefName"])
-        match = _PR_URL_REPO_RE.search(str(info.get("url") or ""))
-        repo = match.group(1) if match else current_repo()
-        names = _protection_required_checks(repo, branch) | _ruleset_required_checks(repo, branch)
-    except MissingGitHubTokenError:
-        raise
-    except (subprocess.CalledProcessError, json.JSONDecodeError) as exc:
+
+    def _warn(exc: Exception) -> None:
         lines = error_text(exc).strip().splitlines()
         detail = lines[-1] if lines else type(exc).__name__
         print(
@@ -1501,6 +1529,26 @@ def required_check_names(pr: str) -> frozenset[str] | None:
             "check that has not registered yet will not be waited for.",
             file=sys.stderr,
         )
+
+    try:
+        info = read_json("pr", "view", pr, "--json", "baseRefName,url")
+        if not isinstance(info, dict) or not info.get("baseRefName"):
+            raise GitHubAPIError(
+                1, ("gh", "pr", "view", pr), stderr="no baseRefName in pr view response"
+            )
+    except MissingGitHubTokenError:
+        raise
+    except (subprocess.CalledProcessError, json.JSONDecodeError) as exc:
+        _warn(exc)
+        return None
+    branch = str(info["baseRefName"])
+    repo = _repo_of_pr_url(info.get("url"), pr, "the required-check lookup")
+    try:
+        names = _protection_required_checks(repo, branch) | _ruleset_required_checks(repo, branch)
+    except MissingGitHubTokenError:
+        raise
+    except (subprocess.CalledProcessError, json.JSONDecodeError) as exc:
+        _warn(exc)
         return None
     return frozenset(names)
 
@@ -1920,17 +1968,8 @@ def update_branch(pr: str) -> None:
     another repo would otherwise update the wrong PR or 404 (#3976). A PR whose
     repo or number cannot be read is an error rather than a guess.
     """
-    info = read_json("pr", "view", pr, "--json", "number,url")
-    url = str(info.get("url") or "") if isinstance(info, dict) else ""
-    number = info.get("number") if isinstance(info, dict) else None
-    match = _PR_URL_REPO_RE.search(url)
-    if match is None or not number:
-        raise GitHubAPIError(
-            1,
-            ("gh", "pr", "view", pr),
-            stderr=f"cannot read the repository and number of PR {pr} for update-branch",
-        )
-    read_output("api", f"repos/{match.group(1)}/pulls/{number}/update-branch", "-X", "PUT")
+    repo, number = pr_repo_and_number(pr, "update-branch")
+    read_output("api", f"repos/{repo}/pulls/{number}/update-branch", "-X", "PUT")
 
 
 def pr_state(pr: str) -> str:

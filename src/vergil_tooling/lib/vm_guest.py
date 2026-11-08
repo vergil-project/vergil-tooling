@@ -397,6 +397,17 @@ _PLUGIN_PATH_EXPORT = 'export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"'
 
 _GUEST_SETTINGS = "~/.claude/settings.json"
 
+# The in-guest read of _GUEST_SETTINGS. Like read_fingerprint's, it masks every
+# file condition into a zero exit, here with a status line ("missing",
+# "unreadable", or "ok" followed by the content), so a non-zero exit of the
+# round-trip can only be the transport failing to reach the VM (#3990).
+_READ_GUEST_SETTINGS = (
+    'f="$HOME/.claude/settings.json"; '
+    'if [ ! -e "$f" ]; then echo missing; '
+    'elif content=$(cat "$f" 2>/dev/null); then printf \'ok\\n%s\\n\' "$content"; '
+    "else echo unreadable; fi"
+)
+
 
 def _read_guest_settings(transport: Transport) -> dict[str, Any]:
     """Return the guest ``~/.claude/settings.json`` as a dict.
@@ -407,19 +418,32 @@ def _read_guest_settings(transport: Transport) -> dict[str, Any]:
     vergil-project/.github#760).
 
     Raises:
-        RuntimeError: the file cannot be read. The message names the file.
+        VmUnreachableError: (a ``RuntimeError``) the VM could not be reached,
+            so the file was never looked at. The message names the file.
+        RuntimeError: the file is missing or cannot be read. The message
+            names the file and which of the two it is.
         claude_marketplace.MarketplaceError: (a ``RuntimeError``) the file is
             not valid JSON or not a JSON object. The message names the file.
     """
     try:
-        result = transport.run("bash", "-c", f"cat {_GUEST_SETTINGS}")
+        result = transport.run("bash", "-c", _READ_GUEST_SETTINGS)
     except subprocess.CalledProcessError as exc:
         msg = (
-            f"cannot read the guest {_GUEST_SETTINGS}: it is missing or unreadable "
-            f"(exit status {exc.returncode})"
+            f"cannot read the guest {_GUEST_SETTINGS}: the VM could not be reached "
+            f"({_failure_reason(exc)})"
         )
-        raise RuntimeError(msg) from exc
-    return claude_marketplace.parse_settings(result.stdout, f"the guest {_GUEST_SETTINGS}")
+        raise VmUnreachableError(msg) from exc
+    status, _, content = result.stdout.partition("\n")
+    if status == "missing":
+        msg = f"the guest {_GUEST_SETTINGS} is missing"
+        raise RuntimeError(msg)
+    if status == "unreadable":
+        msg = f"the guest {_GUEST_SETTINGS} exists but cannot be read"
+        raise RuntimeError(msg)
+    if status != "ok":
+        msg = f"cannot read the guest {_GUEST_SETTINGS}: unexpected output {status!r}"
+        raise RuntimeError(msg)
+    return claude_marketplace.parse_settings(content, f"the guest {_GUEST_SETTINGS}")
 
 
 def update_plugins(transport: Transport) -> None:
@@ -438,6 +462,8 @@ def update_plugins(transport: Transport) -> None:
     a local Lima instance or a remote off-platform box.
 
     Raises:
+        VmUnreachableError: (a ``RuntimeError``) the VM could not be reached
+            to read the guest settings.json.
         RuntimeError: the guest settings.json is missing, unreadable or
             invalid, or any step or the verification failed. The message names
             every failure.
@@ -471,10 +497,12 @@ def copy_claude_config(
     mode is a guard that makes an accidental write fail loudly; it is not a
     security boundary, since the guest user owns the file.
 
-    Each target is made writable (``chmod u+w``) before the overwrite, so a
-    copy locked by an earlier run does not fail the ``cat >`` with "permission
-    denied" (#2436). The ``chmod u+w`` is a harmless no-op on a fresh file
-    (guarded with ``2>/dev/null``).
+    Each file is written atomically (#3987): to a temp file in ``~/.claude``,
+    given its final mode, then renamed into place (see :func:`_atomic_write_cmd`).
+    A concurrent reader never sees an empty or partial file, and a failed copy
+    raises and leaves the existing file as it was. The rename needs only the
+    directory to be writable, so a copy locked by an earlier run is replaced
+    without reopening it (#2436).
 
     With *require_settings* (the update path, which refreshes plugins from the
     copied file right after), a missing host ``settings.json`` is an error
@@ -484,6 +512,8 @@ def copy_claude_config(
     Raises:
         RuntimeError: *require_settings* is set and the host settings.json is
             missing or unusable, or a host file cannot be read.
+        subprocess.CalledProcessError: a guest command failed, such as a copy
+            that could not be written; the guest file it targeted is unchanged.
     """
     settings = claude_dir / "settings.json"
     if require_settings and not settings.is_file():
@@ -519,10 +549,28 @@ def copy_claude_config(
             except claude_marketplace.MarketplaceError as exc:
                 msg = f"the host {source} is unusable: {exc}"
                 raise RuntimeError(msg) from exc
-        cmd = f"chmod u+w {dest} 2>/dev/null; cat > {dest}"
-        if locked:
-            cmd += f" && chmod a-w {dest}"
-        transport.pipe(cmd, content)
+        transport.pipe(_atomic_write_cmd(filename, locked=locked), content)
+
+
+def _atomic_write_cmd(filename: str, *, locked: bool) -> str:
+    """Return the guest command that atomically replaces ``~/.claude/<filename>``.
+
+    Stdin goes to a temp file made by ``mktemp`` in ``~/.claude`` itself, so the
+    final ``mv -f`` is a rename on one filesystem: a reader sees the old file or
+    the new one, never an empty or partial one. The temp file gets its final
+    mode (``644``, then ``a-w`` when *locked*) before the rename. If any step
+    fails, the temp file is removed and the command exits non-zero, so the
+    transport raises and the existing file is left untouched.
+    """
+    dest = f"~/.claude/{filename}"
+    steps = 'cat > "$tmp" && chmod 644 "$tmp"'
+    if locked:
+        steps += ' && chmod a-w "$tmp"'
+    steps += f' && mv -f "$tmp" {dest}'
+    return (
+        f"tmp=$(mktemp ~/.claude/.{filename}.XXXXXX) && "
+        f'{{ {steps} || {{ rm -f "$tmp"; false; }}; }}'
+    )
 
 
 # The agent-VM ~/.claude share set. See
@@ -594,7 +642,8 @@ class VmUnreachableError(RuntimeError):
     """Raised when the shell transport to a VM fails (e.g. SSH connection
     refused) — the VM could not be contacted at all.
 
-    Distinct from an absent spec marker: an unreachable VM says nothing about
+    Distinct from an absent spec marker or guest settings.json: an unreachable
+    VM says nothing about whether a file is there, nor about
     whether its spec drifted, so callers must not collapse this into the
     "needs-rebuild" signal. Doing so misreports a reachability failure as spec
     drift and tells the user to rebuild a VM that may just be mid-boot or wedged.
