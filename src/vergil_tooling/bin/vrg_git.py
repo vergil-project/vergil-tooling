@@ -911,8 +911,10 @@ class _WorkflowRefusal(NamedTuple):
 
     *kind* is ``own`` when the branch's own commits (since its merge-base with
     the remote's default branch) change a workflow file, ``stale`` when they
-    change none but the default branch changed one since that merge-base, and
-    ``unknown`` when vrg-git could not tell (*reason* says why).
+    change none, and ``unknown`` when vrg-git could not tell (*reason* says
+    why). A ``stale`` result's *files* are the workflow files the local
+    default-branch ref differs in, empty when it shows none (*reason* is set
+    when they could not be read).
     """
 
     kind: str
@@ -973,10 +975,12 @@ def _diagnose_workflow_refusal(args: list[str]) -> _WorkflowRefusal:
     GitHub refuses an agent push whose tree differs from the default branch in
     a workflow file, even when the branch's own commits never touched it: a
     branch based on an older default branch carries the old copy. Only the
-    branch's own diff (merge-base to HEAD) says which case this is. Read-only:
-    nothing is fetched, so ``stale`` is reported only when the local refs show
-    both halves (no own workflow change, and a workflow difference from the
-    default branch); every other outcome keeps the usual hand-off guidance.
+    branch's own diff (merge-base to HEAD) says which case this is: an own
+    workflow change is ``own``, none is ``stale``. Read-only: nothing is
+    fetched, so a ``stale`` diagnosis names the upstream workflow files only
+    when the local default-branch ref already has them. When the own diff
+    cannot be computed the result is ``unknown``, which keeps the usual
+    hand-off guidance.
     """
     remote, not_head = _pushed_remote_if_head_only(args)
     if not_head is not None:
@@ -1001,19 +1005,14 @@ def _diagnose_workflow_refusal(args: list[str]) -> _WorkflowRefusal:
         )
     if own:
         return _WorkflowRefusal("own", base=base, files=own)
+    # The branch's own commits change no workflow file, so the refused
+    # workflow difference came from the base moving: the branch is stale. The
+    # files are named when the local base already shows them; a local base
+    # not yet fetched past the change shows none (#3814, R1).
     upstream = _diff_workflow_files("HEAD", base)
     if upstream is None:
-        return _WorkflowRefusal("unknown", base=base, reason=f"could not diff HEAD against {base}")
-    if upstream:
-        return _WorkflowRefusal("stale", base=base, files=upstream)
-    return _WorkflowRefusal(
-        "unknown",
-        base=base,
-        reason=(
-            f"neither the branch's own commits nor its difference from {base} "
-            f"touch {_WORKFLOWS_PATH} ({base} may be out of date locally)"
-        ),
-    )
+        return _WorkflowRefusal("stale", base=base, reason=f"could not diff HEAD against {base}")
+    return _WorkflowRefusal("stale", base=base, files=upstream)
 
 
 def _print_workflow_push_guidance(diagnosis: _WorkflowRefusal) -> None:
@@ -1052,14 +1051,25 @@ def _print_workflow_push_guidance(diagnosis: _WorkflowRefusal) -> None:
 
 def _print_stale_workflow_push_guidance(diagnosis: _WorkflowRefusal) -> None:
     remote = diagnosis.base.partition("/")[0]
+    if diagnosis.files:
+        upstream = (
+            f"  {diagnosis.base} changed {', '.join(diagnosis.files)} since the"
+            " branch's base,\n"
+        )
+    else:
+        unseen = f" ({diagnosis.reason})" if diagnosis.reason else ""
+        upstream = (
+            f"  a workflow file has likely changed upstream since the branch's base;"
+            f" the local\n  {diagnosis.base} does not show which{unseen},\n"
+        )
     print(
         "\nvrg-git: error: push refused because the branch is STALE, not because it"
         " changes workflows.\n"
-        f"  The branch's own commits change no {_WORKFLOWS_PATH}** file, but"
-        f" {diagnosis.base} changed\n"
-        f"  {', '.join(diagnosis.files)} since the branch's base, so its tree"
-        " carries an outdated copy\n"
-        "  and GitHub refuses the push. Update the branch onto the default branch:\n"
+        f"  The branch's own commits change no {_WORKFLOWS_PATH}** file, but\n"
+        f"{upstream}"
+        "  so its tree carries an outdated copy and GitHub refuses the push."
+        " Update the branch\n"
+        "  onto the default branch:\n"
         f"    vrg-git fetch {remote}\n"
         f"    vrg-git rebase {diagnosis.base}\n"
         "  then re-run `vrg-container-run -- vrg-validate` and push again"

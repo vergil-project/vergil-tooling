@@ -116,17 +116,19 @@ def test_own_change_on_a_stale_branch_stays_own(
     assert diagnosis.files == (".github/workflows/release.yml",)
 
 
-def test_no_workflow_difference_is_unknown(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # A branch that has merged the base has no own workflow change and no
-    # workflow difference from it: vrg-git cannot say why GitHub refused, so
-    # it keeps the usual guidance and says so, rather than claim staleness.
+def test_unfetched_base_is_stale_with_files_unknown(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The common stale case: the local origin/develop is still at the branch's
+    # base, so the upstream workflow change is not visible locally. The own
+    # diff is known empty, so the branch is stale, with no files named (R1).
     _commit(repo, "src.txt", "work\n")
-    _advance_base(repo, ".github/workflows/ci.yml", "on: [push, pull_request]\n")
-    _git(repo, "merge", "-q", "--no-edit", "origin/develop")
     monkeypatch.chdir(repo)
     diagnosis = _diagnose_workflow_refusal(["origin", "feature/1-x"])
-    assert diagnosis.kind == "unknown"
-    assert "may be out of date locally" in diagnosis.reason
+    assert diagnosis.kind == "stale"
+    assert diagnosis.base == "origin/develop"
+    assert diagnosis.files == ()
+    assert diagnosis.reason == ""
 
 
 @pytest.mark.parametrize(
@@ -192,22 +194,26 @@ def test_failed_diff_reads_as_none(repo: Path, monkeypatch: pytest.MonkeyPatch) 
     assert _diff_workflow_files("no-such-ref", "HEAD") is None
 
 
-@pytest.mark.parametrize(
-    ("diffs", "reason"),
-    [
-        ([None], "could not diff HEAD against its merge-base with origin/develop"),
-        ([(), None], "could not diff HEAD against origin/develop"),
-    ],
-)
-def test_failed_diff_is_unknown(
-    repo: Path, monkeypatch: pytest.MonkeyPatch, diffs: list[object], reason: str
-) -> None:
-    # A diff that fails is never read as "no workflow change": it is unknown.
+def test_failed_own_diff_is_unknown(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # An own diff that fails is never read as "no workflow change": unknown.
     monkeypatch.chdir(repo)
-    with patch.object(vrg_git, "_diff_workflow_files", side_effect=diffs):
+    with patch.object(vrg_git, "_diff_workflow_files", side_effect=[None]):
         diagnosis = _diagnose_workflow_refusal(["origin", "feature/1-x"])
     assert diagnosis.kind == "unknown"
-    assert diagnosis.reason == reason
+    assert diagnosis.reason == "could not diff HEAD against its merge-base with origin/develop"
+
+
+def test_failed_upstream_diff_is_stale_and_says_so(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The own diff is known empty, so the branch is stale; the failed listing
+    # of upstream files is carried in the reason, not dropped.
+    monkeypatch.chdir(repo)
+    with patch.object(vrg_git, "_diff_workflow_files", side_effect=[(), None]):
+        diagnosis = _diagnose_workflow_refusal(["origin", "feature/1-x"])
+    assert diagnosis.kind == "stale"
+    assert diagnosis.files == ()
+    assert diagnosis.reason == "could not diff HEAD against origin/develop"
 
 
 def test_outside_a_repo_is_unknown(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -249,6 +255,31 @@ def test_stale_branch_fails_with_rebase_guidance(
     assert "Do NOT hand this off" in err
     assert "PROCEED AS USUAL" not in err
     assert "This branch's own commits change" not in err
+
+
+def test_unfetched_base_fails_with_rebase_guidance(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _commit(repo, "src.txt", "work\n")
+    monkeypatch.chdir(repo)
+    assert _push(["push", "-u", "origin", "feature/1-x"]) == 1
+    err = capsys.readouterr().err
+    assert "STALE" in err
+    assert "a workflow file has likely changed upstream" in err
+    assert "does not show which," in err
+    assert "vrg-git fetch origin" in err
+    assert "vrg-git rebase origin/develop" in err
+    assert "PROCEED AS USUAL" not in err
+
+
+def test_failed_upstream_listing_is_named_in_the_stale_guidance(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(repo)
+    with patch.object(vrg_git, "_diff_workflow_files", side_effect=[(), None]):
+        assert _push(["push", "-u", "origin", "feature/1-x"]) == 1
+    err = capsys.readouterr().err
+    assert "does not show which (could not diff HEAD against origin/develop)," in err
 
 
 def test_undiagnosed_refusal_keeps_the_hand_off_with_a_caveat(
