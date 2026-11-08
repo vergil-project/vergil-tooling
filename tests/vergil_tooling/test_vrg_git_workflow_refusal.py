@@ -11,13 +11,16 @@ lookups really run; only the network push and the token lookup are stubbed.
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
 
 from vergil_tooling.bin import vrg_git
-from vergil_tooling.bin.vrg_git import _diagnose_workflow_refusal, main
+from vergil_tooling.bin.vrg_git import _diagnose_workflow_refusal, _diff_workflow_files, main
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 _REAL_RUN = subprocess.run
 _REFUSAL = (
@@ -66,7 +69,9 @@ def _advance_base(repo: Path, rel: str, text: str) -> None:
 
 
 def _push(argv: list[str]) -> int:
-    refused = subprocess.CompletedProcess(args=["git", *argv], returncode=1, stdout="", stderr=_REFUSAL)
+    refused = subprocess.CompletedProcess(
+        args=["git", *argv], returncode=1, stdout="", stderr=_REFUSAL
+    )
     with (
         patch.object(vrg_git, "_run_network_with_retry", return_value=refused),
         patch.object(vrg_git.github, "get_installation_token", return_value=None),
@@ -180,6 +185,29 @@ def test_no_merge_base_is_unknown(repo: Path, monkeypatch: pytest.MonkeyPatch) -
     diagnosis = _diagnose_workflow_refusal(["origin", "lonely"])
     assert diagnosis.kind == "unknown"
     assert "no merge-base with origin/develop" in diagnosis.reason
+
+
+def test_failed_diff_reads_as_none(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(repo)
+    assert _diff_workflow_files("no-such-ref", "HEAD") is None
+
+
+@pytest.mark.parametrize(
+    ("diffs", "reason"),
+    [
+        ([None], "could not diff HEAD against its merge-base with origin/develop"),
+        ([(), None], "could not diff HEAD against origin/develop"),
+    ],
+)
+def test_failed_diff_is_unknown(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, diffs: list[object], reason: str
+) -> None:
+    # A diff that fails is never read as "no workflow change": it is unknown.
+    monkeypatch.chdir(repo)
+    with patch.object(vrg_git, "_diff_workflow_files", side_effect=diffs):
+        diagnosis = _diagnose_workflow_refusal(["origin", "feature/1-x"])
+    assert diagnosis.kind == "unknown"
+    assert diagnosis.reason == reason
 
 
 def test_outside_a_repo_is_unknown(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
