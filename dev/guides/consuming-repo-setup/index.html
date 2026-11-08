@@ -17739,7 +17739,7 @@ branch prefix, issue number) live in <code>vrg-commit</code> itself. See the
 <p><code>vrg-github-repo-init</code> writes <code>.claude/settings.json</code> as the packaged
 template
 <a href="https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/data/claude_settings.json"><code>claude_settings.json</code></a>,
-unchanged. It has four parts:</p>
+unchanged. It has five parts:</p>
 <table>
 <thead>
 <tr>
@@ -17763,6 +17763,10 @@ unchanged. It has four parts:</p>
 <tr>
 <td><code>attribution</code></td>
 <td>Turns off Claude Code's AI co-author trailer on commits and PRs.</td>
+</tr>
+<tr>
+<td><code>idleCompaction</code></td>
+<td><code>false</code>: Claude Code doesn't compact a session while it sits idle, so the human decides when to compact or clear (#3795). Needs Claude Code v2.1.290 or later; older versions ignore it. Context-full auto-compaction and <code>/compact</code> are unchanged.</td>
 </tr>
 </tbody>
 </table>
