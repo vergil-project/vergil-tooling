@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -36,6 +36,7 @@ from vergil_tooling.lib.github_config import (
     ClassicProtectionReport,
     ConfigDiff,
     DiffItem,
+    NotChecked,
     UndeclaredParam,
 )
 from vergil_tooling.lib.versions import ResolutionError
@@ -201,6 +202,66 @@ def test_diff_always_returns_zero() -> None:
         patch(f"{_MODULE}._resolve_config"),
     ):
         assert main(["diff", "--repo", "o/r"]) == 0
+
+
+def _mock_github_not_checked(*, drift: bool = False) -> ConfigDiff:
+    items = _mock_github_noncompliant().items if drift else []
+    return ConfigDiff(
+        items=items,
+        not_checked=[
+            NotChecked(field="security.vulnerability_alerts", permission="administration=read"),
+            NotChecked(field="classic_protection.develop", permission="administration=read"),
+        ],
+    )
+
+
+def _run_main(command: str, diff: ConfigDiff) -> tuple[int, MagicMock]:
+    with (
+        patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
+        patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
+        patch(f"{_MODULE}._audit_repo", return_value=diff),
+        patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
+        patch(f"{_MODULE}._resolve_config"),
+        patch(f"{_MODULE}._apply_repo", return_value=[]) as mock_apply,
+    ):
+        code = main([command, "--repo", "o/r"])
+    return code, mock_apply
+
+
+def test_audit_not_checked_without_drift_exits_two(capsys: pytest.CaptureFixture[str]) -> None:
+    # A setting the identity cannot read is never a clean result (#3816).
+    code, _ = _run_main("audit", _mock_github_not_checked())
+    assert code == 2
+    captured = capsys.readouterr()
+    assert "o/r: NOT FULLY AUDITED" in captured.out
+    assert "o/r: compliant" not in captured.out
+    assert (
+        "security.vulnerability_alerts: not checked (needs administration=read)" in captured.out
+    )
+    assert "classic_protection.develop: not checked (needs administration=read)" in captured.out
+    assert "Could not fully audit o/r: 2 setting(s) not checked" in captured.err
+    assert "administration=read" in captured.err
+
+
+def test_audit_not_checked_with_drift_exits_one(capsys: pytest.CaptureFixture[str]) -> None:
+    code, _ = _run_main("audit", _mock_github_not_checked(drift=True))
+    assert code == 1
+    out = capsys.readouterr().out
+    assert "o/r: NON-COMPLIANT (1 issues)" in out
+    assert "security.vulnerability_alerts: not checked (needs administration=read)" in out
+
+
+def test_diff_not_checked_reports_and_returns_zero(capsys: pytest.CaptureFixture[str]) -> None:
+    code, _ = _run_main("diff", _mock_github_not_checked())
+    assert code == 0
+    assert "not checked (needs administration=read)" in capsys.readouterr().out
+
+
+def test_apply_refuses_when_settings_not_checked(capsys: pytest.CaptureFixture[str]) -> None:
+    code, mock_apply = _run_main("apply", _mock_github_not_checked(drift=True))
+    assert code == 2
+    mock_apply.assert_not_called()
+    assert "Refusing to apply: Could not fully audit o/r" in capsys.readouterr().err
 
 
 def test_audit_runs_local_checks_first(capsys: pytest.CaptureFixture[str]) -> None:

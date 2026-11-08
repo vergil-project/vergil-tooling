@@ -24,7 +24,7 @@ vrg-github-repo-config audit [--repo OWNER/REPO] [--config PATH]
 | Subcommands | `audit` (report), `diff` (report GitHub half only), `apply` (reconcile GitHub half) |
 | Args | `--repo OWNER/REPO` (defaults to the current git remote), `--config PATH` (local `vergil.toml`) |
 | Preconditions | Local checks require running from inside the repo's own checkout; GitHub checks require `gh` credentials |
-| Exit codes | 0 compliant, 1 non-compliant (drift), 2 audit could not complete |
+| Exit codes | 0 compliant, 1 non-compliant (drift), 2 audit could not complete (including settings [not checked](#settings-the-identity-cannot-read)) |
 | Status | Active |
 
 Local checks only run when the current directory *is* the audited
@@ -45,6 +45,36 @@ fatal where it fires: a non-conforming repo cannot silently persist.
 
 `vrg-release` also gates on the GitHub half of this audit, so a repo
 whose required-check set has drifted cannot release until reconciled.
+
+### Settings the identity cannot read
+
+Several GitHub reads need the `administration=read` repository
+permission: `vulnerability-alerts`, the three `actions/permissions`
+endpoints, classic branch protection, and the `security_and_analysis`
+block of the repo object (GitHub leaves the block out for an identity
+without admin access). The agent App does not hold that permission
+(#3816). When a read fails with a 403 naming a missing permission, the
+audit does not guess the value. It reports the setting as not checked:
+
+```text
+  vergil-project/vergil-tooling: NOT FULLY AUDITED (no drift in the settings read; 10 not checked)
+    security.vulnerability_alerts: not checked (needs administration=read)
+    classic_protection.develop: not checked (needs administration=read)
+```
+
+- **It is not drift.** An unread setting is never compared, so it never
+  shows up as a `DiffItem`.
+- **It is not a pass.** `audit` exits 2 with a one-line error naming
+  the permission, unless it also found drift in the settings it did
+  read, in which case it exits 1. It never exits 0 while any setting
+  is not checked.
+- **`apply` refuses.** It exits 2 and writes nothing, since it would
+  converge settings it could not read.
+- A setting the desired state leaves unmanaged (secret scanning on a
+  private repo without GHAS) is skipped as before, not listed as not
+  checked.
+- A 403 that names no missing permission (a rate limit, for example) is
+  still an error, as is any other unexpected status.
 
 ## Local checks
 
@@ -319,7 +349,9 @@ separately, by `open-pull-requests-limit: 0` in the canonical
 [Local checks](#local-checks)).
 
 Alerts are read from `GET /repos/{repo}/vulnerability-alerts` (204 means
-on, 404 means off). Any other status is an error, never a silent "off".
+on, 404 means off). A 403 for a missing permission is reported as
+[not checked](#settings-the-identity-cannot-read); any other status is an
+error, never a silent "off".
 `apply` turns alerts on with `PUT` on that endpoint (or off with
 `DELETE`), and sets `dependabot_security_updates` through the repo's
 `security_and_analysis` settings. `apply` is a human action: it needs

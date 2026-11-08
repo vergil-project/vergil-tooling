@@ -105,13 +105,25 @@ def _audit_and_apply(args: argparse.Namespace, repo: str, *, local_compliant: bo
         emit_error(f"Could not audit {repo}: {exc}")
         return 2
     _print_diff(repo, github_diff)
-    if not github_diff.is_compliant():
+    if github_diff.has_drift():
         all_compliant = False
 
-    if args.command == "audit":
-        return 0 if all_compliant else 1
     if args.command == "diff":
         return 0
+    if args.command == "audit":
+        if not all_compliant:
+            return 1
+        if github_diff.not_checked:
+            # No drift in what was read, but some settings could not be read:
+            # the audit did not complete, so it is never a clean exit 0 (#3816).
+            emit_error(_not_checked_summary(repo, github_diff))
+            return 2
+        return 0
+
+    if github_diff.not_checked:
+        # apply converges every setting, so it needs to read them all first.
+        emit_error(f"Refusing to apply: {_not_checked_summary(repo, github_diff)}")
+        return 2
 
     if github_diff.is_compliant():
         print("GitHub config compliant, nothing to apply.")
@@ -281,7 +293,7 @@ def _audit_repo(repo: str, config: VergilConfig) -> ConfigDiff:
     desired = compute_desired_state(
         config, visibility=result.visibility, is_org=is_org, app_mode=github.is_app_mode()
     )
-    return compute_diff(desired=desired, actual=result.state)
+    return compute_diff(desired=desired, actual=result.state, not_checked=result.not_checked)
 
 
 def _format_item(item: DiffItem) -> str:
@@ -321,16 +333,32 @@ def _print_warnings(diff: ConfigDiff) -> None:
         print(f"    WARNING: {warning}")
 
 
+def _not_checked_summary(repo: str, diff: ConfigDiff) -> str:
+    """One line saying the audit of *repo* is incomplete, and what it needs."""
+    permissions = ", ".join(sorted({nc.permission for nc in diff.not_checked}))
+    return (
+        f"Could not fully audit {repo}: {len(diff.not_checked)} setting(s) not checked "
+        f"(needs {permissions}). Run the audit as an identity that holds it."
+    )
+
+
 def _print_diff(repo: str, diff: ConfigDiff) -> None:
     """Print GitHub config diff results for a repo."""
-    if diff.is_compliant():
-        print(f"  {repo}: compliant")
-    else:
+    if diff.has_drift():
         print(f"  {repo}: NON-COMPLIANT ({len(diff.items) + len(diff.undeclared)} issues)")
         for item in diff.items:
             print(_format_item(item))
         for param in diff.undeclared:
             print(_format_undeclared(param))
+    elif diff.not_checked:
+        print(
+            f"  {repo}: NOT FULLY AUDITED (no drift in the settings read; "
+            f"{len(diff.not_checked)} not checked)"
+        )
+    else:
+        print(f"  {repo}: compliant")
+    for nc in diff.not_checked:
+        print(f"    {nc.field}: not checked (needs {nc.permission})")
     for field_name in diff.skipped:
         if field_name.startswith("security."):
             print(
