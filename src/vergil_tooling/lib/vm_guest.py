@@ -464,7 +464,11 @@ def update_plugins(transport: Transport) -> None:
             to read the guest settings.json.
         RuntimeError: the guest settings.json is missing, unreadable or
             invalid, or any step or the verification failed. The message names
-            every failure.
+            every failure, including those collected before a ``list --json``
+            step raised (then a ``MarketplaceError``,
+            vergil-project/vergil-tooling#3989).
+        subprocess.CalledProcessError: a ``list --json`` command failed before
+            any other step had failed.
     """
     print("  Refreshing Claude plugins...")
     settings = _read_guest_settings(transport)

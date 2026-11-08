@@ -1331,6 +1331,18 @@ def test_plugins_exits_2_on_malformed_listing(
     assert "MarketplaceError" in capsys.readouterr().err
 
 
+def test_plugins_exits_2_naming_earlier_failures_when_a_listing_fails(
+    monkeypatch: pytest.MonkeyPatch, host_claude: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # #3989: a failed listing no longer drops the failures collected before it.
+    run = _LocalRun(fail_on=("plugin update paad@paad", "marketplace list --json"))
+    monkeypatch.setattr(vrg_host.claude_marketplace, "local_run", run)
+    assert vrg_host.main(["plugins"]) == 2
+    err = capsys.readouterr().err
+    assert "vrg-host plugins: MarketplaceError: CalledProcessError: " in err
+    assert "failed before it: paad@paad (user)" in err
+
+
 def test_host_settings_path_is_the_user_settings() -> None:
     assert vrg_host._host_settings_path() == Path.home() / ".claude" / "settings.json"
 

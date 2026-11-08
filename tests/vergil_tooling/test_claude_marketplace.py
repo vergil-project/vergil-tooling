@@ -255,6 +255,30 @@ class TestRefresh:
         assert "listing cause\nERROR: claude plugin " in err
         assert "failed (exit status 1)" in err
 
+    @pytest.mark.parametrize("listing", ["claude plugin list --json", "marketplace list --json"])
+    def test_a_failed_listing_after_a_failure_names_both(self, listing: str) -> None:
+        # #3989: the add and update failures are kept, chained to the error.
+        run = FakeRun(fail_on=("marketplace update", listing))
+        with pytest.raises(MarketplaceError) as caught:
+            refresh(run, SETTINGS_V21, "")
+        assert str(caught.value).startswith("CalledProcessError: ")
+        assert str(caught.value).endswith("; failed before it: marketplace:vergil-marketplace")
+        assert isinstance(caught.value.__cause__, subprocess.CalledProcessError)
+
+    def test_a_malformed_listing_after_failures_names_each_once(self) -> None:
+        run = FakeRun(
+            marketplace_list='{"not": "a list"}',
+            fail_on=("marketplace add", "marketplace update", "plugin update vergil"),
+        )
+        with pytest.raises(MarketplaceError) as caught:
+            refresh(run, SETTINGS_V21, "")
+        message = str(caught.value)
+        assert message.startswith("MarketplaceError: claude plugin marketplace list --json ")
+        assert message.endswith(
+            "; failed before it: marketplace:vergil-marketplace, vergil@vergil-marketplace (user)"
+        )
+        assert isinstance(caught.value.__cause__, MarketplaceError)
+
     def test_a_plugin_enabled_as_false_is_neither_installed_nor_derived(self) -> None:
         settings = {"enabledPlugins": {"superpowers@claude-plugins-official": False}}
         run = FakeRun(plugin_list="[]")

@@ -509,9 +509,13 @@ def refresh(run: Run, settings: dict[str, Any], prefix: str) -> list[str]:
     GitHub marketplace is registered at its declared repo and ref.
 
     Raises:
-        MarketplaceError: a ``list --json`` output is malformed.
+        MarketplaceError: a ``list --json`` output is malformed, or a
+            ``list --json`` step raised after an earlier step had already
+            failed. Then the message names the step's error and every earlier
+            failure label, and the error is chained from the step's exception
+            (vergil-project/vergil-tooling#3989).
         subprocess.CalledProcessError: a ``list --json`` command failed, so
-            the state could not be read at all.
+            the state could not be read at all, and no earlier step had failed.
     """
     failures: list[str] = []
     adds = _marketplace_adds(settings)
@@ -529,8 +533,17 @@ def refresh(run: Run, settings: dict[str, Any], prefix: str) -> list[str]:
         except subprocess.CalledProcessError as exc:
             _report(f"marketplace update {name}", exc)
             failures.append(f"marketplace:{name}")
-    failures.extend(update_installed_plugins(run, settings, prefix))
-    failures.extend(verify(run, settings, prefix))
+    try:
+        failures.extend(update_installed_plugins(run, settings, prefix))
+        failures.extend(verify(run, settings, prefix))
+    except (MarketplaceError, subprocess.CalledProcessError) as exc:
+        if not failures:
+            raise
+        # The caller prints this error, never the list it did not receive, so
+        # the earlier failures go into its message (#3989).
+        earlier = ", ".join(dict.fromkeys(failures))
+        msg = f"{type(exc).__name__}: {exc}; failed before it: {earlier}"
+        raise MarketplaceError(msg) from exc
     # A marketplace whose add failed usually fails its update and verification
     # too; all carry the same `marketplace:<name>` label, so it is named once.
     return list(dict.fromkeys(failures))
