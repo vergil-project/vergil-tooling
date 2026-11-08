@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 from vergil_tooling.lib import dependabot, git, github, gitignore, lang_scaffold, repo_config
 from vergil_tooling.lib.config import _ENUMS
 from vergil_tooling.lib.labels import sync_labels
+from vergil_tooling.lib.output import emit_error
 
 _CHECKPOINT_RE = re.compile(r"chore\(init\): step (\d+) -")
 
@@ -1079,7 +1080,8 @@ def _resolve_versions(vergil_toml: str) -> Resolution | None:
     try:
         resolution = resolve_config(cfg, repo_root=None)
     except VersionsError as exc:
-        raise SystemExit(f"error: {exc}") from exc
+        emit_error(str(exc))
+        raise SystemExit(1) from exc
     return resolution
 
 
@@ -1472,7 +1474,8 @@ def step_github_config(ctx: RepoInitContext) -> None:
     try:
         desired = compute_desired_state(cfg, visibility=result.visibility, is_org=is_org)
     except VersionsError as exc:
-        raise SystemExit(f"error: {exc}") from exc
+        emit_error(str(exc))
+        raise SystemExit(1) from exc
     # Refuse to apply a CI-gates ruleset whose required status checks the
     # generated ci.yml never emits on a pull_request — the defect that ships a
     # repository which cannot merge its first PR with every check green (#2720).

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import tomllib
 from pathlib import Path
@@ -994,13 +995,36 @@ class TestResolveVersions:
         )
         assert _resolve_versions(toml) is None
 
-    def test_pin_outside_window_stops_the_wizard(self) -> None:
-        with pytest.raises(SystemExit, match=r"error: .*3\.11.*remove it from \[ci\]\.versions"):
+    def test_pin_outside_window_stops_the_wizard(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        with pytest.raises(SystemExit) as exc:
             _resolved("python", ["3.11"])
+        assert exc.value.code == 1
+        assert re.match(
+            r"ERROR: .*3\.11.*remove it from \[ci\]\.versions", capsys.readouterr().err
+        )
 
-    def test_unpinned_family_language_stops_the_wizard(self) -> None:
-        with pytest.raises(SystemExit, match="cpp must pin"):
+    def test_window_error_is_a_ci_annotation_under_github_actions(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setenv("GITHUB_ACTIONS", "true")
+        with pytest.raises(SystemExit) as exc:
+            _resolved("python", ["3.11"])
+        assert exc.value.code == 1
+        assert capsys.readouterr().err.startswith("::error")
+
+    def test_unpinned_family_language_stops_the_wizard(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        with pytest.raises(SystemExit) as exc:
             _resolved("cpp")
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert err.startswith("ERROR: ")
+        assert "cpp must pin" in err
 
     _APP_MULTI_PIN = (
         "[project]\n"
@@ -1015,11 +1039,17 @@ class TestResolveVersions:
         'vergil = "v2.1"\n'
     )
 
-    def test_app_multi_pin_stops_the_wizard(self) -> None:
-        with pytest.raises(
-            SystemExit, match=r"error: \[ci\]\.versions pins 2 versions .*pin a single version"
-        ):
+    def test_app_multi_pin_stops_the_wizard(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        with pytest.raises(SystemExit) as exc:
             _resolve_versions(self._APP_MULTI_PIN)
+        assert exc.value.code == 1
+        assert re.match(
+            r"ERROR: \[ci\]\.versions pins 2 versions .*pin a single version",
+            capsys.readouterr().err,
+        )
 
 
 class TestRenderCdWorkflow:
@@ -2104,10 +2134,16 @@ class TestStepGithubConfigExtended:
             mock_fetch.return_value.visibility = "public"
             step_github_config(ctx)
 
-    def test_version_window_error_stops_cleanly_before_apply(self, tmp_path: Path) -> None:
+    def test_version_window_error_stops_cleanly_before_apply(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
         # A resumed run skips step 3's version check; a pin that has since left
         # the window must stop step 9 as a one-line error, not a traceback,
         # and before anything is applied (#3670).
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
         ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
         ctx.work_dir = tmp_path
         failure = ResolutionError("[ci].versions pins 1.25, which is not in the go window")
@@ -2117,11 +2153,13 @@ class TestStepGithubConfigExtended:
             patch("vergil_tooling.lib.github_config.compute_desired_state", side_effect=failure),
             patch("vergil_tooling.lib.github_config.apply_desired_state") as mock_apply,
             patch("vergil_tooling.lib.config.read_config"),
-            pytest.raises(SystemExit, match=r"^error: \[ci\]\.versions pins 1\.25"),
+            pytest.raises(SystemExit) as exc,
         ):
             mock_fetch.return_value.owner_type = "Organization"
             mock_fetch.return_value.visibility = "public"
             step_github_config(ctx)
+        assert exc.value.code == 1
+        assert re.search(r"^ERROR: \[ci\]\.versions pins 1\.25", capsys.readouterr().err, re.M)
         mock_apply.assert_not_called()
 
 
