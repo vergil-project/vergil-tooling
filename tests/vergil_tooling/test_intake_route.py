@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from datetime import date
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, call, patch
@@ -40,6 +41,11 @@ TODAY = date(2026, 10, 23)
 ORIG_URL = "https://github.com/org/.github/issues/352"
 GHSA = "GHSA-abcd-2345-wxyz"
 ADVISORY_LINE = f"Security advisory: org/.github {GHSA}"
+# What gh prints when addSubIssue names a child the parent already lists (#3839).
+DUPLICATE_REFUSAL = (
+    "gh: Failed to add sub-issue #900 to parent org/.github#11. "
+    "Issue may not contain duplicate sub-issues"
+)
 
 
 class Env:
@@ -78,9 +84,11 @@ class Env:
         self.read_json = MagicMock(side_effect=self._read_json)
         self.create_issue = MagicMock(side_effect=lambda **kw: self.created_url)
         self.ensure_labels = MagicMock()
-        # A link takes effect: the task's native parent becomes the epic.
-        self.add_child = MagicMock(side_effect=self.attach)
-        self.reparent_child = MagicMock(side_effect=self.attach)
+        # A link takes effect: the task's native parent becomes the epic,
+        # unless GitHub already lists it under the epic (#3839).
+        self.add_child = MagicMock(side_effect=self.link)
+        self.reparent_child = MagicMock(side_effect=self.link)
+        self.remove_child = MagicMock(side_effect=self.detach)
         self.sleep = MagicMock()
         self.ensure_planning_epic = MagicMock(return_value=PLANNING)
         self.ensure_intake_epic = MagicMock(return_value=INTAKE)
@@ -99,6 +107,22 @@ class Env:
 
     def attach(self, epic: IssueRef, task: IssueRef) -> None:
         self.native_parent[task] = epic
+
+    def link(self, epic: IssueRef, task: IssueRef) -> None:
+        """addSubIssue: refused while *epic* lists *task* but its parent reads elsewhere."""
+        if task in self.stale_listing.get(epic, set()) and self.native_parent.get(task) != epic:
+            raise github.GitHubAPIError(1, ["gh", "api", "graphql"], "", DUPLICATE_REFUSAL)
+        self.attach(epic, task)
+
+    def detach(self, epic: IssueRef, task: IssueRef) -> None:
+        """removeSubIssue: drop the *epic* link; a link another epic still lists takes over."""
+        if self.native_parent.get(task) == epic:
+            holder = next((e for e, kids in self.stale_listing.items() if task in kids), None)
+            if holder is not None:
+                self.stale_listing[holder].discard(task)
+            self.native_parent[task] = holder
+        else:
+            self.stale_listing.get(epic, set()).discard(task)
 
     def native_children(self, epic: IssueRef) -> list[IssueRef]:
         """The epic's sub-issue list: its children by parent field, plus stale listings."""
@@ -139,7 +163,8 @@ class Env:
 @pytest.fixture
 def env() -> Iterator[Env]:
     state = Env()
-    with (
+    # Python allows only 20 statically nested blocks, so one ExitStack holds them.
+    patches = (
         patch(f"{_MOD}.epics.parent_of", side_effect=lambda ref: state.parent),
         patch(f"{_MOD}.epics.queue_kind", side_effect=state.queue_kind),
         patch(f"{_MOD}.epics.container_kind", side_effect=lambda ref: state.kinds.get(ref)),
@@ -150,6 +175,7 @@ def env() -> Iterator[Env]:
         patch(f"{_MOD}.epics.native_children", side_effect=state.native_children),
         patch(f"{_MOD}.epics.add_child", state.add_child),
         patch(f"{_MOD}.epics.reparent_child", state.reparent_child),
+        patch(f"{_MOD}.epics.remove_child", state.remove_child),
         patch(f"{_MOD}.epics.ensure_planning_epic", state.ensure_planning_epic),
         patch(f"{_MOD}.epics.ensure_intake_epic", state.ensure_intake_epic),
         patch(f"{_MOD}.epics.ensure_deferred_epic", state.ensure_deferred_epic),
@@ -163,7 +189,10 @@ def env() -> Iterator[Env]:
         patch(f"{_MOD}.time.sleep", state.sleep),
         patch(f"{_MOD}.security_records.advisory_home", state.advisory_home),
         patch(f"{_MOD}.security_records.retarget", state.retarget),
-    ):
+    )
+    with contextlib.ExitStack() as stack:
+        for patcher in patches:
+            stack.enter_context(patcher)
         yield state
 
 
@@ -816,6 +845,203 @@ def test_route_one_off_transfer_stale_listing_that_clears_settles(env: Env) -> N
     env.reparent_child.assert_called_once_with(TOOL_ADHOC, new)
 
 
+def test_route_one_off_transfer_duplicate_refusal_clears_the_old_link(
+    env: Env, capsys: pytest.CaptureFixture[str]
+) -> None:
+    new = IssueRef("org", "tool", 900)
+    # After the transfer GitHub lists the item under the target epic while its
+    # parent field still reads the intake epic, so replaceParent is refused
+    # with "Issue may not contain duplicate sub-issues" (#3839).
+    env.native_parent[new] = INTAKE
+    env.stale_listing[TOOL_ADHOC] = {new}
+    result = route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    assert result == RouteResult(final=new, moved_by="transfer")
+    env.remove_child.assert_called_once_with(INTAKE, new)
+    assert env.native_parent[new] == TOOL_ADHOC
+    # The recovery is followed by the settle loop's two-read check.
+    assert env.sleep.call_args_list == [call(intake_route._SETTLE_SECONDS)] * 2
+    err = capsys.readouterr().err
+    assert (
+        "intake-route: org/.github#11 already lists org/tool#900 as a sub-issue, but its "
+        "parent reads org/.github#7; removing the stale link from org/.github#7"
+    ) in err
+
+
+def test_route_one_off_same_repo_rerun_duplicate_refusal_clears_and_settles(env: Env) -> None:
+    # The reported re-run (vrg-intake-route <new ref> one-off --repo <same repo>)
+    # on an item left in the duplicate state.
+    env.native_parent[ITEM] = INTAKE
+    env.stale_listing[ADHOC_DOTGITHUB] = {ITEM}
+    env.resolve_epic_ref.return_value = ADHOC_DOTGITHUB
+    result = route(ITEM, OneOff(repo="org/.github"), today=TODAY)
+    assert result == RouteResult(final=ITEM, moved_by="none")
+    env.remove_child.assert_called_once_with(INTAKE, ITEM)
+    assert env.native_parent[ITEM] == ADHOC_DOTGITHUB
+    # A recovered link gets the settle loop's read-back, not a single read.
+    assert env.sleep.call_args_list == [call(intake_route._SETTLE_SECONDS)] * 2
+
+
+def test_route_one_off_same_repo_without_refusal_reads_once(env: Env) -> None:
+    env.native_parent[ITEM] = INTAKE
+    env.resolve_epic_ref.return_value = ADHOC_DOTGITHUB
+    route(ITEM, OneOff(repo="org/.github"), today=TODAY)
+    env.remove_child.assert_not_called()
+    env.sleep.assert_not_called()
+
+
+def test_route_one_off_duplicate_refusal_while_unparented_relinks(env: Env) -> None:
+    new = IssueRef("org", "tool", 900)
+    # The target lists the item but its parent field reads nothing: the only
+    # link to clear is the target's own, then the link is made again.
+    env.stale_listing[TOOL_ADHOC] = {new}
+    result = route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    assert result == RouteResult(final=new, moved_by="transfer")
+    env.remove_child.assert_called_once_with(TOOL_ADHOC, new)
+    assert env.reparent_child.call_args_list == [call(TOOL_ADHOC, new)] * 2
+    assert env.native_parent[new] == TOOL_ADHOC
+
+
+def test_route_one_off_duplicate_refusal_not_listed_fails_cleanly(env: Env) -> None:
+    new = IssueRef("org", "tool", 900)
+    env.native_parent[new] = INTAKE
+    # GitHub refuses the link as a duplicate, but the target's list does not
+    # show the item: no known state to recover from, so nothing is removed.
+    env.reparent_child.side_effect = github.GitHubAPIError(
+        1, ["gh", "api", "graphql"], "", DUPLICATE_REFUSAL
+    )
+    with pytest.raises(intake_route.RouteHalfAppliedError) as excinfo:
+        route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    assert str(excinfo.value) == (
+        "moved org/.github#352 to org/tool#900, but GitHub refused to link it under "
+        "org/.github#11 (Issue may not contain duplicate sub-issues) although "
+        "org/.github#11 does not list it; it is under org/.github#7; the route is "
+        "half-applied. Set the parent of org/tool#900 to org/.github#11 in the GitHub UI"
+    )
+    env.remove_child.assert_not_called()
+
+
+def test_route_one_off_duplicate_refusal_listing_read_failure_fails_cleanly(env: Env) -> None:
+    new = IssueRef("org", "tool", 900)
+    env.native_parent[new] = INTAKE
+    env.stale_listing[TOOL_ADHOC] = {new}
+    with (
+        patch(
+            f"{_MOD}.epics.native_children",
+            side_effect=github.GitHubAPIError(1, ["gh"], "", "gh: HTTP 502"),
+        ),
+        pytest.raises(intake_route.RouteHalfAppliedError) as excinfo,
+    ):
+        route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    message = str(excinfo.value)
+    assert message.startswith(
+        "moved org/.github#352 to org/tool#900, but GitHub refused to link it under "
+        "org/.github#11 (Issue may not contain duplicate sub-issues) and reading the "
+        "sub-issues of org/.github#11 failed ("
+    )
+    assert message.endswith(
+        "); it is under org/.github#7; the route is half-applied. "
+        "Set the parent of org/tool#900 to org/.github#11 in the GitHub UI"
+    )
+    env.remove_child.assert_not_called()
+
+
+def test_route_one_off_duplicate_refusal_remove_failure_fails_cleanly(env: Env) -> None:
+    new = IssueRef("org", "tool", 900)
+    env.native_parent[new] = INTAKE
+    env.stale_listing[TOOL_ADHOC] = {new}
+    env.remove_child.side_effect = github.GitHubAPIError(
+        1, ["gh", "api", "graphql"], "", "gh: HTTP 502"
+    )
+    with pytest.raises(intake_route.RouteHalfAppliedError) as excinfo:
+        route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    message = str(excinfo.value)
+    assert message.startswith(
+        "moved org/.github#352 to org/tool#900, but it is under org/.github#7 while "
+        "org/.github#11 already lists it as a sub-issue, and removing the stale link "
+        "from org/.github#7 failed ("
+    )
+    assert "gh: HTTP 502" in message
+    assert message.endswith(
+        "); the route is half-applied. "
+        "Set the parent of org/tool#900 to org/.github#11 in the GitHub UI"
+    )
+
+
+def test_route_one_off_duplicate_refusal_that_persists_fails_cleanly(
+    env: Env, capsys: pytest.CaptureFixture[str]
+) -> None:
+    new = IssueRef("org", "tool", 900)
+    env.native_parent[new] = INTAKE
+    env.stale_listing[TOOL_ADHOC] = {new}
+    env.remove_child.side_effect = None  # the removal never takes
+    with pytest.raises(intake_route.RouteHalfAppliedError) as excinfo:
+        route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    # vrg-epic-move would hit the same refusal: name the fix that works.
+    assert str(excinfo.value) == (
+        "moved org/.github#352 to org/tool#900, but it is under org/.github#7, not under "
+        "org/.github#11, although org/.github#11 lists it as a sub-issue (GitHub refuses "
+        "the link: Issue may not contain duplicate sub-issues); the route is half-applied. "
+        "Set the parent of org/tool#900 to org/.github#11 in the GitHub UI"
+    )
+    assert env.remove_child.call_count == intake_route._SETTLE_ROUNDS
+    assert capsys.readouterr().err.count("replacing the parent") == intake_route._SETTLE_ROUNDS
+
+
+def test_route_one_off_other_link_error_fails_cleanly(env: Env) -> None:
+    env.native_parent[ITEM] = INTAKE
+    env.resolve_epic_ref.return_value = ADHOC_DOTGITHUB
+    env.reparent_child.side_effect = github.GitHubAPIError(1, ["gh"], "", "gh: HTTP 502")
+    with pytest.raises(intake_route.RouteHalfAppliedError) as excinfo:
+        route(ITEM, OneOff(repo="org/.github"), today=TODAY)
+    message = str(excinfo.value)
+    assert message.startswith(
+        "org/.github#352: linking org/.github#352 under org/.github#9 or reading its "
+        "parent back failed ("
+    )
+    assert "gh: HTTP 502" in message
+    # The pasted command quotes its refs: zsh EXTENDED_GLOB reads an unquoted #.
+    assert message.endswith(
+        "); the route is half-applied. Check where it is with vrg-queue, then fix it "
+        "with: vrg-epic-move --task 'org/.github#352' --epic 'org/.github#9'"
+    )
+    env.remove_child.assert_not_called()
+
+
+def test_route_one_off_transfer_read_back_error_fails_cleanly(env: Env) -> None:
+    new = IssueRef("org", "tool", 900)
+    # The link lands, but reading the old epic's sub-issues back fails.
+    with (
+        patch(
+            f"{_MOD}.epics.native_children",
+            side_effect=github.GitHubAPIError(1, ["gh"], "", "gh: HTTP 502"),
+        ),
+        pytest.raises(intake_route.RouteHalfAppliedError) as excinfo,
+    ):
+        route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    message = str(excinfo.value)
+    assert message.startswith(
+        "moved org/.github#352 to org/tool#900, but linking org/tool#900 under "
+        "org/.github#11 or reading its parent back failed ("
+    )
+    assert message.endswith("vrg-epic-move --task 'org/tool#900' --epic 'org/.github#11'")
+    assert env.native_parent[new] == TOOL_ADHOC
+
+
+def test_route_one_off_missing_token_is_left_as_it_came(env: Env) -> None:
+    env.reparent_child.side_effect = github.MissingGitHubTokenError(1, ["gh"], "", "no token")
+    with pytest.raises(github.MissingGitHubTokenError):
+        route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+
+
+def test_route_planning_duplicate_refusal_is_not_recovered(env: Env) -> None:
+    # Only a one-off reads its parent back, so only a one-off recovers.
+    env.native_parent[ITEM] = INTAKE
+    env.stale_listing[PLANNING] = {ITEM}
+    with pytest.raises(github.GitHubAPIError):
+        route(ITEM, ToPlanning(), today=TODAY)
+    env.remove_child.assert_not_called()
+
+
 def test_route_one_off_already_under_epic_is_left(env: Env) -> None:
     new = IssueRef("org", "tool", 900)
     env.native_parent[new] = TOOL_ADHOC
@@ -1093,18 +1319,19 @@ def test_transfer_parent_mismatch_also_names_the_advisory(env: Env) -> None:
     env.retarget.assert_not_called()
 
 
-def test_transfer_link_error_also_names_the_advisory_and_stays_a_runtime_error(
-    env: Env,
-) -> None:
+def test_transfer_link_error_is_half_applied_and_names_the_advisory(env: Env) -> None:
     env.make_security_item()
     env.reparent_child.side_effect = RuntimeError("GraphQL errors: [boom]")
-    with pytest.raises(RuntimeError) as excinfo:
+    with pytest.raises(intake_route.RouteHalfAppliedError) as excinfo:
         route(ITEM, OneOff(repo="org/tool"), today=TODAY)
-    # Only a settle that read the wrong parent is a half-applied route; a
-    # failed link call keeps its own type, with the advisory recovery added.
-    assert not isinstance(excinfo.value, intake_route.RouteHalfAppliedError)
+    # The item has moved, so a failed link leaves the route half-applied
+    # (#3839): it names that state, with the advisory recovery added.
     message = str(excinfo.value)
-    assert message.startswith("GraphQL errors: [boom]; also, advisory")
+    assert message.startswith(
+        "moved org/.github#352 to org/tool#900, but linking org/tool#900 under "
+        "org/.github#11 or reading its parent back failed (GraphQL errors: [boom])"
+    )
+    assert f"; also, advisory {GHSA} was not retargeted" in message
     assert f"vrg-security-record retarget {GHSA} --to org/tool#900" in message
     env.retarget.assert_not_called()
 
