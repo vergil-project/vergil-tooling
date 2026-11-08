@@ -21,6 +21,7 @@ import sys
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -347,6 +348,34 @@ def _jwt_api_request(endpoint: str, jwt_token: str, *, method: str = "GET") -> A
         return json.loads(resp.read())
 
 
+_JWT_ERROR_MESSAGE_MAX = 300
+
+
+def _jwt_http_error_detail(exc: urllib.error.HTTPError) -> str:
+    """Describe a rejected JWT request: status, endpoint and GitHub's message.
+
+    A bare ``HTTP Error 401: Unauthorized`` cannot tell a JWT claim GitHub
+    judged out of range (clock skew) from a key it no longer accepts; the
+    response's JSON ``message`` names the cause (#3825). The request URL and
+    the error body carry neither the JWT nor a token. An unreadable or
+    non-JSON body is reported as such rather than dropped.
+    """
+    path = urllib.parse.urlsplit(exc.url or "").path or "(unknown endpoint)"
+    base = f"{exc} on {path}"
+    try:
+        body = exc.read()
+    except OSError as read_exc:
+        return f"{base} (response body unreadable: {read_exc})"
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return f"{base} (response body was not JSON)" if body else base
+    message = data.get("message") if isinstance(data, dict) else None
+    if not isinstance(message, str) or not message:
+        return base
+    return f"{base}: GitHub said: {message[:_JWT_ERROR_MESSAGE_MAX]}"
+
+
 def _resolve_installations(jwt_token: str) -> dict[str, str]:
     """Fetch all App installations and return an org → installation ID map."""
     global _installation_cache  # noqa: PLW0603
@@ -366,11 +395,22 @@ def _resolve_installations(jwt_token: str) -> dict[str, str]:
     return mapping
 
 
+# GitHub rejects an App JWT with 401 when its ``iat`` is in the future or its
+# ``exp`` is more than 10 minutes ahead, both judged by GitHub's clock. The
+# ``iat`` backdate covers a local clock running behind; the ``exp`` margin
+# covers one running ahead. An ``exp`` of exactly ``now + 600`` had no margin:
+# a local clock even a fraction of a second fast (``int()`` truncation decides
+# per call) made some mints fail with a bare 401 (#3825).
+_JWT_CLOCK_SKEW_SECS = 60
+_JWT_LIFETIME_SECS = 600 - _JWT_CLOCK_SKEW_SECS
+
+
 def _generate_jwt(app_id: str, key_path: Path) -> str:
     """Generate an RS256 JWT for GitHub App authentication.
 
     Uses ``openssl`` for RSA signing to avoid adding a
-    cryptography dependency.
+    cryptography dependency. ``iat`` is backdated and ``exp`` kept short of
+    GitHub's 10-minute ceiling by the same clock-skew allowance.
     """
     import base64 as _b64
 
@@ -379,7 +419,12 @@ def _generate_jwt(app_id: str, key_path: Path) -> str:
 
     now = int(time.time())
     header = b64url(json.dumps({"alg": "RS256", "typ": "JWT"}).encode())
-    payload = b64url(json.dumps({"iat": now - 60, "exp": now + 600, "iss": int(app_id)}).encode())
+    claims = {
+        "iat": now - _JWT_CLOCK_SKEW_SECS,
+        "exp": now + _JWT_LIFETIME_SECS,
+        "iss": int(app_id),
+    }
+    payload = b64url(json.dumps(claims).encode())
 
     signing_input = f"{header}.{payload}"
 
@@ -476,6 +521,8 @@ def get_installation_token(
             if isinstance(output, bytes):
                 output = output.decode(errors="replace")
             detail = output.strip() or failure_message(exc)
+        elif isinstance(exc, urllib.error.HTTPError):
+            detail = _jwt_http_error_detail(exc)
         else:
             detail = str(exc)
         raise AppAuthError(org, app_id, key_path, detail) from exc
