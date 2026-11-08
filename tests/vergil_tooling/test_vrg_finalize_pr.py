@@ -28,6 +28,7 @@ from vergil_tooling.bin.vrg_finalize_pr import (
     _resolve_strategy,
     _run_finalize_batch,
     _stage_cd_check,
+    _stage_close_refs,
     _stage_merge,
     _stage_provenance,
     _stage_provision,
@@ -41,6 +42,7 @@ from vergil_tooling.bin.vrg_finalize_pr import (
     parse_args,
 )
 from vergil_tooling.lib.cache_space import CacheSpaceError
+from vergil_tooling.lib.github import ClosingIssue, GitHubAPIError, PRClosingReferences
 from vergil_tooling.lib.live_branches import RepoSetError
 from vergil_tooling.lib.pr_merge import MergeAbortError, MergeConflictError
 from vergil_tooling.lib.pr_provenance import Action, ProvenanceResult, Role
@@ -160,6 +162,20 @@ def _merge_commit_sha_stub() -> Iterator[None]:
     the recorded SHA re-patch it directly — the innermost patch wins.
     """
     with patch(_MOD + ".github.merge_commit_sha", return_value="mergecommitsha"):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _no_closing_refs() -> Iterator[None]:
+    """Default: the merged PR closes no issues, read without gh (issue #4002).
+
+    Tests that assert close-refs behavior re-patch it directly — the innermost
+    patch wins.
+    """
+    refs = PRClosingReferences(
+        repo="o/r", number=42, state="MERGED", merged_at="2026-11-08T00:00:00Z", issues=()
+    )
+    with patch(_MOD + ".github.pr_closing_references", return_value=refs):
         yield
 
 
@@ -1981,9 +1997,178 @@ def test_stage_merge_dry_run_skips_engine() -> None:
     assert ctx.merged_branch == "feature/42-x"
 
 
+# -- close-refs: close what GitHub failed to auto-close (issue #4002) ----------
+
+
+def _refs(*issues: ClosingIssue, state: str = "MERGED") -> PRClosingReferences:
+    return PRClosingReferences(
+        repo="o/r",
+        number=123,
+        state=state,
+        merged_at="2026-11-08T12:00:00Z",
+        issues=issues,
+    )
+
+
+def _issue(number: int, state: str, repo: str = "o/r") -> ClosingIssue:
+    return ClosingIssue(repo=repo, number=number, state=state)
+
+
+def test_close_refs_closes_issue_github_left_open(capsys: pytest.CaptureFixture[str]) -> None:
+    ctx = _stage_ctx(["123"])
+    open_refs = _refs(_issue(7, "OPEN"), _issue(8, "CLOSED", repo="o/other"))
+    with (
+        patch(_MOD + ".github.pr_closing_references", return_value=open_refs) as read,
+        patch(_MOD + ".github.close_issue") as close,
+        patch(_MOD + ".time.sleep") as sleep,
+    ):
+        _stage_close_refs(ctx)
+    # One grace re-read before acting, so an auto-close in flight is not raced.
+    sleep.assert_called_once()
+    assert read.call_count == 2
+    close.assert_called_once_with(
+        "o/r",
+        7,
+        comment=(
+            "Completed by PR o/r#123 (merged 2026-11-08T12:00:00Z); GitHub did not auto-close it."
+        ),
+    )
+    out = capsys.readouterr().out
+    assert "o/r#7: GitHub left it open after the merge; closed it as completed" in out
+    assert "o/other#8: closed" in out
+
+
+def test_close_refs_leaves_issue_auto_closed_during_grace() -> None:
+    ctx = _stage_ctx(["123"])
+    with (
+        patch(
+            _MOD + ".github.pr_closing_references",
+            side_effect=[_refs(_issue(7, "OPEN")), _refs(_issue(7, "CLOSED"))],
+        ),
+        patch(_MOD + ".github.close_issue") as close,
+        patch(_MOD + ".time.sleep"),
+    ):
+        _stage_close_refs(ctx)
+    close.assert_not_called()
+
+
+def test_close_refs_all_closed_does_nothing(capsys: pytest.CaptureFixture[str]) -> None:
+    ctx = _stage_ctx(["123"])
+    with (
+        patch(_MOD + ".github.pr_closing_references", return_value=_refs(_issue(7, "CLOSED"))),
+        patch(_MOD + ".github.close_issue") as close,
+        patch(_MOD + ".time.sleep") as sleep,
+    ):
+        _stage_close_refs(ctx)
+    close.assert_not_called()
+    sleep.assert_not_called()
+    assert "o/r#7: closed" in capsys.readouterr().out
+
+
+def test_close_refs_none_listed(capsys: pytest.CaptureFixture[str]) -> None:
+    ctx = _stage_ctx(["123"])
+    with (
+        patch(_MOD + ".github.pr_closing_references", return_value=_refs()),
+        patch(_MOD + ".github.close_issue") as close,
+    ):
+        _stage_close_refs(ctx)
+    close.assert_not_called()
+    assert "PR o/r#123 has no closing issue references." in capsys.readouterr().out
+
+
+def test_close_refs_read_failure_is_loud() -> None:
+    ctx = _stage_ctx(["123"])
+    err = GitHubAPIError(1, ("gh", "api", "graphql"), stderr="HTTP 502")
+    with (
+        patch(_MOD + ".github.pr_closing_references", side_effect=err),
+        patch(_MOD + ".github.close_issue") as close,
+        pytest.raises(
+            FinalizeError,
+            match=r"(?s)could not read the closing issue references of PR 123:.*HTTP 502",
+        ),
+    ):
+        _stage_close_refs(ctx)
+    close.assert_not_called()
+
+
+def test_close_refs_not_merged_refuses() -> None:
+    ctx = _stage_ctx(["123"])
+    with (
+        patch(
+            _MOD + ".github.pr_closing_references",
+            return_value=_refs(_issue(7, "OPEN"), state="OPEN"),
+        ),
+        patch(_MOD + ".github.close_issue") as close,
+        pytest.raises(FinalizeError, match="not MERGED"),
+    ):
+        _stage_close_refs(ctx)
+    close.assert_not_called()
+
+
+def test_close_refs_close_failure_tries_every_issue_then_fails(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    ctx = _stage_ctx(["123"])
+    refs = _refs(_issue(7, "OPEN"), _issue(9, "OPEN"))
+    err = GitHubAPIError(1, ("gh", "issue", "close"), stderr="HTTP 403")
+    with (
+        patch(_MOD + ".github.pr_closing_references", return_value=refs),
+        patch(_MOD + ".github.close_issue", side_effect=[err, None]) as close,
+        patch(_MOD + ".time.sleep"),
+        pytest.raises(FinalizeError, match=r"could not close o/r#7, left open"),
+    ):
+        _stage_close_refs(ctx)
+    assert close.call_count == 2
+    captured = capsys.readouterr()
+    assert "ERROR: could not close o/r#7:" in captured.err
+    assert "HTTP 403" in captured.err
+    assert "o/r#9: GitHub left it open after the merge; closed it as completed" in captured.out
+
+
+def test_close_refs_dry_run_reads_and_closes_nothing() -> None:
+    ctx = _stage_ctx(["123", "--dry-run"])
+    with (
+        patch(_MOD + ".github.pr_closing_references") as read,
+        patch(_MOD + ".github.close_issue") as close,
+    ):
+        _stage_close_refs(ctx)
+    read.assert_not_called()
+    close.assert_not_called()
+
+
+def test_close_refs_failure_still_cleans_up_and_exits_one(tmp_path: Path) -> None:
+    """A close failure fails finalize, but the merged PR is still cleaned up."""
+    err = GitHubAPIError(1, ("gh", "api", "graphql"), stderr="HTTP 502")
+    with (
+        patch(f"{_MOD}.pr_provenance.check_pr", return_value=_clean()),
+        patch(f"{_MOD}.github.pr_state", return_value="MERGED"),
+        patch(f"{_MOD}.github.pr_closing_references", side_effect=err),
+        patch(f"{_MOD}.github.head_ref", return_value="feature/42-x"),
+        patch(f"{_MOD}.git.current_branch", return_value="develop") as branch,
+        patch(f"{_MOD}.git.merged_branches", return_value=[]),
+        patch(f"{_MOD}.git.read_output", return_value=""),
+        patch(f"{_MOD}.git.run"),
+        patch(f"{_MOD}.git.working_tree_status", return_value=""),
+        patch(f"{_MOD}.git.repo_root", return_value=tmp_path),
+        patch(f"{_MOD}.config.read_config", side_effect=FileNotFoundError),
+        patch(f"{_MOD}._wait_for_cd_run", return_value=None),
+    ):
+        result = main(["42"])
+    assert result == 1
+    branch.assert_called()  # cleanup ran despite the close-refs failure
+
+
 def test_build_stages_with_pr() -> None:
     names = [s.name for s in build_stages(include_pr=True)]
-    assert names == ["provenance", "merge", "cleanup", "provision", "validation", "cd-check"]
+    assert names == [
+        "provenance",
+        "merge",
+        "close-refs",
+        "cleanup",
+        "provision",
+        "validation",
+        "cd-check",
+    ]
 
 
 def test_build_stages_without_pr() -> None:
@@ -1993,13 +2178,16 @@ def test_build_stages_without_pr() -> None:
 
 def test_build_stages_skips_post_checks() -> None:
     names = [s.name for s in build_stages(include_pr=True, include_post_checks=False)]
-    assert names == ["provenance", "merge", "cleanup"]
+    assert names == ["provenance", "merge", "close-refs", "cleanup"]
 
 
 def test_build_stages_failure_modes() -> None:
     modes = {s.name: s.mode for s in build_stages(include_pr=True)}
     assert modes["provenance"] == "fail_fast"
     assert modes["merge"] == "fail_fast"
+    # An issue left open fails finalize, but the merged PR is still cleaned up
+    # (issue #4002).
+    assert modes["close-refs"] == "fail_defer"
     assert modes["cleanup"] == "fail_fast"
     # Provisioning is a prerequisite: fail_fast so validation never runs against
     # a broken or absent image (issue #2462).

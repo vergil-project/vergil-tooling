@@ -181,12 +181,32 @@ Runs the pre-merge provenance check first, so violations surface
 before any waiting. Advisories are printed but do not block.
 Violations abort the merge unless `--allow-provenance-violation`
 is given. If the PR is already merged, the merge step is skipped and
-finalize proceeds straight to cleanup. Otherwise the wait-for-green
-loop runs (see *Waiting for green*) and the PR is merged with the
-selected strategy. `--dry-run` skips the wait and prints what it
-would do.
+finalize goes straight on to the closing-reference check (1a) and
+cleanup. Otherwise the wait-for-green loop runs (see *Waiting for
+green*) and the PR is merged with the selected strategy. `--dry-run`
+skips the wait and prints what it would do.
 
-### 1a. Explicit-Target Cleanup (PR mode only)
+### 1a. Close Issues GitHub Left Open (PR mode only)
+
+GitHub sometimes skips the closing-keyword auto-close, which leaves a
+merged task open and blocks epic rollup (issue #4002). Once the merge is
+confirmed, finalize reads the PR's `closingIssuesReferences`: the issues
+GitHub itself lists as closed by the PR, through a closing keyword or a
+Development link. It never parses the PR text, so an issue the PR only
+mentions (`Ref` linkage) is never touched. If any listed issue is still
+open, finalize waits 10 seconds for an auto-close still in flight, reads
+again, then closes each one still open with reason `completed` and the
+comment "Completed by PR `<owner>/<repo>#N` (merged `<time>`); GitHub
+did not auto-close it." Each closed issue is reported in the output.
+This also runs when the PR was already merged, so re-running
+`vrg-finalize-pr <PR>` closes an issue an earlier merge left open.
+
+A failure to read the references, or to close any issue, fails the
+stage and finalize exits 1. Every close is tried first, and the error
+names each issue still open. The cleanup below still runs, because the
+PR is already merged. `--dry-run` reads and closes nothing.
+
+### 1b. Explicit-Target Cleanup (PR mode only)
 
 The just-merged PR branch and its `.worktrees/` worktree are deleted
 by name. The default squash strategy rewrites history onto the
@@ -228,7 +248,7 @@ target's tip as merged:
   manual cleanup.
 
 Both guards gate the worktree removal as strictly as the branch
-deletion. The explicit-target cleanup (step 1a) is unaffected — the
+deletion. The explicit-target cleanup (step 1b) is unaffected — the
 just-merged PR branch has merge evidence by construction.
 
 #### Stuck merged worktrees are surfaced, not buried
@@ -374,4 +394,4 @@ release — the batch runs those once at the end.
 | Code | Meaning |
 | ---- | ------- |
 | 0 | Finalization complete, or declined at a confirmation prompt |
-| 1 | Provenance violation, unmergeable PR (draft, conflicts, failed checks, stuck behind, orphaned check-run, or wait timeout), not run from main worktree, non-TTY stdin or stdout in inference mode, dirty working tree, failed validation, failed CD run, CD watch timeout (result unknown), or a batch item failed |
+| 1 | Provenance violation, unmergeable PR (draft, conflicts, failed checks, stuck behind, orphaned check-run, or wait timeout), not run from main worktree, non-TTY stdin or stdout in inference mode, dirty working tree, a closing-reference issue that could not be read or closed, failed validation, failed CD run, CD watch timeout (result unknown), or a batch item failed |
