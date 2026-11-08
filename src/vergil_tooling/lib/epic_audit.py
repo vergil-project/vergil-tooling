@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from vergil_tooling.lib import epic_docs, epics, github, linkage, release, roadmap
+from vergil_tooling.lib import epic_docs, epics, github, linkage, release, remote_config, roadmap
 from vergil_tooling.lib.labels import RETIRED_LABELS
 
 # A closed-epic-with-open-child violation (issue #2259): the closed epic paired
@@ -621,7 +621,11 @@ def _repo_open_issues(owner: str, bare: str, *, public: bool) -> list[OpenIssue]
         if after is not None:
             variables["after"] = after
         data: Any = github.graphql(_OPEN_ISSUES_QUERY, **variables)
-        page = ((data or {}).get("repository") or {}).get("issues") or {}
+        repository = (data or {}).get("repository")
+        if repository is None:
+            # A listed repo the token cannot read must never count as empty (#3513).
+            raise RuntimeError(f"{owner}/{bare} is listed but its issues cannot be read")
+        page = repository.get("issues") or {}
         for node in page.get("nodes") or []:
             ref = epics.IssueRef(owner, bare, int(node["number"]))
             label_conn = node.get("labels") or {}
@@ -662,6 +666,68 @@ def open_issues(org: str) -> list[OpenIssue]:
             continue
         issues += _repo_open_issues(org, bare, public=github.is_public(repo))
     return issues
+
+
+# GitHub's 403 for /installation/repositories under a token that is not an App
+# installation token (a human's own gh login).
+_NOT_AN_INSTALLATION_403 = "installation access token"
+
+
+def coverage_gap(org: str) -> str | None:
+    """Why the active token may not see every repo in *org*, or None when it sees them all.
+
+    The org-wide passes enumerate *org* through :func:`github.list_org_repos`,
+    which silently lists only the repos the token can see (#3513). An App
+    installation token covers all of *org* only when it is installed on *org*
+    with ``repository_selection`` ``all``; a human's own login covers it when
+    it owns *org* (or *org* is that login's own account). Anything else is a
+    gap the caller must report, never a clean result. Any other API error
+    propagates.
+
+    The installation probe asks for one row on purpose: only the account
+    that row belongs to and the installation's ``repository_selection`` are
+    read, never the repo list, so no listing can be cut short.
+    """
+    try:
+        data: Any = github.read_json("api", "installation/repositories?per_page=1")
+    except github.GitHubAPIError as exc:
+        if _NOT_AN_INSTALLATION_403 not in (exc.stderr or "") + (exc.stdout or ""):
+            raise
+        return _login_coverage_gap(org)
+    if not isinstance(data, dict):
+        raise RuntimeError("unexpected /installation/repositories response")
+    rows = data.get("repositories") or []
+    account = str(((rows[0] or {}).get("owner") or {}).get("login") or "") if rows else ""
+    if account.lower() != org.lower():
+        return f"the GitHub App token in use is not installed on {org}"
+    selection = data.get("repository_selection")
+    if selection != "all":
+        return (
+            f"the GitHub App installation on {org} covers only selected repositories "
+            f"(repository_selection: {selection})"
+        )
+    return None
+
+
+def _login_coverage_gap(org: str) -> str | None:
+    """:func:`coverage_gap` for a human's own gh login (not an App token)."""
+    try:
+        membership: Any = github.read_json("api", f"user/memberships/orgs/{org}")
+    except github.GitHubAPIError as exc:
+        if not remote_config.is_not_found(exc):
+            raise
+        user: Any = github.read_json("api", "user")
+        login = str((user or {}).get("login") or "") if isinstance(user, dict) else ""
+        if login and login.lower() == org.lower():
+            return None
+        return f"the GitHub login in use is not a member of {org}"
+    if (
+        isinstance(membership, dict)
+        and membership.get("state") == "active"
+        and membership.get("role") == "admin"
+    ):
+        return None
+    return f"the GitHub login in use is not an owner of {org}, so it may not see every repo"
 
 
 def _epic_body_parent(issue: OpenIssue) -> epics.IssueRef | None:
@@ -964,8 +1030,13 @@ def render(
     public_queues: list[epics.IssueRef] | None = None,
     private_under_public: list[str] | None = None,
     epic_docs_findings: list[EpicDocsFinding] | None = None,
+    coverage_gap: str | None = None,
 ) -> str:
     """Format the drift + invariant report; a clean state says so explicitly.
+
+    A ``coverage_gap`` (from :func:`coverage_gap`) opens the report with an
+    **Incomplete coverage** section and replaces the clean-state line, so a
+    partial report is never read as a complete one (#3513).
 
     The orphan pass (epic .github#176) adds ``orphans``, ``retired_labels``,
     ``body_only`` and ``public_queues`` (what ``--close`` would apply) and the
@@ -1017,7 +1088,18 @@ def render(
             epic_docs_findings,
         ]
     ):
+        if coverage_gap is not None:
+            return "\n".join(
+                [
+                    *header,
+                    *_render_coverage_gap(coverage_gap),
+                    "_No drift in the repos this identity can see; the report is partial._",
+                    "",
+                ]
+            )
         return "\n".join([*header, "_No drift — everything that should be closed is closed._", ""])
+    if coverage_gap is not None:
+        header = [*header, *_render_coverage_gap(coverage_gap)]
     lines = [*header, "## Task drift (merged PR, task still open)", ""]
     if tasks:
         for task in sorted(tasks, key=lambda t: (t.repo, t.task)):
@@ -1106,6 +1188,17 @@ _PRIVATE_UNDER_PUBLIC_HEADING = (
     "**Private repo work under public .github epics** — an unsupported public → "
     "private flip? Resolve by hand (spec: Private repos and visibility):"
 )
+
+
+def _render_coverage_gap(gap: str) -> list[str]:
+    return [
+        "## Incomplete coverage",
+        "",
+        f"- **This report is partial:** {gap}. Repos the identity cannot see are "
+        "not audited, so a missing finding does not mean a clean state. Run the "
+        "audit as an identity that sees every repo in the org.",
+        "",
+    ]
 
 
 def _render_private_under_public(slugs: list[str]) -> list[str]:
