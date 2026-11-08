@@ -2125,6 +2125,31 @@ class TestDetectOrg:
             mock_run.return_value = _completed(stdout="git@github.com:/repo.git\n")
             assert github.detect_org() is None
 
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://x-access-token:t0ken@github.com/vergil-project/r.git",
+            "https://GitHub.com/vergil-project/r",
+            "org-123@github.com:vergil-project/r.git",
+            "ssh://git@github.com:22/vergil-project/r.git",
+        ],
+    )
+    def test_reads_every_form_the_shared_parser_accepts(self, url: str) -> None:
+        """#3984: detect_org reads origin through github_remote_repo."""
+        with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
+            mock_run.return_value = _completed(stdout=f"{url}\n")
+            assert github.detect_org() == "vergil-project"
+
+    @pytest.mark.parametrize(
+        "url",
+        ["https://github.com/vergil-project", "https://github.com/vergil-project/r/extra"],
+    )
+    def test_returns_none_when_origin_names_no_single_repo(self, url: str) -> None:
+        """#3984: an origin path that is not ``owner/repo`` reads as no org."""
+        with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
+            mock_run.return_value = _completed(stdout=f"{url}\n")
+            assert github.detect_org() is None
+
 
 @pytest.mark.parametrize(
     ("url", "expected"),
@@ -2141,10 +2166,86 @@ class TestDetectOrg:
         ("https://notgithub.com/org/repo", False),
         ("/srv/git/repo.git", False),
         ("", False),
+        # A remote on github.com whose path names no single repo still counts,
+        # so has_github_remote fails closed on it (#3217).
+        ("https://github.com/org", True),
+        ("https://github.com", True),
+        ("https://github.com/org/repo/extra", True),
+        ("git@github.com:/org/repo.git", True),
+        ("github.com:org/repo.git", True),
+        ("git://github.com/org/repo.git", True),
+        # #3984: the host is the host a URL parser sees, and only git's schemes.
+        ("https://evil.example#@github.com/org/repo", False),
+        ("https://evil.example?@github.com/org/repo", False),
+        ("ssh://evil.example#@github.com/org/repo", False),
+        ("evil.example?x@github.com:org/repo", False),
+        ("ftp://github.com/org/repo", False),
+        ("github.com/org/repo", False),  # a local path to git
+        ("github.com", False),
     ],
 )
 def test_is_github_url(url: str, expected: bool) -> None:
     assert github.is_github_url(url) is expected
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("https://github.com/org/repo.git", "org/repo"),
+        ("https://github.com/org/repo", "org/repo"),
+        ("https://github.com/org/repo/", "org/repo"),
+        ("https://github.com/org/repo.git/", "org/repo"),
+        ("https://x-access-token:secret@github.com/org/repo.git", "org/repo"),
+        ("https://github.com:443/org/repo.git", "org/repo"),
+        ("http://github.com/org/repo.git", "org/repo"),
+        ("HTTPS://GitHub.COM/Org/Repo.GIT", "Org/Repo"),
+        ("git@github.com:org/repo.git", "org/repo"),
+        ("git@github.com:/org/repo.git", "org/repo"),
+        ("org-123@github.com:org/repo.git", "org/repo"),
+        ("github.com:org/repo.git", "org/repo"),
+        ("ssh://git@github.com/org/repo.git", "org/repo"),
+        ("ssh://git@github.com:22/org/repo.git", "org/repo"),
+        ("ssh://github.com/org/repo", "org/repo"),
+        ("git+ssh://git@github.com/org/repo.git", "org/repo"),
+        ("ssh+git://git@github.com/org/repo.git", "org/repo"),
+        ("git://github.com/org/repo.git", "org/repo"),
+        ("  git@github.com:org/my.repo.git\n", "org/my.repo"),
+        ("https://github.com/org", None),
+        ("https://github.com/org/", None),
+        ("https://github.com/org/repo/extra", None),
+        ("https://github.com//org/repo", None),
+        ("git@github.com:/repo.git", None),
+        ("ssh://git@github.com:22org/repo", None),
+        ("https://gitlab.com/org/repo.git", None),
+        ("https://github.com.evil.example/org/repo", None),
+        ("https://evil.example#@github.com/org/repo", None),
+        ("https://evil.example?@github.com/org/repo", None),
+        ("https://evil.example\\@github.com/org/repo", None),
+        ("evil.example?x@github.com:org/repo", None),
+        ("https://user:pa/ss@github.com/org/repo", None),
+        ("https://user:p@ss@github.com/org/repo", None),
+        ("ftp://github.com/org/repo", None),
+        ("github.com/org/repo", None),
+        ("", None),
+    ],
+)
+def test_github_remote_repo(url: str, expected: str | None) -> None:
+    assert github.github_remote_repo(url) == expected
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://github.com/org/repo.git",
+        "git@github.com:org/repo.git",
+        "ssh://git@github.com:22/org/repo.git",
+        "github.com:org/repo",
+    ],
+)
+def test_every_parsed_remote_is_a_github_url(url: str) -> None:
+    """The two share one host grammar: a parsed remote is always on github.com."""
+    assert github.github_remote_repo(url) == "org/repo"
+    assert github.is_github_url(url) is True
 
 
 def _checkout(path: Path, *remotes: tuple[str, str]) -> Path:
@@ -2204,6 +2305,16 @@ class TestRepoInstallationToken:
         msg = github.app_auth_message(excinfo.value)
         assert f"{repo} has a remote on GitHub" in msg
         assert "Refusing to fall back to ambient gh auth" in msg
+
+    def test_github_origin_naming_no_single_repo_refuses(self, tmp_path: Path) -> None:
+        # #3984: detect_org reads no org from it, but it is still on GitHub.
+        repo = _checkout(tmp_path / "r", ("origin", "https://github.com/org"))
+        with (
+            patch("vergil_tooling.lib.github.get_installation_token") as m_token,
+            pytest.raises(github.NoTargetOrgError),
+        ):
+            github.repo_installation_token(repo)
+        m_token.assert_not_called()
 
     def test_github_remote_without_app_mode_is_ambient(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
