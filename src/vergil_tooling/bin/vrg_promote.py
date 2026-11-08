@@ -26,31 +26,6 @@ if TYPE_CHECKING:
     from vergil_tooling.lib.promote import Promotion
 
 
-def _can_prompt() -> bool:
-    """Whether there is a terminal to confirm on.
-
-    The answer is read from stdin and the move and the prompt are written to
-    stderr, so both must be terminals.
-    """
-    return sys.stdin.isatty() and sys.stderr.isatty()
-
-
-def _confirmed(p: Promotion) -> bool:
-    """Show the move and ask for confirmation on the terminal.
-
-    The move and the prompt go to stderr, not stdout, so they stay visible when
-    stdout is redirected.
-    """
-    print(describe(p), file=sys.stderr)
-    print(f"Move {p.rolling_tag} on {p.origin_repo}? [y/N] ", end="", file=sys.stderr, flush=True)
-    try:
-        answer = input()
-    except (EOFError, KeyboardInterrupt):
-        print(file=sys.stderr)
-        answer = ""
-    return answer.strip().lower() in ("y", "yes")
-
-
 @cli_main
 def main() -> int:
     if identity_mode.is_agent() or identity_mode.any_agent_signal():
@@ -128,6 +103,31 @@ def main() -> int:
         print(f"Error: {error_text(exc)}", file=sys.stderr)
         return 1
     return 0
+
+
+def _can_prompt() -> bool:
+    """Whether there is a terminal to confirm on.
+
+    The answer is read from stdin and the move and the prompt are written to
+    stderr, so both must be terminals.
+    """
+    return sys.stdin.isatty() and sys.stderr.isatty()
+
+
+def _confirmed(p: Promotion) -> bool:
+    """Show the move and ask for confirmation on the terminal.
+
+    The move and the prompt go to stderr, not stdout, so they stay visible when
+    stdout is redirected.
+    """
+    print(describe(p), file=sys.stderr)
+    print(f"Move {p.rolling_tag} on {p.origin_repo}? [y/N] ", end="", file=sys.stderr, flush=True)
+    try:
+        answer = input()
+    except (EOFError, KeyboardInterrupt):
+        print(file=sys.stderr)
+        answer = ""
+    return answer.strip().lower() in ("y", "yes")
 
 
 if __name__ == "__main__":
