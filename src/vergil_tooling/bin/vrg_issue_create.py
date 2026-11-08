@@ -27,6 +27,7 @@ from vergil_tooling.lib import epics, github
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.labels import ensure_labels_or_report
 from vergil_tooling.lib.process_errors import error_text
+from vergil_tooling.lib.shell_ref import quoted_slug
 
 
 @cli_main
@@ -123,7 +124,8 @@ def main(argv: list[str] | None = None) -> int:
         with github.target_org(owner):
             try:
                 epic = epics.resolve_epic_ref(args.epic, repo=repo)
-            except ValueError as exc:
+            except (ValueError, epics.StandingEpicNotVisibleError) as exc:
+                # A standing epic created but not confirmed names the new epic.
                 print(f"vrg-issue-create: {exc}", file=sys.stderr)
                 return 1
             if epics.queue_kind(epic) == epics.DEFERRED.key:
@@ -165,7 +167,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(
                     f"vrg-issue-create: created {url} but failed to link it under epic "
                     f"{epic.slug}: {error_text(exc)}. Link it with: "
-                    f"vrg-epic-move --task #{task.number} --epic {epic.slug}",
+                    f"vrg-epic-move --task {quoted_slug(task)} --epic {quoted_slug(epic)}",
                     file=sys.stderr,
                 )
                 return 1

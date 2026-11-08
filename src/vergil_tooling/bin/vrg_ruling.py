@@ -71,6 +71,7 @@ from vergil_tooling.lib.rulings.post import (
     post_comment_once,
 )
 from vergil_tooling.lib.rulings.scope import render_scope_change
+from vergil_tooling.lib.shell_ref import quoted_issue_ref
 from vergil_tooling.lib.trusted_authors import (
     TrustedAuthors,
     TrustedAuthorsNotConfiguredError,
@@ -163,7 +164,7 @@ def _request(ctx: _Context, items_path: Path) -> int:
     if pending is not None:
         msg = (
             f"{ctx.where} has open request {pending}; read it with"
-            f" vrg-ruling read --issue {draft_ref.quoted_issue_ref(ctx.repo, ctx.issue)}"
+            f" vrg-ruling read --issue {quoted_issue_ref(ctx.repo, ctx.issue)}"
             f" --request {pending}"
         )
         raise RulingError(msg)

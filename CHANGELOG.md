@@ -5,6 +5,63 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.290] - 2026-11-08
+
+### Bug fixes
+
+- quote the issue ref in the paste-ready commands other tools print (#4052)
+- require the host settings.json on start, rebuild, session and cloud create (#4053)
+- post the check run in the PR's own repo (#4054)
+- bound and check the gh list and search lookups (#4055)
+- bound and check the gh repo list lookups (#4059)
+- name the created epic when the post-create lookup finds a duplicate (#4060)
+- report version-window errors with emit_error (#4061)
+- write every guest and generated file atomically instead of with cat > (#4062)
+- point off-platform not-running hints at vrg-vm rebuild (#4067)
+- name a ruleset as the likely cause of a bare 422 on a REST refs write (#4069)
+- allow deferring a planning issue whose development epics are all closed (#4001) (#4071)
+- read under the audited org's token and refuse a partial view as complete (#4072)
+- open a PR only at the head the latest report-ready recorded (#4073)
+- keep earlier failures when a later refresh listing raises (#4075)
+- report settings the identity cannot read as not checked (#4076)
+- name the created epic when a post-create lookup read fails (#4078)
+- say in vrg-vm update output that it copies the host Claude config (#4079)
+- rebuild step 3's answers from vergil.toml on a resumed init (#4080)
+- refuse an unexpected response shape instead of reading it as empty (#4082)
+- tell a stale branch from a workflow change on a workflow-permission push refusal (#4083)
+- report unreadable queues and make the planning hold consistent with the spec (#4084)
+- reject null, sourceless and repo-less github marketplace declarations (#4086)
+- tell a stale branch from a workflow change on report-ready's workflow-permission push refusal (#4087)
+- install a user-scope copy of each user-enabled plugin even when a project-scope install exists (#4089)
+- keep the App JWT exp clear of GitHub's 10-minute ceiling (#4093)
+
+### Documentation
+
+- name prod-base as the default no-language image in vrg-container-run's help (#4090)
+- say every repository gets the same four rulesets (#4097)
+
+### Features
+
+- add a claude-settings target for the managed .claude/settings.json (#4063)
+- support the global -C option, with every check and the token org following it (#4064)
+- add --yes to vrg-promote and require a terminal only when prompting (#4065)
+- close any closing-reference issue GitHub failed to auto-close (#4068)
+- turn off idle compaction in the managed settings template (#3795) (#4074)
+- add a claude-md target that syncs the CLAUDE.md template region (#4094)
+
+### Refactoring
+
+- remove the uncalled _marketplace_sources and test the add list directly (#4066)
+- drop promote()'s unused dry_run; the CLI owns the dry run (#4081)
+- share one poll loop between retry_known_resource and _await_listed (#4085)
+- share one GitHub remote URL parser between promote, detect_org and is_github_url (#4091)
+- read draft_ref push URLs and vrg-git clone URLs with the shared GitHub remote URL parser (#4095)
+- remove the vestigial vrg-trivy-scan command and lib/trivy.py (#4096)
+
+### Testing
+
+- a deleted untrusted comment is not fatal (#4057)
+
 ## [2.1.289] - 2026-11-08
 
 ### Bug fixes

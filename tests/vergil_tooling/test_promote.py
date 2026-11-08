@@ -211,6 +211,12 @@ def test_plan_promotion_fetches_main_explicitly_and_checks_qualified_ref() -> No
         f"org-123@github.com:{_REPO}.git",
         f"ssh://git@github.com/{_REPO}.git",
         f"ssh://git@github.com:22/{_REPO}.git",
+        # #3984: the forms the shared github_remote_repo parser adds.
+        f"https://github.com:443/{_REPO}.git",
+        f"http://github.com/{_REPO}.git",
+        f"github.com:{_REPO}.git",
+        f"git@github.com:/{_REPO}.git",
+        f"git+ssh://git@github.com/{_REPO}.git",
     ],
 )
 def test_plan_promotion_normalizes_origin(url: str) -> None:
@@ -547,16 +553,13 @@ def test_promote_refuses_when_origin_moved_between_plan_and_push() -> None:
     assert _mutations(mock_run) == []
 
 
-def test_promote_dry_run_does_not_execute(capsys: pytest.CaptureFixture[str]) -> None:
-    with _patched() as (mock_run, _):
-        promote("2.1.50", dry_run=True)
+def test_promote_target_check_refuses_before_any_move() -> None:
+    with (
+        _patched(on_main=1) as (mock_run, _),
+        pytest.raises(PromoteError, match="not on origin/main"),
+    ):
+        promote("2.1.50")
     assert _mutations(mock_run) == []
-    assert capsys.readouterr().out == f"origin: {_REPO}\nv2.1 {OLD[:12]} -> v2.1.50 {NEW[:12]}\n"
-
-
-def test_promote_dry_run_applies_target_check() -> None:
-    with _patched(on_main=1), pytest.raises(PromoteError, match="not on origin/main"):
-        promote("2.1.50", dry_run=True)
 
 
 def test_promote_strips_v_prefix() -> None:

@@ -42,6 +42,7 @@ nightly. The user file is none of those, so it stays minimal.
 - **Fleet policy, so it stays in the repo:**
   - the guard `PreToolUse` hook;
   - `attribution` off;
+  - `idleCompaction` off;
   - `permissions.allow: Bash(vrg-*)`;
   - the enable for the vergil plugin. That plugin's own hooks enforce
     workflow policy, and a user-level `false` cannot turn off a project
@@ -60,7 +61,7 @@ nightly. The user file is none of those, so it stays minimal.
 | File | Owns | Must not hold |
 |---|---|---|
 | `~/.claude/settings.json` (host, copied verbatim to VMs) | plugin enablement (which installs them) and marketplaces for **all** plugins; the agent-VM permission mode; personal model and UI settings | anything that works on only one OS: the same file runs on the macOS host and on Linux VMs |
-| repo `.claude/settings.json` (checked in, generated from the template, audited) | the guard `PreToolUse` hook; `permissions.allow: Bash(vrg-*)`; `attribution` off; `enabledPlugins: {"vergil@vergil-marketplace": true}` | `extraKnownMarketplaces` (a second definition replaces the user's whole entry); any repo-specific key |
+| repo `.claude/settings.json` (checked in, generated from the template, audited) | the guard `PreToolUse` hook; `permissions.allow: Bash(vrg-*)`; `attribution` off; `idleCompaction` off; `enabledPlugins: {"vergil@vergil-marketplace": true}` | `extraKnownMarketplaces` (a second definition replaces the user's whole entry); any repo-specific key |
 | `.claude/settings.local.json` (gitignored; checked by the agent chokepoints) | nothing: absent or exactly `{}` | any key |
 | managed template `data/claude_settings.json` | the only source for the repo file's content | — |
 | managed settings | unused, deliberately (see [Unused scopes](#unused-scopes)) | — |
@@ -164,6 +165,12 @@ Each fact below is what the cited page said on 2026-10-27.
     at the start of every interactive session. Committed settings files must
     therefore hold only valid keys.
     ([settings.md, "Fix a broken settings file"](https://code.claude.com/docs/en/settings.md#fix-a-broken-settings-file))
+12. **`idleCompaction`.** A boolean, valid in any settings file, default
+    `true`; `false` means Claude Code doesn't compact while the session is
+    idle. It needs v2.1.290 or later, and earlier versions ignore it.
+    Turning off `autoCompactEnabled` instead would also stop context-full
+    auto-compaction, so it is not a substitute.
+    ([settings-reference.md, `idleCompaction`](https://code.claude.com/docs/en/settings-reference.md#idlecompaction))
 
 ### Observed on an agent VM
 
@@ -173,8 +180,12 @@ VM on 2026-10-28
 ([vergil-project/.github#578](https://github.com/vergil-project/.github/issues/578)),
 settings alone brought all three plugins back without `vm_guest`'s
 reconcile step, but `vergil` came back at project scope rather than user
-scope. The reconcile step stays until that difference is understood
-([vergil-project/.github#675](https://github.com/vergil-project/.github/issues/675)).
+scope. The reconcile step stays
+([vergil-project/.github#675](https://github.com/vergil-project/.github/issues/675)):
+it is the step that installs, at user scope, every plugin the user file
+enables that has no user-scope install, even when a project-scope install
+exists, because plugin installation belongs to the user file
+([vergil-project/vergil-tooling#3836](https://github.com/vergil-project/vergil-tooling/issues/3836)).
 
 ## Unused scopes
 
@@ -240,9 +251,14 @@ and what needs judgment.
 It checks the following, each a hard failure with no transition window:
 
 - the repo `CLAUDE.md` is at most 200 lines;
-- the template markers are present;
+- the template markers are present, and the region between them is the
+  template verbatim (after a template change,
+  `vrg-fleet-sync --target claude-md` brings every repo back in line, one
+  PR per drifted repo);
 - no `AGENTS.md` exists;
-- `.claude/settings.json` equals the template after JSON parsing;
+- `.claude/settings.json` equals the template after JSON parsing (after
+  a template change, `vrg-fleet-sync --target claude-settings` brings
+  every repo back in line, one PR per drifted repo);
 - the `paad-policy.md` pointer is present (it is in the template region, so
   the template check covers it).
 

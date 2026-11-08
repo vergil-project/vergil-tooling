@@ -11,6 +11,9 @@ caller has to remember a separate push. Already on origin at that commit, the
 push is a no-op. When the delta touches ``.github/workflows/**`` GitHub refuses
 an agent identity's push; that is expected — report-ready says so and records
 the state anyway, and the human's ``vrg-submit-pr`` pushes the branch instead.
+A stale branch, whose own commits change no workflow file but whose tree carries
+an outdated one, is refused the same way; report-ready tells it apart as
+``vrg-git push`` does and fails with the rebase steps, recording nothing (#4077).
 Any other push failure fails report-ready with nothing recorded and no relay ref
 written. A branch with no commits ahead of ``--base`` is refused before
 anything is pushed or recorded, so it is never frozen (#3870). A re-run on a
@@ -18,6 +21,9 @@ frozen branch whose HEAD has drifted past the reported commit is refused before
 anything is pushed. A re-run after a deliberate
 ``unfreeze`` pushes with a lease on the recorded head, so a rebased branch
 replaces the reported commit but an unexpectedly moved origin is refused (#3783).
+``unfreeze`` overwrites the relay ref with the reopened state before it
+reopens the local one, and fails with nothing changed if it cannot, so no
+``vrg-submit-pr`` can still read the branch as ready at its old head (#3815).
 """
 
 from __future__ import annotations
@@ -72,8 +78,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "for this worktree, and freeze the branch. No separate push is needed. "
             "If the delta touches .github/workflows/**, GitHub refuses the agent "
             "push; report-ready records the state anyway and the human's "
-            "vrg-submit-pr pushes the branch instead. Any other push failure "
-            "records nothing."
+            "vrg-submit-pr pushes the branch instead. A stale branch (its own "
+            "commits change no workflow file) is refused with the rebase steps, "
+            "and that and any other push failure record nothing."
         ),
     )
     p_ready.add_argument("--issue", required=True)
@@ -231,6 +238,8 @@ def _push_branch(branch: str, *, lease_sha: str | None = None) -> None:
     where a diff of the delta would only predict it (a human identity's push of
     the same delta succeeds). That case is expected: it is reported and the state
     is still recorded, since the human's ``vrg-submit-pr`` pushes the branch.
+    A stale branch gets the same refusal and is refused here instead (see
+    :func:`_handle_workflow_refusal`).
 
     With *lease_sha* (see :func:`_lease_sha`) and the branch on origin, the push
     carries ``--force-with-lease=refs/heads/<branch>:<lease_sha>`` so a rebase
@@ -245,13 +254,7 @@ def _push_branch(branch: str, *, lease_sha: str | None = None) -> None:
         git.read_output("push", "-u", *lease_args, "origin", f"{ref}:{ref}")
     except subprocess.CalledProcessError as exc:
         if git.is_workflow_push_refusal(exc.stderr):
-            print(
-                f"report-ready: push of {branch} refused for workflow-file changes — "
-                "EXPECTED, not an error. This branch touches .github/workflows/**, "
-                "which an agent identity may not push; the human's vrg-submit-pr "
-                "pushes it at submit time. Recording the ready state anyway.",
-                file=sys.stderr,
-            )
+            _handle_workflow_refusal(branch)
             return
         if lease:
             raise WorkflowError(
@@ -267,6 +270,45 @@ def _push_branch(branch: str, *, lease_sha: str | None = None) -> None:
             "(e.g. after a rebase, vrg-git push --force-with-lease) and re-run report-ready."
         ) from exc
     print(f"report-ready: pushed {branch} to origin", file=sys.stderr)
+
+
+def _handle_workflow_refusal(branch: str) -> None:
+    """Report GitHub's workflow-permission refusal of *branch*, or refuse a stale one.
+
+    The refusal comes both from a branch whose own commits change
+    ``.github/workflows/**`` and from a stale branch whose tree only carries an
+    outdated workflow file; ``vrg-git push`` tells them apart with the same
+    :func:`lib.git.diagnose_workflow_refusal` (#3814, #4077). An own change is
+    the expected hand-off: report it and return, so the state is recorded and
+    the human's ``vrg-submit-pr`` pushes the branch. A stale branch raises, so
+    nothing is recorded and the agent rebases instead. When the cause cannot be
+    told, the hand-off stands as before, with how to check by hand.
+    """
+    diagnosis = git.diagnose_workflow_refusal("origin")
+    if diagnosis.kind == "stale":
+        raise WorkflowError(
+            f"report-ready: {git.stale_workflow_refusal_text(diagnosis)}"
+            "  then re-run `vrg-container-run -- vrg-validate` and re-run report-ready.\n"
+            f"  Nothing was recorded: {branch} is not handed off as ready."
+        )
+    if diagnosis.kind == "own":
+        cause = (
+            f"This branch's own commits change {git.WORKFLOWS_PATH}** "
+            f"({', '.join(diagnosis.files)}), which"
+        )
+    else:
+        cause = f"GitHub refused it for {git.WORKFLOWS_PATH}** changes, which"
+    print(
+        f"report-ready: push of {branch} refused for workflow-file changes — "
+        f"EXPECTED, not an error. {cause} an agent identity may not push; the "
+        "human's vrg-submit-pr pushes it at submit time. Recording the ready state anyway.",
+        file=sys.stderr,
+    )
+    if diagnosis.kind == "unknown":
+        print(
+            f"  report-ready {git.unknown_workflow_refusal_note(diagnosis)}",
+            file=sys.stderr,
+        )
 
 
 def _refuse_drifted_rerun(state: WorkflowState, head_sha: str) -> None:
@@ -403,12 +445,39 @@ def cmd_report_ready(args: argparse.Namespace, transport: LocalFileTransport) ->
     return 0
 
 
-def cmd_unfreeze(_args: argparse.Namespace, transport: LocalFileTransport) -> int:
+def _retract_relay_ref(state: WorkflowState, base: str) -> None:
+    """Publish the unfrozen state to the relay ref, before the local write.
+
+    The relay ref still carries the ``ready`` state the last ``report-ready``
+    pushed. Left in place, a named-branch ``vrg-submit-pr`` on another machine
+    would read it as ready and open the PR at the head reported before the
+    unfreeze, dropping every commit made since (issue #3815). Overwriting it
+    with the ``implementing`` state makes that submit refuse. This runs before
+    the local file is written, and a failure fails the unfreeze with nothing
+    changed: the branch stays frozen rather than reopened with a stale ready
+    relay ref still on origin.
+    """
+    relay = GitHubTransport(state.branch, base=base)
+    try:
+        relay.write(state)
+    except (subprocess.CalledProcessError, OSError) as exc:
+        raise WorkflowError(
+            f"unfreeze: could not update the pr-workflow relay ref {relay.ref} "
+            f"({error_text(exc)}); nothing changed and the branch stays frozen. "
+            "The relay ref still says ready at the reported head, so reopening "
+            "without it would let vrg-submit-pr open the PR at that stale head. "
+            "Fix the push and re-run unfreeze."
+        ) from exc
+
+
+def cmd_unfreeze(args: argparse.Namespace, transport: LocalFileTransport) -> int:
     """Deliberately reopen a frozen (reported-ready) branch for more commits.
 
     The sanctioned escape hatch from the post-report-ready freeze: it is a
     distinct, explicit subcommand precisely so reopening a branch is never a
-    silent side effect of another action.
+    silent side effect of another action. The relay ref is updated to the
+    reopened state first (:func:`_retract_relay_ref`), so no submit anywhere
+    can still see the branch as ready at its old head.
     """
     state = transport.read()
     if state is None:
@@ -416,6 +485,7 @@ def cmd_unfreeze(_args: argparse.Namespace, transport: LocalFileTransport) -> in
             "no workflow file to unfreeze; run report-ready first (there is nothing frozen here)."
         )
     engine.apply_unfreeze(state, now=_now())
+    _retract_relay_ref(state, args.base)
     transport.write(state)
     _emit({"ok": True, "status": state.status})
     return 0

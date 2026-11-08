@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from vergil_tooling.lib.atomic_write import atomic_write_cmd
 from vergil_tooling.lib.package import PackageError, repo_setup
 from vergil_tooling.lib.package.orgs import OrgRepo
 
@@ -299,9 +300,17 @@ def test_rpm_prereq_probe(tmp_path: Path) -> None:
 # --- bootstrap: apt ------------------------------------------------------------
 
 
+def _source_words(script: str, src: str) -> list[str]:
+    """The words of *script* before its atomic write of *src*, which it must end in."""
+    # #4035: the bootstrap source is piped into an atomic replace, never `> src`.
+    suffix = f" | {{ {atomic_write_cmd(src, 0o644)}; }}"
+    assert script.endswith(suffix)
+    return shlex.split(script.removesuffix(suffix))
+
+
 def _assert_deb_write(write: tuple[str, ...], key_tmp: str) -> None:
     assert write[-2] == "-c"
-    assert shlex.split(write[-1]) == [
+    assert _source_words(write[-1], "/etc/apt/sources.list.d/vergil-bootstrap.sources") == [
         "umask",
         "022",
         "&&",
@@ -319,8 +328,6 @@ def _assert_deb_write(write: tuple[str, ...], key_tmp: str) -> None:
         "Suites: noble\n"
         "Components: main\n"
         "Signed-By: /etc/apt/keyrings/vergil-bootstrap.asc\n",
-        ">",
-        "/etc/apt/sources.list.d/vergil-bootstrap.sources",
     ]
 
 
@@ -383,7 +390,7 @@ def test_apt_bootstrap_without_sudo_has_no_sudo_prefix() -> None:
 
 
 def _assert_rpm_write(write: tuple[str, ...], key_tmp: str) -> None:
-    words = shlex.split(write[-1])
+    words = _source_words(write[-1], "/etc/yum.repos.d/vergil-bootstrap.repo")
     assert words[:9] == [
         "umask",
         "022",
@@ -395,8 +402,8 @@ def _assert_rpm_write(write: tuple[str, ...], key_tmp: str) -> None:
         key_tmp,
         "/etc/pki/rpm-gpg/RPM-GPG-KEY-vergil-bootstrap",
     ]
-    assert words[-2:] == [">", "/etc/yum.repos.d/vergil-bootstrap.repo"]
-    assert words[-3] == (
+    assert words[-3:-1] == ["printf", "%s"]
+    assert words[-1] == (
         "[vergil-bootstrap]\n"
         "name=vergil packages (bootstrap)\n"
         "baseurl=https://vergil-project.github.io/packages/rpm/el$releasever/$basearch\n"

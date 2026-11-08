@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from vergil_tooling.lib import claude_marketplace, vm_packages
+from vergil_tooling.lib.atomic_write import atomic_write_cmd
 from vergil_tooling.lib.trusted_authors import VM_FILE_NAME, render_vm_file
 from vergil_tooling.lib.vm_transport import TransportTimeoutError
 
@@ -83,13 +84,13 @@ def inject_credentials(transport: Transport, identity: Identity) -> None:
     print("  Injecting App private key...")
     transport.run("bash", "-c", "mkdir -p ~/.config/vergil")
     transport.pipe(
-        "cat > ~/.config/vergil/app.pem && chmod 600 ~/.config/vergil/app.pem",
+        atomic_write_cmd("~/.config/vergil/app.pem", 0o600),
         key_content,
     )
 
     print("  Injecting App configuration...")
     transport.pipe(
-        "cat > ~/.config/vergil/app.env && chmod 600 ~/.config/vergil/app.env",
+        atomic_write_cmd("~/.config/vergil/app.env", 0o600),
         f"APP_ID={identity.app_id}\n",
     )
 
@@ -129,7 +130,7 @@ def _inject_identity_mode(transport: Transport, mode: str) -> None:
     """
     print(f"  Injecting identity mode ({mode})...")
     transport.pipe(
-        "cat > ~/.config/vergil/identity-mode && chmod 600 ~/.config/vergil/identity-mode",
+        atomic_write_cmd("~/.config/vergil/identity-mode", 0o600),
         f"{mode}\n",
     )
     export_cmd = (
@@ -152,7 +153,7 @@ def _inject_claude_token(transport: Transport, token_path: str) -> None:
 
     print("  Injecting Claude Code token...")
     transport.pipe(
-        "cat > ~/.config/vergil/claude.env && chmod 600 ~/.config/vergil/claude.env",
+        atomic_write_cmd("~/.config/vergil/claude.env", 0o600),
         f"export CLAUDE_CODE_OAUTH_TOKEN={token}\n",
     )
 
@@ -165,15 +166,12 @@ def _inject_claude_token(transport: Transport, token_path: str) -> None:
     credentials = json.dumps({"claudeAiOauth": {"accessToken": token}})
     transport.run("bash", "-c", "mkdir -p ~/.claude")
     transport.pipe(
-        "cat > ~/.claude/.credentials.json && chmod 600 ~/.claude/.credentials.json",
+        atomic_write_cmd("~/.claude/.credentials.json", 0o600),
         credentials + "\n",
     )
 
     onboarding = json.dumps({"hasCompletedOnboarding": True})
-    transport.pipe(
-        "cat > ~/.claude.json",
-        onboarding + "\n",
-    )
+    transport.pipe(atomic_write_cmd("~/.claude.json", 0o644), onboarding + "\n")
 
 
 _TRUSTED_AUTHORS_FILE = f"~/.config/vergil/{VM_FILE_NAME}"
@@ -194,7 +192,7 @@ def inject_trusted_authors(transport: Transport, authors: TrustedAuthors | None)
     print("  Injecting trusted authors...")
     transport.run("bash", "-c", "mkdir -p ~/.config/vergil")
     transport.pipe(
-        f"(umask 077 && cat > {_TRUSTED_AUTHORS_FILE}) && chmod 600 {_TRUSTED_AUTHORS_FILE}",
+        atomic_write_cmd(_TRUSTED_AUTHORS_FILE, 0o600),
         render_vm_file(authors),
     )
 
@@ -225,7 +223,7 @@ def _inject_conan_token(transport: Transport, token_path: str) -> None:
 
     print("  Injecting Conan audit token...")
     transport.pipe(
-        "cat > ~/.config/vergil/conan.env && chmod 600 ~/.config/vergil/conan.env",
+        atomic_write_cmd("~/.config/vergil/conan.env", 0o600),
         f"export CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER={shlex.quote(token)}\n",
     )
 
@@ -272,7 +270,7 @@ def _install(transport: Transport, tag: str) -> None:
 
 def _write_tag_file(transport: Transport, tag: str) -> None:
     transport.run("bash", "-c", f"mkdir -p $(dirname {_TOOLING_TAG_FILE})")
-    transport.pipe(f"cat > {_TOOLING_TAG_FILE}", f"{tag}\n")
+    transport.pipe(atomic_write_cmd(_TOOLING_TAG_FILE, 0o644), f"{tag}\n")
 
 
 def install_tooling(transport: Transport, tag: str) -> None:
@@ -466,7 +464,11 @@ def update_plugins(transport: Transport) -> None:
             to read the guest settings.json.
         RuntimeError: the guest settings.json is missing, unreadable or
             invalid, or any step or the verification failed. The message names
-            every failure.
+            every failure, including those collected before a ``list --json``
+            step raised (then a ``MarketplaceError``,
+            vergil-project/vergil-tooling#3989).
+        subprocess.CalledProcessError: a ``list --json`` command failed before
+            any other step had failed.
     """
     print("  Refreshing Claude plugins...")
     settings = _read_guest_settings(transport)
@@ -477,100 +479,83 @@ def update_plugins(transport: Transport) -> None:
         raise RuntimeError(msg)
 
 
-# Each copied file, and whether the guest copy is locked read-only after the
-# write. The guest CLAUDE.md is a read-only copy of the host's on every
-# transport (epic vergil-project/.github#760, spec §6); settings.json stays
-# writable, because provisioning and the Claude runtime both write it.
-_CLAUDE_CONFIG_FILES = (("CLAUDE.md", True), ("settings.json", False))
+# The guest modes of the copied files. The guest CLAUDE.md is a read-only copy
+# of the host's on every transport (epic vergil-project/.github#760, spec §6);
+# settings.json stays writable, because provisioning and the Claude runtime both
+# write it.
+_CLAUDE_MD_MODE = 0o444
+_SETTINGS_MODE = 0o644
 
 
-def copy_claude_config(
-    transport: Transport, claude_dir: Path, *, require_settings: bool = False
-) -> None:
+def _read_host_file(source: Path) -> str:
+    try:
+        return source.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        msg = f"cannot read the host {source}: {exc}"
+        raise RuntimeError(msg) from exc
+
+
+def copy_claude_config(transport: Transport, claude_dir: Path) -> None:
     """Copy CLAUDE.md and settings.json from host into the VM.
 
-    The sole owner of the guest ``~/.claude/CLAUDE.md`` file mode: after
-    writing it, the copy runs ``chmod a-w`` on it, on Lima as well as cloud,
-    so every path that copies it (start, rebuild, session, cloud create,
-    update) leaves it read-only. When the host has no ``CLAUDE.md``, any guest
-    copy is removed, so the guest never keeps one the host does not have. The
-    mode is a guard that makes an accidental write fail loudly; it is not a
-    security boundary, since the guest user owns the file.
+    The sole owner of the guest ``~/.claude/CLAUDE.md`` file mode: the copy
+    writes it read-only (mode 444), on Lima as well as cloud, so every path that
+    copies it (start, rebuild, session, cloud create, update) leaves it
+    read-only. When the host has no ``CLAUDE.md``, any guest copy is removed, so
+    the guest never keeps one the host does not have. The mode is a guard that
+    makes an accidental write fail loudly; it is not a security boundary, since
+    the guest user owns the file.
 
     Each file is written atomically (#3987): to a temp file in ``~/.claude``,
-    given its final mode, then renamed into place (see :func:`_atomic_write_cmd`).
-    A concurrent reader never sees an empty or partial file, and a failed copy
-    raises and leaves the existing file as it was. The rename needs only the
-    directory to be writable, so a copy locked by an earlier run is replaced
-    without reopening it (#2436).
+    given its final mode, then renamed into place (see
+    :func:`~vergil_tooling.lib.atomic_write.atomic_write_cmd`). A concurrent
+    reader never sees an empty or partial file, and a failed copy raises and
+    leaves the existing file as it was. The rename needs only the directory to
+    be writable, so a copy locked by an earlier run is replaced without
+    reopening it (#2436).
 
-    With *require_settings* (the update path, which refreshes plugins from the
-    copied file right after), a missing host ``settings.json`` is an error
-    naming the host file, not a skip, and the text copied is first parsed and
-    shape-checked as the refresh will read it.
+    The host ``settings.json`` is required on every path (#3988): it is the
+    single authority for the guest copy, which the plugin refresh reads. A
+    missing host file is an error naming it, never a skip that would leave an
+    earlier guest copy in place, and the text copied is first parsed and
+    shape-checked as the refresh will read it. That provisioning writes an
+    initial guest copy does not change this. Both host files are read, and the
+    settings checked, before anything is written to the guest, so a refused copy
+    leaves the guest as it was.
 
     Raises:
-        RuntimeError: *require_settings* is set and the host settings.json is
-            missing or unusable, or a host file cannot be read.
+        RuntimeError: the host settings.json is missing or unusable, or a host
+            file cannot be read.
         subprocess.CalledProcessError: a guest command failed, such as a copy
             that could not be written; the guest file it targeted is unchanged.
     """
     settings = claude_dir / "settings.json"
-    if require_settings and not settings.is_file():
+    if not settings.is_file():
         msg = (
-            f"the host {settings} is missing; it is required, because the plugin "
-            "refresh reads the copy of it in the VM"
+            f"the host {settings} is missing; it is required, because it is the "
+            "only source of the VM's copy, which the plugin refresh reads"
         )
         raise RuntimeError(msg)
-    if not claude_dir.is_dir():
-        # No host config at all: the guest keeps no CLAUDE.md the host lacks.
-        transport.run("bash", "-c", "rm -f ~/.claude/CLAUDE.md")
-        return
+    settings_content = _read_host_file(settings)
+    # Check the exact text that is piped, as the refresh will read it, so a host
+    # file changed since the check above is never copied unchecked.
+    try:
+        claude_marketplace.validate_settings(
+            claude_marketplace.parse_settings(settings_content, f"the host {settings}")
+        )
+    except claude_marketplace.MarketplaceError as exc:
+        msg = f"the host {settings} is unusable: {exc}"
+        raise RuntimeError(msg) from exc
+    claude_md = claude_dir / "CLAUDE.md"
+    claude_md_content = _read_host_file(claude_md) if claude_md.exists() else None
+
     transport.run("bash", "-c", "mkdir -p ~/.claude")
-    for filename, locked in _CLAUDE_CONFIG_FILES:
-        source = claude_dir / filename
-        dest = f"~/.claude/{filename}"
-        if not source.exists():
-            if locked:
-                transport.run("bash", "-c", f"rm -f {dest}")
-            continue
-        try:
-            content = source.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError) as exc:
-            msg = f"cannot read the host {source}: {exc}"
-            raise RuntimeError(msg) from exc
-        if require_settings and filename == "settings.json":
-            # Check the exact text about to be piped, as the refresh will read
-            # it, so a host file changed since the pre-flight is never copied.
-            try:
-                claude_marketplace.validate_settings(
-                    claude_marketplace.parse_settings(content, f"the host {source}")
-                )
-            except claude_marketplace.MarketplaceError as exc:
-                msg = f"the host {source} is unusable: {exc}"
-                raise RuntimeError(msg) from exc
-        transport.pipe(_atomic_write_cmd(filename, locked=locked), content)
-
-
-def _atomic_write_cmd(filename: str, *, locked: bool) -> str:
-    """Return the guest command that atomically replaces ``~/.claude/<filename>``.
-
-    Stdin goes to a temp file made by ``mktemp`` in ``~/.claude`` itself, so the
-    final ``mv -f`` is a rename on one filesystem: a reader sees the old file or
-    the new one, never an empty or partial one. The temp file gets its final
-    mode (``644``, then ``a-w`` when *locked*) before the rename. If any step
-    fails, the temp file is removed and the command exits non-zero, so the
-    transport raises and the existing file is left untouched.
-    """
-    dest = f"~/.claude/{filename}"
-    steps = 'cat > "$tmp" && chmod 644 "$tmp"'
-    if locked:
-        steps += ' && chmod a-w "$tmp"'
-    steps += f' && mv -f "$tmp" {dest}'
-    return (
-        f"tmp=$(mktemp ~/.claude/.{filename}.XXXXXX) && "
-        f'{{ {steps} || {{ rm -f "$tmp"; false; }}; }}'
-    )
+    if claude_md_content is None:
+        # The guest keeps no CLAUDE.md the host lacks.
+        transport.run("bash", "-c", "rm -f ~/.claude/CLAUDE.md")
+    else:
+        transport.pipe(atomic_write_cmd("~/.claude/CLAUDE.md", _CLAUDE_MD_MODE), claude_md_content)
+    transport.pipe(atomic_write_cmd("~/.claude/settings.json", _SETTINGS_MODE), settings_content)
 
 
 # The agent-VM ~/.claude share set. See

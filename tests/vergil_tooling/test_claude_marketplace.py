@@ -14,7 +14,7 @@ from vergil_tooling.lib import claude_marketplace
 from vergil_tooling.lib.claude_marketplace import (
     Declared,
     MarketplaceError,
-    _marketplace_sources,
+    _marketplace_adds,
     _update_plugin_entry,
     declared_marketplaces,
     local_run,
@@ -22,6 +22,7 @@ from vergil_tooling.lib.claude_marketplace import (
     registered_marketplaces,
     shell,
     update_installed_plugins,
+    validate_settings,
     verify,
 )
 
@@ -255,6 +256,30 @@ class TestRefresh:
         assert "listing cause\nERROR: claude plugin " in err
         assert "failed (exit status 1)" in err
 
+    @pytest.mark.parametrize("listing", ["claude plugin list --json", "marketplace list --json"])
+    def test_a_failed_listing_after_a_failure_names_both(self, listing: str) -> None:
+        # #3989: the add and update failures are kept, chained to the error.
+        run = FakeRun(fail_on=("marketplace update", listing))
+        with pytest.raises(MarketplaceError) as caught:
+            refresh(run, SETTINGS_V21, "")
+        assert str(caught.value).startswith("CalledProcessError: ")
+        assert str(caught.value).endswith("; failed before it: marketplace:vergil-marketplace")
+        assert isinstance(caught.value.__cause__, subprocess.CalledProcessError)
+
+    def test_a_malformed_listing_after_failures_names_each_once(self) -> None:
+        run = FakeRun(
+            marketplace_list='{"not": "a list"}',
+            fail_on=("marketplace add", "marketplace update", "plugin update vergil"),
+        )
+        with pytest.raises(MarketplaceError) as caught:
+            refresh(run, SETTINGS_V21, "")
+        message = str(caught.value)
+        assert message.startswith("MarketplaceError: claude plugin marketplace list --json ")
+        assert message.endswith(
+            "; failed before it: marketplace:vergil-marketplace, vergil@vergil-marketplace (user)"
+        )
+        assert isinstance(caught.value.__cause__, MarketplaceError)
+
     def test_a_plugin_enabled_as_false_is_neither_installed_nor_derived(self) -> None:
         settings = {"enabledPlugins": {"superpowers@claude-plugins-official": False}}
         run = FakeRun(plugin_list="[]")
@@ -318,10 +343,36 @@ class TestRefresh:
         assert refresh(run, settings, "") == []
         assert "claude plugin marketplace add vergil-project/vergil-claude-plugin" in run.cmds
 
-    def test_null_entries_read_as_empty(self) -> None:
-        settings = {"extraKnownMarketplaces": {"a": None, "b": {"source": None}}}
-        assert _marketplace_sources(settings) == []
-        assert declared_marketplaces(settings) == []
+    @pytest.mark.parametrize(
+        ("entry", "problem"),
+        [
+            (None, "extraKnownMarketplaces.a is null"),
+            ({"source": None}, "extraKnownMarketplaces.a has no source"),
+            ({}, "extraKnownMarketplaces.a has no source"),
+            (
+                {"source": {"source": "github"}},
+                "extraKnownMarketplaces.a.source is a github source with no repo",
+            ),
+            (
+                {"source": {"source": "github", "repo": "", "url": "https://x/m.git"}},
+                "extraKnownMarketplaces.a.source is a github source with no repo",
+            ),
+        ],
+    )
+    def test_null_entries_and_repoless_github_sources_are_errors(
+        self, entry: Any, problem: str
+    ) -> None:
+        # #3992: such an entry was read as empty or skipped, so it was silently
+        # neither added nor verified. Each is now a named error, raised before
+        # any claude call and by the pre-copy check.
+        settings = {"extraKnownMarketplaces": {"a": entry}}
+        for read in (_marketplace_adds, declared_marketplaces, validate_settings):
+            with pytest.raises(MarketplaceError, match=f"^settings\\.json {problem}$"):
+                read(settings)
+        run = FakeRun()
+        with pytest.raises(MarketplaceError, match=problem):
+            refresh(run, settings, "")
+        assert run.calls == []
 
     def test_refresh_raises_on_malformed_listing(self) -> None:
         with pytest.raises(MarketplaceError):
@@ -441,9 +492,10 @@ class TestShell:
         assert capsys.readouterr().err == ""
 
 
-class TestMarketplaceSources:
-    # Moved from test_vm_guest with _marketplace_sources (#2021, #2029, #3751).
-    def test_marketplace_sources_keeps_github_ref(self) -> None:
+class TestMarketplaceAdds:
+    # Moved from test_vm_guest as _marketplace_sources tests (#2021, #2029, #3751),
+    # then pointed at _marketplace_adds, the list refresh runs (#3991).
+    def test_marketplace_adds_keeps_github_ref(self) -> None:
         settings = {
             "extraKnownMarketplaces": {
                 "vergil-marketplace": {
@@ -457,12 +509,12 @@ class TestMarketplaceSources:
             },
             "enabledPlugins": {},
         }
-        assert _marketplace_sources(settings) == [
-            "vergil-project/vergil-claude-plugin@main",
-            "Ovid/paad",
+        assert _marketplace_adds(settings) == [
+            ("vergil-marketplace", "vergil-project/vergil-claude-plugin@main"),
+            ("paad", "Ovid/paad"),
         ]
 
-    def test_marketplace_sources_keeps_git_url_ref(self) -> None:
+    def test_marketplace_adds_keeps_git_url_ref(self) -> None:
         settings = {
             "extraKnownMarketplaces": {
                 "pinned": {
@@ -477,29 +529,41 @@ class TestMarketplaceSources:
             },
             "enabledPlugins": {},
         }
-        assert _marketplace_sources(settings) == [
-            "https://example.com/y.git#v1.0.0",
-            "https://example.com/z.git",
-            "./local-mp",
+        assert _marketplace_adds(settings) == [
+            ("pinned", "https://example.com/y.git#v1.0.0"),
+            ("bare", "https://example.com/z.git"),
+            ("p", "./local-mp"),
         ]
 
-    def test_skips_sourceless_entries(self) -> None:
+    @pytest.mark.parametrize(
+        ("name", "entry", "problem"),
+        [
+            ("empty", {"source": {}}, "empty.source has no repo, url or path"),
+            ("blank", {"source": {"source": "git", "url": ""}}, "blank.source has no repo"),
+            ("nosrc", {}, "nosrc has no source"),
+        ],
+    )
+    def test_sourceless_entries_are_errors(self, name: str, entry: Any, problem: str) -> None:
+        # #3992: a sourceless entry was skipped, so the marketplace was never
+        # added. The error names the marketplace even beside a good entry.
         settings = {
             "extraKnownMarketplaces": {
                 "u": {"source": {"source": "git", "url": "https://example.com/y.git"}},
-                "empty": {"source": {}},
-                "nosrc": {},
+                name: entry,
             },
             "enabledPlugins": {},
         }
-        assert _marketplace_sources(settings) == ["https://example.com/y.git"]
+        with pytest.raises(MarketplaceError, match=f"extraKnownMarketplaces\\.{problem}"):
+            _marketplace_adds(settings)
 
     def test_derives_official_marketplace_when_undeclared(self) -> None:
         settings = {
             "extraKnownMarketplaces": {},
             "enabledPlugins": {"superpowers@claude-plugins-official": True},
         }
-        assert _marketplace_sources(settings) == ["anthropics/claude-plugins-official"]
+        assert _marketplace_adds(settings) == [
+            ("claude-plugins-official", "anthropics/claude-plugins-official")
+        ]
 
     def test_official_repo_declared_under_another_name_is_added_once(self) -> None:
         settings = {
@@ -510,16 +574,16 @@ class TestMarketplaceSources:
             },
             "enabledPlugins": {"superpowers@claude-plugins-official": True},
         }
-        assert _marketplace_sources(settings) == ["anthropics/claude-plugins-official"]
+        assert _marketplace_adds(settings) == [("anthropic", "anthropics/claude-plugins-official")]
 
     def test_undecidable_undeclared_marketplace_is_not_added(self) -> None:
         enabled = {"thing@some-third-party": True}
         settings = {"extraKnownMarketplaces": {}, "enabledPlugins": enabled}
-        assert _marketplace_sources(settings) == []
+        assert _marketplace_adds(settings) == []
 
     def test_enabled_id_without_marketplace_suffix_is_skipped(self) -> None:
         settings = {"extraKnownMarketplaces": {}, "enabledPlugins": {"bare-id": True}}
-        assert _marketplace_sources(settings) == []
+        assert _marketplace_adds(settings) == []
 
 
 class TestUpdateInstalledPlugins:
@@ -587,13 +651,58 @@ class TestUpdateInstalledPlugins:
         assert label == "vergil@vergil-marketplace (project: <no projectPath>)"
         assert run.calls == []
 
-    def test_id_installed_only_at_project_scope_is_not_reinstalled(self) -> None:
+    @pytest.mark.parametrize("scope", ["project", "local"])
+    def test_id_installed_only_at_project_scope_gets_a_user_install(self, scope: str) -> None:
+        # The #578 probe: vergil came back at project scope only (#3836).
+        pid = "vergil@vergil-marketplace"
+        listing = json.dumps(
+            [{"id": pid, "scope": scope, "enabled": True, "projectPath": "/p/tooling"}]
+        )
+        run = FakeRun(plugin_list=listing)
+        assert update_installed_plugins(run, {"enabledPlugins": {pid: True}}, "") == []
+        update = f"cd /p/tooling && claude plugin update {pid} --scope {scope}"
+        install = f"claude plugin install {pid} --scope user"
+        assert run.cmds.count(install) == 1
+        assert run.cmds.index(update) < run.cmds.index(install)
+
+    def test_failed_user_install_beside_a_project_install_is_named(self) -> None:
+        pid = "vergil@vergil-marketplace"
+        listing = json.dumps(
+            [{"id": pid, "scope": "project", "enabled": True, "projectPath": "/p/tooling"}]
+        )
+        run = FakeRun(plugin_list=listing, fail_on=(f"claude plugin install {pid}",))
+        assert update_installed_plugins(run, {"enabledPlugins": {pid: True}}, "") == [
+            f"{pid} (user)"
+        ]
+
+    def test_id_with_user_and_project_installs_is_not_reinstalled(self) -> None:
+        pid = "vergil@vergil-marketplace"
+        listing = json.dumps(
+            [
+                {"id": pid, "scope": "project", "enabled": True, "projectPath": "/p/tooling"},
+                {"id": pid, "scope": "user", "enabled": True},
+            ]
+        )
+        run = FakeRun(plugin_list=listing)
+        assert update_installed_plugins(run, {"enabledPlugins": {pid: True}}, "") == []
+        assert not any("claude plugin install" in c for c in run.cmds)
+
+    def test_entry_without_a_scope_counts_as_a_user_install(self) -> None:
+        pid = "vergil@vergil-marketplace"
+        run = FakeRun(plugin_list=json.dumps([{"id": pid, "enabled": True}]))
+        assert update_installed_plugins(run, {"enabledPlugins": {pid: True}}, "") == []
+        assert f"claude plugin update {pid} --scope user" in run.cmds
+        assert not any("claude plugin install" in c for c in run.cmds)
+
+    def test_project_install_of_an_id_the_settings_do_not_enable_gets_no_user_install(
+        self,
+    ) -> None:
         pid = "vergil@vergil-marketplace"
         listing = json.dumps(
             [{"id": pid, "scope": "project", "enabled": True, "projectPath": "/p/tooling"}]
         )
         run = FakeRun(plugin_list=listing)
-        update_installed_plugins(run, {"enabledPlugins": {pid: True}}, "")
+        assert update_installed_plugins(run, {"enabledPlugins": {pid: False}}, "") == []
         assert not any("claude plugin install" in c for c in run.cmds)
 
     def test_installs_enabled_plugins_not_yet_installed(self) -> None:

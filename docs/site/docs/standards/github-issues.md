@@ -657,9 +657,11 @@ nobody can act on, and so every parked item says what would bring it back.
 planning or ad-hoc epic can be deferred (an already-deferred item can be
 refreshed). A task in a development (finite) epic cannot: deferring one task
 would in effect suspend its whole epic, so the tool refuses it, naming the
-parent. A planning item is refused once its `epic-create` session has recorded
-an `Epic:` marker (the development epic already exists), and an ad-hoc item is
-refused while an open PR would close it.
+parent. A planning item is refused while any of its development epics is open:
+one an `Epic:` marker in its comments names, or one whose body carries a
+`Planning:` line for it. Once every such epic is closed, nothing is left to
+orphan and the item can be deferred. An ad-hoc item is refused while an open
+PR would close it.
 
 **Every deferral records why, and what to check.** `--reason` and
 `--revisit-when` are both required:
@@ -722,7 +724,7 @@ epic body gains a `Planning: <ref>` line. `vrg-queue planning` reports an item
 **ready to close** once it is `in-progress`, all three markers are present, and
 the docs task is closed (its spec + plan PR merged). A planning item that any
 security advisory still tracks is **held** at in-progress, with a `held:` note,
-until `epic-create` retargets each advisory it names to the task or tasks that
+until `epic-create` retargets each such advisory to the task or tasks that
 fix it; closing it earlier would close those advisories with the fix unwritten
 (see
 [Security items in planning](../guides/security-records.md#security-items-in-planning)).

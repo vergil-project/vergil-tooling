@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vergil_tooling.lib import github
+from vergil_tooling.lib import epics, github
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -287,6 +287,16 @@ def test_run_completed_true_when_status_completed(monkeypatch: pytest.MonkeyPatc
 def test_run_completed_false_when_in_progress(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(github, "read_json", lambda *a, **k: {"status": "in_progress"})
     assert github.run_completed("o/r", "31101639453") is False
+
+
+@pytest.mark.parametrize("payload", [None, ["completed"], {}, {"status": None}, {"status": ""}])
+def test_run_completed_rejects_a_response_with_no_status(
+    monkeypatch: pytest.MonkeyPatch, payload: object
+) -> None:
+    # Never "not completed" for a response with no run status (#4058).
+    monkeypatch.setattr(github, "read_json", lambda *a, **k: payload)
+    with pytest.raises(github.GitHubAPIError, match="no run status"):
+        github.run_completed("o/r", "31101639453")
 
 
 def test_run_completed_queries_run_status_in_the_given_repo(
@@ -667,7 +677,6 @@ def test_failed_check_names_superseded_filter_covers_edge_nodes() -> None:
     )
     rollup = json.dumps(
         [
-            None,  # non-dict node → skipped
             {"__typename": "StatusContext", "context": "external"},  # skipped
             _rollup_node("orphan", None),  # unresolvable run id → live
             _rollup_node("stale", 1),  # superseded by run 2
@@ -682,11 +691,20 @@ def test_failed_check_names_superseded_filter_covers_edge_nodes() -> None:
         assert github.failed_check_names("https://github.com/pr/1") == ["orphan"]
 
 
-def test_superseded_check_names_handles_non_list_rollup() -> None:
-    # Defensive: if statusCheckRollup resolves to a non-list (e.g. null on a PR
-    # with no checks), nothing is superseded rather than crashing the gate.
+def test_superseded_check_names_handles_null_rollup() -> None:
+    # gh exports an absent statusCheckRollup as null: nothing is superseded.
     with patch("vergil_tooling.lib.github.read_json", return_value=None):
         assert github._superseded_check_names("https://github.com/pr/1") == set()
+
+
+@pytest.mark.parametrize("rollup", [{"nodes": []}, "text", [None], ["node"]])
+def test_superseded_check_names_rejects_a_malformed_rollup(rollup: object) -> None:
+    # Any other shape raises rather than read as "nothing superseded" (#4058).
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=rollup),
+        pytest.raises(github.GitHubAPIError, match="unexpected response shape"),
+    ):
+        github._superseded_check_names("https://github.com/pr/1")
 
 
 def test_failed_check_names_raises_on_empty_output() -> None:
@@ -901,6 +919,34 @@ def test_run_tolerating_injects_gh_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert mock_run.call_args.kwargs["env"] == {"GH_TOKEN": "t"}
 
 
+def test_graphql_returns_the_data_object() -> None:
+    payload = json.dumps({"data": {"node": {"id": "N"}}})
+    with patch("vergil_tooling.lib.github.read_output", return_value=payload) as mock_read:
+        assert github.graphql("query", id="N", n=3) == {"node": {"id": "N"}}
+    args = mock_read.call_args.args
+    assert args[:4] == ("api", "graphql", "-f", "query=query")
+    assert args[4:] == ("-f", "id=N", "-F", "n=3")
+
+
+def test_graphql_raises_on_errors() -> None:
+    payload = json.dumps({"data": None, "errors": [{"message": "boom"}]})
+    with (
+        patch("vergil_tooling.lib.github.read_output", return_value=payload),
+        pytest.raises(RuntimeError, match="GraphQL errors"),
+    ):
+        github.graphql("query")
+
+
+@pytest.mark.parametrize("payload", [{}, {"data": None}, {"data": []}, [], None])
+def test_graphql_rejects_a_response_with_no_data_object(payload: object) -> None:
+    # Never {} for a response with no data: that reads as "nothing found" (#4058).
+    with (
+        patch("vergil_tooling.lib.github.read_output", return_value=json.dumps(payload)),
+        pytest.raises(RuntimeError, match="no data object"),
+    ):
+        github.graphql("query")
+
+
 def test_pr_reviews_returns_list() -> None:
     reviews = [{"id": "r1", "state": "APPROVED"}, {"id": "r2", "state": "COMMENTED"}]
     with patch("vergil_tooling.lib.github.read_json", return_value=reviews):
@@ -910,6 +956,16 @@ def test_pr_reviews_returns_list() -> None:
 def test_pr_reviews_empty_list() -> None:
     with patch("vergil_tooling.lib.github.read_json", return_value=[]):
         assert github.pr_reviews("https://github.com/pr/1") == []
+
+
+@pytest.mark.parametrize("payload", [None, {"reviews": []}, ["review"]])
+def test_pr_reviews_rejects_a_malformed_response(payload: object) -> None:
+    # Never "no reviews" for a response that is not a list of reviews (#4058).
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=payload),
+        pytest.raises(github.GitHubAPIError, match="unexpected response shape"),
+    ):
+        github.pr_reviews("https://github.com/pr/1")
 
 
 def test_post_check_run_posts_completed_check() -> None:
@@ -1093,34 +1149,108 @@ def test_list_org_repos() -> None:
         assert github.list_org_repos("org") == ["tooling", ".github", "vm"]
 
 
-def test_list_org_repos_filters_non_dict_and_nameless() -> None:
-    with patch(
-        "vergil_tooling.lib.github.read_json",
-        return_value=["nope", {"id": 1}, {"name": "keep"}],
+@pytest.mark.parametrize("row", ["nope", {"id": 1}, {"name": ""}, {"name": 7}])
+def test_list_org_repos_refuses_a_row_with_no_name(row: object) -> None:
+    # A dropped row would read as a smaller fleet (#4058).
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=[row, {"name": "keep"}]),
+        pytest.raises(TypeError, match="row with no repo name"),
     ):
-        assert github.list_org_repos("org") == ["keep"]
+        github.list_org_repos("org")
 
 
-def test_list_org_repos_non_list_is_empty() -> None:
-    with patch("vergil_tooling.lib.github.read_json", return_value={"unexpected": True}):
-        assert github.list_org_repos("org") == []
+@pytest.mark.parametrize("payload", [{"unexpected": True}, None, "text"])
+def test_list_org_repos_rejects_a_non_list(payload: object) -> None:
+    # Never [] for a response that is not a list: that reads as "no repos" (#4058).
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=payload),
+        pytest.raises(TypeError, match="expected a list"),
+    ):
+        github.list_org_repos("org")
+
+
+def test_list_org_repos_passes_the_listing_limit() -> None:
+    with patch("vergil_tooling.lib.github.read_json", return_value=[]) as mock_read:
+        github.list_org_repos("org")
+    args = mock_read.call_args.args
+    assert args[args.index("--limit") + 1] == str(epics.LISTING_LIMIT)
+
+
+def test_list_org_repos_below_the_limit_is_returned() -> None:
+    rows = [{"name": f"r{i}"} for i in range(epics.LISTING_LIMIT - 1)]
+    with patch("vergil_tooling.lib.github.read_json", return_value=rows):
+        assert len(github.list_org_repos("org")) == epics.LISTING_LIMIT - 1
+
+
+def test_list_org_repos_refuses_a_listing_at_the_limit() -> None:
+    rows = [{"name": f"r{i}"} for i in range(epics.LISTING_LIMIT)]
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=rows),
+        pytest.raises(epics.EpicListTruncatedError, match="repo list of org"),
+    ):
+        github.list_org_repos("org")
+
+
+def _project_row(name: str, *numbers: int) -> dict[str, object]:
+    return {
+        "nameWithOwner": name,
+        "projectsV2": {"Nodes": [{"number": n} for n in numbers]},
+    }
 
 
 def test_list_project_repos() -> None:
-    with patch(
-        "vergil_tooling.lib.github.read_output",
-        return_value="acme/repo-b\nacme/repo-a\nacme/repo-a\n",
-    ):
+    rows = [
+        _project_row("acme/repo-b", 5),
+        _project_row("acme/repo-a", 3, 5),
+        _project_row("acme/other", 3),
+        _project_row("acme/none"),
+        {"nameWithOwner": "acme/no-projects"},
+        "not-a-row",
+    ]
+    with patch("vergil_tooling.lib.github.read_json", return_value=rows) as mock_read:
         repos = github.list_project_repos("acme", "5")
     assert repos == ["acme/repo-a", "acme/repo-b"]
+    args = mock_read.call_args.args
+    assert args[:3] == ("repo", "list", "acme")
+    assert args[args.index("--limit") + 1] == str(epics.LISTING_LIMIT)
+    assert "--jq" not in args
 
 
 def test_list_project_repos_empty() -> None:
-    with patch(
-        "vergil_tooling.lib.github.read_output",
-        return_value="",
-    ):
+    with patch("vergil_tooling.lib.github.read_json", return_value=[]):
         assert github.list_project_repos("acme", "5") == []
+
+
+def test_list_project_repos_below_the_limit_is_returned() -> None:
+    rows = [_project_row(f"acme/r{i}", 5) for i in range(epics.LISTING_LIMIT - 1)]
+    with patch("vergil_tooling.lib.github.read_json", return_value=rows):
+        assert len(github.list_project_repos("acme", "5")) == epics.LISTING_LIMIT - 1
+
+
+def test_list_project_repos_refuses_a_listing_at_the_limit() -> None:
+    rows = [_project_row(f"acme/r{i}") for i in range(epics.LISTING_LIMIT)]
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=rows),
+        pytest.raises(epics.EpicListTruncatedError, match="repo list of acme"),
+    ):
+        github.list_project_repos("acme", "5")
+
+
+def test_list_project_repos_rejects_a_non_list() -> None:
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value={"unexpected": True}),
+        pytest.raises(TypeError, match="expected a list"),
+    ):
+        github.list_project_repos("acme", "5")
+
+
+def test_list_project_repos_rejects_a_non_numeric_project() -> None:
+    with (
+        patch("vergil_tooling.lib.github.read_json") as mock_read,
+        pytest.raises(ValueError, match="GitHub Project number"),
+    ):
+        github.list_project_repos("acme", "5) or (true")
+    mock_read.assert_not_called()
 
 
 def test_read_json_returns_parsed_dict() -> None:
@@ -1942,6 +2072,29 @@ class TestGenerateJwt:
         assert "iat" in payload
         assert "exp" in payload
 
+    def test_claims_allow_clock_skew_both_ways(self, tmp_path: Path) -> None:
+        # #3825: an exp of exactly now + 600 failed with a bare 401 whenever
+        # the local clock ran even slightly ahead of GitHub's.
+        import base64
+
+        key_path = tmp_path / "test.pem"
+        key_path.write_text("fake-key\n")
+        with (
+            patch("vergil_tooling.lib.github.subprocess.run") as mock_run,
+            patch("vergil_tooling.lib.github.time.time", return_value=1_000_000.9),
+        ):
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=b"\x00" * 256
+            )
+            jwt_str = github._generate_jwt("12345", key_path)
+        payload_b64 = jwt_str.split(".")[1]
+        padding = 4 - len(payload_b64) % 4
+        payload = json.loads(base64.urlsafe_b64decode(payload_b64 + "=" * padding))
+        assert payload["iat"] == 1_000_000 - 60
+        # A local clock up to 60 s fast still keeps exp within GitHub's
+        # 10-minute ceiling; one up to 60 s slow still keeps iat in the past.
+        assert payload["exp"] == 1_000_000 + 540
+
 
 class TestDetectOrg:
     def test_parses_ssh_remote(self) -> None:
@@ -1995,6 +2148,31 @@ class TestDetectOrg:
             mock_run.return_value = _completed(stdout="git@github.com:/repo.git\n")
             assert github.detect_org() is None
 
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://x-access-token:t0ken@github.com/vergil-project/r.git",
+            "https://GitHub.com/vergil-project/r",
+            "org-123@github.com:vergil-project/r.git",
+            "ssh://git@github.com:22/vergil-project/r.git",
+        ],
+    )
+    def test_reads_every_form_the_shared_parser_accepts(self, url: str) -> None:
+        """#3984: detect_org reads origin through github_remote_repo."""
+        with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
+            mock_run.return_value = _completed(stdout=f"{url}\n")
+            assert github.detect_org() == "vergil-project"
+
+    @pytest.mark.parametrize(
+        "url",
+        ["https://github.com/vergil-project", "https://github.com/vergil-project/r/extra"],
+    )
+    def test_returns_none_when_origin_names_no_single_repo(self, url: str) -> None:
+        """#3984: an origin path that is not ``owner/repo`` reads as no org."""
+        with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
+            mock_run.return_value = _completed(stdout=f"{url}\n")
+            assert github.detect_org() is None
+
 
 @pytest.mark.parametrize(
     ("url", "expected"),
@@ -2011,10 +2189,86 @@ class TestDetectOrg:
         ("https://notgithub.com/org/repo", False),
         ("/srv/git/repo.git", False),
         ("", False),
+        # A remote on github.com whose path names no single repo still counts,
+        # so has_github_remote fails closed on it (#3217).
+        ("https://github.com/org", True),
+        ("https://github.com", True),
+        ("https://github.com/org/repo/extra", True),
+        ("git@github.com:/org/repo.git", True),
+        ("github.com:org/repo.git", True),
+        ("git://github.com/org/repo.git", True),
+        # #3984: the host is the host a URL parser sees, and only git's schemes.
+        ("https://evil.example#@github.com/org/repo", False),
+        ("https://evil.example?@github.com/org/repo", False),
+        ("ssh://evil.example#@github.com/org/repo", False),
+        ("evil.example?x@github.com:org/repo", False),
+        ("ftp://github.com/org/repo", False),
+        ("github.com/org/repo", False),  # a local path to git
+        ("github.com", False),
     ],
 )
 def test_is_github_url(url: str, expected: bool) -> None:
     assert github.is_github_url(url) is expected
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("https://github.com/org/repo.git", "org/repo"),
+        ("https://github.com/org/repo", "org/repo"),
+        ("https://github.com/org/repo/", "org/repo"),
+        ("https://github.com/org/repo.git/", "org/repo"),
+        ("https://x-access-token:secret@github.com/org/repo.git", "org/repo"),
+        ("https://github.com:443/org/repo.git", "org/repo"),
+        ("http://github.com/org/repo.git", "org/repo"),
+        ("HTTPS://GitHub.COM/Org/Repo.GIT", "Org/Repo"),
+        ("git@github.com:org/repo.git", "org/repo"),
+        ("git@github.com:/org/repo.git", "org/repo"),
+        ("org-123@github.com:org/repo.git", "org/repo"),
+        ("github.com:org/repo.git", "org/repo"),
+        ("ssh://git@github.com/org/repo.git", "org/repo"),
+        ("ssh://git@github.com:22/org/repo.git", "org/repo"),
+        ("ssh://github.com/org/repo", "org/repo"),
+        ("git+ssh://git@github.com/org/repo.git", "org/repo"),
+        ("ssh+git://git@github.com/org/repo.git", "org/repo"),
+        ("git://github.com/org/repo.git", "org/repo"),
+        ("  git@github.com:org/my.repo.git\n", "org/my.repo"),
+        ("https://github.com/org", None),
+        ("https://github.com/org/", None),
+        ("https://github.com/org/repo/extra", None),
+        ("https://github.com//org/repo", None),
+        ("git@github.com:/repo.git", None),
+        ("ssh://git@github.com:22org/repo", None),
+        ("https://gitlab.com/org/repo.git", None),
+        ("https://github.com.evil.example/org/repo", None),
+        ("https://evil.example#@github.com/org/repo", None),
+        ("https://evil.example?@github.com/org/repo", None),
+        ("https://evil.example\\@github.com/org/repo", None),
+        ("evil.example?x@github.com:org/repo", None),
+        ("https://user:pa/ss@github.com/org/repo", None),
+        ("https://user:p@ss@github.com/org/repo", None),
+        ("ftp://github.com/org/repo", None),
+        ("github.com/org/repo", None),
+        ("", None),
+    ],
+)
+def test_github_remote_repo(url: str, expected: str | None) -> None:
+    assert github.github_remote_repo(url) == expected
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://github.com/org/repo.git",
+        "git@github.com:org/repo.git",
+        "ssh://git@github.com:22/org/repo.git",
+        "github.com:org/repo",
+    ],
+)
+def test_every_parsed_remote_is_a_github_url(url: str) -> None:
+    """The two share one host grammar: a parsed remote is always on github.com."""
+    assert github.github_remote_repo(url) == "org/repo"
+    assert github.is_github_url(url) is True
 
 
 def _checkout(path: Path, *remotes: tuple[str, str]) -> Path:
@@ -2074,6 +2328,16 @@ class TestRepoInstallationToken:
         msg = github.app_auth_message(excinfo.value)
         assert f"{repo} has a remote on GitHub" in msg
         assert "Refusing to fall back to ambient gh auth" in msg
+
+    def test_github_origin_naming_no_single_repo_refuses(self, tmp_path: Path) -> None:
+        # #3984: detect_org reads no org from it, but it is still on GitHub.
+        repo = _checkout(tmp_path / "r", ("origin", "https://github.com/org"))
+        with (
+            patch("vergil_tooling.lib.github.get_installation_token") as m_token,
+            pytest.raises(github.NoTargetOrgError),
+        ):
+            github.repo_installation_token(repo)
+        m_token.assert_not_called()
 
     def test_github_remote_without_app_mode_is_ambient(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2499,6 +2763,102 @@ class TestGetInstallationToken:
             github.get_installation_token(org="test-org")
         assert "401" in excinfo.value.detail
 
+    @pytest.mark.parametrize(
+        ("body", "expected"),
+        [
+            (
+                b"{\"message\": \"'Expiration time' claim ('exp') is too far in the future\"}",
+                "HTTP Error 401: Unauthorized on /app/installations/67890/access_tokens: "
+                "GitHub said: 'Expiration time' claim ('exp') is too far in the future",
+            ),
+            (
+                b"<html>oops</html>",
+                "on /app/installations/67890/access_tokens (response body was not JSON)",
+            ),
+            (b'{"documentation_url": "x"}', "on /app/installations/67890/access_tokens"),
+            (b"", "on /app/installations/67890/access_tokens"),
+        ],
+    )
+    def test_token_exchange_401_detail_names_endpoint_and_github_message(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        body: bytes,
+        expected: str,
+    ) -> None:
+        _configure_app(tmp_path, monkeypatch)
+        err = urllib.error.HTTPError(
+            "https://api.github.com/app/installations/67890/access_tokens",
+            401,
+            "Unauthorized",
+            http.client.HTTPMessage(),
+            io.BytesIO(body),
+        )
+        with (
+            patch("vergil_tooling.lib.github._generate_jwt", return_value="fake-jwt"),
+            patch(
+                "vergil_tooling.lib.github._resolve_installations",
+                return_value={"test-org": "67890"},
+            ),
+            patch("vergil_tooling.lib.github._jwt_api_request", side_effect=err),
+            pytest.raises(github.AppAuthError) as excinfo,
+        ):
+            github.get_installation_token(org="test-org")
+        assert expected in excinfo.value.detail
+        assert "fake-jwt" not in excinfo.value.detail
+        assert github._token_cache == {}
+
+    def test_token_exchange_401_unreadable_body_is_reported(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _configure_app(tmp_path, monkeypatch)
+        err = urllib.error.HTTPError(
+            "https://api.github.com/app/installations",
+            401,
+            "Unauthorized",
+            http.client.HTTPMessage(),
+            None,
+        )
+        with (
+            patch("vergil_tooling.lib.github._generate_jwt", return_value="fake-jwt"),
+            patch("vergil_tooling.lib.github._resolve_installations", side_effect=err),
+            patch.object(err, "read", side_effect=OSError("connection reset")),
+            pytest.raises(github.AppAuthError) as excinfo,
+        ):
+            github.get_installation_token(org="test-org")
+        assert excinfo.value.detail == (
+            "HTTP Error 401: Unauthorized on /app/installations "
+            "(response body unreadable: connection reset)"
+        )
+
+    def test_jwt_http_error_detail_reports_truncated_body(self) -> None:
+        err = urllib.error.HTTPError(
+            "https://api.github.com/app/installations",
+            401,
+            "Unauthorized",
+            http.client.HTTPMessage(),
+            None,
+        )
+        with patch.object(err, "read", side_effect=http.client.IncompleteRead(b"{", 10)):
+            detail = github._jwt_http_error_detail(err)
+        assert detail.startswith(
+            "HTTP Error 401: Unauthorized on /app/installations (response body unreadable: "
+        )
+
+    def test_jwt_http_error_detail_truncates_long_message(self) -> None:
+        long = "x" * 1000
+        err = urllib.error.HTTPError(
+            "https://api.github.com/app/installations",
+            401,
+            "Unauthorized",
+            http.client.HTTPMessage(),
+            io.BytesIO(json.dumps({"message": long}).encode()),
+        )
+        detail = github._jwt_http_error_detail(err)
+        assert detail.endswith("GitHub said: " + "x" * 300)
+
     def test_raises_app_auth_error_when_openssl_not_found(
         self,
         tmp_path: Path,
@@ -2682,9 +3042,134 @@ def test_merge_commit_sha_reads_merge_commit_oid() -> None:
     assert any("mergeCommit.oid" in a for a in args)
 
 
-def test_pr_for_branch_none_when_payload_not_dict() -> None:
-    with patch("vergil_tooling.lib.github.read_json", return_value=["nope"]):
-        assert github.pr_for_branch("feature/1423-pr-interface") is None
+_GOOD_PR = {"number": 1, "url": "https://github.com/o/r/pull/1", "title": "T", "headRefOid": "a"}
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        None,
+        {"number": 1},
+        ["nope"],
+        [{**_GOOD_PR, "number": None}],
+        [{**_GOOD_PR, "number": True}],
+        [{**_GOOD_PR, "url": ""}],
+        [{**_GOOD_PR, "title": None}],
+        [{**_GOOD_PR, "headRefOid": ""}],
+    ],
+)
+def test_pr_for_branch_rejects_a_malformed_response(payload: object) -> None:
+    # Never "no PR" or blank fields for a response that is not a PR list (#4058).
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=payload),
+        pytest.raises(github.GitHubAPIError, match="unexpected response shape"),
+    ):
+        github.pr_for_branch("feature/1423-pr-interface")
+
+
+# -- pr_closing_references / close_issue (issue #4002) -------------------------
+
+_GH = "vergil_tooling.lib.github"
+
+
+def _closing_payload(
+    nodes: list[object], *, total: int | None = None, state: str = "MERGED"
+) -> dict[str, object]:
+    return {
+        "repository": {
+            "pullRequest": {
+                "state": state,
+                "mergedAt": "2026-11-08T12:00:00Z",
+                "closingIssuesReferences": {
+                    "totalCount": len(nodes) if total is None else total,
+                    "nodes": nodes,
+                },
+            }
+        }
+    }
+
+
+def _node(number: int, state: str, repo: str = "o/r") -> dict[str, object]:
+    return {"number": number, "state": state, "repository": {"nameWithOwner": repo}}
+
+
+def test_pr_closing_references_reads_githubs_own_list() -> None:
+    payload = _closing_payload([_node(7, "OPEN"), _node(8, "CLOSED", repo="o/other")])
+    with (
+        patch(f"{_GH}.pr_repo_and_number", return_value=("o/r", 123)),
+        patch(f"{_GH}.graphql", return_value=payload) as gql,
+    ):
+        refs = github.pr_closing_references("123")
+    assert gql.call_args.kwargs == {"owner": "o", "name": "r", "number": 123}
+    assert "closingIssuesReferences" in gql.call_args.args[0]
+    assert refs.ref == "o/r#123"
+    assert refs.state == "MERGED"
+    assert refs.merged_at == "2026-11-08T12:00:00Z"
+    assert refs.issues == (
+        github.ClosingIssue(repo="o/r", number=7, state="OPEN"),
+        github.ClosingIssue(repo="o/other", number=8, state="CLOSED"),
+    )
+    assert refs.issues[1].ref == "o/other#8"
+
+
+def test_pr_closing_references_refuses_truncated_list() -> None:
+    payload = _closing_payload([_node(7, "OPEN")], total=101)
+    with (
+        patch(f"{_GH}.pr_repo_and_number", return_value=("o/r", 123)),
+        patch(f"{_GH}.graphql", return_value=payload),
+        pytest.raises(github.GitHubAPIError) as excinfo,
+    ):
+        github.pr_closing_references("123")
+    assert "lists 101 closing references but returned 1" in (excinfo.value.stderr or "")
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"repository": {"pullRequest": {"state": "MERGED", "mergedAt": None}}},
+        _closing_payload([_node(7, "OPEN")], state="WEIRD"),
+        _closing_payload([{"number": 7, "state": "OPEN"}]),
+        _closing_payload([_node(7, "UNKNOWN")]),
+        _closing_payload([_node(0, "OPEN")]),
+        _closing_payload(
+            [{"number": True, "state": "OPEN", "repository": {"nameWithOwner": "o/r"}}]
+        ),
+    ],
+)
+def test_pr_closing_references_refuses_malformed_response(payload: dict[str, object]) -> None:
+    with (
+        patch(f"{_GH}.pr_repo_and_number", return_value=("o/r", 123)),
+        patch(f"{_GH}.graphql", return_value=payload),
+        pytest.raises(github.GitHubAPIError, match="closing issue references"),
+    ):
+        github.pr_closing_references("123")
+
+
+def test_pr_closing_references_refuses_non_string_merged_at() -> None:
+    payload = {"repository": {"pullRequest": {"state": "MERGED", "mergedAt": 5}}}
+    with (
+        patch(f"{_GH}.pr_repo_and_number", return_value=("o/r", 123)),
+        patch(f"{_GH}.graphql", return_value=payload),
+        pytest.raises(github.GitHubAPIError, match="mergedAt"),
+    ):
+        github.pr_closing_references("123")
+
+
+def test_close_issue_closes_as_completed_with_comment() -> None:
+    with patch(f"{_GH}.run") as run:
+        github.close_issue("o/r", 7, comment="Completed by PR o/r#123.")
+    run.assert_called_once_with(
+        "issue",
+        "close",
+        "7",
+        "--repo",
+        "o/r",
+        "--reason",
+        "completed",
+        "--comment",
+        "Completed by PR o/r#123.",
+    )
 
 
 # -- closed_pr_for_branch (issue #1445) ----------------------------------------
@@ -2724,9 +3209,12 @@ def test_closed_pr_for_branch_none_when_no_closed_pr() -> None:
         assert github.closed_pr_for_branch("feature/1445-finalize-cleanup-race") is None
 
 
-def test_closed_pr_for_branch_none_when_payload_not_dict() -> None:
-    with patch("vergil_tooling.lib.github.read_json", return_value=["nope"]):
-        assert github.closed_pr_for_branch("feature/1445-finalize-cleanup-race") is None
+def test_closed_pr_for_branch_rejects_a_payload_not_dict() -> None:
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=["nope"]),
+        pytest.raises(github.GitHubAPIError, match="unexpected response shape"),
+    ):
+        github.closed_pr_for_branch("feature/1445-finalize-cleanup-race")
 
 
 # -- repo_visibility / is_public (epic #130) ---------------------------------
@@ -2949,9 +3437,18 @@ def test_reconcile_stale_warning_names_outcome_in_plain_words(
     assert f"already finished with {conclusion}. Treating it as {word} " in err
 
 
-def test_rollup_check_runs_maps_details_url_and_tolerates_non_list() -> None:
+@pytest.mark.parametrize("rollup", [{"nodes": []}, "text", [None]])
+def test_rollup_check_runs_rejects_a_malformed_rollup(rollup: object) -> None:
+    # Never "no runs" for a rollup that is not a list of nodes (#4058).
+    with (
+        patch.object(github, "read_json", return_value=rollup),
+        pytest.raises(github.GitHubAPIError, match="unexpected response shape"),
+    ):
+        github._rollup_check_runs("1")
+
+
+def test_rollup_check_runs_maps_details_url_and_tolerates_null() -> None:
     nodes = [
-        None,
         {"__typename": "StatusContext", "context": "ext", "state": "SUCCESS"},
         {"__typename": "CheckRun", "name": "no-url", "status": "QUEUED"},
         _stale_rollup_node(),

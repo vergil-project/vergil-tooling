@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import tomllib
 from pathlib import Path
@@ -41,6 +42,7 @@ from vergil_tooling.lib.repo_init import (
     render_mkdocs_yml,
     render_readme,
     render_vergil_toml,
+    restore_generated_config,
     run_wizard,
     step_branch_structure,
     step_ci_cd_workflows,
@@ -994,13 +996,34 @@ class TestResolveVersions:
         )
         assert _resolve_versions(toml) is None
 
-    def test_pin_outside_window_stops_the_wizard(self) -> None:
-        with pytest.raises(SystemExit, match=r"error: .*3\.11.*remove it from \[ci\]\.versions"):
+    def test_pin_outside_window_stops_the_wizard(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        with pytest.raises(SystemExit) as exc:
             _resolved("python", ["3.11"])
+        assert exc.value.code == 1
+        assert re.match(r"ERROR: .*3\.11.*remove it from \[ci\]\.versions", capsys.readouterr().err)
 
-    def test_unpinned_family_language_stops_the_wizard(self) -> None:
-        with pytest.raises(SystemExit, match="cpp must pin"):
+    def test_window_error_is_a_ci_annotation_under_github_actions(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setenv("GITHUB_ACTIONS", "true")
+        with pytest.raises(SystemExit) as exc:
+            _resolved("python", ["3.11"])
+        assert exc.value.code == 1
+        assert capsys.readouterr().err.startswith("::error")
+
+    def test_unpinned_family_language_stops_the_wizard(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        with pytest.raises(SystemExit) as exc:
             _resolved("cpp")
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert err.startswith("ERROR: ")
+        assert "cpp must pin" in err
 
     _APP_MULTI_PIN = (
         "[project]\n"
@@ -1015,11 +1038,17 @@ class TestResolveVersions:
         'vergil = "v2.1"\n'
     )
 
-    def test_app_multi_pin_stops_the_wizard(self) -> None:
-        with pytest.raises(
-            SystemExit, match=r"error: \[ci\]\.versions pins 2 versions .*pin a single version"
-        ):
+    def test_app_multi_pin_stops_the_wizard(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        with pytest.raises(SystemExit) as exc:
             _resolve_versions(self._APP_MULTI_PIN)
+        assert exc.value.code == 1
+        assert re.match(
+            r"ERROR: \[ci\]\.versions pins 2 versions .*pin a single version",
+            capsys.readouterr().err,
+        )
 
 
 class TestRenderCdWorkflow:
@@ -2104,10 +2133,16 @@ class TestStepGithubConfigExtended:
             mock_fetch.return_value.visibility = "public"
             step_github_config(ctx)
 
-    def test_version_window_error_stops_cleanly_before_apply(self, tmp_path: Path) -> None:
+    def test_version_window_error_stops_cleanly_before_apply(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
         # A resumed run skips step 3's version check; a pin that has since left
         # the window must stop step 9 as a one-line error, not a traceback,
         # and before anything is applied (#3670).
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
         ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
         ctx.work_dir = tmp_path
         failure = ResolutionError("[ci].versions pins 1.25, which is not in the go window")
@@ -2117,11 +2152,13 @@ class TestStepGithubConfigExtended:
             patch("vergil_tooling.lib.github_config.compute_desired_state", side_effect=failure),
             patch("vergil_tooling.lib.github_config.apply_desired_state") as mock_apply,
             patch("vergil_tooling.lib.config.read_config"),
-            pytest.raises(SystemExit, match=r"^error: \[ci\]\.versions pins 1\.25"),
+            pytest.raises(SystemExit) as exc,
         ):
             mock_fetch.return_value.owner_type = "Organization"
             mock_fetch.return_value.visibility = "public"
             step_github_config(ctx)
+        assert exc.value.code == 1
+        assert re.search(r"^ERROR: \[ci\]\.versions pins 1\.25", capsys.readouterr().err, re.M)
         mock_apply.assert_not_called()
 
 
@@ -2183,12 +2220,15 @@ class TestRunWizard:
                     "def5678 chore(init): step 4 - config files\n"
                 ),
             ),
+            patch("vergil_tooling.lib.repo_init.restore_generated_config") as mock_restore,
         ):
             run_wizard(ctx)
 
         assert 3 not in steps_run
         assert 4 not in steps_run
         assert 5 in steps_run
+        # A skipped step 3 rebuilds its answers instead of leaving defaults (#3977).
+        mock_restore.assert_called_once_with(ctx)
 
     def test_adopt_ignores_checkpoint_markers_and_regenerates(self) -> None:
         # #2795 regression: adopt is an idempotent "overwrite managed files to
@@ -2381,6 +2421,290 @@ class TestRunWizard:
             run_wizard(ctx)
 
 
+def _committed_answers() -> RepoInitContext:
+    """The step 3 answers ``_committed_ctx`` writes, with no overrides."""
+    return RepoInitContext(
+        org="vergil-project",
+        name="demo",
+        repository_type="library",
+        primary_language="python",
+        branching_model="library-release",
+        versioning_scheme="semver",
+        release_model="tagged-release",
+        integration_tests=True,
+        publish_release=True,
+        publish_docs=False,
+        vergil_version="v2.1",
+    )
+
+
+def _committed_ctx(tmp_path: Path, **overrides: Any) -> RepoInitContext:
+    """A context whose step 3 answers are committed to ``tmp_path/vergil.toml``.
+
+    Returns a fresh context for the resumed run: only the identity, the work
+    dir and the completed steps are set, as on a real resume.
+    """
+    answers = _committed_answers()
+    for key, value in overrides.items():
+        setattr(answers, key, value)
+    (tmp_path / "vergil.toml").write_text(render_vergil_toml(answers))
+    ctx = RepoInitContext(org="vergil-project", name="demo")
+    ctx.work_dir = tmp_path
+    ctx.completed_steps = {1, 3, 4}
+    return ctx
+
+
+class TestRestoreGeneratedConfig:
+    """A resumed fresh init rebuilds step 3's answers or stops (#3977)."""
+
+    def test_restores_every_step3_field(self, tmp_path: Path) -> None:
+        ctx = _committed_ctx(tmp_path, ci_versions=["3.14"])
+
+        restore_generated_config(ctx)
+
+        assert ctx.repository_type == "library"
+        assert ctx.primary_language == "python"
+        assert ctx.branching_model == "library-release"
+        assert ctx.versioning_scheme == "semver"
+        assert ctx.release_model == "tagged-release"
+        assert ctx.ci_versions == ["3.14"]
+        assert ctx.integration_tests is True
+        assert ctx.publish_release is True
+        assert ctx.publish_docs is False
+        assert ctx.vergil_version == "v2.1"
+        assert ctx.package is False
+        assert ctx.resolution is not None
+        assert ctx.resolution.versions == ("3.14",)
+        # The later steps now render the language, not the defaults.
+        ci = render_ci_workflow(ctx)
+        assert "      language: python\n" in ci
+        assert "container-suffix: python" in ci
+        assert "container-suffix: base" not in ci
+
+    def test_no_language_restores_empty(self, tmp_path: Path) -> None:
+        ctx = _committed_ctx(
+            tmp_path,
+            repository_type="documentation",
+            primary_language="",
+            release_model="none",
+            publish_release=False,
+        )
+
+        restore_generated_config(ctx)
+
+        assert ctx.primary_language == ""
+        assert ctx.resolution is None
+
+    def test_package_table_is_restored(self, tmp_path: Path) -> None:
+        ctx = _committed_ctx(tmp_path)
+        with (tmp_path / "vergil.toml").open("a") as f:
+            f.write(
+                '\n[package]\nbuilder = "staged"\nvendor = "vergil"\nname = "demo"\n'
+                'summary = "A demo"\nsmoke = "true"\n'
+            )
+
+        restore_generated_config(ctx)
+
+        assert ctx.package is True
+
+    def test_missing_vergil_toml_refuses(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        ctx = _committed_ctx(tmp_path)
+        (tmp_path / "vergil.toml").unlink()
+
+        with pytest.raises(SystemExit) as exc:
+            restore_generated_config(ctx)
+
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert err.startswith("ERROR: cannot resume the init of this repo: ")
+        assert "vergil.toml is missing" in err
+        # Nothing was restored: the defaults never reach a later step.
+        assert ctx.primary_language == ""
+
+    @pytest.mark.parametrize(
+        ("text", "detail"),
+        [
+            ("[project\n", "is not a valid vergil.toml"),
+            ('[project]\nrepository-type = "library"\n', "is not a valid vergil.toml"),
+        ],
+    )
+    def test_invalid_vergil_toml_refuses(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+        text: str,
+        detail: str,
+    ) -> None:
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        ctx = _committed_ctx(tmp_path)
+        (tmp_path / "vergil.toml").write_text(text)
+
+        with pytest.raises(SystemExit) as exc:
+            restore_generated_config(ctx)
+
+        assert exc.value.code == 1
+        assert detail in capsys.readouterr().err
+
+    def test_missing_vergil_pin_is_invalid(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        ctx = _committed_ctx(tmp_path)
+        text = (tmp_path / "vergil.toml").read_text()
+        (tmp_path / "vergil.toml").write_text(text.split("[dependencies]")[0])
+
+        with pytest.raises(SystemExit) as exc:
+            restore_generated_config(ctx)
+
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert "is not a valid vergil.toml" in err
+        assert "[dependencies] must contain 'vergil'" in err
+
+    def test_contradicting_flags_refuse(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        ctx = _committed_ctx(tmp_path)
+        ctx.opt_primary_language = "go"
+        ctx.opt_publish_docs = True
+        ctx.opt_ci_versions = "3.13"
+
+        with pytest.raises(SystemExit) as exc:
+            restore_generated_config(ctx)
+
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert "--language 'go' (vergil.toml has 'python')" in err
+        assert "--publish-docs True (vergil.toml has False)" in err
+        assert "--versions ['3.13'] (vergil.toml has [])" in err
+        assert ctx.primary_language == ""
+
+    def test_agreeing_flags_are_accepted(self, tmp_path: Path) -> None:
+        ctx = _committed_ctx(tmp_path, ci_versions=["3.14"])
+        ctx.opt_repository_type = "library"
+        ctx.opt_primary_language = "python"
+        ctx.opt_branching_model = "library-release"
+        ctx.opt_versioning_scheme = "semver"
+        ctx.opt_release_model = "tagged-release"
+        ctx.opt_ci_versions = " 3.14 ,"
+        ctx.opt_integration_tests = True
+        ctx.opt_publish_release = True
+        ctx.opt_publish_docs = False
+        ctx.opt_vergil_version = "v2.1"
+
+        restore_generated_config(ctx)
+
+        assert ctx.primary_language == "python"
+
+    def test_moved_window_stops_cleanly(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        ctx = _committed_ctx(tmp_path, ci_versions=["3.11"])
+
+        with pytest.raises(SystemExit) as exc:
+            restore_generated_config(ctx)
+
+        assert exc.value.code == 1
+        assert re.match(r"ERROR: .*3\.11", capsys.readouterr().err)
+
+    def test_pending_step4_non_interactive_requires_license_and_version(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        ctx = _committed_ctx(tmp_path)
+        ctx.completed_steps = {1, 3}
+        ctx.non_interactive = True
+
+        with pytest.raises(SystemExit) as exc:
+            restore_generated_config(ctx)
+
+        assert exc.value.code == 1
+        assert "pass --license and --initial-version." in capsys.readouterr().err
+
+    def test_pending_step4_non_interactive_takes_the_flags(self, tmp_path: Path) -> None:
+        ctx = _committed_ctx(tmp_path)
+        ctx.completed_steps = {1, 3}
+        ctx.non_interactive = True
+        ctx.opt_license_type = "Apache-2.0"
+        ctx.opt_initial_version = "1.2.0"
+
+        restore_generated_config(ctx)
+
+        assert ctx.license_type == "Apache-2.0"
+        assert ctx.initial_version == "1.2.0"
+
+    def test_pending_step4_interactive_prompts_again(self, tmp_path: Path) -> None:
+        ctx = _committed_ctx(tmp_path)
+        ctx.completed_steps = {1, 3}
+        inputs = iter(["2", "0.3.0"])  # license: GPL-3.0; initial version
+
+        with patch("builtins.input", side_effect=lambda _="": next(inputs)):
+            restore_generated_config(ctx)
+
+        assert ctx.license_type == "GPL-3.0"
+        assert ctx.initial_version == "0.3.0"
+
+    def test_done_step4_asks_nothing(self, tmp_path: Path) -> None:
+        ctx = _committed_ctx(tmp_path)
+        ctx.non_interactive = True
+
+        with patch("builtins.input", side_effect=AssertionError("prompted")):
+            restore_generated_config(ctx)
+
+        assert ctx.license_type == "MIT"
+
+    def test_resumed_wizard_renders_steps_4_to_6_from_vergil_toml(self, tmp_path: Path) -> None:
+        # The #3977 scenario end to end: the init stopped after step 3's
+        # checkpoint; the resumed run must write the python gitignore,
+        # dependabot and ci.yml, not the language-less defaults.
+        ctx = _committed_ctx(tmp_path)
+        ctx.completed_steps = set()
+        ctx.work_dir = None
+        ctx.opt_license_type = "MIT"
+        ctx.opt_initial_version = "0.1.0"
+        ctx.description = "Demo"
+
+        def clone(_ctx: RepoInitContext) -> None:
+            _ctx.work_dir = tmp_path
+
+        with (
+            patch("vergil_tooling.lib.repo_init.step_clone", side_effect=clone),
+            patch("vergil_tooling.lib.repo_init.step_scaffold_language"),
+            patch("vergil_tooling.lib.repo_init.step_docs_site"),
+            patch("vergil_tooling.lib.repo_init.step_branch_structure"),
+            patch("vergil_tooling.lib.repo_init.step_github_config"),
+            patch("vergil_tooling.lib.repo_init.step_github_pages"),
+            patch("vergil_tooling.lib.repo_init._check_remote_steps", return_value={1}),
+            patch(
+                "vergil_tooling.lib.repo_init.cwd_repo_slug",
+                return_value="vergil-project/demo",
+            ),
+            patch(
+                "vergil_tooling.lib.repo_init.git.read_output",
+                return_value="abc chore(init): step 3 - vergil.toml\n",
+            ),
+            patch("vergil_tooling.lib.repo_init.git.run"),
+            patch("vergil_tooling.lib.repo_init.step_generate_config") as mock_step3,
+        ):
+            run_wizard(ctx)
+
+        mock_step3.assert_not_called()
+        assert ctx.completed_steps == {1, 3}
+        ci = (tmp_path / ".github" / "workflows" / "ci.yml").read_text()
+        assert "      language: python\n" in ci
+        assert "container-suffix: base" not in ci
+        cd = (tmp_path / ".github" / "workflows" / "cd.yml").read_text()
+        assert "      language: python\n" in cd
+        assert (tmp_path / ".gitignore").read_text() == render_gitignore("python")
+        assert (tmp_path / ".github" / "dependabot.yml").read_text() == dependabot.render("python")
+
+
 def test_render_claude_settings_equals_template() -> None:
     # The template is the whole file: no marketplace entry and no seeded ref
     # (epic vergil-project/.github#558).
@@ -2427,6 +2751,14 @@ def test_render_claude_settings_turns_off_attribution() -> None:
     # Code's commit/PR attribution turned off.
     data = json.loads(render_claude_settings())
     assert data["attribution"] == {"commit": "", "pr": ""}
+
+
+def test_render_claude_settings_turns_off_idle_compaction() -> None:
+    # Idle compaction is off (#3795): the human decides when a session is
+    # compacted. Context-full auto-compaction is left alone.
+    data = json.loads(render_claude_settings())
+    assert data["idleCompaction"] is False
+    assert "autoCompactEnabled" not in data
 
 
 def test_multi_choice_numbers() -> None:

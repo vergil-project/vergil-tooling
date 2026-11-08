@@ -158,6 +158,12 @@ def test_push_draft_failure_is_a_ruling_error(git_repo_with_remote: Clone, tmp_p
         "git@github.com:o/r.git",
         "ssh://git@github.com/o/r.git",
         "ssh://git@github.com:22/O/R",
+        "git://github.com/o/r.git",
+        # #4088: the forms the shared github_remote_repo parser adds.
+        "git+ssh://git@github.com/o/r.git",
+        "ssh+git://git@github.com/o/r.git",
+        "github.com:o/r.git",
+        "git@github.com:/o/r.git",
     ],
 )
 def test_require_remote_is_accepts_the_issue_repo(git_repo_with_remote: Clone, url: str) -> None:
@@ -174,6 +180,14 @@ def test_require_remote_is_accepts_the_issue_repo(git_repo_with_remote: Clone, u
         "https://example.com/o/r.git",
         "https://github.com.evil.example/o/r.git",
         "https://x-access-token:secret@github.com/o/rr.git",
+        "https://github.com/o/r/extra",
+        "ftp://github.com/o/r.git",
+        # #4088: a user part with '#', '?' or '\' puts the host a URL parser
+        # sees off github.com (or leaves it ambiguous); the old regex read
+        # these as github.com/o/r, the shared parser refuses them.
+        "https://evil.example#secret@github.com/o/r.git",
+        "https://evil.example?secret@github.com/o/r.git",
+        "https://evil.example\\secret@github.com/o/r.git",
     ],
 )
 def test_require_remote_is_refuses_another_repo(git_repo_with_remote: Clone, url: str) -> None:

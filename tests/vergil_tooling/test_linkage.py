@@ -186,5 +186,18 @@ from vergil_tooling.lib.linkage import freetext_linkage_error
 def test_freetext_linkage_error_names_offender_and_redirects() -> None:
     msg = freetext_linkage_error("Ref #157", "83")
     assert "Ref #157" in msg
-    assert "vrg-gh issue comment 83" in msg
+    assert "vrg-gh issue comment 83 --body" in msg
     assert "added for you" in msg
+
+
+@pytest.mark.parametrize("primary", ["83", "#83"])
+def test_freetext_linkage_error_names_a_local_issue_by_number(primary: str) -> None:
+    msg = freetext_linkage_error("Ref #157", primary)
+    assert "vrg-gh issue comment 83 --body" in msg
+
+
+def test_freetext_linkage_error_names_a_cross_repo_issue_without_a_hash() -> None:
+    # A pasted 'org/repo#83' is not a gh issue argument, and an unquoted '#'
+    # breaks the paste in zsh (#3966): the command names the number and --repo.
+    msg = freetext_linkage_error("Ref #157", "org/repo#83")
+    assert "vrg-gh issue comment 83 --repo org/repo --body" in msg

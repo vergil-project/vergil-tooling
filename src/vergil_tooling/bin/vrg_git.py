@@ -5,8 +5,8 @@ Enforces a subcommand allowlist and flag deny lists.
 
 from __future__ import annotations
 
+import contextlib
 import os
-import re
 import subprocess
 import sys
 import time
@@ -14,7 +14,16 @@ from pathlib import Path
 
 from vergil_tooling.lib import branch_names, epics, github, retry
 from vergil_tooling.lib.cli import cli_main
-from vergil_tooling.lib.git import _git_auth_env, is_workflow_push_refusal, main_worktree_root
+from vergil_tooling.lib.git import (
+    WORKFLOWS_PATH,
+    WorkflowRefusal,
+    _git_auth_env,
+    diagnose_workflow_refusal,
+    is_workflow_push_refusal,
+    main_worktree_root,
+    stale_workflow_refusal_text,
+    unknown_workflow_refusal_note,
+)
 from vergil_tooling.lib.pr_workflow import freeze
 
 _ALLOWED_SIMPLE: set[str] = {
@@ -113,18 +122,62 @@ _FLAG_DENY: dict[str, set[str]] = {
 
 _REMOTE_SUBCOMMANDS: set[str] = {"push", "pull", "fetch", "ls-remote", "clone"}
 
-# Owner/org of a GitHub clone URL — used to mint the installation token for
-# `clone`, which runs outside any repo (so the org can't come from a remote).
-_GITHUB_CLONE_URL_RE = re.compile(r"(?:https://github\.com/|git@github\.com:)([^/]+)/")
-
 
 @cli_main
 def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
 
+    targets, argv = _split_dash_c(argv)
+    if targets is None:
+        print("vrg-git: option '-C' requires a value", file=sys.stderr)
+        return 2
+    if not targets:
+        return _run(argv)
+    # Apply each `-C <path>` the way git does (each relative to the one before,
+    # an empty one a no-op) by changing into it *before* any check runs, so
+    # every cwd-derived check and the token's org follow the -C repo exactly as
+    # they would follow a `cd` (#3737). The -C options are not forwarded: git
+    # already runs in the target, and re-applying a relative path would land
+    # elsewhere. The previous cwd is restored on return for in-process callers.
+    with contextlib.ExitStack() as stack:
+        for target in targets:
+            if not target:
+                continue
+            try:
+                stack.enter_context(contextlib.chdir(target))
+            except OSError as exc:
+                print(
+                    f"vrg-git: cannot change to '{target}': {exc.strerror or exc}",
+                    file=sys.stderr,
+                )
+                return 128
+        return _run(argv)
+
+
+def _split_dash_c(argv: list[str]) -> tuple[list[str] | None, list[str]]:
+    """Split the leading global ``-C <path>`` options off *argv*.
+
+    Returns ``(paths, rest)``: the ``-C`` paths in order and the remaining
+    arguments, starting at the subcommand. ``paths`` is None when a ``-C`` has
+    no value. Only the separate ``-C <path>`` form is git's (``-C<path>`` is
+    not), and only before the subcommand; any other global option stays an
+    unrecognized subcommand and is refused.
+    """
+    paths: list[str] = []
+    index = 0
+    while index < len(argv) and argv[index] == "-C":
+        if index + 1 >= len(argv):
+            return None, []
+        paths.append(argv[index + 1])
+        index += 2
+    return paths, argv[index:]
+
+
+def _run(argv: list[str]) -> int:
+    """Check *argv* against the policy in the current directory and run it."""
     if not argv:
-        print("usage: vrg-git <subcommand> [args...]", file=sys.stderr)
+        print("usage: vrg-git [-C <path>]... <subcommand> [args...]", file=sys.stderr)
         return 2
 
     if argv[0] in ("-h", "--help"):
@@ -247,7 +300,14 @@ def main(argv: list[str] | None = None) -> int:
             # at submit time. Warn and report success so the agent proceeds to
             # report-ready instead of mistreating a normal case as a failure
             # (#2540). Any other push failure keeps its original returncode.
-            _print_workflow_push_guidance()
+            # A stale branch, whose own commits change no workflow file but
+            # whose tree carries an outdated one, is refused the same way; its
+            # remedy is a rebase, not report-ready, so it stays a failure (#3814).
+            diagnosis = _diagnose_workflow_refusal(argv[1:])
+            if diagnosis.kind == "stale":
+                _print_stale_workflow_push_guidance(diagnosis)
+                return net_result.returncode
+            _print_workflow_push_guidance(diagnosis)
             return 0
         return net_result.returncode
 
@@ -269,11 +329,17 @@ def _check_symbolic_ref_read(args: list[str]) -> str | None:
 
 
 def _org_from_clone_url(args: list[str]) -> str | None:
-    """Return the GitHub org/owner from the first github.com URL among clone args."""
+    """Return the owner of the first github.com repo URL among clone args.
+
+    Used to mint the installation token for ``clone``, which runs outside any
+    repo, so the org cannot come from a remote. An arg counts only when
+    :func:`github.github_remote_repo`, the one GitHub remote URL parser, reads
+    it as naming a repo on github.com (#4088).
+    """
     for arg in args:
-        match = _GITHUB_CLONE_URL_RE.match(arg)
-        if match:
-            return match.group(1)
+        repo = github.github_remote_repo(arg)
+        if repo is not None:
+            return repo.split("/", 1)[0]
     return None
 
 
@@ -835,17 +901,98 @@ def _check_frozen_push(args: list[str]) -> str | None:
     )
 
 
-def _print_workflow_push_guidance() -> None:
+# Push flags that leave the pushed commits as named by the refspecs, so the
+# refused push is still "this branch at HEAD" and its workflow refusal can be
+# diagnosed against the branch's own diff. Any other flag (``--all``,
+# ``--mirror``, ``--tags``, ``-o``, ...) leaves the diagnosis unknown (#3814).
+_DIAGNOSABLE_PUSH_FLAGS = _PUBLISH_SAFE_PUSH_FLAGS | {
+    "--force-with-lease",
+    "--force-if-includes",
+    "--no-verify",
+    "--atomic",
+}
+
+
+def _pushed_remote_if_head_only(args: list[str]) -> tuple[str, str | None]:
+    """Return ``(remote, None)`` when ``git push *args`` pushes only HEAD, else a reason.
+
+    A bare push (or one naming only the remote) pushes the current branch
+    under the default ``push.default``; an explicit refspec must take its
+    source from HEAD or the current branch. Fail-closed: anything else is
+    reported as undiagnosable rather than guessed.
+    """
+    positionals: list[str] = []
+    for arg in args:
+        if arg.startswith("-"):
+            if arg not in _DIAGNOSABLE_PUSH_FLAGS and not arg.startswith("--force-with-lease="):
+                return "", f"the push uses {arg}"
+        else:
+            positionals.append(arg)
+    remote = positionals[0] if positionals else "origin"
+    refspecs = positionals[1:]
+    if not refspecs:
+        return remote, None
+    current = subprocess.run(  # noqa: S603
+        ["git", "symbolic-ref", "--quiet", "--short", "HEAD"],  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    branch = current.stdout.strip() if current.returncode == 0 else ""
+    names = {"HEAD"} | ({branch, f"refs/heads/{branch}"} if branch else set())
+    for refspec in refspecs:
+        src = refspec.removeprefix("+").partition(":")[0]
+        if src not in names:
+            return "", f"the push names {refspec!r}, not the current branch"
+    return remote, None
+
+
+def _diagnose_workflow_refusal(args: list[str]) -> WorkflowRefusal:
+    """Diagnose a refused ``git push *args`` with the shared helper (#3814, #4077).
+
+    Only a push of HEAD is diagnosable; any other push is ``unknown``, which
+    keeps the usual hand-off guidance.
+    """
+    remote, not_head = _pushed_remote_if_head_only(args)
+    if not_head is not None:
+        return WorkflowRefusal("unknown", reason=not_head)
+    return diagnose_workflow_refusal(remote)
+
+
+def _print_workflow_push_guidance(diagnosis: WorkflowRefusal) -> None:
+    if diagnosis.kind == "own":
+        cause = (
+            f"  This branch's own commits change {WORKFLOWS_PATH}** "
+            f"({', '.join(diagnosis.files)}),\n"
+            "  which an agent is not permitted to push;\n"
+        )
+    else:
+        cause = (
+            f"  GitHub refused it for {WORKFLOWS_PATH}** changes, which an agent is"
+            " not permitted to push;\n"
+        )
     print(
         "\nvrg-git: warning: push skipped for workflow-file changes — this is"
         " EXPECTED and NOT an error.\n"
-        "  This branch touches .github/workflows/**, which an agent is not"
-        " permitted to push;\n"
+        f"{cause}"
         "  it does not need an agent push. The human's vrg-submit-pr pushes"
         " the branch at\n"
         "  submit time. PROCEED AS USUAL — run `vrg-pr-workflow report-ready`"
         " to hand off.\n"
         "  Do NOT remove the workflow files from the commit to force a push.",
+        file=sys.stderr,
+    )
+    if diagnosis.kind == "unknown":
+        print(f"  vrg-git {unknown_workflow_refusal_note(diagnosis)}", file=sys.stderr)
+
+
+def _print_stale_workflow_push_guidance(diagnosis: WorkflowRefusal) -> None:
+    print(
+        f"\nvrg-git: error: {stale_workflow_refusal_text(diagnosis)}"
+        "  then re-run `vrg-container-run -- vrg-validate` and push again"
+        " (with --force-with-lease\n"
+        "  if the branch is already on the remote). Do NOT hand this off with"
+        " `vrg-pr-workflow report-ready`.",
         file=sys.stderr,
     )
 
@@ -890,10 +1037,15 @@ def _print_help() -> None:
     """Print vrg-git's own help — what the wrapper enforces before forwarding."""
     denied = ", ".join(sorted(_DENIED))
     print(
-        "usage: vrg-git <subcommand> [args...]\n"
+        "usage: vrg-git [-C <path>]... <subcommand> [args...]\n"
         "\n"
         "A safe git wrapper for agent sessions: it forwards to git only after\n"
         "enforcing policy, so it is not a drop-in replacement for git.\n"
+        "\n"
+        "-C <path> runs as if started in <path> (repeatable, each relative to\n"
+        "the one before, as in git). It changes directory before any check,\n"
+        "so every check below, and the org of the identity token, applies to\n"
+        "the -C repo. No other global git option is accepted.\n"
         "\n"
         "What it enforces:\n"
         "  - Subcommand allowlist: read-only inspection commands plus a vetted\n"

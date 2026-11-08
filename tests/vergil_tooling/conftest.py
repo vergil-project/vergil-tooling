@@ -22,8 +22,10 @@ opt out (see ``_RESOLVER_TEST_MODULES``).
 
 from __future__ import annotations
 
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -205,3 +207,43 @@ def fake_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakeApp:
     monkeypatch.setattr(github, "_token_cache", {})
     monkeypatch.setattr(github, "_warned_no_installation", set())
     return app
+
+
+def shell_transport(home: Path, fake_bin: Path | None = None) -> MagicMock:
+    """A Transport double that runs the guest commands in a real local bash.
+
+    ``~`` and ``$HOME`` are *home*; *fake_bin*, when given, is first on ``PATH``
+    so a test can shadow a guest command with one that fails (see
+    :func:`failing_command`).
+    """
+    path = "/usr/bin:/bin" if fake_bin is None else f"{fake_bin}:/usr/bin:/bin"
+    env = {"HOME": str(home), "PATH": path}
+
+    def run(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(list(args), capture_output=True, text=True, check=True, env=env)  # noqa: S603
+
+    def pipe(cmd: str, input_data: str) -> None:
+        subprocess.run(  # noqa: S603
+            ["bash", "-c", cmd],  # noqa: S607
+            input=input_data,
+            capture_output=True,
+            text=True,
+            check=True,
+            env=env,
+        )
+
+    t = MagicMock()
+    t.run.side_effect = run
+    t.pipe.side_effect = pipe
+    return t
+
+
+def failing_command(fake_bin: Path, name: str) -> None:
+    """Put a *name* in *fake_bin* that writes a fragment to stdout, then fails.
+
+    Shadowing ``cat``, ``chmod`` or ``mv`` with it breaks an atomic write part-way.
+    """
+    fake_bin.mkdir(exist_ok=True)
+    fake = fake_bin / name
+    fake.write_text("#!/bin/sh\nprintf partial\nexit 1\n")
+    fake.chmod(0o755)

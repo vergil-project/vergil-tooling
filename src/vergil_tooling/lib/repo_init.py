@@ -12,7 +12,7 @@ import textwrap
 from dataclasses import dataclass, field
 from importlib import metadata, resources
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 from vergil_tooling.lib import dependabot, git, github, gitignore, lang_scaffold, repo_config
 from vergil_tooling.lib.config import _ENUMS
 from vergil_tooling.lib.labels import sync_labels
+from vergil_tooling.lib.output import emit_error
 
 _CHECKPOINT_RE = re.compile(r"chore\(init\): step (\d+) -")
 
@@ -1079,7 +1080,8 @@ def _resolve_versions(vergil_toml: str) -> Resolution | None:
     try:
         resolution = resolve_config(cfg, repo_root=None)
     except VersionsError as exc:
-        raise SystemExit(f"error: {exc}") from exc
+        emit_error(str(exc))
+        raise SystemExit(1) from exc
     return resolution
 
 
@@ -1251,6 +1253,132 @@ def step_generate_config(ctx: RepoInitContext) -> None:
     git.run("add", "vergil.toml")
     git.run("commit", "-m", "chore(init): step 3 - vergil.toml")
     print("  vergil.toml committed.")
+
+
+def _refuse_resume(msg: str) -> NoReturn:
+    """Stop a resumed init whose step-3 state cannot be rebuilt (#3977)."""
+    emit_error(f"cannot resume the init of this repo: {msg}")
+    raise SystemExit(1)
+
+
+def restore_generated_config(ctx: RepoInitContext) -> None:
+    """Rebuild step 3's context from the committed vergil.toml on a resumed init.
+
+    Step 3 is the only step that fills the vergil.toml-derived fields, and a
+    resumed fresh init skips it once its checkpoint commit exists. Without this
+    the later steps would render ci.yml, cd.yml, dependabot and the gitignore
+    from the dataclass defaults (no language, a ``base`` container) though the
+    committed vergil.toml names a language (#3977). The file is the saved
+    state: every field step 3 wrote is read back from it and the versions are
+    resolved again, which also stops cleanly if the window has moved since.
+
+    Anything that cannot be rebuilt stops the run loudly instead: a missing or
+    invalid vergil.toml, a flag that contradicts it, or (while step 4 is still
+    to run) a license or initial version that vergil.toml does not record and
+    a ``--non-interactive`` run was not given.
+    """
+    import tomllib
+
+    from vergil_tooling.lib.config import ConfigError, _parse_raw_config
+
+    print("Step 3: Restoring the wizard answers from the committed vergil.toml...")
+    if ctx.work_dir is None:  # pragma: no cover
+        raise RuntimeError("work_dir not set")
+    toml_path = ctx.work_dir / "vergil.toml"
+    if not toml_path.is_file():
+        _refuse_resume(
+            f"step 3 is checkpointed but {toml_path} is missing, so its answers cannot be "
+            "restored. Restore vergil.toml from the step 3 commit and re-run."
+        )
+    text = toml_path.read_text()
+    try:
+        raw = tomllib.loads(text)
+        cfg = _parse_raw_config(raw, source=str(toml_path))
+    except (tomllib.TOMLDecodeError, ConfigError) as exc:
+        _refuse_resume(f"{toml_path} is not a valid vergil.toml ({exc}).")
+
+    restored: dict[str, Any] = {
+        "repository_type": cfg.project.repository_type,
+        "primary_language": cfg.project.primary_language or "",
+        "branching_model": cfg.project.branching_model,
+        "versioning_scheme": cfg.project.versioning_scheme,
+        "release_model": cfg.project.release_model,
+        "ci_versions": list(cfg.ci.versions or []),
+        "integration_tests": cfg.ci.integration_tests,
+        "publish_release": cfg.publish.release,
+        "publish_docs": cfg.publish.docs,
+        # The config parser refuses a vergil.toml without this pin.
+        "vergil_version": cfg.dependencies["vergil"],
+    }
+
+    # A flag given on the resumed run must agree with what step 3 committed:
+    # silently preferring either one would leave the repo half one, half the other.
+    flags: dict[str, tuple[str, Any]] = {
+        "repository_type": ("--repository-type", ctx.opt_repository_type),
+        "primary_language": ("--language", ctx.opt_primary_language),
+        "branching_model": ("--branching-model", ctx.opt_branching_model),
+        "versioning_scheme": ("--versioning-scheme", ctx.opt_versioning_scheme),
+        "release_model": ("--release-model", ctx.opt_release_model),
+        "ci_versions": (
+            "--versions",
+            None
+            if ctx.opt_ci_versions is None
+            else [v.strip() for v in ctx.opt_ci_versions.split(",") if v.strip()],
+        ),
+        "integration_tests": ("--integration-tests", ctx.opt_integration_tests),
+        "publish_release": ("--publish-release", ctx.opt_publish_release),
+        "publish_docs": ("--publish-docs", ctx.opt_publish_docs),
+        "vergil_version": ("--vergil-version", ctx.opt_vergil_version),
+    }
+    conflicts = [
+        f"{flag} {given!r} (vergil.toml has {restored[key]!r})"
+        for key, (flag, given) in flags.items()
+        if given is not None and given != restored[key]
+    ]
+    if conflicts:
+        _refuse_resume(
+            "flags contradict the vergil.toml step 3 committed: "
+            + "; ".join(conflicts)
+            + ". Drop them, or edit vergil.toml and amend the step 3 commit."
+        )
+
+    for key, value in restored.items():
+        setattr(ctx, key, value)
+    ctx.package = "package" in raw
+    ctx.resolution = _resolve_versions(text)
+
+    # The license and initial version are step-3 answers that vergil.toml does
+    # not record; only step 4 uses them (LICENSE, VERSION, README). Ask again
+    # rather than take a default the interrupted run may not have chosen.
+    if 4 not in ctx.completed_steps:
+        if ctx.non_interactive:
+            missing = [
+                flag
+                for given, flag in (
+                    (ctx.opt_license_type, "--license"),
+                    (ctx.opt_initial_version, "--initial-version"),
+                )
+                if given is None
+            ]
+            if missing:
+                _refuse_resume(
+                    "step 4 still has to run, and vergil.toml does not record the "
+                    "license or initial version; pass " + " and ".join(missing) + "."
+                )
+        license_options = ["MIT", "GPL-3.0", "Apache-2.0", "none"]
+        ctx.license_type = _resolve(
+            ctx.opt_license_type,
+            non_interactive=ctx.non_interactive,
+            default="MIT",
+            prompt=lambda: prompt_choice("License", license_options, default="MIT"),
+        )
+        ctx.initial_version = _resolve(
+            ctx.opt_initial_version,
+            non_interactive=ctx.non_interactive,
+            default="0.1.0",
+            prompt=lambda: prompt_free_text("Initial version", default="0.1.0"),
+        )
+    print("  vergil.toml answers restored.")
 
 
 def step_scaffold_config_files(ctx: RepoInitContext) -> None:
@@ -1472,7 +1600,8 @@ def step_github_config(ctx: RepoInitContext) -> None:
     try:
         desired = compute_desired_state(cfg, visibility=result.visibility, is_org=is_org)
     except VersionsError as exc:
-        raise SystemExit(f"error: {exc}") from exc
+        emit_error(str(exc))
+        raise SystemExit(1) from exc
     # Refuse to apply a CI-gates ruleset whose required status checks the
     # generated ci.yml never emits on a pull_request — the defect that ships a
     # repository which cannot merge its first PR with every check green (#2720).
@@ -1594,6 +1723,10 @@ def run_wizard(ctx: RepoInitContext) -> None:
     for step_num, desc, func in steps:
         if step_num in ctx.completed_steps:
             print(f"Step {step_num} ({desc}): already completed, skipping.")
+            if step_num == 3:
+                # The later steps render from step 3's answers: rebuild them
+                # from the committed vergil.toml, or stop (#3977).
+                restore_generated_config(ctx)
             continue
         func()
 

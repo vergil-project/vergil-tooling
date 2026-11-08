@@ -136,6 +136,10 @@ def test_intake_create_link_failure_is_loud(
     assert "not linked" in err
     assert _INTAKE.slug in err
     assert "HTTP 502: boom" in err
+    # The fix names both refs single-quoted for the shell (#3966).
+    assert err.rstrip().endswith(
+        "Link it with: vrg-epic-move --task 'org/.github#321' --epic 'org/.github#7'"
+    )
 
 
 def test_intake_epic_failure_creates_nothing(

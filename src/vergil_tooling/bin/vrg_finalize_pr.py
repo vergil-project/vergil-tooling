@@ -183,7 +183,9 @@ def main(argv: list[str] | None = None) -> int:
     # Task closure and epic rollup are event-driven now (epic
     # vergil-project/.github#75): the PR's `Closes #N` linkage closes the task on
     # merge, and the on: issues.closed rollup Action closes the parent epic. The
-    # old post-pipeline `_close_managed_task` call was removed here in T4.
+    # old post-pipeline `_close_managed_task` call was removed here in T4. The
+    # close-refs stage is the backstop for an auto-close GitHub skipped
+    # (issue #4002).
 
     # --release cascade (issue #1634): chain into vrg-release only after a
     # clean finalize. A non-zero pipeline must not trigger a release, and the
@@ -1194,6 +1196,70 @@ def _stage_merge(ctx: FinalizeContext) -> None:
         ctx.merge_commit_sha = github.merge_commit_sha(args.pr) or None
 
 
+# GitHub closes a PR's closing-reference issues asynchronously after the merge,
+# usually within a second or two. Before closing one itself, finalize gives
+# GitHub this long and reads the states again, so an auto-close still in
+# flight is not reported as one GitHub skipped (issue #4002).
+_AUTO_CLOSE_GRACE_SECS = 10
+
+
+def _read_closing_refs(pr: str) -> github.PRClosingReferences:
+    try:
+        return github.pr_closing_references(pr)
+    except (subprocess.CalledProcessError, RuntimeError, ValueError) as exc:
+        msg = f"could not read the closing issue references of PR {pr}: {error_text(exc)}"
+        raise FinalizeError(msg) from exc
+
+
+def _stage_close_refs(ctx: FinalizeContext) -> None:
+    """Close any issue the merged PR closes that GitHub left open (issue #4002).
+
+    GitHub sometimes skips the closing-keyword auto-close, leaving a merged
+    task open, which blocks epic rollup. Only the issues GitHub itself lists
+    as the PR's closing references are touched, never ones it merely
+    mentions. Each issue closed is reported; a failed read or close fails the
+    stage, after every close has been tried.
+    """
+    args = ctx.args
+    if args.dry_run:
+        print(
+            f"  [dry-run] after the merge, close any closing-reference issue of PR {args.pr} "
+            "that GitHub left open"
+        )
+        return
+    refs = _read_closing_refs(args.pr)
+    if refs.state != "MERGED":
+        msg = f"PR {refs.ref} is {refs.state}, not MERGED; its closing references were not checked"
+        raise FinalizeError(msg)
+    if not refs.issues:
+        print(f"PR {refs.ref} has no closing issue references.")
+        return
+    if any(issue.state == "OPEN" for issue in refs.issues):
+        time.sleep(_AUTO_CLOSE_GRACE_SECS)
+        refs = _read_closing_refs(args.pr)
+    still_open = [issue for issue in refs.issues if issue.state == "OPEN"]
+    for issue in refs.issues:
+        if issue.state != "OPEN":
+            print(f"  {issue.ref}: closed")
+    merged = f" (merged {refs.merged_at})" if refs.merged_at else ""
+    comment = f"Completed by PR {refs.ref}{merged}; GitHub did not auto-close it."
+    failures: list[str] = []
+    for issue in still_open:
+        try:
+            github.close_issue(issue.repo, issue.number, comment=comment)
+        except subprocess.CalledProcessError as exc:
+            print(f"ERROR: could not close {issue.ref}: {error_text(exc)}", file=sys.stderr)
+            failures.append(issue.ref)
+            continue
+        print(f"  {issue.ref}: GitHub left it open after the merge; closed it as completed")
+    if failures:
+        msg = (
+            f"could not close {', '.join(failures)}, left open after PR {refs.ref} merged; "
+            "close each by hand"
+        )
+        raise FinalizeError(msg)
+
+
 def _stage_cleanup(ctx: FinalizeContext) -> None:
     """Switch to the target branch, sync, and prune merged branches,
     worktrees, and remote-tracking references."""
@@ -1619,6 +1685,9 @@ def build_stages(*, include_pr: bool, include_post_checks: bool = True) -> tuple
     if include_pr:
         stages.append(Stage("provenance", _stage_provenance, "fail_fast"))
         stages.append(Stage("merge", _stage_merge, "fail_fast"))
+        # fail_defer: an issue left open must fail finalize, but the PR is
+        # merged by now, so its cleanup still runs (issue #4002).
+        stages.append(Stage("close-refs", _stage_close_refs, "fail_defer"))
     stages.append(Stage("cleanup", _stage_cleanup, "fail_fast"))
     if include_post_checks:
         # Provision the environment before it is used. fail_fast: if the image

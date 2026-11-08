@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vergil_tooling.bin.vrg_intake_route import main, parse_args
-from vergil_tooling.lib import github
+from vergil_tooling.lib import epics, github
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.intake_route import (
     Defer,
@@ -188,10 +188,25 @@ def test_main_half_applied_route_exits_1_without_routed(
     message = (
         "moved org/.github#352 to org/tool#900, but it is under org/.github#7, not under "
         "org/.github#11; the route is half-applied. Fix it with: "
-        "vrg-epic-move --task org/tool#900 --epic org/.github#11"
+        "vrg-epic-move --task 'org/tool#900' --epic 'org/.github#11'"
     )
     with patch(f"{_MOD}.intake_route.route", side_effect=RouteHalfAppliedError(message)):
         rc = main(["org/.github#352", "one-off", "--repo", "org/tool"])
+    assert rc == 1
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert err == f"vrg-intake-route: {message}\n"
+
+
+def test_main_unconfirmed_queue_epic_exits_1_naming_it(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A queue epic created but not confirmed is a clean refusal naming the new epic.
+    created = IssueRef("org", ".github", 10)
+    message = "created deferred epic org/.github#10 but org/.github also has org/.github#9"
+    exc = epics.StandingEpicDuplicateError(message, created, [IssueRef("org", ".github", 9)])
+    with patch(f"{_MOD}.intake_route.route", side_effect=exc):
+        rc = main(["org/.github#352", "defer", "--reason", "later", "--revisit-when", "X ships"])
     assert rc == 1
     out, err = capsys.readouterr()
     assert out == ""

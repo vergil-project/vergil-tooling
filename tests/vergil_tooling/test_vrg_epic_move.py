@@ -85,6 +85,25 @@ def test_main_rejects_non_epic_target() -> None:
     mock_add.assert_not_called()
 
 
+def test_main_unconfirmed_standing_epic_exits_1_naming_it(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A standing epic created but not confirmed is a clean refusal, not a traceback.
+    message = "created ad-hoc epic org/.github#10 but org/.github also has org/.github#9"
+    exc = epics.StandingEpicDuplicateError(
+        message, epics.IssueRef("org", ".github", 10), [epics.IssueRef("org", ".github", 9)]
+    )
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.epics.resolve_epic_ref", side_effect=exc),
+        patch(f"{_MOD}.epics.add_child") as mock_add,
+    ):
+        rc = main(["--task", "#42", "--epic", "adhoc"])
+    assert rc == 1
+    assert capsys.readouterr().err == f"vrg-epic-move: {message}\n"
+    mock_add.assert_not_called()
+
+
 def test_main_accepts_adhoc_epic() -> None:
     """The 'adhoc' sentinel skips the cross-org guard (it resolves in .github)."""
     with (

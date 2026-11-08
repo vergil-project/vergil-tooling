@@ -19,10 +19,17 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 _TITLE_RE = re.compile(r"^release: (\d+\.\d+\.\d+)$")
+# Upper bound on the open issues the release search lists. Reaching it is a
+# refusal: an in-flight release issue could lie beyond it (#4038).
+_SEARCH_LIST_LIMIT = 100
 
 
 def _open_release_issues(repo: str) -> list[tuple[str, int, str]]:
-    """Return ``(version, number, body)`` for each open ``release: X.Y.Z`` issue."""
+    """Return ``(version, number, body)`` for each open ``release: X.Y.Z`` issue.
+
+    Raises :class:`ReleaseError` when the search fills the listing limit, since
+    the list may then be truncated.
+    """
     results = github.read_json(
         "issue",
         "list",
@@ -32,9 +39,20 @@ def _open_release_issues(repo: str) -> list[tuple[str, int, str]]:
         "release: in:title",
         "--state",
         "open",
+        "--limit",
+        str(_SEARCH_LIST_LIMIT),
         "--json",
         "number,title,body",
     )
+    if isinstance(results, list) and len(results) >= _SEARCH_LIST_LIMIT:
+        raise ReleaseError(
+            phase="resume",
+            command="gh issue list",
+            message=(
+                f"The release-issue search matched {_SEARCH_LIST_LIMIT}+ open issues; "
+                "refusing to pick a release to resume from a possibly truncated list."
+            ),
+        )
     issues: list[tuple[str, int, str]] = []
     if isinstance(results, list):
         for raw in results:

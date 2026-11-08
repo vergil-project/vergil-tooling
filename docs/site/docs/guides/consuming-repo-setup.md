@@ -137,6 +137,13 @@ fails loudly if a required flag is missing; run
 [CLI Tools Overview](../reference/cli-tools-overview.md#vrg-github-repo-init)
 covers the born-green language skeleton.
 
+A resumed run reads step 3's answers back from the committed
+`vergil.toml`. It stops if that file is missing or invalid, or if a
+flag you pass contradicts it. `vergil.toml` does not record the
+license or the initial version, so a run that resumes before step 4
+asks for them again; under `--non-interactive` it needs `--license`
+and `--initial-version`.
+
 ### An existing repository
 
 From the root of the repo's clone, on a feature branch:
@@ -237,7 +244,7 @@ branch prefix, issue number) live in `vrg-commit` itself. See the
 `vrg-github-repo-init` writes `.claude/settings.json` as the packaged
 template
 [`claude_settings.json`](https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/data/claude_settings.json),
-unchanged. It has four parts:
+unchanged. It has five parts:
 
 | Key | Purpose |
 |---|---|
@@ -245,6 +252,7 @@ unchanged. It has four parts:
 | `hooks.PreToolUse` | Runs `${CLAUDE_PROJECT_DIR}/.claude/hooks/guard.sh` on every `Bash` tool call. |
 | `enabledPlugins` | Enables `vergil@vergil-marketplace`. The `vergil-marketplace` definition (`vergil-project/vergil-claude-plugin`, `ref: "v2.1"`) lives only in the user settings: a second definition in the repo file would replace the user's whole entry. See [The `vergil-marketplace` definition](#the-vergil-marketplace-definition). |
 | `attribution` | Turns off Claude Code's AI co-author trailer on commits and PRs. |
+| `idleCompaction` | `false`: Claude Code doesn't compact a session while it sits idle, so the human decides when to compact or clear (#3795). Needs Claude Code v2.1.290 or later; older versions ignore it. Context-full auto-compaction and `/compact` are unchanged. |
 
 AI co-author attribution is not used (#3200). The `attribution` block
 uses empty strings, which work on every Claude Code version:
@@ -351,8 +359,10 @@ that is not running; a single-VM `vrg-vm update` on one fails with exit 1.
 A skipped Lima VM's next `vrg-vm start` refreshes its plugins, but on start
 a failed refresh or verification is only a warning: check the start output
 for an `update-plugins` warning, or run `vrg-vm update` on that VM once it is
-up. An off-platform (cloud) box does not support `vrg-vm start`; run
-`vrg-vm update` on it once it is running again.
+up. An off-platform (cloud) box does not support `vrg-vm start`. Bring a
+stopped one back with `vrg-vm rebuild <org>/<repo> --identity <identity>`,
+which replaces the disposable VM and reattaches its persistent volume, then
+run `vrg-vm update` on it.
 
 Restart Claude Code afterwards: a running session keeps the plugin version
 it loaded.

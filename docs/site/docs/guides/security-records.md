@@ -267,10 +267,10 @@ of them until the plan exists.
 
   ```bash
   vrg-security-record retarget GHSA-xxxx-xxxx-xxxx \
-    --to vergil-project/vergil-tooling#101 \
-    --to vergil-project/vergil-tooling#102
+    --to 'vergil-project/vergil-tooling#101' \
+    --to 'vergil-project/vergil-tooling#102'
   vrg-security-record retarget GHSA-yyyy-yyyy-yyyy \
-    --to vergil-project/vergil-tooling#103
+    --to 'vergil-project/vergil-tooling#103'
   ```
 
   From then on, the PRs that close those tasks are what close each
@@ -283,7 +283,8 @@ of them until the plan exists.
   shipped code has it. A finding about shipped behaviour always goes to a
   fix task that changes the code.
 - **The guard.** `vrg-queue planning` never shows a planning issue as
-  `ready-to-close` while **any** advisory it names still tracks it. It
+  `ready-to-close` while **any** advisory still tracks it, whether or not
+  its body names that advisory. It
   shows it as `in-progress` with a note that counts the advisories still
   tracking it and names them by GHSA ID only:
 

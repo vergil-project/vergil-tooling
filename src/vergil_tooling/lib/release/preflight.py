@@ -31,6 +31,9 @@ _VERSION_OVERRIDE_FIELDS = ("minor", "major")
 # The "Fix task: <url>" line vrg-update-deps writes into a failed PR's body.
 _FIX_TASK_RE = re.compile(rf"^{re.escape(FIX_TASK_PREFIX)}(\S+)\s*$", re.MULTILINE)
 _PENDING_DEPS_COMMAND = f"gh pr list --state open --label {DEPS_LABEL}"
+# Upper bound on the open dependency-update PRs listed; reaching it refuses the
+# release, since a pending PR beyond it would go unseen (#4038).
+_PENDING_DEPS_LIMIT = 100
 # A fix task is an issue URL; it may live in another repo, so the repo comes
 # from the URL rather than from the release's own repo (#3286).
 _ISSUE_URL_RE = re.compile(r"^https://github\.com/([^/\s]+/[^/\s]+)/issues/(\d+)/?$")
@@ -161,7 +164,7 @@ def pending_deps_prs(repo: str) -> list[PendingDepsPr]:
             "--json",
             "url,body,headRefName",
             "--limit",
-            "100",
+            str(_PENDING_DEPS_LIMIT),
         )
     except (subprocess.CalledProcessError, ValueError) as exc:
         raise ReleaseError(
@@ -175,6 +178,15 @@ def pending_deps_prs(repo: str) -> list[PendingDepsPr]:
             phase="preflight",
             command=_PENDING_DEPS_COMMAND,
             message=f"gh pr list returned {type(raw).__name__}, expected a list.",
+        )
+    if len(raw) >= _PENDING_DEPS_LIMIT:
+        raise ReleaseError(
+            phase="preflight",
+            command=_PENDING_DEPS_COMMAND,
+            message=(
+                f"gh pr list returned {_PENDING_DEPS_LIMIT}+ open dependency-update PRs, "
+                "so the list may be truncated; refusing to release blind."
+            ),
         )
     found: list[PendingDepsPr] = []
     for item in raw:

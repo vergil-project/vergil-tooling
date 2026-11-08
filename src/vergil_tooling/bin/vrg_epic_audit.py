@@ -69,11 +69,10 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 1
-        owner, bare = args.repo.split("/", 1)
-        org, home = owner, epics.resolve_epic_home(owner, bare)
+        org = args.repo.split("/", 1)[0]
     else:
-        org = github.detect_org()
-        if org is None:
+        detected = github.detect_org()
+        if detected is None:
             print(
                 "vrg-epic-audit: could not determine the GitHub org from this "
                 "repo's 'origin' remote; run it from inside a repo in the org you "
@@ -81,15 +80,39 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 1
+        org = detected
+    # Every read runs under the audited org's token, never the cwd repo's: a
+    # token minted for another org lists only the audited org's public repos,
+    # which silently under-reported its private work (#3513).
+    with github.target_org(org):
+        return _audit(args, org)
+
+
+def _audit(args: argparse.Namespace, org: str) -> int:
+    """The drift audit (and, with ``--close``, its passes) of *org*, under its token."""
+    if args.repo:
+        home = epics.resolve_epic_home(org, args.repo.split("/", 1)[1])
+    else:
         # An owner with no .github has no org-wide home to audit (#3613).
         home = epics.require_org_home(org)
+    # Refuse a partial result as complete: a token that cannot see every repo
+    # stops --close before any write and marks the preview partial (#3513).
+    gap = epic_audit.coverage_gap(org)
+    if gap is not None:
+        print(f"vrg-epic-audit: incomplete coverage: {gap}", file=sys.stderr)
+        if args.close:
+            print(
+                "vrg-epic-audit: --close refused: it would act on a partial view "
+                "of the org; run it as an identity that sees every repo.",
+                file=sys.stderr,
+            )
+            return 1
     since = (datetime.now(UTC) - timedelta(days=args.window_days)).date().isoformat()
     tasks = epic_audit.task_drift(since, org=org)
     epics_drift = epic_audit.epic_drift(org, home=home)
-    # One listing of the home's epics feeds both per-epic checks (epic .github#819),
-    # read under the home owner's App token, as epic_documents reads its links.
-    with github.target_org(home.split("/", 1)[0]):
-        home_epics = epic_audit.list_home_epics(home)
+    # One listing of the home's epics feeds both per-epic checks (epic .github#819).
+    # The home is always in the audited org, so the org's token reads it.
+    home_epics = epic_audit.list_home_epics(home)
     closed_epic_open_children = epic_audit.closed_epic_open_child(
         org, home=home, listing=home_epics
     )
@@ -99,17 +122,15 @@ def main(argv: list[str] | None = None) -> int:
         # each epic that was wrongly closed while a child was still open.
         reopened = epic_audit.reopen_epics_with_open_children(closed_epic_open_children)
         # Backstop ad-hoc drain (epic #238): drain closed children of every live
-        # ad-hoc epic into per-quarter archives and close past archives. main() has
-        # no other org scope, so scope the App token to the org before this
-        # mutation (spec §7), matching vrg-adhoc-epic and vrg-epic-move.
-        # The intake, planning and deferred queue epics drain the same way (epic
-        # vergil-project/.github#176), under the same org scope.
+        # ad-hoc epic into per-quarter archives and close past archives, under the
+        # org's token that main() scopes the whole audit to (spec §7), matching
+        # vrg-adhoc-epic and vrg-epic-move. The intake, planning and deferred
+        # queue epics drain the same way (epic vergil-project/.github#176).
         now = datetime.now(UTC)
-        with github.target_org(org):
-            drained = epics.drain_adhoc_org(org, apply=True, now=now)
-            queue_drained = epics.drain_standing_org(org, apply=True, now=now)
-            # One org-wide enumeration feeds every orphan-pass check.
-            issues = epic_audit.open_issues(org)
+        drained = epics.drain_adhoc_org(org, apply=True, now=now)
+        queue_drained = epics.drain_standing_org(org, apply=True, now=now)
+        # One org-wide enumeration feeds every orphan-pass check.
+        issues = epic_audit.open_issues(org)
         moved = sum(len(p.moves) for p in drained)
         closed_archives = sum(len(p.close) for p in drained)
         print(
@@ -140,7 +161,8 @@ def main(argv: list[str] | None = None) -> int:
     pending_operational = epic_audit.operational_pending(org, home=home)
     closed_operational_no_success = epic_audit.closed_operational_without_success(org)
     # Read-only preview of the ad-hoc drain the --close sweep would perform (epic
-    # #238): apply=False mutates nothing, so no org scope is needed.
+    # #238): apply=False mutates nothing. It reads under the org's token, as
+    # every read here does (#3513).
     now = datetime.now(UTC)
     preview = epics.drain_adhoc_org(org, apply=False, now=now)
     pmoved = sum(len(p.moves) for p in preview)
@@ -171,9 +193,11 @@ def main(argv: list[str] | None = None) -> int:
             public_queues=epic_audit.public_self_homed_queues(org, issues=issues),
             private_under_public=epic_audit.private_under_public_epic(org, issues=issues),
             epic_docs_findings=epic_audit.epic_documents(org, home=home, listing=home_epics),
+            coverage_gap=gap,
         )
     )
-    return security_rc
+    # A partial preview never exits clean (#3513).
+    return 1 if gap is not None else security_rc
 
 
 def _apply_security_pass(org: str) -> int:
@@ -197,18 +221,17 @@ def _security_pass(org: str, *, apply: bool) -> int:
     """
     mode = "" if apply else " (preview)"
     try:
-        with github.target_org(org):
-            issues = security_records.security_issues(org)
-            if not issues and not github.repo_exists(org, ".github"):
-                print(f"Security records{mode}: none.")
-                return 0
-            home = security_records.advisory_home(org)
-            advisories = security_records.list_advisories(home)
-            result = security_records.classify(advisories, issues)
-            if apply:
-                synced = security_records.sync_states(home, result, issues)
-            else:
-                synced = len(security_records.pending_syncs(result, issues))
+        issues = security_records.security_issues(org)
+        if not issues and not github.repo_exists(org, ".github"):
+            print(f"Security records{mode}: none.")
+            return 0
+        home = security_records.advisory_home(org)
+        advisories = security_records.list_advisories(home)
+        result = security_records.classify(advisories, issues)
+        if apply:
+            synced = security_records.sync_states(home, result, issues)
+        else:
+            synced = len(security_records.pending_syncs(result, issues))
     except github.MissingGitHubTokenError:
         raise
     except (github.GitHubAPIError, security_records.PrivateHomeError) as exc:
@@ -232,27 +255,25 @@ def _apply_orphan_pass(org: str, issues: list[epic_audit.OpenIssue]) -> int:
     """Apply the orphan pass (epic .github#176) after the existing ``--close`` passes.
 
     Order: nativize body-only ``Parent:`` links -> strip retired kind labels ->
-    move now-public repos' queue items -> attach orphans to intake. Every write is
-    scoped to the org's token. A full queue epic stops the pass with the
-    unlinked items on stderr and exit 1 — never a silent skip.
+    move now-public repos' queue items -> attach orphans to intake. Every write
+    runs under the org's token that main() scopes the whole audit to. A full
+    queue epic stops the pass with the unlinked items on stderr and exit 1 —
+    never a silent skip.
     """
-    with github.target_org(org):
-        nativized = epic_audit.nativize_parents(epic_audit.body_only_parents(org, issues=issues))
-        print(f"Body-only Parent: links nativized: {nativized}.")
-        stripped = epic_audit.strip_retired_labels(
-            epic_audit.retired_label_drift(org, issues=issues)
+    nativized = epic_audit.nativize_parents(epic_audit.body_only_parents(org, issues=issues))
+    print(f"Body-only Parent: links nativized: {nativized}.")
+    stripped = epic_audit.strip_retired_labels(epic_audit.retired_label_drift(org, issues=issues))
+    print(f"Retired kind labels stripped: {stripped} issue(s).")
+    try:
+        moved = epic_audit.move_public_queues(
+            epic_audit.public_self_homed_queues(org, issues=issues), org=org
         )
-        print(f"Retired kind labels stripped: {stripped} issue(s).")
-        try:
-            moved = epic_audit.move_public_queues(
-                epic_audit.public_self_homed_queues(org, issues=issues), org=org
-            )
-            print(f"Public-repo queue items moved to {org}/.github: {moved}.")
-            attached = epic_audit.attach_orphans(epic_audit.orphan_drift(org, issues=issues))
-        except epic_audit.StandingEpicFull as exc:
-            print(f"vrg-epic-audit: {exc}", file=sys.stderr)
-            return 1
-        print(f"Orphans attached to intake: {attached}.")
+        print(f"Public-repo queue items moved to {org}/.github: {moved}.")
+        attached = epic_audit.attach_orphans(epic_audit.orphan_drift(org, issues=issues))
+    except epic_audit.StandingEpicFull as exc:
+        print(f"vrg-epic-audit: {exc}", file=sys.stderr)
+        return 1
+    print(f"Orphans attached to intake: {attached}.")
     return 0
 
 
@@ -274,7 +295,9 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         epilog=(
             "Scope: the org is auto-detected from this repo's 'origin' remote, "
             "so run it from inside a repo in the org you want to audit (there is "
-            "no --org flag). Output is Markdown on stdout."
+            "no --org flag). Output is Markdown on stdout. Every read runs under "
+            "the audited org's token; if that token cannot see every repo in the "
+            "org, the report is marked partial and exits 1, and --close is refused."
         ),
     )
     parser.add_argument(

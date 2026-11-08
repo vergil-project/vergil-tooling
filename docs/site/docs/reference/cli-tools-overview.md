@@ -79,13 +79,18 @@ report-ready freeze. Remote operations run with the GitHub App installation
 token for the resolved identity (see [`vrg-whoami`](#vrg-whoami)). It is not
 a drop-in replacement for `git`; `vrg-git --help` lists the full policy.
 
+The global `-C <path>` option (repeatable, as in git) changes directory
+before any check runs, so every check, and the org of the identity token,
+applies to the `-C` repo exactly as after a `cd`. No other global git option
+is accepted.
+
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_git` |
-| Args | `<subcommand> [args...]`, forwarded to `git` |
+| Args | `[-C <path>]... <subcommand> [args...]`, forwarded to `git` |
 | Preconditions | Git on PATH |
 | Failure mode | A refused command prints the reason on stderr |
-| Exit codes | 0 success; 1 refusal; 2 no subcommand; otherwise git's exit code |
+| Exit codes | 0 success; 1 refusal; 2 no subcommand or a `-C` with no path; 128 a `-C` path that cannot be entered; otherwise git's exit code |
 | Status | Active |
 
 ### vrg-gh
@@ -116,6 +121,13 @@ cloud→Mac handoff: each branch's ready-state comes from a local
 worktree's `pr-workflow.json` when present, else the relay ref
 `refs/vergil/pr-workflow/<branch>`; origin's tip is checked against the
 recorded `head_sha` and the PR opens with `--head` **without pushing**.
+Every mode driven by a ready-state opens the PR only at the `head_sha` the
+latest `report-ready` recorded and refuses rather than pick another head
+(#3815): a local worktree's HEAD must be that commit (a batch checks it
+before its rebase), a named branch reopened by `unfreeze` and not
+re-reported is refused, a local ready-state and relay ref that disagree are
+refused, and origin's tip is checked against the recorded head right before
+`gh pr create`.
 It refuses an issue whose native parent is an intake, planning or deferred
 epic (see [`vrg-pr-workflow`](#vrg-pr-workflow)). Human-run: agent
 identities are refused, and agents hand off with
@@ -126,7 +138,7 @@ identities are refused, and agents hand off with
 | Source | `vergil_tooling.bin.vrg_submit_pr` |
 | Args | positional `branches` (relay mode); or `--issue` (required), `--summary` (required), `--linkage` (default: Ref; `vrg-submit-pr` auto-selects `Closes` for a managed task — `Fixes`/`Resolves` are banned), `--notes`, `--title`, `--dry-run` |
 | Preconditions | Git repo, `gh` CLI on PATH; relay mode: named branches on origin with a resolvable ready-state and matching `head_sha` |
-| Failure mode | Subprocess error from `git push` or `gh pr create`; relay mode: loud failure on a missing ready-state or `head_sha` drift |
+| Failure mode | Subprocess error from `git push` or `gh pr create`; loud refusal on a missing ready-state, a state that is not ready, or any head other than the recorded `head_sha` |
 | Exit codes | 0 success |
 | Status | Active |
 
@@ -153,7 +165,10 @@ follow-up issue (epic #146). `report-ready` pushes the branch itself, to
 so no separate push is needed; a branch already on origin at that commit is a
 no-op push. When the delta touches `.github/workflows/**` GitHub refuses the
 agent push: `report-ready` reports that as expected, records the state anyway,
-and the human's `vrg-submit-pr` pushes the branch. Any other push failure
+and the human's `vrg-submit-pr` pushes the branch. A stale branch, whose own
+commits change no workflow file but whose tree carries an outdated one, gets
+the same refusal: `report-ready` tells it apart as `vrg-git push` does and
+fails with the rebase steps, recording nothing (#4077). Any other push failure
 fails `report-ready` with no local state and no relay ref written. A branch
 with no commits ahead of `--base` is refused before any push, with nothing
 recorded and no freeze (#3870). A re-run on
@@ -168,7 +183,10 @@ allowed while HEAD is exactly the reported commit — it publishes, not
 advances, the branch (issue #3071). `unfreeze` is the only sanctioned way to
 reopen a still-unsubmitted branch — it drops the state back to
 `implementing` while keeping the metadata; an already-submitted branch
-cannot be unfrozen. `status` prints the current state. `report-ready` (like
+cannot be unfrozen. `unfreeze` first overwrites the relay ref with the
+reopened state, so no `vrg-submit-pr` can still read the branch as ready at
+its old head, and fails with nothing changed if that push fails (#3815).
+`status` prints the current state. `report-ready` (like
 `vrg-submit-pr`) refuses an issue whose native parent is an intake, planning
 or deferred epic: a queue item is not buildable until intake review routes it,
 `epic-create` expands it, or deferred review revives it (epics
@@ -182,7 +200,7 @@ is not absent or `{}` (epic vergil-project/.github#558).
 | Source | `vergil_tooling.bin.vrg_pr_workflow` |
 | Args | `report-ready` (`--issue`, `--title`, `--summary`, `--notes` required; `--linkage` default Ref), `unfreeze`, `status`; global `--base` (default: origin/develop) |
 | Preconditions | Git repo; run from the worktree whose branch is being staged |
-| Failure mode | `WorkflowError` on stderr (e.g. unfreeze after submit, or nothing to unfreeze) |
+| Failure mode | `WorkflowError` on stderr (e.g. unfreeze after submit, nothing to unfreeze, or a relay ref unfreeze could not update) |
 | Exit codes | 0 success, 1 error |
 | Status | Active |
 
@@ -282,9 +300,13 @@ origin: vergil-project/vergil-claude-plugin
 v2.1 1a2b3c4d5e6f -> v2.1.50 fc17882a9b0c
 ```
 
-`--dry-run` prints the same lines, after the same target check, and stops.
-Otherwise it asks `Move vX.Y on <repo>? [y/N]` on the terminal, and moves
-the tag only on `y` or `yes`. With no terminal to confirm on, it refuses.
+`--dry-run` prints the same lines, after the same target check, and stops
+(with `--yes` too). `--yes` prints them and moves the tag with no prompt, so
+it needs no terminal and can run from a script. Otherwise it prints them to
+stderr, asks `Move vX.Y on <repo>? [y/N]` there, and moves the tag only on
+`y` or `yes`; the move and the prompt go to stderr so a redirected stdout
+cannot hide them. It refuses to prompt unless both stdin and stderr are
+terminals: with no terminal to confirm on, it refuses and names `--yes`.
 Before it pushes it re-resolves the move and refuses if anything changed
 since it was confirmed, and resolves the local release tag once and checks
 that it is the confirmed commit. It then pushes that tag object, by its id,
@@ -309,9 +331,9 @@ as done.
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_promote` |
-| Args | `version` (positional, default: the `VERSION` file), `--dry-run` |
-| Preconditions | Human identity; run in the repo's checkout; a terminal to confirm on; push access to origin |
-| Failure mode | Exit 1 with a message on stderr. An agent identity, a run with no terminal, a declined or unanswered confirmation, and a missing `VERSION` file each print their own `vrg-promote:` or plain message; a refused target, a move that changed since it was confirmed, an unreadable `VERSION` file, and a failed git or GitHub call print `Error: …`; a missing GitHub token or unusable GitHub App credentials print the guided `vrg-promote:` message |
+| Args | `version` (positional, default: the `VERSION` file), `--dry-run`, `--yes` |
+| Preconditions | Human identity; run in the repo's checkout; a terminal to confirm on, unless `--yes` is given; push access to origin |
+| Failure mode | Exit 1 with a message on stderr. An agent identity, a run with no terminal and no `--yes`, a declined or unanswered confirmation, and a missing `VERSION` file each print their own `vrg-promote:` or plain message; a refused target, a move that changed since it was confirmed, an unreadable `VERSION` file, and a failed git or GitHub call print `Error: …`; a missing GitHub token or unusable GitHub App credentials print the guided `vrg-promote:` message |
 | Exit codes | 0 success (including "already promoted" and `--dry-run`), 1 refusal or error |
 | Status | Active |
 
@@ -723,7 +745,8 @@ under the planning epic with their state: **waiting** (no `in-progress`
 label), **in-progress** (labelled, with its latest progress note), or
 **ready-to-close** (labelled, the `Epic:` / `Docs task:` / `Tasks filed: yes`
 markers present, and the docs task closed). A planning item that any security
-advisory it names still tracks is held at **in-progress** until every such
+advisory still tracks, named in its body or not, is held at **in-progress**
+until every such
 advisory is retargeted to the task or tasks that fix it, with a note that
 counts them and names them by GHSA ID only (`held: <k> advisory still tracks
 this planning issue (<GHSA-id>) — …` for one, `held: <k> advisories still
@@ -742,8 +765,8 @@ collect step of the three review skills (`intake-review`, `planning-review`,
 |---|---|
 | Source | `vergil_tooling.bin.vrg_queue` (views: `lib/queue_view.py`) |
 | Args | `{intake,planning,deferred}` (optional; default: all three); `--repo OWNER/NAME` (that repo's queue home; default: the current org's `.github` queues); `--json` (a list of items; with no queue named, an object keyed by queue, `null` for a missing one) |
-| Preconditions | GitHub App credentials for the target org |
-| Failure mode | A named queue whose home has no live queue epic exits 1 naming the missing epic; with no queue named, a missing queue prints `<queue> queue for <name> in <home>: no queue yet` and the run exits 0. Nothing is created |
+| Preconditions | GitHub App credentials for the target org. The planning view also reads the org's advisories when its `.github` is public, or when a planning item has an advisory line (then a `.github` that is not public is refused): the identity needs Repository security advisories access |
+| Failure mode | A named queue whose home has no live queue epic exits 1 naming the missing epic; with no queue named, a missing queue prints `<queue> queue for <name> in <home>: no queue yet` and the run exits 0. A queue that cannot be read (a failed GitHub call, including the advisory read; a `.github` that is not public; an advisory line naming another org; a malformed response) is named on stderr as `vrg-queue: <queue> queue for <name> in <home> could not be read: <reason>` and the run exits 1; with no queue named, a text run still lists the other queues and prints `<queue> queue for <name> in <home>: not shown (failed; see stderr)` in its place, and a `--json` run prints nothing on stdout. Nothing is created |
 | Exit codes | 0 success, 1 error, 2 bad arguments |
 | Status | Active |
 
@@ -1060,6 +1083,17 @@ flag). `--repo OWNER/NAME` audits that repo's resolved epic home instead of
 the org's `.github`, so a private repo that self-homes its epics can be
 audited; the home-scoped checks (epic drift, stray issues, operation-pending
 epics, and the `--close` drift closes) then target it.
+
+Every read runs under the audited org's token, wherever the command is run
+from. Before any check, the audit confirms that this token sees every repo in
+the org: an App token must belong to an installation on that org with access
+to all repositories, and a human's own `gh` login must be an owner of the org
+(or the org must be that login's own account). If it does not, the audit
+names the gap on stderr. The read-only report then opens with an
+**Incomplete coverage** section and exits 1, and `--close` is refused before
+any write. A full preview therefore needs the org's App installation with
+access to all repositories, or an org owner's own login.
+
 `--epic REF` is a separate read-only mode: it prints one epic's children as
 JSON (`{"epic": <slug>, "children": [{repo, number, title, state}, …]}`) and
 skips the drift audit. A bare `#N` resolves against the current repo's epic
@@ -1091,8 +1125,8 @@ which sets `VRG_EPIC_SWEEP=1`. Other invariant violations stay report-only.
 | Source | `vergil_tooling.bin.vrg_epic_audit` (checks and passes: `lib/epic_audit.py`; security pass: `lib/security_records.py`) |
 | Args | `--window-days N` (positive; default 30), `--repo OWNER/NAME`, `--epic REF`, `--close` |
 | Preconditions | Run inside a repo in the target org; GitHub App credentials for that org. `--close` needs a human identity or `VRG_EPIC_SWEEP=1`. The security-records pass needs Repository security advisories: Read and write |
-| Failure mode | `--close` in an agent session is refused before any network call; a `--repo` without `/`, an org that cannot be detected, or an org with no `.github` home exits 1. A full intake epic stops the orphan pass, listing what it did not attach; a broken security pair or a failed security pass exits 1 after the rest of the run. With `--epic`, a ref that is not an epic exits 1 |
-| Exit codes | 0 success (the read-only report exits 0 even when it finds drift), 1 refused, a pass failed, or error, 2 bad arguments |
+| Failure mode | `--close` in an agent session is refused before any network call; a `--repo` without `/`, an org that cannot be detected, or an org with no `.github` home exits 1. A token that cannot see every repo in the org exits 1: the report is marked partial and `--close` is refused before any write. A full intake epic stops the orphan pass, listing what it did not attach; a broken security pair or a failed security pass exits 1 after the rest of the run. With `--epic`, a ref that is not an epic exits 1 |
+| Exit codes | 0 success (the read-only report exits 0 even when it finds drift), 1 refused, incomplete coverage, a pass failed, or error, 2 bad arguments |
 | Status | Active |
 
 ### vrg-worktree-status
@@ -1387,6 +1421,58 @@ or PR knowledge.
 | Exit codes | 0 ok, 1 `--check` drift, 2 usage error or a `vergil.toml` that fails to load (the config error is printed to stderr; nothing is written) |
 | Status | Active |
 
+### vrg-claude-settings-sync
+
+Single-repo applicator for the managed `.claude/settings.json`
+([#4056](https://github.com/vergil-project/vergil-tooling/issues/4056)).
+It checks (default) or writes the packaged template as rendered by
+`repo_init.render_claude_settings()`, the same render
+`vrg-github-repo-init` writes. The file is **fully managed**: `--check`
+uses the config audit's comparison (equal to the template after JSON
+parsing, so key order and whitespace don't count), and `--write`
+replaces the whole file, atomically, never merging keys. A repo with no
+`.claude/settings.json` gets one. A file already equal after parsing is
+left untouched, so `--check` drifts exactly when `--write` would change
+the file, and after `--write` the audit's `_check_claude_settings`
+passes. It owns **only** the file change and has no git or PR knowledge.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_claude_settings_sync` |
+| Args | `--repo PATH` (default: CWD); mutually exclusive `--check` (default) \| `--write` |
+| Preconditions | None beyond a repository root; `vergil.toml` is not read |
+| Failure mode | `--check` prints `missing .claude/settings.json`, `.claude/settings.json is not valid JSON (…)` or `.claude/settings.json differs from the template` to stderr; `--write` prints `already in sync` or `wrote .claude/settings.json` |
+| Exit codes | 0 ok, 1 `--check` drift, 2 usage error |
+| Status | Active |
+
+### vrg-claude-md-sync
+
+Single-repo applicator for the template region of `CLAUDE.md`
+([#3868](https://github.com/vergil-project/vergil-tooling/issues/3868)).
+Only the lines between `<!-- vergil:template:claude-md:begin -->` and
+`<!-- vergil:template:claude-md:end -->` are managed. It checks (default)
+or writes that region against the packaged
+`claude_md_consumer.md` template, using the config audit's own marker
+parser and comparison (blank lines next to the markers don't count).
+`--write` replaces the lines between the two marker lines with the
+template, verbatim and atomically, and leaves every byte outside them
+alone, the marker lines and their line ends included. A region already in
+sync is left untouched, so `--check` drifts exactly when `--write` would
+change the file, and after `--write` the audit's `_check_claude_md`
+passes. A `CLAUDE.md` that is missing, has no markers, or has malformed
+or duplicated markers is an error in both modes, naming the cause, and
+nothing is written: the tool never guesses where the region belongs. It
+owns **only** the file change and has no git or PR knowledge.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_claude_md_sync` |
+| Args | `--repo PATH` (default: CWD); mutually exclusive `--check` (default) \| `--write` |
+| Preconditions | A `CLAUDE.md` with exactly one begin marker followed by one end marker; `vergil.toml` is not read |
+| Failure mode | `--check` prints `CLAUDE.md template region differs from the template (expected …; found …)` to stderr; `--write` prints `already in sync` or `wrote the CLAUDE.md template region`; either mode prints `cannot sync: missing CLAUDE.md` or `cannot sync: CLAUDE.md has <marker problem>` to stderr and exits 2 |
+| Exit codes | 0 ok, 1 `--check` drift, 2 usage error or a `CLAUDE.md` that is missing or has no well-formed marker pair |
+| Status | Active |
+
 ### vrg-fleet-sync
 
 Propagate a vergil-managed file across a fleet of repositories, opening
@@ -1394,7 +1480,16 @@ Propagate a vergil-managed file across a fleet of repositories, opening
 `gitignore` (default) syncs the managed `.gitignore` block via
 `vrg-gitignore-sync --write`; `dependabot` writes the report-only
 `.github/dependabot.yml` via `vrg-dependabot-sync --write` (branch slug
-`dependabot-config`, filed under epic vergil-project/.github#420). A
+`dependabot-config`, filed under epic vergil-project/.github#420);
+`claude-settings` replaces `.claude/settings.json` with the packaged
+template via `vrg-claude-settings-sync --write` (branch slug
+`claude-settings-sync`), so a template change can be rolled out to every
+repo the config audit would otherwise fail; `claude-md` replaces the
+marked template region of `CLAUDE.md` with the packaged template via
+`vrg-claude-md-sync --write` (branch slug `claude-md-sync`), leaving
+everything outside the markers alone. A repo whose `CLAUDE.md` is missing
+or has no well-formed marker pair is an error for that repo, never a
+skip. A
 target's epic links only repos in the epic's own org: a repo in another
 org (read from the clone with `gh repo view`) is filed under its own
 ad-hoc epic, and the issue body still names the target's epic, because
@@ -1407,14 +1502,15 @@ human. `--dry-run` reports the verdict a live run would reach per repo
 (would change, naming the epic it would be filed under, or skip) from a
 disposable probe worktree, without opening an issue, branch, commit, or
 PR. Each target previews with its applicator's `--check`
-(`vrg-gitignore-sync --check` or `vrg-dependabot-sync --check`), whose
+(`vrg-gitignore-sync --check`, `vrg-dependabot-sync --check`,
+`vrg-claude-settings-sync --check` or `vrg-claude-md-sync --check`), whose
 drift verdict is exactly the change `--write` would make.
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_fleet_sync` |
-| Args | `--repos PATH [PATH …]` (required, local clone paths); `--target {dependabot,gitignore}` (default `gitignore`); `--dry-run` |
-| Preconditions | The target's applicator (`vrg-gitignore-sync` or `vrg-dependabot-sync`) on PATH; each `--repos` path a local clone; git/`gh` credentials for the sweep |
+| Args | `--repos PATH [PATH …]` (required, local clone paths); `--target {claude-md,claude-settings,dependabot,gitignore}` (default `gitignore`); `--dry-run` |
+| Preconditions | The target's applicator (`vrg-gitignore-sync`, `vrg-dependabot-sync`, `vrg-claude-settings-sync` or `vrg-claude-md-sync`) on PATH; each `--repos` path a local clone; git/`gh` credentials for the sweep |
 | Failure mode | Any repo that errors is recorded and reported in the per-repo status lines |
 | Exit codes | 0 all repos ok, 1 one or more repos errored |
 | Status | Active |
@@ -1650,8 +1746,8 @@ instead and flags it with a `DEV tooling` banner, and a plain
 |---|---|
 | Source | `vergil_tooling.bin.vrg_vm` |
 | Args | Global `--identity` (default: the configured default identity), `--config` (path to `identities.toml`); then a subcommand with its own flags (`vrg-vm <subcommand> --help`) |
-| Preconditions | Run by the human (any agent identity is refused, exit 1); host with Lima (local VMs) or the off-platform backend configured; `identities.toml` |
-| Failure mode | Error on stderr; an agent identity is refused before any work; `update --all` attempts every box and reports each failure |
+| Preconditions | Run by the human (any agent identity is refused, exit 1); host with Lima (local VMs) or the off-platform backend configured; `identities.toml`; a valid host `~/.claude/settings.json` for `start`, `rebuild`, `session`, `update` and an off-platform `create` |
+| Failure mode | Error on stderr; an agent identity is refused before any work; a missing or invalid host `~/.claude/settings.json` is refused, naming the file, before any VM is touched; `update --all` attempts every box and reports each failure |
 | Exit codes | 0 success, non-zero on failure |
 | Status | Active |
 
@@ -1897,20 +1993,6 @@ the CI security workflow.
 | Args | `--language` (required), `--target-dir`, `--output`, `--extra-config`, `--exclude-rule` (repeatable), `--has-dockerfiles`, `--has-workflows` |
 | Preconditions | `semgrep` on PATH |
 | Failure mode | Exit 2 when semgrep itself fails |
-| Exit codes | 0 no findings, 1 findings, 2 scan failed |
-| Status | Active |
-
-### vrg-trivy-scan
-
-Run a Trivy vulnerability scan of a filesystem or image, writing SARIF and
-table output, report findings, and optionally write a CycloneDX SBOM.
-
-| Attribute | Value |
-|---|---|
-| Source | `vergil_tooling.bin.vrg_trivy_scan` |
-| Args | `--type {filesystem,image}` (required), `--target` (required), `--output-dir` (required), `--trivyignore`, `--sbom`, `--severity` (default `MEDIUM,HIGH,CRITICAL`) |
-| Preconditions | `trivy` on PATH |
-| Failure mode | Exit 2 when trivy itself fails |
 | Exit codes | 0 no findings, 1 findings, 2 scan failed |
 | Status | Active |
 

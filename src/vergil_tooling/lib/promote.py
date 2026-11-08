@@ -33,17 +33,6 @@ from vergil_tooling.lib import git, github, identity_mode, retry
 from vergil_tooling.lib.process_errors import error_text
 
 _VERSION_RE = re.compile(r"^v?(\d+\.\d+\.\d+)$")
-# A github.com remote URL, in the forms git accepts: https (optionally with a
-# user), ssh:// (any user, optional port) or scp-style ``user@github.com:``.
-# The user part excludes ``?``, ``#``, ``\`` and whitespace, so the host that
-# is matched is the host a URL parser sees.
-_ORIGIN_RE = re.compile(
-    r"^(?:https://(?:[^@/?#\\\s]+@)?github\.com/"
-    r"|ssh://(?:[^@/?#\\\s]+@)?github\.com(?::\d+)?/"
-    r"|[^@/:?#\\\s]+@github\.com:)"
-    r"(?P<repo>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?/?$",
-    re.IGNORECASE,
-)
 _MAIN_REF = "refs/remotes/origin/main"
 _SHORT = 12
 
@@ -127,18 +116,18 @@ def _peeled_commit(tag: str) -> str:
 
 
 def _repo_of(url: str, which: str) -> str:
-    """``owner/repo`` of a github.com remote *url*.
+    """``owner/repo`` of a github.com remote *url* (:func:`github.github_remote_repo`).
 
     The refusal never echoes *url*: a remote URL can carry credentials.
     """
-    m = _ORIGIN_RE.match(url.strip())
-    if not m:
+    repo = github.github_remote_repo(url)
+    if repo is None:
         msg = (
             f"origin's {which} URL is not a GitHub repository URL "
             "(expected https://github.com/<owner>/<repo> or git@github.com:<owner>/<repo>)"
         )
         raise PromoteError(msg)
-    return m.group("repo")
+    return repo
 
 
 def _origin_repo() -> str:
@@ -375,17 +364,16 @@ def promote_confirmed(confirmed: Promotion, *, release_just_published: bool = Fa
         raise _process_error(msg, exc) from exc
 
 
-def promote(version: str, *, dry_run: bool = False) -> None:
+def promote(version: str) -> None:
     """Move the vX.Y rolling tag to vX.Y.Z, without prompting.
 
     The ``vrg-release`` promote stage calls this right after the release was
-    published, so the Release read retries a 404.
+    published, so the Release read retries a 404. The ``vrg-promote`` CLI
+    does not call it: it runs :func:`plan_promotion` and
+    :func:`promote_confirmed` itself, with its own dry run and confirmation.
     """
     p = plan_promotion(version, release_just_published=True)
     if p.old_commit == p.new_commit:
         print(f"{p.rolling_tag} already points at {p.release_tag} — already promoted.")
-        return
-    if dry_run:
-        print(describe(p))
         return
     promote_confirmed(p, release_just_published=True)

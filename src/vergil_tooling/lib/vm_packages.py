@@ -14,10 +14,12 @@ The tooling ref decides the install mode, never a failure:
 from __future__ import annotations
 
 import re
+import shlex
 import subprocess
 import sys
 from typing import TYPE_CHECKING, Literal, NoReturn
 
+from vergil_tooling.lib.atomic_write import atomic_write_cmd
 from vergil_tooling.lib.package import PackageError, orgs, repo_setup
 from vergil_tooling.lib.package import targets as tg
 
@@ -146,7 +148,8 @@ def packaged_install(transport: Transport, ref: str) -> None:
         repo_setup.bootstrap(transport.run, org, "deb", codename, sudo=True)
     except PackageError as exc:
         _die(f"could not set up the {_VENDOR} package repository ({org.base_url}): {exc}")
-    transport.pipe(f"sudo tee {_PIN_FILE} >/dev/null", apt_pin(ref))
+    write_pin = atomic_write_cmd(_PIN_FILE, 0o644)
+    transport.pipe(f"sudo bash -c {shlex.quote(write_pin)}", apt_pin(ref))
     transport.run("sudo", *repo_setup.apt_get("update"))
     policy = transport.run("apt-cache", "policy", _PACKAGE).stdout
     m = re.search(r"Candidate:\s*(\S+)", policy)
@@ -203,7 +206,7 @@ def dev_install(transport: Transport, ref: str) -> None:
         raise ValueError(msg)
     _uv_tool_install(transport, _DEV_INSTALL.format(ref=ref), reinstall=True)
     transport.run("bash", "-c", f"mkdir -p $(dirname {_DEV_REF_FILE})")
-    transport.pipe(f"cat > {_DEV_REF_FILE}", f"{ref}\n")
+    transport.pipe(atomic_write_cmd(_DEV_REF_FILE, 0o644), f"{ref}\n")
 
 
 def dev_ref(transport: Transport) -> str | None:

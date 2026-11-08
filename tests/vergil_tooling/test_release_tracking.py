@@ -12,6 +12,7 @@ from vergil_tooling.lib.release import checklist
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 from vergil_tooling.lib.release.tracking import (
     _MAX_COMMENT_CHARS,
+    _SEARCH_LIST_LIMIT,
     _truncate_for_comment,
     _write_issue_body,
     close_tracking_issue,
@@ -160,6 +161,41 @@ def test_find_existing_tracking_issue_returns_none() -> None:
     with patch(_MOD + ".github.read_json", return_value=[]):
         result = find_existing_tracking_issue("owner/repo", "2.1.0")
     assert result is None
+
+
+def _limited(rows: list[dict[str, object]]):
+    """A ``gh issue list`` stand-in that returns at most ``--limit`` rows (30 without one)."""
+
+    def fake(*args: str) -> list[dict[str, object]]:
+        return rows[: int(args[args.index("--limit") + 1]) if "--limit" in args else 30]
+
+    return fake
+
+
+def _near_misses(count: int) -> list[dict[str, object]]:
+    return [
+        {"title": f"chore(release): 2.1.0 note {i}", "url": f"https://github.com/o/r/issues/{i}"}
+        for i in range(count)
+    ]
+
+
+def test_find_existing_tracking_issue_sees_a_match_past_row_30() -> None:
+    match: dict[str, object] = {
+        "title": "release: 2.1.0",
+        "url": "https://github.com/owner/repo/issues/10",
+    }
+    with patch(_MOD + ".github.read_json", side_effect=_limited([*_near_misses(30), match])):
+        assert find_existing_tracking_issue("owner/repo", "2.1.0") == match["url"]
+
+
+def test_find_existing_tracking_issue_refuses_a_search_that_may_be_truncated() -> None:
+    rows = _near_misses(_SEARCH_LIST_LIMIT)
+    with (
+        patch(_MOD + ".github.read_json", side_effect=_limited(rows)),
+        pytest.raises(ReleaseError, match="may be truncated") as info,
+    ):
+        find_existing_tracking_issue("owner/repo", "2.1.0")
+    assert info.value.phase == "preflight"
 
 
 def test_find_existing_tracking_issue_ignores_partial_title_match() -> None:

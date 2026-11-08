@@ -24,6 +24,9 @@ _MAX_COMMENT_CHARS = 65_536
 # Stay comfortably under the hard limit so the truncation marker and any
 # character-vs-byte counting differences cannot push us back over.
 _COMMENT_BUDGET = 65_000
+# Upper bound on the open issues the tracking-issue search lists. Reaching it is
+# a refusal: the exact-title match could lie beyond it (#4038).
+_SEARCH_LIST_LIMIT = 100
 
 
 def _truncate_for_comment(body: str, *, budget: int = _COMMENT_BUDGET) -> str:
@@ -54,20 +57,33 @@ def find_existing_tracking_issue(repo: str, version: str) -> str | None:
     """Return the URL of an open 'release: <version>' issue, or None.
 
     GitHub search tokenizes on punctuation, so the query is a broad net;
-    we filter client-side for an exact title match.
+    we filter client-side for an exact title match. A net that fills the
+    listing limit raises :class:`ReleaseError`, since the match may lie past it.
     """
+    query = f"release: {version} in:title"
     results = github.read_json(
         "issue",
         "list",
         "--repo",
         repo,
         "--search",
-        f"release: {version} in:title",
+        query,
         "--state",
         "open",
+        "--limit",
+        str(_SEARCH_LIST_LIMIT),
         "--json",
         "url,title",
     )
+    if isinstance(results, list) and len(results) >= _SEARCH_LIST_LIMIT:
+        raise ReleaseError(
+            phase="preflight",
+            command=f"gh issue list --repo {repo} --search '{query}'",
+            message=(
+                f"The search matched {_SEARCH_LIST_LIMIT}+ open issues, so the list may be "
+                f"truncated; cannot tell whether a 'release: {version}' issue exists."
+            ),
+        )
     expected_title = f"release: {version}"
     if isinstance(results, list):
         for item in results:

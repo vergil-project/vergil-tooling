@@ -383,6 +383,7 @@ _PINNED_SETTINGS = {
     },
     "enabledPlugins": {"vergil@vergil-marketplace": True},
     "attribution": {"commit": "", "pr": ""},
+    "idleCompaction": False,
 }
 
 
@@ -480,6 +481,19 @@ class TestClaudeSettings:
         _write_settings(tmp_path, {**_SETTINGS_TEMPLATE, "attribution": False})
         [item] = _settings_items(audit_local_config(tmp_path))
         assert item.actual == "differs: attribution"
+
+    def test_idle_compaction_missing_fails(self, tmp_path: Path) -> None:
+        # Idle compaction is off fleet-wide (#3795); a repo not yet synced
+        # to the template fails the audit.
+        partial = {k: v for k, v in _SETTINGS_TEMPLATE.items() if k != "idleCompaction"}
+        _write_settings(tmp_path, partial)
+        [item] = _settings_items(audit_local_config(tmp_path))
+        assert item.actual == "missing key: idleCompaction"
+
+    def test_idle_compaction_true_fails(self, tmp_path: Path) -> None:
+        _write_settings(tmp_path, {**_SETTINGS_TEMPLATE, "idleCompaction": True})
+        [item] = _settings_items(audit_local_config(tmp_path))
+        assert item.actual == "differs: idleCompaction"
 
     def test_plugin_manager_clobber_detected(self, tmp_path: Path) -> None:
         # Regression for issue #1427: Claude Code's plugin manager rewrote a

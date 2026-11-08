@@ -24,7 +24,7 @@ vrg-github-repo-config audit [--repo OWNER/REPO] [--config PATH]
 | Subcommands | `audit` (report), `diff` (report GitHub half only), `apply` (reconcile GitHub half) |
 | Args | `--repo OWNER/REPO` (defaults to the current git remote), `--config PATH` (local `vergil.toml`) |
 | Preconditions | Local checks require running from inside the repo's own checkout; GitHub checks require `gh` credentials |
-| Exit codes | 0 compliant, 1 non-compliant (drift), 2 audit could not complete |
+| Exit codes | 0 compliant, 1 non-compliant (drift), 2 audit could not complete (including settings [not checked](#settings-the-identity-cannot-read)) |
 | Status | Active |
 
 Local checks only run when the current directory *is* the audited
@@ -45,6 +45,36 @@ fatal where it fires: a non-conforming repo cannot silently persist.
 
 `vrg-release` also gates on the GitHub half of this audit, so a repo
 whose required-check set has drifted cannot release until reconciled.
+
+### Settings the identity cannot read
+
+Several GitHub reads need the `administration=read` repository
+permission: `vulnerability-alerts`, the three `actions/permissions`
+endpoints, classic branch protection, and the `security_and_analysis`
+block of the repo object (GitHub leaves the block out for an identity
+without admin access). The agent App does not hold that permission
+(#3816). When a read fails with a 403 naming a missing permission, the
+audit does not guess the value. It reports the setting as not checked:
+
+```text
+  vergil-project/vergil-tooling: NOT FULLY AUDITED (no drift in the settings read; 10 not checked)
+    security.vulnerability_alerts: not checked (needs administration=read)
+    classic_protection.develop: not checked (needs administration=read)
+```
+
+- **It is not drift.** An unread setting is never compared, so it never
+  shows up as a `DiffItem`.
+- **It is not a pass.** `audit` exits 2 with a one-line error naming
+  the permission, unless it also found drift in the settings it did
+  read, in which case it exits 1. It never exits 0 while any setting
+  is not checked.
+- **`apply` refuses.** It exits 2 and writes nothing, since it would
+  converge settings it could not read.
+- A setting the desired state leaves unmanaged (secret scanning on a
+  private repo without GHAS) is skipped as before, not listed as not
+  checked.
+- A 403 that names no missing permission (a rate limit, for example) is
+  still an error, as is any other unexpected status.
 
 ## Local checks
 
@@ -71,8 +101,9 @@ divergence:
 after JSON parsing: key order and whitespace don't matter, but every key
 and value does, and no other key may appear. The template holds the guard
 `PreToolUse` hook, `permissions.allow: ["Bash(vrg-*)"]`,
-`enabledPlugins: {"vergil@vergil-marketplace": true}` and
-`attribution: {"commit": "", "pr": ""}`. It holds no
+`enabledPlugins: {"vergil@vergil-marketplace": true}`,
+`attribution: {"commit": "", "pr": ""}` and `idleCompaction: false`. It
+holds no
 `extraKnownMarketplaces`: the marketplace is defined only in the user
 settings (see the
 [ownership model](../guides/claude-config-ownership.md)).
@@ -82,10 +113,21 @@ settings (see the
 Its empty-string form is required: `attribution: false` needs a newer
 Claude Code and makes older versions skip the whole settings file.
 
+`idleCompaction: false` stops Claude Code compacting a session while it
+sits idle
+([#3795](https://github.com/vergil-project/vergil-tooling/issues/3795)),
+so the human decides when a session is compacted or cleared. It needs
+Claude Code v2.1.290 or later; older versions ignore the key.
+Context-full auto-compaction (`autoCompactEnabled`) is left on, and
+manual `/compact` still works.
+
 Any other content is one
 `DiffItem(field="local.claude_settings", ...)` whose actual value names
-each top-level key that is missing, unexpected or different. Fix it by
-copying the template into the repo.
+each top-level key that is missing, unexpected or different. Fix it with
+`vrg-claude-settings-sync --write`, which replaces the file with the
+template for one repo; `vrg-fleet-sync --target claude-settings` does the
+same across the fleet, one PR per drifted repo (see the
+[CLI Tools Overview](cli-tools-overview.md#vrg-claude-settings-sync)).
 
 ### `CLAUDE.md` and `AGENTS.md` — the instruction file
 
@@ -98,7 +140,12 @@ verbatim. Content outside the markers belongs to the repo and is never
 compared. A file with no markers fails with
 `DiffItem(field="local.claude_md", expected="well-formed template markers",
 actual="no template markers")`; a region that differs names the first
-divergent template line and `CLAUDE.md` line.
+divergent template line and `CLAUDE.md` line. Fix a differing region
+with `vrg-claude-md-sync --write`, which replaces only the marked region
+with the template for one repo; `vrg-fleet-sync --target claude-md` does
+the same across the fleet, one PR per drifted repo (see the
+[CLI Tools Overview](cli-tools-overview.md#vrg-claude-md-sync)). Neither
+repairs missing or malformed markers: that stays a hand fix.
 
 `CLAUDE.md` is held to a line budget of **200 lines**, counted as
 `len(text.splitlines())` over the whole file, template region included: a
@@ -307,7 +354,9 @@ separately, by `open-pull-requests-limit: 0` in the canonical
 [Local checks](#local-checks)).
 
 Alerts are read from `GET /repos/{repo}/vulnerability-alerts` (204 means
-on, 404 means off). Any other status is an error, never a silent "off".
+on, 404 means off). A 403 for a missing permission is reported as
+[not checked](#settings-the-identity-cannot-read); any other status is an
+error, never a silent "off".
 `apply` turns alerts on with `PUT` on that endpoint (or off with
 `DELETE`), and sets `dependabot_security_updates` through the repo's
 `security_and_analysis` settings. `apply` is a human action: it needs
@@ -346,6 +395,19 @@ order:
   that mode it checks each ruleset's includes, enforcement and rules but not
   its bypass actors, and lists the skipped `rulesets.<name>.bypass_actors`
   fields instead. This holds for every ruleset above.
+- **A REST refs write refused by a ruleset gives no rule text.** When a
+  ruleset blocks a create, update or delete made through the REST refs API
+  (`POST`, `PATCH` or `DELETE` on `repos/{owner}/{repo}/git/refs…`), GitHub
+  answers only `422 Reference update failed`. The same write done as a
+  `git push` names the rule (`GH013: Repository rule violations found for
+  refs/heads/v0.0. - Cannot create ref due to creations being restricted.`).
+  The 422 is generic, since a stale SHA gives the same answer, so every tool
+  that calls the API through `lib/github.py` adds a note to such a failure: it
+  names the ruleset as the likely cause, the ref and the repo, and how to see
+  the rules (`gh api repos/{owner}/{repo}/rules/branches/{branch}` for a
+  branch, `gh api repos/{owner}/{repo}/rulesets`, or this audit). The error is
+  still raised. To diagnose a refusal, or to probe whether a ruleset blocks a
+  write, use `git push`, which prints the rule.
 
 ## GitHub checks — the required-status-check set
 

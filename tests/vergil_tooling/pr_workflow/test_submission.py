@@ -48,7 +48,20 @@ def test_read_pr_fields_prefers_the_state_file(tmp_path: Path) -> None:
         "notes": "n",
         "linkage": "Ref",
         "base": "develop",
+        "head_sha": "h0",
     }
+
+
+def test_read_pr_fields_refuses_a_state_with_no_reported_head(tmp_path: Path) -> None:
+    """vrg-submit-pr holds the PR to the recorded head (issue #3815), so a
+    ready state without one is refused rather than submitted at any head."""
+    _write_state(tmp_path, with_metadata=True)
+    state = LocalFileTransport(tmp_path, base="develop").read()
+    assert state is not None
+    state.git.pop("head_sha")
+    LocalFileTransport(tmp_path, base="develop").write(state)
+    with pytest.raises(WorkflowError, match="no reported head_sha"):
+        submission.read_pr_fields(tmp_path)
 
 
 def test_read_pr_fields_errors_when_state_has_no_metadata(tmp_path: Path) -> None:

@@ -343,6 +343,66 @@ class TestIsNotFound:
         assert retry.is_retryable(_api_error(stderr="HTTP 404: Not Found")) is False
 
 
+class TestPollUntil:
+    @staticmethod
+    def _poll(
+        fn: Callable[[], object], clock: _FakeClock, waits: list[tuple[object, float]]
+    ) -> tuple[bool, object]:
+        return retry.poll_until(
+            fn,
+            lambda result: result == "ready",
+            budget=60.0,
+            sleep=clock.sleep,
+            clock=clock.monotonic,
+            on_wait=lambda result, delay: waits.append((result, delay)),
+        )
+
+    def test_ready_at_once_never_sleeps(self) -> None:
+        clock = _FakeClock()
+        waits: list[tuple[object, float]] = []
+        calls, fn = _sequence("ready")
+        assert self._poll(fn, clock, waits) == (True, "ready")
+        assert len(calls) == 1
+        assert clock.sleeps == []
+        assert waits == []
+
+    def test_polls_with_backoff_until_ready(self) -> None:
+        clock = _FakeClock()
+        waits: list[tuple[object, float]] = []
+        calls, fn = _sequence("a", "b", "ready")
+        with patch("vergil_tooling.lib.retry.random.random", return_value=0.5):
+            got = self._poll(fn, clock, waits)
+            expected = [retry.compute_delay(0), retry.compute_delay(1)]
+        assert got == (True, "ready")
+        assert len(calls) == 3
+        assert clock.sleeps == expected
+        # on_wait sees each unready result and the delay that follows it.
+        assert waits == [("a", expected[0]), ("b", expected[1])]
+
+    def test_budget_spent_returns_last_result(self) -> None:
+        clock = _FakeClock()
+        waits: list[tuple[object, float]] = []
+        calls, fn = _sequence(*[f"miss {i}" for i in range(50)])
+        with patch("vergil_tooling.lib.retry.random.random", return_value=0.5):
+            ready, last = self._poll(fn, clock, waits)
+        assert ready is False
+        assert last == f"miss {len(calls) - 1}"
+        # The last sleep is clamped to land on the deadline, then one final probe.
+        assert sum(clock.sleeps) == pytest.approx(60.0)
+        assert len(calls) == len(clock.sleeps) + 1
+
+    def test_probe_exception_ends_the_poll(self) -> None:
+        clock = _FakeClock()
+        waits: list[tuple[object, float]] = []
+        err = ValueError("boom")
+        calls, fn = _sequence("a", err, "ready")
+        with pytest.raises(ValueError, match="boom") as excinfo:
+            self._poll(fn, clock, waits)
+        assert excinfo.value is err
+        assert len(calls) == 2
+        assert len(clock.sleeps) == 1
+
+
 class TestRetryKnownResource:
     def test_returns_immediately_on_success(self) -> None:
         clock = _FakeClock()

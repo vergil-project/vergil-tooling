@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any
 from vergil_tooling.lib import github, release, remote_config, retry
 from vergil_tooling.lib.config import CONFIG_FILE
 from vergil_tooling.lib.labels import ensure_labels
+from vergil_tooling.lib.process_errors import error_text
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Sequence
@@ -247,9 +248,12 @@ def _reflink_child_states(epic: IssueRef) -> list[ChildState]:
         f"Parent: {epic.slug}",
         "--owner",
         epic.owner,
+        "--limit",
+        str(LISTING_LIMIT),
         "--json",
         "number,state,title,closedAt,repository,body",
     )
+    refuse_truncated(results, LISTING_LIMIT, f"the Parent: {epic.slug} reflink search")
     states: list[ChildState] = []
     for item in results if isinstance(results, list) else []:
         name_with_owner = str((item.get("repository") or {}).get("nameWithOwner", ""))
@@ -652,8 +656,38 @@ _LEGACY_ADHOC_ARCHIVE_RE = re.compile(
 EPIC_TITLE_LIST_LIMIT = 1000
 
 
+#: Upper bound on the other ``gh issue list`` / ``gh search`` lookups here
+#: (#4038). ``gh search`` returns at most 1000 results however many pages it
+#: follows, so a search can never usefully ask for more.
+LISTING_LIMIT = 1000
+
+
 class EpicListTruncatedError(ValueError):
-    """The title lookup's listing reached its limit, so a match may lie beyond it."""
+    """A listing reached its limit, so a row the caller needs may lie beyond it."""
+
+
+class EpicTitleAmbiguousError(ValueError):
+    """More than one open epic carries the title :func:`_find_epic_by_title` looked up.
+
+    *refs* are the matching epics, lowest number first, so a caller that knows
+    which one it created can name the others.
+    """
+
+    def __init__(self, message: str, refs: Sequence[IssueRef]) -> None:
+        super().__init__(message)
+        self.refs = tuple(refs)
+
+
+def refuse_truncated(rows: object, limit: int, what: str) -> None:
+    """Raise :class:`EpicListTruncatedError` if *rows* is a list *limit* long or more.
+
+    gh stops at ``--limit`` without saying so, so a result that long may be cut
+    off and nothing read from it, absence above all, can be trusted.
+    """
+    if isinstance(rows, list) and len(rows) >= limit:
+        raise EpicListTruncatedError(
+            f"{what} reached its {limit}-row limit; refusing to act on a possibly truncated list"
+        )
 
 
 def _find_epic_by_title(
@@ -709,8 +743,12 @@ def _find_epic_by_title(
             return IssueRef(owner=owner, repo=home_repo, number=oldest)
         nums = ", ".join(f"#{r['number']}" for r in rows)
         kind = labels[-1]
-        raise ValueError(
-            f"multiple {kind} epics titled {title!r} in {home} ({nums}) — pass an explicit --epic"
+        raise EpicTitleAmbiguousError(
+            f"multiple {kind} epics titled {title!r} in {home} ({nums}) — pass an explicit --epic",
+            [
+                IssueRef(owner=owner, repo=home_repo, number=number)
+                for number in sorted(int(r["number"]) for r in rows)
+            ],
         )
     if rows:
         return IssueRef(owner=owner, repo=home_repo, number=int(rows[0]["number"]))
@@ -744,7 +782,27 @@ STANDING_EPIC_VISIBILITY_BUDGET_SECS = retry.KNOWN_RESOURCE_BUDGET_SECS
 
 
 class StandingEpicNotVisibleError(RuntimeError):
-    """A standing epic was created but never became visible to the title lookup."""
+    """A standing epic was created but the title lookup never confirmed it is listed.
+
+    Either the lookup kept missing it until the budget ran out, or a lookup
+    failed (the error is chained as ``__cause__``). The message always names
+    the created epic, so a caller can check it rather than create a duplicate.
+    """
+
+
+class StandingEpicDuplicateError(StandingEpicNotVisibleError):
+    """A standing epic was created but the title lookup lists another epic with its title.
+
+    Raised by :func:`_await_listed` in place of the lookup's
+    :class:`EpicTitleAmbiguousError`, so the error names the epic this run
+    created (*created*) and the other same-titled epics (*others*), which only
+    this run can tell apart.
+    """
+
+    def __init__(self, message: str, created: IssueRef, others: Sequence[IssueRef]) -> None:
+        super().__init__(message)
+        self.created = created
+        self.others = tuple(others)
 
 
 def _await_listed(
@@ -764,28 +822,57 @@ def _await_listed(
     jittered backoff, the last sleep clamped to land on the deadline, followed
     by one final look. Raises :class:`StandingEpicNotVisibleError` naming
     *created* and what the lookup last saw if the budget runs out. A lookup
-    that sees two same-titled epics raises its own ambiguity error at once.
+    that sees two or more same-titled epics stops the wait at once with
+    :class:`StandingEpicDuplicateError`, naming *created* and the others. A
+    lookup that fails any other way (a ``gh`` read the retry layer gave up on,
+    unparseable output, a truncated list) stops the wait at once with
+    :class:`StandingEpicNotVisibleError` naming *created*, chained from the
+    failure (#3820). The loop itself is :func:`retry.poll_until` (#3821).
     """
-    deadline = clock() + STANDING_EPIC_VISIBILITY_BUDGET_SECS
-    attempt = 0
-    while True:
-        seen = _find_epic_by_title(home, title, labels=kind.labels)
-        if seen == created:
-            return
-        remaining = deadline - clock()
-        if remaining <= 0:
-            saw = f"saw {seen.slug}" if seen is not None else "saw no matching open epic"
+
+    def probe() -> IssueRef | None:
+        try:
+            return _find_epic_by_title(home, title, labels=kind.labels)
+        except EpicTitleAmbiguousError as exc:
+            others = [ref for ref in exc.refs if ref != created]
+            listed = "" if len(others) < len(exc.refs) else f"; {created.slug} is not listed yet"
+            raise StandingEpicDuplicateError(
+                f"created {kind.key} epic {created.slug} ({title!r}) but {home} also has "
+                f"open epics with that title: {', '.join(ref.slug for ref in others)}{listed}; "
+                f"keep one and close the rest before retrying",
+                created,
+                others,
+            ) from exc
+        except Exception as exc:
+            # Whatever the cause, the epic exists now: an error that dropped its
+            # ref would let a re-run in the list-lag window create a duplicate.
             raise StandingEpicNotVisibleError(
-                f"created {kind.key} epic {created.slug} ({title!r}) but it is still not "
-                f"listed in {home} after {STANDING_EPIC_VISIBILITY_BUDGET_SECS:g}s ({saw}); "
-                f"a later lookup could create a duplicate — check {created.slug} before retrying"
-            )
-        delay = min(retry.compute_delay(attempt), remaining)
+                f"created {kind.key} epic {created.slug} ({title!r}) but checking that it "
+                f"is listed in {home} failed: {error_text(exc)}; a later lookup could "
+                f"create a duplicate — check {created.slug} before retrying"
+            ) from exc
+
+    def on_wait(_seen: IssueRef | None, delay: float) -> None:
         log.warning(
             "%s not listed yet right after creating it, rechecking in %.1fs", created.slug, delay
         )
-        sleep(delay)
-        attempt += 1
+
+    listed, seen = retry.poll_until(
+        probe,
+        lambda found: found == created,
+        budget=STANDING_EPIC_VISIBILITY_BUDGET_SECS,
+        sleep=sleep,
+        clock=clock,
+        on_wait=on_wait,
+    )
+    if listed:
+        return
+    saw = f"saw {seen.slug}" if seen is not None else "saw no matching open epic"
+    raise StandingEpicNotVisibleError(
+        f"created {kind.key} epic {created.slug} ({title!r}) but it is still not "
+        f"listed in {home} after {STANDING_EPIC_VISIBILITY_BUDGET_SECS:g}s ({saw}); "
+        f"a later lookup could create a duplicate — check {created.slug} before retrying"
+    )
 
 
 def ensure_standing_epic(
@@ -806,7 +893,9 @@ def ensure_standing_epic(
     new epic (see :func:`_await_listed`), so a back-to-back caller finds it
     rather than creating a duplicate; it raises
     :class:`StandingEpicNotVisibleError` if that never happens within
-    :data:`STANDING_EPIC_VISIBILITY_BUDGET_SECS`. *sleep* and *clock* default to
+    :data:`STANDING_EPIC_VISIBILITY_BUDGET_SECS` or a lookup fails, or its
+    :class:`StandingEpicDuplicateError` subclass if the lookup lists another
+    epic with the same title; each names the new epic. *sleep* and *clock* default to
     :func:`time.sleep`/:func:`time.monotonic` (resolved at call time) and are
     injectable for tests.
     """
@@ -1123,8 +1212,13 @@ def _open_standing_archive_rows(kind: StandingKind, home: str) -> list[tuple[int
         *[arg for label in kind.archive_labels for arg in ("--label", label)],
         "--state",
         "open",
+        "--limit",
+        str(LISTING_LIMIT),
         "--json",
         "number,title",
+    )
+    refuse_truncated(
+        raw, LISTING_LIMIT, f"the open {' + '.join(kind.archive_labels)} archives of {home}"
     )
     pattern = archive_re(kind)
     out: list[tuple[int, re.Match[str]]] = []
@@ -1482,10 +1576,11 @@ def plan_normalize_adhoc(org: str) -> list[ArchiveConversion]:
             "--state",
             "all",
             "--limit",
-            "500",
+            str(LISTING_LIMIT),
             "--json",
             "number,title",
         )
+        refuse_truncated(raw, LISTING_LIMIT, f"the epic + ad-hoc issues of {home}")
         for item in raw if isinstance(raw, list) else []:
             if not isinstance(item, dict):
                 continue

@@ -13,6 +13,7 @@ import pytest
 
 from vergil_tooling.lib import github
 from vergil_tooling.lib.upstream_refresh import (
+    _PR_LIST_LIMIT,
     COMMIT_SUBJECT,
     REFRESH_BRANCH,
     REPORT_ENV,
@@ -468,6 +469,18 @@ def test_open_refresh_prs_filters_and_sorts(env: Env) -> None:
         RefreshPr(5, "https://github.com/o/r/pull/5", REFRESH_BRANCH),
         RefreshPr(9, "https://github.com/o/r/pull/9", f"{REFRESH_BRANCH}-x"),
     ]
+
+
+def test_open_refresh_prs_accepts_a_list_one_short_of_the_limit(env: Env) -> None:
+    env.gh.prs = [_pr(i, "feature/x") for i in range(1, _PR_LIST_LIMIT)]
+    assert open_refresh_prs(_REPO, _BASE) == []
+
+
+def test_open_refresh_prs_refuses_a_list_that_may_be_truncated(env: Env) -> None:
+    # A refresh PR past the limit would go unseen, so a full page refuses (#4038).
+    env.gh.prs = [_pr(i, "feature/x") for i in range(1, _PR_LIST_LIMIT + 1)]
+    with pytest.raises(UpstreamRefreshError, match="possibly truncated list"):
+        open_refresh_prs(_REPO, _BASE)
 
 
 @pytest.mark.parametrize("payload", [{"not": "a list"}, ["not a dict"]])

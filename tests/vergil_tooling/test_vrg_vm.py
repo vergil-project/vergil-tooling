@@ -1654,9 +1654,32 @@ class TestUpdate:
         ):
             assert main(["update", "--config", str(config_file)]) == 0
         assert [name for name, _, _ in manager.mock_calls] == ["copy", "plugins"]
-        manager.copy.assert_called_once_with(ANY, Path.home() / ".claude", require_settings=True)
+        manager.copy.assert_called_once_with(ANY, Path.home() / ".claude")
         assert manager.copy.call_args.args[0] is manager.plugins.call_args.args[0]
         _assert_transport(manager.copy, "vergil-agent")
+
+    @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
+    def test_update_says_it_copies_config_before_plugins(
+        self,
+        _status: MagicMock,
+        _ver: MagicMock,
+        config_file: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # #3835: the output tells the human the update syncs the user config,
+        # announced before the copy runs and before the plugin refresh.
+        order: list[str] = []
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_vm.copy_claude_config",
+                side_effect=lambda *_a: order.append(capsys.readouterr().out),
+            ),
+            patch("vergil_tooling.bin.vrg_vm.update_plugins"),
+        ):
+            assert main(["update", "--config", str(config_file)]) == 0
+        assert len(order) == 1
+        assert order[0].endswith("  Copying host Claude config (CLAUDE.md, settings.json)...\n")
 
     @pytest.mark.parametrize("flags", [[], ["--all"]])
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
@@ -1707,13 +1730,13 @@ class TestUpdate:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         monkeypatch.setenv("HOME", str(tmp_path))
-        assert _require_host_settings() is False
+        assert _require_host_settings("update") is False
         err = capsys.readouterr().err
         assert "the host settings are unusable" in err
         assert ".claude/settings.json" in err
         (tmp_path / ".claude").mkdir()
         (tmp_path / ".claude" / "settings.json").write_text("{}")
-        assert _require_host_settings() is True
+        assert _require_host_settings("update") is True
 
     @pytest.mark.parametrize(
         "content",
@@ -1738,7 +1761,7 @@ class TestUpdate:
         monkeypatch.setenv("HOME", str(tmp_path))
         (tmp_path / ".claude").mkdir()
         (tmp_path / ".claude" / "settings.json").write_bytes(content)
-        assert _require_host_settings() is False
+        assert _require_host_settings("update") is False
         err = capsys.readouterr().err
         assert str(tmp_path / ".claude" / "settings.json") in err
 
@@ -4984,13 +5007,15 @@ class TestCloudUpdate:
         self, _cloud_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         # In-place update needs IAP reachability, so a non-running box is refused with
-        # an identity-qualified start hint (two identities can share one org/repo).
-        with _CloudPatches(tmp_path / "state", status="") as m:
+        # an identity-qualified rebuild hint (two identities can share one org/repo).
+        # The hint never names `vrg-vm start`, which refuses off-platform boxes (#3994).
+        with _CloudPatches(tmp_path / "state", status="Stopped") as m:
             result = main(["update", "lmf/cloud", "--config", str(_cloud_repo)])
         assert result == 1
         err = capsys.readouterr().err
-        assert "is not running" in err
-        assert "vrg-vm start lmf/cloud --identity vergil-user" in err
+        assert "is not running (status: Stopped)" in err
+        assert "vrg-vm rebuild lmf/cloud --identity vergil-user" in err
+        assert "vrg-vm start" not in err
         m["destroy_vm"].assert_not_called()
         m["apply_vm"].assert_not_called()
 
@@ -7035,7 +7060,52 @@ class TestCmdCp:
         monkeypatch.setattr(vrg_vm.vm_cloud, "ensure_host_path", lambda *a, **k: None)
 
         assert vrg_vm._cmd_cp(_cp_args([str(src)])) == 1
-        assert "reachable" in capsys.readouterr().err.lower()
+        err = capsys.readouterr().err
+        assert "reachable" in err.lower()
+        assert "Start it with: vrg-vm start acme/widgets" in err
+
+    def test_copy_failure_off_platform_hints_rebuild(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # An off-platform box has no `vrg-vm start` (#3994): the hint names rebuild.
+        from vergil_tooling.bin import vrg_vm
+
+        src = tmp_path / "a.pdf"
+        src.write_text("x")
+        transport = MagicMock()
+        transport.copy_to.side_effect = subprocess.CalledProcessError(1, "scp")
+        target = _cp_target(off_platform=True, transport=transport)
+        monkeypatch.setattr(vrg_vm, "_resolve_target", lambda args, **k: target)
+        monkeypatch.setattr(vrg_vm.vm_cloud, "ensure_host_path", lambda *a, **k: None)
+
+        assert vrg_vm._cmd_cp(_cp_args([str(src)])) == 1
+        err = capsys.readouterr().err
+        assert "reachable" in err.lower()
+        assert "Bring it back with: vrg-vm rebuild acme/widgets --identity vergil-user" in err
+        assert "vrg-vm start" not in err
+
+    def test_missing_off_platform_vm_hints_rebuild(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # A session never creates an off-platform box, so the hint names rebuild.
+        from vergil_tooling.bin import vrg_vm
+
+        src = tmp_path / "a.pdf"
+        src.write_text("x")
+
+        def _boom(instance: object = None) -> object:
+            msg = "zone not persisted"
+            raise RuntimeError(msg)
+
+        target = _cp_target(off_platform=True, transport=None)
+        target.backend = types.SimpleNamespace(transport=_boom)
+        monkeypatch.setattr(vrg_vm, "_resolve_target", lambda args, **k: target)
+
+        assert vrg_vm._cmd_cp(_cp_args([str(src)])) == 1
+        err = capsys.readouterr().err
+        assert "does not exist" in err.lower()
+        assert "create it with: vrg-vm rebuild acme/widgets --identity vergil-user" in err
+        assert "vrg-vm session" not in err
 
     def test_missing_vm_reports_clearly(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -7054,7 +7124,9 @@ class TestCmdCp:
         monkeypatch.setattr(vrg_vm, "_resolve_target", lambda args, **k: target)
 
         assert vrg_vm._cmd_cp(_cp_args([str(src)])) == 1
-        assert "does not exist" in capsys.readouterr().err.lower()
+        err = capsys.readouterr().err
+        assert "does not exist" in err.lower()
+        assert "create it with: vrg-vm session acme/widgets" in err
 
     def test_main_dispatches_cp_and_reports_plan_errors(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -7254,3 +7326,89 @@ class TestAgentRefusal:
         out = capsys.readouterr().out
         assert "usage: vrg-vm start" in out
         assert "usage: vrg-vm" in out
+
+
+class TestHostSettingsRequired:
+    """#3988: every path that copies the guest Claude config requires the host
+    ``~/.claude/settings.json`` and refuses, naming it, before touching any VM."""
+
+    @pytest.mark.parametrize(
+        ("argv", "command"),
+        [
+            (["start"], "start"),
+            (["rebuild"], "rebuild"),
+            (["session", "."], "session"),
+        ],
+    )
+    @patch("vergil_tooling.bin.vrg_vm.os.execvp")
+    @patch("vergil_tooling.bin.vrg_vm.delete_vm")
+    @patch("vergil_tooling.bin.vrg_vm.start_vm")
+    @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=1.0)
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
+    def test_lima_path_refuses_before_touching_the_vm(
+        self,
+        _status: MagicMock,
+        _age: MagicMock,
+        mock_start: MagicMock,
+        mock_delete: MagicMock,
+        mock_exec: MagicMock,
+        argv: list[str],
+        command: str,
+        config_file: Path,
+    ) -> None:
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_vm._require_host_settings", return_value=False
+            ) as mock_check,
+            patch("vergil_tooling.bin.vrg_vm.copy_claude_config") as mock_copy,
+        ):
+            assert main([argv[0], "--config", str(config_file), *argv[1:]]) == 1
+        mock_check.assert_called_once_with(command)
+        mock_start.assert_not_called()
+        mock_delete.assert_not_called()
+        mock_copy.assert_not_called()
+        mock_exec.assert_not_called()
+
+    @pytest.mark.parametrize(("verb", "status"), [("create", ""), ("rebuild", "Running")])
+    def test_cloud_build_refuses_before_destroying_or_building(
+        self, verb: str, status: str, _cloud_repo: Path, tmp_path: Path
+    ) -> None:
+        with (
+            _CloudPatches(tmp_path / "state", status=status) as m,
+            patch(
+                "vergil_tooling.bin.vrg_vm._require_host_settings", return_value=False
+            ) as mock_check,
+        ):
+            assert main([verb, "lmf/cloud", "--config", str(_cloud_repo)]) == 1
+        mock_check.assert_called_once_with(verb)
+        m["fetch_modules"].assert_not_called()
+        m["destroy_vm"].assert_not_called()
+        m["apply_vm"].assert_not_called()
+        m["copy_claude_config"].assert_not_called()
+
+    def test_cloud_session_refuses_before_connecting(
+        self, _cloud_repo: Path, tmp_path: Path
+    ) -> None:
+        with (
+            _CloudPatches(tmp_path / "state") as m,
+            patch(
+                "vergil_tooling.bin.vrg_vm._require_host_settings", return_value=False
+            ) as mock_check,
+        ):
+            assert main(["session", "lmf/cloud", "--config", str(_cloud_repo)]) == 1
+        mock_check.assert_called_once_with("session")
+        m["transport"].assert_not_called()
+        m["copy_claude_config"].assert_not_called()
+
+    def test_missing_host_file_is_named_with_the_command(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        assert _require_host_settings("start") is False
+        err = capsys.readouterr().err
+        settings = tmp_path / ".claude" / "settings.json"
+        assert f"{settings} is required" in err
+        assert "vrg-vm start copies it into the VM" in err

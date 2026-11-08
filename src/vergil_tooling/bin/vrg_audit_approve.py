@@ -43,7 +43,11 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    repo = github.current_repo()
+    # The check run belongs on the PR's own repo, read from the PR itself, not
+    # the current directory's remote: run from a checkout of another repo, it
+    # would otherwise land on the wrong repo and the PR would never get its
+    # approval (#4033). A PR whose repo cannot be read raises GitHubAPIError.
+    repo, _ = github.pr_repo_and_number(args.pr, "the audit check run")
     sha = github.head_sha(args.pr)
     title = _TITLES.get(args.conclusion, _TITLES["neutral"])
     summary = args.summary or f"{title} for {sha[:8]}."

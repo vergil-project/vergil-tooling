@@ -175,23 +175,33 @@ _SOURCE_STRINGS = ("source", "repo", "url", "path", "ref")
 def _declared_sources(settings: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
     """Return each ``extraKnownMarketplaces`` entry's name and ``source`` object.
 
-    An entry with no ``source`` yields ``{}``. An empty ``ref`` reads as no ref.
+    Every returned source has a non-empty ``repo``, ``url`` or ``path``, and a
+    ``github`` source has a ``repo``, so each entry is one the refresh can add
+    (and, for a ``github`` source, verify). An empty ``ref`` reads as no ref.
+
+    A null or sourceless entry is an error, never read as empty: an entry the
+    refresh skipped would be silently neither added nor verified
+    (vergil-project/vergil-tooling#3992).
 
     Raises:
         MarketplaceError: an entry, its ``source``, or one of the source's
-            string fields has the wrong JSON type.
+            string fields has the wrong JSON type; an entry or its ``source``
+            is null or missing; the source has no ``repo``, ``url`` or
+            ``path``; or a ``github`` source has no ``repo``.
     """
     entries: list[tuple[str, dict[str, Any]]] = []
     for name, spec in _section(settings, "extraKnownMarketplaces").items():
         where = f"settings.json extraKnownMarketplaces.{name}"
         if spec is None:
-            spec = {}
+            msg = f"{where} is null"
+            raise MarketplaceError(msg)
         if not isinstance(spec, dict):
             msg = f"{where} is not a JSON object"
             raise MarketplaceError(msg)
         src = spec.get("source")
         if src is None:
-            src = {}
+            msg = f"{where} has no source"
+            raise MarketplaceError(msg)
         if not isinstance(src, dict):
             msg = f"{where}.source is not a JSON object"
             raise MarketplaceError(msg)
@@ -199,6 +209,12 @@ def _declared_sources(settings: dict[str, Any]) -> list[tuple[str, dict[str, Any
             if src.get(field) is not None and not isinstance(src[field], str):
                 msg = f"{where}.source.{field} is not a string"
                 raise MarketplaceError(msg)
+        if src.get("source") == "github" and not src.get("repo"):
+            msg = f"{where}.source is a github source with no repo"
+            raise MarketplaceError(msg)
+        if not (src.get("repo") or src.get("url") or src.get("path")):
+            msg = f"{where}.source has no repo, url or path"
+            raise MarketplaceError(msg)
         entries.append((name, {**src, "ref": src.get("ref") or None}))
     return entries
 
@@ -206,17 +222,18 @@ def _declared_sources(settings: dict[str, Any]) -> list[tuple[str, dict[str, Any
 def declared_marketplaces(settings: dict[str, Any]) -> list[Declared]:
     """Return the GitHub marketplaces ``extraKnownMarketplaces`` declares.
 
-    Only a ``github`` source with a ``repo`` is returned: that is the source
-    shape whose registration ``marketplace list --json`` reports as a repo and
-    ref, so it is the one the refresh can verify. An empty ``ref`` reads as no
-    ref, as it does for the add.
+    Only a ``github`` source is returned (it always has a ``repo``; one
+    without is an error): that is the source shape whose registration
+    ``marketplace list --json`` reports as a repo and ref, so it is the one
+    the refresh can verify. An empty ``ref`` reads as no ref, as it does for
+    the add.
 
     Raises:
         MarketplaceError: ``extraKnownMarketplaces`` has the wrong shape.
     """
     declared: list[Declared] = []
     for name, src in _declared_sources(settings):
-        if src.get("source") != "github" or not src.get("repo"):
+        if src.get("source") != "github":
             continue
         declared.append(Declared(name, src["repo"], src["ref"]))
     return declared
@@ -260,14 +277,6 @@ def validate_settings(settings: dict[str, Any]) -> None:
     _enabled_plugin_ids(settings)
 
 
-def _marketplace_sources(settings: dict[str, Any]) -> list[str]:
-    """Return the ``marketplace add`` arguments needed for the enabled plugins, quoted.
-
-    The arguments of :func:`_marketplace_adds`, without their names.
-    """
-    return [arg for _, arg in _marketplace_adds(settings)]
-
-
 def _marketplace_adds(settings: dict[str, Any]) -> list[tuple[str, str]]:
     """Return ``(marketplace name, quoted add-arg)`` for each marketplace to add.
 
@@ -293,16 +302,15 @@ def _marketplace_adds(settings: dict[str, Any]) -> list[tuple[str, str]]:
         # does not match the extraKnownMarketplaces entry (failureCode
         # "declared"). A github repo pins with `@ref` (the form `marketplace
         # list` shows); a git URL pins with `#ref` (Claude Code docs, "Add a
-        # marketplace"). A path has no ref.
+        # marketplace"). A path has no ref. `_declared_sources` guarantees one
+        # of repo, url or path (#3992).
         ref = src["ref"]
         if src.get("repo"):
             base, sep = src["repo"], "@"
         elif src.get("url"):
             base, sep = src["url"], "#"
-        elif src.get("path"):
-            base, sep = src["path"], ""
         else:
-            continue
+            base, sep = src["path"], ""
         arg = shlex.quote(base)
         if ref and sep:
             arg = f"{arg}{sep}{shlex.quote(ref)}"
@@ -473,8 +481,11 @@ def update_installed_plugins(run: Run, settings: dict[str, Any], prefix: str) ->
     install, so one id can appear at user scope and again at project scope for
     each project (#3764). Every install entry is updated at its own scope; a
     project-scope entry is updated from inside its ``projectPath``. An enabled
-    id with no install entry at any scope is installed at user scope (it comes
-    from the user settings.json).
+    id with no **user-scope** install entry is installed at user scope, even
+    when it has a project- or local-scope install: *settings* is the user
+    settings.json, and the user file owns plugin installation, so a project
+    install never stands in for the user one (#3836). An entry with no
+    ``scope`` reads as user scope, as in the update.
 
     Best-effort across the set: one failure does not block the others.
     Returns the failure labels, naming each entry's scope and project.
@@ -483,7 +494,7 @@ def update_installed_plugins(run: Run, settings: dict[str, Any], prefix: str) ->
     desired = _enabled_plugin_ids(settings)
     # One entry per INSTALL, not per id (#3764): never key by id.
     entries = _installed_entries(run, prefix)
-    installed_ids = {entry["id"] for entry in entries}
+    user_installed_ids = {e["id"] for e in entries if e.get("scope", "user") == "user"}
 
     # Refresh every install of a declared-enabled id, plus any install that is
     # itself enabled (the pre-#2006 behaviour), each at its own scope/project.
@@ -493,7 +504,7 @@ def update_installed_plugins(run: Run, settings: dict[str, Any], prefix: str) ->
         if failure:
             failures.append(failure)
 
-    for pid in sorted(desired - installed_ids):
+    for pid in sorted(desired - user_installed_ids):
         label = f"{pid} (user)"
         print(f"    install {label}...")
         try:
@@ -517,9 +528,13 @@ def refresh(run: Run, settings: dict[str, Any], prefix: str) -> list[str]:
     GitHub marketplace is registered at its declared repo and ref.
 
     Raises:
-        MarketplaceError: a ``list --json`` output is malformed.
+        MarketplaceError: a ``list --json`` output is malformed, or a
+            ``list --json`` step raised after an earlier step had already
+            failed. Then the message names the step's error and every earlier
+            failure label, and the error is chained from the step's exception
+            (vergil-project/vergil-tooling#3989).
         subprocess.CalledProcessError: a ``list --json`` command failed, so
-            the state could not be read at all.
+            the state could not be read at all, and no earlier step had failed.
     """
     failures: list[str] = []
     adds = _marketplace_adds(settings)
@@ -537,8 +552,17 @@ def refresh(run: Run, settings: dict[str, Any], prefix: str) -> list[str]:
         except subprocess.CalledProcessError as exc:
             _report(f"marketplace update {name}", exc)
             failures.append(f"marketplace:{name}")
-    failures.extend(update_installed_plugins(run, settings, prefix))
-    failures.extend(verify(run, settings, prefix))
+    try:
+        failures.extend(update_installed_plugins(run, settings, prefix))
+        failures.extend(verify(run, settings, prefix))
+    except (MarketplaceError, subprocess.CalledProcessError) as exc:
+        if not failures:
+            raise
+        # The caller prints this error, never the list it did not receive, so
+        # the earlier failures go into its message (#3989).
+        earlier = ", ".join(dict.fromkeys(failures))
+        msg = f"{type(exc).__name__}: {exc}; failed before it: {earlier}"
+        raise MarketplaceError(msg) from exc
     # A marketplace whose add failed usually fails its update and verification
     # too; all carry the same `marketplace:<name>` label, so it is named once.
     return list(dict.fromkeys(failures))

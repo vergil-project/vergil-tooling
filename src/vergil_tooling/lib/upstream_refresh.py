@@ -46,6 +46,10 @@ COMMIT_SUBJECT = "chore(upstream): refresh upstream inputs"
 
 _BODY_INTRO = "Automated upstream refresh. A human reviews and merges; nothing auto-merges."
 
+#: Upper bound on the open PRs :func:`open_refresh_prs` lists. Reaching it is a
+#: refusal: a refresh PR beyond it would go unseen (#4038).
+_PR_LIST_LIMIT = 100
+
 
 class UpstreamRefreshError(Exception):
     """A refusal or failure of the upstream refresh; the message says why."""
@@ -236,12 +240,18 @@ def open_refresh_prs(repo: str, base: str) -> list[RefreshPr]:
         "--state",
         "open",
         "--limit",
-        "100",
+        str(_PR_LIST_LIMIT),
         "--json",
         "number,url,headRefName",
     )
     if not isinstance(result, list):
         msg = f"gh pr list returned unexpected JSON: {result!r}"
+        raise UpstreamRefreshError(msg)
+    if len(result) >= _PR_LIST_LIMIT:
+        msg = (
+            f"{repo} has {_PR_LIST_LIMIT}+ open PRs against {base}; refusing to look "
+            "for refresh PRs on a possibly truncated list"
+        )
         raise UpstreamRefreshError(msg)
     prs: list[RefreshPr] = []
     for item in result:

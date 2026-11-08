@@ -86,6 +86,30 @@ def test_ensure_scopes_token_to_target_repo_owner() -> None:
     assert seen == ["other-org", "other-org", "other-org"]
 
 
+def test_ensure_created_but_not_confirmed_is_a_clean_error(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A post-create lookup failure exits 1 naming the new epic, no traceback (#3820).
+    message = (
+        "created ad-hoc epic org/.github#7 ('Epic (ad hoc): repo') but checking that it "
+        "is listed in org/.github failed: HTTP 502; a later lookup could create a "
+        "duplicate — check org/.github#7 before retrying"
+    )
+    with (
+        patch(f"{_MOD}.epics.resolve_epic_home", return_value="org/.github"),
+        patch(f"{_MOD}.github.repo_visibility", return_value="PUBLIC"),
+        patch(
+            f"{_MOD}.epics.ensure_adhoc_epic",
+            side_effect=epics.StandingEpicNotVisibleError(message),
+        ),
+        pytest.raises(SystemExit) as excinfo,
+    ):
+        main(["ensure", "--repo", "org/repo"])
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert err == f"vrg-adhoc-epic: {message}\n"
+
+
 def test_ensure_malformed_repo_errors(capsys: pytest.CaptureFixture[str]) -> None:
     with patch(f"{_MOD}.epics.ensure_adhoc_epic") as mock_ensure:
         rc = main(["ensure", "--repo", "noslash"])

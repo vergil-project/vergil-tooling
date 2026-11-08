@@ -45,6 +45,8 @@ the dev-tree override venv.
 | [vrg-github-repo-init](cli-tools-overview.md#vrg-github-repo-init) | Bootstrap a new managed repository |
 | [vrg-gitignore-sync](cli-tools-overview.md#vrg-gitignore-sync) | Check or write a repo's vergil-managed `.gitignore` block |
 | [vrg-dependabot-sync](cli-tools-overview.md#vrg-dependabot-sync) | Check or write a repo's canonical report-only `dependabot.yml` |
+| [vrg-claude-settings-sync](cli-tools-overview.md#vrg-claude-settings-sync) | Check or write a repo's managed `.claude/settings.json` |
+| [vrg-claude-md-sync](cli-tools-overview.md#vrg-claude-md-sync) | Check or write the template region of a repo's `CLAUDE.md` |
 | [vrg-fleet-sync](cli-tools-overview.md#vrg-fleet-sync) | Propagate a managed file across the fleet, one PR per drifted repo |
 | [vrg-ci-sync](cli-tools-overview.md#vrg-ci-sync) | Fleet sweep that strips retired inputs from each repo's `ci.yml` |
 | [vrg-xdist-sync](cli-tools-overview.md#vrg-xdist-sync) | Fleet sweep that adds `pytest-xdist` to each Python repo |
@@ -87,7 +89,6 @@ Run inside dev containers launched by `vrg-container-run`.
 | [vrg-sarif-filter](cli-tools-overview.md#vrg-sarif-filter) | Drop accepted-suppressed results from a SARIF file before upload |
 | [vrg-sarif-evaluate](cli-tools-overview.md#vrg-sarif-evaluate) | Report a SARIF file's findings at the chosen severities |
 | [vrg-semgrep-scan](cli-tools-overview.md#vrg-semgrep-scan) | Run a semgrep scan with language-resolved rulesets and write SARIF |
-| [vrg-trivy-scan](cli-tools-overview.md#vrg-trivy-scan) | Run a Trivy vulnerability scan and write SARIF |
 | [vrg-ecosystem-resolve](cli-tools-overview.md#vrg-ecosystem-resolve) | Resolve a language's package build and publish commands |
 | [vrg-release-validate-inputs](cli-tools-overview.md#vrg-release-validate-inputs) | Validate release workflow inputs |
 | [vrg-version-divergence](cli-tools-overview.md#vrg-version-divergence) | Fail when the head branch's version was not bumped |

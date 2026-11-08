@@ -39,6 +39,7 @@ from typing import Any
 from vergil_tooling.lib import git, github
 from vergil_tooling.lib.rulings import RulingError
 from vergil_tooling.lib.rulings.plain_text import check_plain_text
+from vergil_tooling.lib.shell_ref import quoted_issue_ref
 
 DRAFT_FILE = "reply.md"
 _REF_NAMESPACE = "vergil/ruling-draft"
@@ -54,28 +55,10 @@ _NOT_FOUND_RE = re.compile(r"\(HTTP 404\)$", re.MULTILINE)
 # GitHub answers DELETE on a ref that is not there with 422 and this message.
 _NO_REFERENCE = "Reference does not exist"
 
-# A remote URL naming a repo on github.com: ``https://`` (optionally with a
-# user), ``ssh://`` (optionally with a port) or scp-style ``git@github.com:``.
-_GITHUB_REPO_URL_RE = re.compile(
-    r"^(?:(?:https?|ssh|git)://(?:[^@/]+@)?github\.com(?::[0-9]+)?/|[^@/:]+@github\.com:)"
-    r"([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?$",
-    re.IGNORECASE,
-)
-
 
 def draft_ref(issue: int, request_id: int) -> str:
     """The reserved ref carrying the draft reply to request ``request_id``."""
     return f"refs/{_REF_NAMESPACE}/{issue}/{request_id}"
-
-
-def quoted_issue_ref(repo: str, issue: int) -> str:
-    """The issue ref as a paste-ready shell word, ``'owner/repo#N'``.
-
-    Unquoted, the ``#`` is a glob operator in zsh with ``EXTENDED_GLOB`` set,
-    so the pasted command fails with ``no matches found``. The ref's grammar
-    admits no single quote, so plain single quotes are safe.
-    """
-    return f"'{repo}#{issue}'"
 
 
 def reply_command(repo: str, issue: int, request_id: int) -> str:
@@ -93,17 +76,14 @@ def scope_command(repo: str, issue: int) -> str:
     return f"vrg-scope-change --issue {quoted_issue_ref(repo, issue)}"
 
 
-def _repo_of_url(url: str) -> str | None:
-    match = _GITHUB_REPO_URL_RE.fullmatch(url.strip())
-    if match is None:
-        return None
-    return f"{match.group(1)}/{match.group(2)}"
-
-
 def require_remote_is(
     repo: str, *, remote: str = "origin", command: str = "vrg-ruling draft"
 ) -> None:
     """Refuse unless every push URL of ``remote`` names ``repo`` on github.com.
+
+    A push URL is read with :func:`github.github_remote_repo`, the one GitHub
+    remote URL parser, so this check agrees with the rest of the tooling on
+    which URLs name a repo on github.com (#4088).
 
     The draft is pushed through ``remote``, so a remote pointing anywhere else
     would publish it to the wrong repo. Every push URL is checked (``git remote
@@ -123,7 +103,7 @@ def require_remote_is(
         msg = f"the '{remote}' remote has no push URL; run {command} in a clone of {repo}"
         raise RulingError(msg)
     for url in urls:
-        found = _repo_of_url(url)
+        found = github.github_remote_repo(url)
         if found is None:
             msg = (
                 f"a push URL of the '{remote}' remote is not a github.com repo;"

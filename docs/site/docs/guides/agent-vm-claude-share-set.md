@@ -23,8 +23,11 @@ projection](#cloud-vms-read-only-memory-projection).
 
 `copy_claude_config` additionally copies `CLAUDE.md` and `settings.json`
 into each VM on every start, rebuild and session, on cloud create, and on
-every `vrg-vm update` (which requires the host `settings.json` and fails,
-naming it, when it is missing). The guest `CLAUDE.md` is a read-only copy of
+every `vrg-vm update`. The host `settings.json` is required on every one of
+these paths: each command checks it before touching any VM and refuses,
+naming the file, when it is missing or is not valid settings, rather than
+leaving an earlier guest copy in place. It is the single source of the guest
+copy, even though provisioning writes an initial one. The guest `CLAUDE.md` is a read-only copy of
 the host's on every transport: `copy_claude_config` is the sole owner of its
 file mode and runs `chmod a-w` on it after each copy, and removes the guest
 copy when the host has none. The mode makes an accidental write fail loudly;
@@ -88,7 +91,9 @@ separately, and each one is updated. The CLI has no project flag, and takes
 the project from the working directory, so a project install is updated from
 inside its `projectPath`. If that directory no longer exists in the VM, the
 install is reported as a failure that names its scope and project. An enabled
-plugin with no install at any scope is installed at user scope. Last, it
+plugin with no user-scope install is installed at user scope, even when a
+project-scope install of it exists: the user `settings.json` owns plugin
+installation, so a project install never stands in for the user one. Last, it
 **verifies** that each declared GitHub marketplace is registered, as `claude
 plugin marketplace list --json` reports it, at the declared repo and ref; a
 mismatch (including no registered ref when the settings declare one) or a

@@ -945,6 +945,20 @@ def test_ensure_adhoc_epic_multiple_same_title_raises() -> None:
         epics.ensure_adhoc_epic("org/tooling")
 
 
+def test_find_epic_by_title_ambiguity_names_every_match_lowest_first() -> None:
+    # The ambiguity error is still a ValueError, and carries the matching refs.
+    with (
+        patch(
+            "vergil_tooling.lib.github.read_json",
+            return_value=[_adhoc_row(7), _adhoc_row(3)],
+        ),
+        pytest.raises(epics.EpicTitleAmbiguousError, match=r"\(#7, #3\)") as excinfo,
+    ):
+        epics._find_epic_by_title("org/.github", "Epic (ad hoc): tooling")
+    assert isinstance(excinfo.value, ValueError)
+    assert excinfo.value.refs == (IssueRef("org", ".github", 3), IssueRef("org", ".github", 7))
+
+
 def test_resolve_epic_ref_explicit_validates_epic() -> None:
     with patch("vergil_tooling.lib.epics.is_epic", return_value=True):
         assert epics.resolve_epic_ref("org/.github#40", repo="org/repo") == IssueRef(
@@ -1221,6 +1235,96 @@ def test_find_epic_by_title_accepts_a_list_one_short_of_the_limit() -> None:
     rows = [{"number": i, "title": f"Epic (ad hoc): repo-{i}"} for i in range(1, limit)]
     with patch("vergil_tooling.lib.github.read_json", side_effect=_fake_issue_list(rows)):
         assert epics._find_epic_by_title("org/.github", "Epic (ad hoc): tooling") is None
+
+
+# -- the other bounded lookups (#4038) -----------------------------------------
+
+
+def test_refuse_truncated_passes_a_list_one_short_of_the_limit() -> None:
+    epics.refuse_truncated([{}] * 4, 5, "the listing")
+
+
+def test_refuse_truncated_raises_at_the_limit() -> None:
+    with pytest.raises(epics.EpicListTruncatedError, match="the listing reached its 5-row limit"):
+        epics.refuse_truncated([{}] * 5, 5, "the listing")
+
+
+def _archive_rows(count: int) -> list[dict]:
+    return [
+        {"number": i, "title": f"Archive (ad hoc): repo-{i} — 2026-Q3"} for i in range(1, count + 1)
+    ]
+
+
+def test_open_standing_archive_rows_sees_an_archive_past_row_30() -> None:
+    fake_list = _fake_issue_list(_archive_rows(31))
+    with patch("vergil_tooling.lib.github.read_json", side_effect=fake_list):
+        rows = epics._open_standing_archive_rows(epics.ADHOC, "org/.github")
+    assert sorted(number for number, _ in rows) == list(range(1, 32))
+
+
+def test_open_standing_archive_rows_refuses_a_list_that_may_be_truncated() -> None:
+    fake_list = _fake_issue_list(_archive_rows(epics.LISTING_LIMIT))
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=fake_list),
+        pytest.raises(epics.EpicListTruncatedError, match="archives of org/.github"),
+    ):
+        epics._open_standing_archive_rows(epics.ADHOC, "org/.github")
+
+
+def _reflink_hits(count: int) -> list[dict]:
+    return [
+        {
+            "number": i,
+            "state": "OPEN",
+            "repository": {"nameWithOwner": "org/repo-a"},
+            "body": f"Parent: {EPIC.slug}",
+        }
+        for i in range(1, count + 1)
+    ]
+
+
+def test_reflink_child_states_sees_a_child_past_hit_30() -> None:
+    fake_search = _fake_issue_list(_reflink_hits(31))
+    with patch("vergil_tooling.lib.github.read_json", side_effect=fake_search):
+        states = epics._reflink_child_states(EPIC)
+    assert sorted(s.ref.number for s in states) == list(range(1, 32))
+
+
+def test_reflink_child_states_refuses_a_search_that_may_be_truncated() -> None:
+    hits = _reflink_hits(epics.LISTING_LIMIT)
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=_fake_issue_list(hits)),
+        pytest.raises(epics.EpicListTruncatedError, match="reflink search"),
+    ):
+        epics._reflink_child_states(EPIC)
+
+
+def _legacy_archives(count: int) -> list[dict]:
+    return [
+        {"number": i, "title": f"Epic (ad hoc): repo-{i} — 2026-Q1"} for i in range(1, count + 1)
+    ]
+
+
+def test_plan_normalize_adhoc_sees_an_archive_past_row_500() -> None:
+    with (
+        patch("vergil_tooling.lib.github.list_org_repos", return_value=[]),
+        patch(
+            "vergil_tooling.lib.github.read_json",
+            side_effect=_fake_issue_list(_legacy_archives(501)),
+        ),
+    ):
+        plan = epics.plan_normalize_adhoc("org")
+    assert sorted(c.ref.number for c in plan) == list(range(1, 502))
+
+
+def test_plan_normalize_adhoc_refuses_a_list_that_may_be_truncated() -> None:
+    rows = _legacy_archives(epics.LISTING_LIMIT)
+    with (
+        patch("vergil_tooling.lib.github.list_org_repos", return_value=[]),
+        patch("vergil_tooling.lib.github.read_json", side_effect=_fake_issue_list(rows)),
+        pytest.raises(epics.EpicListTruncatedError, match="ad-hoc issues of org/.github"),
+    ):
+        epics.plan_normalize_adhoc("org")
 
 
 # -- archive rename: rollup no-ops under a converted archive parent (Task 3) ---
@@ -2318,6 +2422,122 @@ def test_ensure_standing_epic_never_visible_names_other_epic_seen() -> None:
         epics.ensure_standing_epic(
             epics.DEFERRED, "org/.github", "org", sleep=fake.sleep, clock=fake.clock
         )
+
+
+def test_ensure_standing_epic_duplicate_after_create_names_created_ref() -> None:
+    # A concurrent creator (or a create the first lookup missed) leaves two
+    # same-titled epics: stop at once, naming the one this run created (#3819).
+    fake = _FakeClock()
+    both = [{"number": 9, "title": "Epic (deferred): org"}, _DEFERRED_ROW]
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=[[], both]),
+        patch("vergil_tooling.lib.epics.ensure_labels"),
+        patch("vergil_tooling.lib.github.create_issue", return_value=_DEFERRED_URL),
+        pytest.raises(epics.StandingEpicDuplicateError) as excinfo,
+    ):
+        epics.ensure_standing_epic(
+            epics.DEFERRED, "org/.github", "org", sleep=fake.sleep, clock=fake.clock
+        )
+    exc = excinfo.value
+    assert isinstance(exc, epics.StandingEpicNotVisibleError)
+    assert isinstance(exc.__cause__, epics.EpicTitleAmbiguousError)
+    assert exc.created == IssueRef("org", ".github", 10)
+    assert exc.others == (IssueRef("org", ".github", 9),)
+    assert str(exc) == (
+        "created deferred epic org/.github#10 ('Epic (deferred): org') but org/.github also "
+        "has open epics with that title: org/.github#9; keep one and close the rest before "
+        "retrying"
+    )
+    assert fake.sleeps == []
+
+
+def test_ensure_standing_epic_duplicates_without_created_ref_say_it_is_unlisted() -> None:
+    # Two other same-titled epics are listed and ours is not yet: name them all.
+    fake = _FakeClock()
+    others = [
+        {"number": 8, "title": "Epic (deferred): org"},
+        {"number": 9, "title": "Epic (deferred): org"},
+    ]
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=[[], others]),
+        patch("vergil_tooling.lib.epics.ensure_labels"),
+        patch("vergil_tooling.lib.github.create_issue", return_value=_DEFERRED_URL),
+        pytest.raises(
+            epics.StandingEpicDuplicateError,
+            match=(
+                r"epic org/\.github#10 .* org/\.github#8, org/\.github#9; "
+                r"org/\.github#10 is not listed yet;"
+            ),
+        ) as excinfo,
+    ):
+        epics.ensure_standing_epic(
+            epics.DEFERRED, "org/.github", "org", sleep=fake.sleep, clock=fake.clock
+        )
+    assert excinfo.value.others == (IssueRef("org", ".github", 8), IssueRef("org", ".github", 9))
+
+
+@pytest.mark.parametrize(
+    ("failure", "detail"),
+    [
+        (
+            github.GitHubAPIError(1, ["gh", "issue", "list"], "", "HTTP 502: Bad Gateway"),
+            "HTTP 502: Bad Gateway",
+        ),
+        (
+            subprocess.CalledProcessError(1, ["gh", "issue", "list"], "", "connection reset"),
+            "connection reset",
+        ),
+        (ValueError("Expecting value: line 1 column 1 (char 0)"), "Expecting value"),
+    ],
+    ids=["api-error", "process-error", "bad-json"],
+)
+def test_ensure_standing_epic_read_failure_after_create_names_created_ref(
+    failure: Exception, detail: str
+) -> None:
+    # A poll read that fails after the create must not drop the new epic's ref:
+    # a re-run in the list-lag window would create a duplicate (#3820).
+    fake = _FakeClock()
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=[[], [], failure]),
+        patch("vergil_tooling.lib.epics.ensure_labels"),
+        patch("vergil_tooling.lib.github.create_issue", return_value=_DEFERRED_URL),
+        pytest.raises(epics.StandingEpicNotVisibleError) as excinfo,
+    ):
+        epics.ensure_standing_epic(
+            epics.DEFERRED, "org/.github", "org", sleep=fake.sleep, clock=fake.clock
+        )
+    exc = excinfo.value
+    assert type(exc) is epics.StandingEpicNotVisibleError
+    assert exc.__cause__ is failure
+    message = str(exc)
+    assert message.startswith(
+        "created deferred epic org/.github#10 ('Epic (deferred): org') but checking that "
+        "it is listed in org/.github failed: "
+    )
+    assert detail in message
+    assert message.endswith("check org/.github#10 before retrying")
+    # The failure stops the wait at once rather than polling on.
+    assert len(fake.sleeps) == 1
+
+
+def test_ensure_standing_epic_truncated_list_after_create_names_created_ref() -> None:
+    # A post-create listing at its row limit cannot confirm the new epic either.
+    fake = _FakeClock()
+    full = [{"number": n, "title": f"t{n}"} for n in range(epics.EPIC_TITLE_LIST_LIMIT)]
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=[[], full]),
+        patch("vergil_tooling.lib.epics.ensure_labels"),
+        patch("vergil_tooling.lib.github.create_issue", return_value=_DEFERRED_URL),
+        pytest.raises(
+            epics.StandingEpicNotVisibleError,
+            match=r"epic org/\.github#10 .* failed: org/\.github has 1000\+ open issues",
+        ) as excinfo,
+    ):
+        epics.ensure_standing_epic(
+            epics.DEFERRED, "org/.github", "org", sleep=fake.sleep, clock=fake.clock
+        )
+    assert isinstance(excinfo.value.__cause__, epics.EpicListTruncatedError)
+    assert "check org/.github#10 before retrying" in str(excinfo.value)
 
 
 def test_ensure_standing_epic_back_to_back_creates_exactly_one() -> None:
