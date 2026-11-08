@@ -484,9 +484,7 @@ def update_plugins(transport: Transport) -> None:
 _CLAUDE_CONFIG_FILES = (("CLAUDE.md", True), ("settings.json", False))
 
 
-def copy_claude_config(
-    transport: Transport, claude_dir: Path, *, require_settings: bool = False
-) -> None:
+def copy_claude_config(transport: Transport, claude_dir: Path) -> None:
     """Copy CLAUDE.md and settings.json from host into the VM.
 
     The sole owner of the guest ``~/.claude/CLAUDE.md`` file mode: after
@@ -504,42 +502,42 @@ def copy_claude_config(
     directory to be writable, so a copy locked by an earlier run is replaced
     without reopening it (#2436).
 
-    With *require_settings* (the update path, which refreshes plugins from the
-    copied file right after), a missing host ``settings.json`` is an error
-    naming the host file, not a skip, and the text copied is first parsed and
-    shape-checked as the refresh will read it.
+    The host ``settings.json`` is required on every path (#3988): it is the
+    single authority for the guest copy, which the plugin refresh reads. A
+    missing host file is an error naming it, never a skip that would leave an
+    earlier guest copy in place, and the text copied is first parsed and
+    shape-checked as the refresh will read it. That provisioning writes an
+    initial guest copy does not change this. The check runs before anything
+    is written to the guest.
 
     Raises:
-        RuntimeError: *require_settings* is set and the host settings.json is
-            missing or unusable, or a host file cannot be read.
+        RuntimeError: the host settings.json is missing or unusable, or a host
+            file cannot be read.
         subprocess.CalledProcessError: a guest command failed, such as a copy
             that could not be written; the guest file it targeted is unchanged.
     """
     settings = claude_dir / "settings.json"
-    if require_settings and not settings.is_file():
+    if not settings.is_file():
         msg = (
-            f"the host {settings} is missing; it is required, because the plugin "
-            "refresh reads the copy of it in the VM"
+            f"the host {settings} is missing; it is required, because it is the "
+            "only source of the VM's copy, which the plugin refresh reads"
         )
         raise RuntimeError(msg)
-    if not claude_dir.is_dir():
-        # No host config at all: the guest keeps no CLAUDE.md the host lacks.
-        transport.run("bash", "-c", "rm -f ~/.claude/CLAUDE.md")
-        return
     transport.run("bash", "-c", "mkdir -p ~/.claude")
     for filename, locked in _CLAUDE_CONFIG_FILES:
         source = claude_dir / filename
         dest = f"~/.claude/{filename}"
-        if not source.exists():
-            if locked:
-                transport.run("bash", "-c", f"rm -f {dest}")
+        if locked and not source.exists():
+            # The guest keeps no CLAUDE.md the host lacks. A settings.json gone
+            # since the check above fails the read below instead.
+            transport.run("bash", "-c", f"rm -f {dest}")
             continue
         try:
             content = source.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as exc:
             msg = f"cannot read the host {source}: {exc}"
             raise RuntimeError(msg) from exc
-        if require_settings and filename == "settings.json":
+        if filename == "settings.json":
             # Check the exact text about to be piped, as the refresh will read
             # it, so a host file changed since the pre-flight is never copied.
             try:

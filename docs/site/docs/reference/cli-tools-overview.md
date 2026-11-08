@@ -1650,8 +1650,8 @@ instead and flags it with a `DEV tooling` banner, and a plain
 |---|---|
 | Source | `vergil_tooling.bin.vrg_vm` |
 | Args | Global `--identity` (default: the configured default identity), `--config` (path to `identities.toml`); then a subcommand with its own flags (`vrg-vm <subcommand> --help`) |
-| Preconditions | Run by the human (any agent identity is refused, exit 1); host with Lima (local VMs) or the off-platform backend configured; `identities.toml` |
-| Failure mode | Error on stderr; an agent identity is refused before any work; `update --all` attempts every box and reports each failure |
+| Preconditions | Run by the human (any agent identity is refused, exit 1); host with Lima (local VMs) or the off-platform backend configured; `identities.toml`; a valid host `~/.claude/settings.json` for `start`, `rebuild`, `session`, `update` and an off-platform `create` |
+| Failure mode | Error on stderr; an agent identity is refused before any work; a missing or invalid host `~/.claude/settings.json` is refused, naming the file, before any VM is touched; `update --all` attempts every box and reports each failure |
 | Exit codes | 0 success, non-zero on failure |
 | Status | Active |
 

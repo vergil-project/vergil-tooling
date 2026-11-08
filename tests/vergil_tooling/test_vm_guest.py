@@ -693,7 +693,10 @@ class TestCopyClaudeConfig:
         # mode included, and remove its temp file.
         claude_dir = tmp_path / "host" / ".claude"
         claude_dir.mkdir(parents=True)
-        (claude_dir / filename).write_text("new content that never lands\n")
+        # The host always has a valid settings.json (it is required, #3988).
+        (claude_dir / "settings.json").write_text('{"new": true}\n')
+        if filename == "CLAUDE.md":
+            (claude_dir / filename).write_text("new content that never lands\n")
         home = tmp_path / "guest"
         guest = home / ".claude"
         guest.mkdir(parents=True)
@@ -713,91 +716,96 @@ class TestCopyClaudeConfig:
         assert original.stat().st_mode & 0o777 == 0o444
         assert [p.name for p in guest.iterdir()] == [filename]
 
-    def test_skips_missing_files(self, tmp_path: Path) -> None:
-        claude_dir = tmp_path / ".claude"
-        claude_dir.mkdir()
-
-        transport = _transport()
-        copy_claude_config(transport, claude_dir)
-
-        # Nothing is piped; a guest CLAUDE.md the host does not have is removed,
-        # and a guest settings.json is left alone.
-        cmds = [c.args[-1] for c in transport.run.call_args_list]
-        assert cmds == ["mkdir -p ~/.claude", "rm -f ~/.claude/CLAUDE.md"]
-        transport.pipe.assert_not_called()
-
-    def test_require_settings_fails_naming_the_host_file(self, tmp_path: Path) -> None:
-        claude_dir = tmp_path / ".claude"
-        claude_dir.mkdir()
-        (claude_dir / "CLAUDE.md").write_text("# prefs\n")
-
-        transport = _transport()
-        with pytest.raises(RuntimeError, match=r"host .*\.claude/settings\.json is missing"):
-            copy_claude_config(transport, claude_dir, require_settings=True)
-        transport.run.assert_not_called()
-        transport.pipe.assert_not_called()
-
-    def test_require_settings_fails_without_a_host_claude_dir(self, tmp_path: Path) -> None:
-        transport = _transport()
-        with pytest.raises(RuntimeError, match="settings.json is missing"):
-            copy_claude_config(transport, tmp_path / ".claude", require_settings=True)
-        transport.run.assert_not_called()
-
-    def test_require_settings_copies_when_present(self, tmp_path: Path) -> None:
+    def test_missing_claude_md_removes_the_guest_copy(self, tmp_path: Path) -> None:
         claude_dir = tmp_path / ".claude"
         claude_dir.mkdir()
         (claude_dir / "settings.json").write_text("{}\n")
 
         transport = _transport()
-        copy_claude_config(transport, claude_dir, require_settings=True)
+        copy_claude_config(transport, claude_dir)
+
+        # A guest CLAUDE.md the host does not have is removed; settings.json is
+        # still copied.
+        cmds = [c.args[-1] for c in transport.run.call_args_list]
+        assert cmds == ["mkdir -p ~/.claude", "rm -f ~/.claude/CLAUDE.md"]
+        piped = [c.args[0] for c in transport.pipe.call_args_list]
+        assert len(piped) == 1
+        assert "~/.claude/settings.json" in piped[0]
+
+    def test_missing_settings_fails_naming_the_host_file(self, tmp_path: Path) -> None:
+        # #3988: the host settings.json is required on every path (start,
+        # rebuild, session, cloud create, update). A missing file is refused
+        # before the guest is touched, never skipped over a stale guest copy.
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        (claude_dir / "CLAUDE.md").write_text("# prefs\n")
+
+        transport = _transport()
+        with pytest.raises(RuntimeError) as excinfo:
+            copy_claude_config(transport, claude_dir)
+        assert f"the host {claude_dir / 'settings.json'} is missing" in str(excinfo.value)
+        assert "required" in str(excinfo.value)
+        transport.run.assert_not_called()
+        transport.pipe.assert_not_called()
+
+    def test_missing_host_claude_dir_fails_naming_the_host_file(self, tmp_path: Path) -> None:
+        transport = _transport()
+        with pytest.raises(RuntimeError, match=r"\.claude/settings\.json is missing"):
+            copy_claude_config(transport, tmp_path / ".claude")
+        transport.run.assert_not_called()
+        transport.pipe.assert_not_called()
+
+    def test_missing_settings_leaves_the_guest_untouched(self, tmp_path: Path) -> None:
+        # The real commands in bash: a refused copy changes nothing in the
+        # guest, so no half-updated config is left behind.
+        claude_dir = tmp_path / "host" / ".claude"
+        claude_dir.mkdir(parents=True)
+        (claude_dir / "CLAUDE.md").write_text("# new prefs\n")
+        home = tmp_path / "guest"
+        guest = home / ".claude"
+        guest.mkdir(parents=True)
+        (guest / "CLAUDE.md").write_text("# old prefs\n")
+        (guest / "settings.json").write_text('{"old": true}\n')
+
+        with pytest.raises(RuntimeError, match="settings.json is missing"):
+            copy_claude_config(_shell_transport(home), claude_dir)
+
+        assert (guest / "CLAUDE.md").read_text() == "# old prefs\n"
+        assert (guest / "settings.json").read_text() == '{"old": true}\n'
+
+    def test_copies_a_valid_settings_file(self, tmp_path: Path) -> None:
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        (claude_dir / "settings.json").write_text("{}\n")
+
+        transport = _transport()
+        copy_claude_config(transport, claude_dir)
         piped = [c.args[0] for c in transport.pipe.call_args_list]
         assert any("~/.claude/settings.json" in cmd for cmd in piped)
 
     @pytest.mark.parametrize("content", ["{not json", "[]", '{"enabledPlugins": {"x@y": "true"}}'])
-    def test_require_settings_rejects_an_unusable_host_file(
-        self, content: str, tmp_path: Path
-    ) -> None:
+    def test_rejects_an_unusable_host_settings_file(self, content: str, tmp_path: Path) -> None:
         # The text about to be piped is checked as the refresh will read it, so
-        # a host file changed after the pre-flight is never copied into a VM.
+        # a host file changed after a pre-flight is never copied into a VM.
         claude_dir = tmp_path / ".claude"
         claude_dir.mkdir()
         (claude_dir / "settings.json").write_text(content)
 
         transport = _transport()
         with pytest.raises(RuntimeError, match=r"the host .*settings\.json is unusable"):
-            copy_claude_config(transport, claude_dir, require_settings=True)
+            copy_claude_config(transport, claude_dir)
         piped = [c.args[0] for c in transport.pipe.call_args_list]
         assert not any("settings.json" in cmd for cmd in piped)
-
-    def test_settings_shape_is_not_checked_without_require_settings(self, tmp_path: Path) -> None:
-        # Start, rebuild and session copy the file as-is; the refresh reports it.
-        claude_dir = tmp_path / ".claude"
-        claude_dir.mkdir()
-        (claude_dir / "settings.json").write_text("{not json")
-
-        transport = _transport()
-        copy_claude_config(transport, claude_dir)
-        piped = [c.args[0] for c in transport.pipe.call_args_list]
-        assert any("~/.claude/settings.json" in cmd for cmd in piped)
 
     def test_unreadable_host_file_is_a_named_error(self, tmp_path: Path) -> None:
         claude_dir = tmp_path / ".claude"
         claude_dir.mkdir()
+        (claude_dir / "settings.json").write_text("{}\n")
         # A directory where the file should be: read_text raises an OSError.
         (claude_dir / "CLAUDE.md").mkdir()
 
         with pytest.raises(RuntimeError, match=r"cannot read the host .*CLAUDE\.md"):
             copy_claude_config(_transport(), claude_dir)
-
-    def test_skips_if_claude_dir_missing(self, tmp_path: Path) -> None:
-        claude_dir = tmp_path / ".claude"
-
-        transport = _transport()
-        copy_claude_config(transport, claude_dir)
-
-        # Nothing is copied, and a guest CLAUDE.md the host lacks is removed.
-        assert [c.args[-1] for c in transport.run.call_args_list] == ["rm -f ~/.claude/CLAUDE.md"]
-        transport.pipe.assert_not_called()
 
 
 class TestLinkClaudeDirs:
