@@ -19071,6 +19071,13 @@ cloud→Mac handoff: each branch's ready-state comes from a local
 worktree's <code>pr-workflow.json</code> when present, else the relay ref
 <code>refs/vergil/pr-workflow/&lt;branch&gt;</code>; origin's tip is checked against the
 recorded <code>head_sha</code> and the PR opens with <code>--head</code> <strong>without pushing</strong>.
+Every mode driven by a ready-state opens the PR only at the <code>head_sha</code> the
+latest <code>report-ready</code> recorded and refuses rather than pick another head
+(#3815): a local worktree's HEAD must be that commit (a batch checks it
+before its rebase), a named branch reopened by <code>unfreeze</code> and not
+re-reported is refused, a local ready-state and relay ref that disagree are
+refused, and origin's tip is checked against the recorded head right before
+<code>gh pr create</code>.
 It refuses an issue whose native parent is an intake, planning or deferred
 epic (see <a href="#vrg-pr-workflow"><code>vrg-pr-workflow</code></a>). Human-run: agent
 identities are refused, and agents hand off with
@@ -19097,7 +19104,7 @@ identities are refused, and agents hand off with
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>Subprocess error from <code>git push</code> or <code>gh pr create</code>; relay mode: loud failure on a missing ready-state or <code>head_sha</code> drift</td>
+<td>Subprocess error from <code>git push</code> or <code>gh pr create</code>; loud refusal on a missing ready-state, a state that is not ready, or any head other than the recorded <code>head_sha</code></td>
 </tr>
 <tr>
 <td>Exit codes</td>
@@ -19146,7 +19153,10 @@ allowed while HEAD is exactly the reported commit — it publishes, not
 advances, the branch (issue #3071). <code>unfreeze</code> is the only sanctioned way to
 reopen a still-unsubmitted branch — it drops the state back to
 <code>implementing</code> while keeping the metadata; an already-submitted branch
-cannot be unfrozen. <code>status</code> prints the current state. <code>report-ready</code> (like
+cannot be unfrozen. <code>unfreeze</code> first overwrites the relay ref with the
+reopened state, so no <code>vrg-submit-pr</code> can still read the branch as ready at
+its old head, and fails with nothing changed if that push fails (#3815).
+<code>status</code> prints the current state. <code>report-ready</code> (like
 <code>vrg-submit-pr</code>) refuses an issue whose native parent is an intake, planning
 or deferred epic: a queue item is not buildable until intake review routes it,
 <code>epic-create</code> expands it, or deferred review revives it (epics
@@ -19176,7 +19186,7 @@ is not absent or <code>{}</code> (epic vergil-project/.github#558).</p>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td><code>WorkflowError</code> on stderr (e.g. unfreeze after submit, or nothing to unfreeze)</td>
+<td><code>WorkflowError</code> on stderr (e.g. unfreeze after submit, nothing to unfreeze, or a relay ref unfreeze could not update)</td>
 </tr>
 <tr>
 <td>Exit codes</td>
