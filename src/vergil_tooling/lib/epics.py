@@ -827,13 +827,12 @@ def _await_listed(
     lookup that fails any other way (a ``gh`` read the retry layer gave up on,
     unparseable output, a truncated list) stops the wait at once with
     :class:`StandingEpicNotVisibleError` naming *created*, chained from the
-    failure (#3820).
+    failure (#3820). The loop itself is :func:`retry.poll_until` (#3821).
     """
-    deadline = clock() + STANDING_EPIC_VISIBILITY_BUDGET_SECS
-    attempt = 0
-    while True:
+
+    def probe() -> IssueRef | None:
         try:
-            seen = _find_epic_by_title(home, title, labels=kind.labels)
+            return _find_epic_by_title(home, title, labels=kind.labels)
         except EpicTitleAmbiguousError as exc:
             others = [ref for ref in exc.refs if ref != created]
             listed = "" if len(others) < len(exc.refs) else f"; {created.slug} is not listed yet"
@@ -852,22 +851,28 @@ def _await_listed(
                 f"is listed in {home} failed: {error_text(exc)}; a later lookup could "
                 f"create a duplicate — check {created.slug} before retrying"
             ) from exc
-        if seen == created:
-            return
-        remaining = deadline - clock()
-        if remaining <= 0:
-            saw = f"saw {seen.slug}" if seen is not None else "saw no matching open epic"
-            raise StandingEpicNotVisibleError(
-                f"created {kind.key} epic {created.slug} ({title!r}) but it is still not "
-                f"listed in {home} after {STANDING_EPIC_VISIBILITY_BUDGET_SECS:g}s ({saw}); "
-                f"a later lookup could create a duplicate — check {created.slug} before retrying"
-            )
-        delay = min(retry.compute_delay(attempt), remaining)
+
+    def on_wait(_seen: IssueRef | None, delay: float) -> None:
         log.warning(
             "%s not listed yet right after creating it, rechecking in %.1fs", created.slug, delay
         )
-        sleep(delay)
-        attempt += 1
+
+    listed, seen = retry.poll_until(
+        probe,
+        lambda found: found == created,
+        budget=STANDING_EPIC_VISIBILITY_BUDGET_SECS,
+        sleep=sleep,
+        clock=clock,
+        on_wait=on_wait,
+    )
+    if listed:
+        return
+    saw = f"saw {seen.slug}" if seen is not None else "saw no matching open epic"
+    raise StandingEpicNotVisibleError(
+        f"created {kind.key} epic {created.slug} ({title!r}) but it is still not "
+        f"listed in {home} after {STANDING_EPIC_VISIBILITY_BUDGET_SECS:g}s ({saw}); "
+        f"a later lookup could create a duplicate — check {created.slug} before retrying"
+    )
 
 
 def ensure_standing_epic(

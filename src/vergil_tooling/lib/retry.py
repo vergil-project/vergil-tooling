@@ -185,6 +185,41 @@ class KnownResourceNotFoundError(subprocess.CalledProcessError):
         return f"{message}: {detail}" if detail else message
 
 
+def poll_until[T](
+    probe: Callable[[], T],
+    ready: Callable[[T], bool],
+    *,
+    budget: float,
+    sleep: Callable[[float], None],
+    clock: Callable[[], float],
+    on_wait: Callable[[T, float], None],
+) -> tuple[bool, T]:
+    """Call *probe* until *ready* holds for its result or *budget* seconds run out.
+
+    The one poll loop behind every known-resource wait (#3821): between probes
+    it sleeps :func:`compute_delay`'s jittered backoff, the last sleep clamped
+    to land on the deadline, followed by one final probe. Before each sleep it
+    calls *on_wait* with the probe's result and the delay, so the caller can
+    log what it is waiting for. Returns ``(True, result)`` as soon as *ready*
+    holds, or ``(False, last_result)`` once the budget is spent; deciding what
+    a timeout means is the caller's job. An exception from *probe* propagates
+    at once and ends the poll.
+    """
+    deadline = clock() + budget
+    attempt = 0
+    while True:
+        result = probe()
+        if ready(result):
+            return True, result
+        remaining = deadline - clock()
+        if remaining <= 0:
+            return False, result
+        delay = min(compute_delay(attempt), remaining)
+        on_wait(result, delay)
+        sleep(delay)
+        attempt += 1
+
+
 def retry_known_resource[T](
     fn: Callable[[], T],
     *,
@@ -203,26 +238,34 @@ def retry_known_resource[T](
     Any other error propagates immediately (transient errors are already
     retried inside the ``github``/``run_with_retry`` layer *fn* calls).
     *sleep* and *clock* default to :func:`time.sleep`/:func:`time.monotonic`
-    (resolved at call time) and are injectable for tests.
+    (resolved at call time) and are injectable for tests. The loop itself is
+    :func:`poll_until`.
     """
-    sleep = sleep or time.sleep
-    clock = clock or time.monotonic
-    deadline = clock() + budget
-    attempt = 0
-    while True:
+
+    # A probe result is the value boxed in a 1-tuple, or the not-found error.
+    def probe() -> tuple[T] | subprocess.CalledProcessError:
         try:
-            return fn()
+            return (fn(),)
         except subprocess.CalledProcessError as exc:
             if not is_not_found(exc):
                 raise
-            remaining = deadline - clock()
-            if remaining <= 0:
-                raise KnownResourceNotFoundError(resource, budget, exc) from exc
-            delay = min(compute_delay(attempt), remaining)
-            log.warning(
-                "%s not readable yet (404 right after GitHub reported it), retrying in %.1fs",
-                resource,
-                delay,
-            )
-            sleep(delay)
-            attempt += 1
+            return exc
+
+    def on_wait(_missing: object, delay: float) -> None:
+        log.warning(
+            "%s not readable yet (404 right after GitHub reported it), retrying in %.1fs",
+            resource,
+            delay,
+        )
+
+    _, outcome = poll_until(
+        probe,
+        lambda result: not isinstance(result, subprocess.CalledProcessError),
+        budget=budget,
+        sleep=sleep or time.sleep,
+        clock=clock or time.monotonic,
+        on_wait=on_wait,
+    )
+    if isinstance(outcome, subprocess.CalledProcessError):
+        raise KnownResourceNotFoundError(resource, budget, outcome) from outcome
+    return outcome[0]
