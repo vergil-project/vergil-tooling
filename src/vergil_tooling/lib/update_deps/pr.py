@@ -24,6 +24,9 @@ if TYPE_CHECKING:
 FIX_TASK_PREFIX = "Fix task: "
 # vrg-issue-create prints "Created <url>, linked under epic <slug>." on success.
 _CREATED_RE = re.compile(r"Created (https://github\.com/\S+/issues/\d+),")
+# Upper bound on the open issues the fix-task search lists. Reaching it is a
+# refusal: a matching task beyond it would be filed again (#4038).
+_FIX_TASK_SEARCH_LIMIT = 100
 
 
 def fix_task_title(version: str) -> str:
@@ -227,6 +230,8 @@ def find_open_fix_task(repo: str, version: str, kind: FailureKind) -> str | None
         f'"{title}" in:title',
         "--state",
         "open",
+        "--limit",
+        str(_FIX_TASK_SEARCH_LIMIT),
         "--json",
         "number,url,title,body",
     )
@@ -245,6 +250,15 @@ def find_open_fix_task(repo: str, version: str, kind: FailureKind) -> str | None
             command="gh " + " ".join(cmd),
             message="gh issue list returned unexpected JSON; no fix task was filed.",
             detail=str(results),
+        )
+    if len(results) >= _FIX_TASK_SEARCH_LIMIT:
+        raise UpdateDepsError(
+            phase="fix-task",
+            command="gh " + " ".join(cmd),
+            message=(
+                f"The fix-task search matched {_FIX_TASK_SEARCH_LIMIT}+ open issues, so the "
+                "list may be truncated; no fix task was filed."
+            ),
         )
     heading = re.compile(rf"^## Failure: {re.escape(kind)}$", re.MULTILINE)
     matches: list[tuple[int, str]] = []

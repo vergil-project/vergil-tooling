@@ -567,6 +567,31 @@ def test_pending_deps_prs_fails_loud_on_bad_json() -> None:
         pending_deps_prs("o/r")
 
 
+def _deps_prs(count: int) -> list[dict[str, object]]:
+    return [
+        {"url": f"https://github.com/o/r/pull/{i}", "body": "", "headRefName": _HEAD}
+        for i in range(1, count + 1)
+    ]
+
+
+def test_pending_deps_prs_accepts_a_list_one_short_of_the_limit() -> None:
+    count = preflight_module._PENDING_DEPS_LIMIT - 1
+    with patch(_MOD + ".github.read_json", return_value=_deps_prs(count)) as m:
+        assert len(pending_deps_prs("o/r")) == count
+    args = list(m.call_args.args)
+    assert args[args.index("--limit") + 1] == str(preflight_module._PENDING_DEPS_LIMIT)
+
+
+def test_pending_deps_prs_refuses_a_list_that_may_be_truncated() -> None:
+    # A pending PR past the limit would go unseen, so a full page refuses (#4038).
+    rows = _deps_prs(preflight_module._PENDING_DEPS_LIMIT)
+    with (
+        patch(_MOD + ".github.read_json", return_value=rows),
+        pytest.raises(ReleaseError, match="may be truncated; refusing to release blind"),
+    ):
+        pending_deps_prs("o/r")
+
+
 def test_pending_deps_prs_rejects_non_list() -> None:
     with (
         patch(_MOD + ".github.read_json", return_value={"url": "x"}),

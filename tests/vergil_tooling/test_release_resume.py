@@ -6,7 +6,11 @@ import pytest
 
 from vergil_tooling.lib.release import checklist
 from vergil_tooling.lib.release.context import ReleaseError
-from vergil_tooling.lib.release.resume import _open_release_issues, find_resume_target
+from vergil_tooling.lib.release.resume import (
+    _SEARCH_LIST_LIMIT,
+    _open_release_issues,
+    find_resume_target,
+)
 
 _MOD = "vergil_tooling.lib.release.resume"
 _STAGES = ["audit", "prepare"]
@@ -26,6 +30,35 @@ def test_find_resume_target_none_raises() -> None:
     with (
         patch(_MOD + ".github.read_json", return_value=[]),
         pytest.raises(ReleaseError, match="No in-flight release"),
+    ):
+        find_resume_target("o/r", _STAGES)
+
+
+def _limited(rows: list[dict[str, object]]):
+    """A ``gh issue list`` stand-in that returns at most ``--limit`` rows (30 without one)."""
+
+    def fake(*args: str) -> list[dict[str, object]]:
+        return rows[: int(args[args.index("--limit") + 1]) if "--limit" in args else 30]
+
+    return fake
+
+
+def _noise(count: int) -> list[dict[str, object]]:
+    # The search is a broad net: these match it but are not release issues.
+    return [{"number": i, "title": f"release: notes {i}", "body": ""} for i in range(count)]
+
+
+def test_find_resume_target_sees_a_release_issue_past_row_30() -> None:
+    rows = [*_noise(30), _issue("2.1.0", 42)]
+    with patch(_MOD + ".github.read_json", side_effect=_limited(rows)):
+        assert find_resume_target("o/r", _STAGES) == ("2.1.0", 42)
+
+
+def test_find_resume_target_refuses_a_search_that_may_be_truncated() -> None:
+    rows = _noise(_SEARCH_LIST_LIMIT)
+    with (
+        patch(_MOD + ".github.read_json", side_effect=_limited(rows)),
+        pytest.raises(ReleaseError, match="possibly truncated list"),
     ):
         find_resume_target("o/r", _STAGES)
 
