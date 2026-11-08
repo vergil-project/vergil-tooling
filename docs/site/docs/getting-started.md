@@ -107,7 +107,7 @@ Either way, the repository ends up with:
 |---|---|
 | `vergil.toml` | The repository profile and tooling config |
 | `CLAUDE.md` | Agent guidance: a short header, the canonical template region between its `vergil:template:claude-md` markers (fleet-wide agent policy such as worktrees, `vrg-git`/`vrg-gh`, validation and the PR handoff), then your repo's own notes; at most 200 lines in all (see [Consuming Repo Setup](guides/consuming-repo-setup.md#claudemd)) |
-| `.claude/settings.json` | Wires the hook guard, enables the Vergil Claude Code plugin, and turns off Claude Code's AI co-author attribution |
+| `.claude/settings.json` | Wires the hook guard, enables the Vergil Claude Code plugin, turns off Claude Code's AI co-author attribution, and turns off idle compaction |
 | `.claude/hooks/guard.sh` | Hook-guard shim that blocks raw `git`/`gh` in agent sessions |
 | `.gitignore` | The vergil-managed ignore block for your language, including `.worktrees/` |
 | `.github/dependabot.yml` | The canonical report-only Dependabot config: every entry has `open-pull-requests-limit: 0`, so Dependabot never opens a PR |

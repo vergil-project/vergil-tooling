@@ -237,7 +237,7 @@ branch prefix, issue number) live in `vrg-commit` itself. See the
 `vrg-github-repo-init` writes `.claude/settings.json` as the packaged
 template
 [`claude_settings.json`](https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/data/claude_settings.json),
-unchanged. It has four parts:
+unchanged. It has five parts:
 
 | Key | Purpose |
 |---|---|
@@ -245,6 +245,7 @@ unchanged. It has four parts:
 | `hooks.PreToolUse` | Runs `${CLAUDE_PROJECT_DIR}/.claude/hooks/guard.sh` on every `Bash` tool call. |
 | `enabledPlugins` | Enables `vergil@vergil-marketplace`. The `vergil-marketplace` definition (`vergil-project/vergil-claude-plugin`, `ref: "v2.1"`) lives only in the user settings: a second definition in the repo file would replace the user's whole entry. See [The `vergil-marketplace` definition](#the-vergil-marketplace-definition). |
 | `attribution` | Turns off Claude Code's AI co-author trailer on commits and PRs. |
+| `idleCompaction` | `false`: Claude Code doesn't compact a session while it sits idle, so the human decides when to compact or clear (#3795). Needs Claude Code v2.1.290 or later; older versions ignore it. Context-full auto-compaction and `/compact` are unchanged. |
 
 AI co-author attribution is not used (#3200). The `attribution` block
 uses empty strings, which work on every Claude Code version:

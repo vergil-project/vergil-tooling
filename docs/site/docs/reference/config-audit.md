@@ -71,8 +71,9 @@ divergence:
 after JSON parsing: key order and whitespace don't matter, but every key
 and value does, and no other key may appear. The template holds the guard
 `PreToolUse` hook, `permissions.allow: ["Bash(vrg-*)"]`,
-`enabledPlugins: {"vergil@vergil-marketplace": true}` and
-`attribution: {"commit": "", "pr": ""}`. It holds no
+`enabledPlugins: {"vergil@vergil-marketplace": true}`,
+`attribution: {"commit": "", "pr": ""}` and `idleCompaction: false`. It
+holds no
 `extraKnownMarketplaces`: the marketplace is defined only in the user
 settings (see the
 [ownership model](../guides/claude-config-ownership.md)).
@@ -81,6 +82,14 @@ settings (see the
 ([#3200](https://github.com/vergil-project/vergil-tooling/issues/3200)).
 Its empty-string form is required: `attribution: false` needs a newer
 Claude Code and makes older versions skip the whole settings file.
+
+`idleCompaction: false` stops Claude Code compacting a session while it
+sits idle
+([#3795](https://github.com/vergil-project/vergil-tooling/issues/3795)),
+so the human decides when a session is compacted or cleared. It needs
+Claude Code v2.1.290 or later; older versions ignore the key.
+Context-full auto-compaction (`autoCompactEnabled`) is left on, and
+manual `/compact` still works.
 
 Any other content is one
 `DiffItem(field="local.claude_settings", ...)` whose actual value names
