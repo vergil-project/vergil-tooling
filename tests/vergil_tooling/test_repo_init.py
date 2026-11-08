@@ -2465,6 +2465,14 @@ def test_render_claude_settings_turns_off_attribution() -> None:
     assert data["attribution"] == {"commit": "", "pr": ""}
 
 
+def test_render_claude_settings_turns_off_idle_compaction() -> None:
+    # Idle compaction is off (#3795): the human decides when a session is
+    # compacted. Context-full auto-compaction is left alone.
+    data = json.loads(render_claude_settings())
+    assert data["idleCompaction"] is False
+    assert "autoCompactEnabled" not in data
+
+
 def test_multi_choice_numbers() -> None:
     with patch("builtins.input", return_value="1,3"):
         assert prompt_multi_choice("pick", ["a", "b", "c"]) == [0, 2]
