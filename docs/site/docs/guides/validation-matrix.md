@@ -123,7 +123,8 @@ dev images come from
    config that relaxes line length. See the
    [Markdown Validation](../reference/lint/markdown-standards.md)
    reference.
-3. shellcheck on shell scripts under `scripts/`.
+3. shellcheck on shell scripts under `scripts/` and on every `*.sh`
+   file elsewhere in the repository.
 4. yamllint on YAML under `.github/` and `docs/`, with the bundled
    config.
 5. hadolint on `Dockerfile*` at the repository root.

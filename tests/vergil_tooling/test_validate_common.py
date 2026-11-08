@@ -16,6 +16,7 @@ from vergil_tooling.bin.validate_common import (
     _find_ansible_lint_config,
     _find_dockerfiles,
     _find_prose_markdown_files,
+    _find_repo_sh_files,
     _find_shell_files,
     _find_strict_markdown_files,
     _find_yaml_files,
@@ -52,6 +53,19 @@ def _no_gitignore_filter() -> Iterator[None]:
     with patch(
         "vergil_tooling.bin.validate_common._drop_gitignored",
         side_effect=lambda _root, paths: paths,
+    ):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _no_repo_sh_listing() -> Iterator[None]:
+    """List no repo-wide ``*.sh`` files: ``git ls-files`` needs a real
+    repository, which most tests' ``tmp_path`` is not. The listing itself is
+    tested against a real repo below, through the name imported at module
+    load, which this patch does not replace (#3830)."""
+    with patch(
+        "vergil_tooling.bin.validate_common._find_repo_sh_files",
+        return_value=[],
     ):
         yield
 
@@ -185,6 +199,63 @@ def test_find_shell_files_sorted(tmp_path: Path) -> None:
     (scripts / "a.sh").write_text("#!/bin/bash\n")
     result = _find_shell_files(tmp_path)
     assert result[0] < result[1]
+
+
+def test_find_shell_files_adds_repo_sh_files_once(tmp_path: Path) -> None:
+    """The repo-wide ``*.sh`` listing joins the scripts/ scan, and a file both
+    find (a ``scripts/**/*.sh``) appears once, in sorted order (#3830)."""
+    scripts = tmp_path / "scripts" / "dev"
+    scripts.mkdir(parents=True)
+    (scripts / "lint.sh").write_text("#!/bin/bash\n")
+    hook = str(tmp_path / "hooks" / "scripts" / "gate.sh")
+    with patch(
+        "vergil_tooling.bin.validate_common._find_repo_sh_files",
+        return_value=[hook, str(scripts / "lint.sh")],
+    ):
+        result = _find_shell_files(tmp_path)
+    assert result == sorted([hook, str(scripts / "lint.sh")])
+
+
+# -- _find_repo_sh_files ------------------------------------------------------
+
+
+def test_find_repo_sh_files_lists_tracked_and_untracked(tmp_path: Path) -> None:
+    """``*.sh`` at any depth is found, committed or not, while a gitignored
+    one, a non-``.sh`` file and a tracked file deleted from disk are not."""
+    repo = _git_repo(tmp_path / "repo", ".worktrees/\n")
+    (repo / "hooks" / "scripts" / "lib").mkdir(parents=True)
+    (repo / "hooks" / "scripts" / "gate.sh").write_text("#!/bin/bash\n")
+    (repo / "hooks" / "scripts" / "lib" / "util.sh").write_text("#!/bin/bash\n")
+    (repo / "hooks" / "hooks.json").write_text("{}\n")
+    (repo / "top.sh").write_text("#!/bin/bash\n")
+    (repo / "gone.sh").write_text("#!/bin/bash\n")
+    (repo / ".worktrees" / "wt").mkdir(parents=True)
+    (repo / ".worktrees" / "wt" / "copy.sh").write_text("#!/bin/bash\n")
+    subprocess.run(
+        ["git", "-C", str(repo), "add", "hooks/scripts/gate.sh", "gone.sh"],
+        check=True,
+        capture_output=True,
+    )
+    (repo / "gone.sh").unlink()
+
+    assert sorted(_find_repo_sh_files(repo)) == [
+        str(repo / "hooks" / "scripts" / "gate.sh"),
+        str(repo / "hooks" / "scripts" / "lib" / "util.sh"),
+        str(repo / "top.sh"),
+    ]
+
+
+def test_find_repo_sh_files_none(tmp_path: Path) -> None:
+    repo = _git_repo(tmp_path / "repo", "")
+    (repo / "README.md").write_text("# Hi\n")
+    assert _find_repo_sh_files(repo) == []
+
+
+def test_find_repo_sh_files_outside_repo_raises(tmp_path: Path) -> None:
+    """Outside a repository ls-files fails: an error, never 'lint less'."""
+    (tmp_path / "x.sh").write_text("#!/bin/bash\n")
+    with pytest.raises(subprocess.CalledProcessError):
+        _find_repo_sh_files(tmp_path)
 
 
 # -- _find_strict_markdown_files ---------------------------------------------
