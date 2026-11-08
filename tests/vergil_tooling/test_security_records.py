@@ -26,6 +26,7 @@ from vergil_tooling.lib.security_records import (
     find_duplicate,
     list_advisories,
     mark_issue,
+    parse_advisory_lines,
     parse_advisory_refs,
     parse_tracking,
     pending_syncs,
@@ -104,6 +105,18 @@ def test_parse_advisory_refs_reads_every_line_in_order() -> None:
         f"Security advisory: org/.github {first}\n"
     )
     assert parse_advisory_refs(body) == (first, second)
+
+
+def test_parse_advisory_lines_keeps_each_lines_org() -> None:
+    first, second = "GHSA-aaaa-aaaa-aaaa", "GHSA-bbbb-bbbb-bbbb"
+    body = (
+        f"Security advisory: org/.github {first}\r\n"
+        f"> Security advisory: org/.github {OTHER}\n"
+        f"Security advisory: other/.github {second}\n"
+        f"Security advisory: org/.github {first}\n"
+    )
+    assert parse_advisory_lines(body) == (("org", first), ("other", second))
+    assert parse_advisory_lines("no line") == ()
 
 
 _LOOKALIKES = [

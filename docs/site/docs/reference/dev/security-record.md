@@ -247,7 +247,8 @@ These commands read or move records as part of their own work:
   An item with the `security` label but no advisory line, or the
   reverse, gets a warning and no retarget.
 - **`vrg-queue planning`** keeps a planning issue at `in-progress` while
-  **any** advisory it names still tracks it, with a note that counts
+  **any** advisory still tracks it, whether or not its body names that
+  advisory, with a note that counts
   them and names them by GHSA ID only (`advisory still tracks` for one,
   `advisories still track` for more):
 
@@ -255,7 +256,10 @@ These commands read or move records as part of their own work:
   held: <k> advisories still track this planning issue (<GHSA-id>[, …]) — retarget each to the task or tasks that fix it with vrg-security-record retarget
   ```
 
-  It reads the advisories only when some planning item names one.
+  It lists each org's advisories once per view, and skips an org whose
+  `.github` is absent or not public unless one of its items has an
+  advisory line (then the private home is refused). An advisory line
+  naming an org other than the issue's own is refused, not ignored.
 
 ## Exit codes
 

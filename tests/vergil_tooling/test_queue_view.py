@@ -204,14 +204,20 @@ def test_items_never_mutate() -> None:
 
 
 def _planning(
-    views: dict[int, dict[str, Any]], states: dict[int, str] | None = None
+    views: dict[int, dict[str, Any]],
+    states: dict[int, str] | None = None,
+    *,
+    dotgithub: str | None = None,
 ) -> list[QueueItem]:
+    """Run the planning view; *dotgithub* is the org ``.github``'s visibility, None if absent."""
     children = [ChildState(IssueRef("org", ".github", n), "OPEN", "") for n in views]
     gh = _fake_gh(views, states)
     with (
         patch(f"{_MOD}.epics.find_standing_epic", return_value=_EPIC) as find,
         patch(f"{_MOD}.epics.child_states", return_value=children),
         patch(f"{_MOD}.github.read_json", side_effect=gh),
+        patch(f"{_MOD}.github.repo_exists", return_value=dotgithub is not None),
+        patch(f"{_MOD}.github.is_public", return_value=dotgithub == "PUBLIC"),
     ):
         items = queue_view.planning_items("org/.github", "org")
     find.assert_called_once_with(epics.PLANNING, "org/.github", "org")
@@ -282,6 +288,7 @@ def test_planning_items_oldest_first_and_comments_fetched_once() -> None:
         patch(f"{_MOD}.epics.find_standing_epic", return_value=_EPIC),
         patch(f"{_MOD}.epics.child_states", return_value=children),
         patch(f"{_MOD}.github.read_json", side_effect=gh),
+        patch(f"{_MOD}.github.repo_exists", return_value=False),
     ):
         items = queue_view.planning_items("org/.github", "org")
     assert [i.title for i in items] == ["old", "new"]
@@ -315,6 +322,7 @@ def test_docs_task_state_rejects_non_object_response() -> None:
         patch(f"{_MOD}.epics.find_standing_epic", return_value=_EPIC),
         patch(f"{_MOD}.epics.child_states", return_value=children),
         patch(f"{_MOD}.github.read_json", side_effect=responses),
+        patch(f"{_MOD}.github.repo_exists", return_value=False),
         pytest.raises(ValueError, match=r"org/\.github#51"),
     ):
         queue_view.planning_items("org/.github", "org")
@@ -445,12 +453,16 @@ def _security_planning(
     views: dict[int, dict[str, Any]],
     advisories: list[Advisory],
     states: dict[int, str] | None = None,
+    *,
+    dotgithub: str | None = "PUBLIC",
 ) -> tuple[list[QueueItem], Any, Any]:
     with (
         patch(f"{_MOD}.security_records.advisory_home", return_value="org/.github") as home,
         patch(f"{_MOD}.security_records.list_advisories", return_value=advisories) as listing,
     ):
-        items = _planning(views, states if states is not None else {51: "CLOSED"})
+        items = _planning(
+            views, states if states is not None else {51: "CLOSED"}, dotgithub=dotgithub
+        )
     return items, home, listing
 
 
@@ -468,11 +480,20 @@ def test_planning_state_ready_after_retarget() -> None:
     assert item.note == "Docs task: org/.github#51"
 
 
-def test_planning_state_not_held_when_named_advisory_is_absent() -> None:
-    # The pair is broken (the sweep reports it); this view does not hold the item.
+def test_planning_held_by_an_advisory_its_body_does_not_name() -> None:
+    # The body names _GHSA, which is gone; _OTHER_GHSA still tracks the issue (#3826).
     [item], _home, _listing = _security_planning(
         {5: _ready_view()}, [_advisory(_OTHER_GHSA, _PLAN)]
     )
+    assert item.state == "in-progress"
+    assert item.note == (
+        f"held: 1 advisory still tracks this planning issue ({_OTHER_GHSA}) — retarget "
+        "each to the task or tasks that fix it with vrg-security-record retarget"
+    )
+
+
+def test_planning_not_held_when_no_advisory_tracks_it() -> None:
+    [item], _home, _listing = _security_planning({5: _ready_view()}, [_advisory(_GHSA, _FIX)])
     assert item.state == "ready-to-close"
 
 
@@ -531,23 +552,52 @@ def test_planning_items_lists_advisories_once() -> None:
     ]
 
 
-def test_non_security_planning_item_unchanged() -> None:
+def test_tracking_line_holds_an_item_with_no_advisory_line() -> None:
     views = {5: _ready_view(), 8: _ready_view(body="An ordinary planning issue.")}
     advisories = [_advisory(_GHSA, _PLAN, IssueRef("org", ".github", 8))]
     items, _home, _listing = _security_planning(views, advisories)
     by_number = {i.ref.number: i for i in items}
     assert by_number[5].state == "in-progress"
-    # #8 has no advisory line, so a tracking line naming it does not hold it.
-    assert by_number[8].state == "ready-to-close"
-    assert by_number[8].note == "Docs task: org/.github#51"
+    # #8's body names no advisory, but the advisory's tracking line names it (#3826).
+    assert by_number[8].state == "in-progress"
+    assert by_number[8].note == _HELD_NOTE
 
 
-def test_no_advisory_lines_never_resolves_home() -> None:
+def test_no_advisory_lines_still_lists_a_public_home() -> None:
     views = {5: _ready_view(body="Mentions Security advisory: org/.github GHSA-x inline.")}
-    items, home, listing = _security_planning(views, [])
+    items, home, listing = _security_planning(views, [_advisory(_GHSA, _PLAN)])
+    assert [(i.state, i.note) for i in items] == [("in-progress", _HELD_NOTE)]
+    home.assert_called_once_with("org")
+    listing.assert_called_once_with("org/.github")
+
+
+@pytest.mark.parametrize("dotgithub", [None, "PRIVATE", "INTERNAL"])
+def test_no_advisory_lines_and_no_public_home_lists_nothing(dotgithub: str | None) -> None:
+    # Security records live only in a public org .github, so there is none to list.
+    views = {5: _ready_view(body="An ordinary planning issue.")}
+    items, home, listing = _security_planning(views, [], dotgithub=dotgithub)
     assert [i.state for i in items] == ["ready-to-close"]
     home.assert_not_called()
     listing.assert_not_called()
+
+
+def test_advisory_line_naming_another_org_is_refused() -> None:
+    body = f"Neutral.\n\nSecurity advisory: other/.github {_OTHER_GHSA}"
+    with pytest.raises(
+        queue_view.AdvisoryLineError,
+        match=(
+            rf"org/\.github#5: its Security advisory: line names other/\.github {_OTHER_GHSA}, "
+            r"not an advisory in org/\.github, the issue's own org"
+        ),
+    ):
+        _security_planning({5: _ready_view(body)}, [_advisory(_OTHER_GHSA, _PLAN)])
+
+
+def test_advisory_line_org_matches_case_insensitively() -> None:
+    body = f"Neutral.\n\nSecurity advisory: ORG/.github {_GHSA}"
+    [item], home, _listing = _security_planning({5: _ready_view(body)}, [_advisory(_GHSA, _PLAN)])
+    assert (item.state, item.note) == ("in-progress", _HELD_NOTE)
+    home.assert_called_once_with("org")
 
 
 def test_planning_private_advisory_home_is_refused_loudly() -> None:

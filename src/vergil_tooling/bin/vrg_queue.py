@@ -4,19 +4,19 @@
 first. ``vrg-queue planning`` lists the open items under the planning queue
 epic with their state: waiting, in-progress, or ready-to-close. A planning
 item that would be ready-to-close is held at in-progress, with a ``held:``
-note, while an advisory its body names still tracks it; reading the
-advisories needs Repository security advisories access on the org's
-``.github``. ``vrg-queue deferred`` lists the open items under the deferred
-queue epic, least recently deferred first, each noted with its latest
-deferral (see :mod:`vergil_tooling.lib.queue_view`). A bare ``vrg-queue``
-lists all three queues in that order; there, a queue whose epic does not exist
-yet is reported as ``no queue yet`` instead of failing the run.
+note, while any advisory still tracks it; reading the advisories needs
+Repository security advisories access on the org's ``.github``.
+``vrg-queue deferred`` lists the open items under the deferred queue epic,
+least recently deferred first, each noted with its latest deferral (see
+:mod:`vergil_tooling.lib.queue_view`). A bare ``vrg-queue`` lists all three
+queues in that order; there, a queue whose epic does not exist yet is reported
+as ``no queue yet`` instead of failing the run.
 
 A queue that cannot be read (a failed GitHub call, an advisory home that is
-not public, a malformed response) is named on stderr with the reason and the
-run exits 1. A bare text run still lists the queues it could read; a bare
-``--json`` run prints nothing on stdout, so a partial object is never taken
-for the whole.
+not public, an advisory line naming another org, a malformed response) is
+named on stderr with the reason and the run exits 1. A bare text run still
+lists the queues it could read; a bare ``--json`` run prints nothing on
+stdout, so a partial object is never taken for the whole.
 
 The default home is the current org's ``.github`` pair; ``--repo OWNER/REPO``
 selects that repo's queue home, which for a self-homed private repo is its own
@@ -45,9 +45,10 @@ _VIEWS = {
 }
 
 # What a view can raise reading GitHub, besides a missing queue epic: a failed
-# ``gh`` call, an advisory home that is not public, or a malformed response
-# (#3826). A missing token is not among them: it reaches ``cli_main``'s
-# guided message. Each is reported, never shown as an empty queue.
+# ``gh`` call, an advisory home that is not public, or a malformed response or
+# an advisory line naming another org (both ``ValueError``s; #3826). A missing
+# token is not among them: it reaches ``cli_main``'s guided message. Each is
+# reported, never shown as an empty queue.
 _VIEW_ERRORS = (github.GitHubAPIError, security_records.PrivateHomeError, ValueError)
 
 

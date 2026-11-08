@@ -724,7 +724,7 @@ epic body gains a `Planning: <ref>` line. `vrg-queue planning` reports an item
 **ready to close** once it is `in-progress`, all three markers are present, and
 the docs task is closed (its spec + plan PR merged). A planning item that any
 security advisory still tracks is **held** at in-progress, with a `held:` note,
-until `epic-create` retargets each advisory it names to the task or tasks that
+until `epic-create` retargets each such advisory to the task or tasks that
 fix it; closing it earlier would close those advisories with the fix unwritten
 (see
 [Security items in planning](../guides/security-records.md#security-items-in-planning)).
