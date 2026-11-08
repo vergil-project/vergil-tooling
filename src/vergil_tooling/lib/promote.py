@@ -375,17 +375,16 @@ def promote_confirmed(confirmed: Promotion, *, release_just_published: bool = Fa
         raise _process_error(msg, exc) from exc
 
 
-def promote(version: str, *, dry_run: bool = False) -> None:
+def promote(version: str) -> None:
     """Move the vX.Y rolling tag to vX.Y.Z, without prompting.
 
     The ``vrg-release`` promote stage calls this right after the release was
-    published, so the Release read retries a 404.
+    published, so the Release read retries a 404. The ``vrg-promote`` CLI
+    does not call it: it runs :func:`plan_promotion` and
+    :func:`promote_confirmed` itself, with its own dry run and confirmation.
     """
     p = plan_promotion(version, release_just_published=True)
     if p.old_commit == p.new_commit:
         print(f"{p.rolling_tag} already points at {p.release_tag} — already promoted.")
-        return
-    if dry_run:
-        print(describe(p))
         return
     promote_confirmed(p, release_just_published=True)
