@@ -17622,6 +17622,12 @@ fails loudly if a required flag is missing; run
 <code>vrg-github-repo-init --help</code> for the full list. The
 <a href="../../reference/cli-tools-overview/#vrg-github-repo-init">CLI Tools Overview</a>
 covers the born-green language skeleton.</p>
+<p>A resumed run reads step 3's answers back from the committed
+<code>vergil.toml</code>. It stops if that file is missing or invalid, or if a
+flag you pass contradicts it. <code>vergil.toml</code> does not record the
+license or the initial version, so a run that resumes before step 4
+asks for them again; under <code>--non-interactive</code> it needs <code>--license</code>
+and <code>--initial-version</code>.</p>
 <h3 id="an-existing-repository">An existing repository<a class="headerlink" href="#an-existing-repository" title="Permanent link">&para;</a></h3>
 <p>From the root of the repo's clone, on a feature branch:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>vrg-github-repo-init<span class="w"> </span>--adopt
