@@ -857,7 +857,9 @@ def graphql(query: str, **variables: object) -> dict[str, object]:
     scalars use ``-F`` (typed, e.g. an ``Int`` issue number). ``gh`` exits
     non-zero when the GraphQL response carries errors, so those surface as
     :class:`GitHubAPIError` from :func:`read_output`; the explicit ``errors``
-    check guards the rarer 200-with-errors case.
+    check guards the rarer 200-with-errors case. A response with no ``data``
+    object raises :class:`RuntimeError` too, rather than read as an empty
+    answer (#4058).
     """
     args = ["api", "graphql", "-f", f"query={query}"]
     for name, value in variables.items():
@@ -866,7 +868,10 @@ def graphql(query: str, **variables: object) -> dict[str, object]:
     if isinstance(payload, dict) and payload.get("errors"):
         raise RuntimeError(f"GraphQL errors: {payload['errors']}")
     data = payload.get("data") if isinstance(payload, dict) else None
-    return data if isinstance(data, dict) else {}
+    if not isinstance(data, dict):
+        msg = f"GraphQL response has no data object: {payload!r}"
+        raise RuntimeError(msg)
+    return cast("dict[str, object]", data)
 
 
 def write_json(method: str, endpoint: str, body: dict[str, object]) -> None:
@@ -1082,6 +1087,31 @@ def check_run_bucket(status: str | None, conclusion: str | None) -> str:
     return _CONCLUSION_BUCKETS.get((conclusion or "").upper(), _PENDING_BUCKET)
 
 
+def _shape_error(cmd: tuple[str, ...], detail: str) -> GitHubAPIError:
+    """A :class:`GitHubAPIError` for a ``gh`` answer that is not the shape asked for.
+
+    Raised rather than read as an empty or default answer (#4058), so a caller
+    that handles ``gh`` failures handles it the same way.
+    """
+    return GitHubAPIError(1, cmd, stderr=f"unexpected response shape: {detail}")
+
+
+def _status_check_rollup(pr: str) -> list[dict[str, object]]:
+    """*pr*'s ``statusCheckRollup`` nodes.
+
+    gh exports an absent rollup as ``null``, read here as no nodes; any other
+    non-list, or a node that is not an object, raises :class:`GitHubAPIError`
+    rather than read as "no checks" (#4058).
+    """
+    cmd = ("pr", "view", pr, "--json", "statusCheckRollup", "--jq", ".statusCheckRollup")
+    gh_cmd = ("gh", *cmd)
+    rollup = _optional_list(read_json(*cmd), gh_cmd, "statusCheckRollup")
+    for node in rollup:
+        if not isinstance(node, dict):
+            raise _shape_error(gh_cmd, f"a statusCheckRollup node is {node!r}")
+    return cast("list[dict[str, object]]", rollup)
+
+
 def _rollup_check_runs(pr: str) -> dict[str, tuple[str, str]]:
     """Map each CheckRun's ``detailsUrl`` to its ``(status, conclusion)`` from statusCheckRollup.
 
@@ -1090,12 +1120,8 @@ def _rollup_check_runs(pr: str) -> dict[str, tuple[str, str]]:
     ``detailsUrl`` is what ``gh pr checks`` reports as a check's ``link``, so it
     keys a pending check back to its exact check-run (names repeat across runs).
     """
-    rollup = read_json(
-        "pr", "view", pr, "--json", "statusCheckRollup", "--jq", ".statusCheckRollup"
-    )
-    items = rollup if isinstance(rollup, list) else []
     runs: dict[str, tuple[str, str]] = {}
-    for node in map(_as_obj, items):
+    for node in _status_check_rollup(pr):
         url = node.get("detailsUrl")
         if node.get("__typename") == "CheckRun" and url:
             runs[str(url)] = (str(node.get("status") or ""), str(node.get("conclusion") or ""))
@@ -1170,10 +1196,15 @@ def run_completed(repo: str, run_id: str) -> bool:
 
     *repo* is passed to ``gh`` explicitly: without it ``gh run view`` resolves
     the current directory's repo, which 404s when the watched PR lives in
-    another repo (#3829).
+    another repo (#3829). A response with no string ``status`` raises
+    :class:`GitHubAPIError` rather than read as "not completed" (#4058).
     """
-    data = read_json("run", "view", run_id, "--repo", repo, "--json", "status")
-    return isinstance(data, dict) and data.get("status") == "completed"
+    cmd = ("run", "view", run_id, "--repo", repo, "--json", "status")
+    data = read_json(*cmd)
+    status = data.get("status") if isinstance(data, dict) else None
+    if not isinstance(status, str) or not status:
+        raise _shape_error(("gh", *cmd), f"no run status in {data!r}")
+    return status == "completed"
 
 
 # The repo and job id of an Actions job link, for reading the job itself.
@@ -1184,10 +1215,14 @@ def job_conclusion(repo: str, job_id: str) -> str | None:
     """The Actions job's own ``conclusion`` (``success``, ``failure``, ...), or None if unset.
 
     Read from the jobs API, which can be authoritative while the job's check-run
-    is still stuck ``pending`` (#3358). A gh/API failure propagates.
+    is still stuck ``pending`` (#3358). A gh/API failure propagates, and so
+    does a response that is not a JSON object (#4058).
     """
-    data = read_json("api", f"repos/{repo}/actions/jobs/{job_id}")
-    conclusion = data.get("conclusion") if isinstance(data, dict) else None
+    endpoint = f"repos/{repo}/actions/jobs/{job_id}"
+    data = read_json("api", endpoint)
+    if not isinstance(data, dict):
+        raise _shape_error(("gh", "api", endpoint), f"the job is {type(data).__name__}")
+    conclusion = data.get("conclusion")
     return str(conclusion) if conclusion else None
 
 
@@ -1468,10 +1503,36 @@ def _as_obj(value: object) -> dict[str, Any]:
     return cast("dict[str, Any]", value) if isinstance(value, dict) else {}
 
 
-def _check_contexts(checks: object) -> set[str]:
-    """The context of each {context, ...} object in a JSON list."""
-    items: list[object] = cast("list[object]", checks) if isinstance(checks, list) else []
-    return {str(c["context"]) for c in map(_as_obj, items) if c.get("context")}
+def _optional_obj(value: object, cmd: tuple[str, ...], what: str) -> dict[str, Any]:
+    """*value* as a JSON object, ``{}`` when absent (``None``); any other type raises (#4058)."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise _shape_error(cmd, f"{what} is {value!r}")
+    return cast("dict[str, Any]", value)
+
+
+def _optional_list(value: object, cmd: tuple[str, ...], what: str) -> list[object]:
+    """*value* as a JSON list, ``[]`` when absent (``None``); any other type raises (#4058)."""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise _shape_error(cmd, f"{what} is {value!r}")
+    return cast("list[object]", value)
+
+
+def _check_contexts(checks: object, cmd: tuple[str, ...]) -> set[str]:
+    """The context of each {context, ...} object in a JSON list (absent: none).
+
+    A list that is not one of objects with a string ``context`` raises (#4058).
+    """
+    names: set[str] = set()
+    for item in _optional_list(checks, cmd, "a required checks list"):
+        context = _as_obj(item).get("context")
+        if not isinstance(context, str) or not context:
+            raise _shape_error(cmd, f"a required check is {item!r}")
+        names.add(context)
+    return names
 
 
 def _protection_required_checks(repo: str, branch: str) -> set[str]:
@@ -1480,18 +1541,27 @@ def _protection_required_checks(repo: str, branch: str) -> set[str]:
     Reads ``GET /repos/{repo}/branches/{branch}``, whose ``protection`` summary is
     visible with plain read access (the dedicated ``/protection`` endpoint needs
     admin). Both the legacy ``contexts`` list and the newer ``checks`` objects
-    are honoured; an ``enforcement_level`` of ``off`` contributes nothing.
+    are honoured; an ``enforcement_level`` of ``off`` contributes nothing. An
+    absent field means none is required; a field of the wrong type raises
+    :class:`GitHubAPIError` rather than read as "none required" (#4058).
     """
     endpoint = f"repos/{repo}/branches/{branch}"
+    cmd = ("gh", "api", endpoint)
     data = read_json("api", endpoint)
     if not isinstance(data, dict):
-        raise GitHubAPIError(1, ("gh", "api", endpoint), stderr="unexpected response shape")
-    rsc = _as_obj(_as_obj(data.get("protection")).get("required_status_checks"))
+        raise GitHubAPIError(1, cmd, stderr="unexpected response shape")
+    protection = _optional_obj(data.get("protection"), cmd, "protection")
+    rsc = _optional_obj(
+        protection.get("required_status_checks"), cmd, "protection.required_status_checks"
+    )
     if rsc.get("enforcement_level") == "off":
         return set()
-    contexts = rsc.get("contexts")
-    names = {str(c) for c in contexts} if isinstance(contexts, list) else set()
-    return names | _check_contexts(rsc.get("checks"))
+    names: set[str] = set()
+    for context in _optional_list(rsc.get("contexts"), cmd, "required_status_checks.contexts"):
+        if not isinstance(context, str) or not context:
+            raise _shape_error(cmd, f"a required status check context is {context!r}")
+        names.add(context)
+    return names | _check_contexts(rsc.get("checks"), cmd)
 
 
 def _ruleset_required_checks(repo: str, branch: str) -> set[str]:
@@ -1499,17 +1569,22 @@ def _ruleset_required_checks(repo: str, branch: str) -> set[str]:
 
     Reads ``GET /repos/{repo}/rules/branches/{branch}`` — the rules in effect for
     the branch across every active ruleset (repo- and org-level) — and collects
-    the ``context`` of each ``required_status_checks`` rule's checks.
+    the ``context`` of each ``required_status_checks`` rule's checks. A rule
+    that is not an object, or rule parameters of the wrong type, raise
+    :class:`GitHubAPIError` rather than read as "none required" (#4058).
     """
     endpoint = f"repos/{repo}/rules/branches/{branch}"
+    cmd = ("gh", "api", endpoint)
     data = read_json("api", endpoint)
     if not isinstance(data, list):
-        raise GitHubAPIError(1, ("gh", "api", endpoint), stderr="unexpected response shape")
+        raise GitHubAPIError(1, cmd, stderr="unexpected response shape")
     names: set[str] = set()
-    for rule in map(_as_obj, data):
+    for rule in data:
+        if not isinstance(rule, dict):
+            raise _shape_error(cmd, f"a branch rule is {rule!r}")
         if rule.get("type") == "required_status_checks":
-            params = _as_obj(rule.get("parameters"))
-            names |= _check_contexts(params.get("required_status_checks"))
+            params = _optional_obj(rule.get("parameters"), cmd, "a rule's parameters")
+            names |= _check_contexts(params.get("required_status_checks"), cmd)
     return names
 
 
@@ -1742,17 +1817,9 @@ def _superseded_check_names(pr: str) -> set[str]:
     non-``CheckRun`` status context (an app-posted status), is treated as live
     and never suppressed.
     """
-    rollup = read_json(
-        "pr", "view", pr, "--json", "statusCheckRollup", "--jq", ".statusCheckRollup"
-    )
-    if not isinstance(rollup, list):
-        return set()
     parsed: list[tuple[str, object, int | None]] = []
     latest: dict[object, int] = {}
-    for raw in rollup:
-        if not isinstance(raw, dict):
-            continue
-        node = cast("dict[str, object]", raw)
+    for node in _status_check_rollup(pr):
         if node.get("__typename") != "CheckRun":
             continue
         name = str(node.get("name"))
@@ -1850,9 +1917,16 @@ def pr_checks(pr: str) -> list[dict[str, str]]:
 
 
 def pr_reviews(pr: str) -> list[dict[str, object]]:
-    """Return the PR's reviews (``id``, ``state``, ``author``, ...)."""
-    result = read_json("pr", "view", pr, "--json", "reviews", "--jq", ".reviews")
-    return cast("list[dict[str, object]]", result) if isinstance(result, list) else []
+    """Return the PR's reviews (``id``, ``state``, ``author``, ...).
+
+    A response that is not a list of objects raises :class:`GitHubAPIError`
+    rather than read as "no reviews" (#4058).
+    """
+    cmd = ("pr", "view", pr, "--json", "reviews", "--jq", ".reviews")
+    result = read_json(*cmd)
+    if not isinstance(result, list) or not all(isinstance(r, dict) for r in result):
+        raise _shape_error(("gh", *cmd), f"reviews are not a list of objects: {result!r}")
+    return cast("list[dict[str, object]]", result)
 
 
 def post_check_run(
@@ -1992,22 +2066,33 @@ def _first_pr_for_branch(branch: str, state: str) -> dict[str, str] | None:
     ``headRefOid`` is included so callers can confirm a name-matched PR's
     head actually corresponds to the branch's current tip — a branch name
     reused after a same-named PR merged matches by name but not by tip
-    (issue #1719).
+    (issue #1719). An empty list is "no PR"; a response that is not a list,
+    or a first PR with no number, URL or head commit, raises
+    :class:`GitHubAPIError` rather than read as "no PR" or blank fields (#4058).
     """
-    result = read_json(
-        "pr", "list", "--head", branch, "--state", state, "--json", "number,url,title,headRefOid"
-    )
-    if not isinstance(result, list) or not result:
+    cmd = ("pr", "list", "--head", branch, "--state", state, "--json", "number,url,title,headRefOid")
+    result = read_json(*cmd)
+    if not isinstance(result, list):
+        raise _shape_error(("gh", *cmd), f"the PR list is {type(result).__name__}")
+    if not result:
         return None
-    if not isinstance(result[0], dict):
-        return None
-    first = cast("dict[str, object]", result[0])
-    return {
-        "number": str(first.get("number") or ""),
-        "url": str(first.get("url") or ""),
-        "title": str(first.get("title") or ""),
-        "headRefOid": str(first.get("headRefOid") or ""),
-    }
+    first = _as_obj(result[0])
+    number = first.get("number")
+    url = first.get("url")
+    title = first.get("title")
+    head = first.get("headRefOid")
+    if (
+        not isinstance(number, int)
+        or isinstance(number, bool)
+        or number <= 0
+        or not isinstance(url, str)
+        or not url
+        or not isinstance(title, str)
+        or not isinstance(head, str)
+        or not head
+    ):
+        raise _shape_error(("gh", *cmd), f"the first PR is {result[0]!r}")
+    return {"number": str(number), "url": url, "title": title, "headRefOid": head}
 
 
 def pr_for_branch(branch: str) -> dict[str, str] | None:
@@ -2200,7 +2285,9 @@ def list_org_repos(org: str) -> list[str]:
 
     Asks for up to :data:`~vergil_tooling.lib.epics.LISTING_LIMIT` repos and
     raises :class:`~vergil_tooling.lib.epics.EpicListTruncatedError` when it
-    gets that many, since the list may then be cut off (#4051).
+    gets that many, since the list may then be cut off (#4051). A response
+    that is not a list, or a row with no string ``name``, raises
+    :class:`TypeError` rather than read as an empty or shorter fleet (#4058).
     """
     # Deferred: lib.epics imports this module at load time.
     from vergil_tooling.lib import epics
@@ -2216,11 +2303,17 @@ def list_org_repos(org: str) -> list[str]:
         "name",
     )
     epics.refuse_truncated(raw, epics.LISTING_LIMIT, f"the repo list of {org}")
-    return (
-        [str(r["name"]) for r in raw if isinstance(r, dict) and "name" in r]
-        if isinstance(raw, list)
-        else []
-    )
+    if not isinstance(raw, list):
+        msg = f"gh repo list {org} returned {type(raw).__name__}, expected a list"
+        raise TypeError(msg)
+    names: list[str] = []
+    for row in raw:
+        name = row.get("name") if isinstance(row, dict) else None
+        if not isinstance(name, str) or not name:
+            msg = f"gh repo list {org} returned a row with no repo name: {row!r}"
+            raise TypeError(msg)
+        names.append(name)
+    return names
 
 
 def list_project_repos(owner: str, project: str) -> list[str]:

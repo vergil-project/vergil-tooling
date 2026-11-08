@@ -289,6 +289,16 @@ def test_run_completed_false_when_in_progress(monkeypatch: pytest.MonkeyPatch) -
     assert github.run_completed("o/r", "31101639453") is False
 
 
+@pytest.mark.parametrize("payload", [None, ["completed"], {}, {"status": None}, {"status": ""}])
+def test_run_completed_rejects_a_response_with_no_status(
+    monkeypatch: pytest.MonkeyPatch, payload: object
+) -> None:
+    # Never "not completed" for a response with no run status (#4058).
+    monkeypatch.setattr(github, "read_json", lambda *a, **k: payload)
+    with pytest.raises(github.GitHubAPIError, match="no run status"):
+        github.run_completed("o/r", "31101639453")
+
+
 def test_run_completed_queries_run_status_in_the_given_repo(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -667,7 +677,6 @@ def test_failed_check_names_superseded_filter_covers_edge_nodes() -> None:
     )
     rollup = json.dumps(
         [
-            None,  # non-dict node → skipped
             {"__typename": "StatusContext", "context": "external"},  # skipped
             _rollup_node("orphan", None),  # unresolvable run id → live
             _rollup_node("stale", 1),  # superseded by run 2
@@ -682,11 +691,20 @@ def test_failed_check_names_superseded_filter_covers_edge_nodes() -> None:
         assert github.failed_check_names("https://github.com/pr/1") == ["orphan"]
 
 
-def test_superseded_check_names_handles_non_list_rollup() -> None:
-    # Defensive: if statusCheckRollup resolves to a non-list (e.g. null on a PR
-    # with no checks), nothing is superseded rather than crashing the gate.
+def test_superseded_check_names_handles_null_rollup() -> None:
+    # gh exports an absent statusCheckRollup as null: nothing is superseded.
     with patch("vergil_tooling.lib.github.read_json", return_value=None):
         assert github._superseded_check_names("https://github.com/pr/1") == set()
+
+
+@pytest.mark.parametrize("rollup", [{"nodes": []}, "text", [None], ["node"]])
+def test_superseded_check_names_rejects_a_malformed_rollup(rollup: object) -> None:
+    # Any other shape raises rather than read as "nothing superseded" (#4058).
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=rollup),
+        pytest.raises(github.GitHubAPIError, match="unexpected response shape"),
+    ):
+        github._superseded_check_names("https://github.com/pr/1")
 
 
 def test_failed_check_names_raises_on_empty_output() -> None:
@@ -901,6 +919,34 @@ def test_run_tolerating_injects_gh_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert mock_run.call_args.kwargs["env"] == {"GH_TOKEN": "t"}
 
 
+def test_graphql_returns_the_data_object() -> None:
+    payload = json.dumps({"data": {"node": {"id": "N"}}})
+    with patch("vergil_tooling.lib.github.read_output", return_value=payload) as mock_read:
+        assert github.graphql("query", id="N", n=3) == {"node": {"id": "N"}}
+    args = mock_read.call_args.args
+    assert args[:4] == ("api", "graphql", "-f", "query=query")
+    assert args[4:] == ("-f", "id=N", "-F", "n=3")
+
+
+def test_graphql_raises_on_errors() -> None:
+    payload = json.dumps({"data": None, "errors": [{"message": "boom"}]})
+    with (
+        patch("vergil_tooling.lib.github.read_output", return_value=payload),
+        pytest.raises(RuntimeError, match="GraphQL errors"),
+    ):
+        github.graphql("query")
+
+
+@pytest.mark.parametrize("payload", [{}, {"data": None}, {"data": []}, [], None])
+def test_graphql_rejects_a_response_with_no_data_object(payload: object) -> None:
+    # Never {} for a response with no data: that reads as "nothing found" (#4058).
+    with (
+        patch("vergil_tooling.lib.github.read_output", return_value=json.dumps(payload)),
+        pytest.raises(RuntimeError, match="no data object"),
+    ):
+        github.graphql("query")
+
+
 def test_pr_reviews_returns_list() -> None:
     reviews = [{"id": "r1", "state": "APPROVED"}, {"id": "r2", "state": "COMMENTED"}]
     with patch("vergil_tooling.lib.github.read_json", return_value=reviews):
@@ -910,6 +956,16 @@ def test_pr_reviews_returns_list() -> None:
 def test_pr_reviews_empty_list() -> None:
     with patch("vergil_tooling.lib.github.read_json", return_value=[]):
         assert github.pr_reviews("https://github.com/pr/1") == []
+
+
+@pytest.mark.parametrize("payload", [None, {"reviews": []}, ["review"]])
+def test_pr_reviews_rejects_a_malformed_response(payload: object) -> None:
+    # Never "no reviews" for a response that is not a list of reviews (#4058).
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=payload),
+        pytest.raises(github.GitHubAPIError, match="unexpected response shape"),
+    ):
+        github.pr_reviews("https://github.com/pr/1")
 
 
 def test_post_check_run_posts_completed_check() -> None:
@@ -1093,17 +1149,24 @@ def test_list_org_repos() -> None:
         assert github.list_org_repos("org") == ["tooling", ".github", "vm"]
 
 
-def test_list_org_repos_filters_non_dict_and_nameless() -> None:
-    with patch(
-        "vergil_tooling.lib.github.read_json",
-        return_value=["nope", {"id": 1}, {"name": "keep"}],
+@pytest.mark.parametrize("row", ["nope", {"id": 1}, {"name": ""}, {"name": 7}])
+def test_list_org_repos_refuses_a_row_with_no_name(row: object) -> None:
+    # A dropped row would read as a smaller fleet (#4058).
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=[row, {"name": "keep"}]),
+        pytest.raises(TypeError, match="row with no repo name"),
     ):
-        assert github.list_org_repos("org") == ["keep"]
+        github.list_org_repos("org")
 
 
-def test_list_org_repos_non_list_is_empty() -> None:
-    with patch("vergil_tooling.lib.github.read_json", return_value={"unexpected": True}):
-        assert github.list_org_repos("org") == []
+@pytest.mark.parametrize("payload", [{"unexpected": True}, None, "text"])
+def test_list_org_repos_rejects_a_non_list(payload: object) -> None:
+    # Never [] for a response that is not a list: that reads as "no repos" (#4058).
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=payload),
+        pytest.raises(TypeError, match="expected a list"),
+    ):
+        github.list_org_repos("org")
 
 
 def test_list_org_repos_passes_the_listing_limit() -> None:
@@ -2749,9 +2812,29 @@ def test_merge_commit_sha_reads_merge_commit_oid() -> None:
     assert any("mergeCommit.oid" in a for a in args)
 
 
-def test_pr_for_branch_none_when_payload_not_dict() -> None:
-    with patch("vergil_tooling.lib.github.read_json", return_value=["nope"]):
-        assert github.pr_for_branch("feature/1423-pr-interface") is None
+_GOOD_PR = {"number": 1, "url": "https://github.com/o/r/pull/1", "title": "T", "headRefOid": "a"}
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        None,
+        {"number": 1},
+        ["nope"],
+        [{**_GOOD_PR, "number": None}],
+        [{**_GOOD_PR, "number": True}],
+        [{**_GOOD_PR, "url": ""}],
+        [{**_GOOD_PR, "title": None}],
+        [{**_GOOD_PR, "headRefOid": ""}],
+    ],
+)
+def test_pr_for_branch_rejects_a_malformed_response(payload: object) -> None:
+    # Never "no PR" or blank fields for a response that is not a PR list (#4058).
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=payload),
+        pytest.raises(github.GitHubAPIError, match="unexpected response shape"),
+    ):
+        github.pr_for_branch("feature/1423-pr-interface")
 
 
 # -- pr_closing_references / close_issue (issue #4002) -------------------------
@@ -2896,9 +2979,12 @@ def test_closed_pr_for_branch_none_when_no_closed_pr() -> None:
         assert github.closed_pr_for_branch("feature/1445-finalize-cleanup-race") is None
 
 
-def test_closed_pr_for_branch_none_when_payload_not_dict() -> None:
-    with patch("vergil_tooling.lib.github.read_json", return_value=["nope"]):
-        assert github.closed_pr_for_branch("feature/1445-finalize-cleanup-race") is None
+def test_closed_pr_for_branch_rejects_a_payload_not_dict() -> None:
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=["nope"]),
+        pytest.raises(github.GitHubAPIError, match="unexpected response shape"),
+    ):
+        github.closed_pr_for_branch("feature/1445-finalize-cleanup-race")
 
 
 # -- repo_visibility / is_public (epic #130) ---------------------------------
@@ -3121,9 +3207,18 @@ def test_reconcile_stale_warning_names_outcome_in_plain_words(
     assert f"already finished with {conclusion}. Treating it as {word} " in err
 
 
-def test_rollup_check_runs_maps_details_url_and_tolerates_non_list() -> None:
+@pytest.mark.parametrize("rollup", [{"nodes": []}, "text", [None]])
+def test_rollup_check_runs_rejects_a_malformed_rollup(rollup: object) -> None:
+    # Never "no runs" for a rollup that is not a list of nodes (#4058).
+    with (
+        patch.object(github, "read_json", return_value=rollup),
+        pytest.raises(github.GitHubAPIError, match="unexpected response shape"),
+    ):
+        github._rollup_check_runs("1")
+
+
+def test_rollup_check_runs_maps_details_url_and_tolerates_null() -> None:
     nodes = [
-        None,
         {"__typename": "StatusContext", "context": "ext", "state": "SUCCESS"},
         {"__typename": "CheckRun", "name": "no-url", "status": "QUEUED"},
         _stale_rollup_node(),

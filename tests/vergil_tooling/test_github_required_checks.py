@@ -163,13 +163,12 @@ _PROTECTION = {
         "required_status_checks": {
             "enforcement_level": "non_admins",
             "contexts": ["legacy / ci"],
-            "checks": [{"context": "app / check", "app_id": None}, {"app_id": 3}],
+            "checks": [{"context": "app / check", "app_id": None}],
         },
     },
 }
 _RULES = [
     {"type": "pull_request", "parameters": {}},
-    "not-a-rule",
     {"type": "required_status_checks", "parameters": None},
     {
         "type": "required_status_checks",
@@ -178,11 +177,48 @@ _RULES = [
             "required_status_checks": [
                 {"context": "test / evidence", "integration_id": 15368},
                 {"context": "quality / evidence"},
-                "junk",
             ],
         },
     },
 ]
+
+
+def _rules_with(checks: object) -> list[object]:
+    return [{"type": "required_status_checks", "parameters": {"required_status_checks": checks}}]
+
+
+@pytest.mark.parametrize(
+    ("protection", "rules"),
+    [
+        ({"protected": True, "protection": "on"}, []),
+        ({"protection": {"required_status_checks": ["x"]}}, []),
+        ({"protection": {"required_status_checks": {"contexts": "legacy / ci"}}}, []),
+        ({"protection": {"required_status_checks": {"contexts": [None]}}}, []),
+        ({"protection": {"required_status_checks": {"checks": {"context": "x"}}}}, []),
+        ({"protection": {"required_status_checks": {"checks": [{"app_id": 3}]}}}, []),
+        ({"protected": False}, ["not-a-rule"]),
+        ({"protected": False}, [{"type": "required_status_checks", "parameters": []}]),
+        ({"protected": False}, _rules_with("test / evidence")),
+        ({"protected": False}, _rules_with(["junk"])),
+        ({"protected": False}, _rules_with([{"context": ""}])),
+    ],
+)
+def test_required_check_names_malformed_shape_warns_and_returns_none(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    protection: dict[str, Any],
+    rules: list[object],
+) -> None:
+    # A field of the wrong type is never read as "none required" (#4058): it
+    # takes the visible lookup-failure path instead.
+    responses = {
+        "pr": _PR_VIEW,
+        "repos/o/r/branches/develop": protection,
+        "repos/o/r/rules/branches/develop": rules,
+    }
+    monkeypatch.setattr(github, "read_json", _api(responses))
+    assert github.required_check_names("12") is None
+    assert "unexpected response shape" in capsys.readouterr().err
 
 
 def test_required_check_names_unions_protection_and_rulesets(

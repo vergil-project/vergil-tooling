@@ -106,12 +106,22 @@ def test_job_conclusion_reads_the_jobs_api(monkeypatch: pytest.MonkeyPatch) -> N
     assert calls == [("api", "repos/o/r/actions/jobs/77")]
 
 
-@pytest.mark.parametrize("payload", [{"conclusion": None}, {}, ["not", "an", "object"]])
+@pytest.mark.parametrize("payload", [{"conclusion": None}, {}])
 def test_job_conclusion_none_when_job_has_no_conclusion(
     monkeypatch: pytest.MonkeyPatch, payload: object
 ) -> None:
     monkeypatch.setattr(github, "read_json", lambda *a: payload)
     assert github.job_conclusion("o/r", "77") is None
+
+
+@pytest.mark.parametrize("payload", [["not", "an", "object"], None])
+def test_job_conclusion_rejects_a_response_that_is_not_an_object(
+    monkeypatch: pytest.MonkeyPatch, payload: object
+) -> None:
+    # Never "no conclusion" for a response that is not a job (#4058).
+    monkeypatch.setattr(github, "read_json", lambda *a: payload)
+    with pytest.raises(github.GitHubAPIError, match="unexpected response shape"):
+        github.job_conclusion("o/r", "77")
 
 
 # --- wait_for_checks: stale check whose job succeeded --------------------------
