@@ -89,7 +89,6 @@ Run inside dev containers launched by `vrg-container-run`.
 | [vrg-sarif-filter](cli-tools-overview.md#vrg-sarif-filter) | Drop accepted-suppressed results from a SARIF file before upload |
 | [vrg-sarif-evaluate](cli-tools-overview.md#vrg-sarif-evaluate) | Report a SARIF file's findings at the chosen severities |
 | [vrg-semgrep-scan](cli-tools-overview.md#vrg-semgrep-scan) | Run a semgrep scan with language-resolved rulesets and write SARIF |
-| [vrg-trivy-scan](cli-tools-overview.md#vrg-trivy-scan) | Run a Trivy vulnerability scan and write SARIF |
 | [vrg-ecosystem-resolve](cli-tools-overview.md#vrg-ecosystem-resolve) | Resolve a language's package build and publish commands |
 | [vrg-release-validate-inputs](cli-tools-overview.md#vrg-release-validate-inputs) | Validate release workflow inputs |
 | [vrg-version-divergence](cli-tools-overview.md#vrg-version-divergence) | Fail when the head branch's version was not bumped |

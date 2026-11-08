@@ -256,8 +256,8 @@ Every other semgrep rule stays enforced.
 
 #### Suppressing a reviewed finding in source
 
-The SARIF gate (`vrg-sarif-evaluate`, and the `vrg-semgrep-scan` /
-`vrg-trivy-scan` wrappers, all backed by `src/vergil_tooling/lib/sarif.py`)
+The SARIF gate (`vrg-sarif-evaluate`, and the `vrg-semgrep-scan` wrapper,
+both backed by `src/vergil_tooling/lib/sarif.py`)
 honors SARIF result **suppressions**. A result does **not** fail the gate
 when its `suppressions` array holds an entry with:
 
