@@ -18983,6 +18983,10 @@ others; use <code>vrg-commit</code> for commits), a flag deny-list (<code>push -
 report-ready freeze. Remote operations run with the GitHub App installation
 token for the resolved identity (see <a href="#vrg-whoami"><code>vrg-whoami</code></a>). It is not
 a drop-in replacement for <code>git</code>; <code>vrg-git --help</code> lists the full policy.</p>
+<p>The global <code>-C &lt;path&gt;</code> option (repeatable, as in git) changes directory
+before any check runs, so every check, and the org of the identity token,
+applies to the <code>-C</code> repo exactly as after a <code>cd</code>. No other global git option
+is accepted.</p>
 <table>
 <thead>
 <tr>
@@ -18997,7 +19001,7 @@ a drop-in replacement for <code>git</code>; <code>vrg-git --help</code> lists th
 </tr>
 <tr>
 <td>Args</td>
-<td><code>&lt;subcommand&gt; [args...]</code>, forwarded to <code>git</code></td>
+<td><code>[-C &lt;path&gt;]... &lt;subcommand&gt; [args...]</code>, forwarded to <code>git</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
@@ -19009,7 +19013,7 @@ a drop-in replacement for <code>git</code>; <code>vrg-git --help</code> lists th
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 success; 1 refusal; 2 no subcommand; otherwise git's exit code</td>
+<td>0 success; 1 refusal; 2 no subcommand or a <code>-C</code> with no path; 128 a <code>-C</code> path that cannot be entered; otherwise git's exit code</td>
 </tr>
 <tr>
 <td>Status</td>
