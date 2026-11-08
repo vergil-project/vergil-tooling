@@ -130,7 +130,7 @@ def _sub(ref: str, title: str = "t", state: str = "OPEN") -> dict[str, Any]:
     }
 
 
-def _subs(nodes: list[dict[str, Any]], cursor: str | None = None) -> dict[str, Any]:
+def _subs(nodes: list[Any], cursor: str | None = None) -> dict[str, Any]:
     info = {"hasNextPage": cursor is not None, "endCursor": cursor}
     return {"repository": {"issue": {"subIssues": {"pageInfo": info, "nodes": nodes}}}}
 
@@ -584,8 +584,6 @@ def test_request_unknown_base(repo: Path, capsys: Cap) -> None:
     assert "ERROR: git failed" in err
 
 
-
-
 _CREATED = "2026-11-01T09:30:00Z"
 
 
@@ -775,10 +773,16 @@ def test_request_refuses_a_github_api_error(
     assert "git failed" not in err
 
 
+@pytest.mark.parametrize("failing_kind", ["task", "subs", "comments"])
 def test_request_reports_a_missing_github_token(
-    repo: Path, capsys: Cap, monkeypatch: pytest.MonkeyPatch
+    repo: Path, capsys: Cap, monkeypatch: pytest.MonkeyPatch, failing_kind: str
 ) -> None:
+    fake = github.graphql
+
     def failing(query: str, **variables: object) -> Any:
+        kind = "comments" if "createdAt" in query else "subs" if "subIssues" in query else "task"
+        if kind != failing_kind:
+            return fake(query, **variables)
         raise MissingGitHubTokenError(4, ("gh", "api", "graphql"), None, "no token")
 
     monkeypatch.setattr("vergil_tooling.lib.github.graphql", failing)
@@ -885,12 +889,12 @@ def test_check_request_takes_the_body_and_tasks_from_github(
         (
             _task(parent={"number": "7", "repository": {"nameWithOwner": "acme/.github"}}),
             None,
-            "an issue has no number or repository",
+            "acme/widget#42: an issue has no number or repository",
         ),
         (
             _task(parent={"number": 7, "repository": {"nameWithOwner": "acme"}}),
             None,
-            "an issue has no usable ref",
+            "acme/widget#42: an issue has no usable ref",
         ),
         (_task(parent=_parent(total=101)), None, f"{EPIC}: its labels are incomplete"),
         (
@@ -968,6 +972,7 @@ def test_request_refuses_a_failed_fetch(
     assert message in err
     assert "git failed" not in err
     assert not (_merge_review_dir(repo) / "request-review.json").exists()
+
 
 def test_request_refuses_missing_design_source(repo: Path, tmp_path: Path, capsys: Cap) -> None:
     argv = _argv(repo, "review", "--design-source", str(tmp_path / "nope.md"))
