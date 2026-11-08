@@ -23,8 +23,11 @@ projection](#cloud-vms-read-only-memory-projection).
 
 `copy_claude_config` additionally copies `CLAUDE.md` and `settings.json`
 into each VM on every start, rebuild and session, on cloud create, and on
-every `vrg-vm update` (which requires the host `settings.json` and fails,
-naming it, when it is missing). The guest `CLAUDE.md` is a read-only copy of
+every `vrg-vm update`. The host `settings.json` is required on every one of
+these paths: each command checks it before touching any VM and refuses,
+naming the file, when it is missing or is not valid settings, rather than
+leaving an earlier guest copy in place. It is the single source of the guest
+copy, even though provisioning writes an initial one. The guest `CLAUDE.md` is a read-only copy of
 the host's on every transport: `copy_claude_config` is the sole owner of its
 file mode and runs `chmod a-w` on it after each copy, and removes the guest
 copy when the host has none. The mode makes an accidental write fail loudly;

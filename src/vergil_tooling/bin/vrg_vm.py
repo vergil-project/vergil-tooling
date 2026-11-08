@@ -1378,6 +1378,10 @@ def _cloud_create(
     volume + VM apply rebuilds it; the persistent volume is reattached, not recreated.
     """
     name, identity, config = target.identity_name, target.identity, target.config
+    # The link-claude stage copies the host settings.json (#3988): refuse a
+    # missing or unusable one before any box is destroyed or built.
+    if not _require_host_settings(verb):
+        return 1
     backend = _cloud_backend(target)
     vm_cloud.preflight(backend.spec.provider)
 
@@ -1459,6 +1463,11 @@ def _cmd_start(args: argparse.Namespace) -> int:
 
     if target.spec.off_platform:
         print(_EPHEMERAL_MSG, file=sys.stderr)
+        return 1
+
+    # The copy-config stage copies the host settings.json (#3988): refuse a
+    # missing or unusable one before the VM is started.
+    if not _require_host_settings("start"):
         return 1
 
     if _preflight_target(target) != 0:
@@ -1588,7 +1597,7 @@ def _update_over_transport(
     # Deliver the host's current settings.json (and the read-only CLAUDE.md)
     # before the refresh, so a running VM follows a changed marketplace ref
     # without a restart (epic vergil-project/.github#760, spec §6).
-    copy_claude_config(transport, Path.home() / ".claude", require_settings=True)
+    copy_claude_config(transport, Path.home() / ".claude")
     update_plugins(transport)
 
 
@@ -1668,22 +1677,27 @@ def _cmd_update_off_platform(target: Target, args: argparse.Namespace) -> int:
     return 0
 
 
-def _require_host_settings() -> bool:
+def _require_host_settings(command: str) -> bool:
     """Check, before touching any VM, that the host ``~/.claude/settings.json`` is usable.
 
-    The update copies it into each VM and refreshes the plugins from that copy
-    (spec §6 of epic vergil-project/.github#760). So the file must exist and
-    parse as the refresh will parse it: otherwise a broken host file would be
-    copied over every VM's working ``settings.json`` before the refresh
-    rejected it. Prints the error, naming the host file, and returns False.
+    Every path that copies the guest Claude config (``vrg-vm update``,
+    ``start``, ``rebuild``, ``session`` and the cloud ``create``) copies this
+    file into the VM, and the plugin refresh reads that copy (spec §6 of epic
+    vergil-project/.github#760). The file is required (#3988): it must exist
+    and parse as the refresh will parse it, or the command refuses before any
+    VM is started, destroyed or written. Otherwise a missing file would leave
+    a stale guest copy in place, and a broken one would be copied over the
+    VM's working ``settings.json``. :func:`copy_claude_config` checks the text
+    again as it copies it. Prints the error, naming the host file and
+    *command* (such as ``update``), and returns False.
     """
     settings = Path.home() / ".claude" / "settings.json"
     try:
         claude_marketplace.validate_settings(claude_marketplace.read_settings_file(settings))
     except claude_marketplace.MarketplaceError as exc:
         print(
-            f"ERROR: the host settings are unusable ({exc}); vrg-vm update copies "
-            f"{settings} into each VM and refreshes the plugins from it",
+            f"ERROR: the host settings are unusable ({exc}); {settings} is required: "
+            f"vrg-vm {command} copies it into the VM, where the plugin refresh reads it",
             file=sys.stderr,
         )
         return False
@@ -1694,7 +1708,7 @@ def _cmd_update(args: argparse.Namespace) -> int:
     # `main` has already refused an agent (epic vergil-project/.github#760, spec §6).
     if args.all:
         return _cmd_update_all(args)
-    if not _require_host_settings():
+    if not _require_host_settings("update"):
         return 1
 
     # Off-platform boxes update IN PLACE over IAP — same transport-generic tooling
@@ -1798,7 +1812,7 @@ def _cmd_update_all(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
-    if not _require_host_settings():
+    if not _require_host_settings("update"):
         return 1
 
     config_path = args.config if args.config else _default_config_path()
@@ -2043,6 +2057,11 @@ def _cmd_rebuild(args: argparse.Namespace) -> int:
         # The volume apply is idempotent, so the rebuild destroys only the
         # disposable VM and re-applies; the persistent volume is reattached.
         return _cloud_create("rebuild", target, args, destroy_first=True)
+
+    # The copy-config stage copies the host settings.json (#3988): refuse a
+    # missing or unusable one before the VM is destroyed.
+    if not _require_host_settings("rebuild"):
+        return 1
 
     status = vm_status(target.instance)
     if not status:
@@ -3081,6 +3100,10 @@ def _cmd_session(args: argparse.Namespace) -> int:
             "session and start clean.)",
             file=sys.stderr,
         )
+        return 1
+    # Both the Lima and the cloud session copy the host settings.json (#3988):
+    # refuse a missing or unusable one before connecting to the VM.
+    if not _require_host_settings("session"):
         return 1
     target = _resolve_target(args, borrow_allowed=True)
     name, identity, config = target.identity_name, target.identity, target.config
