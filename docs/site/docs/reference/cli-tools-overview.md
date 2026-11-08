@@ -287,9 +287,13 @@ origin: vergil-project/vergil-claude-plugin
 v2.1 1a2b3c4d5e6f -> v2.1.50 fc17882a9b0c
 ```
 
-`--dry-run` prints the same lines, after the same target check, and stops.
-Otherwise it asks `Move vX.Y on <repo>? [y/N]` on the terminal, and moves
-the tag only on `y` or `yes`. With no terminal to confirm on, it refuses.
+`--dry-run` prints the same lines, after the same target check, and stops
+(with `--yes` too). `--yes` prints them and moves the tag with no prompt, so
+it needs no terminal and can run from a script. Otherwise it prints them to
+stderr, asks `Move vX.Y on <repo>? [y/N]` there, and moves the tag only on
+`y` or `yes`; the move and the prompt go to stderr so a redirected stdout
+cannot hide them. It refuses to prompt unless both stdin and stderr are
+terminals: with no terminal to confirm on, it refuses and names `--yes`.
 Before it pushes it re-resolves the move and refuses if anything changed
 since it was confirmed, and resolves the local release tag once and checks
 that it is the confirmed commit. It then pushes that tag object, by its id,
@@ -314,9 +318,9 @@ as done.
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_promote` |
-| Args | `version` (positional, default: the `VERSION` file), `--dry-run` |
-| Preconditions | Human identity; run in the repo's checkout; a terminal to confirm on; push access to origin |
-| Failure mode | Exit 1 with a message on stderr. An agent identity, a run with no terminal, a declined or unanswered confirmation, and a missing `VERSION` file each print their own `vrg-promote:` or plain message; a refused target, a move that changed since it was confirmed, an unreadable `VERSION` file, and a failed git or GitHub call print `Error: …`; a missing GitHub token or unusable GitHub App credentials print the guided `vrg-promote:` message |
+| Args | `version` (positional, default: the `VERSION` file), `--dry-run`, `--yes` |
+| Preconditions | Human identity; run in the repo's checkout; a terminal to confirm on, unless `--yes` is given; push access to origin |
+| Failure mode | Exit 1 with a message on stderr. An agent identity, a run with no terminal and no `--yes`, a declined or unanswered confirmation, and a missing `VERSION` file each print their own `vrg-promote:` or plain message; a refused target, a move that changed since it was confirmed, an unreadable `VERSION` file, and a failed git or GitHub call print `Error: …`; a missing GitHub token or unusable GitHub App credentials print the guided `vrg-promote:` message |
 | Exit codes | 0 success (including "already promoted" and `--dry-run`), 1 refusal or error |
 | Status | Active |
 
