@@ -17877,8 +17877,14 @@ update &lt;name&gt;</code>), then the installed plugins. <code>claude-plugins-of
 re-added and updated the same way when an enabled plugin needs it and the
 settings do not declare it. Any other registered marketplace, such as an
 old one that no settings file declares, is never updated and cannot fail
-the refresh; a plugin enabled from one is still updated, from that
-marketplace's catalog as it stands. It then verifies that each declared
+the refresh. So the settings must declare the marketplace of every plugin
+they enable, <code>claude-plugins-official</code> aside: a plugin enabled from an
+undeclared marketplace is an error, raised before any <code>claude</code> command runs,
+that names the plugin and its marketplace (its catalog would otherwise never
+be refreshed). So is an install that <code>claude plugin list --json</code> reports
+enabled from such a marketplace, for example one a project's own settings
+enable: the refresh stops before updating any plugin. It then verifies
+that each declared
 GitHub marketplace is registered, as
 <code>claude plugin marketplace list --json</code> reports it, at the declared repo
 and ref. A mismatch or a missing registration is a reported failure:

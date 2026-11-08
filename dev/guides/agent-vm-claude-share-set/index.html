@@ -17300,9 +17300,17 @@ re-clones the marketplace at that ref, which is how a VM switches ref. It
 then refreshes each marketplace it added by name (<code>claude plugin
 marketplace update &lt;name&gt;</code>), including <code>claude-plugins-official</code> when it
 added that one for an enabled plugin. Any other marketplace registered in the
-VM is never updated, so a stale leftover cannot fail the refresh; a plugin
-enabled from one is still updated, from that marketplace's catalog as it
-stands. It then updates every <strong>install</strong> of an
+VM is never updated, so a stale leftover cannot fail the refresh. The
+<code>settings.json</code> must therefore declare the marketplace of every plugin it
+enables, <code>claude-plugins-official</code> aside: a plugin enabled from an
+undeclared marketplace would be updated from a catalog nobody refreshed, so
+it is an error, raised before any <code>claude</code> command runs, that names the
+plugin and its marketplace. <code>vrg-vm update</code> checks the host file for it
+before copying the file into any VM. An install that <code>claude plugin list
+--json</code> reports enabled from such a marketplace (one a project's own
+settings enable, say) is an error too, naming the install and its
+marketplace, and the refresh stops before updating any plugin. Otherwise it
+updates every <strong>install</strong> of an
 enabled plugin to its latest version, each at its own scope (<code>claude plugin
 update &lt;id&gt; --scope &lt;user|project&gt;</code> — there is no bulk-update form), all
 inside the VM. One plugin can be installed at user scope and again at project
