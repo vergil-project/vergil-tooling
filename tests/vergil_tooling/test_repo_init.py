@@ -1002,9 +1002,7 @@ class TestResolveVersions:
         with pytest.raises(SystemExit) as exc:
             _resolved("python", ["3.11"])
         assert exc.value.code == 1
-        assert re.match(
-            r"ERROR: .*3\.11.*remove it from \[ci\]\.versions", capsys.readouterr().err
-        )
+        assert re.match(r"ERROR: .*3\.11.*remove it from \[ci\]\.versions", capsys.readouterr().err)
 
     def test_window_error_is_a_ci_annotation_under_github_actions(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
