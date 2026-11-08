@@ -15,6 +15,7 @@ from vergil_tooling.lib.trusted_authors import TrustedAuthors, parse_trusted_aut
 from vergil_tooling.lib.vm_guest import (
     _PLUGIN_PATH_EXPORT,
     _PRUNE_PROBE,
+    _READ_GUEST_SETTINGS,
     VmUnreachableError,
     _inject_host_git_identity,
     _read_host_git_config,
@@ -995,13 +996,15 @@ class TestUpdatePlugins:
         registered_ref: str = "v2.1",
         fail_on: str = "",
     ) -> MagicMock:
-        settings_out = self._SETTINGS if settings is None else settings
+        # *settings* is the guest read's raw stdout (status line first) or the
+        # exception the transport raises; the default is a readable file.
+        settings_out = f"ok\n{self._SETTINGS}" if settings is None else settings
 
         def side_effect(*args: str, **_kw: object) -> MagicMock:
             cmd = args[-1]
             if fail_on and fail_on in cmd:
                 raise subprocess.CalledProcessError(1, "bash")
-            if "cat ~/.claude/settings.json" in cmd:
+            if cmd == _READ_GUEST_SETTINGS:
                 if isinstance(settings_out, Exception):
                     raise settings_out
                 out = settings_out
@@ -1041,21 +1044,45 @@ class TestUpdatePlugins:
             update_plugins(transport)
 
     @pytest.mark.parametrize(
-        "settings",
+        ("settings", "expected"),
         [
-            pytest.param(subprocess.CalledProcessError(1, "cat"), id="missing"),
-            pytest.param(subprocess.CalledProcessError(126, "cat"), id="unreadable"),
-            pytest.param("{not valid json", id="invalid"),
-            pytest.param("[]", id="not-an-object"),
+            pytest.param("missing\n", r"settings\.json is missing", id="missing"),
+            pytest.param(
+                "unreadable\n", r"settings\.json exists but cannot be read", id="unreadable"
+            ),
+            pytest.param("ok\n{not valid json", r"settings\.json", id="invalid"),
+            pytest.param("ok\n[]", r"settings\.json", id="not-an-object"),
+            pytest.param("", r"unexpected output", id="no-status-line"),
+            pytest.param("garbage\n{}", r"unexpected output", id="unknown-status"),
         ],
     )
     def test_update_plugins_fails_on_missing_unreadable_or_invalid_guest_settings(
-        self, settings: str | Exception
+        self, settings: str, expected: str
     ) -> None:
         transport = self._fake_transport(settings=settings)
-        with pytest.raises(RuntimeError, match=r"~/\.claude/settings\.json"):
+        with pytest.raises(RuntimeError, match=expected) as excinfo:
             update_plugins(transport)
+        # A file problem is never reported as an unreachable VM.
+        assert not isinstance(excinfo.value, VmUnreachableError)
+        assert "~/.claude/settings.json" in str(excinfo.value)
         # Nothing ran against claude before the failure.
+        assert not any("claude " in c.args[-1] for c in transport.run.call_args_list)
+
+    @pytest.mark.parametrize("returncode", [255, 1])
+    def test_update_plugins_reports_an_unreachable_vm_not_a_missing_file(
+        self, returncode: int
+    ) -> None:
+        # The guest read masks every file condition into a zero exit, so any
+        # failed round-trip (ssh's 255 after the connect retries, or limactl
+        # failing to reach a stopped instance) is the connection, not the file.
+        transport = self._fake_transport(settings=subprocess.CalledProcessError(returncode, "ssh"))
+        with pytest.raises(VmUnreachableError) as excinfo:
+            update_plugins(transport)
+        message = str(excinfo.value)
+        assert "could not be reached" in message
+        assert f"exit status {returncode}" in message
+        assert "~/.claude/settings.json" in message
+        assert "missing" not in message
         assert not any("claude " in c.args[-1] for c in transport.run.call_args_list)
 
     def test_raises_naming_every_failure_after_attempting_all(self) -> None:
@@ -1071,6 +1098,44 @@ class TestUpdatePlugins:
         transport = self._fake_transport(fail_on="marketplace add")
         with pytest.raises(RuntimeError, match="marketplace:vergil-marketplace"):
             update_plugins(transport)
+
+
+class TestReadGuestSettingsScript:
+    """The in-guest read, run for real under bash against a scratch HOME.
+
+    Every file condition must exit 0 with a status line, so a non-zero exit
+    can only ever mean the transport failed.
+    """
+
+    @staticmethod
+    def _run(home: Path) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(  # noqa: S603
+            ["bash", "-c", _READ_GUEST_SETTINGS],  # noqa: S607
+            capture_output=True,
+            text=True,
+            check=False,
+            env={"HOME": str(home), "PATH": "/usr/bin:/bin"},
+        )
+
+    def test_readable_file_is_ok_then_content(self, tmp_path: Path) -> None:
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".claude" / "settings.json").write_text('{"a": 1}\n')
+        result = self._run(tmp_path)
+        assert result.returncode == 0
+        assert result.stdout == 'ok\n{"a": 1}\n'
+
+    def test_missing_file_is_missing(self, tmp_path: Path) -> None:
+        result = self._run(tmp_path)
+        assert result.returncode == 0
+        assert result.stdout == "missing\n"
+
+    def test_unreadable_file_is_unreadable(self, tmp_path: Path) -> None:
+        # A directory in the file's place cannot be read even as root, unlike
+        # a mode-000 file, so the case holds wherever the tests run.
+        (tmp_path / ".claude" / "settings.json").mkdir(parents=True)
+        result = self._run(tmp_path)
+        assert result.returncode == 0
+        assert result.stdout == "unreadable\n"
 
 
 class TestPruneCacheImages:
