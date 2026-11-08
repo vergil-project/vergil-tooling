@@ -1053,8 +1053,7 @@ def _print_stale_workflow_push_guidance(diagnosis: _WorkflowRefusal) -> None:
     remote = diagnosis.base.partition("/")[0]
     if diagnosis.files:
         upstream = (
-            f"  {diagnosis.base} changed {', '.join(diagnosis.files)} since the"
-            " branch's base,\n"
+            f"  {diagnosis.base} changed {', '.join(diagnosis.files)} since the branch's base,\n"
         )
     else:
         unseen = f" ({diagnosis.reason})" if diagnosis.reason else ""
