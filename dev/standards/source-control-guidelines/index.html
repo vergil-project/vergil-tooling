@@ -17399,7 +17399,11 @@ all users, including repository administrators.</p>
 <code>lib/github_config.py</code> and checked by the config audit; the
 <a href="../../reference/config-audit/#github-checks-rulesets">rulesets table</a> lists
 each one's includes, rules and bypass.</p>
-<p><strong>Library repositories</strong> require four rulesets:</p>
+<p>Every repository requires the same four rulesets, whatever its
+<code>repository-type</code>: <code>compute_desired_state()</code> does not vary them by type, and
+only the CI gates' required checks differ from one repository to another. A
+repository that publishes no tags still carries Tag protection and Rolling tag
+branch names, so a tag or branch of either shape can never appear unprotected.</p>
 <ol>
 <li><strong>Branch protection</strong> (targets: <code>main</code>, <code>develop</code>)</li>
 <li>Prevent branch deletion</li>
@@ -17434,17 +17438,6 @@ each one's includes, rules and bypass.</p>
 <li>Prevent updating or force-pushing such a branch</li>
 <li>No deletion restriction, so a stray branch of that shape can be removed</li>
 <li>No bypass</li>
-</ol>
-<p><strong>Documentation repositories</strong> require two rulesets:</p>
-<ol>
-<li><strong>Branch protection</strong> (targets: eternal branches only)</li>
-<li>
-<p>Same rules as library repositories</p>
-</li>
-<li>
-<p><strong>CI gates</strong> (targets: eternal branches only)</p>
-</li>
-<li>Required checks are repo-specific</li>
 </ol>
 <p>Rulesets are managed via the GitHub API or the repository settings UI. When
 creating or updating rulesets, verify the configuration by checking an open PR
