@@ -2064,8 +2064,26 @@ def merge(pr: str, *, strategy: str) -> None:
 
 
 def list_org_repos(org: str) -> list[str]:
-    """Return the bare names of all (non-archived) repositories in *org*."""
-    raw: Any = read_json("repo", "list", org, "--no-archived", "--limit", "1000", "--json", "name")
+    """Return the bare names of all (non-archived) repositories in *org*.
+
+    Asks for up to :data:`~vergil_tooling.lib.epics.LISTING_LIMIT` repos and
+    raises :class:`~vergil_tooling.lib.epics.EpicListTruncatedError` when it
+    gets that many, since the list may then be cut off (#4051).
+    """
+    # Deferred: lib.epics imports this module at load time.
+    from vergil_tooling.lib import epics
+
+    raw: Any = read_json(
+        "repo",
+        "list",
+        org,
+        "--no-archived",
+        "--limit",
+        str(epics.LISTING_LIMIT),
+        "--json",
+        "name",
+    )
+    epics.refuse_truncated(raw, epics.LISTING_LIMIT, f"the repo list of {org}")
     return (
         [str(r["name"]) for r in raw if isinstance(r, dict) and "name" in r]
         if isinstance(raw, list)
@@ -2074,24 +2092,43 @@ def list_org_repos(org: str) -> list[str]:
 
 
 def list_project_repos(owner: str, project: str) -> list[str]:
-    """Return sorted, unique repos linked to a GitHub Project."""
-    jq_filter = (
-        f".[] | select(.projectsV2.Nodes | length > 0) "
-        f"| select(.projectsV2.Nodes[].number == {project}) "
-        f"| .nameWithOwner"
-    )
-    output = read_output(
+    """Return sorted, unique repos of *owner* linked to GitHub Project *project*.
+
+    Lists up to :data:`~vergil_tooling.lib.epics.LISTING_LIMIT` of *owner*'s
+    repos and filters them here rather than through ``--jq``, so the
+    truncation check sees every row gh returned: a listing that reaches the
+    limit raises :class:`~vergil_tooling.lib.epics.EpicListTruncatedError`
+    instead of silently dropping the project repos past it (#4051).
+    """
+    # Deferred: lib.epics imports this module at load time.
+    from vergil_tooling.lib import epics
+
+    if not project.isdigit():
+        msg = f"project must be a GitHub Project number, got {project!r}"
+        raise ValueError(msg)
+    number = int(project)
+    raw: Any = read_json(
         "repo",
         "list",
         owner,
+        "--limit",
+        str(epics.LISTING_LIMIT),
         "--json",
         "nameWithOwner,projectsV2",
-        "--limit",
-        "100",
-        "--jq",
-        jq_filter,
     )
-    return sorted({r for r in output.splitlines() if r})
+    epics.refuse_truncated(raw, epics.LISTING_LIMIT, f"the repo list of {owner}")
+    if not isinstance(raw, list):
+        msg = f"gh repo list {owner} returned {type(raw).__name__}, expected a list"
+        raise TypeError(msg)
+    repos: set[str] = set()
+    for row in raw:
+        projects = row.get("projectsV2") if isinstance(row, dict) else None
+        nodes = projects.get("Nodes") if isinstance(projects, dict) else None
+        if not isinstance(nodes, list):
+            continue
+        if any(isinstance(n, dict) and n.get("number") == number for n in nodes):
+            repos.add(str(row["nameWithOwner"]))
+    return sorted(repos)
 
 
 def download_api_binary(endpoint: str, dest: Path) -> None:
