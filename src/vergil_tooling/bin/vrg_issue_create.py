@@ -124,7 +124,8 @@ def main(argv: list[str] | None = None) -> int:
         with github.target_org(owner):
             try:
                 epic = epics.resolve_epic_ref(args.epic, repo=repo)
-            except ValueError as exc:
+            except (ValueError, epics.StandingEpicNotVisibleError) as exc:
+                # A standing epic created but not confirmed names the new epic.
                 print(f"vrg-issue-create: {exc}", file=sys.stderr)
                 return 1
             if epics.queue_kind(epic) == epics.DEFERRED.key:

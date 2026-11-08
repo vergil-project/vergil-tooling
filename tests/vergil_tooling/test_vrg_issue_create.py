@@ -547,6 +547,25 @@ def test_main_epic_resolution_failure_creates_nothing() -> None:
     mock_create.assert_not_called()
 
 
+def test_main_unconfirmed_standing_epic_exits_1_naming_it(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A standing epic created but not confirmed is a clean refusal, not a traceback.
+    message = "created ad-hoc epic org/.github#10 but it is still not listed in org/.github"
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(
+            f"{_MOD}.epics.resolve_epic_ref",
+            side_effect=epics.StandingEpicNotVisibleError(message),
+        ),
+        patch(f"{_MOD}.github.create_issue") as mock_create,
+    ):
+        rc = main(["--epic", "adhoc", "--title", "T"])
+    assert rc == 1
+    assert capsys.readouterr().err == f"vrg-issue-create: {message}\n"
+    mock_create.assert_not_called()
+
+
 def test_main_link_failure_reports_created_issue(capsys: pytest.CaptureFixture[str]) -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
