@@ -50,6 +50,34 @@ def _transport(stdout: str = "") -> MagicMock:
     return t
 
 
+def _shell_transport(home: Path, fake_bin: Path | None = None) -> MagicMock:
+    """A Transport double that runs the guest commands in a real local bash.
+
+    ``~`` is *home*; *fake_bin*, when given, is first on ``PATH`` so a test can
+    shadow a guest command with one that fails.
+    """
+    path = "/usr/bin:/bin" if fake_bin is None else f"{fake_bin}:/usr/bin:/bin"
+    env = {"HOME": str(home), "PATH": path}
+
+    def run(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(list(args), capture_output=True, text=True, check=True, env=env)  # noqa: S603
+
+    def pipe(cmd: str, input_data: str) -> None:
+        subprocess.run(  # noqa: S603
+            ["bash", "-c", cmd],  # noqa: S607
+            input=input_data,
+            capture_output=True,
+            text=True,
+            check=True,
+            env=env,
+        )
+
+    t = MagicMock()
+    t.run.side_effect = run
+    t.pipe.side_effect = pipe
+    return t
+
+
 class TestInjectCredentials:
     @patch("vergil_tooling.lib.vm_guest._inject_host_git_identity")
     def test_injects_all_credentials(self, _mock_id: MagicMock, tmp_path: Path) -> None:
@@ -594,16 +622,20 @@ class TestCopyClaudeConfig:
         assert "settings.json" in settings_call[0][0]
         assert '"key"' in settings_call[0][1]
 
-        # #2436: the target must be made writable before the overwrite, because
-        # an earlier copy left CLAUDE.md read-only, so a plain `cat >` on a later
-        # session would fail with "permission denied". Guard both files against a
-        # non-chmod regression.
-        assert md_call[0][0].startswith(
-            "chmod u+w ~/.claude/CLAUDE.md 2>/dev/null; cat > ~/.claude/CLAUDE.md"
+        # #3987: each file is written to a temp file in ~/.claude (so the mv is a
+        # rename on one filesystem), given its final mode there, then moved into
+        # place; a failure removes the temp file and leaves the original alone.
+        # The rename also replaces a read-only CLAUDE.md without reopening it
+        # (#2436), since it needs only the directory to be writable.
+        assert md_call[0][0] == (
+            'tmp=$(mktemp ~/.claude/.CLAUDE.md.XXXXXX) && { cat > "$tmp"'
+            ' && chmod 644 "$tmp" && chmod a-w "$tmp"'
+            ' && mv -f "$tmp" ~/.claude/CLAUDE.md || { rm -f "$tmp"; false; }; }'
         )
-        assert (
-            settings_call[0][0]
-            == "chmod u+w ~/.claude/settings.json 2>/dev/null; cat > ~/.claude/settings.json"
+        assert settings_call[0][0] == (
+            'tmp=$(mktemp ~/.claude/.settings.json.XXXXXX) && { cat > "$tmp"'
+            ' && chmod 644 "$tmp"'
+            ' && mv -f "$tmp" ~/.claude/settings.json || { rm -f "$tmp"; false; }; }'
         )
 
     def test_copy_claude_config_locks_claude_md(self, tmp_path: Path) -> None:
@@ -619,11 +651,66 @@ class TestCopyClaudeConfig:
         copy_claude_config(transport, claude_dir)
 
         piped = [c.args[0] for c in transport.pipe.call_args_list]
-        md = next(cmd for cmd in piped if "cat > ~/.claude/CLAUDE.md" in cmd)
-        assert md.index("cat > ~/.claude/CLAUDE.md") < md.index("chmod a-w ~/.claude/CLAUDE.md")
-        assert md.endswith("cat > ~/.claude/CLAUDE.md && chmod a-w ~/.claude/CLAUDE.md")
-        every = " ".join(piped) + " ".join(c.args[-1] for c in transport.run.call_args_list)
-        assert "chmod a-w ~/.claude/settings.json" not in every
+        md = next(cmd for cmd in piped if "~/.claude/CLAUDE.md" in cmd)
+        # The lock is applied to the temp file, before it is moved into place.
+        assert md.index('chmod a-w "$tmp"') < md.index('mv -f "$tmp" ~/.claude/CLAUDE.md')
+        others = [cmd for cmd in piped if cmd != md]
+        others += [c.args[-1] for c in transport.run.call_args_list]
+        assert others
+        assert not any("chmod a-w" in cmd for cmd in others)
+
+    def test_real_shell_replaces_both_files_with_their_final_modes(self, tmp_path: Path) -> None:
+        # The real commands in bash, over a guest whose CLAUDE.md an earlier copy
+        # left read-only (#2436): both files are replaced, CLAUDE.md is locked,
+        # settings.json is not, and no temp file is left behind.
+        claude_dir = tmp_path / "host" / ".claude"
+        claude_dir.mkdir(parents=True)
+        (claude_dir / "CLAUDE.md").write_text("# new prefs\n")
+        (claude_dir / "settings.json").write_text('{"new": true}\n')
+        home = tmp_path / "guest"
+        guest = home / ".claude"
+        guest.mkdir(parents=True)
+        (guest / "CLAUDE.md").write_text("# old prefs\n")
+        (guest / "CLAUDE.md").chmod(0o444)
+        (guest / "settings.json").write_text('{"old": true}\n')
+
+        copy_claude_config(_shell_transport(home), claude_dir)
+
+        assert (guest / "CLAUDE.md").read_text() == "# new prefs\n"
+        assert (guest / "settings.json").read_text() == '{"new": true}\n'
+        assert (guest / "CLAUDE.md").stat().st_mode & 0o777 == 0o444
+        assert (guest / "settings.json").stat().st_mode & 0o777 == 0o644
+        assert sorted(p.name for p in guest.iterdir()) == ["CLAUDE.md", "settings.json"]
+
+    @pytest.mark.parametrize("failing", ["cat", "chmod", "mv"])
+    @pytest.mark.parametrize("filename", ["CLAUDE.md", "settings.json"])
+    def test_failed_write_leaves_the_original_and_no_temp_file(
+        self, failing: str, filename: str, tmp_path: Path
+    ) -> None:
+        # A write that breaks part-way (a fake command that writes a fragment,
+        # then fails) must fail loudly, keep the guest file exactly as it was,
+        # mode included, and remove its temp file.
+        claude_dir = tmp_path / "host" / ".claude"
+        claude_dir.mkdir(parents=True)
+        (claude_dir / filename).write_text("new content that never lands\n")
+        home = tmp_path / "guest"
+        guest = home / ".claude"
+        guest.mkdir(parents=True)
+        original = guest / filename
+        original.write_text("original\n")
+        original.chmod(0o444)
+        fake_bin = tmp_path / "bin"
+        fake_bin.mkdir()
+        fake = fake_bin / failing
+        fake.write_text("#!/bin/sh\nprintf partial\nexit 1\n")
+        fake.chmod(0o755)
+
+        with pytest.raises(subprocess.CalledProcessError):
+            copy_claude_config(_shell_transport(home, fake_bin), claude_dir)
+
+        assert original.read_text() == "original\n"
+        assert original.stat().st_mode & 0o777 == 0o444
+        assert [p.name for p in guest.iterdir()] == [filename]
 
     def test_skips_missing_files(self, tmp_path: Path) -> None:
         claude_dir = tmp_path / ".claude"
@@ -663,7 +750,7 @@ class TestCopyClaudeConfig:
         transport = _transport()
         copy_claude_config(transport, claude_dir, require_settings=True)
         piped = [c.args[0] for c in transport.pipe.call_args_list]
-        assert any("cat > ~/.claude/settings.json" in cmd for cmd in piped)
+        assert any("~/.claude/settings.json" in cmd for cmd in piped)
 
     @pytest.mark.parametrize("content", ["{not json", "[]", '{"enabledPlugins": {"x@y": "true"}}'])
     def test_require_settings_rejects_an_unusable_host_file(
@@ -690,7 +777,7 @@ class TestCopyClaudeConfig:
         transport = _transport()
         copy_claude_config(transport, claude_dir)
         piped = [c.args[0] for c in transport.pipe.call_args_list]
-        assert any("cat > ~/.claude/settings.json" in cmd for cmd in piped)
+        assert any("~/.claude/settings.json" in cmd for cmd in piped)
 
     def test_unreadable_host_file_is_a_named_error(self, tmp_path: Path) -> None:
         claude_dir = tmp_path / ".claude"

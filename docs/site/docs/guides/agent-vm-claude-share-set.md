@@ -169,9 +169,9 @@ session refreshes it. Before opening the session, `vrg-vm`:
    symlink onto the `/vergil` checkout) so Claude derives the **same
    memory slug** as the host and finds the projected memory;
 2. copies that repo's `memory/` + `MEMORY.md` from the host over the
-   established transport idiom (the same
-   `cat > <file>` mechanism `copy_claude_config` uses — there is no
-   `rsync` over the transport);
+   established transport idiom (a `cat > <file>` piped through
+   `transport.pipe`, the transport `copy_claude_config` also uses — there
+   is no `rsync` over the transport);
 3. re-applies **surgical** read-only permissions — locking `memory/` and
    `MEMORY.md` while leaving the session-transcript
    `.jsonl` files writable (a blanket `chmod` of `projects/<slug>/`
