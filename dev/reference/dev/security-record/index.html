@@ -17405,13 +17405,17 @@ because the old number now leads to the moved issue itself.</p>
   An item with the <code>security</code> label but no advisory line, or the
   reverse, gets a warning and no retarget.</li>
 <li><strong><code>vrg-queue planning</code></strong> keeps a planning issue at <code>in-progress</code> while
-  <strong>any</strong> advisory it names still tracks it, with a note that counts
+  <strong>any</strong> advisory still tracks it, whether or not its body names that
+  advisory, with a note that counts
   them and names them by GHSA ID only (<code>advisory still tracks</code> for one,
   <code>advisories still track</code> for more):</li>
 </ul>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>held: &lt;k&gt; advisories still track this planning issue (&lt;GHSA-id&gt;[, …]) — retarget each to the task or tasks that fix it with vrg-security-record retarget
 </code></pre></div>
-<p>It reads the advisories only when some planning item names one.</p>
+<p>It lists each org's advisories once per view, and skips an org whose
+  <code>.github</code> is absent or not public unless one of its items has an
+  advisory line (then the private home is refused). An advisory line
+  naming an org other than the issue's own is refused, not ignored.</p>
 <h2 id="exit-codes">Exit codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>
 <table>
 <thead>

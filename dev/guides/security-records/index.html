@@ -17593,7 +17593,8 @@ of them until the plan exists.</p>
   shipped code has it. A finding about shipped behaviour always goes to a
   fix task that changes the code.
 - <strong>The guard.</strong> <code>vrg-queue planning</code> never shows a planning issue as
-  <code>ready-to-close</code> while <strong>any</strong> advisory it names still tracks it. It
+  <code>ready-to-close</code> while <strong>any</strong> advisory still tracks it, whether or not
+  its body names that advisory. It
   shows it as <code>in-progress</code> with a note that counts the advisories still
   tracking it and names them by GHSA ID only:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>held: 1 advisory still tracks this planning issue (GHSA-xxxx-xxxx-xxxx) — retarget each to the task or tasks that fix it with vrg-security-record retarget

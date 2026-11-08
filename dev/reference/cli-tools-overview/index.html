@@ -20229,7 +20229,8 @@ under the planning epic with their state: <strong>waiting</strong> (no <code>in-
 label), <strong>in-progress</strong> (labelled, with its latest progress note), or
 <strong>ready-to-close</strong> (labelled, the <code>Epic:</code> / <code>Docs task:</code> / <code>Tasks filed: yes</code>
 markers present, and the docs task closed). A planning item that any security
-advisory it names still tracks is held at <strong>in-progress</strong> until every such
+advisory still tracks, named in its body or not, is held at <strong>in-progress</strong>
+until every such
 advisory is retargeted to the task or tasks that fix it, with a note that
 counts them and names them by GHSA ID only (<code>held: &lt;k&gt; advisory still tracks
 this planning issue (&lt;GHSA-id&gt;) — …</code> for one, <code>held: &lt;k&gt; advisories still
@@ -20261,11 +20262,11 @@ collect step of the three review skills (<code>intake-review</code>, <code>plann
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>GitHub App credentials for the target org</td>
+<td>GitHub App credentials for the target org. The planning view also reads the org's advisories when its <code>.github</code> is public, or when a planning item has an advisory line (then a <code>.github</code> that is not public is refused): the identity needs Repository security advisories access</td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>A named queue whose home has no live queue epic exits 1 naming the missing epic; with no queue named, a missing queue prints <code>&lt;queue&gt; queue for &lt;name&gt; in &lt;home&gt;: no queue yet</code> and the run exits 0. Nothing is created</td>
+<td>A named queue whose home has no live queue epic exits 1 naming the missing epic; with no queue named, a missing queue prints <code>&lt;queue&gt; queue for &lt;name&gt; in &lt;home&gt;: no queue yet</code> and the run exits 0. A queue that cannot be read (a failed GitHub call, including the advisory read; a <code>.github</code> that is not public; an advisory line naming another org; a malformed response) is named on stderr as <code>vrg-queue: &lt;queue&gt; queue for &lt;name&gt; in &lt;home&gt; could not be read: &lt;reason&gt;</code> and the run exits 1; with no queue named, a text run still lists the other queues and prints <code>&lt;queue&gt; queue for &lt;name&gt; in &lt;home&gt;: not shown (failed; see stderr)</code> in its place, and a <code>--json</code> run prints nothing on stdout. Nothing is created</td>
 </tr>
 <tr>
 <td>Exit codes</td>
