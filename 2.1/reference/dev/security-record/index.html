@@ -1376,6 +1376,8 @@
       
         
       
+        
+      
     
     
     
@@ -1428,6 +1430,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.290/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.290
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17160,7 +17190,7 @@ it. For the policy, neutral wording and the severity mapping, see
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>                           [--summary TEXT] [--issue OWNER/REPO#N] [--resume GHSA-ID]
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>vrg-security-record list [--repo OWNER/NAME] [--state {draft,closed,all}] [--details]
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>vrg-security-record show (GHSA-ID | OWNER/REPO#N)
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>vrg-security-record retarget GHSA-ID --to OWNER/REPO#N [--to OWNER/REPO#N ...]
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>vrg-security-record retarget GHSA-ID --to 'OWNER/REPO#N' [--to 'OWNER/REPO#N' ...]
 </code></pre></div>
 <h2 id="output-rule">Output rule<a class="headerlink" href="#output-rule" title="Permanent link">&para;</a></h2>
 <p>An advisory's summary and description reach stdout only through <code>show</code>
@@ -17334,11 +17364,15 @@ refusal names every missing advisory:</p>
 moves; <code>vrg-intake-route</code> and the <code>epic-create</code> planning handoff both use
 it.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>vrg-security-record<span class="w"> </span>retarget<span class="w"> </span>GHSA-xxxx-xxxx-xxxx<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span>--to<span class="w"> </span>vergil-project/vergil-tooling#101<span class="w"> </span>--to<span class="w"> </span>vergil-project/vergil-tooling#102
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span>--to<span class="w"> </span><span class="s1">'vergil-project/vergil-tooling#101'</span><span class="w"> </span>--to<span class="w"> </span><span class="s1">'vergil-project/vergil-tooling#102'</span>
 </code></pre></div>
 <p>Every <code>--to</code> must be a full <code>owner/repo#N</code> ref, and all of them must be
-in one org. The steps run in order, and each starts only once the one
-before it succeeded:</p>
+in one org. The refs are single-quoted so the command pastes into any
+shell: unquoted, the <code>#</code> is a glob operator in zsh with <code>EXTENDED_GLOB</code>
+set. The <code>retarget</code> commands that <code>vrg-intake-route</code> prints for an
+advisory it could not retarget are quoted the same way.</p>
+<p>The steps run in order, and each starts only once the one before it
+succeeded:</p>
 <ol>
 <li><strong>Mark</strong> each target: ensure the <code>security</code> label in its repo, add it
    to the issue, and append the <code>Security advisory:</code> line (skipped when
@@ -17401,13 +17435,17 @@ because the old number now leads to the moved issue itself.</p>
   An item with the <code>security</code> label but no advisory line, or the
   reverse, gets a warning and no retarget.</li>
 <li><strong><code>vrg-queue planning</code></strong> keeps a planning issue at <code>in-progress</code> while
-  <strong>any</strong> advisory it names still tracks it, with a note that counts
+  <strong>any</strong> advisory still tracks it, whether or not its body names that
+  advisory, with a note that counts
   them and names them by GHSA ID only (<code>advisory still tracks</code> for one,
   <code>advisories still track</code> for more):</li>
 </ul>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>held: &lt;k&gt; advisories still track this planning issue (&lt;GHSA-id&gt;[, …]) — retarget each to the task or tasks that fix it with vrg-security-record retarget
 </code></pre></div>
-<p>It reads the advisories only when some planning item names one.</p>
+<p>It lists each org's advisories once per view, and skips an org whose
+  <code>.github</code> is absent or not public unless one of its items has an
+  advisory line (then the private home is refused). An advisory line
+  naming an org other than the issue's own is refused, not ignored.</p>
 <h2 id="exit-codes">Exit codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>
 <table>
 <thead>

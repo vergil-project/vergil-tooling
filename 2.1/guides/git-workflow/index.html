@@ -1376,6 +1376,8 @@
       
         
       
+        
+      
     
     
     
@@ -1428,6 +1430,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.290/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.290
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17601,7 +17631,10 @@ runs <code>vrg-pr-workflow report-ready</code>, which pushes the branch to origi
 No separate push is needed. When the delta touches
 <code>.github/workflows/**</code> GitHub refuses the agent push; <code>report-ready</code>
 says so, records the state anyway, and the human's <code>vrg-submit-pr</code>
-pushes the branch instead. Any other push failure fails <code>report-ready</code>
+pushes the branch instead. A stale branch, whose own commits change no
+workflow file but whose tree carries an outdated one, gets the same
+refusal; <code>report-ready</code> tells it apart as <code>vrg-git push</code> does and fails
+with the rebase steps, recording nothing. Any other push failure fails <code>report-ready</code>
 with nothing recorded, as does a branch with no commits ahead of its
 base. Recording ready <strong>freezes the branch</strong>: <code>vrg-commit</code>
 and the <code>vrg-git</code> push path refuse further commits/pushes on it,

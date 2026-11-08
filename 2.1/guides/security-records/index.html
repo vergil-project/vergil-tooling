@@ -1376,6 +1376,8 @@
       
         
       
+        
+      
     
     
     
@@ -1428,6 +1430,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.290/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.290
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17578,10 +17608,10 @@ of them until the plan exists.</p>
   retarget has succeeded:</li>
 </ul>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>vrg-security-record<span class="w"> </span>retarget<span class="w"> </span>GHSA-xxxx-xxxx-xxxx<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>--to<span class="w"> </span>vergil-project/vergil-tooling#101<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>--to<span class="w"> </span>vergil-project/vergil-tooling#102
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>--to<span class="w"> </span><span class="s1">'vergil-project/vergil-tooling#101'</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>--to<span class="w"> </span><span class="s1">'vergil-project/vergil-tooling#102'</span>
 <a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>vrg-security-record<span class="w"> </span>retarget<span class="w"> </span>GHSA-yyyy-yyyy-yyyy<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span>--to<span class="w"> </span>vergil-project/vergil-tooling#103
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span>--to<span class="w"> </span><span class="s1">'vergil-project/vergil-tooling#103'</span>
 </code></pre></div>
 <p>From then on, the PRs that close those tasks are what close each
   advisory.
@@ -17593,7 +17623,8 @@ of them until the plan exists.</p>
   shipped code has it. A finding about shipped behaviour always goes to a
   fix task that changes the code.
 - <strong>The guard.</strong> <code>vrg-queue planning</code> never shows a planning issue as
-  <code>ready-to-close</code> while <strong>any</strong> advisory it names still tracks it. It
+  <code>ready-to-close</code> while <strong>any</strong> advisory still tracks it, whether or not
+  its body names that advisory. It
   shows it as <code>in-progress</code> with a note that counts the advisories still
   tracking it and names them by GHSA ID only:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>held: 1 advisory still tracks this planning issue (GHSA-xxxx-xxxx-xxxx) — retarget each to the task or tasks that fix it with vrg-security-record retarget

@@ -1376,6 +1376,8 @@
       
         
       
+        
+      
     
     
     
@@ -1428,6 +1430,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.290/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.290
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17241,6 +17271,7 @@ nightly. The user file is none of those, so it stays minimal.</p>
 <li><strong>Fleet policy, so it stays in the repo:</strong></li>
 <li>the guard <code>PreToolUse</code> hook;</li>
 <li><code>attribution</code> off;</li>
+<li><code>idleCompaction</code> off;</li>
 <li><code>permissions.allow: Bash(vrg-*)</code>;</li>
 <li>the enable for the vergil plugin. That plugin's own hooks enforce
     workflow policy, and a user-level <code>false</code> cannot turn off a project
@@ -17270,7 +17301,7 @@ nightly. The user file is none of those, so it stays minimal.</p>
 </tr>
 <tr>
 <td>repo <code>.claude/settings.json</code> (checked in, generated from the template, audited)</td>
-<td>the guard <code>PreToolUse</code> hook; <code>permissions.allow: Bash(vrg-*)</code>; <code>attribution</code> off; <code>enabledPlugins: {"vergil@vergil-marketplace": true}</code></td>
+<td>the guard <code>PreToolUse</code> hook; <code>permissions.allow: Bash(vrg-*)</code>; <code>attribution</code> off; <code>idleCompaction</code> off; <code>enabledPlugins: {"vergil@vergil-marketplace": true}</code></td>
 <td><code>extraKnownMarketplaces</code> (a second definition replaces the user's whole entry); any repo-specific key</td>
 </tr>
 <tr>
@@ -17409,6 +17440,12 @@ review treats it as correct.</p>
     at the start of every interactive session. Committed settings files must
     therefore hold only valid keys.
     (<a href="https://code.claude.com/docs/en/settings.md#fix-a-broken-settings-file">settings.md, "Fix a broken settings file"</a>)</li>
+<li><strong><code>idleCompaction</code>.</strong> A boolean, valid in any settings file, default
+    <code>true</code>; <code>false</code> means Claude Code doesn't compact while the session is
+    idle. It needs v2.1.290 or later, and earlier versions ignore it.
+    Turning off <code>autoCompactEnabled</code> instead would also stop context-full
+    auto-compaction, so it is not a substitute.
+    (<a href="https://code.claude.com/docs/en/settings-reference.md#idlecompaction">settings-reference.md, <code>idleCompaction</code></a>)</li>
 </ol>
 <h3 id="observed-on-an-agent-vm">Observed on an agent VM<a class="headerlink" href="#observed-on-an-agent-vm" title="Permanent link">&para;</a></h3>
 <p>This is a Vergil test result, not a platform fact: the recurring review
@@ -17417,8 +17454,12 @@ VM on 2026-10-28
 (<a href="https://github.com/vergil-project/.github/issues/578">vergil-project/.github#578</a>),
 settings alone brought all three plugins back without <code>vm_guest</code>'s
 reconcile step, but <code>vergil</code> came back at project scope rather than user
-scope. The reconcile step stays until that difference is understood
-(<a href="https://github.com/vergil-project/.github/issues/675">vergil-project/.github#675</a>).</p>
+scope. The reconcile step stays
+(<a href="https://github.com/vergil-project/.github/issues/675">vergil-project/.github#675</a>):
+it is the step that installs, at user scope, every plugin the user file
+enables that has no user-scope install, even when a project-scope install
+exists, because plugin installation belongs to the user file
+(<a href="https://github.com/vergil-project/vergil-tooling/issues/3836">vergil-project/vergil-tooling#3836</a>).</p>
 <h2 id="unused-scopes">Unused scopes<a class="headerlink" href="#unused-scopes" title="Permanent link">&para;</a></h2>
 <p><strong>Managed settings are unused, deliberately.</strong> They are the only scope a
 repo-local file cannot override, but nothing needs them yet, and they raise
@@ -17472,9 +17513,14 @@ and what needs judgment.</p>
 It checks the following, each a hard failure with no transition window:</p>
 <ul>
 <li>the repo <code>CLAUDE.md</code> is at most 200 lines;</li>
-<li>the template markers are present;</li>
+<li>the template markers are present, and the region between them is the
+  template verbatim (after a template change,
+  <code>vrg-fleet-sync --target claude-md</code> brings every repo back in line, one
+  PR per drifted repo);</li>
 <li>no <code>AGENTS.md</code> exists;</li>
-<li><code>.claude/settings.json</code> equals the template after JSON parsing;</li>
+<li><code>.claude/settings.json</code> equals the template after JSON parsing (after
+  a template change, <code>vrg-fleet-sync --target claude-settings</code> brings
+  every repo back in line, one PR per drifted repo);</li>
 <li>the <code>paad-policy.md</code> pointer is present (it is in the template region, so
   the template check covers it).</li>
 </ul>

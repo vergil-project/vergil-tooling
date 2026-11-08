@@ -1376,6 +1376,8 @@
       
         
       
+        
+      
     
     
     
@@ -1428,6 +1430,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.290/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.290
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13674,6 +13704,28 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-claude-settings-sync" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-claude-settings-sync
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vrg-claude-md-sync" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-claude-md-sync
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-fleet-sync" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -13904,17 +13956,6 @@
     <span class="md-ellipsis">
       
         vrg-semgrep-scan
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#vrg-trivy-scan" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        vrg-trivy-scan
       
     </span>
   </a>
@@ -18406,6 +18447,28 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-claude-settings-sync" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-claude-settings-sync
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vrg-claude-md-sync" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-claude-md-sync
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-fleet-sync" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18636,17 +18699,6 @@
     <span class="md-ellipsis">
       
         vrg-semgrep-scan
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#vrg-trivy-scan" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        vrg-trivy-scan
       
     </span>
   </a>
@@ -18961,6 +19013,10 @@ others; use <code>vrg-commit</code> for commits), a flag deny-list (<code>push -
 report-ready freeze. Remote operations run with the GitHub App installation
 token for the resolved identity (see <a href="#vrg-whoami"><code>vrg-whoami</code></a>). It is not
 a drop-in replacement for <code>git</code>; <code>vrg-git --help</code> lists the full policy.</p>
+<p>The global <code>-C &lt;path&gt;</code> option (repeatable, as in git) changes directory
+before any check runs, so every check, and the org of the identity token,
+applies to the <code>-C</code> repo exactly as after a <code>cd</code>. No other global git option
+is accepted.</p>
 <table>
 <thead>
 <tr>
@@ -18975,7 +19031,7 @@ a drop-in replacement for <code>git</code>; <code>vrg-git --help</code> lists th
 </tr>
 <tr>
 <td>Args</td>
-<td><code>&lt;subcommand&gt; [args...]</code>, forwarded to <code>git</code></td>
+<td><code>[-C &lt;path&gt;]... &lt;subcommand&gt; [args...]</code>, forwarded to <code>git</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
@@ -18987,7 +19043,7 @@ a drop-in replacement for <code>git</code>; <code>vrg-git --help</code> lists th
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 success; 1 refusal; 2 no subcommand; otherwise git's exit code</td>
+<td>0 success; 1 refusal; 2 no subcommand or a <code>-C</code> with no path; 128 a <code>-C</code> path that cannot be entered; otherwise git's exit code</td>
 </tr>
 <tr>
 <td>Status</td>
@@ -19045,6 +19101,13 @@ cloud→Mac handoff: each branch's ready-state comes from a local
 worktree's <code>pr-workflow.json</code> when present, else the relay ref
 <code>refs/vergil/pr-workflow/&lt;branch&gt;</code>; origin's tip is checked against the
 recorded <code>head_sha</code> and the PR opens with <code>--head</code> <strong>without pushing</strong>.
+Every mode driven by a ready-state opens the PR only at the <code>head_sha</code> the
+latest <code>report-ready</code> recorded and refuses rather than pick another head
+(#3815): a local worktree's HEAD must be that commit (a batch checks it
+before its rebase), a named branch reopened by <code>unfreeze</code> and not
+re-reported is refused, a local ready-state and relay ref that disagree are
+refused, and origin's tip is checked against the recorded head right before
+<code>gh pr create</code>.
 It refuses an issue whose native parent is an intake, planning or deferred
 epic (see <a href="#vrg-pr-workflow"><code>vrg-pr-workflow</code></a>). Human-run: agent
 identities are refused, and agents hand off with
@@ -19071,7 +19134,7 @@ identities are refused, and agents hand off with
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>Subprocess error from <code>git push</code> or <code>gh pr create</code>; relay mode: loud failure on a missing ready-state or <code>head_sha</code> drift</td>
+<td>Subprocess error from <code>git push</code> or <code>gh pr create</code>; loud refusal on a missing ready-state, a state that is not ready, or any head other than the recorded <code>head_sha</code></td>
 </tr>
 <tr>
 <td>Exit codes</td>
@@ -19105,7 +19168,10 @@ follow-up issue (epic #146). <code>report-ready</code> pushes the branch itself,
 so no separate push is needed; a branch already on origin at that commit is a
 no-op push. When the delta touches <code>.github/workflows/**</code> GitHub refuses the
 agent push: <code>report-ready</code> reports that as expected, records the state anyway,
-and the human's <code>vrg-submit-pr</code> pushes the branch. Any other push failure
+and the human's <code>vrg-submit-pr</code> pushes the branch. A stale branch, whose own
+commits change no workflow file but whose tree carries an outdated one, gets
+the same refusal: <code>report-ready</code> tells it apart as <code>vrg-git push</code> does and
+fails with the rebase steps, recording nothing (#4077). Any other push failure
 fails <code>report-ready</code> with no local state and no relay ref written. A branch
 with no commits ahead of <code>--base</code> is refused before any push, with nothing
 recorded and no freeze (#3870). A re-run on
@@ -19120,7 +19186,10 @@ allowed while HEAD is exactly the reported commit — it publishes, not
 advances, the branch (issue #3071). <code>unfreeze</code> is the only sanctioned way to
 reopen a still-unsubmitted branch — it drops the state back to
 <code>implementing</code> while keeping the metadata; an already-submitted branch
-cannot be unfrozen. <code>status</code> prints the current state. <code>report-ready</code> (like
+cannot be unfrozen. <code>unfreeze</code> first overwrites the relay ref with the
+reopened state, so no <code>vrg-submit-pr</code> can still read the branch as ready at
+its old head, and fails with nothing changed if that push fails (#3815).
+<code>status</code> prints the current state. <code>report-ready</code> (like
 <code>vrg-submit-pr</code>) refuses an issue whose native parent is an intake, planning
 or deferred epic: a queue item is not buildable until intake review routes it,
 <code>epic-create</code> expands it, or deferred review revives it (epics
@@ -19150,7 +19219,7 @@ is not absent or <code>{}</code> (epic vergil-project/.github#558).</p>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td><code>WorkflowError</code> on stderr (e.g. unfreeze after submit, or nothing to unfreeze)</td>
+<td><code>WorkflowError</code> on stderr (e.g. unfreeze after submit, nothing to unfreeze, or a relay ref unfreeze could not update)</td>
 </tr>
 <tr>
 <td>Exit codes</td>
@@ -19344,9 +19413,13 @@ local tags with origin's.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>origin: vergil-project/vergil-claude-plugin
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>v2.1 1a2b3c4d5e6f -&gt; v2.1.50 fc17882a9b0c
 </code></pre></div>
-<p><code>--dry-run</code> prints the same lines, after the same target check, and stops.
-Otherwise it asks <code>Move vX.Y on &lt;repo&gt;? [y/N]</code> on the terminal, and moves
-the tag only on <code>y</code> or <code>yes</code>. With no terminal to confirm on, it refuses.
+<p><code>--dry-run</code> prints the same lines, after the same target check, and stops
+(with <code>--yes</code> too). <code>--yes</code> prints them and moves the tag with no prompt, so
+it needs no terminal and can run from a script. Otherwise it prints them to
+stderr, asks <code>Move vX.Y on &lt;repo&gt;? [y/N]</code> there, and moves the tag only on
+<code>y</code> or <code>yes</code>; the move and the prompt go to stderr so a redirected stdout
+cannot hide them. It refuses to prompt unless both stdin and stderr are
+terminals: with no terminal to confirm on, it refuses and names <code>--yes</code>.
 Before it pushes it re-resolves the move and refuses if anything changed
 since it was confirmed, and resolves the local release tag once and checks
 that it is the confirmed commit. It then pushes that tag object, by its id,
@@ -19380,15 +19453,15 @@ as done.</p>
 </tr>
 <tr>
 <td>Args</td>
-<td><code>version</code> (positional, default: the <code>VERSION</code> file), <code>--dry-run</code></td>
+<td><code>version</code> (positional, default: the <code>VERSION</code> file), <code>--dry-run</code>, <code>--yes</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>Human identity; run in the repo's checkout; a terminal to confirm on; push access to origin</td>
+<td>Human identity; run in the repo's checkout; a terminal to confirm on, unless <code>--yes</code> is given; push access to origin</td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>Exit 1 with a message on stderr. An agent identity, a run with no terminal, a declined or unanswered confirmation, and a missing <code>VERSION</code> file each print their own <code>vrg-promote:</code> or plain message; a refused target, a move that changed since it was confirmed, an unreadable <code>VERSION</code> file, and a failed git or GitHub call print <code>Error: …</code>; a missing GitHub token or unusable GitHub App credentials print the guided <code>vrg-promote:</code> message</td>
+<td>Exit 1 with a message on stderr. An agent identity, a run with no terminal and no <code>--yes</code>, a declined or unanswered confirmation, and a missing <code>VERSION</code> file each print their own <code>vrg-promote:</code> or plain message; a refused target, a move that changed since it was confirmed, an unreadable <code>VERSION</code> file, and a failed git or GitHub call print <code>Error: …</code>; a missing GitHub token or unusable GitHub App credentials print the guided <code>vrg-promote:</code> message</td>
 </tr>
 <tr>
 <td>Exit codes</td>
@@ -20189,7 +20262,8 @@ under the planning epic with their state: <strong>waiting</strong> (no <code>in-
 label), <strong>in-progress</strong> (labelled, with its latest progress note), or
 <strong>ready-to-close</strong> (labelled, the <code>Epic:</code> / <code>Docs task:</code> / <code>Tasks filed: yes</code>
 markers present, and the docs task closed). A planning item that any security
-advisory it names still tracks is held at <strong>in-progress</strong> until every such
+advisory still tracks, named in its body or not, is held at <strong>in-progress</strong>
+until every such
 advisory is retargeted to the task or tasks that fix it, with a note that
 counts them and names them by GHSA ID only (<code>held: &lt;k&gt; advisory still tracks
 this planning issue (&lt;GHSA-id&gt;) — …</code> for one, <code>held: &lt;k&gt; advisories still
@@ -20221,11 +20295,11 @@ collect step of the three review skills (<code>intake-review</code>, <code>plann
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>GitHub App credentials for the target org</td>
+<td>GitHub App credentials for the target org. The planning view also reads the org's advisories when its <code>.github</code> is public, or when a planning item has an advisory line (then a <code>.github</code> that is not public is refused): the identity needs Repository security advisories access</td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>A named queue whose home has no live queue epic exits 1 naming the missing epic; with no queue named, a missing queue prints <code>&lt;queue&gt; queue for &lt;name&gt; in &lt;home&gt;: no queue yet</code> and the run exits 0. Nothing is created</td>
+<td>A named queue whose home has no live queue epic exits 1 naming the missing epic; with no queue named, a missing queue prints <code>&lt;queue&gt; queue for &lt;name&gt; in &lt;home&gt;: no queue yet</code> and the run exits 0. A queue that cannot be read (a failed GitHub call, including the advisory read; a <code>.github</code> that is not public; an advisory line naming another org; a malformed response) is named on stderr as <code>vrg-queue: &lt;queue&gt; queue for &lt;name&gt; in &lt;home&gt; could not be read: &lt;reason&gt;</code> and the run exits 1; with no queue named, a text run still lists the other queues and prints <code>&lt;queue&gt; queue for &lt;name&gt; in &lt;home&gt;: not shown (failed; see stderr)</code> in its place, and a <code>--json</code> run prints nothing on stdout. Nothing is created</td>
 </tr>
 <tr>
 <td>Exit codes</td>
@@ -20745,8 +20819,17 @@ writing, the ad-hoc and queue-epic drains and the security-records pass that
 flag). <code>--repo OWNER/NAME</code> audits that repo's resolved epic home instead of
 the org's <code>.github</code>, so a private repo that self-homes its epics can be
 audited; the home-scoped checks (epic drift, stray issues, operation-pending
-epics, and the <code>--close</code> drift closes) then target it.
-<code>--epic REF</code> is a separate read-only mode: it prints one epic's children as
+epics, and the <code>--close</code> drift closes) then target it.</p>
+<p>Every read runs under the audited org's token, wherever the command is run
+from. Before any check, the audit confirms that this token sees every repo in
+the org: an App token must belong to an installation on that org with access
+to all repositories, and a human's own <code>gh</code> login must be an owner of the org
+(or the org must be that login's own account). If it does not, the audit
+names the gap on stderr. The read-only report then opens with an
+<strong>Incomplete coverage</strong> section and exits 1, and <code>--close</code> is refused before
+any write. A full preview therefore needs the org's App installation with
+access to all repositories, or an org owner's own login.</p>
+<p><code>--epic REF</code> is a separate read-only mode: it prints one epic's children as
 JSON (<code>{"epic": &lt;slug&gt;, "children": [{repo, number, title, state}, …]}</code>) and
 skips the drift audit. A bare <code>#N</code> resolves against the current repo's epic
 home.</p>
@@ -20792,11 +20875,11 @@ which sets <code>VRG_EPIC_SWEEP=1</code>. Other invariant violations stay report
 </tr>
 <tr>
 <td>Failure mode</td>
-<td><code>--close</code> in an agent session is refused before any network call; a <code>--repo</code> without <code>/</code>, an org that cannot be detected, or an org with no <code>.github</code> home exits 1. A full intake epic stops the orphan pass, listing what it did not attach; a broken security pair or a failed security pass exits 1 after the rest of the run. With <code>--epic</code>, a ref that is not an epic exits 1</td>
+<td><code>--close</code> in an agent session is refused before any network call; a <code>--repo</code> without <code>/</code>, an org that cannot be detected, or an org with no <code>.github</code> home exits 1. A token that cannot see every repo in the org exits 1: the report is marked partial and <code>--close</code> is refused before any write. A full intake epic stops the orphan pass, listing what it did not attach; a broken security pair or a failed security pass exits 1 after the rest of the run. With <code>--epic</code>, a ref that is not an epic exits 1</td>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 success (the read-only report exits 0 even when it finds drift), 1 refused, a pass failed, or error, 2 bad arguments</td>
+<td>0 success (the read-only report exits 0 even when it finds drift), 1 refused, incomplete coverage, a pass failed, or error, 2 bad arguments</td>
 </tr>
 <tr>
 <td>Status</td>
@@ -21296,13 +21379,120 @@ or PR knowledge.</p>
 </tr>
 </tbody>
 </table>
+<h3 id="vrg-claude-settings-sync">vrg-claude-settings-sync<a class="headerlink" href="#vrg-claude-settings-sync" title="Permanent link">&para;</a></h3>
+<p>Single-repo applicator for the managed <code>.claude/settings.json</code>
+(<a href="https://github.com/vergil-project/vergil-tooling/issues/4056">#4056</a>).
+It checks (default) or writes the packaged template as rendered by
+<code>repo_init.render_claude_settings()</code>, the same render
+<code>vrg-github-repo-init</code> writes. The file is <strong>fully managed</strong>: <code>--check</code>
+uses the config audit's comparison (equal to the template after JSON
+parsing, so key order and whitespace don't count), and <code>--write</code>
+replaces the whole file, atomically, never merging keys. A repo with no
+<code>.claude/settings.json</code> gets one. A file already equal after parsing is
+left untouched, so <code>--check</code> drifts exactly when <code>--write</code> would change
+the file, and after <code>--write</code> the audit's <code>_check_claude_settings</code>
+passes. It owns <strong>only</strong> the file change and has no git or PR knowledge.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_claude_settings_sync</code></td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>--repo PATH</code> (default: CWD); mutually exclusive <code>--check</code> (default) | <code>--write</code></td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>None beyond a repository root; <code>vergil.toml</code> is not read</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td><code>--check</code> prints <code>missing .claude/settings.json</code>, <code>.claude/settings.json is not valid JSON (…)</code> or <code>.claude/settings.json differs from the template</code> to stderr; <code>--write</code> prints <code>already in sync</code> or <code>wrote .claude/settings.json</code></td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 ok, 1 <code>--check</code> drift, 2 usage error</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-claude-md-sync">vrg-claude-md-sync<a class="headerlink" href="#vrg-claude-md-sync" title="Permanent link">&para;</a></h3>
+<p>Single-repo applicator for the template region of <code>CLAUDE.md</code>
+(<a href="https://github.com/vergil-project/vergil-tooling/issues/3868">#3868</a>).
+Only the lines between <code>&lt;!-- vergil:template:claude-md:begin --&gt;</code> and
+<code>&lt;!-- vergil:template:claude-md:end --&gt;</code> are managed. It checks (default)
+or writes that region against the packaged
+<code>claude_md_consumer.md</code> template, using the config audit's own marker
+parser and comparison (blank lines next to the markers don't count).
+<code>--write</code> replaces the lines between the two marker lines with the
+template, verbatim and atomically, and leaves every byte outside them
+alone, the marker lines and their line ends included. A region already in
+sync is left untouched, so <code>--check</code> drifts exactly when <code>--write</code> would
+change the file, and after <code>--write</code> the audit's <code>_check_claude_md</code>
+passes. A <code>CLAUDE.md</code> that is missing, has no markers, or has malformed
+or duplicated markers is an error in both modes, naming the cause, and
+nothing is written: the tool never guesses where the region belongs. It
+owns <strong>only</strong> the file change and has no git or PR knowledge.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_claude_md_sync</code></td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>--repo PATH</code> (default: CWD); mutually exclusive <code>--check</code> (default) | <code>--write</code></td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>A <code>CLAUDE.md</code> with exactly one begin marker followed by one end marker; <code>vergil.toml</code> is not read</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td><code>--check</code> prints <code>CLAUDE.md template region differs from the template (expected …; found …)</code> to stderr; <code>--write</code> prints <code>already in sync</code> or <code>wrote the CLAUDE.md template region</code>; either mode prints <code>cannot sync: missing CLAUDE.md</code> or <code>cannot sync: CLAUDE.md has &lt;marker problem&gt;</code> to stderr and exits 2</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 ok, 1 <code>--check</code> drift, 2 usage error or a <code>CLAUDE.md</code> that is missing or has no well-formed marker pair</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
 <h3 id="vrg-fleet-sync">vrg-fleet-sync<a class="headerlink" href="#vrg-fleet-sync" title="Permanent link">&para;</a></h3>
 <p>Propagate a vergil-managed file across a fleet of repositories, opening
 <strong>one PR per repo whose file drifts</strong>. <code>--target</code> picks the file:
 <code>gitignore</code> (default) syncs the managed <code>.gitignore</code> block via
 <code>vrg-gitignore-sync --write</code>; <code>dependabot</code> writes the report-only
 <code>.github/dependabot.yml</code> via <code>vrg-dependabot-sync --write</code> (branch slug
-<code>dependabot-config</code>, filed under epic vergil-project/.github#420). A
+<code>dependabot-config</code>, filed under epic vergil-project/.github#420);
+<code>claude-settings</code> replaces <code>.claude/settings.json</code> with the packaged
+template via <code>vrg-claude-settings-sync --write</code> (branch slug
+<code>claude-settings-sync</code>), so a template change can be rolled out to every
+repo the config audit would otherwise fail; <code>claude-md</code> replaces the
+marked template region of <code>CLAUDE.md</code> with the packaged template via
+<code>vrg-claude-md-sync --write</code> (branch slug <code>claude-md-sync</code>), leaving
+everything outside the markers alone. A repo whose <code>CLAUDE.md</code> is missing
+or has no well-formed marker pair is an error for that repo, never a
+skip. A
 target's epic links only repos in the epic's own org: a repo in another
 org (read from the clone with <code>gh repo view</code>) is filed under its own
 ad-hoc epic, and the issue body still names the target's epic, because
@@ -21315,7 +21505,8 @@ human. <code>--dry-run</code> reports the verdict a live run would reach per rep
 (would change, naming the epic it would be filed under, or skip) from a
 disposable probe worktree, without opening an issue, branch, commit, or
 PR. Each target previews with its applicator's <code>--check</code>
-(<code>vrg-gitignore-sync --check</code> or <code>vrg-dependabot-sync --check</code>), whose
+(<code>vrg-gitignore-sync --check</code>, <code>vrg-dependabot-sync --check</code>,
+<code>vrg-claude-settings-sync --check</code> or <code>vrg-claude-md-sync --check</code>), whose
 drift verdict is exactly the change <code>--write</code> would make.</p>
 <table>
 <thead>
@@ -21331,11 +21522,11 @@ drift verdict is exactly the change <code>--write</code> would make.</p>
 </tr>
 <tr>
 <td>Args</td>
-<td><code>--repos PATH [PATH …]</code> (required, local clone paths); <code>--target {dependabot,gitignore}</code> (default <code>gitignore</code>); <code>--dry-run</code></td>
+<td><code>--repos PATH [PATH …]</code> (required, local clone paths); <code>--target {claude-md,claude-settings,dependabot,gitignore}</code> (default <code>gitignore</code>); <code>--dry-run</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>The target's applicator (<code>vrg-gitignore-sync</code> or <code>vrg-dependabot-sync</code>) on PATH; each <code>--repos</code> path a local clone; git/<code>gh</code> credentials for the sweep</td>
+<td>The target's applicator (<code>vrg-gitignore-sync</code>, <code>vrg-dependabot-sync</code>, <code>vrg-claude-settings-sync</code> or <code>vrg-claude-md-sync</code>) on PATH; each <code>--repos</code> path a local clone; git/<code>gh</code> credentials for the sweep</td>
 </tr>
 <tr>
 <td>Failure mode</td>
@@ -21772,11 +21963,11 @@ instead and flags it with a <code>DEV tooling</code> banner, and a plain
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>Run by the human (any agent identity is refused, exit 1); host with Lima (local VMs) or the off-platform backend configured; <code>identities.toml</code></td>
+<td>Run by the human (any agent identity is refused, exit 1); host with Lima (local VMs) or the off-platform backend configured; <code>identities.toml</code>; a valid host <code>~/.claude/settings.json</code> for <code>start</code>, <code>rebuild</code>, <code>session</code>, <code>update</code> and an off-platform <code>create</code></td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>Error on stderr; an agent identity is refused before any work; <code>update --all</code> attempts every box and reports each failure</td>
+<td>Error on stderr; an agent identity is refused before any work; a missing or invalid host <code>~/.claude/settings.json</code> is refused, naming the file, before any VM is touched; <code>update --all</code> attempts every box and reports each failure</td>
 </tr>
 <tr>
 <td>Exit codes</td>
@@ -22252,43 +22443,6 @@ the CI security workflow.</p>
 <tr>
 <td>Failure mode</td>
 <td>Exit 2 when semgrep itself fails</td>
-</tr>
-<tr>
-<td>Exit codes</td>
-<td>0 no findings, 1 findings, 2 scan failed</td>
-</tr>
-<tr>
-<td>Status</td>
-<td>Active</td>
-</tr>
-</tbody>
-</table>
-<h3 id="vrg-trivy-scan">vrg-trivy-scan<a class="headerlink" href="#vrg-trivy-scan" title="Permanent link">&para;</a></h3>
-<p>Run a Trivy vulnerability scan of a filesystem or image, writing SARIF and
-table output, report findings, and optionally write a CycloneDX SBOM.</p>
-<table>
-<thead>
-<tr>
-<th>Attribute</th>
-<th>Value</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Source</td>
-<td><code>vergil_tooling.bin.vrg_trivy_scan</code></td>
-</tr>
-<tr>
-<td>Args</td>
-<td><code>--type {filesystem,image}</code> (required), <code>--target</code> (required), <code>--output-dir</code> (required), <code>--trivyignore</code>, <code>--sbom</code>, <code>--severity</code> (default <code>MEDIUM,HIGH,CRITICAL</code>)</td>
-</tr>
-<tr>
-<td>Preconditions</td>
-<td><code>trivy</code> on PATH</td>
-</tr>
-<tr>
-<td>Failure mode</td>
-<td>Exit 2 when trivy itself fails</td>
 </tr>
 <tr>
 <td>Exit codes</td>

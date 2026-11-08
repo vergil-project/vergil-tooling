@@ -1376,6 +1376,8 @@
       
         
       
+        
+      
     
     
     
@@ -1428,6 +1430,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.290/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.290
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17622,6 +17652,12 @@ fails loudly if a required flag is missing; run
 <code>vrg-github-repo-init --help</code> for the full list. The
 <a href="../../reference/cli-tools-overview/#vrg-github-repo-init">CLI Tools Overview</a>
 covers the born-green language skeleton.</p>
+<p>A resumed run reads step 3's answers back from the committed
+<code>vergil.toml</code>. It stops if that file is missing or invalid, or if a
+flag you pass contradicts it. <code>vergil.toml</code> does not record the
+license or the initial version, so a run that resumes before step 4
+asks for them again; under <code>--non-interactive</code> it needs <code>--license</code>
+and <code>--initial-version</code>.</p>
 <h3 id="an-existing-repository">An existing repository<a class="headerlink" href="#an-existing-repository" title="Permanent link">&para;</a></h3>
 <p>From the root of the repo's clone, on a feature branch:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>vrg-github-repo-init<span class="w"> </span>--adopt
@@ -17739,7 +17775,7 @@ branch prefix, issue number) live in <code>vrg-commit</code> itself. See the
 <p><code>vrg-github-repo-init</code> writes <code>.claude/settings.json</code> as the packaged
 template
 <a href="https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/data/claude_settings.json"><code>claude_settings.json</code></a>,
-unchanged. It has four parts:</p>
+unchanged. It has five parts:</p>
 <table>
 <thead>
 <tr>
@@ -17763,6 +17799,10 @@ unchanged. It has four parts:</p>
 <tr>
 <td><code>attribution</code></td>
 <td>Turns off Claude Code's AI co-author trailer on commits and PRs.</td>
+</tr>
+<tr>
+<td><code>idleCompaction</code></td>
+<td><code>false</code>: Claude Code doesn't compact a session while it sits idle, so the human decides when to compact or clear (#3795). Needs Claude Code v2.1.290 or later; older versions ignore it. Context-full auto-compaction and <code>/compact</code> are unchanged.</td>
 </tr>
 </tbody>
 </table>
@@ -17856,8 +17896,10 @@ that is not running; a single-VM <code>vrg-vm update</code> on one fails with ex
 A skipped Lima VM's next <code>vrg-vm start</code> refreshes its plugins, but on start
 a failed refresh or verification is only a warning: check the start output
 for an <code>update-plugins</code> warning, or run <code>vrg-vm update</code> on that VM once it is
-up. An off-platform (cloud) box does not support <code>vrg-vm start</code>; run
-<code>vrg-vm update</code> on it once it is running again.</p>
+up. An off-platform (cloud) box does not support <code>vrg-vm start</code>. Bring a
+stopped one back with <code>vrg-vm rebuild &lt;org&gt;/&lt;repo&gt; --identity &lt;identity&gt;</code>,
+which replaces the disposable VM and reattaches its persistent volume, then
+run <code>vrg-vm update</code> on it.</p>
 <p>Restart Claude Code afterwards: a running session keeps the plugin version
 it loaded.</p>
 <p>Both commands are human actions. <code>vrg-host plugins</code> and every <code>vrg-vm</code>
