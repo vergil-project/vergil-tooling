@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import contextlib
 import os
-import re
 import subprocess
 import sys
 import time
@@ -122,10 +121,6 @@ _FLAG_DENY: dict[str, set[str]] = {
 
 
 _REMOTE_SUBCOMMANDS: set[str] = {"push", "pull", "fetch", "ls-remote", "clone"}
-
-# Owner/org of a GitHub clone URL — used to mint the installation token for
-# `clone`, which runs outside any repo (so the org can't come from a remote).
-_GITHUB_CLONE_URL_RE = re.compile(r"(?:https://github\.com/|git@github\.com:)([^/]+)/")
 
 
 @cli_main
@@ -334,11 +329,17 @@ def _check_symbolic_ref_read(args: list[str]) -> str | None:
 
 
 def _org_from_clone_url(args: list[str]) -> str | None:
-    """Return the GitHub org/owner from the first github.com URL among clone args."""
+    """Return the owner of the first github.com repo URL among clone args.
+
+    Used to mint the installation token for ``clone``, which runs outside any
+    repo, so the org cannot come from a remote. An arg counts only when
+    :func:`github.github_remote_repo`, the one GitHub remote URL parser, reads
+    it as naming a repo on github.com (#4088).
+    """
     for arg in args:
-        match = _GITHUB_CLONE_URL_RE.match(arg)
-        if match:
-            return match.group(1)
+        repo = github.github_remote_repo(arg)
+        if repo is not None:
+            return repo.split("/", 1)[0]
     return None
 
 
