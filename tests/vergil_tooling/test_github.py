@@ -2754,6 +2754,111 @@ def test_pr_for_branch_none_when_payload_not_dict() -> None:
         assert github.pr_for_branch("feature/1423-pr-interface") is None
 
 
+# -- pr_closing_references / close_issue (issue #4002) -------------------------
+
+_GH = "vergil_tooling.lib.github"
+
+
+def _closing_payload(
+    nodes: list[object], *, total: int | None = None, state: str = "MERGED"
+) -> dict[str, object]:
+    return {
+        "repository": {
+            "pullRequest": {
+                "state": state,
+                "mergedAt": "2026-11-08T12:00:00Z",
+                "closingIssuesReferences": {
+                    "totalCount": len(nodes) if total is None else total,
+                    "nodes": nodes,
+                },
+            }
+        }
+    }
+
+
+def _node(number: int, state: str, repo: str = "o/r") -> dict[str, object]:
+    return {"number": number, "state": state, "repository": {"nameWithOwner": repo}}
+
+
+def test_pr_closing_references_reads_githubs_own_list() -> None:
+    payload = _closing_payload([_node(7, "OPEN"), _node(8, "CLOSED", repo="o/other")])
+    with (
+        patch(f"{_GH}.pr_repo_and_number", return_value=("o/r", 123)),
+        patch(f"{_GH}.graphql", return_value=payload) as gql,
+    ):
+        refs = github.pr_closing_references("123")
+    assert gql.call_args.kwargs == {"owner": "o", "name": "r", "number": 123}
+    assert "closingIssuesReferences" in gql.call_args.args[0]
+    assert refs.ref == "o/r#123"
+    assert refs.state == "MERGED"
+    assert refs.merged_at == "2026-11-08T12:00:00Z"
+    assert refs.issues == (
+        github.ClosingIssue(repo="o/r", number=7, state="OPEN"),
+        github.ClosingIssue(repo="o/other", number=8, state="CLOSED"),
+    )
+    assert refs.issues[1].ref == "o/other#8"
+
+
+def test_pr_closing_references_refuses_truncated_list() -> None:
+    payload = _closing_payload([_node(7, "OPEN")], total=101)
+    with (
+        patch(f"{_GH}.pr_repo_and_number", return_value=("o/r", 123)),
+        patch(f"{_GH}.graphql", return_value=payload),
+        pytest.raises(github.GitHubAPIError) as excinfo,
+    ):
+        github.pr_closing_references("123")
+    assert "lists 101 closing references but returned 1" in (excinfo.value.stderr or "")
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"repository": {"pullRequest": {"state": "MERGED", "mergedAt": None}}},
+        _closing_payload([_node(7, "OPEN")], state="WEIRD"),
+        _closing_payload([{"number": 7, "state": "OPEN"}]),
+        _closing_payload([_node(7, "UNKNOWN")]),
+        _closing_payload([_node(0, "OPEN")]),
+        _closing_payload(
+            [{"number": True, "state": "OPEN", "repository": {"nameWithOwner": "o/r"}}]
+        ),
+    ],
+)
+def test_pr_closing_references_refuses_malformed_response(payload: dict[str, object]) -> None:
+    with (
+        patch(f"{_GH}.pr_repo_and_number", return_value=("o/r", 123)),
+        patch(f"{_GH}.graphql", return_value=payload),
+        pytest.raises(github.GitHubAPIError, match="closing issue references"),
+    ):
+        github.pr_closing_references("123")
+
+
+def test_pr_closing_references_refuses_non_string_merged_at() -> None:
+    payload = {"repository": {"pullRequest": {"state": "MERGED", "mergedAt": 5}}}
+    with (
+        patch(f"{_GH}.pr_repo_and_number", return_value=("o/r", 123)),
+        patch(f"{_GH}.graphql", return_value=payload),
+        pytest.raises(github.GitHubAPIError, match="mergedAt"),
+    ):
+        github.pr_closing_references("123")
+
+
+def test_close_issue_closes_as_completed_with_comment() -> None:
+    with patch(f"{_GH}.run") as run:
+        github.close_issue("o/r", 7, comment="Completed by PR o/r#123.")
+    run.assert_called_once_with(
+        "issue",
+        "close",
+        "7",
+        "--repo",
+        "o/r",
+        "--reason",
+        "completed",
+        "--comment",
+        "Completed by PR o/r#123.",
+    )
+
+
 # -- closed_pr_for_branch (issue #1445) ----------------------------------------
 
 

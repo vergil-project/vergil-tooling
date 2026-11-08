@@ -22,6 +22,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -2049,6 +2050,129 @@ def merge_commit_sha(pr: str) -> str:
     string if the PR is not yet merged (no merge commit exists).
     """
     return read_output("pr", "view", pr, "--json", "mergeCommit", "--jq", '.mergeCommit.oid // ""')
+
+
+# GraphQL caps a connection page at 100 nodes. A PR closing more than that is
+# not expected; if one does, the read refuses rather than act on part of it.
+_CLOSING_REFS_PAGE = 100
+
+_CLOSING_REFS_QUERY = f"""
+query($owner: String!, $name: String!, $number: Int!) {{
+  repository(owner: $owner, name: $name) {{
+    pullRequest(number: $number) {{
+      state
+      mergedAt
+      closingIssuesReferences(first: {_CLOSING_REFS_PAGE}) {{
+        totalCount
+        nodes {{ number state repository {{ nameWithOwner }} }}
+      }}
+    }}
+  }}
+}}
+"""
+
+
+@dataclass(frozen=True)
+class ClosingIssue:
+    """One issue GitHub lists as closed by a PR (its ``closingIssuesReferences``)."""
+
+    repo: str
+    number: int
+    state: str
+
+    @property
+    def ref(self) -> str:
+        """The issue as ``OWNER/REPO#N``."""
+        return f"{self.repo}#{self.number}"
+
+
+@dataclass(frozen=True)
+class PRClosingReferences:
+    """A PR's state and the issues GitHub itself says it closes."""
+
+    repo: str
+    number: int
+    state: str
+    merged_at: str | None
+    issues: tuple[ClosingIssue, ...]
+
+    @property
+    def ref(self) -> str:
+        """The PR as ``OWNER/REPO#N``."""
+        return f"{self.repo}#{self.number}"
+
+
+def _closing_refs_error(pr: str, detail: str) -> GitHubAPIError:
+    return GitHubAPIError(
+        1,
+        ("gh", "api", "graphql"),
+        stderr=f"cannot read the closing issue references of PR {pr}: {detail}",
+    )
+
+
+def _closing_issue(pr: str, node: object) -> ClosingIssue:
+    fields = _as_obj(node)
+    number = fields.get("number")
+    state = fields.get("state")
+    repo = _as_obj(fields.get("repository")).get("nameWithOwner")
+    if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
+        raise _closing_refs_error(pr, f"a reference has no valid number: {node!r}")
+    if state not in ("OPEN", "CLOSED"):
+        raise _closing_refs_error(pr, f"a reference has an unknown state: {node!r}")
+    if not isinstance(repo, str) or "/" not in repo:
+        raise _closing_refs_error(pr, f"a reference has no repository: {node!r}")
+    return ClosingIssue(repo=repo, number=number, state=state)
+
+
+def pr_closing_references(pr: str) -> PRClosingReferences:
+    """Return *pr*'s state and the issues GitHub lists as its closing references.
+
+    The list is GitHub's own ``closingIssuesReferences`` (closing keywords and
+    manual Development links), never parsed from the PR text, so an issue the
+    PR only mentions is never in it (issue #4002). The repo is read from the
+    PR itself, and each reference keeps its own repo, so a cross-repo
+    reference is never mistaken for one in the PR's repo. A response that is
+    not what was asked for, or a list longer than one page, raises
+    :class:`GitHubAPIError` rather than return a partial or guessed answer.
+    """
+    repo, number = pr_repo_and_number(pr, "its closing issue references")
+    owner, name = repo.split("/", 1)
+    data = graphql(_CLOSING_REFS_QUERY, owner=owner, name=name, number=number)
+    node = _as_obj(_as_obj(data.get("repository")).get("pullRequest"))
+    state = node.get("state")
+    if state not in ("OPEN", "CLOSED", "MERGED"):
+        raise _closing_refs_error(pr, f"no pull request state in the response: {data!r}")
+    merged_at = node.get("mergedAt")
+    if merged_at is not None and not isinstance(merged_at, str):
+        raise _closing_refs_error(pr, f"mergedAt is not a timestamp: {merged_at!r}")
+    refs = _as_obj(node.get("closingIssuesReferences"))
+    total = refs.get("totalCount")
+    nodes = refs.get("nodes")
+    if not isinstance(total, int) or isinstance(total, bool) or not isinstance(nodes, list):
+        raise _closing_refs_error(pr, f"no closingIssuesReferences in the response: {data!r}")
+    issues = tuple(_closing_issue(pr, item) for item in cast("list[object]", nodes))
+    if total != len(issues):
+        raise _closing_refs_error(
+            pr, f"GitHub lists {total} closing references but returned {len(issues)}"
+        )
+    return PRClosingReferences(
+        repo=repo, number=number, state=state, merged_at=merged_at, issues=issues
+    )
+
+
+def close_issue(repo: str, number: int, *, comment: str) -> None:
+    """Close *repo*#*number* as completed, posting *comment*; raise on failure."""
+    run(
+        "issue",
+        "close",
+        str(number),
+        "--repo",
+        repo,
+        "--reason",
+        "completed",
+        "--comment",
+        comment,
+    )
 
 
 def merge(pr: str, *, strategy: str) -> None:
