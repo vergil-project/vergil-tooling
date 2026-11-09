@@ -104,8 +104,6 @@ def detect_language(repo_root: Path) -> str:
         return "go"
     if (repo_root / "Cargo.toml").is_file():
         return "rust"
-    if (repo_root / "pom.xml").is_file() or (repo_root / "mvnw").is_file():
-        return "java"
     # C++ is identified by the pair: a CMakeLists.txt AND a Conan manifest
     # (spec vergil-project/.github#207 §3.3). Either marker alone is
     # insufficient — CMake is used far beyond Conan-managed C++ projects.

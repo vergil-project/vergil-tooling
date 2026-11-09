@@ -21,7 +21,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--language",
         required=True,
-        help="Programming language (python, go, java, rust)",
+        help="Programming language (python, go, rust)",
     )
     parser.add_argument(
         "--target-dir",

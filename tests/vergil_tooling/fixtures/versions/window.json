@@ -29,28 +29,6 @@
         }
       ]
     },
-    "java": {
-      "families": [
-        {
-          "key": "java",
-          "token_prefix": "",
-          "versions": [
-            {
-              "version": "21",
-              "eol": null,
-              "in_policy": true,
-              "runtime_published": null
-            },
-            {
-              "version": "17",
-              "eol": null,
-              "in_policy": true,
-              "runtime_published": null
-            }
-          ]
-        }
-      ]
-    },
     "go": {
       "families": [
         {

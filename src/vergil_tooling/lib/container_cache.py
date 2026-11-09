@@ -48,7 +48,6 @@ _CACHE_FILES: dict[str, list[str]] = {
     "python": ["uv.lock", "vergil.toml"],
     "rust": ["Cargo.lock", "vergil.toml"],
     "go": ["go.sum", "vergil.toml"],
-    "java": ["pom.xml", "vergil.toml"],
     # cpp names both conanfile spellings; cache_files() filters to what exists.
     "cpp": ["conanfile.txt", "conanfile.py", "conan.lock", "CMakeLists.txt", "vergil.toml"],
     "typescript": ["package-lock.json", "vergil.toml"],
@@ -77,7 +76,6 @@ _WARMUP_REQUIRES: dict[str, list[list[str]]] = {
     "python": [["pyproject.toml"], ["uv.lock"]],
     "rust": [["Cargo.toml"]],
     "go": [["go.mod"]],
-    "java": [["pom.xml"], ["mvnw"]],
     "cpp": [["conanfile.txt", "conanfile.py"], ["CMakeLists.txt"], ["conan.lock"]],
     "typescript": [["package.json"], ["package-lock.json"]],
 }

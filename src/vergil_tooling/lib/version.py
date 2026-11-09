@@ -19,7 +19,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 _GO_VERSION_RE = re.compile(r'Version\s*=\s*"([^"]+)"')
-_JAVA_VERSION_RE = re.compile(r"<version>([^<]+)</version>")
 
 _LOCKFILE_COMMANDS: dict[str, list[str]] = {
     "python": ["uv", "lock"],
@@ -29,7 +28,6 @@ _LOCKFILE_COMMANDS: dict[str, list[str]] = {
 _DEFAULT_VERSION_FILES: dict[str, str] = {
     "python": "pyproject.toml",
     "rust": "Cargo.toml",
-    "java": "pom.xml",
 }
 
 VERSION_FILE = "VERSION"
@@ -38,7 +36,6 @@ _LANGUAGES_WITH_SEPARATE_VERSION = frozenset(
     {
         "python",
         "rust",
-        "java",
         "go",
     }
 )
@@ -117,13 +114,6 @@ def _read_version(text: str, language: str) -> str:
             raise ValueError(msg)
         return m.group(1)
 
-    if language == "java":
-        m = _JAVA_VERSION_RE.search(text)
-        if not m:
-            msg = "No <version>...</version> found"
-            raise ValueError(msg)
-        return m.group(1)
-
     if language == "claude-plugin":
         data = json.loads(text)
         version = data.get("version")
@@ -196,8 +186,6 @@ def _write_version(version_file: Path, language: str, old: str, new: str) -> Non
         text = text.replace(f'version = "{old}"', f'version = "{new}"', 1)
     elif language == "go":
         text = text.replace(f'Version = "{old}"', f'Version = "{new}"', 1)
-    elif language == "java":
-        text = text.replace(f"<version>{old}</version>", f"<version>{new}</version>", 1)
     elif language == "claude-plugin":
         text = text.replace(f'"version": "{old}"', f'"version": "{new}"', 1)
     else:

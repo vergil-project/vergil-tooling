@@ -547,7 +547,6 @@ def _cd_release_secrets(language: str | None) -> list[str]:
     """
     secrets_map = {
         "rust": ["CARGO_REGISTRY_TOKEN"],
-        "java": ["CENTRAL_USERNAME", "CENTRAL_TOKEN", "GPG_PRIVATE_KEY", "GPG_PASSPHRASE"],
     }
     return secrets_map.get(language or "", [])
 
@@ -556,7 +555,6 @@ _CODEQL_LANGUAGES = frozenset(
     {
         "python",
         "go",
-        "java",
         "cpp",
         "csharp",
         "javascript",

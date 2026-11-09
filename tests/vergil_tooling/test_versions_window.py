@@ -64,7 +64,7 @@ def test_load_window_parses_schema_1() -> None:
 
     assert fetched == [_URL]
     assert window.source == _URL
-    assert set(window.languages) == {"python", "java", "go", "rust", "cpp", "typescript"}
+    assert set(window.languages) == {"python", "go", "rust", "cpp", "typescript"}
     (python,) = window.languages["python"]
     assert python == WindowFamily(
         key="python",

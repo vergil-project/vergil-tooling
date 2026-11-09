@@ -62,7 +62,6 @@ def test_language_ecosystems_mapping() -> None:
         "python": "uv",
         "go": "gomod",
         "rust": "cargo",
-        "java": "maven",
         "typescript": "npm",
     }
 
