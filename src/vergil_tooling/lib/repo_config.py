@@ -24,6 +24,10 @@ if TYPE_CHECKING:
 #: Packaged template files.
 CLAUDE_MD_TEMPLATE = "claude_md_consumer.md"
 SETTINGS_TEMPLATE = "claude_settings.json"
+HOOK_GUARD_SHIM_TEMPLATE = "hook_guard_shim.sh"
+
+#: Where the hook guard shim lives in a repo, relative to its root.
+HOOK_GUARD_SHIM_PATH = ".claude/hooks/guard.sh"
 
 #: The CLAUDE.md line budget (epic vergil-project/.github#558), counted as
 #: ``len(text.splitlines())`` so a trailing newline is not an extra line.
@@ -34,6 +38,17 @@ def _read_data_file(name: str) -> str:
     return (
         importlib.resources.files("vergil_tooling.data").joinpath(name).read_text(encoding="utf-8")
     )
+
+
+def render_hook_guard_shim() -> str:
+    """Return the ``.claude/hooks/guard.sh`` text: the packaged hook guard shim.
+
+    The file is fully managed: the audit requires a repo's copy to match it
+    byte for byte, ``vrg-github-repo-init`` writes it for a new repo, and
+    ``vrg-hook-guard-shim-sync`` writes it for an existing one. A missing
+    packaged file raises; it is never treated as an empty shim.
+    """
+    return _read_data_file(HOOK_GUARD_SHIM_TEMPLATE)
 
 
 def _load_template() -> str:
@@ -395,13 +410,39 @@ def _first_divergence(
 
 
 def _check_hook_guard_shim(repo_root: Path, items: list[DiffItem]) -> None:
-    shim_path = repo_root / ".claude" / "hooks" / "guard.sh"
+    """Require ``.claude/hooks/guard.sh`` to match the packaged shim byte for byte.
+
+    A stale copy (one that does not fail closed) or a local edit is drift.
+    The comparison is on bytes, so a CRLF copy, which bash cannot run, is
+    drift too. An unreadable file is reported, never passed.
+    """
+    shim_path = repo_root / HOOK_GUARD_SHIM_PATH
     if not shim_path.is_file():
         items.append(
             DiffItem(
                 field="local.hook_guard_shim",
                 expected="present",
                 actual="missing",
+            )
+        )
+        return
+    try:
+        current = shim_path.read_bytes()
+    except OSError as exc:
+        items.append(
+            DiffItem(
+                field="local.hook_guard_shim",
+                expected="readable",
+                actual=f"unreadable ({exc})",
+            )
+        )
+        return
+    if current != render_hook_guard_shim().encode("utf-8"):
+        items.append(
+            DiffItem(
+                field="local.hook_guard_shim",
+                expected="matches the packaged shim (src/vergil_tooling/data/hook_guard_shim.sh)",
+                actual="differs from the packaged shim (stale or locally edited)",
             )
         )
 

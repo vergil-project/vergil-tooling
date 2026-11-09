@@ -1407,9 +1407,8 @@ def step_scaffold_config_files(ctx: RepoInitContext) -> None:
     # .claude/hooks/guard.sh
     hooks_dir = claude_dir / "hooks"
     hooks_dir.mkdir(exist_ok=True)
-    shim_content = _load_data_file("hook_guard_shim.sh")
     shim_path = hooks_dir / "guard.sh"
-    shim_path.write_text(shim_content)
+    shim_path.write_bytes(repo_config.render_hook_guard_shim().encode("utf-8"))
     shim_path.chmod(shim_path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
     # README.md
