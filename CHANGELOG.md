@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.294] - 2026-11-09
+
+### Features
+
+- install vergil-tooling from its package where the image has the vergil apt repository (#4133)
+
 ## [2.1.293] - 2026-11-09
 
 ### Bug fixes
