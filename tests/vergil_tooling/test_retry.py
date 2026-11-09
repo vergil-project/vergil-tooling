@@ -286,6 +286,56 @@ class TestCallWithRetry:
         assert excinfo.value is err
         mock_sleep.assert_not_called()
 
+    def test_default_classifier_does_not_retry_500(self) -> None:
+        calls, fn = _sequence(_api_error(stderr="HTTP 500"), "ok")
+        with (
+            patch("vergil_tooling.lib.retry.time.sleep") as mock_sleep,
+            pytest.raises(subprocess.CalledProcessError),
+        ):
+            retry.call_with_retry(fn)
+        assert calls == [1]
+        mock_sleep.assert_not_called()
+
+    def test_read_classifier_retries_500_then_succeeds(self) -> None:
+        calls, fn = _sequence(_api_error(stderr="HTTP 500"), "ok")
+        with patch("vergil_tooling.lib.retry.time.sleep") as mock_sleep:
+            assert retry.call_with_retry(fn, retryable=retry.is_retryable_read) == "ok"
+        assert calls == [1, 1]
+        assert mock_sleep.call_count == 1
+
+
+class TestIsRetryableRead:
+    """The read-only classifier: the shared list plus HTTP 500 (#4119)."""
+
+    @pytest.mark.parametrize(
+        "stderr",
+        [
+            # gh's rendering of the 2026-11-09 release-asset failures.
+            "HTTP 500 (https://api.github.com/repos/vergil-project/vergil-tooling/releases/"
+            "assets/663982521)",
+            "HTTP 500: Internal Server Error",
+            "500 Internal Server Error",
+        ],
+    )
+    def test_500_is_retryable_for_reads_only(self, stderr: str) -> None:
+        assert retry.is_retryable_read(_api_error(stderr=stderr)) is True
+        assert retry.is_retryable(_api_error(stderr=stderr)) is False
+
+    def test_500_in_stdout(self) -> None:
+        assert retry.is_retryable_read(_api_error(stdout="HTTP 500")) is True
+
+    @pytest.mark.parametrize(
+        "stderr", ["HTTP 502 Bad Gateway", "HTTP 503", "unexpected EOF", "HTTP 401"]
+    )
+    def test_shared_transients_stay_retryable(self, stderr: str) -> None:
+        assert retry.is_retryable_read(_api_error(stderr=stderr)) is True
+
+    @pytest.mark.parametrize(
+        "stderr", ["HTTP 404 Not Found", "HTTP 422 Unprocessable Entity", "release not found", ""]
+    )
+    def test_answer_type_errors_stay_fatal(self, stderr: str) -> None:
+        assert retry.is_retryable_read(_api_error(stderr=stderr)) is False
+
 
 class _FakeClock:
     """Deterministic monotonic clock whose ``sleep`` advances time instantly."""

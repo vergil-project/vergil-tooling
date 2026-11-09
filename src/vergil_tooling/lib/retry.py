@@ -8,6 +8,9 @@ while executing your query" failure (#3148), ``net/http`` transport failures (TL
 timeout, connection refused, DNS lookup, EOF) and raw git/SSH transport
 drops identically (#2835).
 
+HTTP 500 is retried **only for read-only callers**, through
+:func:`is_retryable_read` (#4119); see ``_READ_RETRYABLE_PATTERNS``.
+
 HTTP 401 "Bad credentials" is treated as transient: GitHub's API
 (notably the GraphQL endpoint behind ``gh pr checks --watch``)
 intermittently rejects a valid token, with the immediately following
@@ -101,10 +104,38 @@ _RETRYABLE_PATTERNS = (
 )
 
 
+# Retryable only for a read-only call, never through :func:`is_retryable`.
+# GitHub's REST API answers a backend blip with a bare HTTP 500 (gh prints
+# "HTTP 500 (<url>)"); the release-asset endpoint did so intermittently on
+# 2026-11-09, failing three package-index builds in a row on a different old
+# asset each time (#4119). A 500 is not in the shared list because GitHub can
+# return one after a write has landed: retrying a ``gh issue create`` would
+# then create a duplicate silently, where the 502/504 retry's duplicates fail
+# loudly. A read has no such risk.
+_READ_RETRYABLE_PATTERNS = (
+    "http 500",
+    "internal server error",
+)
+
+
 def is_retryable(exc: subprocess.CalledProcessError) -> bool:
     """Return True if the error looks like a transient GitHub API failure."""
     detail = ((exc.stderr or "") + (exc.stdout or "")).lower()
     return any(p in detail for p in _RETRYABLE_PATTERNS)
+
+
+def is_retryable_read(exc: subprocess.CalledProcessError) -> bool:
+    """Return True if a **read-only** call's error is transient.
+
+    Everything :func:`is_retryable` accepts, plus GitHub's HTTP 500. Pass it as
+    ``call_with_retry(..., retryable=is_retryable_read)`` only where every call
+    wrapped is a read, so a 500 that landed server-side can never repeat a
+    mutation.
+    """
+    if is_retryable(exc):
+        return True
+    detail = ((exc.stderr or "") + (exc.stdout or "")).lower()
+    return any(p in detail for p in _READ_RETRYABLE_PATTERNS)
 
 
 def compute_delay(attempt: int) -> float:
@@ -123,21 +154,26 @@ def run_with_retry(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str
     return call_with_retry(lambda: subprocess.run(*args, **kwargs))  # noqa: S603
 
 
-def call_with_retry[T](fn: Callable[[], T]) -> T:
+def call_with_retry[T](
+    fn: Callable[[], T],
+    *,
+    retryable: Callable[[subprocess.CalledProcessError], bool] = is_retryable,
+) -> T:
     """Call *fn*, retrying a transient ``CalledProcessError`` with bounded backoff.
 
     The callable form of :func:`run_with_retry`, for code that runs ``gh``
     through an injected transport (e.g. the package-index collector's ``Run``,
-    #3153) rather than ``subprocess.run`` directly. An error that
-    :func:`is_retryable` does not classify as transient is raised at once; a
-    transient one is retried up to :data:`MAX_RETRIES` times and then the
-    original error is raised.
+    #3153) rather than ``subprocess.run`` directly. An error that *retryable*
+    (default :func:`is_retryable`) does not classify as transient is raised at
+    once; a transient one is retried up to :data:`MAX_RETRIES` times and then
+    the original error is raised. A caller whose calls are all reads may pass
+    :func:`is_retryable_read`.
     """
     for attempt in range(MAX_RETRIES + 1):
         try:
             return fn()
         except subprocess.CalledProcessError as exc:
-            if attempt == MAX_RETRIES or not is_retryable(exc):
+            if attempt == MAX_RETRIES or not retryable(exc):
                 raise
             delay = compute_delay(attempt)
             log.warning(
