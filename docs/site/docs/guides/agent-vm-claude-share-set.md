@@ -80,9 +80,17 @@ re-clones the marketplace at that ref, which is how a VM switches ref. It
 then refreshes each marketplace it added by name (`claude plugin
 marketplace update <name>`), including `claude-plugins-official` when it
 added that one for an enabled plugin. Any other marketplace registered in the
-VM is never updated, so a stale leftover cannot fail the refresh; a plugin
-enabled from one is still updated, from that marketplace's catalog as it
-stands. It then updates every **install** of an
+VM is never updated, so a stale leftover cannot fail the refresh. The
+`settings.json` must therefore declare the marketplace of every plugin it
+enables, `claude-plugins-official` aside: a plugin enabled from an
+undeclared marketplace would be updated from a catalog nobody refreshed, so
+it is an error, raised before any `claude` command runs, that names the
+plugin and its marketplace. `vrg-vm update` checks the host file for it
+before copying the file into any VM. An install that `claude plugin list
+--json` reports enabled from such a marketplace (one a project's own
+settings enable, say) is an error too, naming the install and its
+marketplace, and the refresh stops before updating any plugin. Otherwise it
+updates every **install** of an
 enabled plugin to its latest version, each at its own scope (`claude plugin
 update <id> --scope <user|project>` — there is no bulk-update form), all
 inside the VM. One plugin can be installed at user scope and again at project

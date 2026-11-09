@@ -84,7 +84,7 @@ divergence:
 | Check | Asserts |
 |---|---|
 | `_check_vergil_toml` | `vergil.toml` present and parseable |
-| `_check_hook_guard_shim` | `.claude/hooks/guard.sh` present |
+| `_check_hook_guard_shim` | `.claude/hooks/guard.sh` present, readable, and byte-identical to the packaged hook guard shim **(#4109)** |
 | `_check_claude_md` | `CLAUDE.md` has one pair of template markers, and the marked region carries the canonical consumer template verbatim |
 | `_check_claude_md_length` | `CLAUDE.md` is at most 200 lines, template region included **(.github#558)** |
 | `_check_agents_md` | no `AGENTS.md` exists **(.github#558)** |
@@ -128,6 +128,24 @@ each top-level key that is missing, unexpected or different. Fix it with
 template for one repo; `vrg-fleet-sync --target claude-settings` does the
 same across the fleet, one PR per drifted repo (see the
 [CLI Tools Overview](cli-tools-overview.md#vrg-claude-settings-sync)).
+
+### `_check_hook_guard_shim` — the whole file
+
+`.claude/hooks/guard.sh` must match the packaged shim,
+[`hook_guard_shim.sh`](https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/data/hook_guard_shim.sh),
+byte for byte. The packaged shim fails closed: when `vrg-hook-guard` is
+not installed, its `jq` fallback refuses input it cannot check. An older
+copy that lets such input through, a local edit, or a CRLF copy is drift.
+The check reports one `DiffItem(field="local.hook_guard_shim", ...)`:
+`missing` when the file is absent, `unreadable (…)` when it cannot be
+read, or `differs from the packaged shim (stale or locally edited)`. It
+compares content only, not the file mode.
+
+Fix it with `vrg-hook-guard-shim-sync --write`, which replaces the file
+with the packaged shim, mode `0755`, for one repo;
+`vrg-fleet-sync --target hook-guard-shim` does the same across the
+fleet, one PR per drifted repo (see the
+[CLI Tools Overview](cli-tools-overview.md#vrg-hook-guard-shim-sync)).
 
 ### `CLAUDE.md` and `AGENTS.md` — the instruction file
 
@@ -258,8 +276,8 @@ build/validation/CI-evidence output including the mkdocs build path
 `docs/site/site/` and the paths `vrg-container-docs` stages:
 `docs/site/docs/changelog.md`, `docs/site/docs/releases/` and
 `mkdocs.staged.yml`) plus the fragment for its `[project].primary-language`
-(Python, TypeScript/Node, Go, C++; Rust and Java are managed with
-an empty fragment). A repo that declares no fragment language gets the
+(Python, TypeScript/Node, Go, C++; Rust is managed with an empty
+fragment). A repo that declares no fragment language gets the
 base-only block.
 
 **The managed fence.** The composed block is written into `.gitignore`

@@ -203,7 +203,7 @@ Required keys and accepted values:
 | `[project].versioning-scheme` | `application`, `library`, `none`, `semver` | Required. |
 | `[project].branching-model` | `application-promotion`, `docs-single-branch`, `library-release` | Required. Determines which branch prefixes `vrg-commit` allows. |
 | `[project].release-model` | `artifact-publishing`, `environment-promotion`, `none`, `tagged-release` | Required. |
-| `[project].primary-language` | `cpp`, `go`, `java`, `python`, `rust`, `typescript` | Optional. Omit it for a repo with no primary language; it selects the per-language checks, container image and `.gitignore` fragment. |
+| `[project].primary-language` | `cpp`, `go`, `python`, `rust`, `typescript` | Optional. Omit it for a repo with no primary language; it selects the per-language checks, container image and `.gitignore` fragment. |
 | `[ci].versions` | non-empty list of strings | Optional pin. Omit it to follow the version window. Every pinned version must be in the window, and an app may pin only one version; either violation is an error. C++ and TypeScript repos must pin. |
 | `[dependencies].vergil` | `vX.Y` | Required. The vergil release line; new repos get the line of the vergil-tooling that created them. |
 
@@ -233,7 +233,10 @@ vergil-tooling is installed and otherwise falls back to a `jq`-based
 hard deny. `vrg-github-repo-init` writes it, executable, from the
 packaged template
 [`hook_guard_shim.sh`](https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/data/hook_guard_shim.sh).
-No per-clone configuration is required.
+No per-clone configuration is required. The file is fully managed: the
+config audit requires it to match the packaged shim byte for byte, and
+`vrg-hook-guard-shim-sync --write` (or `vrg-fleet-sync --target
+hook-guard-shim` across the fleet) replaces a stale or edited copy.
 
 All branch/context checks (detached HEAD, protected branches,
 branch prefix, issue number) live in `vrg-commit` itself. See the
@@ -339,8 +342,14 @@ update <name>`), then the installed plugins. `claude-plugins-official` is
 re-added and updated the same way when an enabled plugin needs it and the
 settings do not declare it. Any other registered marketplace, such as an
 old one that no settings file declares, is never updated and cannot fail
-the refresh; a plugin enabled from one is still updated, from that
-marketplace's catalog as it stands. It then verifies that each declared
+the refresh. So the settings must declare the marketplace of every plugin
+they enable, `claude-plugins-official` aside: a plugin enabled from an
+undeclared marketplace is an error, raised before any `claude` command runs,
+that names the plugin and its marketplace (its catalog would otherwise never
+be refreshed). So is an install that `claude plugin list --json` reports
+enabled from such a marketplace, for example one a project's own settings
+enable: the refresh stops before updating any plugin. It then verifies
+that each declared
 GitHub marketplace is registered, as
 `claude plugin marketplace list --json` reports it, at the declared repo
 and ref. A mismatch or a missing registration is a reported failure:

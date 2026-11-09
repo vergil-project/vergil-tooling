@@ -58,13 +58,6 @@ def test_show_go(tmp_path: Path) -> None:
     assert show(tmp_path) == "1.0.5"
 
 
-def test_show_java(tmp_path: Path) -> None:
-    _write_toml(tmp_path, "java")
-    (tmp_path / "VERSION").write_text("3.2.1\n")
-    (tmp_path / "pom.xml").write_text("<project>\n  <version>3.2.1</version>\n</project>\n")
-    assert show(tmp_path) == "3.2.1"
-
-
 def test_show_claude_plugin(tmp_path: Path) -> None:
     _write_toml(tmp_path)
     (tmp_path / "VERSION").write_text("1.4.19\n")
@@ -227,17 +220,6 @@ def test_bump_go(tmp_path: Path) -> None:
     assert 'Version = "1.0.6"' in text
 
 
-def test_bump_java(tmp_path: Path) -> None:
-    _write_toml(tmp_path, "java")
-    (tmp_path / "VERSION").write_text("3.2.1\n")
-    (tmp_path / "pom.xml").write_text("<project>\n  <version>3.2.1</version>\n</project>\n")
-    result = bump(tmp_path)
-    assert result == "3.2.2"
-    assert (tmp_path / "VERSION").read_text().strip() == "3.2.2"
-    text = (tmp_path / "pom.xml").read_text()
-    assert "<version>3.2.2</version>" in text
-
-
 def test_bump_claude_plugin(tmp_path: Path) -> None:
     _write_toml(tmp_path)
     (tmp_path / "VERSION").write_text("1.4.19\n")
@@ -351,13 +333,6 @@ def test_read_version_go_bad_format() -> None:
 
     with pytest.raises(ValueError, match="No Version"):
         _read_version("no version here", "go")
-
-
-def test_read_version_java_bad_format() -> None:
-    from vergil_tooling.lib.version import _read_version
-
-    with pytest.raises(ValueError, match="No <version>"):
-        _read_version("no version here", "java")
 
 
 def test_read_version_claude_plugin_missing_key() -> None:

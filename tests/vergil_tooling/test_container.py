@@ -71,16 +71,6 @@ def test_detect_rust(tmp_path: Path) -> None:
     assert detect_language(tmp_path) == "rust"
 
 
-def test_detect_java_pom(tmp_path: Path) -> None:
-    (tmp_path / "pom.xml").write_text("<project/>\n")
-    assert detect_language(tmp_path) == "java"
-
-
-def test_detect_java_mvnw(tmp_path: Path) -> None:
-    (tmp_path / "mvnw").write_text("#!/bin/bash\n")
-    assert detect_language(tmp_path) == "java"
-
-
 def test_detect_none(tmp_path: Path) -> None:
     assert detect_language(tmp_path) == ""
 

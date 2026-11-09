@@ -98,10 +98,3 @@ class TestShimFallback:
     def test_non_bash_tool_passes_through(self, shim: Path, tmp_path: Path) -> None:
         proc = _run_shim(shim, _payload({"file_path": "/x"}, tool_name="Read"), tmp_path)
         assert (proc.returncode, proc.stdout, proc.stderr) == (0, "", "")
-
-
-def test_shim_copies_differ_only_in_deny_reason() -> None:
-    template, local = (p.read_text().splitlines() for p in _SHIMS)
-    differing = [(a, b) for a, b in zip(template, local, strict=True) if a != b]
-    assert len(differing) == 1
-    assert all("permissionDecisionReason" in line for line in differing[0])

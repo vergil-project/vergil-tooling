@@ -80,7 +80,6 @@ FRAGMENT_LANGS: tuple[str, ...] = (
     "cpp",
     "go",
     "rust",
-    "java",
     "typescript",
 )
 

@@ -128,9 +128,6 @@ nav:
           - Go:
               - Overview: standards/development/go/overview.md
               - Naming Conventions: standards/development/go/naming-conventions.md
-          - Java:
-              - Overview: standards/development/java/overview.md
-              - Naming Conventions: standards/development/java/naming-conventions.md
           - Rust:
               - Overview: standards/development/rust/overview.md
               - Naming Conventions: standards/development/rust/naming-conventions.md

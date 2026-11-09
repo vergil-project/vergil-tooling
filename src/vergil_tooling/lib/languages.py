@@ -144,42 +144,6 @@ _GO_LICENSES_ALLOWLIST = ",".join(
     ]
 )
 
-_MAVEN_LICENSES_ALLOWLIST = "|".join(
-    [
-        "Apache 2.0",
-        "Apache-2.0",
-        "The Apache License, Version 2.0",
-        "BSD-2-Clause",
-        "BSD-3-Clause",
-        "GPL-3.0-or-later",
-        "ISC",
-        "MIT License",
-        "MPL-2.0",
-    ]
-)
-
-# The Java vulnerability-audit input (issue #3554): a CycloneDX SBOM of the
-# whole reactor, written by the AUDIT stage's ``makeAggregateBom`` step. It is
-# Maven's own resolved graph, so dependency management, BOM imports, profiles
-# and every module are resolved exactly as the build resolves them.
-JAVA_SBOM = "target/bom.json"
-
-# The Java vulnerability scan: OSV-Scanner over ``JAVA_SBOM``, as one ``sh -c``
-# step for two reasons. osv-scanner only finds an ``osv-scanner.toml`` beside the
-# scanned file (``target/``), so a repo-root config holding reviewed
-# suppressions is passed explicitly when one is committed. And a dev image
-# without osv-scanner fails with a message naming the fix, not a bare
-# FileNotFoundError. ``--allow-no-lockfiles`` lets a project with no
-# dependencies pass (an empty SBOM); a missing SBOM still fails.
-_JAVA_OSV_SCAN = (
-    "command -v osv-scanner >/dev/null 2>&1 || { "
-    "echo 'ERROR: osv-scanner is not installed. The Java audit needs it on PATH;"
-    " add it to the dev-java image in vergil-containers.' >&2; exit 127; }; "
-    f"set -- --allow-no-lockfiles --lockfile={JAVA_SBOM}; "
-    'if [ -f osv-scanner.toml ]; then set -- --config=osv-scanner.toml "$@"; fi; '
-    'exec osv-scanner scan source "$@"'
-)
-
 # C++ license allowlist (epic vergil-project/.github#207 §4). C++/Conan has no
 # turnkey allowlist-enforcing gate the way pip-licenses / go-licenses do, so v1
 # license checking is *best-effort surfacing* (see the AUDIT commands below) and
@@ -447,46 +411,6 @@ _REGISTRY: dict[str, Language] = {
             build_cmd=["go", "build", "./..."],
             publish_cmd=None,
             publish_env_var=None,
-        ),
-    ),
-    "java": Language(
-        name="java",
-        checks={
-            CheckKind.INSTALL: [["./mvnw", "dependency:resolve", "-B"]],
-            CheckKind.LINT: [["./mvnw", "spotless:check", "checkstyle:check", "-B"]],
-            CheckKind.TYPECHECK: [["./mvnw", "compile", "-B"]],
-            CheckKind.TEST: [["./mvnw", "verify", "-B"]],
-            CheckKind.AUDIT: [
-                ["./mvnw", "dependency:tree", "-B", "-q"],
-                [
-                    "./mvnw",
-                    "org.codehaus.mojo:license-maven-plugin:add-third-party",
-                    "-Dlicense.excludedScopes=test",
-                    "-Dlicense.failIfWarning=true",
-                    f"-Dlicense.includedLicenses={_MAVEN_LICENSES_ALLOWLIST}",
-                    "-B",
-                ],
-                # Vulnerability audit over the full resolved graph (#3554):
-                # every module (``skipNotDeployed=false`` keeps modules that
-                # are never deployed) and every scope, test included, like the
-                # Python audit of the whole lock (#3498).
-                [
-                    "./mvnw",
-                    "org.cyclonedx:cyclonedx-maven-plugin:makeAggregateBom",
-                    "-DincludeTestScope=true",
-                    "-Dcyclonedx.skipNotDeployed=false",
-                    "-DoutputFormat=json",
-                    "-DoutputName=bom",
-                    "-B",
-                    "-q",
-                ],
-                ["sh", "-c", _JAVA_OSV_SCAN],
-            ],
-        },
-        ecosystem=EcosystemInfo(
-            build_cmd=["./mvnw", "package", "-B"],
-            publish_cmd=["./mvnw", "deploy", "-B"],
-            publish_env_var="MAVEN_GPG_PASSPHRASE",
         ),
     ),
     "rust": Language(

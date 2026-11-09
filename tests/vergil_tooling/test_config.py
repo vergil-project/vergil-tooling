@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
@@ -278,6 +279,20 @@ def test_config_rejects_retired_ruby_language(tmp_path: Path) -> None:
     toml = _VALID_TOML.replace('primary-language = "python"', 'primary-language = "ruby"')
     (tmp_path / "vergil.toml").write_text(toml)
     with pytest.raises(ConfigError, match=r"primary-language 'ruby' is no longer supported"):
+        read_config(tmp_path)
+
+
+def test_config_rejects_retired_java_language(tmp_path: Path) -> None:
+    """Java is retired: it fails loudly instead of reading as unset."""
+    toml = _VALID_TOML.replace('primary-language = "python"', 'primary-language = "java"')
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(
+        ConfigError,
+        match=re.escape(
+            "primary-language 'java' is no longer supported"
+            " (Java support was removed in epic vergil-project/.github#952)"
+        ),
+    ):
         read_config(tmp_path)
 
 

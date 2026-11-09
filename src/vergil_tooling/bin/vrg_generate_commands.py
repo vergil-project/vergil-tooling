@@ -1,7 +1,7 @@
 """Generate MQSC command methods for all language ports.
 
 Reads mapping-data.json and generates complete command method blocks for
-Python, Java, Go, and Rust.  Output is written between
+Python, Go, and Rust.  Output is written between
 BEGIN/END GENERATED MQSC METHODS markers in the target file.
 """
 
@@ -273,95 +273,6 @@ def generate_python(specs: list[CommandSpec], mapping_pages: frozenset[str]) -> 
 
 
 # ---------------------------------------------------------------------------
-# Java generation
-# ---------------------------------------------------------------------------
-
-
-def _java_method_name(cmd: CommandSpec) -> str:
-    """Convert verb_qualifier to camelCase."""
-    parts = f"{cmd.verb.lower()}_{cmd.mqsc_qualifier.lower()}".split("_")
-    return parts[0] + "".join(p.capitalize() for p in parts[1:])
-
-
-def _java_method(cmd: CommandSpec) -> str:
-    """Generate one Java method."""
-    method_name = _java_method_name(cmd)
-    command_label = f"{cmd.verb} {cmd.mqsc_qualifier}"
-
-    lines: list[str] = []
-    article = "an" if cmd.verb[0] in "AEIOU" else "a"
-    lines.append(f"  /** Executes {article} {command_label} MQSC command. */")
-
-    if cmd.pattern == "singleton":
-        lines.append(f"  public @Nullable Map<String, Object> {method_name}(")
-        lines.append(
-            "      @Nullable Map<String, Object> requestParameters,"
-            " @Nullable List<String> responseParameters) {"
-        )
-        lines.append("    List<Map<String, Object>> objects =")
-        lines.append(
-            f'        mqscCommand("{cmd.verb}", "{cmd.mqsc_qualifier}",'
-            f" null, requestParameters, responseParameters, null);"
-        )
-        lines.append("    return objects.isEmpty() ? null : objects.get(0);")
-    elif cmd.pattern == "list":
-        lines.append(f"  public List<Map<String, Object>> {method_name}(")
-        lines.append("      @Nullable String name,")
-        lines.append("      @Nullable Map<String, Object> requestParameters,")
-        lines.append("      @Nullable List<String> responseParameters,")
-        lines.append("      @Nullable String where) {")
-        if cmd.name_default:
-            lines.append(
-                f'    return mqscCommand("{cmd.verb}", "{cmd.mqsc_qualifier}",'
-                f' name != null ? name : "{cmd.name_default}",'
-                f" requestParameters, responseParameters, where);"
-            )
-        else:
-            lines.append(
-                f'    return mqscCommand("{cmd.verb}", "{cmd.mqsc_qualifier}",'
-                f" name, requestParameters, responseParameters, where);"
-            )
-    elif cmd.pattern == "required_name":
-        lines.append(f"  public void {method_name}(")
-        lines.append("      @Nullable String name,")
-        lines.append("      @Nullable Map<String, Object> requestParameters,")
-        lines.append("      @Nullable List<String> responseParameters) {")
-        lines.append('    Objects.requireNonNull(name, "name");')
-        lines.append(
-            f'    mqscCommand("{cmd.verb}", "{cmd.mqsc_qualifier}",'
-            f" name, requestParameters, responseParameters, null);"
-        )
-    elif cmd.pattern == "no_name":
-        lines.append(f"  public void {method_name}(")
-        lines.append(
-            "      @Nullable Map<String, Object> requestParameters,"
-            " @Nullable List<String> responseParameters) {"
-        )
-        lines.append(
-            f'    mqscCommand("{cmd.verb}", "{cmd.mqsc_qualifier}",'
-            f" null, requestParameters, responseParameters, null);"
-        )
-    else:  # optional_name
-        lines.append(f"  public void {method_name}(")
-        lines.append("      @Nullable String name,")
-        lines.append("      @Nullable Map<String, Object> requestParameters,")
-        lines.append("      @Nullable List<String> responseParameters) {")
-        lines.append(
-            f'    mqscCommand("{cmd.verb}", "{cmd.mqsc_qualifier}",'
-            f" name, requestParameters, responseParameters, null);"
-        )
-
-    lines.append("  }")
-    return "\n".join(lines)
-
-
-def generate_java(specs: list[CommandSpec]) -> str:
-    """Generate all Java methods."""
-    methods = [_java_method(cmd) for cmd in specs]
-    return "\n\n".join(methods)
-
-
-# ---------------------------------------------------------------------------
 # Go generation
 # ---------------------------------------------------------------------------
 
@@ -590,11 +501,10 @@ def generate_rust(specs: list[CommandSpec]) -> str:
 # Language dispatch
 # ---------------------------------------------------------------------------
 
-LANGUAGES = ("python", "java", "go", "rust")
+LANGUAGES = ("python", "go", "rust")
 
 GENERATORS: dict[str, object] = {
     "python": generate_python,
-    "java": generate_java,
     "go": generate_go,
     "rust": generate_rust,
 }
@@ -609,8 +519,6 @@ def generate(
     """Generate command methods for the given language."""
     if language == "python":
         return generate_python(specs, mapping_pages or frozenset())
-    if language == "java":
-        return generate_java(specs)
     if language == "go":
         return generate_go(specs)
     if language == "rust":
@@ -625,7 +533,6 @@ def generate(
 
 MARKERS: dict[str, tuple[str, str]] = {
     "python": ("    # BEGIN GENERATED MQSC METHODS", "    # END GENERATED MQSC METHODS"),
-    "java": ("  // BEGIN GENERATED MQSC METHODS", "  // END GENERATED MQSC METHODS"),
     "go": ("// BEGIN GENERATED MQSC METHODS", "// END GENERATED MQSC METHODS"),
     "rust": ("    // BEGIN GENERATED MQSC METHODS", "    // END GENERATED MQSC METHODS"),
 }
