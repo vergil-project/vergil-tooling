@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.294/">
       
       
         <link rel="next" href="../v2.1.292/">
@@ -1391,6 +1391,8 @@
       
         
       
+        
+      
     
     
     
@@ -1446,6 +1448,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.294/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.294
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -16967,6 +16997,7 @@
 </ul>
 <p>The package-index stage followed the publish-index run that covers the release, but treated it as progress output only. When that run failed, the stage kept polling the Pages index for the full 1200s timeout, then reported a timeout that pointed at the index rather than the failed run.</p>
 <p>Now, when a followed run concludes failure, timed_out or startup_failure, the stage checks the index once more and looks for a newer index run to follow. If the index still lacks the release and there is no newer run, it fails at once, naming the run and its conclusion. A newer run is still followed, and a failure to list runs still falls back to plain polling, so the index poll stays the only check that passes the stage.</p>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.293/v2.1.293-ci-evidence.tar.gz">Download →</a></p>
 
 
 

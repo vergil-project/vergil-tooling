@@ -1384,6 +1384,8 @@
       
         
       
+        
+      
     
     
     
@@ -1436,6 +1438,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.294/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.294
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17529,6 +17559,14 @@ repository with no language uses the base image. On top of that image,
 <code>vrg-container-run</code> builds a per-branch cached image with
 vergil-tooling installed. Set <code>DOCKER_DEV_IMAGE</code> to use a different
 image.</p>
+<p>The image chooses how vergil-tooling is installed, by two checks: the
+vergil apt source (<code>/etc/apt/sources.list.d/vergil.sources</code>) and a core
+vergil-python (<code>/opt/vergil/python/*/bin/python3</code>). With both, a release
+version (<code>vX.Y</code> or <code>vX.Y.Z</code>) installs the vergil-tooling package, pinned
+to that version, and the build checks that <code>vrg-*</code> runs from <code>/usr/bin</code>
+on vergil-python; a branch is <code>uv tool install</code> from git on the core
+Python. With neither, it is <code>uv tool install</code> from git. An image with only
+one of the two fails the build. The build log names the path it took.</p>
 <p><code>vrg-validate</code> first runs the common checks: the
 <a href="../../reference/lint/repo-profile/">repo-profile</a> check, markdownlint,
 shellcheck, yamllint, hadolint, actionlint, and ansible-lint when the
