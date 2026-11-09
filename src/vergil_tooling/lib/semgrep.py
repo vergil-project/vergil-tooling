@@ -12,7 +12,6 @@ if TYPE_CHECKING:
 _LANGUAGE_RULESETS: dict[str, str] = {
     "python": "p/python",
     "go": "p/golang",
-    "java": "p/java",
     "rust": "p/rust",
 }
 

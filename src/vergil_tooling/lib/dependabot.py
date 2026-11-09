@@ -28,13 +28,11 @@ from vergil_tooling.lib.config import declared_primary_language
 DEPENDABOT_PATH = Path(".github/dependabot.yml")
 
 # Primary language -> Dependabot ``package-ecosystem`` value. Languages absent
-# here (cpp, shell, none, ...) get the ``github-actions`` entry only. Java is
-# ``maven`` only: the fleet's Java builds use Maven (pom.xml / mvnw).
+# here (cpp, shell, none, ...) get the ``github-actions`` entry only.
 LANGUAGE_ECOSYSTEMS: dict[str, str] = {
     "python": "uv",
     "go": "gomod",
     "rust": "cargo",
-    "java": "maven",
     "typescript": "npm",
 }
 

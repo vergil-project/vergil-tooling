@@ -30,9 +30,6 @@ class TestResolveRulesets:
     def test_go_maps_to_golang(self) -> None:
         assert resolve_rulesets("go") == ["p/golang"]
 
-    def test_java(self) -> None:
-        assert resolve_rulesets("java") == ["p/java"]
-
     def test_rust(self) -> None:
         assert resolve_rulesets("rust") == ["p/rust"]
 

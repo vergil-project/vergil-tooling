@@ -61,7 +61,6 @@ def test_reports_all_failures(capsys: pytest.CaptureFixture[str]) -> None:
     ("language", "tag"),
     [
         ("python", "3.14"),
-        ("java", "21"),
         ("go", "1.26"),
         ("rust", "1.93"),
         ("cpp", "20"),  # clang-20, suffix cpp-clang
@@ -97,7 +96,6 @@ def test_positional_resolver_container_tag_accepted(
         ("python", "latest"),  # language images publish no :latest tag
         ("go", "v1.0.0"),
         ("rust", "1..93"),
-        ("java", "21."),
         ("cpp", " 20"),
         ("typescript", "24\n"),
     ],

@@ -117,7 +117,6 @@ def test_fragment_langs_are_expected() -> None:
         "cpp",
         "go",
         "rust",
-        "java",
         "typescript",
     )
 
@@ -241,7 +240,6 @@ def test_compose_unknown_language_is_base_only() -> None:
 
 def test_empty_language_fragments_are_empty() -> None:
     assert gitignore.load_fragment("rust") == []
-    assert gitignore.load_fragment("java") == []
 
 
 def test_load_fragment_unknown_is_empty() -> None:

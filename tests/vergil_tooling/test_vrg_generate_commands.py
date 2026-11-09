@@ -270,48 +270,6 @@ def test_python_mapping_pages(mapping_data_file: Path, tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Java generation
-# ---------------------------------------------------------------------------
-
-
-def test_java_singleton(mapping_data_file: Path) -> None:
-    specs = load_commands(mapping_data_file)
-    output = generate("java", specs)
-    assert "public @Nullable Map<String, Object> displayQmgr(" in output
-    assert "objects.isEmpty() ? null : objects.get(0);" in output
-
-
-def test_java_list_with_default(mapping_data_file: Path) -> None:
-    specs = load_commands(mapping_data_file)
-    output = generate("java", specs)
-    assert "public List<Map<String, Object>> displayQueue(" in output
-    assert 'name != null ? name : "*"' in output
-
-
-def test_java_required_name(mapping_data_file: Path) -> None:
-    specs = load_commands(mapping_data_file)
-    output = generate("java", specs)
-    assert "public void defineQlocal(" in output
-    assert 'Objects.requireNonNull(name, "name")' in output
-
-
-def test_java_optional_name(mapping_data_file: Path) -> None:
-    specs = load_commands(mapping_data_file)
-    output = generate("java", specs)
-    assert "public void alterAuthinfo(" in output
-    # No requireNonNull for optional
-    lines_between = output[output.index("alterAuthinfo(") : output.index("alterQmgr(")]
-    assert "requireNonNull" not in lines_between
-
-
-def test_java_no_name(mapping_data_file: Path) -> None:
-    specs = load_commands(mapping_data_file)
-    output = generate("java", specs)
-    assert "public void alterQmgr(" in output
-    assert "null, requestParameters, responseParameters, null);" in output
-
-
-# ---------------------------------------------------------------------------
 # Go generation
 # ---------------------------------------------------------------------------
 
@@ -330,17 +288,6 @@ def test_go_list_with_default(mapping_data_file: Path) -> None:
     assert "func (session *Session) DisplayQueue(ctx context.Context, name string," in output
     assert "([]map[string]any, error)" in output
     assert 'displayName = "*"' in output
-
-
-def test_java_list_without_default(mapping_data_file: Path) -> None:
-    """DISPLAY commands without name_default pass name directly in Java."""
-    data = {"commands": {"DISPLAY AUTHINFO": {"qualifier": "authinfo"}}}
-    path = mapping_data_file.parent / "auth.json"
-    path.write_text(json.dumps(data), encoding="utf-8")
-    specs = load_commands(path)
-    output = generate("java", specs)
-    assert "displayAuthinfo(" in output
-    assert "name, requestParameters, responseParameters, where" in output
 
 
 def test_rust_list_without_default(mapping_data_file: Path) -> None:
@@ -587,7 +534,7 @@ def test_main_missing_mapping_data(capsys: pytest.CaptureFixture[str]) -> None:
 
 
 def test_main_all_languages(mapping_data_file: Path) -> None:
-    for lang in ("python", "java", "go", "rust"):
+    for lang in ("python", "go", "rust"):
         result = main(["--language", lang, "--mapping-data", str(mapping_data_file)])
         assert result == 0, f"Failed for {lang}"
 
@@ -618,13 +565,11 @@ def test_all_languages_same_method_count(mapping_data_file: Path) -> None:
     """All languages should generate the same number of methods."""
     specs = load_commands(mapping_data_file)
     expected = len(specs)
-    for lang in ("python", "java", "go", "rust"):
+    for lang in ("python", "go", "rust"):
         output = generate(lang, specs)
         # Count methods by language-specific markers
         if lang == "python":
             count = output.count("    def ")
-        elif lang == "java":
-            count = output.count("  public ")
         elif lang == "go":
             count = output.count("func (session *Session) ")
         elif lang == "rust":

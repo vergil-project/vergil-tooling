@@ -145,9 +145,9 @@ class TestPromptChoice:
 
 
 class TestPromptLanguage:
-    # Languages are listed sorted: cpp, go, java, python, rust, typescript (index 4 is python).
+    # Languages are listed sorted: cpp, go, python, rust, typescript (index 3 is python).
     def test_selects_language(self) -> None:
-        with patch("builtins.input", return_value="4"):
+        with patch("builtins.input", return_value="3"):
             assert prompt_language() == "python"
 
     def test_none_of_the_above_returns_empty(self) -> None:
@@ -1130,19 +1130,6 @@ class TestRenderCdWorkflow:
         assert "    secrets:\n" in content
         assert "      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}\n" in content
 
-    def test_release_java_explicit_secrets(self) -> None:
-        ctx = RepoInitContext(org="vergil-project", name="test")
-        ctx.publish_docs = False
-        ctx.publish_release = True
-        ctx.primary_language = "java"
-        content = render_cd_workflow(ctx)
-        assert "secrets: inherit" not in content
-        assert "    secrets:\n" in content
-        assert "      CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}\n" in content
-        assert "      CENTRAL_TOKEN: ${{ secrets.CENTRAL_TOKEN }}\n" in content
-        assert "      GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}\n" in content
-        assert "      GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}\n" in content
-
     def test_cd_release_secrets_helper(self) -> None:
         # python/go/unlisted → no secrets; publishers → their exact secret set.
         assert _cd_release_secrets("python") == []
@@ -1150,12 +1137,6 @@ class TestRenderCdWorkflow:
         assert _cd_release_secrets(None) == []
         assert _cd_release_secrets("elixir") == []
         assert _cd_release_secrets("rust") == ["CARGO_REGISTRY_TOKEN"]
-        assert _cd_release_secrets("java") == [
-            "CENTRAL_USERNAME",
-            "CENTRAL_TOKEN",
-            "GPG_PRIVATE_KEY",
-            "GPG_PASSPHRASE",
-        ]
 
 
 class TestRenderMkdocsYml:
@@ -1442,14 +1423,14 @@ class TestStepGenerateConfig:
         ctx.work_dir = tmp_path
 
         # Indices are alphabetical within each sorted enum:
-        # repository-type: 5=tooling; primary-language: 4=python — sorted order
-        # is cpp, go, java, python, rust, typescript;
+        # repository-type: 5=tooling; primary-language: 3=python — sorted order
+        # is cpp, go, python, rust, typescript;
         # branching-model: 3=library-release, versioning-scheme: 4=semver,
         # release-model: 4=tagged-release
         inputs = iter(
             [
                 "5",  # repository-type: tooling
-                "4",  # primary-language: python
+                "3",  # primary-language: python
                 "3",  # branching-model: library-release
                 "4",  # versioning-scheme: semver
                 "4",  # release-model: tagged-release

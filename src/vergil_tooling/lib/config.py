@@ -30,7 +30,7 @@ _ENUMS: dict[str, set[str]] = {
     "versioning-scheme": {"library", "semver", "application", "none"},
     "branching-model": {"library-release", "application-promotion", "docs-single-branch"},
     "release-model": {"artifact-publishing", "tagged-release", "environment-promotion", "none"},
-    "primary-language": {"python", "go", "java", "rust", "cpp", "typescript"},
+    "primary-language": {"python", "go", "rust", "cpp", "typescript"},
 }
 
 # What each [project].repository-type means (epic vergil-project/.github#407,
@@ -54,6 +54,7 @@ REPOSITORY_TYPE_DEFINITIONS: dict[str, str] = {
 # which would silently validate the repo as a language-less project.
 _RETIRED_PRIMARY_LANGUAGES: dict[str, str] = {
     "ruby": "Ruby support was removed in epic vergil-project/.github#407",
+    "java": "Java support was removed in epic vergil-project/.github#952",
 }
 
 # The branch each branching model integrates feature work into. Every current
