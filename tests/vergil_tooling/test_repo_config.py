@@ -85,6 +85,7 @@ _TEMPLATE_PATH = (
     / "claude_md_consumer.md"
 )
 _TEMPLATE_TEXT = _TEMPLATE_PATH.read_text(encoding="utf-8")
+_SHIM_PATH = _TEMPLATE_PATH.with_name("hook_guard_shim.sh")
 
 
 class TestHookGuardShim:
@@ -93,13 +94,73 @@ class TestHookGuardShim:
         fields = {i.field for i in diff.items}
         assert "local.hook_guard_shim" in fields
 
-    def test_present(self, tmp_path: Path) -> None:
-        hooks_dir = tmp_path / ".claude" / "hooks"
+    @staticmethod
+    def _shim_items(root: Path) -> list[DiffItem]:
+        return [i for i in audit_local_config(root).items if i.field == "local.hook_guard_shim"]
+
+    @staticmethod
+    def _write_shim(root: Path, data: bytes) -> Path:
+        hooks_dir = root / ".claude" / "hooks"
         hooks_dir.mkdir(parents=True)
-        (hooks_dir / "guard.sh").write_text("#!/usr/bin/env bash\nexec vrg-hook-guard\n")
-        diff = audit_local_config(tmp_path)
-        fields = {i.field for i in diff.items}
-        assert "local.hook_guard_shim" not in fields
+        path = hooks_dir / "guard.sh"
+        path.write_bytes(data)
+        return path
+
+    def test_missing_reports_missing(self, tmp_path: Path) -> None:
+        [item] = self._shim_items(tmp_path)
+        assert (item.expected, item.actual) == ("present", "missing")
+
+    def test_matching_shim_passes(self, tmp_path: Path) -> None:
+        self._write_shim(tmp_path, _SHIM_PATH.read_bytes())
+        assert self._shim_items(tmp_path) == []
+
+    def test_stale_shim_is_drift(self, tmp_path: Path) -> None:
+        """A copy that is present but not the packaged shim fails the audit (#4109)."""
+        self._write_shim(tmp_path, b"#!/usr/bin/env bash\nexec vrg-hook-guard\n")
+        [item] = self._shim_items(tmp_path)
+        assert item.actual == "differs from the packaged shim (stale or locally edited)"
+        assert item.expected == (
+            "matches the packaged shim (src/vergil_tooling/data/hook_guard_shim.sh)"
+        )
+
+    def test_crlf_shim_is_drift(self, tmp_path: Path) -> None:
+        """The comparison is on bytes: a CRLF copy is drift, not a newline-normalized pass."""
+        self._write_shim(tmp_path, _SHIM_PATH.read_bytes().replace(b"\n", b"\r\n"))
+        [item] = self._shim_items(tmp_path)
+        assert item.actual == "differs from the packaged shim (stale or locally edited)"
+
+    def test_unreadable_shim_is_reported(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A shim that cannot be read is a reported item, never a pass."""
+        path = self._write_shim(tmp_path, _SHIM_PATH.read_bytes())
+        real_read_bytes = Path.read_bytes
+
+        def failing_read_bytes(self: Path) -> bytes:
+            if self == path:
+                raise PermissionError("Permission denied")
+            return real_read_bytes(self)
+
+        monkeypatch.setattr(Path, "read_bytes", failing_read_bytes)
+        [item] = self._shim_items(tmp_path)
+        assert item.expected == "readable"
+        assert item.actual == "unreadable (Permission denied)"
+
+    def test_missing_packaged_shim_is_fatal(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A missing packaged shim raises; it never makes every repo's shim pass or fail."""
+        self._write_shim(tmp_path, _SHIM_PATH.read_bytes())
+
+        def missing(name: str) -> str:
+            raise FileNotFoundError(name)
+
+        monkeypatch.setattr(repo_config, "_read_data_file", missing)
+        with pytest.raises(FileNotFoundError, match="hook_guard_shim.sh"):
+            repo_config._check_hook_guard_shim(tmp_path, [])
+
+    def test_render_is_the_packaged_file(self) -> None:
+        assert repo_config.render_hook_guard_shim() == _SHIM_PATH.read_text(encoding="utf-8")
 
 
 class TestClaudeMd:
@@ -516,7 +577,7 @@ def _write_compliant_repo(root: Path) -> None:
     (root / "vergil.toml").write_text(_MINIMAL_VERGIL_TOML_VER.format(version="v2.1"))
     hooks_dir = root / ".claude" / "hooks"
     hooks_dir.mkdir(parents=True)
-    (hooks_dir / "guard.sh").write_text("#!/usr/bin/env bash\nexec vrg-hook-guard\n")
+    (hooks_dir / "guard.sh").write_bytes(_SHIM_PATH.read_bytes())
     (root / "CLAUDE.md").write_text(f"# CLAUDE.md\n\n{_BEGIN}\n{_TEMPLATE_TEXT}{_END}\n")
     (root / ".claude" / "settings.json").write_text(json.dumps(_SETTINGS_TEMPLATE))
     # A fully compliant repo carries the fenced managed .gitignore for its

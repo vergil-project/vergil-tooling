@@ -1473,6 +1473,32 @@ owns **only** the file change and has no git or PR knowledge.
 | Exit codes | 0 ok, 1 `--check` drift, 2 usage error or a `CLAUDE.md` that is missing or has no well-formed marker pair |
 | Status | Active |
 
+### vrg-hook-guard-shim-sync
+
+Single-repo applicator for the managed `.claude/hooks/guard.sh`
+([#4109](https://github.com/vergil-project/vergil-tooling/issues/4109)).
+It checks (default) or writes the packaged hook guard shim,
+`hook_guard_shim.sh`, the same shim `vrg-github-repo-init` writes. The
+file is **fully managed**: `--check` uses the config audit's comparison
+(byte for byte, so a stale copy, a local edit or a CRLF copy is drift)
+and also requires every execute bit, since Claude Code cannot run a
+non-executable hook. `--write` replaces the whole file atomically and
+leaves it mode `0755`. A repo with no shim gets one. A shim that already
+matches and is executable is left untouched, so `--check` drifts exactly
+when `--write` would change the file, and after `--write` the audit's
+`_check_hook_guard_shim` passes. A shim that exists but cannot be read is
+an error in both modes, never a pass. It owns **only** the file change
+and has no git or PR knowledge.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_hook_guard_shim_sync` |
+| Args | `--repo PATH` (default: CWD); mutually exclusive `--check` (default) \| `--write` |
+| Preconditions | None beyond a repository root; `vergil.toml` is not read |
+| Failure mode | `--check` prints `missing .claude/hooks/guard.sh`, `.claude/hooks/guard.sh differs from the packaged shim` or `.claude/hooks/guard.sh is not executable` to stderr; `--write` prints `already in sync` or `wrote .claude/hooks/guard.sh`; either mode prints `cannot read .claude/hooks/guard.sh: …` to stderr and exits 2 |
+| Exit codes | 0 ok, 1 `--check` drift, 2 usage error or an unreadable shim |
+| Status | Active |
+
 ### vrg-fleet-sync
 
 Propagate a vergil-managed file across a fleet of repositories, opening
@@ -1489,7 +1515,11 @@ marked template region of `CLAUDE.md` with the packaged template via
 `vrg-claude-md-sync --write` (branch slug `claude-md-sync`), leaving
 everything outside the markers alone. A repo whose `CLAUDE.md` is missing
 or has no well-formed marker pair is an error for that repo, never a
-skip. A
+skip; `hook-guard-shim` replaces `.claude/hooks/guard.sh` with the
+packaged hook guard shim, mode `0755`, via
+`vrg-hook-guard-shim-sync --write` (branch slug `hook-guard-shim-sync`),
+so a stale shim that does not fail closed is brought in line. A repo
+whose shim cannot be read is an error for that repo, never a skip. A
 target's epic links only repos in the epic's own org: a repo in another
 org (read from the clone with `gh repo view`) is filed under its own
 ad-hoc epic, and the issue body still names the target's epic, because
@@ -1503,14 +1533,15 @@ human. `--dry-run` reports the verdict a live run would reach per repo
 disposable probe worktree, without opening an issue, branch, commit, or
 PR. Each target previews with its applicator's `--check`
 (`vrg-gitignore-sync --check`, `vrg-dependabot-sync --check`,
-`vrg-claude-settings-sync --check` or `vrg-claude-md-sync --check`), whose
+`vrg-claude-settings-sync --check`, `vrg-claude-md-sync --check` or
+`vrg-hook-guard-shim-sync --check`), whose
 drift verdict is exactly the change `--write` would make.
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_fleet_sync` |
-| Args | `--repos PATH [PATH …]` (required, local clone paths); `--target {claude-md,claude-settings,dependabot,gitignore}` (default `gitignore`); `--dry-run` |
-| Preconditions | The target's applicator (`vrg-gitignore-sync`, `vrg-dependabot-sync`, `vrg-claude-settings-sync` or `vrg-claude-md-sync`) on PATH; each `--repos` path a local clone; git/`gh` credentials for the sweep |
+| Args | `--repos PATH [PATH …]` (required, local clone paths); `--target {claude-md,claude-settings,dependabot,gitignore,hook-guard-shim}` (default `gitignore`); `--dry-run` |
+| Preconditions | The target's applicator (`vrg-gitignore-sync`, `vrg-dependabot-sync`, `vrg-claude-settings-sync`, `vrg-claude-md-sync` or `vrg-hook-guard-shim-sync`) on PATH; each `--repos` path a local clone; git/`gh` credentials for the sweep |
 | Failure mode | Any repo that errors is recorded and reported in the per-repo status lines |
 | Exit codes | 0 all repos ok, 1 one or more repos errored |
 | Status | Active |
