@@ -17767,7 +17767,10 @@ vergil-tooling is installed and otherwise falls back to a <code>jq</code>-based
 hard deny. <code>vrg-github-repo-init</code> writes it, executable, from the
 packaged template
 <a href="https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/data/hook_guard_shim.sh"><code>hook_guard_shim.sh</code></a>.
-No per-clone configuration is required.</p>
+No per-clone configuration is required. The file is fully managed: the
+config audit requires it to match the packaged shim byte for byte, and
+<code>vrg-hook-guard-shim-sync --write</code> (or <code>vrg-fleet-sync --target
+hook-guard-shim</code> across the fleet) replaces a stale or edited copy.</p>
 <p>All branch/context checks (detached HEAD, protected branches,
 branch prefix, issue number) live in <code>vrg-commit</code> itself. See the
 <a href="../../reference/hooks/pre-commit/">Claude Code Hook Guard reference</a>.</p>

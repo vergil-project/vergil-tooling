@@ -13293,6 +13293,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#_check_hook_guard_shim-the-whole-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        _check_hook_guard_shim — the whole file
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#claudemd-and-agentsmd-the-instruction-file" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17226,6 +17237,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#_check_hook_guard_shim-the-whole-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        _check_hook_guard_shim — the whole file
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#claudemd-and-agentsmd-the-instruction-file" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17494,7 +17516,7 @@ divergence:</p>
 </tr>
 <tr>
 <td><code>_check_hook_guard_shim</code></td>
-<td><code>.claude/hooks/guard.sh</code> present</td>
+<td><code>.claude/hooks/guard.sh</code> present, readable, and byte-identical to the packaged hook guard shim <strong>(#4109)</strong></td>
 </tr>
 <tr>
 <td><code>_check_claude_md</code></td>
@@ -17560,6 +17582,21 @@ each top-level key that is missing, unexpected or different. Fix it with
 template for one repo; <code>vrg-fleet-sync --target claude-settings</code> does the
 same across the fleet, one PR per drifted repo (see the
 <a href="../cli-tools-overview/#vrg-claude-settings-sync">CLI Tools Overview</a>).</p>
+<h3 id="_check_hook_guard_shim-the-whole-file"><code>_check_hook_guard_shim</code> — the whole file<a class="headerlink" href="#_check_hook_guard_shim-the-whole-file" title="Permanent link">&para;</a></h3>
+<p><code>.claude/hooks/guard.sh</code> must match the packaged shim,
+<a href="https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/data/hook_guard_shim.sh"><code>hook_guard_shim.sh</code></a>,
+byte for byte. The packaged shim fails closed: when <code>vrg-hook-guard</code> is
+not installed, its <code>jq</code> fallback refuses input it cannot check. An older
+copy that lets such input through, a local edit, or a CRLF copy is drift.
+The check reports one <code>DiffItem(field="local.hook_guard_shim", ...)</code>:
+<code>missing</code> when the file is absent, <code>unreadable (…)</code> when it cannot be
+read, or <code>differs from the packaged shim (stale or locally edited)</code>. It
+compares content only, not the file mode.</p>
+<p>Fix it with <code>vrg-hook-guard-shim-sync --write</code>, which replaces the file
+with the packaged shim, mode <code>0755</code>, for one repo;
+<code>vrg-fleet-sync --target hook-guard-shim</code> does the same across the
+fleet, one PR per drifted repo (see the
+<a href="../cli-tools-overview/#vrg-hook-guard-shim-sync">CLI Tools Overview</a>).</p>
 <h3 id="claudemd-and-agentsmd-the-instruction-file"><code>CLAUDE.md</code> and <code>AGENTS.md</code> — the instruction file<a class="headerlink" href="#claudemd-and-agentsmd-the-instruction-file" title="Permanent link">&para;</a></h3>
 <p><code>CLAUDE.md</code> must hold exactly one pair of template markers,
 <code>&lt;!-- vergil:template:claude-md:begin --&gt;</code> and

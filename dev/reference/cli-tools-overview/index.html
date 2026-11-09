@@ -13726,6 +13726,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-hook-guard-shim-sync" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-hook-guard-shim-sync
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-fleet-sync" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18469,6 +18480,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-hook-guard-shim-sync" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-hook-guard-shim-sync
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-fleet-sync" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -21477,6 +21499,55 @@ owns <strong>only</strong> the file change and has no git or PR knowledge.</p>
 </tr>
 </tbody>
 </table>
+<h3 id="vrg-hook-guard-shim-sync">vrg-hook-guard-shim-sync<a class="headerlink" href="#vrg-hook-guard-shim-sync" title="Permanent link">&para;</a></h3>
+<p>Single-repo applicator for the managed <code>.claude/hooks/guard.sh</code>
+(<a href="https://github.com/vergil-project/vergil-tooling/issues/4109">#4109</a>).
+It checks (default) or writes the packaged hook guard shim,
+<code>hook_guard_shim.sh</code>, the same shim <code>vrg-github-repo-init</code> writes. The
+file is <strong>fully managed</strong>: <code>--check</code> uses the config audit's comparison
+(byte for byte, so a stale copy, a local edit or a CRLF copy is drift)
+and also requires every execute bit, since Claude Code cannot run a
+non-executable hook. <code>--write</code> replaces the whole file atomically and
+leaves it mode <code>0755</code>. A repo with no shim gets one. A shim that already
+matches and is executable is left untouched, so <code>--check</code> drifts exactly
+when <code>--write</code> would change the file, and after <code>--write</code> the audit's
+<code>_check_hook_guard_shim</code> passes. A shim that exists but cannot be read is
+an error in both modes, never a pass. It owns <strong>only</strong> the file change
+and has no git or PR knowledge.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_hook_guard_shim_sync</code></td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>--repo PATH</code> (default: CWD); mutually exclusive <code>--check</code> (default) | <code>--write</code></td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>None beyond a repository root; <code>vergil.toml</code> is not read</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td><code>--check</code> prints <code>missing .claude/hooks/guard.sh</code>, <code>.claude/hooks/guard.sh differs from the packaged shim</code> or <code>.claude/hooks/guard.sh is not executable</code> to stderr; <code>--write</code> prints <code>already in sync</code> or <code>wrote .claude/hooks/guard.sh</code>; either mode prints <code>cannot read .claude/hooks/guard.sh: …</code> to stderr and exits 2</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 ok, 1 <code>--check</code> drift, 2 usage error or an unreadable shim</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
 <h3 id="vrg-fleet-sync">vrg-fleet-sync<a class="headerlink" href="#vrg-fleet-sync" title="Permanent link">&para;</a></h3>
 <p>Propagate a vergil-managed file across a fleet of repositories, opening
 <strong>one PR per repo whose file drifts</strong>. <code>--target</code> picks the file:
@@ -21492,7 +21563,11 @@ marked template region of <code>CLAUDE.md</code> with the packaged template via
 <code>vrg-claude-md-sync --write</code> (branch slug <code>claude-md-sync</code>), leaving
 everything outside the markers alone. A repo whose <code>CLAUDE.md</code> is missing
 or has no well-formed marker pair is an error for that repo, never a
-skip. A
+skip; <code>hook-guard-shim</code> replaces <code>.claude/hooks/guard.sh</code> with the
+packaged hook guard shim, mode <code>0755</code>, via
+<code>vrg-hook-guard-shim-sync --write</code> (branch slug <code>hook-guard-shim-sync</code>),
+so a stale shim that does not fail closed is brought in line. A repo
+whose shim cannot be read is an error for that repo, never a skip. A
 target's epic links only repos in the epic's own org: a repo in another
 org (read from the clone with <code>gh repo view</code>) is filed under its own
 ad-hoc epic, and the issue body still names the target's epic, because
@@ -21506,7 +21581,8 @@ human. <code>--dry-run</code> reports the verdict a live run would reach per rep
 disposable probe worktree, without opening an issue, branch, commit, or
 PR. Each target previews with its applicator's <code>--check</code>
 (<code>vrg-gitignore-sync --check</code>, <code>vrg-dependabot-sync --check</code>,
-<code>vrg-claude-settings-sync --check</code> or <code>vrg-claude-md-sync --check</code>), whose
+<code>vrg-claude-settings-sync --check</code>, <code>vrg-claude-md-sync --check</code> or
+<code>vrg-hook-guard-shim-sync --check</code>), whose
 drift verdict is exactly the change <code>--write</code> would make.</p>
 <table>
 <thead>
@@ -21522,11 +21598,11 @@ drift verdict is exactly the change <code>--write</code> would make.</p>
 </tr>
 <tr>
 <td>Args</td>
-<td><code>--repos PATH [PATH …]</code> (required, local clone paths); <code>--target {claude-md,claude-settings,dependabot,gitignore}</code> (default <code>gitignore</code>); <code>--dry-run</code></td>
+<td><code>--repos PATH [PATH …]</code> (required, local clone paths); <code>--target {claude-md,claude-settings,dependabot,gitignore,hook-guard-shim}</code> (default <code>gitignore</code>); <code>--dry-run</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>The target's applicator (<code>vrg-gitignore-sync</code>, <code>vrg-dependabot-sync</code>, <code>vrg-claude-settings-sync</code> or <code>vrg-claude-md-sync</code>) on PATH; each <code>--repos</code> path a local clone; git/<code>gh</code> credentials for the sweep</td>
+<td>The target's applicator (<code>vrg-gitignore-sync</code>, <code>vrg-dependabot-sync</code>, <code>vrg-claude-settings-sync</code>, <code>vrg-claude-md-sync</code> or <code>vrg-hook-guard-shim-sync</code>) on PATH; each <code>--repos</code> path a local clone; git/<code>gh</code> credentials for the sweep</td>
 </tr>
 <tr>
 <td>Failure mode</td>
