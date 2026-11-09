@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.293/">
       
       
         <link rel="next" href="../v2.1.291/">
@@ -1389,6 +1389,8 @@
       
         
       
+        
+      
     
     
     
@@ -1444,6 +1446,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.293/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.293
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -16935,6 +16965,7 @@
 <li><strong>retry HTTP 500 on package-index release reads (#4120)</strong>
 The index collector's shared retry never covered a bare HTTP 500, so one intermittent 500 from the release-asset API failed the whole index build (three runs in a row on 2026-11-09). Add a read-only classifier, retry.is_retryable_read, that also accepts HTTP 500, and use it for the collector's gh calls, which are all reads. The shared list is unchanged, because a 500 on a write can mean the write landed and a retry would duplicate it silently.</li>
 </ul>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.292/v2.1.292-ci-evidence.tar.gz">Download →</a></p>
 
 
 
