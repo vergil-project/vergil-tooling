@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.293] - 2026-11-09
+
+### Bug fixes
+
+- fail package-index fast when the followed publish-index run failed (#4125)
+
 ## [2.1.292] - 2026-11-09
 
 ### Bug fixes
