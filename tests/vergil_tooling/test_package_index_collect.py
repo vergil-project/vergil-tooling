@@ -815,7 +815,15 @@ def _one_release_gh() -> _FakeGh:
         "gh release download v2.1.0 --repo o/t --pattern t_2.1.0-1_amd64.deb",
     ],
 )
-@pytest.mark.parametrize("stderr", [_GRAPHQL_BLIP, "HTTP 502: Bad Gateway"])
+@pytest.mark.parametrize(
+    "stderr",
+    [
+        _GRAPHQL_BLIP,
+        "HTTP 502: Bad Gateway",
+        # The release-asset API's intermittent 500, as gh printed it (#4119).
+        "HTTP 500 (https://api.github.com/repos/o/t/releases/assets/663982521)",
+    ],
+)
 def test_transient_gh_release_blip_is_retried_then_succeeds(
     tmp_path: Path, sleeps: list[float], prefix: str, stderr: str
 ) -> None:
@@ -856,8 +864,11 @@ def test_non_gh_command_is_never_retried(tmp_path: Path, sleeps: list[float]) ->
     assert sleeps == []
 
 
-def test_transient_attestation_blip_is_retried(tmp_path: Path, sleeps: list[float]) -> None:
-    gh = _Flaky(_stdout(""), "gh attestation verify", 1, "HTTP 503")
+@pytest.mark.parametrize("stderr", ["HTTP 503", "HTTP 500"])
+def test_transient_attestation_blip_is_retried(
+    tmp_path: Path, sleeps: list[float], stderr: str
+) -> None:
+    gh = _Flaky(_stdout(""), "gh attestation verify", 1, stderr)
     collect.verify([_a("o/t", "v2.1.0", "t", "2.1.0")], tmp_path / "k.asc", gh=gh)
     assert gh.attempts == 2
     assert len(sleeps) == 1
