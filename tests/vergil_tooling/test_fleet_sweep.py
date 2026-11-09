@@ -1066,7 +1066,9 @@ def test_fleet_target_hook_guard_shim_spec(monkeypatch: pytest.MonkeyPatch) -> N
             _FakeProc(stdout="wrote .claude/hooks/guard.sh\n"),
             _FakeProc(stdout="already in sync\n"),
             _FakeProc(returncode=0),
-            _FakeProc(returncode=1, stderr=".claude/hooks/guard.sh differs from the packaged shim\n"),
+            _FakeProc(
+                returncode=1, stderr=".claude/hooks/guard.sh differs from the packaged shim\n"
+            ),
         ]
     )
 

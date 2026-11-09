@@ -119,13 +119,15 @@ class TestHookGuardShim:
         self._write_shim(tmp_path, b"#!/usr/bin/env bash\nexec vrg-hook-guard\n")
         [item] = self._shim_items(tmp_path)
         assert item.actual == "differs from the packaged shim (stale or locally edited)"
-        assert "hook_guard_shim.sh" in item.expected
+        assert item.expected == (
+            "matches the packaged shim (src/vergil_tooling/data/hook_guard_shim.sh)"
+        )
 
     def test_crlf_shim_is_drift(self, tmp_path: Path) -> None:
         """The comparison is on bytes: a CRLF copy is drift, not a newline-normalized pass."""
         self._write_shim(tmp_path, _SHIM_PATH.read_bytes().replace(b"\n", b"\r\n"))
         [item] = self._shim_items(tmp_path)
-        assert item.actual.startswith("differs")
+        assert item.actual == "differs from the packaged shim (stale or locally edited)"
 
     def test_unreadable_shim_is_reported(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
