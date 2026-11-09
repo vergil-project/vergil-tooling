@@ -307,8 +307,9 @@ only when set, and declaring or changing it trips `NEEDS-REBUILD`.
 
 Lima and cloud VMs install vergil-tooling from the vergil **package
 repository** (`https://vergil-project.github.io/packages`) with `apt`,
-not with `uv tool install`. The macOS host, the dev container cache and
-this repo's dev-tree `.venv` are unchanged and still use `uv`.
+not with `uv tool install`. The macOS host and this repo's dev-tree
+`.venv` still use `uv`. The dev container cache chooses by the image (see
+[the cached image](../guides/ci-architecture.md#tier-1-local-pre-commit)).
 
 **Which version.** The version is the identity's resolved vergil
 version: the per-identity `vergil` setting in `identities.toml`, else

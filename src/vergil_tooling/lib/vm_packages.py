@@ -48,7 +48,7 @@ def classify_ref(ref: str) -> Literal["line", "exact", "dev"]:
     return "dev"
 
 
-def _deb_version(ref: str) -> str:
+def deb_version(ref: str) -> str:
     """The deb version an exact ``vX.Y.Z`` ref names (shared builds are revision 1)."""
     return f"{ref[1:]}-1"
 
@@ -63,13 +63,14 @@ def _require_release(ref: str) -> Literal["line", "exact"]:
 
 def apt_pin(ref: str) -> str:
     """The ``/etc/apt/preferences.d`` text pinning vergil-tooling to ``ref``."""
-    version = _deb_version(ref) if _require_release(ref) == "exact" else f"{ref[1:]}.*"
+    version = deb_version(ref) if _require_release(ref) == "exact" else f"{ref[1:]}.*"
     return f"Package: {_PACKAGE}\nPin: version {version}\nPin-Priority: 1001\n"
 
 
-def _candidate_matches(ref: str, candidate: str) -> bool:
+def candidate_matches(ref: str, candidate: str) -> bool:
+    """Whether apt ``candidate`` is the release ``ref`` names (its line, or exactly)."""
     if classify_ref(ref) == "exact":
-        return candidate == _deb_version(ref)
+        return candidate == deb_version(ref)
     return candidate.startswith(f"{ref[1:]}.")
 
 
@@ -153,13 +154,13 @@ def packaged_install(transport: Transport, ref: str) -> None:
     transport.run("sudo", *repo_setup.apt_get("update"))
     policy = transport.run("apt-cache", "policy", _PACKAGE).stdout
     m = re.search(r"Candidate:\s*(\S+)", policy)
-    if m is None or not _candidate_matches(ref, m[1]):
+    if m is None or not candidate_matches(ref, m[1]):
         _die(
             f"no packaged vergil-tooling matching {ref} in {org.base_url} "
             f"(apt candidate: {m[1] if m else '(none)'}). Release {ref} first, or "
             f"install a git ref explicitly with 'vrg-vm update --tag <git-ref>' (a dev install)."
         )
-    spec = f"{_PACKAGE}={_deb_version(ref)}" if kind == "exact" else _PACKAGE
+    spec = f"{_PACKAGE}={deb_version(ref)}" if kind == "exact" else _PACKAGE
     # An explicit pin may move the VM to an older release (identity pinned back).
     transport.run("sudo", *repo_setup.apt_get("install", "-y", "--allow-downgrades", spec))
     _remove_uv_copy(transport)

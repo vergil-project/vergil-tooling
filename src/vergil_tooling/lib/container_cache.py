@@ -8,8 +8,10 @@ import re
 import shlex
 import subprocess
 import sys
+from pathlib import PurePosixPath
 from typing import TYPE_CHECKING
 
+from vergil_tooling.lib import vm_packages
 from vergil_tooling.lib.config import vrg_install_tag
 from vergil_tooling.lib.container import (
     _GHCR,
@@ -20,6 +22,7 @@ from vergil_tooling.lib.container import (
     workspace_mount_args,
 )
 from vergil_tooling.lib.languages import CheckKind, language_commands
+from vergil_tooling.lib.package import orgs, repo_setup
 from vergil_tooling.lib.versions.extensions import container_env
 
 if TYPE_CHECKING:
@@ -29,6 +32,17 @@ if TYPE_CHECKING:
 _SELF_PROJECT_NAME = "vergil-tooling"
 
 _VRG_GIT_URL = "https://github.com/vergil-project/vergil-tooling"
+
+# The vergil-tooling install's two environment probes (epic .github#649), the
+# package pin it writes, and the test seam prefixing every probed or written path.
+_TOOLING_PACKAGE = "vergil-tooling"
+_VERGIL_SOURCE = "/etc/apt/sources.list.d/vergil.sources"
+_CORE_PYTHON_DIR = "/opt/vergil/python/"
+_CORE_PYTHON_GLOB = "/opt/vergil/python/*/bin/python3"
+_TOOLING_PIN_FILE = "/etc/apt/preferences.d/vergil-tooling"
+_CACHE_ROOT_ENV = "VRG_CACHE_ROOT"
+_UV_FROM_GIT = "vergil-tooling: uv tool install from git (image without the vergil apt repository)"
+_FIRST_CANDIDATE = '!c && $1 == "Candidate:" {c = $2} END {print c}'
 
 _PULL_TIMEOUT_SECONDS = 120
 
@@ -369,11 +383,173 @@ def _env_export(build_env: Mapping[str, str]) -> str:
     return "export " + " ".join(f"{k}={shlex.quote(v)}" for k, v in build_env.items())
 
 
+def _say(msg: str) -> str:
+    """A shell line printing *msg* (a constant, shell-quoted) to stderr."""
+    return f"printf '%s\\n' {shlex.quote(msg)} >&2"
+
+
+def _probe_lines(spec: str) -> list[str]:
+    """Shell lines probing the image, and taking the two paths that need no core Python.
+
+    Both probed paths are prefixed with ``$VRG_CACHE_ROOT`` (unset in a real
+    build), the seam the tests run the snippet through. Half an environment —
+    the vergil apt source without a core vergil-python, or the reverse — is
+    refused, never sent down the uv path. Neither present is today's install.
+    """
+    source = f"the vergil apt source ({_VERGIL_SOURCE})"
+    core = f"a core vergil-python ({_CORE_PYTHON_GLOB})"
+    refuse = "vergil-tooling: the image has {} but not {}; refusing to guess"
+    return [
+        f'root="${{{_CACHE_ROOT_ENV}:-}}"',
+        "shopt -s nullglob",
+        f'cores=("$root"{_CORE_PYTHON_GLOB})',
+        f'if [ -e "$root"{_VERGIL_SOURCE} ]; then has_source=1; else has_source=0; fi',
+        'if [ "${#cores[@]}" -gt 0 ]; then has_core=1; else has_core=0; fi',
+        'if [ "$has_source" = 1 ] && [ "$has_core" = 0 ]; then',
+        f"  {_say(refuse.format(source, core))}",
+        "  exit 1",
+        "fi",
+        'if [ "$has_source" = 0 ] && [ "$has_core" = 1 ]; then',
+        f"  {_say(refuse.format(core, source))}",
+        "  exit 1",
+        "fi",
+        'if [ "$has_source" = 0 ]; then',
+        f"  {_say(_UV_FROM_GIT)}",
+        f"  exec uv tool install --quiet {spec}",
+        "fi",
+    ]
+
+
+def _dev_core_lines(tag: str, spec: str) -> list[str]:
+    """Shell lines installing a dev ref from git on the image's one core Python.
+
+    The explicit ``--python`` overrides a family's ``UV_PYTHON``, which
+    :func:`_compose_setup` exports before this snippet (spec §5.2).
+    """
+    return [
+        'if [ "${#cores[@]}" -gt 1 ]; then',
+        "  "
+        + _say(
+            f"vergil-tooling: the image has more than one core Python under {_CORE_PYTHON_DIR};"
+            " refusing to guess which is core"
+        ),
+        "  exit 1",
+        "fi",
+        f"{_say(f'vergil-tooling: uv tool install from git on the core Python ({tag})')}",
+        f'exec uv tool install --quiet --python "${{cores[0]}}" {spec}',
+    ]
+
+
+def _packaged_lines(tag: str) -> list[str]:
+    """Shell lines installing a line or exact release from the vergil apt repository.
+
+    Mirrors :func:`vergil_tooling.lib.vm_packages.packaged_install`: pin, update,
+    check apt's candidate against the tag (a pin that matches nothing leaves
+    apt's normal candidate in place, so the check is what refuses it), install.
+    Then checks that ``vrg-*`` runs from the package on vergil-python.
+    """
+    exact = vm_packages.classify_ref(tag) == "exact"
+    if exact:
+        deb = vm_packages.deb_version(tag)
+        matches = f'[ "$cand" = {shlex.quote(deb)} ]'
+        spec = f"{_TOOLING_PACKAGE}={deb}"
+    else:
+        matches = f'[[ "$cand" == {shlex.quote(tag[1:] + ".")}* ]]'
+        spec = _TOOLING_PACKAGE
+    base_url = orgs.for_vendor("vergil").base_url
+    mismatch = (
+        f"vergil-tooling: no packaged vergil-tooling matching {tag} in {base_url} "
+        f"(apt candidate: %s). Release {tag} first, or pin a git ref in vergil.toml's "
+        "[dependencies].vergil (a dev install).\\n"
+    )
+    apt_get = " ".join(repo_setup.apt_get())
+    pin_dir = str(PurePosixPath(_TOOLING_PIN_FILE).parent)
+    not_usr_bin = "vergil-tooling: vrg-whoami resolves to %s, not the package's /usr/bin copy\\n"
+    not_core = (
+        f"vergil-tooling: %s runs on %s, not a core vergil-python under {_CORE_PYTHON_DIR}\\n"
+    )
+    return [
+        _say(f"vergil-tooling: packaged install ({tag})"),
+        f'mkdir -p "$root"{pin_dir}',
+        f"printf '%s' {shlex.quote(vm_packages.apt_pin(tag))} > \"$root\"{_TOOLING_PIN_FILE}",
+        f"{apt_get} update",
+        f'policy="$(apt-cache policy {_TOOLING_PACKAGE})"',
+        # The first Candidate: line, read whole (no early exit, so no SIGPIPE).
+        f'cand="$(printf \'%s\\n\' "$policy" | awk {shlex.quote(_FIRST_CANDIDATE)})"',
+        f"if ! {matches}; then",
+        f'  printf {shlex.quote(mismatch)} "${{cand:-(none)}}" >&2',
+        "  exit 1",
+        "fi",
+        f"{apt_get} install -y {shlex.quote(spec)}",
+        'if ! vrg="$(command -v vrg-whoami)"; then',
+        f"  {_say('vergil-tooling: vrg-whoami is not on PATH after the packaged install')}",
+        "  exit 1",
+        "fi",
+        'if [[ "$vrg" != "$root"/usr/bin/* ]]; then',
+        f'  printf {shlex.quote(not_usr_bin)} "$vrg" >&2',
+        "  exit 1",
+        "fi",
+        'target="$(readlink -f "$vrg")"',
+        'shebang=""',
+        'IFS= read -r shebang < "$target" || true',
+        "interp=\"${shebang#'#!'}\"",
+        'interp="${interp%% *}"',
+        'py="$(readlink -f "$interp" || true)"',
+        "on_core=0",
+        f'if [[ "$py" == "$root"{_CORE_PYTHON_DIR}* ]]; then',
+        "  on_core=1",
+        'elif [ -n "$interp" ]; then',
+        '  cfg="$(dirname "$(dirname "$interp")")/pyvenv.cfg"',
+        '  if [ -f "$cfg" ]; then',
+        """    home="$(awk -F' *= *' '$1 == "home" {print $2}' "$cfg")\"""",
+        f'    if [[ "$home" == "$root"{_CORE_PYTHON_DIR}* ]]; then on_core=1; fi',
+        "  fi",
+        "fi",
+        'if [ "$on_core" = 0 ]; then',
+        f'  printf {shlex.quote(not_core)} "$vrg" "${{interp:-(no interpreter)}}" >&2',
+        "  exit 1",
+        "fi",
+        # The package's own smoke (vergil.toml [package].smoke).
+        'if ! "$vrg" --mode > /dev/null; then',
+        f"  {_say('vergil-tooling: vrg-whoami --mode failed after the packaged install')}",
+        "  exit 1",
+        "fi",
+    ]
+
+
+def vergil_tooling_setup_command(tag: str) -> str:
+    """Return the cache-build fragment installing vergil-tooling at *tag*.
+
+    The image's environment chooses the install (epic vergil-project/.github#649,
+    spec §5.2, §7), by two probes: the vergil apt source
+    (``/etc/apt/sources.list.d/vergil.sources``) and a core vergil-python
+    (``/opt/vergil/python/*/bin/python3``).
+
+    * **Both present** — a line or exact *tag* installs the package from the
+      vergil apt repository, pinned to it, and checks that ``vrg-*`` runs from
+      ``/usr/bin`` on vergil-python; a dev *tag* is ``uv tool install`` from git
+      on the core Python, with an explicit ``--python``.
+    * **Neither present** — today's ``uv tool install`` from git.
+    * **Exactly one present** — refused: exit 1, nothing installed.
+
+    Every path logs which one it took. :func:`_compose_setup` joins fragments
+    with ``&&`` and sets no ``-e``, so the fragment runs as its own
+    ``bash -euo pipefail -c``: any failure on the chosen path fails the build.
+    """
+    spec = shlex.quote(f"{_TOOLING_PACKAGE} @ git+{_VRG_GIT_URL}@{tag}")
+    if vm_packages.classify_ref(tag) == "dev":
+        chosen = _dev_core_lines(tag, spec)
+    else:
+        chosen = _packaged_lines(tag)
+    script = "\n".join((*_probe_lines(spec), *chosen))
+    return f"bash -euo pipefail -c {shlex.quote(script)}"
+
+
 def _compose_setup(repo_root: Path, lang: str, *, build_env: Mapping[str, str]) -> str:
     """Return the shell setup string baked into the cached image.
 
     The composed step is, in order,
-    ``<export env> && <apt fragment> && <uv tool install …> && <build-command> &&
+    ``<export env> && <apt fragment> && <vergil-tooling install> && <build-command> &&
     <warmup>``:
 
     * **env** — *build_env*, the resolver's container env
@@ -387,7 +563,8 @@ def _compose_setup(repo_root: Path, lang: str, *, build_env: Mapping[str, str]) 
     * **apt** — repo-declared ``[container].system-packages``, installed first so
       the rest of the step runs against the provisioned base (epic
       vergil-project/.github#272).
-    * **uv install** — the pinned vergil-tooling install. Skipped for the self-repo
+    * **install** — the pinned vergil-tooling install
+      (:func:`vergil_tooling_setup_command`). Skipped for the self-repo
       (vergil-tooling itself), which uses its local dev version; the build-command
       then runs after apt and before warmup, the same relative slot.
     * **build-command** — the repo's declared ``[container].build-command`` (epic
@@ -416,9 +593,8 @@ def _compose_setup(repo_root: Path, lang: str, *, build_env: Mapping[str, str]) 
     if _is_self_repo(repo_root):
         setup = tail or "true"
     else:
-        tag = vrg_install_tag(repo_root)
-        uv_install = f"uv tool install --quiet 'vergil-tooling @ git+{_VRG_GIT_URL}@{tag}'"
-        setup = f"{uv_install} && {tail}" if tail else uv_install
+        install = vergil_tooling_setup_command(vrg_install_tag(repo_root))
+        setup = f"{install} && {tail}" if tail else install
 
     apt = apt_install_command(container_system_packages(repo_root), container_platform())
     if apt:
