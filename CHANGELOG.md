@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.291] - 2026-11-09
+
+### Bug fixes
+
+- make a plugin enabled from an undeclared marketplace a fatal refresh error (#4101)
+
+### Documentation
+
+- remove Java from the supported languages (#4114)
+
+### Features
+
+- keep the hook guard shim current with an audit content check and a fleet-sync target (#4110)
+
+### Refactoring
+
+- retire java and remove its support from the tooling (#4113)
+
 ## [2.1.290] - 2026-11-08
 
 ### Bug fixes
