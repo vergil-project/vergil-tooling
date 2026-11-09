@@ -365,8 +365,12 @@ from the wrong checkout would move the wrong repo's tag.
 
 Both `vrg-promote` runs check the target against origin's current state
 (each one fetches `main` and the tags first). The target must be an existing
-`vX.Y.Z` tag on origin whose commit is on origin's `main` and that has a
-published GitHub Release. `vrg-promote` refuses, with exit 1:
+`vX.Y.Z` tag on origin whose commit is on origin's `main`, or is that
+release's freeze commit, and that has a published GitHub Release. A freeze
+commit is the commit vergil-actions' CD tags: one commit on top of `main`,
+with the subject `chore(release): freeze internal refs to vX.Y.Z`, that
+changes nothing but what `vrg-freeze-refs` rewrites for that tag.
+`vrg-promote` refuses, with exit 1:
 
 - any other target;
 - an agent identity;

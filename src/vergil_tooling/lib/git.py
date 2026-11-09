@@ -605,6 +605,24 @@ def file_at(commit: str, path: str) -> str | None:
     return read_output("cat-file", "blob", f"{commit}:{path}")
 
 
+def blob_bytes(sha: str) -> bytes:
+    """Return the blob *sha*'s content exactly as git stores it.
+
+    Nothing is decoded or stripped, so two blobs compare equal only when
+    their bytes are. Raises ``CalledProcessError`` when git fails (an unknown
+    object, or one that is not a blob), and ``ValueError`` for a revision git
+    would read as an option.
+    """
+    _check_revs(sha)
+    args = ("cat-file", "blob", sha)
+    return subprocess.run(  # noqa: S603
+        ("git", *args),  # noqa: S607
+        check=True,
+        capture_output=True,
+        env=_git_env(args),
+    ).stdout
+
+
 def diff_patch(base: str, head: str) -> bytes:
     """Return ``git diff <base> <head>`` exactly as git prints it.
 
