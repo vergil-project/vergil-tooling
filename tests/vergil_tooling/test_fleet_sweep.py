@@ -1047,6 +1047,63 @@ def test_fleet_claude_md_cannot_sync_is_an_error(
         applicator(Path("/w"), check=check)
 
 
+def test_fleet_target_hook_guard_shim_spec(monkeypatch: pytest.MonkeyPatch) -> None:
+    """--target hook-guard-shim builds its SweepSpec and shells out to its applicator (#4109)."""
+    spec, applicator = _capture_main(
+        monkeypatch, ["--repos", "/clones/x", "--target", "hook-guard-shim"]
+    )
+    assert spec.repos == ["/clones/x"]
+    assert spec.branch_slug == "hook-guard-shim-sync"
+    assert spec.commit_type == "chore"
+    assert spec.commit_scope == "claude"
+    assert spec.epic is None
+    assert spec.title == "chore(claude): sync the managed .claude/hooks/guard.sh"
+    assert "src/vergil_tooling/data/hook_guard_shim.sh" in spec.body
+
+    proc_calls: list[list[str]] = []
+    procs = iter(
+        [
+            _FakeProc(stdout="wrote .claude/hooks/guard.sh\n"),
+            _FakeProc(stdout="already in sync\n"),
+            _FakeProc(returncode=0),
+            _FakeProc(returncode=1, stderr=".claude/hooks/guard.sh differs from the packaged shim\n"),
+        ]
+    )
+
+    def fake_proc_run(args, **kwargs):  # noqa: ANN001, ANN003
+        proc_calls.append(list(args))
+        return next(procs)
+
+    monkeypatch.setattr(vrg_fleet_sync.subprocess, "run", fake_proc_run)
+
+    assert applicator(Path("/w")) == AppResult(changed=True, summary="wrote .claude/hooks/guard.sh")
+    assert proc_calls[-1] == ["vrg-hook-guard-shim-sync", "--write", "--repo", "/w"]
+    assert applicator(Path("/w")) == AppResult(changed=False, summary="already in sync")
+    assert applicator(Path("/w"), check=True) == AppResult(changed=False, summary="already in sync")
+    assert proc_calls[-1] == ["vrg-hook-guard-shim-sync", "--check", "--repo", "/w"]
+    assert applicator(Path("/w"), check=True) == AppResult(
+        changed=True, summary="would sync (.claude/hooks/guard.sh differs from the packaged shim)"
+    )
+
+
+@pytest.mark.parametrize("check", [False, True])
+def test_fleet_hook_guard_shim_unreadable_is_an_error(
+    monkeypatch: pytest.MonkeyPatch, *, check: bool
+) -> None:
+    """An unreadable shim (applicator exit 2) raises, so the sweep records an error (#4109)."""
+    _spec_unused, applicator = _capture_main(
+        monkeypatch, ["--repos", "/clones/x", "--target", "hook-guard-shim"]
+    )
+    message = "vrg-hook-guard-shim-sync: cannot read .claude/hooks/guard.sh: Permission denied\n"
+    monkeypatch.setattr(
+        vrg_fleet_sync.subprocess,
+        "run",
+        lambda *_a, **_k: _FakeProc(returncode=2, stderr=message),
+    )
+    with pytest.raises(RuntimeError, match=r"exit 2\): .*cannot read .claude/hooks/guard.sh"):
+        applicator(Path("/w"), check=check)
+
+
 def test_fleet_gitignore_check_previews_with_check_flag(monkeypatch: pytest.MonkeyPatch) -> None:
     """check=True runs ``vrg-gitignore-sync --check``, never ``--write`` (#3568)."""
     _spec_unused, applicator = _capture_main(monkeypatch, ["--repos", "/clones/x"])
