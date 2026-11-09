@@ -612,15 +612,85 @@ def test_cancelled_run_follows_the_next(
 def test_heartbeat_while_index_propagates(
     release_ctx_with_package: ReleaseContext, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    gh = _FakeGh(lists=[json.dumps([_run(2, "09:33:00")])], conclusions={"2": "failure"})
+    gh = _FakeGh(lists=[json.dumps([_run(2, "09:33:00")])], conclusions={"2": "success"})
     sleeps: list[float] = []
     fetch = _answers(b"", b"", _PACKAGES.encode())
     assert _follow(release_ctx_with_package, gh, fetch, sleeps.append) == ["2"]
     assert sleeps == [30]
     out = capsys.readouterr().out
-    assert "Publish-index run finished (failure)" in out
+    assert "Publish-index run finished (success)" in out
     assert "vergil-tooling 2.1.240-1 not in the index yet (" in out
     assert "polling again in 30s" in out
+
+
+# -- fail fast on a failed publish-index run (#4121) --------------------------
+
+
+@pytest.mark.parametrize("conclusion", ["failure", "timed_out", "startup_failure"])
+def test_failed_run_with_no_newer_run_fails_fast(
+    release_ctx_with_package: ReleaseContext, conclusion: str
+) -> None:
+    gh = _FakeGh(lists=[json.dumps([_run(2, "09:33:00")])], conclusions={"2": conclusion})
+    with pytest.raises(ReleaseError) as excinfo:
+        _follow(release_ctx_with_package, gh, _answers(b"", b""), _boom)
+    err = excinfo.value
+    assert err.command == "follow publish-index run"
+    assert (
+        f"publish-index run https://github.com/{_PACKAGES_REPO}/actions/runs/2 "
+        f"finished '{conclusion}'; vergil-tooling 2.1.240-1 not visible in {_NOBLE_AMD64}"
+    ) in str(err)
+    assert err.detail == (
+        f"see that run's failed step, then re-run the publish-index workflow in "
+        f"{_PACKAGES_REPO}; the release itself stands"
+    )
+    assert release_ctx_with_package.deferred_publish_failures == [package_index.PHASE]
+
+
+def test_failed_run_but_index_already_lists_the_release_passes(
+    release_ctx_with_package: ReleaseContext,
+) -> None:
+    gh = _FakeGh(lists=[json.dumps([_run(2, "09:33:00")])], conclusions={"2": "failure"})
+    assert _follow(release_ctx_with_package, gh, _answers(b"", _PACKAGES.encode()), _boom) == [
+        "2"
+    ]
+    assert release_ctx_with_package.package_index_urls == (_NOBLE_AMD64,)
+
+
+def test_failed_run_then_newer_run_is_followed(
+    release_ctx_with_package: ReleaseContext,
+) -> None:
+    runs = json.dumps([_run(3, "09:40:00"), _run(2, "09:33:00")])
+    gh = _FakeGh(lists=[runs], conclusions={"2": "failure", "3": "success"})
+    fetch = _answers(b"", b"", _PACKAGES.encode())
+    assert _follow(release_ctx_with_package, gh, fetch, _boom) == ["2", "3"]
+    assert release_ctx_with_package.deferred_publish_failures == []
+
+
+def test_failed_newer_run_fails_fast_after_following_it(
+    release_ctx_with_package: ReleaseContext,
+) -> None:
+    runs = json.dumps([_run(3, "09:40:00"), _run(2, "09:33:00")])
+    gh = _FakeGh(lists=[runs], conclusions={"2": "success", "3": "failure"})
+    with pytest.raises(ReleaseError, match=r"actions/runs/3 finished 'failure'"):
+        _follow(release_ctx_with_package, gh, _answers(b"", b"", b""), _boom)
+
+
+def test_failed_run_then_list_failure_falls_back_to_polling(
+    release_ctx_with_package: ReleaseContext, capsys: pytest.CaptureFixture[str]
+) -> None:
+    gh = _FakeGh(lists=[json.dumps([_run(2, "09:33:00")])], conclusions={"2": "failure"})
+
+    def failing_second_list(*args: str) -> str:
+        if args[:2] == ("run", "list") and gh.list_calls >= 1:
+            raise subprocess.CalledProcessError(1, ["gh", *args], stderr="boom")
+        return gh(*args)
+
+    sleeps: list[float] = []
+    fetch = _answers(b"", b"", _PACKAGES.encode())
+    assert _follow(release_ctx_with_package, failing_second_list, fetch, sleeps.append) == ["2"]
+    assert sleeps == [30]
+    assert "Could not follow the publish-index run" in capsys.readouterr().out
+    assert release_ctx_with_package.deferred_publish_failures == []
 
 
 def test_heartbeat_until_run_appears(
