@@ -106,8 +106,13 @@ adding new public surface. Versions: `v1.3.0` → `v1.3.1`.
      version, and succeeds only once all of them are listed. While it
      waits, it streams the `Publish package index` run in `<org>/packages`
      that covers the release and prints a heartbeat line on each poll
-     otherwise; the index poll alone decides success. A miss
-     (timeout or polling error) does not undo the release. It is recorded
+     otherwise; the index poll alone decides success. If the run it
+     follows fails (`failure`, `timed_out` or `startup_failure`), the
+     index still lacks the release and no newer index run is listed, the
+     stage fails at once rather than waiting out the 20 minutes: its error
+     names the failed run, so check that run's failed step before
+     re-running it. A miss (timeout, a failed publish-index run, or a
+     polling error) does not undo the release. It is recorded
      as a deferred publish failure: the tracking issue stays open with a
      deferral comment, the consumer-refresh stage holds (it
      prints a warning not to advertise the version instead of the refresh
