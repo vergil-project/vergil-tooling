@@ -145,7 +145,7 @@ _KNOWN_KEYS: dict[str, frozenset[str]] = {
     "project": frozenset(_PROJECT_FIELDS),
     "dependencies": frozenset({"vergil"}),
     "markdownlint": frozenset({"ignore"}),
-    "ci": frozenset({"versions", "integration-tests", "primary-version"}),
+    "ci": frozenset({"versions", "integration-tests", "primary-version", "images"}),
     "publish": frozenset({"release", "docs", "consumer-refresh"}),
     "container": frozenset(
         {"env-prefixes", "system-packages", "build-command", "build-cache-files"}
@@ -245,6 +245,11 @@ class CiConfig:
     # The explicit [ci].primary-version override, or "" when unset. Without it
     # the resolver makes the newest resolved version the primary.
     primary_version: str = ""
+    # [ci].images: the repo's ci.yml calls its repo-local ci-images.yml as job
+    # `images` (vergil-containers' PR image builds), so `images / evidence` is a
+    # required gate and the release harvests `ci-evidence-images`
+    # (vergil-project/vergil-tooling#4132). Default false.
+    images: bool = False
 
 
 @dataclass
@@ -1218,10 +1223,17 @@ def _parse_raw_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> VergilC
         got = type(primary_version).__name__
         msg = f"{source}: [ci].primary-version must be a string (got {got})"
         raise ConfigError(msg)
+    # Strictly boolean: a coerced "false" would read as true and require a gate
+    # the repo never runs, blocking every merge.
+    images = ci_raw.get("images", False)
+    if not isinstance(images, bool):
+        msg = f"{source}: [ci].images must be a boolean (got {images!r})"
+        raise ConfigError(msg)
     ci = CiConfig(
         versions=versions,
         integration_tests=bool(ci_raw.get("integration-tests", False)),
         primary_version=primary_version or "",
+        images=images,
     )
 
     publish_raw = raw.get("publish", {})

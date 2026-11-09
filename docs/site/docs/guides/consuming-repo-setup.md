@@ -208,7 +208,10 @@ Required keys and accepted values:
 | `[dependencies].vergil` | `vX.Y` | Required. The vergil release line; new repos get the line of the vergil-tooling that created them. |
 
 `[publish]` (`release`, default `false`; `docs`, default `true`) and
-`[ci].integration-tests` (default `false`) are optional. Optional
+`[ci].integration-tests` (default `false`) are optional, as is
+`[ci].images` (a boolean, default `false`), which only a repo whose `ci.yml`
+calls a repo-local `ci-images.yml` as job `images` sets; it makes
+`images / evidence` a required check. Optional
 tables have their own references:
 [`[container]`](../reference/container-config.md),
 [`[test]`](../reference/test-config.md),

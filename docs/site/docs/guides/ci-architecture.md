@@ -447,6 +447,7 @@ The `CI gates` ruleset requires these checks. The list is computed from
 | `test / evidence` | The language has a unit test command |
 | `version / version-bump` | `[project].release-model` is not `none` |
 | `package / evidence` | `vergil.toml` has `[package]` |
+| `images / evidence` | `[ci].images` is on |
 | `security / codeql`, `CodeQL` | GHAS is available and CodeQL supports the language |
 | `Trivy`, `Semgrep OSS` | GHAS is available |
 | `test / integration / <version>` | `[ci].integration-tests` is on (one per resolved version) |
@@ -485,6 +486,11 @@ non-matrixed checks (the security scanners, the version-bump gate,
 `vergil.toml` has a `[package]` section also requires `package / evidence`, the
 one stable gate `ci-package.yml` emits over its whole target matrix; repos
 without `[package]` neither call `ci-package.yml` nor require the gate.
+`[ci].images = true` (default `false`) does the same for `images / evidence`.
+It is set only by a repo whose `ci.yml` calls its repo-local `ci-images.yml`
+as a job named `images`, which vergil-containers does to build and scan the
+images a PR changes. That workflow's `evidence` job is the single aggregating
+gate, and a release of such a repo harvests its `ci-evidence-images` artifact.
 
 `vrg-github-repo-config audit` **hard-fails on required-set drift**: if a
 repo's configured required checks diverge from the desired set, the audit

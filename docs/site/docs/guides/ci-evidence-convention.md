@@ -156,6 +156,7 @@ prefix:
 | `audit / …`                                        | `audit`       | Yes                 |
 | `quality / …` (common, custom, lint, typecheck)    | `quality`     | Yes                 |
 | `package / …` (only with `[package]`)              | `package`     | Yes                 |
+| `images / …` (only with `[ci].images`)             | `images`      | Yes                 |
 | `version / …`                                      | —             | No (non-blocking)   |
 | `docs`                                             | —             | No (low-signal)     |
 
@@ -167,6 +168,10 @@ A repo whose `vergil.toml` has a `[package]` section also requires the
 `package / evidence` gate (the `ci-package.yml` aggregate over its whole
 target matrix), so the harvest pulls `ci-evidence-package` for it; a repo
 without `[package]` never calls `ci-package.yml` and is never asked for it.
+A repo with `[ci].images = true` requires `images / evidence` (the `evidence`
+job of its repo-local `ci-images.yml`, called as job `images`), so the harvest
+pulls `ci-evidence-images`; that job must upload it with an `evidence.json`
+and at least one report file, or the release fails completeness.
 `version/` is a sanity check on version state, not substantive evidence, and
 `docs` is low-signal; the absence of either does not fail the release.
 

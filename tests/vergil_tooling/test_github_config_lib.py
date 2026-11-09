@@ -323,10 +323,12 @@ def _ci(
     *,
     versions: list[str] | None = None,
     integration_tests: bool = False,
+    images: bool = False,
 ) -> CiConfig:
     return CiConfig(
         versions=versions or ["3.14"],
         integration_tests=integration_tests,
+        images=images,
     )
 
 
@@ -393,6 +395,21 @@ def test_ci_gates_requires_package_evidence_when_package_section_present() -> No
     (epic vergil-project/.github#356, spec section 8.1)."""
     ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=False, package=True)
     assert "package / evidence" in _check_names(ruleset)
+
+
+def test_ci_gates_requires_images_evidence_when_ci_images_on() -> None:
+    """A repo with ``[ci].images = true`` calls the repo-local ``ci-images.yml``
+    as its ``images`` job, whose ``evidence`` aggregate is then a required PR
+    check (vergil-project/vergil-tooling#4132)."""
+    ruleset = desired_ci_gates_ruleset(_project(), _ci(images=True), ghas=False)
+    assert "images / evidence" in _check_names(ruleset)
+
+
+def test_ci_gates_omits_images_evidence_by_default() -> None:
+    """A repo that never runs ``ci-images.yml`` must never require its gate: the
+    status would never report and every merge would block."""
+    ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=True, docs=True, package=True)
+    assert "images / evidence" not in _check_names(ruleset)
 
 
 def test_ci_gates_omits_package_evidence_without_package_section() -> None:
@@ -716,6 +733,42 @@ def test_package_evidence_flagged_when_ci_lacks_package_job() -> None:
     assert missing == ["package / evidence"]
 
 
+# The shape of vergil-containers' ci.yml: a PR-only ``images`` job calling the
+# repo-local ``ci-images.yml`` (no ``@<ref>``), its ``if:`` line before ``uses:``.
+_IMAGES_CI_YAML = (
+    _ci_yaml(jobs=_FULL_CI_JOBS)
+    + "  images:\n"
+    + "    if: github.event_name == 'pull_request'\n"
+    + "    uses: ./.github/workflows/ci-images.yml\n"
+)
+
+
+def test_images_evidence_producible_when_ci_calls_local_ci_images() -> None:
+    """The ``images`` caller job running the repo-local ``ci-images.yml`` emits
+    ``images / evidence`` on ``pull_request`` (vergil-tooling#4132)."""
+    ruleset = desired_ci_gates_ruleset(_project(), _ci(images=True), ghas=True, docs=True)
+    required = required_status_contexts(ruleset)
+    assert unproducible_ci_yaml_contexts(_IMAGES_CI_YAML, required, ghas=True) == []
+
+
+def test_images_evidence_flagged_when_ci_lacks_images_job() -> None:
+    ruleset = desired_ci_gates_ruleset(_project(), _ci(images=True), ghas=True, docs=True)
+    ci_yaml = _ci_yaml(jobs=_FULL_CI_JOBS)
+    missing = unproducible_ci_yaml_contexts(ci_yaml, required_status_contexts(ruleset), ghas=True)
+    assert missing == ["images / evidence"]
+
+
+def test_images_evidence_flagged_when_ci_images_runs_under_another_job_id() -> None:
+    """The context is ``<caller job> / evidence``: ``ci-images.yml`` called as
+    ``image-builds`` emits ``image-builds / evidence``, never ``images / evidence``."""
+    ruleset = desired_ci_gates_ruleset(_project(), _ci(images=True), ghas=True, docs=True)
+    ci_yaml = _ci_yaml(jobs=_FULL_CI_JOBS) + (
+        "  image-builds:\n    uses: ./.github/workflows/ci-images.yml\n"
+    )
+    missing = unproducible_ci_yaml_contexts(ci_yaml, required_status_contexts(ruleset), ghas=True)
+    assert missing == ["images / evidence"]
+
+
 def test_unrecognized_reusable_workflow_produces_no_contexts() -> None:
     """A job wired to an unknown reusable workflow contributes nothing to the
     producible set, so any required context is flagged (the safe default)."""
@@ -739,6 +792,15 @@ def test_assert_ci_gates_producible_passes_when_every_context_is_emitted() -> No
     ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=True, docs=True)
     assert_ci_gates_producible(
         _desired_with([ruleset]), _ci_yaml(jobs=_FULL_CI_JOBS), ghas=True, source="ci.yml"
+    )
+
+
+def test_assert_ci_gates_producible_passes_for_images_repo() -> None:
+    """``apply`` against a vergil-containers-shaped ci.yml with ``[ci].images``
+    on is not refused (vergil-tooling#4132)."""
+    ruleset = desired_ci_gates_ruleset(_project(), _ci(images=True), ghas=True, docs=True)
+    assert_ci_gates_producible(
+        _desired_with([ruleset]), _IMAGES_CI_YAML, ghas=True, source="ci.yml"
     )
 
 
@@ -924,8 +986,9 @@ def test_producible_gate_catalog_covers_desired_stable_gates() -> None:
     ruleset requires must be in the produced catalog, so the catalog can never
     silently fall behind ``desired_ci_gates_ruleset``."""
     ruleset = desired_ci_gates_ruleset(
-        _project(), _ci(integration_tests=True), ghas=True, docs=True, package=True
+        _project(), _ci(integration_tests=True, images=True), ghas=True, docs=True, package=True
     )
+    assert "images / evidence" in required_status_contexts(ruleset)
     stable = {
         c for c in required_status_contexts(ruleset) if not c.startswith("test / integration / ")
     }
@@ -1060,6 +1123,7 @@ def _vergil_config(
     release_model: str = "tagged-release",
     versions: list[str] | None = None,
     integration_tests: bool = False,
+    images: bool = False,
     docs: bool = True,
     package: PackageConfig | None = None,
 ) -> VergilConfig:
@@ -1067,7 +1131,7 @@ def _vergil_config(
         project=_project(language=language, release_model=release_model),
         dependencies={"vergil": "v1.4"},
         markdownlint=MarkdownlintConfig(ignore=[]),
-        ci=_ci(versions=versions or ["3.14"], integration_tests=integration_tests),
+        ci=_ci(versions=versions or ["3.14"], integration_tests=integration_tests, images=images),
         publish=PublishConfig(release=False, docs=docs, consumer_refresh=None),
         container=ContainerConfig(env_prefixes=[], system_packages=[]),
         validation=ValidationConfig(container_command=DEFAULT_VALIDATION_COMMAND),
@@ -1165,6 +1229,29 @@ def test_compute_desired_state_requires_package_gate_with_several_packages() -> 
     state = compute_desired_state(cfg, visibility="public", is_org=True)
     gates = next(r for r in state.rulesets if r.name == "CI gates")
     assert "package / evidence" in _check_names(gates)
+
+
+def test_compute_desired_state_requires_images_gate_with_ci_images() -> None:
+    """``[ci].images`` in ``vergil.toml`` flows through to the CI-gates ruleset,
+    and the audit then finds a live ruleset requiring it compliant."""
+    state = compute_desired_state(_vergil_config(images=True), visibility="public", is_org=True)
+    gates = next(r for r in state.rulesets if r.name == "CI gates")
+    assert "images / evidence" in _check_names(gates)
+    assert compute_diff(desired=state, actual=state).is_compliant()
+
+
+def test_compute_desired_state_omits_images_gate_by_default() -> None:
+    state = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    gates = next(r for r in state.rulesets if r.name == "CI gates")
+    assert "images / evidence" not in _check_names(gates)
+
+
+def test_audit_reports_images_gate_drift_on_non_images_repo() -> None:
+    """A repo without ``[ci].images`` whose live ruleset was hand-edited to
+    require ``images / evidence`` is reported as drift, not silently accepted."""
+    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    actual = compute_desired_state(_vergil_config(images=True), visibility="public", is_org=True)
+    assert not compute_diff(desired=desired, actual=actual).is_compliant()
 
 
 def test_compute_desired_state_omits_package_gate_without_package_section() -> None:
@@ -3488,6 +3575,9 @@ class TestClassifyEvidenceGate:
     def test_package_prefix(self) -> None:
         assert classify_evidence_gate("package / evidence") == "package"
 
+    def test_images_prefix(self) -> None:
+        assert classify_evidence_gate("images / evidence") == "images"
+
     def test_version_is_non_evidence(self) -> None:
         assert classify_evidence_gate("version / version-bump") is None
 
@@ -3521,6 +3611,29 @@ class TestRequiredEvidenceGates:
     def test_package_gate_absent_without_package_section(self) -> None:
         gates = {g.name for g in required_evidence_gates(_project(), _ci(), ghas=True)}
         assert "package" not in gates
+
+    def test_images_gate_required_with_ci_images(self) -> None:
+        gates = {
+            g.name: g for g in required_evidence_gates(_project(), _ci(images=True), ghas=True)
+        }
+        assert gates["images"].checks == ("images / evidence",)
+
+    def test_images_gate_absent_by_default(self) -> None:
+        gates = {
+            g.name for g in required_evidence_gates(_project(), _ci(), ghas=True, package=True)
+        }
+        assert "images" not in gates
+
+    def test_images_gate_ordered_last(self) -> None:
+        gates = required_evidence_gates(_project(), _ci(images=True), ghas=True, package=True)
+        assert [g.name for g in gates] == [
+            "security",
+            "test",
+            "audit",
+            "quality",
+            "package",
+            "images",
+        ]
 
     def test_package_gate_ordered_after_quality(self) -> None:
         gates = required_evidence_gates(_project(), _ci(), ghas=True, package=True)

@@ -29,6 +29,7 @@ and any value that loader rejects fails the check. The core rules:
 | `[project].ghas` | Optional; must be a boolean |
 | `[ci].versions` | Optional pin; when set, a non-empty list of strings |
 | `[ci].primary-version` | Optional; a string |
+| `[ci].images` | Optional; must be a boolean |
 | `[dependencies].vergil` | Required |
 
 The recognized `[project].primary-language` values are `cpp`, `go`,

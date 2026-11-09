@@ -887,6 +887,87 @@ def test_package_section_makes_harvest_download_ci_evidence_package(
     assert f"repos/o/r/actions/artifacts/{package_id}/zip" in calls
 
 
+def _images_repo_required_gates(monkeypatch: pytest.MonkeyPatch, *, images: bool) -> Any:
+    """The real required-gate derivation for a repo with ``[ci].images`` set as given."""
+    from types import SimpleNamespace
+
+    from vergil_tooling.lib.config import CiConfig, ProjectConfig
+
+    project = ProjectConfig(
+        repository_type="tooling",
+        versioning_scheme="semver",
+        branching_model="library-release",
+        release_model="tagged-release",
+        primary_language=None,
+    )
+    cfg = SimpleNamespace(
+        project=project,
+        ci=CiConfig(versions=["latest"], integration_tests=False, images=images),
+        publish=SimpleNamespace(docs=True),
+        packages=(),
+    )
+    monkeypatch.setattr(ci_evidence, "require_config_at_ref", lambda _repo, _ref: cfg)
+    monkeypatch.setattr(github, "repo_visibility", lambda _repo: "public")
+    monkeypatch.setattr(ci_evidence, "ghas_available", lambda _c, *, visibility: True)
+    return ci_evidence.resolve_required_gates("o/r", "cafef00d")
+
+
+def test_ci_images_makes_harvest_download_ci_evidence_images(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A ``[ci].images`` repo requires the ``images`` gate, so the harvest pulls
+    ``ci-evidence-images`` (vergil-project/vergil-tooling#4132)."""
+    required = _images_repo_required_gates(monkeypatch, images=True)
+    gates = {g.name: g for g in required}
+    assert gates["images"].checks == ("images / evidence",)
+
+    monkeypatch.setattr(
+        github,
+        "read_json_paginated",
+        lambda *a, **k: [
+            {"name": f"ci-evidence-{g.name}", "id": i} for i, g in enumerate(required)
+        ],
+    )
+    calls = _fake_downloads(monkeypatch)
+
+    result = download_evidence_artifacts("o/r", 7, tmp_path / "artifacts", required)
+
+    assert tmp_path / "artifacts" / "images" in result
+    images_id = [g.name for g in required].index("images")
+    assert f"repos/o/r/actions/artifacts/{images_id}/zip" in calls
+
+
+def test_ci_images_release_without_images_artifact_fails_completeness(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A ``[ci].images`` release whose CI run uploaded no ``ci-evidence-images``
+    fails the harvest naming the gate, never a silent pass."""
+    required = _images_repo_required_gates(monkeypatch, images=True)
+    others = [g for g in required if g.name != "images"]
+    monkeypatch.setattr(
+        github,
+        "read_json_paginated",
+        lambda *a, **k: [{"name": f"ci-evidence-{g.name}", "id": i} for i, g in enumerate(others)],
+    )
+    _fake_downloads(monkeypatch)
+
+    gate_dirs = download_evidence_artifacts("o/r", 7, tmp_path, required)
+    harvested = {
+        d.name: ci_evidence.GateEvidence(d.name, "success", (), {}, (d / "report.json",))
+        for d in gate_dirs
+    }
+
+    with pytest.raises(ci_evidence.IncompleteEvidenceError) as exc:
+        ci_evidence.validate_completeness(required, harvested)
+    assert exc.value.missing == ["images"]
+
+
+def test_no_ci_images_never_requires_images_evidence(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without ``[ci].images`` the release never asks for ``ci-evidence-images``."""
+    required = _images_repo_required_gates(monkeypatch, images=False)
+    assert "images" not in {g.name for g in required}
+
+
 # --- _gate_conclusion ---------------------------------------------------
 
 
