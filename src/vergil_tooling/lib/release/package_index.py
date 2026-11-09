@@ -10,8 +10,11 @@ holds while any publish is deferred.
 
 While it waits, the stage streams the ``Publish package index`` run in
 ``<org>/packages`` that covers this release, and prints a heartbeat on every
-poll while no run is being streamed (#3528). Run-watching is progress output
-only: the index poll is the sole pass/fail check.
+poll while no run is being streamed (#3528). The index poll is the only check
+that passes the stage. A followed run can still end it early, though: if the
+run failed, the index still lacks the release and no newer index run exists
+that could publish it, the stage fails at once and names the failed run
+(#4121), instead of polling a result that cannot change until the timeout.
 """
 
 from __future__ import annotations
@@ -46,6 +49,9 @@ PHASE = "package-index"
 # The org packages repo's index workflow, dispatched by cd-release's release job.
 _INDEX_WORKFLOW = "publish-index.yml"
 _RUN_LIST_LIMIT = "20"
+# Conclusions of a run that did not publish the index. Any other conclusion
+# (``success``, or one GitHub adds later) keeps the stage polling to its timeout.
+_FAILED_CONCLUSIONS = frozenset({"failure", "timed_out", "startup_failure"})
 
 
 def _fetch(url: str) -> bytes:
@@ -317,8 +323,8 @@ def _next_index_run(packages_repo: str, since: datetime, seen: set[str]) -> dict
     return candidates[0] if candidates else None
 
 
-def _follow_index_run(packages_repo: str, run: dict[str, Any]) -> None:
-    """Stream ``run`` until it completes and say how it ended (progress output only)."""
+def _follow_index_run(packages_repo: str, run: dict[str, Any]) -> str:
+    """Stream ``run`` until it completes, say how it ended, and return its conclusion."""
     run_id = str(run["databaseId"])
     resource = f"publish-index run {run_id}"
     print(f"  Publish-index run: {run['url']}")
@@ -343,6 +349,7 @@ def _follow_index_run(packages_repo: str, run: dict[str, Any]) -> None:
         print("  Publish-index run was cancelled (superseded); following the next one.")
     else:
         print(f"  Publish-index run finished ({conclusion}); checking the index.")
+    return conclusion
 
 
 def _wait(
@@ -368,6 +375,12 @@ def _wait(
     packages_repo = f"{org.github_org}/packages"
     since = _following(ctx, packages_repo)
     seen: set[str] = set()
+    # The last followed run, when it failed: (url, conclusion). Cleared when a
+    # newer run is followed, since that run may still publish the release.
+    failed: tuple[str, str] | None = None
+    rerun = (
+        f"re-run the publish-index workflow in {org.github_org}/packages; the release itself stands"
+    )
     # A package once seen stays seen: only the ones still missing are polled.
     missing = waits
     while missing := [w for w in missing if not w.visible()]:
@@ -378,21 +391,30 @@ def _wait(
                 command="poll package index",
                 message="; ".join(f"{w.label} not visible in {w.where}" for w in missing)
                 + f" after {timeout}s",
-                detail=(
-                    f"re-run the publish-index workflow in {org.github_org}/packages; "
-                    "the release itself stands"
-                ),
+                detail=rerun,
             )
         if since is not None:
             try:
                 run = _next_index_run(packages_repo, since, seen)
                 if run is not None:
                     seen.add(str(run["databaseId"]))
-                    _follow_index_run(packages_repo, run)
+                    conclusion = _follow_index_run(packages_repo, run)
+                    failed = (run["url"], conclusion) if conclusion in _FAILED_CONCLUSIONS else None
                     continue
             except subprocess.CalledProcessError as exc:
                 since = None
                 print(f"  Could not follow the publish-index run ({exc}); polling the index only.")
+            if failed is not None and since is not None:
+                # The followed run failed, the index still lacks the release, and
+                # no newer run exists to publish it: waiting cannot change that.
+                url, conclusion = failed
+                raise ReleaseError(
+                    phase=PHASE,
+                    command="follow publish-index run",
+                    message=f"publish-index run {url} finished '{conclusion}'; "
+                    + "; ".join(f"{w.label} not visible in {w.where}" for w in missing),
+                    detail=f"see that run's failed step, then {rerun}",
+                )
         print(
             f"  {', '.join(w.label for w in missing)} not in the index yet "
             f"({int(current - start)}s elapsed); polling again in {interval}s"
@@ -419,9 +441,11 @@ def wait_for_index(
     first rpm target's. The stage succeeds only once all of them are listed,
     and records each one's index file in ``ctx.package_index_urls``.
 
-    No-op without ``[package]``. Any failure (a timeout, or an error while
-    polling) records ``package-index`` in ``ctx.deferred_publish_failures``
-    before propagating, so the consumer refresh holds.
+    No-op without ``[package]``. Any failure (a timeout, a followed
+    publish-index run that failed with no newer run to follow (#4121), or an
+    error while polling) records ``package-index`` in
+    ``ctx.deferred_publish_failures`` before propagating, so the consumer
+    refresh holds.
     """
     try:
         _wait(ctx, fetch=fetch, sleep=sleep, now=now, timeout=timeout, interval=interval)
