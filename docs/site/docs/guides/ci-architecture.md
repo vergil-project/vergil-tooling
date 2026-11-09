@@ -74,6 +74,15 @@ repository with no language uses the base image. On top of that image,
 vergil-tooling installed. Set `DOCKER_DEV_IMAGE` to use a different
 image.
 
+The image chooses how vergil-tooling is installed, by two checks: the
+vergil apt source (`/etc/apt/sources.list.d/vergil.sources`) and a core
+vergil-python (`/opt/vergil/python/*/bin/python3`). With both, a release
+version (`vX.Y` or `vX.Y.Z`) installs the vergil-tooling package, pinned
+to that version, and the build checks that `vrg-*` runs from `/usr/bin`
+on vergil-python; a branch is `uv tool install` from git on the core
+Python. With neither, it is `uv tool install` from git. An image with only
+one of the two fails the build. The build log names the path it took.
+
 `vrg-validate` first runs the common checks: the
 [repo-profile](../reference/lint/repo-profile.md) check, markdownlint,
 shellcheck, yamllint, hadolint, actionlint, and ansible-lint when the
