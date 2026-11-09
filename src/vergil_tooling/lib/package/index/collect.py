@@ -9,7 +9,8 @@
 - Every collected file must pass ``gh attestation verify`` pinned to the
   vergil-actions release workflow on ``main``; every ``.rpm`` must also carry a
   valid org signature. A failure is a hard error, never a skip.
-- Every ``gh`` call retries a transient GitHub error with the shared bounded
+- Every ``gh`` call retries a transient GitHub error, including the HTTP 500
+  the release-asset API returns intermittently (#4119), with the shared bounded
   backoff of :mod:`vergil_tooling.lib.retry` (#3153); one that outlasts the
   budget is still a hard error.
 """
@@ -141,15 +142,18 @@ def _detail(exc: subprocess.CalledProcessError) -> str:
 def _invoke(run: Run, *argv: str) -> subprocess.CompletedProcess[str]:
     """Run ``argv``; a ``gh`` call gets the shared transient-error retry (#3153).
 
-    A ``gh`` failure that :func:`retry.is_retryable` classifies as transient (a
-    5xx, GitHub's GraphQL "Something went wrong" blip, a transport drop) is
-    retried with bounded backoff and, once the budget is spent, re-raised. Any
-    other failure — a missing release, a failed attestation — is raised at once,
-    never retried. Local tools (``dpkg-deb``, ``rpm``, ``rpmkeys``) are never
-    retried.
+    A ``gh`` failure that :func:`retry.is_retryable_read` classifies as
+    transient (an HTTP 500/502/503/504, GitHub's GraphQL "Something went wrong"
+    blip, a transport drop) is retried with bounded backoff and, once the budget
+    is spent, re-raised. The read-only classifier is safe here because every
+    ``gh`` call the index makes is a read (``release list``/``view``/
+    ``download``, ``attestation verify``); it adds the HTTP 500 the release-asset
+    API returns intermittently (#4119). Any other failure — a missing release, a
+    failed attestation — is raised at once, never retried. Local tools
+    (``dpkg-deb``, ``rpm``, ``rpmkeys``) are never retried.
     """
     if argv[0] == "gh":
-        return retry.call_with_retry(lambda: run(*argv))
+        return retry.call_with_retry(lambda: run(*argv), retryable=retry.is_retryable_read)
     return run(*argv)
 
 
