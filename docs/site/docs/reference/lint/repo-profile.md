@@ -32,8 +32,8 @@ and any value that loader rejects fails the check. The core rules:
 | `[dependencies].vergil` | Required |
 
 The recognized `[project].primary-language` values are `cpp`, `go`,
-`java`, `python`, `rust` and `typescript`. A retired language
-(`ruby`) is rejected outright. Any other unrecognized value is a
+`python`, `rust` and `typescript`. A retired language (`ruby`,
+`java`) is rejected outright. Any other unrecognized value is a
 warning, not a failure: the language is treated as unset.
 Unrecognized sections and keys are also reported as warnings. The
 optional tables have their own references, such as

@@ -1406,7 +1406,7 @@ Single-repo applicator for the canonical **report-only**
 repo's `[project].primary-language` and either checks (default) or writes
 the render from `lib/dependabot.py`: a `github-actions` entry plus the
 language's ecosystem (`python` → `uv`, `go` → `gomod`, `rust` → `cargo`,
-`java` → `maven`, `typescript` → `npm`; any other language gets
+`typescript` → `npm`; any other language gets
 `github-actions` only), every entry at `open-pull-requests-limit: 0` so
 Dependabot never opens a PR. The file is **exact match**: `--write`
 replaces local additions. It owns **only** the file change and has no git
@@ -1830,7 +1830,7 @@ Runs unprivileged and refuses `sudo`/`doas`/`su`/`pkexec`. See the
 ### vrg-generate-commands
 
 Generate MQSC command methods for all language ports (Python,
-Java, Go, Rust) from `mapping-data.json`. Updates target files
+Go, Rust) from `mapping-data.json`. Updates target files
 between `BEGIN/END GENERATED MQSC METHODS` markers.
 
 | Attribute | Value |

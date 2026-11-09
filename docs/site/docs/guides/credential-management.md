@@ -380,8 +380,7 @@ The release workflow forwards per-ecosystem secrets to `cd-release`
 
 | Secret | Blast radius |
 |---|---|
-| `CARGO_REGISTRY_TOKEN`, `CENTRAL_USERNAME`/`CENTRAL_TOKEN` | Can publish to that registry under the project's account |
-| `GPG_PRIVATE_KEY`/`GPG_PASSPHRASE` (java) | Can sign artifacts as the project |
+| `CARGO_REGISTRY_TOKEN` | Can publish to that registry under the project's account |
 | `PACKAGE_SIGNING_KEY`/`PACKAGE_SIGNING_PASSPHRASE` | Can sign `.deb`/`.rpm` packages that apt/dnf clients will trust, because clients trust the org signing key |
 
 Python publishing uses PyPI OIDC trusted publishing, so there is no

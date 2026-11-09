@@ -230,7 +230,7 @@ standards-compliance job is gone: PR issue linkage is now checked by
 
 !!! tip "Semgrep rulesets"
     `vrg-semgrep-scan` maps the language to a registry ruleset:
-    `python`, `java` and `rust` map to `p/<language>`, and `go`
+    `python` and `rust` map to `p/<language>`, and `go`
     maps to `p/golang`. It adds `p/dockerfile` when the repository has
     Dockerfiles and `p/github-actions` when it has workflows.
     `ci-security.yml` adds `p/c` for `cpp` and `p/typescript` for
@@ -341,7 +341,6 @@ publisher reads:
 | python | *none* — PyPI OIDC trusted publishing |
 | go | *none* — no publish token |
 | rust | `CARGO_REGISTRY_TOKEN` |
-| java | `CENTRAL_USERNAME`, `CENTRAL_TOKEN`, `GPG_PRIVATE_KEY`, `GPG_PASSPHRASE` |
 
 A language that needs no secret (python, go, or any non-publishing
 language) gets **no `secrets:` block at all**, not `secrets: inherit`.
@@ -501,9 +500,6 @@ is the single source of truth.
 
 **`dev-python`**
 :   Base: `python:<v>-slim`. Includes git, curl, uv.
-
-**`dev-java`**
-:   Base: `eclipse-temurin:<v>-jdk`. Includes git, curl.
 
 **`dev-go`**
 :   Base: `golang:<v>`. Includes golangci-lint,

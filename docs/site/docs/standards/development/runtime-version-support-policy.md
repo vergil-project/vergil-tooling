@@ -10,7 +10,7 @@ language pages such as
 ## Scope
 
 Applies to every repository that declares a `[project].primary-language` in
-`vergil.toml`: Python, Java, Go, Rust, C++ and TypeScript.
+`vergil.toml`: Python, Go, Rust, C++ and TypeScript.
 
 ## Definitions
 
@@ -117,7 +117,6 @@ rule each language's window follows, from its vergil-containers policy page:
 | Python | Every GA minor that is not EOL |
 | Go | The two newest releases |
 | Rust | The newest stable release and the one before it (N-1) |
-| Java | LTS releases that are not EOL |
 | TypeScript (Node.js) | LTS majors that are not EOL |
 | C++ (Clang) | The newest LLVM major and the one before it |
 | C++ (GCC) | The maintained series that the image's base distribution packages |
