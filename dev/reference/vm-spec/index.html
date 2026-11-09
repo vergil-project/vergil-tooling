@@ -17595,8 +17595,9 @@ only when set, and declaring or changing it trips <code>NEEDS-REBUILD</code>.</p
 <h2 id="vergil-tooling-inside-the-vm">vergil-tooling inside the VM<a class="headerlink" href="#vergil-tooling-inside-the-vm" title="Permanent link">&para;</a></h2>
 <p>Lima and cloud VMs install vergil-tooling from the vergil <strong>package
 repository</strong> (<code>https://vergil-project.github.io/packages</code>) with <code>apt</code>,
-not with <code>uv tool install</code>. The macOS host, the dev container cache and
-this repo's dev-tree <code>.venv</code> are unchanged and still use <code>uv</code>.</p>
+not with <code>uv tool install</code>. The macOS host and this repo's dev-tree
+<code>.venv</code> still use <code>uv</code>. The dev container cache chooses by the image (see
+<a href="../../guides/ci-architecture/#tier-1-local-pre-commit">the cached image</a>).</p>
 <p><strong>Which version.</strong> The version is the identity's resolved vergil
 version: the per-identity <code>vergil</code> setting in <code>identities.toml</code>, else
 the config-level <code>vergil</code>. The repo's <code>vergil.toml</code> plays no part. A
