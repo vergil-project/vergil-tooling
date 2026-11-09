@@ -10,11 +10,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from vergil_tooling.bin.vrg_freeze_refs import main as freeze_refs_main
 from vergil_tooling.lib import github
 from vergil_tooling.lib.promote import (
     PromoteError,
     Promotion,
     _peeled_commit,
+    _require_merged_work,
     describe,
     plan_promotion,
     promote,
@@ -23,6 +25,7 @@ from vergil_tooling.lib.promote import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
+    from pathlib import Path
 
 _RUN = "vergil_tooling.lib.promote.subprocess.run"
 _READ = "vergil_tooling.lib.promote.github.read_output"
@@ -31,6 +34,10 @@ OLD_REF = "t" * 40
 OLD = "a" * 40
 NEW = "b" * 40
 NEW_TAG_OBJ = "r" * 40
+# A commit object that is not a freeze commit: one parent, an unrelated subject.
+_UNRELATED_COMMIT = (
+    f"tree {'e' * 40}\nparent {'p' * 40}\nauthor A <a@example.com> 0 +0000\n\nfeat: unrelated\n"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -111,6 +118,8 @@ def _git_responses(  # noqa: PLR0913
             return _ok(_ls_lines(ref, rolling_raw or rolling, rolling, patterns))
         if sub == "merge-base":
             return _ok(returncode=on_main, stderr="fatal: bad object")
+        if sub == "cat-file":  # the release commit, read only when it is not on main
+            return _ok(_UNRELATED_COMMIT)
         if sub == "rev-parse":
             target = argv[-1]
             if target.endswith("^{commit}"):  # peel the resolved release object
@@ -279,8 +288,9 @@ def test_plan_promotion_accepts_push_url_in_another_form() -> None:
 
 
 def test_plan_promotion_refuses_tag_not_on_main() -> None:
-    with _patched(on_main=1), pytest.raises(PromoteError, match="not on origin/main"):
+    with _patched(on_main=1), pytest.raises(PromoteError, match="not on origin/main") as excinfo:
         plan_promotion("2.1.50")
+    assert "is not its freeze commit: its subject is not" in str(excinfo.value)
 
 
 def test_plan_promotion_merge_base_error_raises() -> None:
@@ -749,3 +759,267 @@ def test_peeled_commit_ignores_refs_that_only_end_like_the_tag() -> None:
     out = "other1\trefs/heads/refs/tags/v2.1\nabc123\trefs/tags/v2.1\n"
     with patch(_RUN, return_value=_ok(out)):
         assert _peeled_commit("v2.1") == "abc123"
+
+
+# --- #4140: a release tag on vergil-actions' freeze commit ------------------
+#
+# vergil-actions' CD tags a freeze commit on top of main's head: its
+# freeze-internal-refs action runs vrg-freeze-refs, then commits the result as
+# "chore(release): freeze internal refs to <tag>". These tests build that shape
+# in a real repository, with the real vrg-freeze-refs, and check it against
+# the guard.
+
+_ACTIONS_REPO = "vergil-project/vergil-actions"
+_FREEZE_MESSAGE = "chore(release): freeze internal refs to v2.1.61"
+_WORKFLOW = """\
+name: CD docs
+on: workflow_call
+jobs:
+  docs:
+    uses: vergil-project/vergil-actions/.github/workflows/cd-docs.yml@develop
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install vergil-tooling
+        uses: ./actions/shared/setup/vergil
+      - name: Stage
+        uses: ./actions/shared/docs/stage
+        with:
+          mkdocs-config: docs/site/mkdocs.yml
+"""
+_ACTION = """\
+name: Registry publish
+runs:
+  using: composite
+  steps:
+    - uses: ./actions/shared/setup/vergil
+"""
+
+
+def _git(cwd: Path, *args: str) -> str:
+    return _sp.run(
+        ("git", *args), cwd=cwd, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+def _publish_main(repo: Path) -> None:
+    """Push the clone's main to origin and refresh ``refs/remotes/origin/main``."""
+    _git(repo, "push", "-q", "origin", "main")
+    _git(repo, "fetch", "-q", "origin")
+
+
+@pytest.fixture
+def actions_repo(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """A clone of a bare origin whose main holds vergil-actions-like YAML.
+
+    The clone is the working directory, checked out on main's head, and
+    ``refs/remotes/origin/main`` is origin's main.
+    """
+    for var in ("AUTHOR", "COMMITTER"):
+        monkeypatch.setenv(f"GIT_{var}_NAME", "Test")
+        monkeypatch.setenv(f"GIT_{var}_EMAIL", "test@example.com")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "gitconfig"))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    origin = tmp_path / "origin.git"
+    _git(tmp_path, "init", "-q", "--bare", "-b", "main", str(origin))
+    repo = tmp_path / "clone"
+    _git(tmp_path, "clone", "-q", str(origin), str(repo))
+    _git(repo, "checkout", "-q", "-b", "main")
+    (repo / ".github/workflows").mkdir(parents=True)
+    (repo / ".github/workflows/cd-docs.yml").write_text(_WORKFLOW)
+    (repo / "actions/cd/release/registry-publish").mkdir(parents=True)
+    (repo / "actions/cd/release/registry-publish/action.yml").write_text(_ACTION)
+    (repo / "README.md").write_text("vergil-actions\n")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "Merge pull request #1 from vergil-project/release/2.1.61")
+    _publish_main(repo)
+    monkeypatch.chdir(repo)
+    return repo
+
+
+def _freeze(repo: Path, tag: str, *, message_tag: str | None = None) -> str:
+    """Run vergil-actions' freeze step (vrg-freeze-refs, then its commit); return the commit."""
+    assert freeze_refs_main(["--owner-repo", _ACTIONS_REPO, "--tag", tag]) == 0
+    _git(repo, "add", ".github/workflows", "actions")
+    _git(repo, "commit", "-qm", f"chore(release): freeze internal refs to {message_tag or tag}")
+    return _git(repo, "rev-parse", "HEAD")
+
+
+def _commit(repo: Path, message: str) -> str:
+    _git(repo, "commit", "-qam", message)
+    return _git(repo, "rev-parse", "HEAD")
+
+
+def _refusal(commit: str, release_tag: str = "v2.1.61") -> str:
+    with pytest.raises(PromoteError) as excinfo:
+        _require_merged_work(_ACTIONS_REPO, release_tag, commit)
+    text = str(excinfo.value)
+    assert text.startswith(
+        f"{release_tag} ({commit[:12]}) is not on origin/main, and is not its freeze commit: "
+    )
+    return text
+
+
+def test_merged_work_accepts_a_commit_on_main(actions_repo: Path) -> None:
+    _require_merged_work(_ACTIONS_REPO, "v2.1.61", _git(actions_repo, "rev-parse", "HEAD"))
+
+
+def test_merged_work_accepts_the_release_freeze_commit(actions_repo: Path) -> None:
+    commit = _freeze(actions_repo, "v2.1.61")
+    workflow = (actions_repo / ".github/workflows/cd-docs.yml").read_text()
+    assert "vergil-project/vergil-actions/actions/shared/setup/vergil@v2.1.61" in workflow
+    _require_merged_work(_ACTIONS_REPO, "v2.1.61", commit)
+
+
+def test_merged_work_refuses_a_freeze_commit_for_another_tag(actions_repo: Path) -> None:
+    commit = _freeze(actions_repo, "v2.1.60")
+    assert f"its subject is not '{_FREEZE_MESSAGE}'" in _refusal(commit)
+
+
+def test_merged_work_refuses_refs_frozen_to_another_tag(actions_repo: Path) -> None:
+    commit = _freeze(actions_repo, "v2.1.60", message_tag="v2.1.61")
+    expected = "the freeze commit changes more than internal refs in .github/workflows/cd-docs.yml"
+    assert expected in _refusal(commit)
+
+
+def test_merged_work_refuses_a_freeze_commit_whose_parent_is_not_on_main(
+    actions_repo: Path,
+) -> None:
+    (actions_repo / "README.md").write_text("unmerged\n")
+    parent = _commit(actions_repo, "feat: unmerged work")
+    commit = _freeze(actions_repo, "v2.1.61")
+    assert f"its parent ({parent[:12]}) is not on origin/main" in _refusal(commit)
+
+
+def test_merged_work_refuses_a_commit_with_two_parents(actions_repo: Path) -> None:
+    _git(actions_repo, "checkout", "-q", "-b", "side")
+    (actions_repo / "README.md").write_text("side\n")
+    _commit(actions_repo, "feat: side")
+    _git(actions_repo, "checkout", "-q", "main")
+    _git(actions_repo, "merge", "-q", "--no-ff", "-m", _FREEZE_MESSAGE, "side")
+    commit = _git(actions_repo, "rev-parse", "HEAD")
+    assert "it has 2 parents (a freeze commit has exactly one)" in _refusal(commit)
+
+
+def test_merged_work_refuses_a_root_commit(actions_repo: Path) -> None:
+    _git(actions_repo, "checkout", "-q", "--orphan", "orphan")
+    commit = _commit(actions_repo, _FREEZE_MESSAGE)
+    assert "it has 0 parents (a freeze commit has exactly one)" in _refusal(commit)
+
+
+def test_merged_work_refuses_a_freeze_commit_with_a_non_ref_change(actions_repo: Path) -> None:
+    assert freeze_refs_main(["--owner-repo", _ACTIONS_REPO, "--tag", "v2.1.61"]) == 0
+    workflow = actions_repo / ".github/workflows/cd-docs.yml"
+    workflow.write_text(workflow.read_text().replace("docs/site/mkdocs.yml", "mkdocs.yml"))
+    commit = _commit(actions_repo, _FREEZE_MESSAGE)
+    expected = "the freeze commit changes more than internal refs in .github/workflows/cd-docs.yml"
+    assert expected in _refusal(commit)
+
+
+def test_merged_work_refuses_a_whitespace_only_change(actions_repo: Path) -> None:
+    (actions_repo / "README.md").write_text("vergil-actions\n\n")
+    commit = _commit(actions_repo, _FREEZE_MESSAGE)
+    assert "the freeze commit changes more than internal refs in README.md" in _refusal(commit)
+
+
+def test_merged_work_refuses_a_freeze_commit_that_adds_a_file(actions_repo: Path) -> None:
+    (actions_repo / "extra.yml").write_text("uses: ./actions/x\n")
+    _git(actions_repo, "add", "extra.yml")
+    commit = _freeze(actions_repo, "v2.1.61")
+    assert "it adds extra.yml" in _refusal(commit)
+
+
+def test_merged_work_refuses_a_freeze_commit_that_deletes_a_file(actions_repo: Path) -> None:
+    _git(actions_repo, "rm", "-q", "README.md")
+    commit = _freeze(actions_repo, "v2.1.61")
+    assert "it deletes README.md" in _refusal(commit)
+
+
+def test_merged_work_refuses_a_freeze_commit_that_renames_a_file(actions_repo: Path) -> None:
+    _git(actions_repo, "mv", "README.md", "README.txt")
+    commit = _freeze(actions_repo, "v2.1.61")
+    assert "it deletes README.md" in _refusal(commit)
+
+
+def test_merged_work_refuses_a_mode_change(actions_repo: Path) -> None:
+    _git(actions_repo, "update-index", "--chmod=+x", "README.md")
+    commit = _freeze(actions_repo, "v2.1.61")
+    assert "it changes the mode of README.md" in _refusal(commit)
+
+
+def test_merged_work_refuses_a_type_change(actions_repo: Path) -> None:
+    (actions_repo / "README.md").unlink()
+    (actions_repo / "README.md").symlink_to("actions")
+    _git(actions_repo, "add", "README.md")
+    commit = _freeze(actions_repo, "v2.1.61")
+    assert "it changes the type of README.md" in _refusal(commit)
+
+
+def test_merged_work_refuses_a_changed_symlink(actions_repo: Path) -> None:
+    (actions_repo / "link").symlink_to("README.md")
+    _git(actions_repo, "add", "link")
+    _commit(actions_repo, "feat: add link")
+    _publish_main(actions_repo)
+    (actions_repo / "link").unlink()
+    (actions_repo / "link").symlink_to("actions")
+    _git(actions_repo, "add", "link")
+    commit = _freeze(actions_repo, "v2.1.61")
+    assert "link is not a regular file" in _refusal(commit)
+
+
+def test_merged_work_refuses_non_utf8_content(actions_repo: Path) -> None:
+    (actions_repo / "README.md").write_bytes(b"\xff\xfe\n")
+    _commit(actions_repo, "feat: binary readme")
+    _publish_main(actions_repo)
+    (actions_repo / "README.md").write_bytes(b"\xff\xfd\n")
+    commit = _commit(actions_repo, _FREEZE_MESSAGE)
+    assert "README.md is not UTF-8 text" in _refusal(commit)
+
+
+def test_merged_work_refuses_an_empty_freeze_commit(actions_repo: Path) -> None:
+    _git(actions_repo, "commit", "-q", "--allow-empty", "-m", _FREEZE_MESSAGE)
+    commit = _git(actions_repo, "rev-parse", "HEAD")
+    assert "it changes no file" in _refusal(commit)
+
+
+def test_merged_work_refuses_an_unrelated_commit_off_main(actions_repo: Path) -> None:
+    (actions_repo / "README.md").write_text("unrelated\n")
+    commit = _commit(actions_repo, "feat: unrelated")
+    assert f"its subject is not '{_FREEZE_MESSAGE}'" in _refusal(commit)
+
+
+def test_merged_work_reads_the_subject_line_not_a_folded_paragraph(actions_repo: Path) -> None:
+    assert freeze_refs_main(["--owner-repo", _ACTIONS_REPO, "--tag", "v2.1.61"]) == 0
+    commit = _commit(actions_repo, "chore(release): freeze internal refs to\nv2.1.61")
+    assert "its subject is not" in _refusal(commit)
+
+
+def test_merged_work_blob_read_failure_raises(actions_repo: Path) -> None:
+    commit = _freeze(actions_repo, "v2.1.61")
+    failure = _sp.CalledProcessError(128, ["git", "cat-file", "blob", "x"], b"", b"fatal: bad")
+    with (
+        patch("vergil_tooling.lib.promote.git.blob_bytes", side_effect=failure),
+        pytest.raises(PromoteError, match="cannot read") as excinfo,
+    ):
+        _require_merged_work(_ACTIONS_REPO, "v2.1.61", commit)
+    assert excinfo.value.cmd == ["git", "cat-file", "blob", "x"]
+
+
+def test_plan_promotion_accepts_vergil_actions_release_shape(actions_repo: Path) -> None:
+    """vergil-actions' real tag shape: an annotated tag on a freeze commit on top of main."""
+    main_head = _git(actions_repo, "rev-parse", "HEAD")
+    commit = _freeze(actions_repo, "v2.1.61")
+    _git(actions_repo, "tag", "-a", "v2.1.61", "-m", "Release 2.1.61")
+    _git(actions_repo, "push", "-q", "origin", "v2.1.61")
+    assert _git(actions_repo, "rev-list", "--parents", "-n", "1", commit).split() == [
+        commit,
+        main_head,
+    ]
+    assert _git(actions_repo, "rev-parse", "refs/remotes/origin/main") == main_head
+    with (
+        patch("vergil_tooling.lib.promote._origin_repo", return_value=_ACTIONS_REPO),
+        patch(_READ, return_value="false"),
+    ):
+        p = plan_promotion("2.1.61")
+    assert p == Promotion(_ACTIONS_REPO, "v2.1", "v2.1.61", "", "", commit)

@@ -285,9 +285,16 @@ boundary, because the identity signals come from the caller's environment.
 The rolling-tag ruleset on GitHub, which only the repository Admin role
 bypasses, is what enforces who can move the tag.
 
-The target must be an existing `vX.Y.Z` tag on origin whose commit is on
-origin's `main` and that has a published (non-draft) GitHub Release; any
-other target is refused. origin's push URL must name the same GitHub repo as
+The target must be an existing `vX.Y.Z` tag on origin whose commit is
+merged work and that has a published (non-draft) GitHub Release; any other
+target is refused. Merged work is a commit on origin's `main`, or that
+release's freeze commit, the shape vergil-actions' CD tags: a commit with
+exactly one parent, that parent on origin's `main`, the subject
+`chore(release): freeze internal refs to vX.Y.Z`, and a change from the
+parent in which every file is a regular file whose new content is exactly
+what `vrg-freeze-refs` makes of the old one for origin's repo and that tag,
+with no file added, deleted, renamed or re-moded. A refusal names the rule
+that failed. origin's push URL must name the same GitHub repo as
 its fetch URL. Every run, `--dry-run` included, first runs
 `git fetch --tags --force origin +refs/heads/main:refs/remotes/origin/main`,
 so the checks run against origin's current state. That fetch overwrites
