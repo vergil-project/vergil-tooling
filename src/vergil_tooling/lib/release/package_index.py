@@ -379,8 +379,7 @@ def _wait(
     # newer run is followed, since that run may still publish the release.
     failed: tuple[str, str] | None = None
     rerun = (
-        f"re-run the publish-index workflow in {org.github_org}/packages; "
-        "the release itself stands"
+        f"re-run the publish-index workflow in {org.github_org}/packages; the release itself stands"
     )
     # A package once seen stays seen: only the ones still missing are polled.
     missing = waits

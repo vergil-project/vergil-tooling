@@ -650,9 +650,7 @@ def test_failed_run_but_index_already_lists_the_release_passes(
     release_ctx_with_package: ReleaseContext,
 ) -> None:
     gh = _FakeGh(lists=[json.dumps([_run(2, "09:33:00")])], conclusions={"2": "failure"})
-    assert _follow(release_ctx_with_package, gh, _answers(b"", _PACKAGES.encode()), _boom) == [
-        "2"
-    ]
+    assert _follow(release_ctx_with_package, gh, _answers(b"", _PACKAGES.encode()), _boom) == ["2"]
     assert release_ctx_with_package.package_index_urls == (_NOBLE_AMD64,)
 
 
