@@ -290,6 +290,7 @@ def test_times_out_and_defers(release_ctx_with_package: ReleaseContext) -> None:
     assert exc_info.value.detail is not None
     assert "vergil-project/packages" in exc_info.value.detail
     assert _NOBLE_AMD64 in str(exc_info.value)
+    assert "after 3600s of polling the index" in str(exc_info.value)
     assert sleeps and all(s == 30 for s in sleeps)
 
 
@@ -527,7 +528,11 @@ def _run(run_id: int, created: str, conclusion: str = "") -> dict[str, object]:
 
 
 class _FakeGh:
-    """Stands in for ``github.read_output``: the CD jobs, run lists and conclusions."""
+    """Stands in for ``github.read_output``: the CD jobs, run lists and run views.
+
+    A run in ``pending`` reports each of its statuses there in turn, one per
+    view, before it reports ``completed`` with its entry in ``conclusions``.
+    """
 
     def __init__(
         self,
@@ -535,10 +540,12 @@ class _FakeGh:
         jobs: str = _RELEASE_JOBS,
         lists: list[str] | None = None,
         conclusions: dict[str, str] | None = None,
+        pending: dict[str, list[str]] | None = None,
     ) -> None:
         self.jobs = jobs
         self.lists = lists or [""]
         self.conclusions = conclusions or {}
+        self.pending = {k: list(v) for k, v in (pending or {}).items()}
         self.list_calls = 0
 
     def __call__(self, *args: str) -> str:
@@ -552,7 +559,15 @@ class _FakeGh:
             assert args[3:5] == ("vergil-project/vergil-tooling", "111")
             return self.jobs
         assert args[3] == _PACKAGES_REPO
-        return self.conclusions[args[4]]
+        assert args[5:] == ("--json", "status,conclusion,jobs")
+        run_id = args[4]
+        if self.pending.get(run_id):
+            status = self.pending[run_id].pop(0)
+            job = {"name": "build-index", "status": status, "conclusion": ""}
+            return json.dumps({"status": status, "conclusion": "", "jobs": [job]})
+        conclusion = self.conclusions[run_id]
+        job = {"name": "build-index", "status": "completed", "conclusion": conclusion}
+        return json.dumps({"status": "completed", "conclusion": conclusion, "jobs": [job]})
 
 
 def _answers(*texts: bytes) -> Fetch:
@@ -561,23 +576,41 @@ def _answers(*texts: bytes) -> Fetch:
 
 
 def _follow(
-    ctx: ReleaseContext, gh: Callable[..., str], fetch: Fetch, sleep: Callable[[float], None]
+    ctx: ReleaseContext,
+    gh: Callable[..., str],
+    fetch: Fetch,
+    sleep: Callable[[float], None],
+    *,
+    now: Callable[[], float] | None = None,
+    **kwargs: int,
 ) -> list[str]:
-    """Run the stage with a recorded CD run; return the run IDs streamed."""
+    """Run the stage with a recorded CD run; return the run IDs streamed, in order."""
     ctx.cd_run_id = "111"
-    watched: list[str] = []
+    followed: list[str] = []
 
-    def watch(repo: str, run_id: str, *, check_status: bool) -> None:
-        assert repo == _PACKAGES_REPO
-        assert check_status is False
-        watched.append(run_id)
+    def recording(*args: str) -> str:
+        if args[:2] == ("run", "view") and args[3] == _PACKAGES_REPO and args[4] not in followed:
+            followed.append(args[4])
+        return gh(*args)
 
-    with (
-        patch.object(package_index.github, "read_output", side_effect=gh),
-        patch.object(package_index, "watch_workflow", side_effect=watch),
-    ):
-        package_index.wait_for_index(ctx, fetch=fetch, sleep=sleep, now=_clock())
-    return watched
+    with patch.object(package_index.github, "read_output", side_effect=recording):
+        package_index.wait_for_index(ctx, fetch=fetch, sleep=sleep, now=now or _clock(), **kwargs)
+    return followed
+
+
+class _Time:
+    """A fake clock that only ``sleep`` advances."""
+
+    def __init__(self) -> None:
+        self.t = 0.0
+        self.sleeps: list[float] = []
+
+    def now(self) -> float:
+        return self.t
+
+    def sleep(self, secs: float) -> None:
+        self.sleeps.append(secs)
+        self.t += secs
 
 
 def test_streams_earliest_covering_run(
@@ -761,6 +794,112 @@ def test_no_cd_run_polls_with_heartbeat(
     out = capsys.readouterr().out
     assert "No CD release job recorded; polling the index only." in out
     assert "not in the index yet (" in out
+
+
+# -- a followed run does not count against the timeout (#4145) ---------------
+
+_RUN2_URL = f"https://github.com/{_PACKAGES_REPO}/actions/runs/2"
+
+
+def test_run_longer_than_timeout_then_index_shows_release_passes(
+    release_ctx_with_package: ReleaseContext, capsys: pytest.CaptureFixture[str]
+) -> None:
+    clock = _Time()
+    gh = _FakeGh(
+        lists=[json.dumps([_run(2, "09:33:00")])],
+        conclusions={"2": "success"},
+        pending={"2": ["queued"] + ["in_progress"] * 10},
+    )
+    fetch = _answers(b"", b"", _PACKAGES.encode())
+    followed = _follow(release_ctx_with_package, gh, fetch, clock.sleep, now=clock.now, timeout=60)
+    assert followed == ["2"]
+    # 11 polls of the run (330s, well past the 60s timeout), then one index poll.
+    assert clock.sleeps == [30] * 12
+    assert release_ctx_with_package.package_index_urls == (_NOBLE_AMD64,)
+    assert release_ctx_with_package.deferred_publish_failures == []
+    out = capsys.readouterr().out
+    # Each status and job state is printed once, as it changes.
+    assert out.count("Publish-index run status: queued") == 1
+    assert out.count("Publish-index run status: in_progress") == 1
+    assert out.count("    build-index: in_progress") == 1
+    assert "    build-index: success" in out
+    assert "Publish-index run finished (success); checking the index." in out
+
+
+def test_run_succeeds_but_index_never_shows_release_names_window_and_run(
+    release_ctx_with_package: ReleaseContext,
+) -> None:
+    clock = _Time()
+    gh = _FakeGh(
+        lists=[json.dumps([_run(2, "09:33:00")])],
+        conclusions={"2": "success"},
+        pending={"2": ["in_progress"] * 4},
+    )
+    with pytest.raises(ReleaseError) as excinfo:
+        _follow(
+            release_ctx_with_package,
+            gh,
+            lambda _u: b"",
+            clock.sleep,
+            now=clock.now,
+            timeout=60,
+        )
+    err = excinfo.value
+    assert err.command == "poll package index"
+    assert (
+        f"vergil-tooling 2.1.240-1 not visible in {_NOBLE_AMD64} "
+        f"within 60s of publish-index run {_RUN2_URL} succeeding"
+    ) in str(err)
+    # 120s following the run, then the full 60s window polling the index.
+    assert clock.t == 180
+    assert release_ctx_with_package.deferred_publish_failures == [package_index.PHASE]
+
+
+def test_run_still_running_after_follow_timeout_fails(
+    release_ctx_with_package: ReleaseContext,
+) -> None:
+    clock = _Time()
+    gh = _FakeGh(
+        lists=[json.dumps([_run(2, "09:33:00")])],
+        conclusions={"2": "success"},
+        pending={"2": ["in_progress"] * 100},
+    )
+    with pytest.raises(ReleaseError) as excinfo:
+        _follow(
+            release_ctx_with_package,
+            gh,
+            _answers(b""),
+            clock.sleep,
+            now=clock.now,
+            follow_timeout=90,
+        )
+    err = excinfo.value
+    assert err.command == "follow publish-index run"
+    assert f"publish-index run {_RUN2_URL} still in_progress after 90s of following it" in str(err)
+    assert err.detail is not None
+    assert "cancel that run" in err.detail
+    assert clock.t == 90
+    assert release_ctx_with_package.deferred_publish_failures == [package_index.PHASE]
+
+
+def test_no_run_appears_names_that_wait(release_ctx_with_package: ReleaseContext) -> None:
+    with pytest.raises(ReleaseError) as excinfo:
+        _follow(release_ctx_with_package, _FakeGh(), lambda _u: b"", lambda _s: None, timeout=60)
+    assert (
+        "after 60s: no publish-index run created since 2026-10-24T09:30:00+00:00 appeared"
+    ) in str(excinfo.value)
+
+
+def test_cancelled_run_with_no_newer_run_names_that_wait(
+    release_ctx_with_package: ReleaseContext,
+) -> None:
+    gh = _FakeGh(lists=[json.dumps([_run(2, "09:33:00")])], conclusions={"2": "cancelled"})
+    with pytest.raises(ReleaseError) as excinfo:
+        _follow(release_ctx_with_package, gh, lambda _u: b"", lambda _s: None, timeout=60)
+    assert (
+        f"within 60s of publish-index run {_RUN2_URL} finishing 'cancelled', "
+        "and no newer run appeared"
+    ) in str(excinfo.value)
 
 
 # -- _fetch -----------------------------------------------------------------

@@ -106,7 +106,12 @@ adding new public surface. Versions: `v1.3.0` → `v1.3.1`.
      version, and succeeds only once all of them are listed. While it
      waits, it streams the `Publish package index` run in `<org>/packages`
      that covers the release and prints a heartbeat line on each poll
-     otherwise; the index poll alone decides success. If the run it
+     otherwise; the index poll alone decides success. The hour bounds
+     idle polling only: the stage waits for a followed run however long
+     it takes (up to three hours, then it fails naming the run), and the
+     hour restarts when that run completes, so the index has a full hour
+     to show the release after it. A timeout error says which wait ran
+     out. If the run it
      follows fails (`failure`, `timed_out` or `startup_failure`), the
      index still lacks the release and no newer index run is listed, the
      stage fails at once rather than waiting out the hour: its error
