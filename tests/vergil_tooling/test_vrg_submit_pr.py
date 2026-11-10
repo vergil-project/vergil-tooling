@@ -462,31 +462,29 @@ class TestIdentityGate:
 
     @pytest.mark.parametrize("flag", ["--help", "-h"])
     @pytest.mark.parametrize("mode", ["user", "audit"])
-    def test_agent_help_redirects_instead_of_usage(
+    def test_agent_help_shows_full_usage(
         self,
         flag: str,
         mode: str,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """An agent's --help gets the human-only redirect, never the usage (issue #3545)."""
+        """An agent's --help prints the full usage, not a refusal (issue #4178).
+
+        The identity gate runs after parsing, so an agent can read the options
+        and give the human a correct command line; the help itself says the
+        command is human-only and names the agent's handoff.
+        """
         monkeypatch.setenv("VRG_IDENTITY_MODE", mode)
-        result = main(["--issue", "42", flag])
-        assert result == 0
+        monkeypatch.setenv("COLUMNS", "500")
+        with pytest.raises(SystemExit) as exc:
+            main(["--issue", "42", flag])
+        assert exc.value.code == 0
         out = capsys.readouterr().out
+        assert "usage:" in out
+        assert "--finalize" in out
         assert "human-only" in out
         assert "vrg-pr-workflow report-ready" in out
-        assert "usage:" not in out
-        assert "--finalize" not in out
-
-    def test_agent_help_from_sys_argv(
-        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """The console-script entry point (argv=None) reads sys.argv."""
-        monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
-        monkeypatch.setattr("sys.argv", ["vrg-submit-pr", "--help"])
-        assert main() == 0
-        assert "vrg-pr-workflow report-ready" in capsys.readouterr().out
 
     def test_human_help_shows_usage(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -497,7 +495,7 @@ class TestIdentityGate:
             main(["--help"])
         out = capsys.readouterr().out
         assert "usage:" in out
-        assert "human-only" not in out
+        assert "--finalize" in out
 
     def test_human_mode_allowed(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("VRG_IDENTITY_MODE", raising=False)

@@ -8,8 +8,8 @@ session, whose shell carries the agent's identity.
 
 In order, it:
 
-1. refuses in an agent identity mode (before parsing, so ``--help`` also
-   redirects);
+1. refuses in an agent identity mode (after parsing, so ``--help`` prints
+   the full usage to any identity);
 2. refuses unless stdin and stdout are interactive terminals;
 3. refuses unless the login its credentials post as (``gh api user``) is the
    one human login of the trusted-authors configuration;
@@ -68,16 +68,6 @@ EXIT_ERROR = 1
 EXIT_USAGE = 2
 EXIT_FATAL = 4
 
-_AGENT_HELP = """\
-vrg-ruling-reply is a human-only command: it posts the human's reply to a
-ruling request as the human, and agent identities cannot run it.
-
-The human runs it in their own shell on the host, never through '!' in an
-agent session. The agent drafts the reply with 'vrg-ruling draft', which
-prints the command for the human to run, and reads the posted reply with
-'vrg-ruling read'.
-"""
-
 _AGENT_REFUSAL = (
     f"{_PROG}: this is a human-only command and cannot run in an agent identity;"
     " the human runs it in their own shell. Draft the reply with 'vrg-ruling draft'."
@@ -86,17 +76,13 @@ _AGENT_REFUSAL = (
 
 @cli_main
 def main(argv: list[str] | None = None) -> int:
-    # The identity gate runs before parsing so an agent's --help reaches it,
-    # as vrg-submit-pr's does.
+    args = parse_args(argv)
+
+    # The identity gate runs after parsing, so --help prints the full usage to
+    # any identity (issue #4178).
     if identity_mode.is_agent():
-        raw_args = sys.argv[1:] if argv is None else argv
-        if {"-h", "--help"} & set(raw_args):
-            print(_AGENT_HELP)
-            return EXIT_OK
         print(_AGENT_REFUSAL, file=sys.stderr)
         return EXIT_ERROR
-
-    args = parse_args(argv)
     try:
         if not _is_interactive():
             msg = (
@@ -279,6 +265,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "re-checks the issue and posts exactly what it showed, once."
         ),
         epilog=(
+            "Agent identities are refused: the agent drafts the reply with "
+            "'vrg-ruling draft', which prints this command for the human to run, and "
+            "reads the posted reply with 'vrg-ruling read'. "
             "Exit codes: 0 posted, 1 refused, declined or error, 2 usage error, "
             "4 a fatal turn check."
         ),
