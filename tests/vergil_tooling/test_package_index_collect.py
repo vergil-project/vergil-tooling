@@ -33,9 +33,10 @@ def _bytes(name: str) -> bytes:
 class _FakeGh:
     """A ``Run`` fake for ``gh``, ``dpkg-deb``, ``rpm`` and ``rpmkeys``.
 
-    - ``gh release list`` lists ``releases[product]``; tags in ``drafts`` are
-      drafts and tags in ``prereleases`` are prereleases.
-    - ``gh release view`` returns each release's asset names.
+    - ``gh api --paginate --slurp repos/<product>/releases?per_page=100``
+      lists ``releases[product]`` with their asset names, in pages of
+      ``page_size``; tags in ``drafts`` are drafts and tags in ``prereleases``
+      are prereleases.
     - ``gh release download`` writes the manifest (``json.dumps``) or
       placeholder bytes into ``--dir``.
     - ``dpkg-deb -f`` / ``rpm -qp`` answer deterministic metadata derived from
@@ -54,6 +55,7 @@ class _FakeGh:
         control: dict[str, str] | None = None,
         rpm_qf: dict[str, str] | None = None,
         skip_write: tuple[str, ...] = (),
+        page_size: int = 100,
     ) -> None:
         self.releases = releases
         self.manifest = manifest
@@ -64,31 +66,29 @@ class _FakeGh:
         self.control = control or {}
         self.rpm_qf = rpm_qf or {}
         self.skip_write = skip_write
+        self.page_size = page_size
         self.calls: list[str] = []
-
-    def _assets(self, repo: str, tag: str) -> list[str]:
-        return dict(self.releases[repo])[tag]
 
     def __call__(self, *argv: str) -> subprocess.CompletedProcess[str]:
         self.calls.append(" ".join(argv))
         return subprocess.CompletedProcess(argv, 0, self._answer(list(argv)), "")
 
     def _answer(self, a: list[str]) -> str:
-        if a[:3] == ["gh", "release", "list"]:
-            repo = a[a.index("--repo") + 1]
-            assert a[a.index("--json") + 1] == "tagName,isDraft,isPrerelease"
+        if a[:4] == ["gh", "api", "--paginate", "--slurp"]:
+            assert len(a) == 5
+            repo = a[4].removeprefix("repos/").removesuffix("/releases?per_page=100")
+            assert a[4] == f"repos/{repo}/releases?per_page=100"
             rows = [
                 {
-                    "tagName": tag,
-                    "isDraft": tag in self.drafts,
-                    "isPrerelease": tag in self.prereleases,
+                    "tag_name": tag,
+                    "draft": tag in self.drafts,
+                    "prerelease": tag in self.prereleases,
+                    "assets": [{"name": n} for n in assets],
                 }
-                for tag, _ in self.releases[repo]
+                for tag, assets in self.releases[repo]
             ]
-            return json.dumps(rows)
-        if a[:3] == ["gh", "release", "view"]:
-            repo = a[a.index("--repo") + 1]
-            return json.dumps({"assets": [{"name": n} for n in self._assets(repo, a[3])]})
+            n = self.page_size
+            return json.dumps([rows[i : i + n] for i in range(0, len(rows), n)])
         if a[:3] == ["gh", "release", "download"]:
             name = a[a.index("--pattern") + 1]
             dest = Path(a[a.index("--dir") + 1])
@@ -158,19 +158,74 @@ def test_default_runner_is_repo_setup_local_run(fn: Any) -> None:
     assert inspect.signature(fn).parameters["gh"].default is repo_setup.local_run
 
 
+# --- packaged_tags -------------------------------------------------------------
+
+
+def test_packaged_tags_reads_every_page() -> None:
+    rel = [(f"v1.0.{i}", ["packages-manifest.json", f"p_1.0.{i}-1_amd64.deb"]) for i in range(5)]
+    gh = _fake_gh({"o/p": rel}, page_size=2)
+    assert list(collect.packaged_tags("o/p", gh)) == [f"v1.0.{i}" for i in range(5)]
+
+
+def test_packaged_tags_skips_unpackaged_draft_prerelease_and_unstable() -> None:
+    gh = _fake_gh(
+        {
+            "o/p": [
+                ("v1.0.0", []),
+                ("v1.0.1", [collect.MANIFEST]),
+                ("v1.0.2", [collect.MANIFEST]),
+                ("v1.0.3", [collect.MANIFEST]),
+                ("develop-1", [collect.MANIFEST]),
+            ]
+        },
+        drafts=("v1.0.2",),
+        prereleases=("v1.0.3",),
+    )
+    assert list(collect.packaged_tags("o/p", gh)) == ["v1.0.1"]
+
+
+def test_release_without_manifest_is_not_returned() -> None:  # Review Focus 2
+    gh = _fake_gh(releases={"o/t": [("v2.0.0", ["t_2.0.0-1_amd64.deb"])]})
+    assert collect.packaged_tags("o/t", gh) == {}
+
+
 # --- collect -----------------------------------------------------------------
 
 
-def test_release_without_manifest_is_ignored(  # Review Focus 2
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    gh = _fake_gh(releases={"o/t": [("v2.0.0", [])]})  # no assets at all
-    assert collect.collect(IndexConfig("vergil", ["o/t"], 3, 2), tmp_path, gh=gh) == []
-    assert (
-        "o/t@v2.0.0: no packages-manifest.json (pre-packaging release) — skipped"
-        in capsys.readouterr().out
+def _downloaded_tags(gh: _FakeGh) -> set[str]:
+    return {c.split(" ")[3] for c in gh.calls if c.startswith("gh release download ")}
+
+
+def test_collect_downloads_only_selected_releases(tmp_path: Path) -> None:
+    gh = _fake_gh(
+        releases={
+            "o/t": [
+                (f"v{v}", [collect.MANIFEST, f"t_{v}-1_amd64.deb"])
+                for v in ("2.0.1", "2.1.0", "2.1.1")
+            ]
+        },
+        manifest={"artifacts": [_entry("deb", "amd64")]},
     )
-    assert not any("download" in c for c in gh.calls)
+    arts = collect.collect(IndexConfig("vergil", ["o/t"], 1, 1), tmp_path, gh=gh)
+    assert [a.tag for a in arts] == ["v2.1.1"]
+    assert not any(c.startswith("gh release view ") for c in gh.calls)
+    assert _downloaded_tags(gh) == {"v2.1.1"}
+
+
+def test_collect_selects_newest_packaged_release_in_a_line(tmp_path: Path) -> None:
+    gh = _fake_gh(
+        releases={
+            "o/t": [
+                ("v2.1.1", ["t_2.1.1-1_amd64.deb"]),
+                ("v2.1.0", [collect.MANIFEST, "t_2.1.0-1_amd64.deb"]),
+            ]
+        },
+        manifest={"artifacts": [_entry("deb", "amd64")]},
+    )
+    arts = collect.collect(IndexConfig("vergil", ["o/t"], 1, 1), tmp_path, gh=gh)
+    assert [a.path.name for a in arts] == ["t_2.1.0-1_amd64.deb"]
+    assert not any("v2.1.1" in c for c in gh.calls)
+    assert _downloaded_tags(gh) == {"v2.1.0"}
 
 
 def test_partial_release_is_fatal(tmp_path: Path) -> None:  # Review Focus 2
@@ -238,8 +293,7 @@ def test_only_stable_tags_and_metadata(tmp_path: Path) -> None:
             hashlib.sha256(_bytes(rpm)).hexdigest(),
         ),
     ]
-    viewed = [c for c in gh.calls if c.startswith("gh release view ")]
-    assert viewed == ["gh release view v2.1.0 --repo o/t --json assets"]
+    assert not any(c.startswith("gh release view ") for c in gh.calls)
     downloaded = {c.split("--pattern ")[1].split(" ")[0] for c in gh.calls if "download" in c}
     assert downloaded == {collect.MANIFEST, deb, rpm}  # non-package assets are not fetched
     assert arts[0].full_version == "2.1.0-1"
@@ -809,8 +863,7 @@ def _one_release_gh() -> _FakeGh:
 @pytest.mark.parametrize(
     "prefix",
     [
-        "gh release list",
-        "gh release view",
+        "gh api",
         "gh release download v2.1.0 --repo o/t --pattern packages-manifest.json",
         "gh release download v2.1.0 --repo o/t --pattern t_2.1.0-1_amd64.deb",
     ],
@@ -834,7 +887,7 @@ def test_transient_gh_release_blip_is_retried_then_succeeds(
     assert len(sleeps) == 2
 
 
-@pytest.mark.parametrize("prefix", ["gh release list", "gh release view", "gh release download"])
+@pytest.mark.parametrize("prefix", ["gh api", "gh release download"])
 def test_persistent_transient_gh_release_failure_is_fatal_after_budget(
     tmp_path: Path, sleeps: list[float], prefix: str
 ) -> None:
@@ -845,7 +898,7 @@ def test_persistent_transient_gh_release_failure_is_fatal_after_budget(
     assert len(sleeps) == retry.MAX_RETRIES
 
 
-@pytest.mark.parametrize("prefix", ["gh release list", "gh release view", "gh release download"])
+@pytest.mark.parametrize("prefix", ["gh api", "gh release download"])
 def test_answer_type_gh_release_failure_is_not_retried(
     tmp_path: Path, sleeps: list[float], prefix: str
 ) -> None:

@@ -191,10 +191,8 @@ class _Patched:
         ) -> None:
             ev.append(("verify", len(arts), keyfile.name, rpmdb.name, rpmdb.exists()))
 
-        def fake_select(
-            arts: list[Artifact], keep: int, lines: int, *, retire: frozenset[str]
-        ) -> list[Artifact]:
-            ev.append(("select", keep, lines, sorted(retire)))
+        def fake_drop_retired(arts: list[Artifact], retire: frozenset[str]) -> list[Artifact]:
+            ev.append(("drop_retired", sorted(retire)))
             return arts[:1]
 
         def fake_apt(
@@ -231,7 +229,7 @@ class _Patched:
         monkeypatch.setattr(site, "fingerprint", fake_fpr)
         monkeypatch.setattr(collect, "collect", fake_collect)
         monkeypatch.setattr(collect, "verify", fake_verify)
-        monkeypatch.setattr(retention, "select", fake_select)
+        monkeypatch.setattr(retention, "drop_retired", fake_drop_retired)
         monkeypatch.setattr(apt, "write", fake_apt)
         monkeypatch.setattr(rpm, "write", fake_rpm)
         monkeypatch.setattr(sign, "import_key", fake_import)
@@ -257,8 +255,8 @@ def test_build_site_runs_every_step_in_order(
     assert p.events == [
         ("fingerprint", "v.asc"),
         ("collect", "v", ["o/t"], "work"),
-        ("verify", 2, "v.asc", "rpmdb", False),
-        ("select", 2, 1, ["old-rt"]),
+        ("drop_retired", ["old-rt"]),
+        ("verify", 1, "v.asc", "rpmdb", False),
         ("apt", ["deb"], ["noble", "resolute"], "v", []),
         ("rpm", "https://v.github.io/p/", ["el9", "el10"]),
         ("import_key", "PACKAGE_SIGNING_KEY", "PACKAGE_SIGNING_PASSPHRASE"),
