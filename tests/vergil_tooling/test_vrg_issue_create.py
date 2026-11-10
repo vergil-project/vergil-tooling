@@ -254,6 +254,9 @@ def test_kind_deployment_applies_label_and_scaffold() -> None:
     body = kwargs["body"]
     assert "Blocked-by: org/repo#5" in body
     assert "## Deploy steps" in body  # deployment-specific scaffold section
+    # Steps the agent identity cannot run are marked human-run up front (#4176).
+    assert "## Human-run steps" in body
+    assert "vrg-github-repo-config diff" in body
     assert "release" in body.lower()  # release-as-precondition boundary
     assert "## Results" in body
     assert kwargs["body_file"] is None
