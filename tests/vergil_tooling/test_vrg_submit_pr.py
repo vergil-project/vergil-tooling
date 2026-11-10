@@ -39,6 +39,7 @@ from vergil_tooling.lib import epics, worktrees
 from vergil_tooling.lib.pr_workflow import engine, freeze
 from vergil_tooling.lib.pr_workflow.errors import AlreadySubmittedError, WorkflowError
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
+from vergil_tooling.lib.release.gate import unreleased_refusal as _real_unreleased_refusal
 from vergil_tooling.lib.worktrees import MergeCommitsError, Worktree
 
 if TYPE_CHECKING:
@@ -47,6 +48,16 @@ if TYPE_CHECKING:
     from vergil_tooling.lib.pr_workflow.state import WorkflowState
 
 _MOD = "vergil_tooling.bin.vrg_submit_pr"
+
+
+@pytest.fixture(autouse=True)
+def _released_repo() -> Iterator[None]:
+    """Default every test to a repo that declares [publish].release = true.
+
+    The refusal tests override it — the innermost patch wins.
+    """
+    with patch(_MOD + ".gate.unreleased_refusal", return_value=None):
+        yield
 
 
 @pytest.fixture(autouse=True)
@@ -1483,6 +1494,79 @@ class TestInstallFlag:
         assert result != 0
         mock_run.assert_not_called()
         assert "human maintainer" in capsys.readouterr().err.lower()
+
+
+_UNRELEASED_TOML = """\
+[project]
+repository-type = "library"
+versioning-scheme = "semver"
+branching-model = "library-release"
+release-model = "tagged-release"
+primary-language = "python"
+
+[dependencies]
+vergil = "v2.0"
+
+[ci]
+versions = ["3.14"]
+
+[publish]
+release = false
+"""
+
+
+class TestUnreleasedRepoRefusal:
+    """--release/--install on a repo that is not released is refused up front,
+    before any push, PR or merge (issue #4175)."""
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["--issue", "42", "--summary", "Fix", "--title", "fix: bug", "--release"],
+            ["--issue", "42", "--summary", "Fix", "--title", "fix: bug", "--install"],
+            ["--all", "--yes", "--install"],
+            ["feature/a", "--install", "--yes"],
+            ["feature/a", "--release", "--dry-run"],
+        ],
+    )
+    def test_cascade_refused(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], argv: list[str]
+    ) -> None:
+        (tmp_path / "vergil.toml").write_text(_UNRELEASED_TOML)
+        with (
+            patch(_MOD + ".gate.unreleased_refusal", side_effect=_real_unreleased_refusal),
+            patch("vergil_tooling.lib.release.gate.git.main_worktree_root", return_value=tmp_path),
+            patch(_MOD + ".git.run") as m_git_run,
+            patch(_MOD + "._push_branch") as m_push,
+            patch(_MOD + ".github.create_pr") as m_create,
+            patch(_MOD + "._run_relay_cascade") as m_relay,
+            patch(_MOD + "._run_submit_batch") as m_batch,
+            patch(_MOD + ".subprocess.run") as mock_run,
+        ):
+            assert main(argv) == 1
+        for m in (m_git_run, m_push, m_create, m_relay, m_batch, mock_run):
+            m.assert_not_called()
+        flag = "--install" if "--install" in argv else "--release"
+        err = capsys.readouterr().err
+        assert f"vrg-submit-pr {flag}: this repo is not released" in err
+
+    def test_submit_without_cascade_ignores_unreleased_repo(self, tmp_path: Path) -> None:
+        """A plain submit (or --finalize) never consults the release gate."""
+        with (
+            patch(_MOD + ".gate.unreleased_refusal") as m_gate,
+            patch(_MOD + ".git.repo_root", return_value=tmp_path),
+            patch(_MOD + ".git.current_branch", return_value="feature/x"),
+            patch(_MOD + ".git.run"),
+            patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/1"),
+            patch(_MOD + ".git.main_worktree_root", return_value=tmp_path),
+            patch(_MOD + ".subprocess.run") as mock_run,
+        ):
+            mock_run.return_value.returncode = 0
+            result = main(
+                ["--issue", "42", "--summary", "Fix", "--title", "fix: bug", "--finalize"]
+            )
+        assert result == 0
+        m_gate.assert_not_called()
 
 
 def test_submit_one_pushes_creates_records_and_returns_url() -> None:

@@ -85,6 +85,7 @@ from vergil_tooling.lib.pr_workflow.errors import AlreadySubmittedError, Workflo
 from vergil_tooling.lib.pr_workflow.github_transport import GitHubTransport
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
 from vergil_tooling.lib.process_errors import error_text
+from vergil_tooling.lib.release import gate
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.pr_workflow.state import WorkflowState
@@ -135,6 +136,16 @@ def main(argv: list[str] | None = None) -> int:
         args.release = True
     if args.release:
         args.finalize = True
+
+    # A release cascade on a repo that is not released is refused before any
+    # push, PR or merge, so nothing changes (issue #4175). The check reads the
+    # main worktree's vergil.toml, the checkout vrg-release would run from.
+    if args.release:
+        refusal = gate.unreleased_refusal()
+        if refusal is not None:
+            flag = "--install" if args.install else "--release"
+            print(f"vrg-submit-pr {flag}: {refusal}", file=sys.stderr)
+            return 1
 
     if args.branches:
         # Relay path: branches identify the submit. It opens PRs worktree-free
