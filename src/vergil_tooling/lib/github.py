@@ -360,7 +360,7 @@ def _jwt_api_request(endpoint: str, jwt_token: str, *, method: str = "GET") -> A
                 raise
             delay = retry.compute_delay(attempt)
             log.warning(
-                "GitHub App token request failed with %s on %s%s (attempt %d/%d), "
+                "GitHub App installation request failed with %s on %s%s (attempt %d/%d), "
                 "retrying in %.1fs",
                 exc,
                 endpoint,
