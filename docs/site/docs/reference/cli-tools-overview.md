@@ -1571,23 +1571,6 @@ report.
 | Exit codes | 0 success, 1 any repo errored |
 | Status | Active |
 
-### vrg-xdist-sync
-
-Fleet sweep that adds `pytest-xdist` to each Python repo's dev dependencies,
-opening one PR per repo that needs it. It stops at `report-ready` and never
-submits or merges. A repo it cannot safely change is reported and gets a
-follow-up issue; a non-Python repo is skipped. `--dry-run` reports each
-repo's verdict without opening anything.
-
-| Attribute | Value |
-|---|---|
-| Source | `vergil_tooling.bin.vrg_xdist_sync` |
-| Args | `--repos PATH...` (required, local clones), `--dry-run` |
-| Preconditions | Local clones of the target repos; `uv` on PATH; GitHub App credentials |
-| Failure mode | Per-repo errors are reported in the summary |
-| Exit codes | 0 success, 1 any repo errored |
-| Status | Active |
-
 ### vrg-container-run
 
 Run arbitrary commands inside a dev container. Auto-detects the

@@ -243,7 +243,7 @@ token `gh` runs with:
 `vrg-queue`, `vrg-release`, `vrg-resolve-tracking-issue`,
 `vrg-roadmap`, `vrg-ruling`, `vrg-ruling-reply`, `vrg-scope-change`,
 `vrg-security-record`, `vrg-submit-pr`, `vrg-update-deps`,
-`vrg-upstream-refresh`, `vrg-worktree-status` and `vrg-xdist-sync`.
+`vrg-upstream-refresh` and `vrg-worktree-status`.
 
 `vrg-package` calls `gh` only: it lists and downloads releases, and
 verifies their attestations, when it builds the package index.

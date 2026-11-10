@@ -1,17 +1,16 @@
 """Classify where a repository declares its development dependencies.
 
-The Task-9 xdist fleet sweep must add ``pytest-xdist`` to each Python repo's dev
-dependencies, but the fleet declares them in several shapes (uv dependency
-groups, PEP 621 optional-dependencies, a ``requirements-*.txt`` file, or a
-poetry section). ``classify_dev_deps`` reports the shape so the applicator edits
-the right place — and returns ``UNKNOWN`` rather than guessing when it recognizes
-none, so the sweep can report loudly instead of silently no-op'ing (epic
-vergil-project/.github#333, Task 3; "no silent failures" repo policy).
+The fleet declares dev dependencies in several shapes (uv dependency groups,
+PEP 621 optional-dependencies, a ``requirements-*.txt`` file, or a poetry
+section). ``classify_dev_deps`` reports the shape for the fleet survey
+(``scripts/perf/fleet_survey.py``) — and returns ``UNKNOWN`` rather than
+guessing when it recognizes none, so the survey can report loudly instead of
+silently no-op'ing (epic vergil-project/.github#333, Task 3; "no silent
+failures" repo policy).
 
 This module is an **import-graph leaf**: standard library (``tomllib`` +
-filesystem) only, importing nothing else from ``vergil_tooling``. That matches
-the ``languages.py`` leaf convention so ``lib/xdist_applicator.py`` (Task 9) can
-consume the shape without an import cycle.
+filesystem) only, importing nothing else from ``vergil_tooling``, matching the
+``languages.py`` leaf convention.
 """
 
 from __future__ import annotations
