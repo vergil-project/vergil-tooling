@@ -65,7 +65,7 @@ for you; see [Keeping up to date](#keeping-up-to-date).
 ## Step 2: Install vergil-tooling
 
 ```bash
-uv tool install --python 3.14 'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.1'
+uv tool install --python 3.15 'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.1'
 ```
 
 This installs all `vrg-*` console scripts into `~/.local/bin/`.
