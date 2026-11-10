@@ -10,10 +10,21 @@ ruleset on GitHub, which only the repository Admin role bypasses, is what
 enforces who can move the tag.
 
 The target of a move is checked: the release tag must exist on origin, its
-commit must be on origin's ``main`` (the primary guard, which limits the
-target to merged work), and it must have a published GitHub Release (an
-additional layer). Every check, and the push, act on the one repo origin's
-fetch and push URLs both name.
+commit must be merged work (the primary guard), and it must have a
+published GitHub Release (an additional layer). Every check, and the push,
+act on the one repo origin's fetch and push URLs both name.
+
+Merged work is a commit on origin's ``main``, or that release's freeze
+commit (#4140). vergil-actions' CD never tags a commit on ``main``: its
+freeze-internal-refs action runs ``vrg-freeze-refs``, which rewrites the
+repo's internal action refs to the release tag, and tags the commit it adds
+on top of ``main``. A release tag ``vX.Y.Z`` on a commit off ``main`` passes
+only when that commit has exactly one parent, the parent is on origin's
+``main``, its subject is exactly ``chore(release): freeze internal refs to
+vX.Y.Z``, and every file it changes is a regular file whose new content is
+exactly what :func:`freeze_refs.freeze_references` makes of the parent's,
+for origin's repo and that tag; no file is added, deleted, renamed or
+re-moded. A refusal names the rule that failed.
 
 The push sends the release tag object that was checked (resolved once
 locally and verified against the commit origin reported) straight to the
@@ -29,12 +40,16 @@ import re
 import subprocess
 from dataclasses import dataclass
 
-from vergil_tooling.lib import git, github, identity_mode, retry
+from vergil_tooling.lib import freeze_refs, git, github, identity_mode, retry
 from vergil_tooling.lib.process_errors import error_text
 
 _VERSION_RE = re.compile(r"^v?(\d+\.\d+\.\d+)$")
 _MAIN_REF = "refs/remotes/origin/main"
 _SHORT = 12
+# The subject vergil-actions' freeze-internal-refs action commits its freeze with.
+_FREEZE_SUBJECT = "chore(release): freeze internal refs to {tag}"
+# The git modes of a regular file (plain and executable).
+_FILE_MODES = frozenset({"100644", "100755"})
 
 
 class PromoteError(ValueError):
@@ -153,15 +168,107 @@ def _fetch_main_and_tags() -> None:
     _git_read("fetch", "--tags", "--force", "origin", f"+refs/heads/main:{_MAIN_REF}")
 
 
-def _require_on_main(release_tag: str, commit: str) -> None:
+def _on_main(what: str, commit: str) -> bool:
+    """Whether *commit* (named *what* in a failure) is on origin's ``main``."""
     try:
-        on_main = git.is_ancestor(commit, _MAIN_REF)
+        return git.is_ancestor(commit, _MAIN_REF)
     except subprocess.CalledProcessError as exc:
         detail = error_text(exc, output=False)
-        msg = f"cannot check whether {release_tag} is on origin/main: {detail}"
+        msg = f"cannot check whether {what} is on origin/main: {detail}"
         raise _process_error(msg, exc) from exc
-    if not on_main:
-        msg = f"{release_tag} ({commit[:_SHORT]}) is not on origin/main"
+
+
+def _commit_parents_and_subject(commit: str) -> tuple[list[str], str]:
+    """*commit*'s parents and its subject: the message's first line, as stored.
+
+    The raw commit object is read rather than ``%s``, which folds a
+    multi-line first paragraph into one line.
+    """
+    headers, _, message = _git_read("cat-file", "commit", commit).partition("\n\n")
+    parents = [line.split(" ", 1)[1] for line in headers.split("\n") if line.startswith("parent ")]
+    return parents, message.split("\n", 1)[0]
+
+
+def _blob_text(sha: str, path: str) -> str | None:
+    """The blob *sha* of *path* as UTF-8 text, or ``None`` when it is not UTF-8."""
+    try:
+        data = git.blob_bytes(sha)
+    except subprocess.CalledProcessError as exc:
+        msg = f"cannot read {path} ({sha[:_SHORT]}): {error_text(exc, output=False)}"
+        raise _process_error(msg, exc) from exc
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def _change_failure(repo: str, release_tag: str, meta: str, path: str) -> str | None:
+    """Why the change *meta* to *path* is not a freeze of its refs, or ``None`` if it is.
+
+    *meta* is a ``git diff-tree --raw`` entry,
+    ``:<old mode> <new mode> <old blob> <new blob> <status>``.
+    """
+    old_mode, new_mode, old_sha, new_sha, status = meta.removeprefix(":").split(" ")
+    verbs = {"A": "adds", "D": "deletes", "T": "changes the type of"}
+    if status != "M":
+        return f"it {verbs.get(status, f'changes ({status})')} {path}"
+    if old_mode != new_mode:
+        return f"it changes the mode of {path}"
+    if new_mode not in _FILE_MODES:
+        return f"{path} is not a regular file"
+    old, new = _blob_text(old_sha, path), _blob_text(new_sha, path)
+    if old is None or new is None:
+        return f"{path} is not UTF-8 text"
+    if freeze_refs.freeze_references(old, repo, release_tag) != new:
+        return f"the freeze commit changes more than internal refs in {path}"
+    return None
+
+
+def _freeze_commit_failure(repo: str, release_tag: str, commit: str) -> str | None:
+    """Why *commit* is not *release_tag*'s freeze commit, or ``None`` if it is.
+
+    A freeze commit is what vergil-actions' CD tags: one commit on top of
+    origin's ``main``, made by ``vrg-freeze-refs`` for the same tag. It has
+    exactly one parent, on origin's ``main``; its subject is exactly
+    ``chore(release): freeze internal refs to <tag>``; and every file it
+    changes is a regular file whose new content is exactly
+    :func:`freeze_refs.freeze_references` of its parent's content, for
+    *repo* and the tag. Nothing is added, deleted, renamed or re-moded.
+    """
+    parents, subject = _commit_parents_and_subject(commit)
+    if len(parents) != 1:
+        return f"it has {len(parents)} parents (a freeze commit has exactly one)"
+    expected = _FREEZE_SUBJECT.format(tag=release_tag)
+    if subject != expected:
+        return f"its subject is not '{expected}'"
+    parent = parents[0]
+    if not _on_main(f"{release_tag}'s parent ({parent[:_SHORT]})", parent):
+        return f"its parent ({parent[:_SHORT]}) is not on origin/main"
+    raw = _git_read("diff-tree", "-r", "-z", "--raw", "--no-renames", "--no-abbrev", parent, commit)
+    fields = raw.removesuffix("\0").split("\0") if raw else []
+    if not fields:
+        return "it changes no file"
+    for meta, path in zip(fields[::2], fields[1::2], strict=True):
+        failure = _change_failure(repo, release_tag, meta, path)
+        if failure:
+            return failure
+    return None
+
+
+def _require_merged_work(repo: str, release_tag: str, commit: str) -> None:
+    """Refuse unless *commit* is on origin's ``main`` or is *release_tag*'s freeze commit.
+
+    See :func:`_freeze_commit_failure`. A refusal names the freeze-commit
+    rule that failed.
+    """
+    if _on_main(release_tag, commit):
+        return
+    failure = _freeze_commit_failure(repo, release_tag, commit)
+    if failure:
+        msg = (
+            f"{release_tag} ({commit[:_SHORT]}) is not on origin/main, "
+            f"and is not its freeze commit: {failure}"
+        )
         raise PromoteError(msg)
 
 
@@ -233,8 +340,9 @@ def plan_promotion(version: str, *, release_just_published: bool = False) -> Pro
     """Resolve and check a move of the rolling tag to release *version*.
 
     Refuses an agent identity before any git call. Raises
-    :class:`PromoteError` when the release tag is absent on origin, is not on
-    origin's ``main``, or has no published GitHub Release.
+    :class:`PromoteError` when the release tag is absent on origin, is
+    neither on origin's ``main`` nor that release's freeze commit, or has no
+    published GitHub Release.
     *release_just_published* retries a 404 on the Release read (see
     :func:`_require_published_release`).
     """
@@ -252,7 +360,7 @@ def plan_promotion(version: str, *, release_just_published: bool = False) -> Pro
         raise PromoteError(msg)
     old_ref, old_commit = _remote_tag(rolling_tag)
 
-    _require_on_main(release_tag, new_commit)
+    _require_merged_work(repo, release_tag, new_commit)
     _require_published_release(repo, release_tag, known_published=release_just_published)
     return Promotion(repo, rolling_tag, release_tag, old_ref, old_commit, new_commit)
 
