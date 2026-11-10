@@ -1,14 +1,11 @@
 """Refuse to release a package identity that an earlier release already published (#3309).
 
-The index refuses two collected artifacts that share an identity
-``(fmt, name, full_version, arch)`` but differ in bytes (:mod:`.retention`).
-Package builds are not byte-reproducible, so *any* rebuild at a published
-identity is such a conflict. The index is built from every release of every
-repo, so that refusal — correct as it is — fires only after the offending
-release has published, and then fails every repo's index publish until the
-duplicate assets are removed by hand (the vergil-python v1.0.1 incident).
+Two published packages that share an identity ``(fmt, name, full_version,
+arch)`` but differ in bytes are a conflict apt and dnf cannot resolve. Package
+builds are not byte-reproducible, so *any* rebuild at a published identity is
+such a conflict (the vergil-python v1.0.1 incident).
 
-This module applies the same rule to a release *before* it publishes:
+This module refuses one in a release *before* it publishes:
 
 - **What would be published** is fully known without building: the package
   name (:func:`naming.package_name`), the package version
@@ -17,8 +14,8 @@ This module applies the same rule to a release *before* it publishes:
   release's own ``packages-manifest.json``), whose revision comes from
   :class:`collect.ManifestEntry` — the same rule the index checks a release's
   files against.
-- **What is already published** is every stable release of the repo that the
-  index collects (:func:`collect.stable_tags`, :func:`collect.release_packages`),
+- **What is already published** is every packaged stable release of the repo
+  (:func:`collect.stable_tags`, :func:`collect.release_packages`),
   identified from its attached package file names. nFPM names each file from
   the very name/version/release/arch the index later reads from the package
   metadata, and the index pairs files with manifest entries by that same name

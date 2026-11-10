@@ -1,9 +1,11 @@
-"""Collect and verify the packaged stable releases of each indexed product (spec §7.2).
+"""Collect and verify the releases each indexed product publishes (spec §7.2).
 
-- Only stable ``vX.Y.Z`` releases are considered; drafts, prereleases and
-  ``develop-*`` tags never are.
-- A release without ``packages-manifest.json`` is pre-packaging history: it is
-  skipped with a printed note.
+- One paginated release listing per product (:func:`packaged_tags`) gives its
+  packaged stable releases with their asset names: ``vX.Y.Z`` tags that are
+  neither drafts nor prereleases and attach ``packages-manifest.json``. Any
+  other release is ignored.
+- Retention (:func:`.retention.select_tags`) picks the tags to publish from
+  that list, and only those releases are downloaded.
 - A release whose manifest names a ``(fmt, arch, suite)`` with no attached file,
   or which attaches a package its manifest does not name, is a hard error.
 - Every collected file must pass ``gh attestation verify`` pinned to the
@@ -26,6 +28,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 
 from vergil_tooling.lib import retry
 from vergil_tooling.lib.package import PackageError
+from vergil_tooling.lib.package.index import retention
 from vergil_tooling.lib.package.repo_setup import Run, local_run
 
 if TYPE_CHECKING:
@@ -53,9 +56,9 @@ class Identity(NamedTuple):
     """What makes two packages "the same package" to apt/dnf and to the index.
 
     ``arch`` is in deb terms (``amd64``/``arm64``/``all``) for both formats.
-    Two collected artifacts with one identity must be byte-identical
-    (:mod:`.retention`); a build is not byte-reproducible, so a rebuild at a
-    published identity never is (:mod:`.published`).
+    A build is not byte-reproducible, so a rebuild at a published identity
+    would differ from what was published: :mod:`.published` refuses one before
+    it is released.
     """
 
     fmt: str
@@ -83,10 +86,6 @@ class Artifact:
     @property
     def full_version(self) -> str:
         return f"{self.version}-{self.release}"
-
-    @property
-    def identity(self) -> Identity:
-        return Identity(self.fmt, self.name, self.full_version, self.arch)
 
 
 @dataclass(frozen=True)
@@ -146,10 +145,11 @@ def _invoke(run: Run, *argv: str) -> subprocess.CompletedProcess[str]:
     transient (an HTTP 500/502/503/504, GitHub's GraphQL "Something went wrong"
     blip, a transport drop) is retried with bounded backoff and, once the budget
     is spent, re-raised. The read-only classifier is safe here because every
-    ``gh`` call the index makes is a read (``release list``/``view``/
-    ``download``, ``attestation verify``); it adds the HTTP 500 the release-asset
-    API returns intermittently (#4119). Any other failure — a missing release, a
-    failed attestation — is raised at once, never retried. Local tools
+    ``gh`` call the index makes is a read (the ``api`` release listing,
+    ``release list``/``view``/``download``, ``attestation verify``); it adds
+    the HTTP 500 the release-asset API returns intermittently (#4119). Any
+    other failure — a missing release, a failed attestation — is raised at
+    once, never retried. Local tools
     (``dpkg-deb``, ``rpm``, ``rpmkeys``) are never retried.
     """
     if argv[0] == "gh":
@@ -218,7 +218,42 @@ def release_packages(product: str, tag: str, gh: Run = local_run) -> list[str] |
     names = _asset_names(gh, f"{product}@{tag}", product, tag)
     if MANIFEST not in names:
         return None
-    return [n for n in names if n.endswith((".deb", ".rpm"))]
+    return _package_names(names)
+
+
+def _package_names(assets: list[str]) -> list[str]:
+    return [n for n in assets if n.endswith((".deb", ".rpm"))]
+
+
+def packaged_tags(product: str, gh: Run = local_run) -> dict[str, list[str]]:
+    """Each packaged stable release tag of ``product``, mapped to its asset names.
+
+    One paginated REST listing replaces a ``gh release view`` per release;
+    ``--slurp`` wraps its pages in one outer array, which is flattened. A
+    packaged stable release has a ``vX.Y.Z`` tag, is neither a draft nor a
+    prerelease, and attaches ``packages-manifest.json``; any other release is
+    left out. Tags are in listing order.
+    """
+    pages = _json(
+        gh,
+        f"listing releases of {product}",
+        "gh",
+        "api",
+        "--paginate",
+        "--slurp",
+        f"repos/{product}/releases?per_page=100",
+    )
+    out: dict[str, list[str]] = {}
+    for rel in (r for page in pages for r in page):
+        assets = [a["name"] for a in rel["assets"]]
+        if (
+            not rel["draft"]
+            and not rel["prerelease"]
+            and _STABLE_TAG.fullmatch(rel["tag_name"])
+            and MANIFEST in assets
+        ):
+            out[rel["tag_name"]] = assets
+    return out
 
 
 def _download(gh: Run, where: str, product: str, tag: str, name: str, dest: Path) -> Path:
@@ -372,13 +407,12 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def _release_artifacts(product: str, tag: str, workdir: Path, gh: Run) -> list[Artifact] | None:
-    """The artifacts of one release, or ``None`` when it has no manifest."""
+def _release_artifacts(
+    product: str, tag: str, assets: list[str], workdir: Path, gh: Run
+) -> list[Artifact]:
+    """The artifacts of one packaged release, whose asset names are ``assets``."""
     where = f"{product}@{tag}"
-    packages = release_packages(product, tag, gh)
-    if packages is None:
-        print(f"{where}: no {MANIFEST} (pre-packaging release) — skipped")
-        return None
+    packages = _package_names(assets)
     dest = workdir / product / tag
     dest.mkdir(parents=True, exist_ok=True)
     entries = _manifest_entries(_download(gh, where, product, tag, MANIFEST, dest), where)
@@ -405,13 +439,16 @@ def _release_artifacts(product: str, tag: str, workdir: Path, gh: Run) -> list[A
 
 
 def collect(cfg: IndexConfig, workdir: Path, gh: Run = local_run) -> list[Artifact]:
-    """Download and describe every packaged stable release of every configured product."""
+    """Download and describe the releases retention selects, for every configured product.
+
+    For each product, :func:`.retention.select_tags` picks from its packaged
+    stable releases (:func:`packaged_tags`); no other release is downloaded.
+    """
     out: list[Artifact] = []
     for product in cfg.products:
-        for tag in stable_tags(product, gh):
-            arts = _release_artifacts(product, tag, workdir, gh)
-            if arts is not None:
-                out.extend(arts)
+        rels = packaged_tags(product, gh)
+        for tag in retention.select_tags(list(rels), cfg.keep, cfg.lines):
+            out.extend(_release_artifacts(product, tag, rels[tag], workdir, gh))
     return out
 
 

@@ -564,27 +564,20 @@ lines = 2                         # newest major.minor lines kept per product (d
 retire = ["vergil-python3.14.8"]  # exact package names to drop (default: none)
 ```
 
-The index is rebuilt from scratch on every run. For each product it keeps
-the newest `keep` releases in each of the newest `lines` major.minor lines,
-then adds the newest provider of every dependency of a kept package, so
-everything indexed is installable.
+The index is rebuilt from scratch on every run. For each product it lists
+the packaged stable releases (a `vX.Y.Z` tag, not a draft or prerelease,
+with a `packages-manifest.json` attached) and selects the newest `keep`
+releases in each of the newest `lines` major.minor lines. Only the selected
+releases are downloaded, and every package they ship is kept.
 
 `retire` drops packages by exact name, for every format (`deb` and `rpm`)
-and architecture, whichever release ships them. A retired package is dropped
-before dependencies are resolved, so it keeps none of its own dependencies in
-the index. Each entry must be a non-empty string, listed once. If a package
-the index keeps still depends on a retired name, the index build fails rather
-than publishing a package that cannot be installed. To fix it, remove the name
-from `retire` or make sure retention no longer keeps the dependent release.
-Omitting `retire`, or setting it to `[]`, retires nothing.
+and architecture, from the selected releases. Each entry must be a non-empty
+string, listed once. Omitting `retire`, or setting it to `[]`, retires
+nothing. An entry that matches no selected package drops nothing.
 
-Every `retire` entry must name a package that some collected release ships,
-in any format or architecture. The check runs against everything collected
-before retention drops anything, so a name found only in releases that
-retention would evict still counts. An entry that matches nothing fails the
-index build. It is either a typo, which would otherwise leave the package
-published, or a package whose releases are gone; either way, remove it from
-`packages.toml`.
+Every package left after `retire` is verified before it is indexed: its
+build attestation must come from the release workflow on `main`, and every
+`.rpm` must carry a valid org signature. A failure fails the index build.
 
 ### Checking `packages.toml` without building
 
@@ -599,9 +592,7 @@ non-empty `vendor`, well-formed and unique `products`, positive integer
 network, signing keys or output directory, so `--keys` and `--out` are not
 needed. On success it prints `vrg-package: packages.toml: ok`. On any
 invalid value it prints the error and exits non-zero, so a repo's
-validation can catch a typo before publish time. Checks that need the
-collected releases, such as a `retire` entry that matches no package, still
-run only in the full index build.
+validation can catch a typo before publish time.
 
 ## Inspecting the matrix
 
