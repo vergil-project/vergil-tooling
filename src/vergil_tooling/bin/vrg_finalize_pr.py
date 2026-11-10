@@ -460,13 +460,14 @@ def _warn_image_failures(failures: list[tuple[str, str]]) -> None:
         )
 
 
-def _clean_branch_images(branch: str) -> None:
-    """Remove *branch*'s cached dev images, warning on any failure (#3566)."""
+def _clean_branch_images(branch: str, root: Path) -> None:
+    """Remove *branch*'s cached dev images of *root*'s repo, warning on any failure (#3566)."""
     try:
-        removed, failures = clean_branch_images(branch)
-    except RuntimeError as exc:
+        removed, failures = clean_branch_images(branch, root)
+    except (RuntimeError, subprocess.CalledProcessError) as exc:
         print(
-            f"  WARNING: could not clean cached images for {branch}: {exc}",
+            f"  WARNING: could not clean cached images for {branch}: "
+            f"{' '.join(error_text(exc).split())}",
             file=sys.stderr,
         )
         return
@@ -483,10 +484,11 @@ def _prune_orphan_branch_images(*, dry_run: bool) -> None:
     was never finalized — abandoned, or its PR closed out of band — whose
     ~1.3–2G cached image would otherwise linger and fill the VM disk.
 
-    The tag records no repository and every repo of a language shares the image
-    name, so "live" is asked of the whole platform repo set, exactly as
-    ``vrg-container-cache prune`` asks it — never of the finalized repo alone,
-    which would delete every other repo's in-progress images. Where no repo set
+    The tag names its repository only by directory name (#4162) and every repo
+    of a language shares the image name, so "live" is asked of the whole
+    platform repo set, exactly as ``vrg-container-cache prune`` asks it — never
+    of the finalized repo alone, which would delete every other repo's
+    in-progress images. Where no repo set
     can be confirmed (the physical host has no default) the sweep is skipped
     and says so; a failed lookup skips it with a warning. Neither fails
     finalize: the merge has already landed.
@@ -563,7 +565,7 @@ def _delete_branch_and_worktree(
     print(f"  Deleting merged branch: {branch}")
     _run(["branch", "-D", branch], dry_run=dry_run)
     if not dry_run:
-        _clean_branch_images(branch)
+        _clean_branch_images(branch, root)
     # Drop the branch's relay ref too, so a cloud-handoff ref never outlives the
     # branch it belonged to (issue #2369). Shared by both cleanup paths.
     _delete_relay_ref(branch, dry_run=dry_run)
@@ -1516,7 +1518,7 @@ def _reprovision_target_image(ctx: FinalizeContext, retry: tuple[str, ...]) -> N
     naming the image, the cause and the *retry* command (issue #3605).
     """
     branch = ctx.args.target_branch
-    _clean_branch_images(branch)
+    _clean_branch_images(branch, ctx.root)
     lang = resolve_language(ctx.root)
     try:
         provision_dev_image(ctx.root, lang, quiet_warmup=True)

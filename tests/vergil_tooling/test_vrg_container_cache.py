@@ -47,6 +47,14 @@ def _marker_language_resolution() -> Iterator[None]:
         yield
 
 
+@pytest.fixture(autouse=True)
+def _repo_name() -> Iterator[None]:
+    # The tests' repo roots are bare temp directories, not git repositories;
+    # every command runs as repo "my-repo" (cache_repo_name, #4162).
+    with patch("vergil_tooling.bin.vrg_container_cache.cache_repo_name", return_value="my-repo"):
+        yield
+
+
 # -- no subcommand ------------------------------------------------------------
 
 
@@ -217,10 +225,14 @@ def test_clean_removes_existing(tmp_path: Path, capsys: pytest.CaptureFixture[st
             return_value="feature/42",
         ),
         patch("vergil_tooling.bin.vrg_container_cache.detect_runtime", return_value="docker"),
-        patch("vergil_tooling.bin.vrg_container_cache.find_cached_image", return_value=cached),
+        patch(
+            "vergil_tooling.bin.vrg_container_cache.find_cached_image", return_value=cached
+        ) as find,
         patch(_CLI + ".remove_images", return_value=[]) as m_remove,
     ):
         assert main(["clean"]) == 0
+    # clean removes only this repository's image (#4162).
+    assert find.call_args.kwargs["repo"] == "my-repo"
     m_remove.assert_called_once_with([cached[0]], "docker")
     assert "Removed:" in capsys.readouterr().out
 
@@ -282,7 +294,9 @@ def test_status_no_cache_with_expected_tag(
             "vergil_tooling.bin.vrg_container_cache.resolve_base_digest",
             return_value=("sha256:abc", True),
         ),
-        patch("vergil_tooling.bin.vrg_container_cache.find_cached_image", return_value=None),
+        patch(
+            "vergil_tooling.bin.vrg_container_cache.find_cached_image", return_value=None
+        ) as find,
         patch("vergil_tooling.bin.vrg_container_cache.resolve_language", return_value="go"),
         patch(
             "vergil_tooling.bin.vrg_container_cache.default_image",
@@ -291,7 +305,9 @@ def test_status_no_cache_with_expected_tag(
     ):
         assert main(["status"]) == 0
     out = capsys.readouterr().out
-    assert "Expected tag:" in out
+    # Only this repository's image is looked for, and the tag names it (#4162).
+    assert find.call_args.kwargs["repo"] == "my-repo"
+    assert "Expected tag: ghcr.io/r/dev-go:1.26--feature-42--my-repo." in out
 
 
 def test_status_current(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -435,10 +451,16 @@ _PY = "ghcr.io/vergil-project/prod-python"
 
 def _prune_images() -> list[CacheImage]:
     return [
-        CacheImage(f"{_PY}:3.14--develop--0123abcd", "id-dev", "develop"),
-        CacheImage(f"{_PY}:3.14--feature-1-live--0123abcd", "id-live", "feature-1-live"),
-        CacheImage(f"{_PY}:3.14--feature-2-gone--0123abcd", "id-gone", "feature-2-gone"),
-        CacheImage(f"{_PY}:3.14--feature-3-used--0123abcd", "id-used", "feature-3-used"),
+        CacheImage(f"{_PY}:3.14--develop--repo-a.0123abcd", "id-dev", "develop", "repo-a"),
+        CacheImage(
+            f"{_PY}:3.14--feature-1-live--repo-a.0123abcd", "id-live", "feature-1-live", "repo-a"
+        ),
+        CacheImage(
+            f"{_PY}:3.14--feature-2-gone--repo-a.0123abcd", "id-gone", "feature-2-gone", "repo-a"
+        ),
+        CacheImage(
+            f"{_PY}:3.14--feature-3-used--repo-a.0123abcd", "id-used", "feature-3-used", "repo-a"
+        ),
     ]
 
 
@@ -469,11 +491,11 @@ def test_prune_is_a_dry_run_by_default(tmp_path: Path, capsys: pytest.CaptureFix
     m_remove.assert_not_called()
     out = capsys.readouterr().out
     assert f"Repo set: 1 repo(s) under {tmp_path}" in out
-    assert "keep    ghcr.io/vergil-project/prod-python:3.14--develop--0123abcd" in out
+    assert "keep    ghcr.io/vergil-project/prod-python:3.14--develop--repo-a.0123abcd" in out
     assert "(protected branch 'develop')" in out
     assert "(branch 'feature-1-live' live in org/a)" in out
     assert "(in use by a container)" in out
-    assert "remove  ghcr.io/vergil-project/prod-python:3.14--feature-2-gone--0123abcd" in out
+    assert "remove  ghcr.io/vergil-project/prod-python:3.14--feature-2-gone--repo-a.0123abcd" in out
     assert "Dry run: 1 of 4 cached image(s) would be removed." in out
 
 
@@ -482,14 +504,14 @@ def test_prune_apply_removes_only_finished_images(
 ) -> None:
     with _prune_env(tmp_path) as m_remove:
         assert main(["prune", "--apply"]) == 0
-    m_remove.assert_called_once_with([f"{_PY}:3.14--feature-2-gone--0123abcd"], "nerdctl")
+    m_remove.assert_called_once_with([f"{_PY}:3.14--feature-2-gone--repo-a.0123abcd"], "nerdctl")
     assert "Removed 1 of 1 cached image(s)." in capsys.readouterr().out
 
 
 def test_prune_apply_fails_loudly_on_rmi_error(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    ref = f"{_PY}:3.14--feature-2-gone--0123abcd"
+    ref = f"{_PY}:3.14--feature-2-gone--repo-a.0123abcd"
     with _prune_env(tmp_path, removed=[(ref, "image is being used")]):
         assert main(["prune", "--apply"]) == 1
     captured = capsys.readouterr()
@@ -557,7 +579,12 @@ def test_prune_from_outside_a_repo_spans_a_mixed_repo_set(
         return "ghs_gh_org"
 
     images = [
-        CacheImage(f"{_PY}:3.14--feature-{n}--0123abcd", f"id-{n}", f"feature-{n}")
+        CacheImage(
+            f"{_PY}:3.14--feature-{n}--repo-a.0123abcd",
+            f"id-{n}",
+            f"feature-{n}",
+            "repo-a",
+        )
         for n in ("1-live", "2-local", "3-tracked", "4-gone")
     ]
     with (
@@ -570,7 +597,7 @@ def test_prune_from_outside_a_repo_spans_a_mixed_repo_set(
         assert main(["prune", "--root", str(projects)]) == 0
     captured = capsys.readouterr()
     assert "Repo set: 3 repo(s)" in captured.out
-    assert f"remove  {_PY}:3.14--feature-4-gone--0123abcd" in captured.out
+    assert f"remove  {_PY}:3.14--feature-4-gone--repo-a.0123abcd" in captured.out
     assert "Dry run: 1 of 4 cached image(s) would be removed." in captured.out
     assert f"warning: origin of {gitlab.resolve()} is not on GitHub" in captured.err
 

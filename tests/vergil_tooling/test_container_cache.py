@@ -15,6 +15,7 @@ from tests.vergil_tooling.conftest import window_default_resolution
 from vergil_tooling.lib.config import vrg_install_tag
 from vergil_tooling.lib.container_cache import (
     _VRG_GIT_URL,
+    CacheImageRef,
     _allow_stale_base,
     _build_cached_image,
     _compose_setup,
@@ -24,13 +25,17 @@ from vergil_tooling.lib.container_cache import (
     _warmup_command,
     apt_install_command,
     cache_image_tag,
+    cache_repo_name,
     cache_sensitive_files,
     compute_cache_hash,
     ensure_cached_image,
     find_cached_image,
     missing_warmup_files,
+    parse_cache_image_ref,
     provision_dev_image,
     resolve_base_digest,
+    sanitize_branch,
+    sanitize_repo,
     vergil_tooling_setup_command,
 )
 
@@ -57,6 +62,17 @@ def build_space() -> Iterator[MagicMock]:
     # behaviour is tested in test_cache_space.py (#3571).
     with patch("vergil_tooling.lib.cache_space.ensure_build_space") as mock_space:
         yield mock_space
+
+
+@pytest.fixture(autouse=True)
+def _repo_name() -> Iterator[None]:
+    # The tests' repo roots are bare temp directories, not git repositories, so
+    # name each by its directory, as a main clone's name would read. The real
+    # lookup is tested directly through the cache_repo_name imported above.
+    with patch(
+        "vergil_tooling.lib.container_cache.cache_repo_name", side_effect=lambda root: root.name
+    ):
+        yield
 
 
 def _completed(returncode: int = 0, stdout: str = "", stderr: str = "") -> MagicMock:
@@ -180,42 +196,122 @@ def test_cache_image_tag_format() -> None:
         "ghcr.io/vergil-project/dev-go:1.26",
         "feature/42-thing",
         "abcd1234",
+        repo="vergil-tooling",
     )
-    assert tag == "ghcr.io/vergil-project/dev-go:1.26--feature-42-thing--abcd1234"
+    assert tag == "ghcr.io/vergil-project/dev-go:1.26--feature-42-thing--vergil-tooling.abcd1234"
+
+
+def test_cache_image_tag_refuses_a_tag_too_long_for_the_runtime() -> None:
+    # The part after ":" may hold at most 128 characters; say so before the build.
+    with pytest.raises(ValueError, match="over the 128 a container runtime accepts"):
+        cache_image_tag("ghcr.io/vergil-project/dev-go:1.26", "f" * 120, "abcd1234", repo="r")
+
+
+def test_cache_image_tag_at_the_runtime_limit() -> None:
+    # 4 + 2 + branch + 2 + 1 + 1 + 8 = 128 with a 110-character branch.
+    tag = cache_image_tag("ghcr.io/vergil-project/dev-go:1.26", "f" * 110, "abcd1234", repo="r")
+    assert len(tag.split(":", 1)[1]) == 128
 
 
 # -- find_cached_image --------------------------------------------------------
 
+_GO = "ghcr.io/vergil-project/dev-go"
+
+
+def _find(stdout: str, repo: str = "repo-a", branch: str = "feature/42-thing") -> object:
+    mock_result = MagicMock(returncode=0, stdout=stdout)
+    with patch("vergil_tooling.lib.container_cache.subprocess.run", return_value=mock_result):
+        return find_cached_image(f"{_GO}:1.26", branch, repo=repo, runtime="docker")
+
 
 def test_find_cached_image_hit() -> None:
-    docker_output = (
-        "ghcr.io/vergil-project/dev-go:1.26--feature-42-thing--abcd1234\n"
-        "ghcr.io/vergil-project/dev-python:3.14\n"
-    )
-    mock_result = MagicMock(returncode=0, stdout=docker_output)
-    with patch("vergil_tooling.lib.container_cache.subprocess.run", return_value=mock_result):
-        result = find_cached_image(
-            "ghcr.io/vergil-project/dev-go:1.26", "feature/42-thing", runtime="docker"
-        )
-    assert result is not None
-    assert result[0] == "ghcr.io/vergil-project/dev-go:1.26--feature-42-thing--abcd1234"
-    assert result[1] == "abcd1234"
+    docker_output = f"{_GO}:1.26--feature-42-thing--repo-a.abcd1234\n{_GO}:1.26\n"
+    assert _find(docker_output) == (f"{_GO}:1.26--feature-42-thing--repo-a.abcd1234", "abcd1234")
 
 
 def test_find_cached_image_miss() -> None:
-    docker_output = "ghcr.io/vergil-project/dev-python:3.14\n"
-    mock_result = MagicMock(returncode=0, stdout=docker_output)
-    with patch("vergil_tooling.lib.container_cache.subprocess.run", return_value=mock_result):
-        result = find_cached_image(
-            "ghcr.io/vergil-project/dev-go:1.26", "feature/42-thing", runtime="docker"
-        )
-    assert result is None
+    assert _find("ghcr.io/vergil-project/dev-python:3.14\n") is None
+
+
+def test_find_cached_image_returns_only_the_current_repos_image() -> None:
+    # Another repository's image on the same base and branch comes first in the
+    # listing; it is never returned, whatever the order (#4162).
+    docker_output = (
+        f"{_GO}:1.26--feature-42-thing--repo-b.11111111\n"
+        f"{_GO}:1.26--feature-42-thing--repo-a.22222222\n"
+        f"{_GO}:1.26--feature-42-thing--repo-ab.33333333\n"
+    )
+    assert _find(docker_output, repo="repo-a") == (
+        f"{_GO}:1.26--feature-42-thing--repo-a.22222222",
+        "22222222",
+    )
+    assert _find(docker_output, repo="repo-b") == (
+        f"{_GO}:1.26--feature-42-thing--repo-b.11111111",
+        "11111111",
+    )
+    assert _find(docker_output, repo="repo-c") is None
+
+
+def test_find_cached_image_ignores_an_old_format_image() -> None:
+    # An image from before #4162 names no repository, so it is no one's: it is
+    # never returned (and so never removed by the build), whichever repo asks.
+    assert _find(f"{_GO}:1.26--feature-42-thing--abcd1234\n") is None
+
+
+def test_find_cached_image_matches_the_whole_branch() -> None:
+    # "feature/42" must not match the image of "feature/42--thing".
+    docker_output = f"{_GO}:1.26--feature-42--thing--repo-a.abcd1234\n"
+    assert _find(docker_output, branch="feature/42") is None
+
+
+def test_find_cached_image_sanitizes_the_repo_name() -> None:
+    docker_output = f"{_GO}:1.26--feature-42-thing--odd-name.abcd1234\n"
+    assert _find(docker_output, repo="odd--name") == (
+        f"{_GO}:1.26--feature-42-thing--odd-name.abcd1234",
+        "abcd1234",
+    )
 
 
 def test_find_cached_image_docker_error() -> None:
     mock_result = MagicMock(returncode=1, stdout="")
     with patch("vergil_tooling.lib.container_cache.subprocess.run", return_value=mock_result):
-        assert find_cached_image("img:1", "branch", runtime="docker") is None
+        assert find_cached_image("img:1", "branch", repo="r", runtime="docker") is None
+
+
+# -- cache_repo_name ----------------------------------------------------------
+
+
+def _git(cwd: Path, *args: str) -> None:
+    subprocess.run(
+        ["git", "-c", "commit.gpgsign=false", *args], cwd=cwd, check=True, capture_output=True
+    )
+
+
+def test_cache_repo_name_is_the_clone_from_every_worktree(tmp_path: Path) -> None:
+    clone = tmp_path / "my-repo"
+    clone.mkdir()
+    _git(clone, "init", "-q", "-b", "develop")
+    _git(
+        clone,
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@example.com",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "init",
+    )
+    worktree = clone / ".worktrees" / "issue-1-x"
+    _git(clone, "worktree", "add", "-q", "-b", "feature/1-x", str(worktree))
+    assert cache_repo_name(clone) == "my-repo"
+    assert cache_repo_name(worktree) == "my-repo"
+
+
+def test_cache_repo_name_outside_a_repository_raises(tmp_path: Path) -> None:
+    with pytest.raises(subprocess.CalledProcessError):
+        cache_repo_name(tmp_path)
 
 
 # -- ensure_cached_image ------------------------------------------------------
@@ -470,6 +566,118 @@ def test_ensure_rebuilds_when_base_digest_changes(tmp_path: Path) -> None:
     mock_build.assert_called_once()
     # The stale image was removed.
     assert stale_tag in mock_run.call_args[0][0]
+
+
+class _ImageStore:
+    """A fake local image store for ensure_cached_image across runs (#4162).
+
+    Answers ``images`` from its refs and ``rmi -f`` by dropping one, and records
+    every removal; a build adds the tag it was asked for.
+    """
+
+    def __init__(self, refs: list[str]) -> None:
+        self.refs = list(refs)
+        self.removed: list[str] = []
+        self.built: list[str] = []
+
+    def run(self, cmd: list[str], **_kwargs: object) -> MagicMock:
+        if cmd[1] == "images":
+            return _completed(0, stdout="".join(f"{ref}\n" for ref in self.refs))
+        if cmd[1:3] == ["rmi", "-f"]:
+            self.removed.append(cmd[3])
+            self.refs.remove(cmd[3])
+            return _completed(0)
+        msg = f"unexpected runtime call: {cmd}"
+        raise AssertionError(msg)
+
+    def build(self, _root: Path, _lang: str, _base: str, target_tag: str, **_kw: object) -> str:
+        self.built.append(target_tag)
+        self.refs.append(target_tag)
+        return target_tag
+
+
+def _run_in(store: _ImageStore, repo_root: Path, branch: str = "develop") -> str:
+    """One ensure_cached_image run of *repo_root* against *store*."""
+    with (
+        patch("vergil_tooling.lib.git.current_branch", return_value=branch),
+        patch(
+            "vergil_tooling.lib.container_cache.resolve_base_digest",
+            return_value=("sha256:abc", True),
+        ),
+        patch("vergil_tooling.lib.container_cache.subprocess.run", side_effect=store.run),
+        patch("vergil_tooling.lib.container_cache._image_is_launchable", return_value=True),
+        patch("vergil_tooling.lib.container_cache._build_cached_image", side_effect=store.build),
+    ):
+        return ensure_cached_image(
+            repo_root,
+            "go",
+            "ghcr.io/vergil-project/prod-base:latest",
+            runtime="docker",
+            build_env={},
+        )
+
+
+def _two_repos(tmp_path: Path) -> tuple[Path, Path]:
+    repo_a, repo_b = tmp_path / "repo-a", tmp_path / "repo-b"
+    for repo in (repo_a, repo_b):
+        repo.mkdir()
+        (repo / "vergil.toml").write_text(_VALID_TOML)
+    return repo_a, repo_b
+
+
+def test_two_repos_on_one_base_and_branch_keep_their_own_images(tmp_path: Path) -> None:
+    # Both repos build on prod-base:latest on develop. Before #4162 each run
+    # found the other's image, saw a hash mismatch, removed it and rebuilt.
+    repo_a, repo_b = _two_repos(tmp_path)
+    store = _ImageStore([])
+
+    image_a = _run_in(store, repo_a)
+    image_b = _run_in(store, repo_b)
+    assert image_a != image_b
+    assert image_a.endswith(f"--develop--repo-a.{image_a[-8:]}")
+    assert image_b.endswith(f"--develop--repo-b.{image_b[-8:]}")
+
+    # Run each again, in both orders: every run reuses its own image.
+    assert _run_in(store, repo_a) == image_a
+    assert _run_in(store, repo_b) == image_b
+    assert _run_in(store, repo_b) == image_b
+    assert _run_in(store, repo_a) == image_a
+
+    assert store.built == [image_a, image_b]
+    assert store.removed == []
+    assert sorted(store.refs) == sorted([image_a, image_b])
+
+
+def test_a_stale_image_is_replaced_without_touching_the_other_repos(tmp_path: Path) -> None:
+    # repo-a's cache key moves: the build removes repo-a's old image only.
+    repo_a, repo_b = _two_repos(tmp_path)
+    store = _ImageStore([])
+    image_a = _run_in(store, repo_a)
+    image_b = _run_in(store, repo_b)
+
+    (repo_a / "go.sum").write_text("changed\n")
+    new_a = _run_in(store, repo_a)
+
+    assert new_a != image_a
+    assert store.removed == [image_a]
+    assert sorted(store.refs) == sorted([new_a, image_b])
+    assert _run_in(store, repo_b) == image_b
+
+
+def test_an_old_format_image_is_left_alone_and_not_reused(tmp_path: Path) -> None:
+    # An image from before #4162 (no repository in its tag) is never found, so
+    # the repo builds its own and neither run removes the old one: that is
+    # plan_prune's to remove (see test_cache_prune.py).
+    repo_a, repo_b = _two_repos(tmp_path)
+    legacy = "ghcr.io/vergil-project/prod-base:latest--develop--2fb5421a"
+    store = _ImageStore([legacy])
+
+    image_a = _run_in(store, repo_a)
+    image_b = _run_in(store, repo_b)
+
+    assert legacy not in (image_a, image_b)
+    assert store.removed == []
+    assert sorted(store.refs) == sorted([legacy, image_a, image_b])
 
 
 # -- provision_dev_image ------------------------------------------------------
@@ -1761,7 +1969,7 @@ def test_ensure_folds_build_env_into_the_key_and_the_build(tmp_path: Path) -> No
         ) as mock_build,
     ):
         ensure_cached_image(tmp_path, "python", "img:1", runtime="docker", build_env=_PY_ENV)
-    assert mock_build.call_args[0][3] == f"img:1--develop--{expected}"
+    assert mock_build.call_args[0][3] == f"img:1--develop--{tmp_path.name}.{expected}"
     assert mock_build.call_args.kwargs["build_env"] == _PY_ENV
 
 
@@ -1777,47 +1985,103 @@ def test_provision_passes_no_env_for_a_language_without_one(tmp_path: Path) -> N
     assert ensure.call_args.kwargs["build_env"] == {}
 
 
-# -- parse_cache_image_ref (#3481) --------------------------------------------
+# -- parse_cache_image_ref (#3481, #4162) -------------------------------------
+
+_PY_BASE = "ghcr.io/vergil-project/prod-python"
+_BASE = "ghcr.io/vergil-project/prod-base"
 
 
 @pytest.mark.parametrize(
     ("ref", "expected"),
     [
         (
-            "ghcr.io/vergil-project/prod-python:3.14--feature-1-x--0123abcd",
-            ("3.14", "feature-1-x"),
+            f"{_PY_BASE}:3.14--feature-1-x--vergil-tooling.0123abcd",
+            CacheImageRef(_PY_BASE, "3.14", "feature-1-x", "vergil-tooling", "0123abcd"),
+        ),
+        # A repository whose name starts with "." (the org profile repo).
+        (
+            f"{_BASE}:latest--develop--.github.2fb5421a",
+            CacheImageRef(_BASE, "latest", "develop", ".github", "2fb5421a"),
+        ),
+        # A dotted repository name keeps every dot but the hash's.
+        (
+            f"{_BASE}:latest--develop--a.b.0123abcd",
+            CacheImageRef(_BASE, "latest", "develop", "a.b", "0123abcd"),
+        ),
+        # A sanitized branch that itself contains "--" parses whole: the
+        # repository never contains "--", so the last "--" is its boundary.
+        (
+            f"{_BASE}:latest--feature--odd--my-repo.0123abcd",
+            CacheImageRef(_BASE, "latest", "feature--odd", "my-repo", "0123abcd"),
+        ),
+        # The format before #4162: no repository, the hash after "--".
+        (
+            f"{_PY_BASE}:3.14--feature-1-x--0123abcd",
+            CacheImageRef(_PY_BASE, "3.14", "feature-1-x", None, "0123abcd"),
         ),
         (
-            "ghcr.io/vergil-project/prod-cpp-clang:20--develop--deadbeef",
-            ("20", "develop"),
+            f"{_BASE}:latest--feature--odd--0123abcd",
+            CacheImageRef(_BASE, "latest", "feature--odd", None, "0123abcd"),
         ),
-        # A sanitized branch that itself contains "--" parses whole.
-        (
-            "ghcr.io/vergil-project/prod-base:latest--feature--odd--0123abcd",
-            ("latest", "feature--odd"),
-        ),
-        ("ghcr.io/vergil-project/prod-python:3.14", None),  # base image
-        ("ghcr.io/vergil-project/prod-python:<none>", None),
-        ("ghcr.io/vergil-project/prod-python:3.14--x--NOTAHASH", None),
+        (f"{_PY_BASE}:3.14", None),  # base image
+        (f"{_PY_BASE}:<none>", None),
+        (f"{_PY_BASE}:3.14--x--NOTAHASH", None),
+        (f"{_PY_BASE}:3.14--x--repo.NOTAHASH", None),
         ("docker.io/library/redis:7--x--0123abcd", None),  # not ours
+        ("docker.io/library/redis:7--x--repo.0123abcd", None),  # not ours
     ],
 )
-def test_parse_cache_image_ref(ref: str, expected: tuple[str, str] | None) -> None:
-    from vergil_tooling.lib.container_cache import parse_cache_image_ref
-
+def test_parse_cache_image_ref(ref: str, expected: CacheImageRef | None) -> None:
     assert parse_cache_image_ref(ref) == expected
 
 
-def test_parse_inverts_cache_image_tag() -> None:
-    from vergil_tooling.lib.container_cache import (
-        cache_image_tag,
-        parse_cache_image_ref,
-        sanitize_branch,
+def test_parsed_ref_says_whether_it_is_legacy() -> None:
+    legacy = parse_cache_image_ref(f"{_BASE}:latest--develop--2fb5421a")
+    current = parse_cache_image_ref(f"{_BASE}:latest--develop--repo.2fb5421a")
+    assert legacy is not None
+    assert legacy.legacy
+    assert current is not None
+    assert not current.legacy
+
+
+@pytest.mark.parametrize(
+    ("branch", "repo"),
+    [
+        ("feature/12-x", "vergil-tooling"),
+        ("develop", ".github"),
+        ("feature/a--b", "odd--name-"),
+        ("release/1.2", "repo with spaces"),
+    ],
+)
+def test_parse_inverts_cache_image_tag(branch: str, repo: str) -> None:
+    ref = cache_image_tag("ghcr.io/vergil-project/prod-go:1.24", branch, "a1b2c3d4", repo=repo)
+    assert parse_cache_image_ref(ref) == CacheImageRef(
+        "ghcr.io/vergil-project/prod-go",
+        "1.24",
+        sanitize_branch(branch),
+        sanitize_repo(repo),
+        "a1b2c3d4",
     )
 
-    ref = cache_image_tag("ghcr.io/vergil-project/prod-go:1.24", "feature/12-x", "a1b2c3d4")
-    assert parse_cache_image_ref(ref) == ("1.24", sanitize_branch("feature/12-x"))
-    assert sanitize_branch("feature/12-x") == "feature-12-x"
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("vergil-tooling", "vergil-tooling"),
+        (".github", ".github"),
+        ("odd--name", "odd-name"),
+        ("-lead-and-trail-", "lead-and-trail"),
+        ("with spaces/and@marks", "with-spaces-and-marks"),
+    ],
+)
+def test_sanitize_repo(name: str, expected: str) -> None:
+    assert sanitize_repo(name) == expected
+
+
+@pytest.mark.parametrize("name", ["", "-", "@@"])
+def test_sanitize_repo_refuses_a_name_that_leaves_nothing(name: str) -> None:
+    with pytest.raises(ValueError, match="leaves nothing"):
+        sanitize_repo(name)
 
 
 # -- vergil_tooling_setup_command: the install the image's environment chooses --

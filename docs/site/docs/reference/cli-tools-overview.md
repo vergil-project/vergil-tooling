@@ -1700,12 +1700,32 @@ cached image for the current branch), `clean` (remove it), `status` (show
 cache state and the expected tag), `clean-all` (remove every image it
 manages), and `prune` (remove the cached images of finished branches).
 
+A cached image is named
+`<base image>:<base tag>--<branch>--<repository>.<hash>`, for example
+`ghcr.io/vergil-project/prod-base:latest--develop--vergil-tooling.2fb5421a`.
+The branch is sanitized (`/` becomes `-`). The repository is the directory
+name of the repository's clone, the same from each of its worktrees. The hash
+is the cache key: the cache-sensitive files, the base image's digest and the
+build environment. Naming the repository gives each repository its own cached
+image, so two repositories on the same base image and branch no longer
+replace each other's. `build`, `clean`, `status` and `vrg-container-run` only
+ever find or remove the current repository's image, and so does
+`vrg-finalize-pr` when it cleans a branch's images (issue #4162).
+
+Images from earlier vergil-tooling releases are named
+`<base image>:<base tag>--<branch>--<hash>`, with no repository. No command
+uses them any more: each repository builds a new image the first time it
+runs, and the old ones are left for `prune` to remove (see below).
+`clean-all` removes both kinds.
+
 `prune` covers every cached per-branch image in the local image store,
 whichever repo built it. It is a **dry run by default**: it prints the repo
 set and a keep or remove verdict, with the reason, for each image, and
-removes nothing until re-run with `--apply` (issue #3481). The image tag
-records the branch (sanitized: `/` becomes `-`) but not the repository, so
-the rule leans toward keeping. An image is kept when:
+removes nothing until re-run with `--apply` (issue #3481). An image in the
+old format, with no repository, is removed whatever its branch, unless a
+container uses it. For the rest, the tag names the repository only by its
+directory name and the branch only in sanitized form, so the rule leans
+toward keeping. An image is kept when:
 
 - its branch is protected (`develop`, `main`, `release`);
 - a container, running or stopped, uses it;
