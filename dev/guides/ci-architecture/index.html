@@ -17962,6 +17962,10 @@ is the local command. Nothing else needs to be added to the repository.</p>
 <td><code>vergil.toml</code> has <code>[package]</code></td>
 </tr>
 <tr>
+<td><code>images / evidence</code></td>
+<td><code>[ci].images</code> is on</td>
+</tr>
+<tr>
 <td><code>security / codeql</code>, <code>CodeQL</code></td>
 <td>GHAS is available and CodeQL supports the language</td>
 </tr>
@@ -18005,7 +18009,12 @@ non-matrixed checks (the security scanners, the version-bump gate,
 <code>docs / docs</code>) keep their fixed, version-free names. A repo whose
 <code>vergil.toml</code> has a <code>[package]</code> section also requires <code>package / evidence</code>, the
 one stable gate <code>ci-package.yml</code> emits over its whole target matrix; repos
-without <code>[package]</code> neither call <code>ci-package.yml</code> nor require the gate.</p>
+without <code>[package]</code> neither call <code>ci-package.yml</code> nor require the gate.
+<code>[ci].images = true</code> (default <code>false</code>) does the same for <code>images / evidence</code>.
+It is set only by a repo whose <code>ci.yml</code> calls its repo-local <code>ci-images.yml</code>
+as a job named <code>images</code>, which vergil-containers does to build and scan the
+images a PR changes. That workflow's <code>evidence</code> job is the single aggregating
+gate, and a release of such a repo harvests its <code>ci-evidence-images</code> artifact.</p>
 <p><code>vrg-github-repo-config audit</code> <strong>hard-fails on required-set drift</strong>: if a
 repo's configured required checks diverge from the desired set, the audit
 fails rather than reporting a warning. <code>vrg-release</code> gates on that audit,
