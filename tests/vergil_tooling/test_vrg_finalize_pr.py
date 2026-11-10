@@ -1111,7 +1111,7 @@ def test_main_cleans_docker_cache_on_branch_delete(
     ):
         result = main([])
     assert result == 0
-    mock_clean.assert_called_once_with("feature/x")
+    mock_clean.assert_called_once_with("feature/x", tmp_path)
     assert "Cleaned 2 cached container image(s)" in capsys.readouterr().out
 
 
@@ -2291,7 +2291,7 @@ def test_stage_validation_launch_failure_reprovisions_and_retries(tmp_path: Path
     ):
         _stage_validation(ctx)  # must not raise
     assert run.call_count == 2
-    clean.assert_called_once_with("develop")
+    clean.assert_called_once_with("develop", tmp_path)
     prov.assert_called_once()
 
 
@@ -3521,7 +3521,7 @@ def test_clean_branch_images_warns_on_rmi_failure(capsys: pytest.CaptureFixture[
     """The finalized branch's image cleanup reports a refused rmi (#3566)."""
     failure = ("ghcr.io/vergil-project/dev-python:3.14--feature-1-x--0123abcd", "conflict")
     with patch(_MOD + ".clean_branch_images", return_value=(0, [failure])):
-        _clean_branch_images("feature/1-x")
+        _clean_branch_images("feature/1-x", Path("/r"))
     out = capsys.readouterr()
     assert "Cleaned" not in out.out
     assert f"WARNING: could not remove cached image {failure[0]}: conflict" in out.err
@@ -3531,10 +3531,21 @@ def test_clean_branch_images_warns_when_images_cannot_be_listed(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     with patch(_MOD + ".clean_branch_images", side_effect=RuntimeError("daemon down")):
-        _clean_branch_images("feature/1-x")
+        _clean_branch_images("feature/1-x", Path("/r"))
     assert "WARNING: could not clean cached images for feature/1-x: daemon down" in (
         capsys.readouterr().err
     )
+
+
+def test_clean_branch_images_warns_when_the_repo_cannot_be_named(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The images to clean are the repo's own (#4162); naming it runs git, and a
+    # git failure is a warning, as an unlistable image store is.
+    err = subprocess.CalledProcessError(128, ["git", "rev-parse"], stderr="not a git repository")
+    with patch(_MOD + ".clean_branch_images", side_effect=err):
+        _clean_branch_images("feature/1-x", Path("/r"))
+    assert "stderr: not a git repository" in capsys.readouterr().err
 
 
 def test_main_sweeps_orphan_relay_ref(tmp_path: Path) -> None:

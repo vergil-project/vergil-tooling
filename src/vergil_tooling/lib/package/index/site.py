@@ -4,9 +4,11 @@
 the configured products' release assets:
 
 1. load ``packages.toml``;
-2. collect the packaged stable releases;
-3. verify their provenance and rpm signatures (rpm key in a private rpm DB);
-4. apply retention;
+2. collect the releases retention selects: list each product's packaged
+   stable releases, keep the newest ``keep`` in each of the newest ``lines``
+   lines, and download only those;
+3. drop every artifact whose package name is in ``[retention].retire``;
+4. verify the rest: provenance, and rpm signatures (rpm key in a private rpm DB);
 5. wipe the output directory;
 6. write apt metadata for the registry's Ubuntu suites;
 7. write dnf metadata for the registry's EL releases;
@@ -153,10 +155,10 @@ def build_site(
 
     workdir.mkdir(parents=True, exist_ok=True)
     artifacts = collect.collect(cfg, workdir, run)
+    kept = retention.drop_retired(artifacts, frozenset(cfg.retire))
     rpmdb = workdir / "rpmdb"
     shutil.rmtree(rpmdb, ignore_errors=True)
-    collect.verify(artifacts, keyfile, run, rpmdb=rpmdb)
-    kept = retention.select(artifacts, cfg.keep, cfg.lines, retire=frozenset(cfg.retire))
+    collect.verify(kept, keyfile, run, rpmdb=rpmdb)
     print(f"indexing {len(kept)} of {len(artifacts)} collected package(s)")
 
     _wipe(out, config, keys_dir, workdir)

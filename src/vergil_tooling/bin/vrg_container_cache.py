@@ -34,6 +34,7 @@ from vergil_tooling.lib.container import (
 )
 from vergil_tooling.lib.container_cache import (
     cache_image_tag,
+    cache_repo_name,
     cache_sensitive_files,
     compute_cache_hash,
     ensure_cached_image,
@@ -126,7 +127,7 @@ def _cmd_clean(_args: argparse.Namespace, *, runtime: str) -> int:
     lang = resolve_language(repo_root)
     base = default_image(repo_resolution(repo_root, lang), fallback=True)
     branch = git.current_branch()
-    existing = find_cached_image(base, branch, runtime=runtime)
+    existing = find_cached_image(base, branch, repo=cache_repo_name(repo_root), runtime=runtime)
     if existing is None:
         print("No cached image for this branch.")
         return 0
@@ -144,7 +145,8 @@ def _cmd_status(_args: argparse.Namespace, *, runtime: str) -> int:
     resolution = repo_resolution(repo_root, lang)
     base = default_image(resolution, fallback=True)
     branch = git.current_branch()
-    existing = find_cached_image(base, branch, runtime=runtime)
+    repo = cache_repo_name(repo_root)
+    existing = find_cached_image(base, branch, repo=repo, runtime=runtime)
     files = cache_sensitive_files(repo_root, lang)
 
     def _current_hash() -> str:
@@ -161,7 +163,7 @@ def _cmd_status(_args: argparse.Namespace, *, runtime: str) -> int:
     if existing is None:
         print("No cached image for this branch.")
         if files:
-            print(f"Expected tag: {cache_image_tag(base, branch, _current_hash())}")
+            print(f"Expected tag: {cache_image_tag(base, branch, _current_hash(), repo=repo)}")
         return 0
     print(f"Cached image: {existing[0]}")
     print(f"Hash:         {existing[1]}")
@@ -195,7 +197,7 @@ def _cmd_prune(args: argparse.Namespace, *, runtime: str) -> int:
     """Report, or with --apply remove, cached images of finished branches.
 
     Dry run by default, as vrg-branch-sweep: the verdicts rest on a name
-    match the tag cannot make exact (no repo, sanitized branch), so the human
+    match the tag cannot make exact (repo by directory name, sanitized branch), so the human
     sees the list before anything is deleted. Any failure to read the repo set,
     the images or a repo's branches stops before a single removal; a failed
     rmi is reported and makes the run exit 1 (#3481).

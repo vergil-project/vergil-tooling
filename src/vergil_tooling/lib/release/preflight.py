@@ -600,8 +600,8 @@ def _check_packages_unpublished(repo: str, repo_root: Path, ver: str) -> None:
 
     Package builds are not byte-reproducible, so rebuilding a ``(name, full
     version, arch, format)`` an earlier release published yields different
-    files at the same identity — which the shared package index refuses, failing
-    every repo's index publish until the duplicate assets are removed by hand.
+    files at the same identity, a conflict apt and dnf cannot resolve. The
+    shared package index does not check for it.
 
     This is the earliest point that can know: the full package versions follow
     from ``[package]`` and the release version alone, and nothing is branched,

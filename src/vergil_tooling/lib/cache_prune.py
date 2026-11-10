@@ -7,14 +7,19 @@ behind ``vrg-container-cache prune`` and ``vrg-finalize-pr``'s orphan sweep
 (#3566), and the home of every cached-image removal, so each one reports a
 failed ``rmi`` rather than ignoring it.
 
-The tag does not record the repository, and the branch in it is sanitized
-(``/`` becomes ``-``), so an image cannot be mapped back to exactly one branch.
-The rule is therefore deliberately one-sided: an image is removed only when its
-sanitized branch matches **no** live branch in **any** repo of the repo set
+The tag records the repository by its clone's directory name only (#4162), and
+the branch in it is sanitized (``/`` becomes ``-``), so an image cannot be
+mapped back to exactly one branch of one repo of the repo set. The rule is
+therefore deliberately one-sided: an image is removed only when its sanitized
+branch matches **no** live branch in **any** repo of the repo set
 (:mod:`vergil_tooling.lib.live_branches`). A name collision, a merged branch not
 yet deleted, or a stale local branch all keep the image; the cost of a wrong
 keep is disk, the cost of a wrong removal is a cold rebuild of live work.
 Protected branches and images any container references are never removed.
+
+An image in the format before #4162, which names no repository, is removed
+whatever its branch unless a container references it: no current lookup
+returns one, so it can only ever take up disk (#4162).
 """
 
 from __future__ import annotations
@@ -24,7 +29,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib.container import detect_runtime
-from vergil_tooling.lib.container_cache import parse_cache_image_ref, sanitize_branch
+from vergil_tooling.lib.container_cache import (
+    cache_repo_name,
+    parse_cache_image_ref,
+    sanitize_branch,
+    sanitize_repo,
+)
 from vergil_tooling.lib.live_branches import live_branches
 
 if TYPE_CHECKING:
@@ -40,11 +50,16 @@ _SHA_PREFIX = "sha256:"
 
 @dataclass(frozen=True)
 class CacheImage:
-    """A cached per-branch image: its reference, content id and sanitized branch."""
+    """A cached per-branch image: its reference, content id, branch and repository.
+
+    *branch* and *repo* are sanitized, as the tag holds them. *repo* is None for
+    an image in the format before #4162, which named no repository.
+    """
 
     ref: str
     image_id: str
     branch: str
+    repo: str | None
 
 
 @dataclass(frozen=True)
@@ -82,7 +97,14 @@ def list_cache_images(runtime: str) -> list[CacheImage]:
         ref, _tab, image_id = line.partition("\t")
         parsed = parse_cache_image_ref(ref.strip())
         if parsed is not None:
-            images.append(CacheImage(ref=ref.strip(), image_id=image_id.strip(), branch=parsed[1]))
+            images.append(
+                CacheImage(
+                    ref=ref.strip(),
+                    image_id=image_id.strip(),
+                    branch=parsed.branch,
+                    repo=parsed.repo,
+                )
+            )
     return images
 
 
@@ -124,9 +146,11 @@ def plan_prune(
 ) -> list[PruneVerdict]:
     """Return a keep-or-remove verdict, with its reason, for every image.
 
-    Checked in order: a protected branch keeps; a container referencing the
-    image keeps; a sanitized match against any repo's live branch keeps.
-    Only an image that passes none of these is removed.
+    An image in the format before #4162 (no repository in its tag) is removed
+    unless a container references it. Any other image is checked in order: a
+    protected branch keeps; a container referencing the image keeps; a
+    sanitized match against any repo's live branch keeps. Only an image that
+    passes none of these is removed.
     """
     used = list(in_use)
     live_in: dict[str, list[str]] = {}
@@ -136,7 +160,13 @@ def plan_prune(
 
     verdicts: list[PruneVerdict] = []
     for image in images:
-        if image.branch in PROTECTED_BRANCHES:
+        if image.repo is None:
+            if _is_in_use(image, used):
+                verdicts.append(PruneVerdict(image, False, "in use by a container"))
+            else:
+                reason = "old format with no repository; no current lookup uses it"
+                verdicts.append(PruneVerdict(image, True, reason))
+        elif image.branch in PROTECTED_BRANCHES:
             verdicts.append(PruneVerdict(image, False, f"protected branch '{image.branch}'"))
         elif _is_in_use(image, used):
             verdicts.append(PruneVerdict(image, False, "in use by a container"))
@@ -168,16 +198,28 @@ def remove_images(refs: Iterable[str], runtime: str) -> list[tuple[str, str]]:
     return failures
 
 
-def clean_branch_images(branch: str, *, runtime: str = "") -> tuple[int, list[tuple[str, str]]]:
-    """Remove every cached image of *branch*; return ``(removed, failures)``.
+def clean_branch_images(
+    branch: str, repo_root: Path, *, runtime: str = ""
+) -> tuple[int, list[tuple[str, str]]]:
+    """Remove every cached image of *branch* built for *repo_root*'s repository.
 
+    Returns ``(removed, failures)``. Another repository's image of the same
+    branch, and an image in the format before #4162, are left alone: the first
+    is someone else's cache, the second is :func:`plan_prune`'s to remove.
     *failures* are ``(ref, error)`` pairs from :func:`remove_images`, for the
     caller to report: a failed ``rmi`` is never ignored (#3566). Raises
-    ``RuntimeError`` when the runtime cannot list images.
+    ``RuntimeError`` when the runtime cannot list images, and
+    ``subprocess.CalledProcessError`` when *repo_root* is not in a git
+    repository.
     """
     rt = runtime or detect_runtime()
     sanitized = sanitize_branch(branch)
-    refs = [image.ref for image in list_cache_images(rt) if image.branch == sanitized]
+    repo = sanitize_repo(cache_repo_name(repo_root))
+    refs = [
+        image.ref
+        for image in list_cache_images(rt)
+        if image.branch == sanitized and image.repo == repo
+    ]
     failures = remove_images(refs, rt)
     return len(refs) - len(failures), failures
 
@@ -191,11 +233,12 @@ def prune_finished_images(
     ``vrg-finalize-pr``'s swept safety net (#2600) and the low-disk auto-prune
     before a cache build (#3571): the same :func:`plan_prune` verdicts against
     the live branches of the whole repo set, not just one repo's, because the
-    tag does not record its repo and every repo of a language shares the base
-    image name (#3566). Returns ``(removed, failures)``: the refs removed, and
-    the ``(ref, error)`` pairs from :func:`remove_images`. A failure to read
-    the images, the containers or any repo's branches raises (``RuntimeError``
-    or ``CalledProcessError``) before anything is removed.
+    tag names its repo only by directory name (#4162) and every repo of a
+    language shares the base image name (#3566). Returns ``(removed,
+    failures)``: the refs removed, and the ``(ref, error)`` pairs from
+    :func:`remove_images`. A failure to read the images, the containers or any
+    repo's branches raises (``RuntimeError`` or ``CalledProcessError``) before
+    anything is removed.
     """
     rt = runtime or detect_runtime()
     images = list_cache_images(rt)

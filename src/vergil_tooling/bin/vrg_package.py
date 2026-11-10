@@ -38,10 +38,11 @@ Subcommands:
           before building. A repo without [package] passes. Any gh error
           refuses: the check never skips.
 
-  index   Build the signed apt/dnf package-repository site (spec §7.2): collect
-          and verify the stable releases of every product in --config, apply
-          retention, write and sign the metadata, and size-check the result in
-          --out. Needs PACKAGE_SIGNING_KEY and PACKAGE_SIGNING_PASSPHRASE.
+  index   Build the signed apt/dnf package-repository site (spec §7.2): select
+          the releases retention keeps for every product in --config, download
+          only those, drop retired packages, verify the rest, write and sign
+          the metadata, and size-check the result in --out. Needs
+          PACKAGE_SIGNING_KEY and PACKAGE_SIGNING_PASSPHRASE.
           With --check-config, only validate --config and exit (no network,
           keys or output; --keys and --out are then not needed).
 
@@ -172,7 +173,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ix = sub.add_parser(
         "index",
         help="Build the signed apt/dnf package-repository site",
-        description="Collect, verify, retain, index, sign and size-check (spec §7.2).",
+        description="Select, download, verify, index, sign and size-check (spec §7.2).",
     )
     ix.add_argument("--config", required=True, metavar="PATH", help="packages.toml")
     ix.add_argument(
