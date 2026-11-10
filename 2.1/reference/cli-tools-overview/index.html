@@ -1394,6 +1394,8 @@
       
         
       
+        
+      
     
     
     
@@ -1446,6 +1448,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.299/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.299
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -22021,12 +22051,30 @@ vergil-tooling, <code>system-packages</code>, and the <code>build-command</code>
 cached image for the current branch), <code>clean</code> (remove it), <code>status</code> (show
 cache state and the expected tag), <code>clean-all</code> (remove every image it
 manages), and <code>prune</code> (remove the cached images of finished branches).</p>
+<p>A cached image is named
+<code>&lt;base image&gt;:&lt;base tag&gt;--&lt;branch&gt;--&lt;repository&gt;.&lt;hash&gt;</code>, for example
+<code>ghcr.io/vergil-project/prod-base:latest--develop--vergil-tooling.2fb5421a</code>.
+The branch is sanitized (<code>/</code> becomes <code>-</code>). The repository is the directory
+name of the repository's clone, the same from each of its worktrees. The hash
+is the cache key: the cache-sensitive files, the base image's digest and the
+build environment. Naming the repository gives each repository its own cached
+image, so two repositories on the same base image and branch no longer
+replace each other's. <code>build</code>, <code>clean</code>, <code>status</code> and <code>vrg-container-run</code> only
+ever find or remove the current repository's image, and so does
+<code>vrg-finalize-pr</code> when it cleans a branch's images (issue #4162).</p>
+<p>Images from earlier vergil-tooling releases are named
+<code>&lt;base image&gt;:&lt;base tag&gt;--&lt;branch&gt;--&lt;hash&gt;</code>, with no repository. No command
+uses them any more: each repository builds a new image the first time it
+runs, and the old ones are left for <code>prune</code> to remove (see below).
+<code>clean-all</code> removes both kinds.</p>
 <p><code>prune</code> covers every cached per-branch image in the local image store,
 whichever repo built it. It is a <strong>dry run by default</strong>: it prints the repo
 set and a keep or remove verdict, with the reason, for each image, and
-removes nothing until re-run with <code>--apply</code> (issue #3481). The image tag
-records the branch (sanitized: <code>/</code> becomes <code>-</code>) but not the repository, so
-the rule leans toward keeping. An image is kept when:</p>
+removes nothing until re-run with <code>--apply</code> (issue #3481). An image in the
+old format, with no repository, is removed whatever its branch, unless a
+container uses it. For the rest, the tag names the repository only by its
+directory name and the branch only in sanitized form, so the rule leans
+toward keeping. An image is kept when:</p>
 <ul>
 <li>its branch is protected (<code>develop</code>, <code>main</code>, <code>release</code>);</li>
 <li>a container, running or stopped, uses it;</li>
