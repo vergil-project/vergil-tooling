@@ -882,6 +882,40 @@ def test_run_still_running_after_follow_timeout_fails(
     assert release_ctx_with_package.deferred_publish_failures == [package_index.PHASE]
 
 
+def test_follow_failure_past_timeout_gets_a_full_polling_window(
+    release_ctx_with_package: ReleaseContext, capsys: pytest.CaptureFixture[str]
+) -> None:
+    clock = _Time()
+    gh = _FakeGh(
+        lists=[json.dumps([_run(2, "09:33:00")])],
+        conclusions={"2": "success"},
+        pending={"2": ["in_progress"] * 4},
+    )
+
+    def failing_fifth_view(*args: str) -> str:
+        if args[:2] == ("run", "view") and args[3] == _PACKAGES_REPO and not gh.pending["2"]:
+            raise subprocess.CalledProcessError(1, ["gh", *args], stderr="boom")
+        return gh(*args)
+
+    with pytest.raises(ReleaseError) as excinfo:
+        _follow(
+            release_ctx_with_package,
+            failing_fifth_view,
+            lambda _u: b"",
+            clock.sleep,
+            now=clock.now,
+            timeout=60,
+        )
+    err = excinfo.value
+    assert err.command == "poll package index"
+    assert (
+        f"vergil-tooling 2.1.240-1 not visible in {_NOBLE_AMD64} after 60s of polling the index"
+    ) in str(err)
+    # 120s following the run until gh failed, then the full 60s polling the index.
+    assert clock.t == 180
+    assert "Could not follow the publish-index run" in capsys.readouterr().out
+
+
 def test_no_run_appears_names_that_wait(release_ctx_with_package: ReleaseContext) -> None:
     with pytest.raises(ReleaseError) as excinfo:
         _follow(release_ctx_with_package, _FakeGh(), lambda _u: b"", lambda _s: None, timeout=60)

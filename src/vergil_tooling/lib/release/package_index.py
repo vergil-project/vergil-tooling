@@ -476,7 +476,12 @@ def _wait(
                     deadline = now() + timeout
                     continue
             except subprocess.CalledProcessError as exc:
+                # Following may have failed partway through a run, past the
+                # deadline: the index-only fallback gets a full window of its
+                # own, and its timeout names that wait, not an earlier run.
                 since = None
+                last = None
+                deadline = now() + timeout
                 print(f"  Could not follow the publish-index run ({exc}); polling the index only.")
             if last is not None and last[1] in _FAILED_CONCLUSIONS and since is not None:
                 # The followed run failed, the index still lacks the release, and
