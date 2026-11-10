@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.295] - 2026-11-10
+
+### Bug fixes
+
+- accept vergil-actions' freeze-commit release tags (#4141)
+
+### Chores
+
+- uv lock --upgrade
+
 ## [2.1.294] - 2026-11-09
 
 ### Features
