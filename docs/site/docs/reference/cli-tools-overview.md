@@ -278,7 +278,8 @@ and the [Releasing guide](../guides/releasing.md).
 
 Move the rolling `vX.Y` tag to release `vX.Y.Z`. It is human-only: it
 refuses any agent identity, failing closed on any agent signal
-(`is_agent() or any_agent_signal()`), before any output or git call.
+(`is_agent() or any_agent_signal()`), once its arguments are parsed and
+before any other output or git call, so `--help` still prints the usage.
 `vrg-release`'s promote stage uses the same library and the same refusal.
 The refusal stops an agent from running it by mistake; it is not a security
 boundary, because the identity signals come from the caller's environment.
