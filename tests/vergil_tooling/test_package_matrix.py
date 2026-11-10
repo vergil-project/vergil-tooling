@@ -32,11 +32,19 @@ def _pkg(**kw: Any) -> PackageConfig:
     return PackageConfig(**base)
 
 
+_PKG_UBUNTU_2404 = "ghcr.io/vergil-project/prod-pkg-ubuntu:24.04"
+_PKG_UBUNTU_2604 = "ghcr.io/vergil-project/prod-pkg-ubuntu:26.04"
+
+
+def test_shared_build_image_is_pkg_ubuntu_2404() -> None:
+    assert matrix.SHARED_IMAGE == _PKG_UBUNTU_2404
+
+
 def test_default_is_two_shared_cells_and_eight_tests() -> None:
     m = matrix.resolve(_pkg(), "t")
     assert [(c.id, c.runner, c.image, c.fmts, c.native, c.suite) for c in m.build] == [
-        ("shared-amd64", "ubuntu-24.04", "ubuntu:24.04", ("deb", "rpm"), False, None),
-        ("shared-arm64", "ubuntu-24.04-arm", "ubuntu:24.04", ("deb", "rpm"), False, None),
+        ("shared-amd64", "ubuntu-24.04", _PKG_UBUNTU_2404, ("deb", "rpm"), False, None),
+        ("shared-arm64", "ubuntu-24.04-arm", _PKG_UBUNTU_2404, ("deb", "rpm"), False, None),
     ]
     assert m.build[0].targets == (
         "rhel/10/amd64",
@@ -55,7 +63,7 @@ def test_test_cells_carry_the_target_image_and_suite() -> None:
     cell = next(t for t in m.test if t.target == "rhel/9/arm64")
     assert (cell.id, cell.image, cell.fmt, cell.suite) == (
         "test-rhel-9-arm64",
-        "registry.access.redhat.com/ubi9/ubi",
+        "ghcr.io/vergil-project/prod-pkg-rhel:9",
         "rpm",
         "el9",
     )
@@ -80,8 +88,8 @@ def test_native_gets_its_own_cell_in_its_os() -> None:
     m = matrix.resolve(_pkg(native=["ubuntu/26.04/*"]), "t")
     native = [c for c in m.build if c.native]
     assert [(c.id, c.image, c.fmts, c.suite) for c in native] == [
-        ("native-ubuntu-26.04-amd64", "ubuntu:26.04", ("deb",), "resolute"),
-        ("native-ubuntu-26.04-arm64", "ubuntu:26.04", ("deb",), "resolute"),
+        ("native-ubuntu-26.04-amd64", _PKG_UBUNTU_2604, ("deb",), "resolute"),
+        ("native-ubuntu-26.04-arm64", _PKG_UBUNTU_2604, ("deb",), "resolute"),
     ]
     assert [c.targets for c in native] == [("ubuntu/26.04/amd64",), ("ubuntu/26.04/arm64",)]
     assert native[1].runner == "ubuntu-24.04-arm"
