@@ -17245,6 +17245,12 @@ they leave behind are described in the
 <a href="../../../guides/releasing/#the-vrg-release-pipeline">Releasing guide</a>.</p>
 <p>Releasing is a human maintainer action. <code>vrg-release</code> refuses to run
 under an agent identity.</p>
+<p><code>vrg-release</code> only releases a repo that declares itself released with
+<code>[publish] release = true</code> in <code>vergil.toml</code>. When the key is <code>false</code> or
+absent it refuses up front, before the resume lookup or any stage, and
+changes nothing. <code>vrg-finalize-pr</code> and <code>vrg-submit-pr</code> refuse
+<code>--release</code> and <code>--install</code> on such a repo the same way, before any
+push, PR or merge.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>vrg-release<span class="w"> </span><span class="o">[</span>minor<span class="p">|</span>major<span class="o">]</span><span class="w"> </span><span class="o">[</span>options<span class="o">]</span>
 </code></pre></div>
