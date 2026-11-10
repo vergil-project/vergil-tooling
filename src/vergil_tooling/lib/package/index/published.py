@@ -88,8 +88,8 @@ def parse_filename(filename: str) -> Identity:
 def published(product: str, exclude_tag: str, gh: Run = local_run) -> dict[Identity, str]:
     """Every identity ``product`` has published, mapped to its earliest release tag.
 
-    Only the releases the index collects count; ``exclude_tag`` (the release
-    being checked) never does.
+    Every packaged stable release counts, since each is one the index can
+    select; ``exclude_tag`` (the release being checked) never does.
     """
     out: dict[Identity, str] = {}
     tags = [t for t in collect.stable_tags(product, gh) if t != exclude_tag]
@@ -117,9 +117,9 @@ def check_unpublished(
     msg = (
         f"{product}@{tag} would re-publish {len(clashes)} package(s) at a version an "
         f"earlier release already published:\n{lines}\n"
-        "Package builds are not byte-reproducible, so the rebuilt files would differ "
-        "and the shared package index would refuse them, failing every repo's index "
-        "publish. Bump the package version before releasing: a new "
+        "Package builds are not byte-reproducible, so a rebuild would publish "
+        "different bytes under a version that was already published, a conflict "
+        "apt and dnf cannot resolve. Bump the package version before releasing: a new "
         "[package].upstream-version in vergil.toml, or a new repo release for an "
         "upstream-version package (its version ends in the repo version); for a "
         "[package].version override, set a new version."

@@ -242,6 +242,8 @@ def test_vergil_python_v101_rebuild_is_refused_naming_v100(tmp_path: Path) -> No
     ) in msg
     assert "arm64 (rpm): already published" in msg
     assert "not byte-reproducible" in msg
+    assert "a conflict apt and dnf cannot resolve" in msg
+    assert "would refuse" not in msg
     assert "Bump the package version" in msg
     assert "a new [package].upstream-version in vergil.toml" in msg
     assert "a new repo release for an upstream-version package" in msg
