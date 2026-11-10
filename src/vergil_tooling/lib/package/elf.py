@@ -2,8 +2,9 @@
 
 A shared build cell builds on Ubuntu 24.04 but may emit an ``.rpm`` for RHEL 9,
 whose glibc is older. Every ELF object in the staged tree is scanned for the
-``GLIBC_x.y`` symbol versions it needs; anything newer than the lowest glibc
-among the cell's targets is a hard error, so such a package can never ship.
+``GLIBC_x.y`` symbol versions it needs from glibc's own libraries; anything
+newer than the lowest glibc among the cell's targets is a hard error, so such a
+package can never ship.
 """
 
 from __future__ import annotations
@@ -22,9 +23,41 @@ from vergil_tooling.lib.package import PackageError
 _ELF_MAGIC = b"\x7fELF"
 _GLIBC = re.compile(r"GLIBC_(\d+)\.(\d+)(?:\.\d+)?")
 
+# The sonames glibc itself ships, on the architectures the fleet builds for
+# (amd64 and arm64). A version need counts only when its library (the verneed
+# entry's ``vn_file``) is in this set: other libraries may name their own
+# versions ``GLIBC_x.y`` (aarch64's libgcc_s.so.1 has ``GLIBC_2.0`` for
+# ``__register_frame``), and those say nothing about the glibc a file needs.
+# The set is explicit, not a pattern, so an unknown library is never counted.
+# ``libcrypt.so.1`` is left out: on current distributions it is libxcrypt, not glibc.
+GLIBC_SONAMES: frozenset[str] = frozenset(
+    {
+        # The dynamic loaders.
+        "ld-linux-x86-64.so.2",
+        "ld-linux-aarch64.so.1",
+        # The C library and the libraries split from it.
+        "libc.so.6",
+        "libm.so.6",
+        "libmvec.so.1",
+        "libpthread.so.0",
+        "libdl.so.2",
+        "librt.so.1",
+        "libresolv.so.2",
+        "libutil.so.1",
+        "libanl.so.1",
+        "libnsl.so.1",
+        "libBrokenLocale.so.1",
+        "libthread_db.so.1",
+        "libc_malloc_debug.so.0",
+    }
+)
+
 
 def glibc_requirements(path: Path) -> set[tuple[int, int]]:
-    """Return every ``(major, minor)`` glibc version ``path`` needs; empty for a non-ELF file."""
+    """Return every ``(major, minor)`` glibc version ``path`` needs; empty for a non-ELF file.
+
+    Only version needs on a library in ``GLIBC_SONAMES`` are counted.
+    """
     with path.open("rb") as fh:
         if fh.read(len(_ELF_MAGIC)) != _ELF_MAGIC:
             return set()
@@ -34,7 +67,10 @@ def glibc_requirements(path: Path) -> set[tuple[int, int]]:
             for section in ELFFile(fh).iter_sections():
                 if not isinstance(section, GNUVerNeedSection):
                     continue
-                for _verneed, auxiter in section.iter_versions():
+                for verneed, auxiter in section.iter_versions():
+                    # pyelftools sets ``name`` on a verneed entry to its ``vn_file``.
+                    if verneed.name not in GLIBC_SONAMES:
+                        continue
                     for aux in auxiter:
                         m = _GLIBC.fullmatch(aux.name)
                         if m:

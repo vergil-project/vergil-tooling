@@ -292,8 +292,11 @@ did. A manifest that names some artifacts but not others is rejected.
 
 Because a shared cell builds on Ubuntu 24.04 for every target, the python
 builder applies a **glibc floor guard**: any ELF object in the venv that needs
-a `GLIBC_x.y` symbol newer than the lowest glibc among the cell's targets is a
-hard error. Trip it, and the fix is to mark the affected targets `native`.
+a `GLIBC_x.y` symbol version from one of glibc's own libraries (`libc.so.6`,
+`libm.so.6`, the dynamic loader and the rest) newer than the lowest glibc among
+the cell's targets is a hard error. A `GLIBC_x.y` version named by another
+library, such as aarch64's `libgcc_s.so.1`, does not count. Trip it, and the
+fix is to mark the affected targets `native`.
 
 The package revision is `1` for shared builds, and `1~<suite>` (deb) or
 `1.<suite>` (rpm) for `native` builds.

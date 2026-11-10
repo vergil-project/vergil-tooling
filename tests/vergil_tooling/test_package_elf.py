@@ -18,16 +18,20 @@ if TYPE_CHECKING:
 
 
 class _FakeVerNeed(GNUVerNeedSection):
-    """A version-needed section yielding fixed auxiliary names (no real ELF needed)."""
+    """A version-needed section yielding fixed needs (no real ELF needed).
 
-    def __init__(self, names: list[str]) -> None:
-        self._names = names
+    ``needs`` maps each needed library (the verneed ``vn_file``) to its version names.
+    """
+
+    def __init__(self, needs: dict[str, list[str]]) -> None:
+        self._needs = needs
 
     def iter_versions(self) -> Iterator[Any]:
-        yield (
-            SimpleNamespace(name="libc.so.6"),
-            iter(SimpleNamespace(name=n) for n in self._names),
-        )
+        for lib, names in self._needs.items():
+            yield (
+                SimpleNamespace(name=lib),
+                iter(SimpleNamespace(name=n) for n in names),
+            )
 
 
 def _fake_elffile(sections: list[object]) -> Any:
@@ -59,12 +63,52 @@ def test_real_interpreter_requires_some_glibc() -> None:
 def test_only_glibc_versions_are_collected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     f = tmp_path / "lib.so"
     f.write_bytes(b"\x7fELF")
+    names = ["GLIBC_2.2.5", "GLIBC_2.34", "GLIBC_PRIVATE", "ZLIB_1.2.0", "XGLIBC_9.9"]
     sections = [
         object(),
-        _FakeVerNeed(["GLIBC_2.2.5", "GLIBC_2.34", "GLIBC_PRIVATE", "ZLIB_1.2.0", "XGLIBC_9.9"]),
+        _FakeVerNeed({"libc.so.6": names}),
     ]
     monkeypatch.setattr(elf, "ELFFile", _fake_elffile(sections))
     assert elf.glibc_requirements(f) == {(2, 2), (2, 34)}
+
+
+def test_non_glibc_library_glibc_names_are_not_counted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The arm64 python interpreter's needs: libgcc_s.so.1 names __register_frame
+    # and __deregister_frame GLIBC_2.0, which is not a need on glibc.
+    f = tmp_path / "python3.15"
+    f.write_bytes(b"\x7fELF")
+    sections: list[object] = [
+        _FakeVerNeed(
+            {
+                "libgcc_s.so.1": ["GLIBC_2.0", "GCC_3.0"],
+                "libm.so.6": ["GLIBC_2.17", "GLIBC_2.29"],
+                "libc.so.6": ["GLIBC_2.17", "GLIBC_2.34"],
+                "ld-linux-aarch64.so.1": ["GLIBC_2.17"],
+                "libz.so.1": ["GLIBC_9.99"],
+            }
+        ),
+    ]
+    monkeypatch.setattr(elf, "ELFFile", _fake_elffile(sections))
+    assert elf.glibc_requirements(f) == {(2, 17), (2, 29), (2, 34)}
+
+
+def test_only_non_glibc_needs_give_no_requirements(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    f = tmp_path / "ext.so"
+    f.write_bytes(b"\x7fELF")
+    sections: list[object] = [_FakeVerNeed({"libgcc_s.so.1": ["GLIBC_2.0"]})]
+    monkeypatch.setattr(elf, "ELFFile", _fake_elffile(sections))
+    assert elf.glibc_requirements(f) == set()
+    # So the floor guard has nothing to hold against the file.
+    elf.check_glibc_floor(tmp_path, (2, 17))
+
+
+@pytest.mark.parametrize("loader", ["ld-linux-x86-64.so.2", "ld-linux-aarch64.so.1"])
+def test_both_loaders_are_glibc(loader: str) -> None:
+    assert loader in elf.GLIBC_SONAMES
 
 
 def test_corrupt_elf_is_fatal(tmp_path: Path) -> None:
