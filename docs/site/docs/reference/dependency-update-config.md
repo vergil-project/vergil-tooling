@@ -12,6 +12,41 @@ The design is epic
 [vergil-project/.github#381](https://github.com/vergil-project/.github/issues/381)
 (spec `epics/381-release-dep-updates/spec.md`).
 
+## Which mechanism do I use?
+
+A dependency update and an [upstream refresh](upstream-refresh-config.md)
+are separate pipelines. Ask one question of the input: does the repo's
+code depend on it, or does the repo deliver it?
+
+- **The code depends on it: a dependency update.** Libraries, lockfiles
+  and the vergil line are what the repo is built on. They move after
+  each release, at the start of the next development cycle, so a whole
+  cycle runs against them before the next release ships them.
+- **The repo delivers it: an upstream refresh.** Upstream content that
+  the repo packages and publishes, such as vergil-python's CPython and
+  python-build-standalone builds or vergil-containers' tool binaries and
+  toolchains, is refreshed before a release, and the release publishes
+  it. Its current users are listed on the
+  [upstream refresh page](upstream-refresh-config.md#which-mechanism-do-i-use).
+
+The current users of a dependency update, each from the `update-deps`
+stage of its `vrg-release`:
+
+- **Every repo released with `vrg-release`** keeps its
+  `uses: vergil-*/…@vX.Y` refs in step with `[dependencies].vergil`
+  through the `vergil` updater.
+- **vergil-tooling** refreshes its `uv.lock` through the `python`
+  updater.
+- **vergil-vm** runs a hook (`scripts/dev/update-deps.sh`) that upgrades
+  its OpenTofu providers within their ranges and bumps the nerdctl
+  version within its major.
+
+A dependency update merges its own PR once it is green, but only from a
+`vrg-release` or `vrg-update-deps` that a human runs; a human merges
+every upstream refresh PR. How the merge policy is expected to change
+for these automation PRs is tracked in
+[vergil-project/.github#470](https://github.com/vergil-project/.github/issues/470).
+
 ## Updaters
 
 The updaters run in this order. Each one runs only when the repo has
