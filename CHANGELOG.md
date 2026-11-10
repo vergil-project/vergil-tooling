@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.298] - 2026-11-10
+
+### Bug fixes
+
+- make the packaged cppcheck suppressions file comment-free for cppcheck 2.13 (#4158)
+- count only glibc libraries' version needs in elf.glibc_requirements (#4161)
+- install the host tools on Python 3.15 in consumer-refresh and the install docs (#4163)
+
 ## [2.1.297] - 2026-11-10
 
 ### Features
