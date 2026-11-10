@@ -15,6 +15,11 @@ that passes the stage. A followed run can still end it early, though: if the
 run failed, the index still lacks the release and no newer index run exists
 that could publish it, the stage fails at once and names the failed run
 (#4121), instead of polling a result that cannot change until the timeout.
+
+The timeout bounds idle polling only. A followed run is waited for however
+long it takes, up to its own, longer bound, and the timeout restarts when it
+completes, so a run slower than the timeout does not fail a release it
+delivered (#4145).
 """
 
 from __future__ import annotations
@@ -35,7 +40,6 @@ from typing import TYPE_CHECKING, Any
 from vergil_tooling.lib import config, github, retry
 from vergil_tooling.lib.package import matrix, naming, orgs
 from vergil_tooling.lib.release.context import ReleaseError
-from vergil_tooling.lib.release.subprocess import watch_workflow
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.config import PackageConfig
@@ -323,15 +327,9 @@ def _next_index_run(packages_repo: str, since: datetime, seen: set[str]) -> dict
     return candidates[0] if candidates else None
 
 
-def _follow_index_run(packages_repo: str, run: dict[str, Any]) -> str:
-    """Stream ``run`` until it completes, say how it ended, and return its conclusion."""
-    run_id = str(run["databaseId"])
-    resource = f"publish-index run {run_id}"
-    print(f"  Publish-index run: {run['url']}")
-    retry.retry_known_resource(
-        lambda: watch_workflow(packages_repo, run_id, check_status=False), resource=resource
-    )
-    conclusion = retry.retry_known_resource(
+def _run_view(packages_repo: str, run_id: str, resource: str) -> dict[str, Any]:
+    """The run's ``status``, ``conclusion`` and ``jobs``, as ``gh run view`` reports them."""
+    out = retry.retry_known_resource(
         lambda: github.read_output(
             "run",
             "view",
@@ -339,17 +337,80 @@ def _follow_index_run(packages_repo: str, run: dict[str, Any]) -> str:
             packages_repo,
             run_id,
             "--json",
-            "conclusion",
-            "--jq",
-            ".conclusion",
+            "status,conclusion,jobs",
         ),
         resource=resource,
-    ).strip()
+    )
+    view: dict[str, Any] = json.loads(out)
+    return view
+
+
+def _follow_index_run(
+    packages_repo: str,
+    run: dict[str, Any],
+    *,
+    sleep: Callable[[float], None],
+    now: Callable[[], float],
+    follow_timeout: int,
+    interval: int,
+) -> str:
+    """Stream ``run`` until it completes, say how it ended, and return its conclusion.
+
+    The run is polled every ``interval`` seconds, and its status and each job's
+    state are printed as they change. A run still not completed
+    ``follow_timeout`` seconds after following began raises ``ReleaseError``:
+    ``gh run watch`` has no deadline, so a hung run would hang the release
+    with it, as an unbounded ``gh pr checks --watch`` once did (#3170).
+    """
+    run_id = str(run["databaseId"])
+    resource = f"publish-index run {run_id}"
+    print(f"  Publish-index run: {run['url']}")
+    began = now()
+    shown: dict[str, str] = {}
+    while True:
+        view = _run_view(packages_repo, run_id, resource)
+        status = str(view.get("status") or "")
+        lines = {"": f"  Publish-index run status: {status}"}
+        for job in view.get("jobs") or []:
+            name = str(job.get("name", ""))
+            lines[f"job {name}"] = f"    {name}: {job.get('conclusion') or job.get('status', '')}"
+        for key, line in lines.items():
+            if shown.get(key) != line:
+                shown[key] = line
+                print(line)
+        if status == "completed":
+            break
+        if now() - began >= follow_timeout:
+            raise ReleaseError(
+                phase=PHASE,
+                command="follow publish-index run",
+                message=f"publish-index run {run['url']} still {status or 'not completed'} "
+                f"after {follow_timeout}s of following it",
+                detail=f"cancel that run, then re-run the publish-index workflow in "
+                f"{packages_repo}; the release itself stands",
+            )
+        sleep(interval)
+    conclusion = str(view.get("conclusion") or "")
     if conclusion == "cancelled":
         print("  Publish-index run was cancelled (superseded); following the next one.")
     else:
         print(f"  Publish-index run finished ({conclusion}); checking the index.")
     return conclusion
+
+
+def _timeout_reason(timeout: int, since: datetime | None, last: tuple[str, str] | None) -> str:
+    """Which wait ran out, for the timeout message (#4145)."""
+    if last is not None:
+        url, conclusion = last
+        if conclusion == "success":
+            return f"within {timeout}s of publish-index run {url} succeeding"
+        return (
+            f"within {timeout}s of publish-index run {url} finishing '{conclusion}', "
+            "and no newer run appeared"
+        )
+    if since is not None:
+        return f"after {timeout}s: no publish-index run created since {since.isoformat()} appeared"
+    return f"after {timeout}s of polling the index"
 
 
 def _wait(
@@ -359,6 +420,7 @@ def _wait(
     sleep: Callable[[float], None],
     now: Callable[[], float],
     timeout: int,
+    follow_timeout: int,
     interval: int,
 ) -> None:
     cfg = config.read_config(ctx.repo_root)
@@ -371,13 +433,16 @@ def _wait(
     for w in waits:
         print(f"Waiting for {w.label} in {w.where} (timeout {timeout}s)...")
     start = now()
+    # The deadline bounds idle polling only. Following a run is bounded by
+    # ``follow_timeout`` instead, and the deadline restarts when a followed run
+    # completes, so the index gets a full window to propagate after it (#4145).
     deadline = start + timeout
     packages_repo = f"{org.github_org}/packages"
     since = _following(ctx, packages_repo)
     seen: set[str] = set()
-    # The last followed run, when it failed: (url, conclusion). Cleared when a
-    # newer run is followed, since that run may still publish the release.
-    failed: tuple[str, str] | None = None
+    # The last followed run: (url, conclusion). A newer run followed replaces
+    # it, since that run may still publish the release.
+    last: tuple[str, str] | None = None
     rerun = (
         f"re-run the publish-index workflow in {org.github_org}/packages; the release itself stands"
     )
@@ -390,7 +455,8 @@ def _wait(
                 phase=PHASE,
                 command="poll package index",
                 message="; ".join(f"{w.label} not visible in {w.where}" for w in missing)
-                + f" after {timeout}s",
+                + " "
+                + _timeout_reason(timeout, since, last),
                 detail=rerun,
             )
         if since is not None:
@@ -398,16 +464,29 @@ def _wait(
                 run = _next_index_run(packages_repo, since, seen)
                 if run is not None:
                     seen.add(str(run["databaseId"]))
-                    conclusion = _follow_index_run(packages_repo, run)
-                    failed = (run["url"], conclusion) if conclusion in _FAILED_CONCLUSIONS else None
+                    conclusion = _follow_index_run(
+                        packages_repo,
+                        run,
+                        sleep=sleep,
+                        now=now,
+                        follow_timeout=follow_timeout,
+                        interval=interval,
+                    )
+                    last = (run["url"], conclusion)
+                    deadline = now() + timeout
                     continue
             except subprocess.CalledProcessError as exc:
+                # Following may have failed partway through a run, past the
+                # deadline: the index-only fallback gets a full window of its
+                # own, and its timeout names that wait, not an earlier run.
                 since = None
+                last = None
+                deadline = now() + timeout
                 print(f"  Could not follow the publish-index run ({exc}); polling the index only.")
-            if failed is not None and since is not None:
+            if last is not None and last[1] in _FAILED_CONCLUSIONS and since is not None:
                 # The followed run failed, the index still lacks the release, and
                 # no newer run exists to publish it: waiting cannot change that.
-                url, conclusion = failed
+                url, conclusion = last
                 raise ReleaseError(
                     phase=PHASE,
                     command="follow publish-index run",
@@ -432,6 +511,7 @@ def wait_for_index(
     sleep: Callable[[float], None] = time.sleep,
     now: Callable[[], float] = time.monotonic,
     timeout: int = 3600,
+    follow_timeout: int = 10800,
     interval: int = 30,
 ) -> None:
     """Poll the org package index until every package of this release is visible.
@@ -441,14 +521,28 @@ def wait_for_index(
     first rpm target's. The stage succeeds only once all of them are listed,
     and records each one's index file in ``ctx.package_index_urls``.
 
+    ``timeout`` bounds idle polling: waiting for a publish-index run to appear,
+    and for the index to show the release once a followed run has completed
+    (the window restarts from each followed run's completion). A followed run
+    is waited for however long it takes, up to ``follow_timeout`` (#4145).
+
     No-op without ``[package]``. Any failure (a timeout, a followed
-    publish-index run that failed with no newer run to follow (#4121), or an
-    error while polling) records ``package-index`` in
+    publish-index run that failed with no newer run to follow (#4121), a
+    followed run still not completed after ``follow_timeout``, or an error
+    while polling) records ``package-index`` in
     ``ctx.deferred_publish_failures`` before propagating, so the consumer
     refresh holds.
     """
     try:
-        _wait(ctx, fetch=fetch, sleep=sleep, now=now, timeout=timeout, interval=interval)
+        _wait(
+            ctx,
+            fetch=fetch,
+            sleep=sleep,
+            now=now,
+            timeout=timeout,
+            follow_timeout=follow_timeout,
+            interval=interval,
+        )
     except Exception:
         if PHASE not in ctx.deferred_publish_failures:
             ctx.deferred_publish_failures.append(PHASE)
