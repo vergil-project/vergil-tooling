@@ -32,7 +32,7 @@ git and the agent-VM tools, and flags anything missing or out of date.
 ## 1. Install vergil-tooling on the host
 
 ```bash
-uv tool install --python 3.14 'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.1'
+uv tool install --python 3.15 'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.1'
 ```
 
 This installs all `vrg-*` console scripts into `~/.local/bin/`.

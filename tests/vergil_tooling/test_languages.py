@@ -563,6 +563,27 @@ def test_cpp_gcovr_config_ignores_source_not_found() -> None:
     assert "filter" not in setting_keys
 
 
+def test_cpp_cppcheck_suppressions_file_has_no_comments() -> None:
+    """The packaged cppcheck suppressions list holds only suppression IDs.
+
+    cppcheck 2.13.0 (Ubuntu 24.04) rejects a comment line in a
+    ``--suppressions-list`` file with ``Failed to add suppression. No id.``, so
+    the file carries no comment or blank lines; the rationale lives in
+    ``cppcheck-suppressions.md`` beside it. Every suppression is kept. (#4138)
+    """
+    lines = _cpp_config_path("cppcheck-suppressions.txt").read_text().splitlines()
+    for line in lines:
+        assert line.strip(), "blank line in cppcheck-suppressions.txt"
+        assert not line.lstrip().startswith("#"), f"comment line: {line!r}"
+        assert line == line.strip() and " " not in line, f"not a bare ID: {line!r}"
+    assert lines == [
+        "missingIncludeSystem",
+        "unmatchedSuppression",
+        "checkersReport",
+        "missingInclude",
+    ]
+
+
 def test_cpp_audit_commands() -> None:
     joined = _joined(language_commands("cpp", CheckKind.AUDIT))
     # conan audit is the CVE scan — it reads ConanCenter advisories using the

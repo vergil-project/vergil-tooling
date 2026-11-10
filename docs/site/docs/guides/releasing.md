@@ -19,7 +19,7 @@ old `standard-tooling`/`st-*` naming):
 The canonical host install (see [Getting Started](../getting-started.md)):
 
 ```bash
-uv tool install --python 3.14 'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.1'
+uv tool install --python 3.15 'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.1'
 ```
 
 On an agent VM, a dev ref (`vrg-vm update --tag develop`, or any non-release
