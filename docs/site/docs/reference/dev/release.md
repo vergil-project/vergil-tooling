@@ -39,7 +39,9 @@ vrg-release [minor|major] [options]
 
 - Run from the root checkout, on `develop`, with a clean working tree
   that matches `origin/develop`.
-- `git-cliff` on `PATH` and an authenticated `gh`.
+- A reachable container runtime (docker or nerdctl) and an authenticated
+  `gh`. `git-cliff` runs in the dev container through `vrg-container-run`,
+  so it is not needed on the host.
 
 ## The dependency-update gate
 

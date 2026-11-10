@@ -7,7 +7,7 @@
 # Scope (spec §4): a tool earns an entry only if Vergil development needs it
 # on the macOS host itself. The list was curated (plan Task 7, spec §11) by
 # cross-checking what vergil-tooling actually invokes host-side: vrg-container-run
-# (docker), vrg-vm (limactl, gcloud, tofu), vrg-release (git-cliff), vrg-gh and
+# (docker), vrg-vm (limactl, gcloud, tofu), vrg-gh and
 # the PR workflow (gh), git and bash throughout, and the documented host
 # prerequisites (Docker, uv, gh). #3300 added git, bash, the Xcode Command Line
 # Tools and Claude Code after the first real `vrg-host upgrade --all` showed
@@ -17,6 +17,8 @@
 #   - shellcheck, hadolint, yamllint, actionlint, markdownlint: run only by
 #     vrg-validate inside the dev container (vrg-container-run); the host never
 #     invokes them, and the setup guides say not to install them on the host.
+#   - git-cliff: vrg-release runs it in the dev container through
+#     vrg-container-run, so it is no longer a host tool (#4169).
 #   - ssh, ssh-keygen, sysctl, PlistBuddy: part of macOS, updated with the OS
 #     (see the `macos` entry). git and bash used to be listed here as well, but
 #     on a Homebrew-first host both resolve to Homebrew formulae ahead of the
@@ -175,13 +177,6 @@ installed_version = [
 [[dependency]]
 name = "opentofu"
 why = "OpenTofu (tofu) provisions the cloud agent VMs for vrg-vm; preflight requires >= 1.8.0."
-method = "brew-formula"
-upgrade = "auto"
-latest = "probe"
-
-[[dependency]]
-name = "git-cliff"
-why = "Changelog generator that vrg-release requires on the host (release preflight)."
 method = "brew-formula"
 upgrade = "auto"
 latest = "probe"
