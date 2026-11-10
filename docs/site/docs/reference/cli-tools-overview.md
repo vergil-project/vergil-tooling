@@ -269,7 +269,7 @@ and the [Releasing guide](../guides/releasing.md).
 |---|---|
 | Source | `vergil_tooling.bin.vrg_release` |
 | Args | `minor`/`major` (optional positional), `--no-promote`, `--without-deps`, `--allow-pending-deps`, `--install`, `--resume [X.Y.Z]`, `--skip-audit`, `--output-window`, `--output-format` |
-| Preconditions | Human identity; on `develop`, clean working tree, local develop matches `origin/develop`; `gh` authenticated and `git-cliff` on PATH |
+| Preconditions | Human identity; on `develop`, clean working tree, local develop matches `origin/develop`; `gh` authenticated and a reachable container runtime (docker or nerdctl) for `vrg-container-run`, which runs `git-cliff` |
 | Failure mode | Fail-fast stages stop the run; deferred stages (including `update-deps`) record the failure, let later stages run, and are summarized at the end |
 | Exit codes | 0 success, 1 any failure or refusal, 130 interrupted |
 | Status | Active |
@@ -1812,7 +1812,7 @@ hand.
 ### vrg-host
 
 Observe and manage the Vergil-critical macOS host dependencies (`uv`,
-`gh`, `git`, `bash`, `gcloud`, Lima, Docker Desktop, OpenTofu, `git-cliff`,
+`gh`, `git`, `bash`, `gcloud`, Lima, Docker Desktop, OpenTofu,
 vergil-tooling, Claude Code, macOS, the Xcode Command Line Tools) declared in
 the packaged, tooling-owned manifest
 `src/vergil_tooling/data/host_dependencies.toml` (never

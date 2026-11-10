@@ -282,7 +282,6 @@ itself. Current entries:
 | `lima` | brew-formula | auto | probe | Runs the local agent VMs `vrg-vm` creates |
 | `docker-desktop` | brew-cask (installed version from the app) | manual | probe | The container engine and `docker` CLI that `vrg-container-run` execs |
 | `opentofu` | brew-formula | auto | probe | Provisions cloud agent VMs for `vrg-vm` (preflight requires >= 1.8.0) |
-| `git-cliff` | brew-formula | auto | probe | Changelog generator `vrg-release` requires |
 | `vergil-tooling` | uv-tool | auto | unmanaged | The `vrg-*` host tools themselves |
 | `claude-code` | brew-cask | auto | probe | The host-side agent for out-of-sandbox work, such as reattaching an agent session with human access |
 | `macos` | custom | manual | probe | The host OS; a pending update is surfaced, never applied |
