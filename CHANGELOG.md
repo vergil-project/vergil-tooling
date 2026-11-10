@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.299] - 2026-11-10
+
+### Bug fixes
+
+- select index releases before downloading and verifying them (#4174)
+- name the repository in cached dev images so repositories stop evicting each other (#4177)
+
+### Chores
+
+- uv lock --upgrade
+
 ## [2.1.298] - 2026-11-10
 
 ### Bug fixes
