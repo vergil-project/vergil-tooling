@@ -73,6 +73,11 @@ This repo validates its own unreleased code: the `[validation]` override in
 `vergil.toml` (`container-command = "uv run vrg-validate"`) expands
 `vrg-container-run -- vrg-validate` to `uv run vrg-validate` in the container.
 
+Its `custom` stage runs `scripts/bin/validate-custom`, which builds the site
+docs with `mkdocs build --strict` on a staged temporary copy of `docs/site`, so
+a broken internal link or nav entry fails validation. mkdocs-material comes
+from the dev dependency group.
+
 ## Identity
 
 Agent sessions run as `user` or `audit`. Query the resolved role with
