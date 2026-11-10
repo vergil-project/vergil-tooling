@@ -18275,11 +18275,9 @@ packages. A dispatch failure is deferred: it does not fail the release.</p>
 <p>A package's identity is its name, full version (<code>&lt;version&gt;-&lt;revision&gt;</code>),
 architecture and format. Builds are not byte-reproducible, so a release
 that rebuilds an identity an earlier release already published ships
-different bytes under the same identity. The package index refuses that
-(the same identity must be byte-identical), and since the index is built
-from every release of every repo, the refusal fails every repo's index
-publish. The index refusal stays as the last line of defence, but two
-earlier checks stop such a release before it publishes:</p>
+different bytes under the same identity, a conflict apt and dnf cannot
+resolve. The package index does not check for it, so two checks stop such
+a release before it publishes:</p>
 <ol>
 <li><strong><code>vrg-release</code> preflight</strong>, on a fresh start, before anything is
    tagged. This is the earliest point that knows the full versions: the
@@ -18297,7 +18295,7 @@ earlier checks stop such a release before it publishes:</p>
    access to the repo's releases.</p>
 <p>Both compare the identities the release would publish against those
 attached to every earlier stable release that carries a
-<code>packages-manifest.json</code>, which are the releases the index collects. The
+<code>packages-manifest.json</code>, the releases the index can select. The
 published identities are read from the attached file names, which nFPM
 derives from the same metadata the index reads. The release's own tag is
 never counted as an earlier release. Any failure to read the releases
@@ -18355,25 +18353,18 @@ vergil-tooling 2.1.258: amd64 got <code>vergil-python3.15</code> and arm64 got
 <a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="n">lines</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">2</span><span class="w">                         </span><span class="c1"># newest major.minor lines kept per product (default 2)</span>
 <a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="n">retire</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"vergil-python3.14.8"</span><span class="p">]</span><span class="w">  </span><span class="c1"># exact package names to drop (default: none)</span>
 </code></pre></div>
-<p>The index is rebuilt from scratch on every run. For each product it keeps
-the newest <code>keep</code> releases in each of the newest <code>lines</code> major.minor lines,
-then adds the newest provider of every dependency of a kept package, so
-everything indexed is installable.</p>
+<p>The index is rebuilt from scratch on every run. For each product it lists
+the packaged stable releases (a <code>vX.Y.Z</code> tag, not a draft or prerelease,
+with a <code>packages-manifest.json</code> attached) and selects the newest <code>keep</code>
+releases in each of the newest <code>lines</code> major.minor lines. Only the selected
+releases are downloaded, and every package they ship is kept.</p>
 <p><code>retire</code> drops packages by exact name, for every format (<code>deb</code> and <code>rpm</code>)
-and architecture, whichever release ships them. A retired package is dropped
-before dependencies are resolved, so it keeps none of its own dependencies in
-the index. Each entry must be a non-empty string, listed once. If a package
-the index keeps still depends on a retired name, the index build fails rather
-than publishing a package that cannot be installed. To fix it, remove the name
-from <code>retire</code> or make sure retention no longer keeps the dependent release.
-Omitting <code>retire</code>, or setting it to <code>[]</code>, retires nothing.</p>
-<p>Every <code>retire</code> entry must name a package that some collected release ships,
-in any format or architecture. The check runs against everything collected
-before retention drops anything, so a name found only in releases that
-retention would evict still counts. An entry that matches nothing fails the
-index build. It is either a typo, which would otherwise leave the package
-published, or a package whose releases are gone; either way, remove it from
-<code>packages.toml</code>.</p>
+and architecture, from the selected releases. Each entry must be a non-empty
+string, listed once. Omitting <code>retire</code>, or setting it to <code>[]</code>, retires
+nothing. An entry that matches no selected package drops nothing.</p>
+<p>Every package left after <code>retire</code> is verified before it is indexed: its
+build attestation must come from the release workflow on <code>main</code>, and every
+<code>.rpm</code> must carry a valid org signature. A failure fails the index build.</p>
 <h3 id="checking-packagestoml-without-building">Checking <code>packages.toml</code> without building<a class="headerlink" href="#checking-packagestoml-without-building" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>vrg-package<span class="w"> </span>index<span class="w"> </span>--check-config<span class="w"> </span>--config<span class="w"> </span>packages.toml
 </code></pre></div>
@@ -18384,9 +18375,7 @@ non-empty <code>vendor</code>, well-formed and unique <code>products</code>, pos
 network, signing keys or output directory, so <code>--keys</code> and <code>--out</code> are not
 needed. On success it prints <code>vrg-package: packages.toml: ok</code>. On any
 invalid value it prints the error and exits non-zero, so a repo's
-validation can catch a typo before publish time. Checks that need the
-collected releases, such as a <code>retire</code> entry that matches no package, still
-run only in the full index build.</p>
+validation can catch a typo before publish time.</p>
 <h2 id="inspecting-the-matrix">Inspecting the matrix<a class="headerlink" href="#inspecting-the-matrix" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>vrg-container-run<span class="w"> </span>--<span class="w"> </span>vrg-package<span class="w"> </span>matrix
 </code></pre></div>
