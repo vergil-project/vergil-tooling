@@ -5,6 +5,7 @@ from __future__ import annotations
 import http.client
 import io
 import json
+import logging
 import subprocess
 import urllib.error
 from pathlib import Path
@@ -2407,6 +2408,75 @@ class TestJwtApiRequest:
             result = github._jwt_api_request("/endpoint", "jwt")
         assert result == {"token": "ghs_abc"}
 
+    @pytest.mark.parametrize("status", [401, 429, 500, 502, 503, 504])
+    def test_retries_transient_status_then_succeeds(
+        self, status: int, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        err = _jwt_http_error(status, request_id="ABCD:1234")
+        resp = _mock_http_response(b'{"token": "ghs_abc"}')
+        with (
+            patch(_URLOPEN, side_effect=[err, resp]) as mock_open,
+            patch("vergil_tooling.lib.github.time.sleep") as mock_sleep,
+            caplog.at_level(logging.WARNING, logger="vergil_tooling.lib.github"),
+        ):
+            result = github._jwt_api_request("/app/installations/1/access_tokens", "secret-jwt")
+        assert result == {"token": "ghs_abc"}
+        assert mock_open.call_count == 2
+        mock_sleep.assert_called_once()
+        assert "(request ID ABCD:1234)" in caplog.text
+        assert "attempt 1/5" in caplog.text
+        assert "secret-jwt" not in caplog.text
+
+    def test_persistent_401_fails_after_retries_run_out(self) -> None:
+        errors = [_jwt_http_error(401) for _ in range(github.retry.MAX_RETRIES + 1)]
+        with (
+            patch(_URLOPEN, side_effect=errors) as mock_open,
+            patch("vergil_tooling.lib.github.time.sleep") as mock_sleep,
+            pytest.raises(urllib.error.HTTPError) as excinfo,
+        ):
+            github._jwt_api_request("/app/installations", "jwt")
+        assert excinfo.value is errors[-1]
+        assert mock_open.call_count == github.retry.MAX_RETRIES + 1
+        assert mock_sleep.call_count == github.retry.MAX_RETRIES
+
+    @pytest.mark.parametrize("status", [400, 403, 404, 422])
+    def test_non_transient_status_fails_at_once(self, status: int) -> None:
+        err = _jwt_http_error(status)
+        with (
+            patch(_URLOPEN, side_effect=err) as mock_open,
+            patch("vergil_tooling.lib.github.time.sleep") as mock_sleep,
+            pytest.raises(urllib.error.HTTPError) as excinfo,
+        ):
+            github._jwt_api_request("/app/installations", "jwt")
+        assert excinfo.value is err
+        mock_open.assert_called_once()
+        mock_sleep.assert_not_called()
+
+    def test_non_http_error_is_not_retried(self) -> None:
+        with (
+            patch(_URLOPEN, side_effect=urllib.error.URLError("no route")) as mock_open,
+            patch("vergil_tooling.lib.github.time.sleep") as mock_sleep,
+            pytest.raises(urllib.error.URLError),
+        ):
+            github._jwt_api_request("/app/installations", "jwt")
+        mock_open.assert_called_once()
+        mock_sleep.assert_not_called()
+
+
+def _jwt_http_error(
+    status: int, *, request_id: str | None = None, body: bytes = b""
+) -> urllib.error.HTTPError:
+    headers = http.client.HTTPMessage()
+    if request_id is not None:
+        headers["X-GitHub-Request-Id"] = request_id
+    return urllib.error.HTTPError(
+        "https://api.github.com/app/installations",
+        status,
+        http.client.responses.get(status, "Error"),
+        headers,
+        io.BytesIO(body),
+    )
+
 
 class TestResolveInstallations:
     def test_returns_org_to_id_mapping(self) -> None:
@@ -2858,6 +2928,44 @@ class TestGetInstallationToken:
         )
         detail = github._jwt_http_error_detail(err)
         assert detail.endswith("GitHub said: " + "x" * 300)
+
+    def test_jwt_http_error_detail_records_request_id(self) -> None:
+        err = _jwt_http_error(
+            401,
+            request_id="C0DE:5EED:1:2:3",
+            body=b'{"message": "A JSON web token could not be decoded"}',
+        )
+        detail = github._jwt_http_error_detail(err)
+        assert detail == (
+            "HTTP Error 401: Unauthorized on /app/installations (request ID C0DE:5EED:1:2:3): "
+            "GitHub said: A JSON web token could not be decoded"
+        )
+
+    def test_persistent_401_raises_app_auth_error_with_request_id(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The real request path end to end: every attempt is rejected, so the
+        # mint fails loudly after the retries with the last response's detail.
+        _configure_app(tmp_path, monkeypatch)
+        attempts = github.retry.MAX_RETRIES + 1
+        errors = [
+            _jwt_http_error(401, request_id=f"ID-{i}", body=b'{"message": "Bad credentials"}')
+            for i in range(attempts)
+        ]
+        with (
+            patch("vergil_tooling.lib.github._generate_jwt", return_value="fake-jwt"),
+            patch(_URLOPEN, side_effect=errors) as mock_open,
+            patch("vergil_tooling.lib.github.time.sleep"),
+            pytest.raises(github.AppAuthError) as excinfo,
+        ):
+            github.get_installation_token(org="test-org")
+        assert mock_open.call_count == attempts
+        assert excinfo.value.detail == (
+            f"HTTP Error 401: Unauthorized on /app/installations (request ID ID-{attempts - 1}): "
+            "GitHub said: Bad credentials"
+        )
 
     def test_raises_app_auth_error_when_openssl_not_found(
         self,

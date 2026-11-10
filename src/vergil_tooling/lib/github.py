@@ -338,6 +338,12 @@ def _jwt_api_request(endpoint: str, jwt_token: str, *, method: str = "GET") -> A
 
     The ``gh`` CLI sends ``GH_TOKEN`` values as ``Authorization: token``
     but GitHub requires JWTs to use ``Authorization: Bearer``.
+
+    A transient HTTP error (see :func:`_is_retryable_jwt_status`) is retried
+    with :func:`retry.compute_delay` backoff, each retry logged with its
+    request ID, up to :data:`retry.MAX_RETRIES` times (#4168); the last error,
+    or any other one, is raised unchanged. The whole backoff stays well
+    inside the JWT's lifetime, so a retry never sends an expired JWT.
     """
     url = f"https://api.github.com{endpoint}"
     data = b"" if method == "POST" else None
@@ -345,8 +351,52 @@ def _jwt_api_request(endpoint: str, jwt_token: str, *, method: str = "GET") -> A
     req.add_header("Authorization", f"Bearer {jwt_token}")
     req.add_header("Accept", "application/vnd.github+json")
 
-    with urllib.request.urlopen(req) as resp:  # noqa: S310
-        return json.loads(resp.read())
+    for attempt in range(retry.MAX_RETRIES + 1):
+        try:
+            with urllib.request.urlopen(req) as resp:  # noqa: S310
+                return json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            if attempt == retry.MAX_RETRIES or not _is_retryable_jwt_status(exc.code):
+                raise
+            delay = retry.compute_delay(attempt)
+            log.warning(
+                "GitHub App token request failed with %s on %s%s (attempt %d/%d), "
+                "retrying in %.1fs",
+                exc,
+                endpoint,
+                _request_id_suffix(exc),
+                attempt + 1,
+                retry.MAX_RETRIES + 1,
+                delay,
+            )
+            exc.close()
+            time.sleep(delay)
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
+def _is_retryable_jwt_status(status: int) -> bool:
+    """True for an HTTP status that may be a GitHub-side blip on the App token path.
+
+    A 401 is retried as :mod:`vergil_tooling.lib.retry` retries it for ``gh``:
+    GitHub intermittently rejects valid credentials (the 2026-11-08 prune
+    failure, #4168), and a 401 is refused before anything is minted. A 429 and
+    any 5xx are retried too: a repeated token exchange only mints another
+    short-lived token, so even a 500 that landed server-side is harmless. Any
+    other status (403, 404, 422 ...) is an answer and fails at once. A key
+    GitHub truly rejects still fails, once :data:`retry.MAX_RETRIES` retries
+    have run out.
+    """
+    return status in {401, 429} or 500 <= status <= 599  # noqa: PLR2004
+
+
+def _request_id_suffix(exc: urllib.error.HTTPError) -> str:
+    """`` (request ID <id>)`` from GitHub's ``X-GitHub-Request-Id`` header, or ``""``.
+
+    The ID is what GitHub needs to trace a failed request, and the only way to
+    tell a GitHub-side failure from a local one after the fact (#4168).
+    """
+    request_id = exc.headers.get("X-GitHub-Request-Id") if exc.headers else None
+    return f" (request ID {request_id})" if request_id else ""
 
 
 _JWT_ERROR_MESSAGE_MAX = 300
@@ -357,12 +407,14 @@ def _jwt_http_error_detail(exc: urllib.error.HTTPError) -> str:
 
     A bare ``HTTP Error 401: Unauthorized`` cannot tell a JWT claim GitHub
     judged out of range (clock skew) from a key it no longer accepts; the
-    response's JSON ``message`` names the cause (#3825). The request URL and
-    the error body carry neither the JWT nor a token. An unreadable or
+    response's JSON ``message`` names the cause (#3825), and its
+    ``X-GitHub-Request-Id`` header lets GitHub trace the request (#4168). The
+    request URL, the request ID and the error body carry neither the JWT nor a
+    token. An unreadable or
     non-JSON body is reported as such rather than dropped.
     """
     path = urllib.parse.urlsplit(exc.url or "").path or "(unknown endpoint)"
-    base = f"{exc} on {path}"
+    base = f"{exc} on {path}{_request_id_suffix(exc)}"
     try:
         body = exc.read()
     except (OSError, http.client.HTTPException) as read_exc:
