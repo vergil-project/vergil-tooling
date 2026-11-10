@@ -17796,8 +17796,10 @@ adding new public surface. Versions: <code>v1.3.0</code> → <code>v1.3.1</code>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>vrg-release
 </code></pre></div>
 <p><code>vrg-release</code> is a human-only command: it refuses to run under an
-   agent identity. It needs <code>git-cliff</code> on <code>PATH</code> and an authenticated
-   <code>gh</code>. It drives the whole release through the stages listed in
+   agent identity. It needs a running container runtime (docker or
+   nerdctl) and an authenticated <code>gh</code>; it generates the changelog with
+   <code>git-cliff</code> in the dev container, through <code>vrg-container-run</code>. It
+   drives the whole release through the stages listed in
    <a href="#the-vrg-release-pipeline">The <code>vrg-release</code> pipeline</a> below, in a
    managed worktree, so the root checkout is never switched off
    <code>develop</code>. See the <a href="../../reference/dev/release/"><code>vrg-release</code> reference</a>

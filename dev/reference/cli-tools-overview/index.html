@@ -19523,7 +19523,7 @@ and the <a href="../../guides/releasing/">Releasing guide</a>.</p>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>Human identity; on <code>develop</code>, clean working tree, local develop matches <code>origin/develop</code>; <code>gh</code> authenticated and <code>git-cliff</code> on PATH</td>
+<td>Human identity; on <code>develop</code>, clean working tree, local develop matches <code>origin/develop</code>; <code>gh</code> authenticated and a reachable container runtime (docker or nerdctl) for <code>vrg-container-run</code>, which runs <code>git-cliff</code></td>
 </tr>
 <tr>
 <td>Failure mode</td>
@@ -22206,7 +22206,7 @@ hand.</p>
 </table>
 <h3 id="vrg-host">vrg-host<a class="headerlink" href="#vrg-host" title="Permanent link">&para;</a></h3>
 <p>Observe and manage the Vergil-critical macOS host dependencies (<code>uv</code>,
-<code>gh</code>, <code>git</code>, <code>bash</code>, <code>gcloud</code>, Lima, Docker Desktop, OpenTofu, <code>git-cliff</code>,
+<code>gh</code>, <code>git</code>, <code>bash</code>, <code>gcloud</code>, Lima, Docker Desktop, OpenTofu,
 vergil-tooling, Claude Code, macOS, the Xcode Command Line Tools) declared in
 the packaged, tooling-owned manifest
 <code>src/vergil_tooling/data/host_dependencies.toml</code> (never

@@ -17309,7 +17309,9 @@ under an agent identity.</p>
 <ul>
 <li>Run from the root checkout, on <code>develop</code>, with a clean working tree
   that matches <code>origin/develop</code>.</li>
-<li><code>git-cliff</code> on <code>PATH</code> and an authenticated <code>gh</code>.</li>
+<li>A reachable container runtime (docker or nerdctl) and an authenticated
+  <code>gh</code>. <code>git-cliff</code> runs in the dev container through <code>vrg-container-run</code>,
+  so it is not needed on the host.</li>
 </ul>
 <h2 id="the-dependency-update-gate">The dependency-update gate<a class="headerlink" href="#the-dependency-update-gate" title="Permanent link">&para;</a></h2>
 <p>On a fresh start (not on <code>--resume</code>), preflight refuses while an open
