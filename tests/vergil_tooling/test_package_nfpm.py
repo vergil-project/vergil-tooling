@@ -357,9 +357,9 @@ def test_package_creates_out_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 
 def test_missing_nfpm_is_fatal(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(nfpm.shutil, "which", lambda _: None)
-    # The hint must name the setup action that actually installs nFPM.
+    # The hint must name where CI's nFPM actually comes from: the toolchain image.
     with pytest.raises(
-        PackageError, match=r"nfpm not found on PATH \(CI installs it via actions/package/setup\)"
+        PackageError, match=r"nfpm not found on PATH \(CI ships it in the package toolchain image\)"
     ):
         nfpm.package({}, "deb", tmp_path)
 
