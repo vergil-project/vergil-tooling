@@ -330,7 +330,9 @@ def test_check_host_prerequisites_success(on_path: set[str], runtime: str) -> No
 
     ok = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
     with (
-        patch("shutil.which", side_effect=lambda name: f"/usr/bin/{name}" if name in on_path else None),
+        patch(
+            "shutil.which", side_effect=lambda name: f"/usr/bin/{name}" if name in on_path else None
+        ),
         patch(_MOD + ".subprocess.run", return_value=ok) as mock_run,
     ):
         _check_host_prerequisites()
@@ -348,7 +350,9 @@ def test_check_host_prerequisites_runtime_unreachable(failure: Exception) -> Non
     from vergil_tooling.lib.release.preflight import _check_host_prerequisites
 
     with (
-        patch("shutil.which", side_effect=lambda name: "/usr/bin/docker" if name == "docker" else None),
+        patch(
+            "shutil.which", side_effect=lambda name: "/usr/bin/docker" if name == "docker" else None
+        ),
         patch(_MOD + ".subprocess.run", side_effect=failure),
         pytest.raises(ReleaseError, match="docker container runtime is not reachable"),
     ):

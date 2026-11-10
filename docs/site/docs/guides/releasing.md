@@ -72,7 +72,8 @@ adding new public surface. Versions: `v1.3.0` → `v1.3.1`.
    `vrg-release` is a human-only command: it refuses to run under an
    agent identity. It needs a running container runtime (docker or
    nerdctl) and an authenticated `gh`; it generates the changelog with
-   `git-cliff` in the dev container, through `vrg-container-run`. It drives the whole release through the stages listed in
+   `git-cliff` in the dev container, through `vrg-container-run`. It
+   drives the whole release through the stages listed in
    [The `vrg-release` pipeline](#the-vrg-release-pipeline) below, in a
    managed worktree, so the root checkout is never switched off
    `develop`. See the [`vrg-release` reference](../reference/dev/release.md)

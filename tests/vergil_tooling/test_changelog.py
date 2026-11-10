@@ -43,7 +43,10 @@ def _cliff_args(mock_run: MagicMock) -> tuple[str, ...]:
     ],
 )
 def test_git_cliff_runs_in_the_dev_container(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, generate: Callable[[Path, str], object], config: str
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    generate: Callable[[Path, str], object],
+    config: str,
 ) -> None:
     # git-cliff is not a host dependency (#4169): it runs through
     # vrg-container-run, which mounts the repo as its working directory, and
