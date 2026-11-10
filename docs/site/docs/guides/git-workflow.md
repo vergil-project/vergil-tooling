@@ -326,6 +326,7 @@ You are working on issue #42: Add LRU cache to pipeline.
 
 Your worktree is: <project-root>/.worktrees/issue-42-add-caching/
 Your branch is:   feature/42-add-caching
+Your scratch is:  <project-root>/build/tmp/agents/42/
 
 Rules for this session:
 - Do all git operations from inside your worktree:
@@ -339,6 +340,8 @@ Rules for this session:
   is allowed (rule 3 of the worktree convention).
 - When you need to run validation, run it from inside your worktree
   (vrg-container-run mounts the current directory).
+- Use only your scratch directory for temporary files; other agents
+  run in parallel.
 ```
 
 ### Cleanup after merge
