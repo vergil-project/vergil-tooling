@@ -2033,7 +2033,7 @@ the CI security workflow.
 | Source | `vergil_tooling.bin.vrg_semgrep_scan` |
 | Args | `--language` (required), `--target-dir`, `--output`, `--extra-config`, `--exclude-rule` (repeatable), `--has-dockerfiles`, `--has-workflows` |
 | Preconditions | `semgrep` on PATH |
-| Failure mode | Exit 2 when semgrep itself fails |
+| Failure mode | Exit 2 when semgrep itself fails, after printing semgrep's captured stdout and stderr; the error names the last non-empty stderr line (or stdout line) |
 | Exit codes | 0 no findings, 1 findings, 2 scan failed |
 | Status | Active |
 

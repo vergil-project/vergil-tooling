@@ -5,11 +5,15 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.output import emit_error, emit_warning, write_output, write_summary
 from vergil_tooling.lib.sarif import evaluate_findings, format_summary, parse_sarif
 from vergil_tooling.lib.semgrep import resolve_rulesets, run_scan
+
+if TYPE_CHECKING:
+    from vergil_tooling.lib.semgrep import ScanResult
 
 
 @cli_main
@@ -83,7 +87,7 @@ def main(argv: list[str] | None = None) -> int:
     write_output("scan_exit_code", str(scan_result.returncode))
 
     if scan_result.returncode > 1:
-        emit_error(f"semgrep scan failed with exit code {scan_result.returncode}")
+        _report_scan_failure(scan_result)
         return 2
 
     if not scan_result.sarif_produced:
@@ -107,6 +111,27 @@ def main(argv: list[str] | None = None) -> int:
         write_summary(format_summary(result))
 
     return 0 if result.passed else 1
+
+
+def _last_line(text: str) -> str:
+    """Return the last non-empty line of *text*, stripped, or ``""``."""
+    for line in reversed(text.splitlines()):
+        if line.strip():
+            return line.strip()
+    return ""
+
+
+def _report_scan_failure(scan_result: ScanResult) -> None:
+    """Print semgrep's captured output, then an error carrying its key line."""
+    for name, text in (("stdout", scan_result.stdout), ("stderr", scan_result.stderr)):
+        if text.strip():
+            print(f"--- semgrep {name} ---", file=sys.stderr)
+            print(text.rstrip("\n"), file=sys.stderr)
+    msg = f"semgrep scan failed with exit code {scan_result.returncode}"
+    detail = _last_line(scan_result.stderr) or _last_line(scan_result.stdout)
+    if detail:
+        msg = f"{msg}: {detail}"
+    emit_error(msg)
 
 
 if __name__ == "__main__":

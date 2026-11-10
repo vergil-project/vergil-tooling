@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
@@ -11,6 +12,8 @@ from vergil_tooling.lib.semgrep import ScanResult
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    import pytest
 
 _MOD = "vergil_tooling.bin.vrg_semgrep_scan"
 
@@ -85,6 +88,84 @@ def test_scan_failure(tmp_path: Path) -> None:
         )
     assert rc == 2
     mock_err.assert_called_once()
+
+
+def _fake_semgrep(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, script: str) -> None:
+    """Put a ``semgrep`` running *script* (sh) first on PATH, outside CI."""
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake = fake_bin / "semgrep"
+    fake.write_text(f"#!/bin/sh\n{script}")
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+
+
+def test_scan_failure_prints_semgrep_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _fake_semgrep(
+        tmp_path,
+        monkeypatch,
+        "printf 'Scanning 12 files\\n'\n"
+        "printf 'Fatal error at line 1\\nsemgrep-core exited with -11!\\n\\n' >&2\n"
+        "exit 2\n",
+    )
+
+    rc = main(["--language", "python", "--output", str(tmp_path / "out.sarif")])
+
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "Scanning 12 files" in err
+    assert "Fatal error at line 1" in err
+    assert "ERROR: semgrep scan failed with exit code 2: semgrep-core exited with -11!" in err
+    # The full output comes before the error line.
+    assert err.index("Fatal error at line 1") < err.index("ERROR: semgrep scan failed")
+
+
+def test_scan_failure_falls_back_to_stdout_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _fake_semgrep(tmp_path, monkeypatch, "printf 'invalid config p/python\\n'\nexit 7\n")
+
+    rc = main(["--language", "python", "--output", str(tmp_path / "out.sarif")])
+
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "ERROR: semgrep scan failed with exit code 7: invalid config p/python" in err
+
+
+def test_scan_failure_with_no_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _fake_semgrep(tmp_path, monkeypatch, "exit 2\n")
+
+    rc = main(["--language", "python", "--output", str(tmp_path / "out.sarif")])
+
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "--- semgrep" not in err
+    assert err.rstrip("\n").endswith("ERROR: semgrep scan failed with exit code 2")
+
+
+def test_findings_scan_prints_no_semgrep_output(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    output = tmp_path / "results.sarif"
+
+    def _fake_scan(rulesets: list, target: object, out: object, **_kwargs: object) -> ScanResult:
+        output.write_text(json.dumps(_FINDINGS_SARIF))
+        return ScanResult(returncode=1, sarif_produced=True, stderr="noisy progress\n")
+
+    with (
+        patch(f"{_MOD}.run_scan", side_effect=_fake_scan),
+        patch(f"{_MOD}.emit_error"),
+        patch(f"{_MOD}.write_output"),
+        patch(f"{_MOD}.write_summary"),
+    ):
+        rc = main(["--language", "python", "--output", str(output)])
+    assert rc == 1
+    assert "noisy progress" not in capsys.readouterr().err
 
 
 def test_no_sarif_produced(tmp_path: Path) -> None:
