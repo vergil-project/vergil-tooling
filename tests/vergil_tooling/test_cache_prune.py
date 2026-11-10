@@ -21,7 +21,7 @@ from vergil_tooling.lib.cache_prune import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
 
 _RUN = "vergil_tooling.lib.cache_prune.subprocess.run"
 _PY = "ghcr.io/vergil-project/prod-python"
@@ -33,8 +33,19 @@ def _done(
     return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr=stderr)
 
 
-def _img(branch: str, image_id: str = "aaaa11112222") -> CacheImage:
-    return CacheImage(ref=f"{_PY}:3.14--{branch}--0123abcd", image_id=image_id, branch=branch)
+@pytest.fixture(autouse=True)
+def _repo_name() -> Iterator[None]:
+    # The tests' repo roots are not git repositories; every clean runs as
+    # repo-a, the repository the test refs name (cache_repo_name, #4162).
+    with patch("vergil_tooling.lib.cache_prune.cache_repo_name", return_value="repo-a"):
+        yield
+
+
+def _img(branch: str, image_id: str = "aaaa11112222", repo: str | None = "repo-a") -> CacheImage:
+    tail = f"{repo}.0123abcd" if repo is not None else "0123abcd"
+    return CacheImage(
+        ref=f"{_PY}:3.14--{branch}--{tail}", image_id=image_id, branch=branch, repo=repo
+    )
 
 
 # -- list_cache_images ------------------------------------------------------------
@@ -42,15 +53,19 @@ def _img(branch: str, image_id: str = "aaaa11112222") -> CacheImage:
 
 def test_lists_only_cached_images() -> None:
     stdout = (
-        f"{_PY}:3.14--feature-1-a--0123abcd\tid1\n"
+        f"{_PY}:3.14--feature-1-a--repo-a.0123abcd\tid1\n"
+        f"{_PY}:3.14--feature-1-a--0123abcd\tid5\n"  # the format before #4162
         f"{_PY}:3.14\tid2\n"  # base image
-        "docker.io/library/redis:7--x--0123abcd\tid3\n"  # foreign image
+        "docker.io/library/redis:7--x--repo-a.0123abcd\tid3\n"  # foreign image
         f"{_PY}:<none>\tid4\n"
         "\n"
     )
     with patch(_RUN, return_value=_done(stdout=stdout)) as mock_run:
         images = list_cache_images("nerdctl")
-    assert images == [CacheImage(f"{_PY}:3.14--feature-1-a--0123abcd", "id1", "feature-1-a")]
+    assert images == [
+        CacheImage(f"{_PY}:3.14--feature-1-a--repo-a.0123abcd", "id1", "feature-1-a", "repo-a"),
+        CacheImage(f"{_PY}:3.14--feature-1-a--0123abcd", "id5", "feature-1-a", None),
+    ]
     assert mock_run.call_args.args[0][:2] == ["nerdctl", "images"]
 
 
@@ -126,7 +141,7 @@ def test_protected_branch_is_kept_even_when_not_live(branch: str) -> None:
 @pytest.mark.parametrize(
     "used",
     [
-        f"{_PY}:3.14--feature-3-gone--0123abcd",  # by ref
+        f"{_PY}:3.14--feature-3-gone--repo-a.0123abcd",  # by ref
         "aaaa1111",  # by a short id
         "sha256:aaaa11112222ffff",  # by a full id
     ],
@@ -145,6 +160,23 @@ def test_image_without_id_matches_only_by_ref() -> None:
     image = _img("feature-3-gone", image_id="")
     verdicts = _verdicts([image], in_use=("aaaa1111",))
     assert verdicts["feature-3-gone"][0]
+
+
+@pytest.mark.parametrize("branch", ["develop", "feature-1-live", "feature-3-gone"])
+def test_old_format_image_is_removed_whatever_its_branch(branch: str) -> None:
+    # No current lookup returns an image with no repository in its tag (#4162),
+    # so it is removed even on a protected or live branch.
+    [verdict] = plan_prune(
+        [_img(branch, repo=None)], {_REPO_A: frozenset({"develop", "feature/1-live"})}, ()
+    )
+    assert verdict.remove
+    assert verdict.reason == "old format with no repository; no current lookup uses it"
+
+
+def test_old_format_image_a_container_uses_is_kept() -> None:
+    [verdict] = plan_prune([_img("develop", repo=None)], {_REPO_A: frozenset()}, ("aaaa1111",))
+    assert not verdict.remove
+    assert verdict.reason == "in use by a container"
 
 
 # -- remove_images ----------------------------------------------------------------
@@ -192,36 +224,55 @@ def _runtime(
 
 def test_clean_branch_images_removes_only_that_branch() -> None:
     images = (
-        f"{_PY}:3.14--feature-42-thing--0123abcd\tid1\n"
-        f"{_PY}:3.15--feature-42-thing--4567abcd\tid2\n"
-        f"{_PY}:3.14--feature-42-thing-2--89abcdef\tid3\n"  # a different branch
+        f"{_PY}:3.14--feature-42-thing--repo-a.0123abcd\tid1\n"
+        f"{_PY}:3.15--feature-42-thing--repo-a.4567abcd\tid2\n"
+        f"{_PY}:3.14--feature-42-thing-2--repo-a.89abcdef\tid3\n"  # a different branch
         f"{_PY}:3.14\tid4\n"  # base image
     )
     run, removed = _runtime(images)
     with patch(_RUN, side_effect=run):
-        assert clean_branch_images("feature/42-thing", runtime="docker") == (2, [])
+        assert clean_branch_images("feature/42-thing", _REPO_A, runtime="docker") == (2, [])
     assert removed == [
-        f"{_PY}:3.14--feature-42-thing--0123abcd",
-        f"{_PY}:3.15--feature-42-thing--4567abcd",
+        f"{_PY}:3.14--feature-42-thing--repo-a.0123abcd",
+        f"{_PY}:3.15--feature-42-thing--repo-a.4567abcd",
     ]
+
+
+def test_clean_branch_images_leaves_other_repos_and_old_format_images() -> None:
+    # Cleaning repo-a's develop image (vrg-finalize-pr's recovery path) must not
+    # remove repo-b's develop image, nor an old-format one (#4162).
+    mine = f"{_PY}:3.14--develop--repo-a.0123abcd"
+    images = (
+        f"{mine}\tid1\n"
+        f"{_PY}:3.14--develop--repo-b.4567abcd\tid2\n"
+        f"{_PY}:3.14--develop--repo-ab.89abcdef\tid3\n"
+        f"{_PY}:3.14--develop--fedcba98\tid4\n"
+    )
+    run, removed = _runtime(images)
+    with patch(_RUN, side_effect=run):
+        assert clean_branch_images("develop", _REPO_A, runtime="docker") == (
+            1,
+            [],
+        )
+    assert removed == [mine]
 
 
 def test_clean_branch_images_none_found() -> None:
     run, removed = _runtime(f"{_PY}:3.14\tid1\n")
     with patch(_RUN, side_effect=run):
-        assert clean_branch_images("feature/99-other", runtime="docker") == (0, [])
+        assert clean_branch_images("feature/99-other", _REPO_A, runtime="docker") == (0, [])
     assert removed == []
 
 
 def test_clean_branch_images_reports_rmi_failures() -> None:
     """A failed rmi comes back with the runtime's error instead of vanishing (#3566)."""
-    ok = f"{_PY}:3.14--feature-1-x--0123abcd"
-    bad = f"{_PY}:3.15--feature-1-x--4567abcd"
+    ok = f"{_PY}:3.14--feature-1-x--repo-a.0123abcd"
+    bad = f"{_PY}:3.15--feature-1-x--repo-a.4567abcd"
     run, _removed = _runtime(
         f"{ok}\tid1\n{bad}\tid2\n", rmi={bad: _done(returncode=1, stderr="image is in use")}
     )
     with patch(_RUN, side_effect=run):
-        assert clean_branch_images("feature/1-x", runtime="docker") == (
+        assert clean_branch_images("feature/1-x", _REPO_A, runtime="docker") == (
             1,
             [(bad, "image is in use")],
         )
@@ -232,7 +283,7 @@ def test_clean_branch_images_list_failure_raises() -> None:
         patch(_RUN, return_value=_done(returncode=1, stderr="daemon down")),
         pytest.raises(RuntimeError, match="daemon down"),
     ):
-        clean_branch_images("feature/1-x", runtime="docker")
+        clean_branch_images("feature/1-x", _REPO_A, runtime="docker")
 
 
 def test_clean_branch_images_defaults_to_the_detected_runtime() -> None:
@@ -241,7 +292,7 @@ def test_clean_branch_images_defaults_to_the_detected_runtime() -> None:
         patch("vergil_tooling.lib.cache_prune.detect_runtime", return_value="nerdctl"),
         patch(_RUN, side_effect=run) as mock_run,
     ):
-        clean_branch_images("feature/1-x")
+        clean_branch_images("feature/1-x", _REPO_A)
     assert mock_run.call_args.args[0][0] == "nerdctl"
 
 
@@ -253,14 +304,15 @@ _LIVE = "vergil_tooling.lib.cache_prune.live_branches"
 def test_prune_keeps_a_branch_live_in_another_repo() -> None:
     """Another repo's in-progress branch keeps its image (#3566).
 
-    The tag records no repo, so a branch live only in repo B must survive a
-    sweep run from repo A; only a branch live nowhere is removed.
+    The tag names its repo only by directory name, so a branch live only in
+    repo B must survive a sweep run from repo A; only a branch live nowhere is
+    removed.
     """
     images = (
-        f"{_PY}:3.14--feature-1-mine--0123abcd\tid1\n"
-        f"{_PY}:3.14--feature-2-theirs--4567abcd\tid2\n"
-        f"{_PY}:3.14--feature-3-gone--89abcdef\tid3\n"
-        f"{_PY}:3.14--develop--fedcba98\tid4\n"
+        f"{_PY}:3.14--feature-1-mine--repo-a.0123abcd\tid1\n"
+        f"{_PY}:3.14--feature-2-theirs--repo-a.4567abcd\tid2\n"
+        f"{_PY}:3.14--feature-3-gone--repo-a.89abcdef\tid3\n"
+        f"{_PY}:3.14--develop--repo-a.fedcba98\tid4\n"
     )
     live = {
         _REPO_A: frozenset({"develop", "feature/1-mine"}),
@@ -270,25 +322,43 @@ def test_prune_keeps_a_branch_live_in_another_repo() -> None:
     with patch(_LIVE, return_value=live) as mock_live, patch(_RUN, side_effect=run):
         result = prune_orphan_branch_images([_REPO_A, _REPO_B], runtime="docker")
     assert result == (1, [])
-    assert removed == [f"{_PY}:3.14--feature-3-gone--89abcdef"]
+    assert removed == [f"{_PY}:3.14--feature-3-gone--repo-a.89abcdef"]
     mock_live.assert_called_once_with([_REPO_A, _REPO_B])
 
 
+def test_prune_removes_old_format_images_even_on_live_and_protected_branches() -> None:
+    # The images an earlier release left behind, which no lookup uses since
+    # #4162, are swept; the current-format images beside them are kept.
+    old_develop = f"{_PY}:3.14--develop--2fb5421a"
+    old_live = f"{_PY}:3.14--feature-1-mine--4567abcd"
+    images = (
+        f"{old_develop}\tid1\n"
+        f"{old_live}\tid2\n"
+        f"{_PY}:3.14--develop--repo-a.fedcba98\tid3\n"
+        f"{_PY}:3.14--feature-1-mine--repo-a.0123abcd\tid4\n"
+    )
+    run, removed = _runtime(images)
+    live = {_REPO_A: frozenset({"develop", "feature/1-mine"})}
+    with patch(_LIVE, return_value=live), patch(_RUN, side_effect=run):
+        assert prune_orphan_branch_images([_REPO_A], runtime="docker") == (2, [])
+    assert removed == [old_develop, old_live]
+
+
 def test_prune_keeps_an_image_a_container_uses() -> None:
-    images = f"{_PY}:3.14--feature-3-gone--89abcdef\tid3\n"
+    images = f"{_PY}:3.14--feature-3-gone--repo-a.89abcdef\tid3\n"
 
     def run(cmd: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
         assert cmd[1] != "rmi", "an in-use image must not be removed"
         if cmd[1] == "images":
             return _done(stdout=images)
-        return _done(stdout=f"{_PY}:3.14--feature-3-gone--89abcdef\n")
+        return _done(stdout=f"{_PY}:3.14--feature-3-gone--repo-a.89abcdef\n")
 
     with patch(_LIVE, return_value={_REPO_A: frozenset()}), patch(_RUN, side_effect=run):
         assert prune_orphan_branch_images([_REPO_A], runtime="docker") == (0, [])
 
 
 def test_prune_reports_rmi_failures() -> None:
-    gone = f"{_PY}:3.14--feature-3-gone--89abcdef"
+    gone = f"{_PY}:3.14--feature-3-gone--repo-a.89abcdef"
     run, _removed = _runtime(f"{gone}\tid3\n", rmi={gone: _done(returncode=1, stderr="conflict")})
     with patch(_LIVE, return_value={_REPO_A: frozenset()}), patch(_RUN, side_effect=run):
         assert prune_orphan_branch_images([_REPO_A], runtime="docker") == (0, [(gone, "conflict")])
@@ -297,8 +367,8 @@ def test_prune_reports_rmi_failures() -> None:
 def test_prune_finished_images_returns_the_removed_refs() -> None:
     # The auto-prune prints what it removed, so the refs come back, not a count;
     # a ref whose rmi was refused is a failure, not a removal (#3571).
-    gone = f"{_PY}:3.14--feature-3-gone--89abcdef"
-    stuck = f"{_PY}:3.14--feature-4-stuck--01234567"
+    gone = f"{_PY}:3.14--feature-3-gone--repo-a.89abcdef"
+    stuck = f"{_PY}:3.14--feature-4-stuck--repo-a.01234567"
     run, _removed = _runtime(
         f"{gone}\tid3\n{stuck}\tid4\n", rmi={stuck: _done(returncode=1, stderr="conflict")}
     )
@@ -327,7 +397,7 @@ def test_prune_with_no_cached_images_reads_no_branches() -> None:
 
 def test_prune_branch_lookup_failure_removes_nothing() -> None:
     """An unreadable repo stops the sweep before any rmi, never counts as no branches."""
-    images = f"{_PY}:3.14--feature-3-gone--89abcdef\tid3\n"
+    images = f"{_PY}:3.14--feature-3-gone--repo-a.89abcdef\tid3\n"
 
     def run(cmd: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
         assert cmd[1] != "rmi", "nothing may be removed when a lookup fails"

@@ -8,7 +8,8 @@ import re
 import shlex
 import subprocess
 import sys
-from pathlib import PurePosixPath
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import vm_packages
@@ -27,7 +28,6 @@ from vergil_tooling.lib.versions.extensions import container_env
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
-    from pathlib import Path
 
 _SELF_PROJECT_NAME = "vergil-tooling"
 
@@ -304,38 +304,128 @@ def _sanitize_branch(branch: str) -> str:
     return re.sub(r"[^a-zA-Z0-9._-]", "-", branch)
 
 
-def cache_image_tag(base_image: str, branch: str, cache_hash: str) -> str:
-    """Construct the cached image tag."""
+def sanitize_repo(name: str) -> str:
+    """Return the repository *name* as it appears in a cached image tag.
+
+    Characters a tag cannot hold become ``-``, runs of ``-`` collapse to one and
+    leading or trailing ``-`` are dropped, so the name never contains ``--``,
+    the tag's separator: that is what keeps :func:`parse_cache_image_ref`
+    unambiguous (#4162). Raises ``ValueError`` when nothing is left.
+    """
+    sanitized = re.sub(r"-{2,}", "-", re.sub(r"[^a-zA-Z0-9._-]", "-", name)).strip("-")
+    if not sanitized:
+        msg = f"repository name {name!r} leaves nothing to name a cached image by"
+        raise ValueError(msg)
+    return sanitized
+
+
+def cache_repo_name(repo_root: Path) -> str:
+    """Return the repository a cached image built from *repo_root* belongs to.
+
+    The directory name of the repository's main worktree, the clone itself, as
+    :func:`vergil_tooling.lib.git.main_worktree_root` reads it. A secondary
+    worktree (``.worktrees/issue-<N>-<slug>``) belongs to its clone, so the name
+    is the same from every worktree of one repository (#4162). Raises
+    ``subprocess.CalledProcessError`` when *repo_root* is not in a git
+    repository.
+    """
+    from vergil_tooling.lib import git as _git
+
+    common_dir = _git.read_output(
+        "-C", str(repo_root), "rev-parse", "--path-format=absolute", "--git-common-dir"
+    )
+    return Path(common_dir).resolve().parent.name
+
+
+# The longest tag a container runtime accepts (the distribution spec's limit).
+_MAX_TAG_LENGTH = 128
+
+
+def cache_image_tag(base_image: str, branch: str, cache_hash: str, *, repo: str) -> str:
+    """Construct the cached image reference for *repo* on *branch*.
+
+    ``<base_repo>:<base_tag>--<sanitized_branch>--<repo>.<cache_hash>`` (#4162):
+    the repository is in the tag, so two repositories on one base image and
+    branch each have their own cached image. Raises ``ValueError`` when the tag
+    is longer than a runtime accepts, rather than failing later at commit.
+    """
     base_tag = base_image.split(":")[-1] if ":" in base_image else "latest"
     base_repo = base_image.split(":")[0]
-    sanitized = _sanitize_branch(branch)
-    return f"{base_repo}:{base_tag}--{sanitized}--{cache_hash}"
+    tag = f"{base_tag}--{_sanitize_branch(branch)}--{sanitize_repo(repo)}.{cache_hash}"
+    if len(tag) > _MAX_TAG_LENGTH:
+        msg = (
+            f"cached image tag '{tag}' is {len(tag)} characters, over the "
+            f"{_MAX_TAG_LENGTH} a container runtime accepts; use a shorter branch name"
+        )
+        raise ValueError(msg)
+    return f"{base_repo}:{tag}"
 
 
 # A cached image's reference, as cache_image_tag builds it:
-# ``<base_repo>:<base_tag>--<sanitized_branch>--<cache_hash>``. Base images are
-# only ever ours (default_image), the base tag never contains ``--``, and the hash
-# is compute_cache_hash's 8 hex chars. The branch is the greedy middle, so a
+# ``<base_repo>:<base_tag>--<sanitized_branch>--<repo>.<cache_hash>``. Base images
+# are only ever ours (default_image), the base tag never contains ``--``, the
+# repository never contains ``--`` (sanitize_repo) and the hash is
+# compute_cache_hash's 8 hex chars. The branch is the greedy middle, so a
 # sanitized name that itself contains ``--`` still parses whole.
 _CACHE_REF_RE = re.compile(
-    rf"^{re.escape(_GHCR)}/[^:]+:(?P<base_tag>.+?)--(?P<branch>.+)--(?P<hash>[0-9a-f]{{8}})$"
+    rf"^(?P<base_repo>{re.escape(_GHCR)}/[^:]+):(?P<base_tag>.+?)--(?P<branch>.+)"
+    r"--(?P<repo>[a-zA-Z0-9._]+(?:-[a-zA-Z0-9._]+)*)\.(?P<hash>[0-9a-f]{8})$"
+)
+
+# The format before #4162, with no repository:
+# ``<base_repo>:<base_tag>--<sanitized_branch>--<cache_hash>``. The hash follows
+# ``--`` here and ``.`` in the current format, so no reference matches both.
+_LEGACY_CACHE_REF_RE = re.compile(
+    rf"^(?P<base_repo>{re.escape(_GHCR)}/[^:]+):(?P<base_tag>.+?)--(?P<branch>.+)"
+    r"--(?P<hash>[0-9a-f]{8})$"
 )
 
 
-def parse_cache_image_ref(ref: str) -> tuple[str, str] | None:
-    """Return ``(base_tag, sanitized_branch)`` for a cached image *ref*, else None.
+@dataclass(frozen=True)
+class CacheImageRef:
+    """A parsed cached image reference.
 
-    The inverse of :func:`cache_image_tag`, as far as it goes: the branch comes
-    back sanitized (``feature/1-x`` and ``feature-1-x`` both read
-    ``feature-1-x``), and the tag carries no repository at all, so the caller
-    must match the branch against every repository that could have built it.
-    Anything not shaped exactly like a cached image (a base image, a foreign
-    image, ``<none>``) returns None so it is never treated as ours.
+    *branch* and *repo* are as the tag holds them (sanitized). *repo* is None
+    for an image in the format before #4162, which named no repository: no
+    current lookup returns such an image, and the prune removes it.
+    """
+
+    base_repo: str
+    base_tag: str
+    branch: str
+    repo: str | None
+    cache_hash: str
+
+    @property
+    def legacy(self) -> bool:
+        """True for an image in the format before #4162."""
+        return self.repo is None
+
+
+def parse_cache_image_ref(ref: str) -> CacheImageRef | None:
+    """Return the parts of a cached image *ref*, else None.
+
+    The inverse of :func:`cache_image_tag`, as far as it goes: the branch and
+    repository come back sanitized (``feature/1-x`` and ``feature-1-x`` both read
+    ``feature-1-x``). A reference in the format before #4162 parses with
+    ``repo=None``. Anything not shaped exactly like a cached image (a base image,
+    a foreign image, ``<none>``) returns None so it is never treated as ours.
     """
     match = _CACHE_REF_RE.match(ref)
-    if match is None:
-        return None
-    return match["base_tag"], match["branch"]
+    if match is not None:
+        repo: str | None = match["repo"]
+    else:
+        match = _LEGACY_CACHE_REF_RE.match(ref)
+        if match is None:
+            return None
+        repo = None
+    return CacheImageRef(
+        base_repo=match["base_repo"],
+        base_tag=match["base_tag"],
+        branch=match["branch"],
+        repo=repo,
+        cache_hash=match["hash"],
+    )
 
 
 def sanitize_branch(branch: str) -> str:
@@ -343,16 +433,23 @@ def sanitize_branch(branch: str) -> str:
     return _sanitize_branch(branch)
 
 
-def find_cached_image(base_image: str, branch: str, *, runtime: str = "") -> tuple[str, str] | None:
-    """Find an existing cached image for *base_image* and *branch*.
+def find_cached_image(
+    base_image: str, branch: str, *, repo: str, runtime: str = ""
+) -> tuple[str, str] | None:
+    """Find *repo*'s existing cached image for *base_image* and *branch*.
 
-    Returns ``(full_tag, hash_suffix)`` or ``None``.
+    Returns ``(full_tag, hash_suffix)`` or ``None``. Only an image whose tag
+    names *repo* matches: another repository's image on the same base and
+    branch, or an image in the format before #4162, is never returned, so the
+    cache build that removes a stale match only ever removes *repo*'s own.
     """
     rt = runtime or detect_runtime()
-    sanitized = _sanitize_branch(branch)
     base_tag = base_image.split(":")[-1] if ":" in base_image else "latest"
     base_repo = base_image.split(":")[0]
-    pattern = f"{base_repo}:{base_tag}--{sanitized}--"
+    pattern = re.compile(
+        rf"^{re.escape(base_repo)}:{re.escape(base_tag)}--{re.escape(_sanitize_branch(branch))}"
+        rf"--{re.escape(sanitize_repo(repo))}\.(?P<hash>[0-9a-f]{{8}})$"
+    )
 
     result = subprocess.run(  # noqa: S603
         [rt, "images", "--format", "{{.Repository}}:{{.Tag}}"],  # noqa: S607
@@ -363,9 +460,9 @@ def find_cached_image(base_image: str, branch: str, *, runtime: str = "") -> tup
         return None
 
     for line in result.stdout.splitlines():
-        if line.startswith(pattern):
-            tag_hash = line[len(pattern) :]
-            return (line, tag_hash)
+        match = pattern.match(line.strip())
+        if match is not None:
+            return (match.group(0), match["hash"])
     return None
 
 
@@ -794,11 +891,12 @@ def ensure_cached_image(
     from vergil_tooling.lib import git as _git
 
     branch = _git.current_branch()
+    repo = cache_repo_name(repo_root)
     base_digest, _verified = resolve_base_digest(base_image, runtime=rt)
     current_hash = compute_cache_hash(
         files, base_digest=base_digest, salt=repo_root.name, env=build_env
     )
-    existing = find_cached_image(base_image, branch, runtime=rt)
+    existing = find_cached_image(base_image, branch, repo=repo, runtime=rt)
 
     if existing is not None:
         existing_tag, existing_hash = existing
@@ -811,6 +909,8 @@ def ensure_cached_image(
         # image that fails at container creation. Force removal and surface a
         # non-zero result instead of swallowing it: the rebuild still proceeds
         # (commit reassigns the tag), but a genuine removal error should be seen.
+        # find_cached_image only returns this repository's own image, so this
+        # never removes another repository's cache (#4162).
         rmi = subprocess.run(  # noqa: S603
             [rt, "rmi", "-f", existing_tag],  # noqa: S607
             capture_output=True,
@@ -829,7 +929,7 @@ def ensure_cached_image(
     from vergil_tooling.lib.cache_space import ensure_build_space
 
     ensure_build_space(rt)
-    target_tag = cache_image_tag(base_image, branch, current_hash)
+    target_tag = cache_image_tag(base_image, branch, current_hash, repo=repo)
     return _build_cached_image(
         repo_root,
         lang,
