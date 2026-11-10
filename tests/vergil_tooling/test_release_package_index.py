@@ -276,7 +276,7 @@ def test_no_package_section_is_a_noop(release_ctx: ReleaseContext) -> None:
 def test_times_out_and_defers(release_ctx_with_package: ReleaseContext) -> None:
     sleeps: list[float] = []
     with pytest.raises(
-        ReleaseError, match=r"vergil-tooling 2\.1\.240-1 not visible in .* after 1200s"
+        ReleaseError, match=r"vergil-tooling 2\.1\.240-1 not visible in .* after 3600s"
     ) as exc_info:
         package_index.wait_for_index(
             release_ctx_with_package,

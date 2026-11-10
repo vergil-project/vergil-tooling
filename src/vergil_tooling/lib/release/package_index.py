@@ -431,7 +431,7 @@ def wait_for_index(
     fetch: Fetch = _fetch,
     sleep: Callable[[float], None] = time.sleep,
     now: Callable[[], float] = time.monotonic,
-    timeout: int = 1200,
+    timeout: int = 3600,
     interval: int = 30,
 ) -> None:
     """Poll the org package index until every package of this release is visible.

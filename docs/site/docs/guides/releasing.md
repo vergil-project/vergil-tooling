@@ -100,7 +100,7 @@ adding new public surface. Versions: `v1.3.0` → `v1.3.1`.
      rebuilds and signs the apt/dnf index. A failed dispatch does not fail
      the release; the index's weekly reconcile picks the release up.
    - `vrg-release`'s `package-index` stage then polls the published
-     index (up to 20 minutes, every 30 seconds) until the new version is
+     index (up to one hour, every 30 seconds) until the new version is
      visible, so the consumer refresh never races the index. With several
      `[[package]]` entries it waits for every package, each at its own full
      version, and succeeds only once all of them are listed. While it
@@ -109,7 +109,7 @@ adding new public surface. Versions: `v1.3.0` → `v1.3.1`.
      otherwise; the index poll alone decides success. If the run it
      follows fails (`failure`, `timed_out` or `startup_failure`), the
      index still lacks the release and no newer index run is listed, the
-     stage fails at once rather than waiting out the 20 minutes: its error
+     stage fails at once rather than waiting out the hour: its error
      names the failed run, so check that run's failed step before
      re-running it. A miss (timeout, a failed publish-index run, or a
      polling error) does not undo the release. It is recorded
