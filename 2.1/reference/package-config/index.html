@@ -1390,6 +1390,8 @@
       
         
       
+        
+      
     
     
     
@@ -1442,6 +1444,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.297/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.297
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17941,40 +17971,47 @@ variables set:</p>
 <td><code>.deb</code></td>
 <td><code>noble</code></td>
 <td>2.39</td>
-<td><code>ubuntu:24.04</code></td>
+<td><code>ghcr.io/vergil-project/prod-pkg-ubuntu:24.04</code></td>
 </tr>
 <tr>
 <td><code>ubuntu/26.04/{amd64,arm64}</code></td>
 <td><code>.deb</code></td>
 <td><code>resolute</code></td>
 <td>2.43</td>
-<td><code>ubuntu:26.04</code></td>
+<td><code>ghcr.io/vergil-project/prod-pkg-ubuntu:26.04</code></td>
 </tr>
 <tr>
 <td><code>rhel/9/{amd64,arm64}</code></td>
 <td><code>.rpm</code></td>
 <td><code>el9</code></td>
 <td>2.34</td>
-<td><code>registry.access.redhat.com/ubi9/ubi</code></td>
+<td><code>ghcr.io/vergil-project/prod-pkg-rhel:9</code></td>
 </tr>
 <tr>
 <td><code>rhel/10/{amd64,arm64}</code></td>
 <td><code>.rpm</code></td>
 <td><code>el10</code></td>
 <td>2.39</td>
-<td><code>registry.access.redhat.com/ubi10/ubi</code></td>
+<td><code>ghcr.io/vergil-project/prod-pkg-rhel:10</code></td>
 </tr>
 </tbody>
 </table>
-<p>Adding a target, such as Ubuntu 28.04, is a registry change and a
-vergil-tooling release. No workflow changes.</p>
+<p>Every image is a managed package toolchain image from vergil-containers:
+the upstream <code>ubuntu:&lt;version&gt;</code> or <code>registry.access.redhat.com/ubi&lt;version&gt;/ubi</code>
+with uv and nFPM preinstalled, so no package job installs its toolchain at
+run time. The registry derives each image from the target's distro and
+version (<code>prod-pkg-&lt;distro&gt;:&lt;version&gt;</code>); it is never listed per target.</p>
+<p>Adding a target, such as Ubuntu 28.04, needs its toolchain image published by
+vergil-containers, then a registry change and a vergil-tooling release. No
+workflow changes.</p>
 <h3 id="matrix-resolution-and-the-22-default">Matrix resolution and the 2×2 default<a class="headerlink" href="#matrix-resolution-and-the-22-default" title="Permanent link">&para;</a></h3>
 <p><code>vrg-package matrix</code> turns the config into explicit JSON lists of build cells
 and test cells. The workflows consume only that JSON.</p>
 <ul>
 <li>Every non-<code>native</code> selected target on an architecture shares <strong>one build
-  cell</strong> (<code>shared-amd64</code>, <code>shared-arm64</code>). It builds in <code>ubuntu:24.04</code> and
-  emits every format its targets need.</li>
+  cell</strong> (<code>shared-amd64</code>, <code>shared-arm64</code>). It builds in
+  <code>ghcr.io/vergil-project/prod-pkg-ubuntu:24.04</code> and emits every format its
+  targets need.</li>
 <li>Each <code>native</code> target gets its own build cell (<code>native-&lt;distro&gt;-&lt;version&gt;-&lt;arch&gt;</code>)
   inside a container of that OS.</li>
 <li>A <code>noarch</code> package has exactly one build cell, <code>shared-noarch</code>, on amd64.</li>
