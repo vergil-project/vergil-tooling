@@ -444,6 +444,37 @@ def test_read_config_ci_no_integration_tests(tmp_path: Path) -> None:
     assert cfg.ci.integration_tests is False
 
 
+def test_read_config_ci_images_defaults_false(tmp_path: Path) -> None:
+    # A repo that never runs ci-images.yml need not say so.
+    toml = _BASE_TOML + '[ci]\nversions = ["3.14"]\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    assert read_config(tmp_path).ci.images is False
+
+
+def test_read_config_ci_images_true(tmp_path: Path) -> None:
+    toml = _BASE_TOML + "[ci]\nimages = true\n"
+    (tmp_path / "vergil.toml").write_text(toml)
+    assert read_config(tmp_path).ci.images is True
+
+
+def test_read_config_ci_images_is_a_known_key(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    toml = _BASE_TOML + "[ci]\nimages = false\n"
+    (tmp_path / "vergil.toml").write_text(toml)
+    assert read_config(tmp_path).ci.images is False
+    assert "unrecognized key 'images'" not in capsys.readouterr().err
+
+
+def test_read_config_ci_images_non_boolean_raises(tmp_path: Path) -> None:
+    # A non-boolean [ci].images is rejected, not coerced: "false" would
+    # otherwise read as true and require a gate the repo never runs.
+    toml = _BASE_TOML + '[ci]\nimages = "false"\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=r"\[ci\]\.images must be a boolean"):
+        read_config(tmp_path)
+
+
 def test_read_config_ci_versions_optional(tmp_path: Path) -> None:
     # No [ci].versions: the repo follows the published version window.
     toml = _BASE_TOML + "[ci]\nintegration-tests = true\n"
