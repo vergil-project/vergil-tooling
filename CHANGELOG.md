@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.297] - 2026-11-10
+
+### Features
+
+- run package jobs in the managed toolchain images (#4152)
+
 ## [2.1.296] - 2026-11-10
 
 ### Bug fixes

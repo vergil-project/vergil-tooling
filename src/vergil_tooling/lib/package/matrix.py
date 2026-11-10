@@ -36,7 +36,8 @@ if TYPE_CHECKING:
     from vergil_tooling.lib.config import PackageConfig
 
 RUNNERS = {"amd64": "ubuntu-24.04", "arm64": "ubuntu-24.04-arm"}
-SHARED_IMAGE = "ubuntu:24.04"
+# Derived from the registry, so the shared build runs in its toolchain image too.
+SHARED_IMAGE = tg.REGISTRY["ubuntu/24.04/amd64"].image
 NOARCH_CELL_ID = "shared-noarch"
 # Joins a package name to a cell id when a repo has several packages.
 QUALIFIER = "--"
