@@ -1146,6 +1146,24 @@ class TestRenderMkdocsYml:
         assert 'site_name: "vergil-vm"' in content
         assert "material" in content
 
+    def test_snippets_are_confined_to_the_docs_dir(self) -> None:
+        content = render_mkdocs_yml(RepoInitContext(org="vergil-project", name="vergil-vm"))
+        assert _SNIPPETS_CONFIG in content
+        assert "  - pymdownx.snippets\n" not in content
+
+    def test_own_docs_site_confines_snippets_the_same_way(self) -> None:
+        own = Path(__file__).resolve().parents[2] / "docs" / "site" / "mkdocs.yml"
+        assert _SNIPPETS_CONFIG in own.read_text()
+
+
+_SNIPPETS_CONFIG = (
+    "  - pymdownx.snippets:\n"
+    "      base_path: !relative $docs_dir\n"
+    "      restrict_base_path: true\n"
+    "      check_paths: true\n"
+    "      url_download: false\n"
+)
+
 
 class TestStepCreateRepo:
     def test_creates_new_repo(self) -> None:
