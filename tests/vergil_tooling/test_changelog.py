@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess as _sp
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -383,6 +384,42 @@ def test_pr_merged_while_release_in_flight_ships_in_the_next_release(repo: Path)
     assert "next release fix" in new_section
     assert "## [1.0.0]" + published == changelog_1_0[changelog_1_0.index("## [1.0.0]") :]
     assert changelog_1_1.count("# Changelog") == 1
+
+
+# A line pymdownx.snippets would read as an inline or block snippet marker:
+# optional indent and escapes, then dashes, `8<` and dashes, at the line start.
+_SNIPPET_MARKER = re.compile(r"^[ \t]*;*-+8<-+", re.MULTILINE)
+
+
+def test_pasted_subjects_and_bodies_carry_no_line_start_snippet_marker(repo: Path) -> None:
+    _commit(repo, "feat: initial feature")
+    _git(repo, "branch", "main")
+    body = "\n".join(
+        (
+            '--8<-- "docs/other.md"',
+            "  -8<- 'docs/other.md'",
+            ';--8<-- "docs/other.md"',
+            '\t---8<--- "docs/other.md"',
+            "--8<--",
+            "docs/other.md",
+            "--8<--",
+            'inline text --8<-- "docs/other.md" stays as written',
+        )
+    )
+    _commit(repo, f"fix: render pasted text\n\n{body}")
+    _commit(repo, 'fix: --8<-- "docs/other.md"')
+    _cut_release(repo, "1.0.0")
+
+    changelog, notes = _prepare(repo, "1.0.0")
+
+    for text in (changelog, notes):
+        assert _SNIPPET_MARKER.findall(text) == []
+    # The text stays readable: the leading dash becomes its HTML entity.
+    assert '&#45;-8<-- "docs/other.md"' in notes
+    assert "  &#45;8<- 'docs/other.md'" in notes
+    assert '\t&#45;--8<--- "docs/other.md"' in notes
+    assert 'inline text --8<-- "docs/other.md" stays as written' in notes
+    assert '- &#45;-8<-- "docs/other.md"' in changelog
 
 
 def test_regenerating_the_changelog_is_idempotent(repo: Path) -> None:
