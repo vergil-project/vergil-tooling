@@ -25,8 +25,8 @@ be understood is left unchanged and listed **prominently** in a follow-up
 report — never silently skipped (this repo's "no silent failures" policy).
 
 Each repo's tracking issue links under that repo's **own** org ad-hoc epic
-(``epic=None``), like ``vrg-fleet-sync`` and ``vrg-xdist-sync``: the fleet spans
-several orgs and ``vrg-issue-create`` refuses a cross-org epic link (#3015).
+(``epic=None``), like ``vrg-fleet-sync``: the fleet spans several orgs and
+``vrg-issue-create`` refuses a cross-org epic link (#3015).
 """
 
 from __future__ import annotations

@@ -2,14 +2,13 @@
 """Phase-0 fleet survey: test-layout, dev-dep shape, and Python floor.
 
 Epic vergil-project/.github#333, Task 3. This driver imports the two ``lib``
-classifiers — the import-graph leaves that library code (Tasks 9 and 10)
-consumes — and adds a survey-only ``python_floor`` probe, then renders three
-markdown tables over the Python repos found among the sibling clones.
+classifiers (import-graph leaves) and adds a survey-only ``python_floor`` probe,
+then renders three markdown tables over the Python repos found among the sibling
+clones.
 
-The classifiers live in ``lib/`` (not here) precisely so ``languages.py`` and
-``lib/xdist_applicator.py`` can consume them without ``lib`` importing from
-``scripts/``. This script is the *consumer* side: a plain driver, not gated
-library code.
+The classifiers live in ``lib/`` (not here) so library code can consume them
+without ``lib`` importing from ``scripts/``. This script is the *consumer* side:
+a plain driver, not gated library code.
 
 Usage::
 
