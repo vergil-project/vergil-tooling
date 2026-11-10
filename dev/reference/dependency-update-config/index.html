@@ -13669,6 +13669,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#which-mechanism-do-i-use" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Which mechanism do I use?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#updaters" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17205,6 +17216,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#which-mechanism-do-i-use" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Which mechanism do I use?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#updaters" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17332,6 +17354,39 @@ per-repo hook a repo configures with <code>[dependency-update]</code> in
 <p>The design is epic
 <a href="https://github.com/vergil-project/.github/issues/381">vergil-project/.github#381</a>
 (spec <code>epics/381-release-dep-updates/spec.md</code>).</p>
+<h2 id="which-mechanism-do-i-use">Which mechanism do I use?<a class="headerlink" href="#which-mechanism-do-i-use" title="Permanent link">&para;</a></h2>
+<p>A dependency update and an <a href="../upstream-refresh-config/">upstream refresh</a>
+are separate pipelines. Ask one question of the input: does the repo's
+code depend on it, or does the repo deliver it?</p>
+<ul>
+<li><strong>The code depends on it: a dependency update.</strong> Libraries, lockfiles
+  and the vergil line are what the repo is built on. They move after
+  each release, at the start of the next development cycle, so a whole
+  cycle runs against them before the next release ships them.</li>
+<li><strong>The repo delivers it: an upstream refresh.</strong> Upstream content that
+  the repo packages and publishes, such as vergil-python's CPython and
+  python-build-standalone builds or vergil-containers' tool binaries and
+  toolchains, is refreshed before a release, and the release publishes
+  it. Its current users are listed on the
+  <a href="../upstream-refresh-config/#which-mechanism-do-i-use">upstream refresh page</a>.</li>
+</ul>
+<p>The current users of a dependency update, each from the <code>update-deps</code>
+stage of its <code>vrg-release</code>:</p>
+<ul>
+<li><strong>Every repo released with <code>vrg-release</code></strong> keeps its
+  <code>uses: vergil-*/…@vX.Y</code> refs in step with <code>[dependencies].vergil</code>
+  through the <code>vergil</code> updater.</li>
+<li><strong>vergil-tooling</strong> refreshes its <code>uv.lock</code> through the <code>python</code>
+  updater.</li>
+<li><strong>vergil-vm</strong> runs a hook (<code>scripts/dev/update-deps.sh</code>) that upgrades
+  its OpenTofu providers within their ranges and bumps the nerdctl
+  version within its major.</li>
+</ul>
+<p>A dependency update merges its own PR once it is green, but only from a
+<code>vrg-release</code> or <code>vrg-update-deps</code> that a human runs; a human merges
+every upstream refresh PR. How the merge policy is expected to change
+for these automation PRs is tracked in
+<a href="https://github.com/vergil-project/.github/issues/470">vergil-project/.github#470</a>.</p>
 <h2 id="updaters">Updaters<a class="headerlink" href="#updaters" title="Permanent link">&para;</a></h2>
 <p>The updaters run in this order. Each one runs only when the repo has
 what it updates, and each one's changes become a separate commit on the
