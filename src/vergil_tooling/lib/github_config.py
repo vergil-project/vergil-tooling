@@ -350,6 +350,11 @@ def desired_ci_gates_ruleset(
     aggregate is then required; any other repo never reports it, so requiring it
     there would block every merge for the same reason (epic
     vergil-project/.github#356, spec section 8.1).
+
+    ``ci.images`` (``[ci].images``) follows the same rule for
+    ``images / evidence``: only a repo whose ``ci.yml`` calls its repo-local
+    ``ci-images.yml`` as job ``images`` (vergil-containers' PR image builds)
+    reports it (vergil-project/vergil-tooling#4132).
     """
     checks: list[dict[str, object]] = []
     lang = project.primary_language
@@ -410,6 +415,11 @@ def desired_ci_gates_ruleset(
     # target matrix, required exactly when the repo declares ``[package]``.
     if package:
         checks.append(_make_check("package / evidence"))
+
+    # PR image builds: the one aggregating gate of the repo-local ci-images.yml,
+    # required exactly when the repo declares ``[ci].images``.
+    if ci.images:
+        checks.append(_make_check("images / evidence"))
 
     # Integration tests per resolved version (when enabled). The caller resolves
     # the versions (lib.versions), since [ci].versions may be absent.
@@ -524,6 +534,11 @@ def _reusable_pr_contexts(
         return ({f"{j} / docs"}, set())
     if reusable_file == "ci-package.yml":
         return ({f"{j} / evidence"}, set())
+    # Not a vergil-actions workflow: vergil-containers' repo-local PR image
+    # build (called as ``./.github/workflows/ci-images.yml``), whose single
+    # aggregating gate is its ``evidence`` job (vergil-tooling#4132).
+    if reusable_file == "ci-images.yml":
+        return ({f"{j} / evidence"}, set())
     if reusable_file == "ci-security.yml":
         exact = {f"{j} / trivy", f"{j} / semgrep", f"{j} / codeql"}
         if ghas:
@@ -630,6 +645,7 @@ _PRODUCIBLE_GATE_CATALOG: frozenset[str] = frozenset(
         "audit / evidence",
         "test / evidence",
         "package / evidence",
+        "images / evidence",
         "security / trivy",
         "security / semgrep",
         "security / codeql",
@@ -669,7 +685,7 @@ def unproducible_required_contexts(required: set[str], produced: set[str]) -> se
 class EvidenceGate:
     """An evidence-producing gate and the required checks classified under it."""
 
-    name: str  # "security" | "test" | "audit" | "quality" | "package"
+    name: str  # "security" | "test" | "audit" | "quality" | "package" | "images"
     checks: tuple[str, ...]  # required check names classified under this gate
 
 
@@ -690,18 +706,28 @@ _EVIDENCE_GATE_PREFIXES: tuple[tuple[str, str | None], ...] = (
     ("audit /", "audit"),
     ("quality /", "quality"),
     ("package /", "package"),
+    # Evidence-producing like every gate that can block a merge: a release of a
+    # ``[ci].images`` repo harvests ``ci-evidence-images`` (vergil-tooling#4132).
+    ("images /", "images"),
     ("version /", None),
 )
 
 # Canonical output order for grouped evidence gates (deterministic tuple order).
-_EVIDENCE_GATE_ORDER: tuple[str, ...] = ("security", "test", "audit", "quality", "package")
+_EVIDENCE_GATE_ORDER: tuple[str, ...] = (
+    "security",
+    "test",
+    "audit",
+    "quality",
+    "package",
+    "images",
+)
 
 
 def classify_evidence_gate(check_name: str) -> str | None:
     """Map a required status-check name to its evidence gate.
 
     Returns the gate name (``security``/``test``/``audit``/``quality``/
-    ``package``) or
+    ``package``/``images``) or
     ``None`` when the check is non-evidence-producing (e.g. ``version /
     version-bump``, or any name matching no known prefix/literal).
     """
