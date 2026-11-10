@@ -15,6 +15,13 @@ they leave behind are described in the
 Releasing is a human maintainer action. `vrg-release` refuses to run
 under an agent identity.
 
+`vrg-release` only releases a repo that declares itself released with
+`[publish] release = true` in `vergil.toml`. When the key is `false` or
+absent it refuses up front, before the resume lookup or any stage, and
+changes nothing. `vrg-finalize-pr` and `vrg-submit-pr` refuse
+`--release` and `--install` on such a repo the same way, before any
+push, PR or merge.
+
 ## Usage
 
 ```bash

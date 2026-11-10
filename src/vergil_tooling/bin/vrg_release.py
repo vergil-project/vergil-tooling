@@ -7,6 +7,7 @@ import sys
 
 from vergil_tooling.lib import git, github, identity_mode, progress
 from vergil_tooling.lib.cli import cli_main
+from vergil_tooling.lib.release import gate
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.handoff import run_consumer_refresh
 from vergil_tooling.lib.release.orchestrator import ReleaseState, build_stages
@@ -30,6 +31,14 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     repo_root = git.repo_root()
+
+    # Follow the repo's declared identity (issue #4175): a repo that does not
+    # set [publish].release = true is refused before the resume lookup or any
+    # stage, so nothing is branched, opened or merged.
+    refusal = gate.unreleased_refusal(repo_root)
+    if refusal is not None:
+        print(f"vrg-release: {refusal}", file=sys.stderr)
+        return 1
 
     resume_requested = args.resume is not None
     if resume_requested and args.version_override is not None:

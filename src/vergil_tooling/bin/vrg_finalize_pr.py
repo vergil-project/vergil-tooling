@@ -73,6 +73,7 @@ from vergil_tooling.lib.live_branches import RepoSetError, default_repo_roots, d
 from vergil_tooling.lib.pr_workflow import batch, github_transport
 from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.progress import Stage
+from vergil_tooling.lib.release import gate
 from vergil_tooling.lib.repo_init import prompt_choice
 from vergil_tooling.lib.versions import VersionsError
 
@@ -128,6 +129,15 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     root = git.repo_root()
+
+    # A release cascade on a repo that is not released is refused before any
+    # merge or cleanup, so nothing changes (issue #4175).
+    if args.release:
+        refusal = gate.unreleased_refusal(root)
+        if refusal is not None:
+            flag = "--install" if args.install else "--release"
+            print(f"vrg-finalize-pr {flag}: {refusal}", file=sys.stderr)
+            return 1
 
     # Batch mode (issue #1673): an explicit comma-list or --all finalizes
     # several PRs serially. A single PR (or none) falls through to the
