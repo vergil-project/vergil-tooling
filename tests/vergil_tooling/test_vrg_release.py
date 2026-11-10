@@ -4,17 +4,82 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
+import pytest
+
 from vergil_tooling.bin.vrg_release import main, parse_args
 from vergil_tooling.lib.release.context import ReleaseContext
+from vergil_tooling.lib.release.gate import unreleased_refusal as _real_unreleased_refusal
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    import pytest
+    from collections.abc import Callable, Iterator
 
     from vergil_tooling.lib.release.orchestrator import ReleaseState
 
 _MOD = "vergil_tooling.bin.vrg_release"
+
+
+@pytest.fixture(autouse=True)
+def _released_repo() -> Iterator[None]:
+    """Default every test to a repo that declares [publish].release = true.
+
+    The refusal tests override it — the innermost patch wins.
+    """
+    with patch(_MOD + ".gate.unreleased_refusal", return_value=None):
+        yield
+
+
+_UNRELEASED_TOML = """\
+[project]
+repository-type = "library"
+versioning-scheme = "semver"
+branching-model = "library-release"
+release-model = "tagged-release"
+primary-language = "python"
+
+[dependencies]
+vergil = "v2.0"
+
+[ci]
+versions = ["3.14"]
+
+[publish]
+release = false
+"""
+
+
+@pytest.mark.parametrize("argv", [[], ["--install"], ["--resume"], ["minor"]])
+def test_main_refuses_repo_not_released(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], argv: list[str]
+) -> None:
+    """[publish].release = false: refuse before the resume lookup or any stage
+    (issue #4175)."""
+    (tmp_path / "vergil.toml").write_text(_UNRELEASED_TOML)
+    with (
+        patch(_MOD + ".gate.unreleased_refusal", side_effect=_real_unreleased_refusal),
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".find_resume_target") as m_resume,
+        patch(_MOD + ".progress.run_pipeline") as m_pipeline,
+        patch(_MOD + ".run_consumer_refresh") as m_refresh,
+    ):
+        assert main(argv) == 1
+    m_resume.assert_not_called()
+    m_pipeline.assert_not_called()
+    m_refresh.assert_not_called()
+    err = capsys.readouterr().err
+    assert "vrg-release: this repo is not released ([publish].release" in err
+
+
+def test_main_released_repo_runs_pipeline(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(
+        _UNRELEASED_TOML.replace("release = false", "release = true")
+    )
+    with (
+        patch(_MOD + ".gate.unreleased_refusal", side_effect=_real_unreleased_refusal),
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".progress.run_pipeline", return_value=0) as m_pipeline,
+    ):
+        assert main(["--output-format", "plain"]) == 0
+    m_pipeline.assert_called_once()
 
 
 def test_parse_args_default() -> None:

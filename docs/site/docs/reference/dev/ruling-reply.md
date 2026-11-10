@@ -33,9 +33,8 @@ the agent's draft. `--response-text` posts the human's own text instead.
 
 In order, it:
 
-1. refuses in an agent identity mode, before parsing arguments (with `-h` or
-   `--help` it prints a short note saying the command is human-only, and
-   exits 0);
+1. refuses in an agent identity mode, after parsing arguments (so `-h` or
+   `--help` prints the full usage to any identity, and exits 0);
 2. refuses unless stdin and stdout are both interactive terminals;
 3. refuses unless the trusted-authors configuration lists exactly one human
    login and the login its credentials post as (`gh api user`) is that login;

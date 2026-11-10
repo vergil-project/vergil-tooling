@@ -896,4 +896,8 @@ merely merged.
 deploy steps (install/sync/restart). Where deploying needs a **release**
 (bump/tag/publish), that release is a **human-gated precondition** — attested,
 never performed by the agent — the same policy that keeps PR submission and merge
-in human hands.
+in human hands. A deploy step that needs a **human identity** (for example
+`vrg-github-repo-config apply`, which needs `administration=read`) goes under the
+scaffold's **Human-run steps** section, not the agent-safe deploy steps: the agent
+checks its preconditions, gives the human the paste-ready command, then verifies
+the result with a check it can run (for repo config, `vrg-github-repo-config diff`).

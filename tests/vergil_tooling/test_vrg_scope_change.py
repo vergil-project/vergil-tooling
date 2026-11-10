@@ -197,9 +197,13 @@ def test_refuses_in_agent_mode(
     assert cli.prompts == []
 
 
-def test_agent_help_redirects_before_parsing(cli: Cli, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_agent_help_shows_full_usage(cli: Cli, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The identity gate runs after parsing, so an agent reads the usage (issue #4178)."""
     monkeypatch.setattr(identity_mode, "current_mode", lambda: IdentityMode.USER)
+    monkeypatch.setenv("COLUMNS", "500")
     assert cli("--help") == 0
+    assert "usage:" in cli.stdout
+    assert "--text" in cli.stdout
     assert "human-only command" in cli.stdout
     assert "vrg-ruling draft-scope" in cli.stdout
 

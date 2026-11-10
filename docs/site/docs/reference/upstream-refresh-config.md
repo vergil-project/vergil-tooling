@@ -27,6 +27,41 @@ are separate pipelines with separate hooks:
 Neither command runs the other's hook. `vrg-upstream-refresh` never runs
 dependency updaters, validation or a release.
 
+## Which mechanism do I use?
+
+Ask one question of the input: does the repo's code depend on it, or
+does the repo deliver it?
+
+- **The code depends on it: a dependency update.** Libraries, lockfiles
+  and the vergil line are what the repo is built on. They move after
+  each release, at the start of the next development cycle, so a whole
+  cycle runs against them before the next release ships them.
+- **The repo delivers it: an upstream refresh.** Upstream content that
+  the repo packages and publishes is refreshed before a release, and the
+  release publishes it.
+
+The current users of an upstream refresh, each from a scheduled
+`upstream-refresh` job in its `ops.yml`:
+
+- **vergil-python** refreshes each series listed in `runtime.toml` to
+  its newest CPython patch and python-build-standalone build
+  (`scripts/dev/upstream-refresh.sh`).
+- **vergil-containers** moves its binary-download tools to their newest
+  releases and its language toolchain pins (`docker/pins/toolchains.yml`:
+  Python builds from python-build-standalone, Go, Node, Rust and
+  rustup-init) to the newest patch of each series
+  (`docker/pins/upstream-refresh.sh`).
+
+The current users of a dependency update are listed on the
+[dependency update page](dependency-update-config.md#which-mechanism-do-i-use).
+
+Neither PR merges unattended today. A human merges every upstream
+refresh PR, and a dependency update merges its own PR once it is green,
+but only from a `vrg-release` or `vrg-update-deps` that a human runs.
+How the merge policy is expected to change for these automation PRs is
+tracked in
+[vergil-project/.github#470](https://github.com/vergil-project/.github/issues/470).
+
 ## `[upstream-refresh]`
 
 ```toml

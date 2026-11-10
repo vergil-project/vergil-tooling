@@ -53,7 +53,6 @@ def test_load_manifest_parses_curated_entries() -> None:
         "lima": ("brew-formula", "auto", "probe"),
         "docker-desktop": ("brew-cask", "manual", "probe"),
         "opentofu": ("brew-formula", "auto", "probe"),
-        "git-cliff": ("brew-formula", "auto", "probe"),
         "vergil-tooling": ("uv-tool", "auto", "unmanaged"),
         "claude-code": ("brew-cask", "auto", "probe"),
         "macos": ("custom", "manual", "probe"),
@@ -65,12 +64,23 @@ def test_load_manifest_parses_curated_entries() -> None:
 
 @pytest.mark.parametrize(
     "excluded",
-    ["shellcheck", "hadolint", "yamllint", "actionlint", "markdownlint", "az", "jq", "xcode"],
+    [
+        "shellcheck",
+        "hadolint",
+        "yamllint",
+        "actionlint",
+        "markdownlint",
+        "git-cliff",
+        "az",
+        "jq",
+        "xcode",
+    ],
 )
 def test_container_only_and_optional_tools_are_out_of_scope(excluded: str) -> None:
-    # Spec §4: linters run only inside the dev container; az is an optional
-    # provider; jq ships with macOS; full Xcode is not needed beyond the
-    # Command Line Tools (#3300). None earns a host manifest entry.
+    # Spec §4: linters (and, since #4169, git-cliff) run only inside the dev
+    # container; az is an optional provider; jq ships with macOS; full Xcode
+    # is not needed beyond the Command Line Tools (#3300). None earns a host
+    # manifest entry.
     assert excluded not in {d.name for d in host_deps.load_manifest()}
 
 

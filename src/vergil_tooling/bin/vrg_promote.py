@@ -1,7 +1,8 @@
 """CLI entry point for vrg-promote.
 
 Moves the rolling ``vX.Y`` tag to an existing release ``vX.Y.Z``. It is a
-human maintainer action: an agent identity is refused before any output (a
+human maintainer action: an agent identity is refused once the arguments are
+parsed, before any other output (``--help`` still prints the usage; a
 guard against an agent running it by mistake; the GitHub rolling-tag ruleset
 is what enforces who can move the tag). The
 command prints the origin repo and the tag move, and asks for confirmation on
@@ -28,14 +29,6 @@ if TYPE_CHECKING:
 
 @cli_main
 def main() -> int:
-    if identity_mode.is_agent() or identity_mode.any_agent_signal():
-        print(
-            "vrg-promote: moving a rolling tag is a human maintainer action. "
-            "Agents cannot run vrg-promote.",
-            file=sys.stderr,
-        )
-        return 1
-
     parser = argparse.ArgumentParser(
         prog="vrg-promote",
         description=(
@@ -61,6 +54,16 @@ def main() -> int:
         help="Move the tag without asking for confirmation, so no terminal is needed.",
     )
     args = parser.parse_args()
+
+    # The identity gate runs after parsing, so --help prints the full usage to
+    # any identity (issue #4178).
+    if identity_mode.is_agent() or identity_mode.any_agent_signal():
+        print(
+            "vrg-promote: moving a rolling tag is a human maintainer action. "
+            "Agents cannot run vrg-promote.",
+            file=sys.stderr,
+        )
+        return 1
 
     version = args.version
     if version is None:
