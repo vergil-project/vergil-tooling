@@ -1384,6 +1384,8 @@
       
         
       
+        
+      
     
     
     
@@ -1436,6 +1438,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.295/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.295
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18003,8 +18033,12 @@ from the wrong checkout would move the wrong repo's tag.</p>
    the push.</p>
 <p>Both <code>vrg-promote</code> runs check the target against origin's current state
 (each one fetches <code>main</code> and the tags first). The target must be an existing
-<code>vX.Y.Z</code> tag on origin whose commit is on origin's <code>main</code> and that has a
-published GitHub Release. <code>vrg-promote</code> refuses, with exit 1:</p>
+<code>vX.Y.Z</code> tag on origin whose commit is on origin's <code>main</code>, or is that
+release's freeze commit, and that has a published GitHub Release. A freeze
+commit is the commit vergil-actions' CD tags: one commit on top of <code>main</code>,
+with the subject <code>chore(release): freeze internal refs to vX.Y.Z</code>, that
+changes nothing but what <code>vrg-freeze-refs</code> rewrites for that tag.
+<code>vrg-promote</code> refuses, with exit 1:</p>
 <ul>
 <li>any other target;</li>
 <li>an agent identity;</li>
