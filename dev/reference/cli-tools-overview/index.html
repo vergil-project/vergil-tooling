@@ -19542,7 +19542,8 @@ and the <a href="../../guides/releasing/">Releasing guide</a>.</p>
 <h3 id="vrg-promote">vrg-promote<a class="headerlink" href="#vrg-promote" title="Permanent link">&para;</a></h3>
 <p>Move the rolling <code>vX.Y</code> tag to release <code>vX.Y.Z</code>. It is human-only: it
 refuses any agent identity, failing closed on any agent signal
-(<code>is_agent() or any_agent_signal()</code>), before any output or git call.
+(<code>is_agent() or any_agent_signal()</code>), once its arguments are parsed and
+before any other output or git call, so <code>--help</code> still prints the usage.
 <code>vrg-release</code>'s promote stage uses the same library and the same refusal.
 The refusal stops an agent from running it by mistake; it is not a security
 boundary, because the identity signals come from the caller's environment.

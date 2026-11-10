@@ -15094,6 +15094,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="The rule">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#help-is-for-every-identity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Help is for every identity
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -17189,6 +17206,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="The rule">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#help-is-for-every-identity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Help is for every identity
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -17245,11 +17279,22 @@ rather than a person at a prompt — are exempt (see below).</p>
 Tools that take no flags still get a parser so their <code>--help</code> describes them.
 Wrappers that forward to another CLI intercept <code>--help</code> themselves to explain
 their wrapper-specific behavior before forwarding.</p>
+<h3 id="help-is-for-every-identity">Help is for every identity<a class="headerlink" href="#help-is-for-every-identity" title="Permanent link">&para;</a></h3>
+<p><code>--help</code> prints the same full help to anyone, whatever the identity or
+authentication. Identity, permission and authentication checks are runtime
+checks: they run after argument parsing has handled <code>-h</code> / <code>--help</code>, and only
+when the command is about to act. A human-only command says so in its help
+(and names the agent's handoff, where it has one) rather than hiding its
+options from agents: an agent that cannot read a command's help guesses its
+command line, and a guessed command line handed to the human is worse than a
+correct one.</p>
 <h2 id="enforcement">Enforcement<a class="headerlink" href="#enforcement" title="Permanent link">&para;</a></h2>
 <p><code>tests/vergil_tooling/test_help_coverage.py</code> is the gate. It enumerates every
 console script from <code>[project.scripts]</code>, runs each covered tool with <code>--help</code>
-in a subprocess, and asserts exit <code>0</code> with non-empty output. <code>--help</code>
-short-circuits before a tool's real work, so the check is hermetic.</p>
+in a subprocess, and asserts exit <code>0</code> with non-empty output. It also runs each
+covered tool with <code>--help</code> and <code>-h</code> under an agent identity and asserts exit
+<code>0</code> with a usage line. <code>--help</code> short-circuits before a tool's real work, so
+the check is hermetic.</p>
 <p>Two lists steer the gate:</p>
 <ul>
 <li><strong><code>EXEMPT</code></strong> — non-human entry points with no <code>--help</code> contract (currently
