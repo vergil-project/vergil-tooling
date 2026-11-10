@@ -470,11 +470,9 @@ packages. A dispatch failure is deferred: it does not fail the release.
 A package's identity is its name, full version (`<version>-<revision>`),
 architecture and format. Builds are not byte-reproducible, so a release
 that rebuilds an identity an earlier release already published ships
-different bytes under the same identity. The package index refuses that
-(the same identity must be byte-identical), and since the index is built
-from every release of every repo, the refusal fails every repo's index
-publish. The index refusal stays as the last line of defence, but two
-earlier checks stop such a release before it publishes:
+different bytes under the same identity, a conflict apt and dnf cannot
+resolve. The package index does not check for it, so two checks stop such
+a release before it publishes:
 
 1. **`vrg-release` preflight**, on a fresh start, before anything is
    tagged. This is the earliest point that knows the full versions: the
@@ -495,7 +493,7 @@ earlier checks stop such a release before it publishes:
 
 Both compare the identities the release would publish against those
 attached to every earlier stable release that carries a
-`packages-manifest.json`, which are the releases the index collects. The
+`packages-manifest.json`, the releases the index can select. The
 published identities are read from the attached file names, which nFPM
 derives from the same metadata the index reads. The release's own tag is
 never counted as an earlier release. Any failure to read the releases

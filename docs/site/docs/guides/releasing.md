@@ -563,9 +563,9 @@ release when a package it would publish has the same name, full
 version, architecture and format as a package an earlier stable
 release of the repo already published. Package builds are not
 byte-reproducible, so the rebuilt file would differ from the published
-one. The shared package index refuses that, and because the index is
-built from every release of every repo, the refusal would fail every
-repo's index publish until the duplicate assets were removed by hand.
+one: two packages with one identity but different bytes, a conflict apt
+and dnf cannot resolve. The shared package index does not check for it,
+so this check and `vrg-package check-unpublished` are what stop it.
 
 The check runs in `preflight`, before anything is branched, tagged or
 published. That is the earliest point that knows the full package
