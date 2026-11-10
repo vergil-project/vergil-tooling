@@ -695,7 +695,7 @@ Which routes an item allows depends on the container epic it is in:
 | Item is in | Allowed routes |
 |---|---|
 | intake | `drop`, `defer`, `one-off`, `planning`, `split` |
-| planning | `defer`, `drop` — both refused once an `Epic:` marker is recorded |
+| planning | `defer`, `drop` — both refused while any development epic of the item is open |
 | ad hoc | `defer` — refused while an open PR would close the item |
 | deferred | `defer` (refresh), `intake`, `planning`, `one-off`, `drop`, `split` |
 | no parent | `planning` (the `epic-create` free-text path) |

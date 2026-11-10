@@ -362,12 +362,50 @@ def _epic_hit(number: int, state: str, body: str = "Planning: org/.github#352") 
     }
 
 
-def test_route_planning_with_epic_marker_refuses_drop(env: Env) -> None:
+def test_route_drop_planning_refuses_open_marker_epic(env: Env) -> None:
     _planning_item(env)
     env.comments = ["Epic: org/.github#600\nDocs task: org/.github#601"]
-    with pytest.raises(RouteRefusedError, match=r"has a development epic \(org/\.github#600\)"):
+    with pytest.raises(
+        RouteRefusedError,
+        match=r"has an open development epic \(org/\.github#600\); dropping it would orphan",
+    ):
         route(ITEM, Drop(reason="no longer needed"), today=TODAY)
     _assert_untouched(env)
+
+
+def test_route_drop_planning_refuses_open_epic_found_by_planning_line(env: Env) -> None:
+    _planning_item(env)
+    env.comments = ["Epic: org/.github#600"]
+    env.api_states = {"repos/org/.github/issues/600": "closed"}
+    env.search_results = [_epic_hit(600, "CLOSED"), _epic_hit(648, "OPEN")]
+    with pytest.raises(
+        RouteRefusedError, match=r"has an open development epic \(org/\.github#648\); dropping"
+    ):
+        route(ITEM, Drop(reason="no longer needed"), today=TODAY)
+    _assert_untouched(env)
+
+
+def test_route_drop_planning_with_all_epics_closed_closes(env: Env) -> None:
+    # #4170: a planning item whose development epic is closed can be dropped.
+    _planning_item(env)
+    env.comments = ["Epic: org/.github#600\nDocs task: org/.github#601"]
+    env.api_states = {"repos/org/.github/issues/600": "closed"}
+    env.search_results = [_epic_hit(600, "CLOSED")]
+    result = route(ITEM, Drop(reason="no longer needed"), today=TODAY)
+    assert result == RouteResult(final=ITEM, moved_by="none")
+    env.reparent_child.assert_not_called()
+    env.ensure_deferred_epic.assert_not_called()
+    env.run.assert_called_once_with(
+        "issue",
+        "close",
+        "352",
+        "--repo",
+        "org/.github",
+        "--reason",
+        "not planned",
+        "--comment",
+        "Dropped in planning review: no longer needed",
+    )
 
 
 def test_route_defer_planning_refuses_open_marker_epic(env: Env) -> None:

@@ -49,10 +49,9 @@ advisories alone.
 
 A task in a development epic, an epic, and an unparented issue are refused
 (``planning`` alone accepts an unparented issue: the ``epic-create`` free-text
-path), the refusal naming the parent. A planning item whose ``epic-create``
-session already recorded an ``Epic:`` marker refuses drop, and refuses defer
+path), the refusal naming the parent. A planning item refuses drop and defer
 while any of its development epics is open (one an ``Epic:`` marker names, or
-one whose body carries a ``Planning:`` line for it; #4001). An
+one whose body carries a ``Planning:`` line for it; #4001, #4170). An
 ad-hoc item refuses defer while an open PR would close it. A private repo's item
 is never routed to a public repo or epic. The whole route runs under the item
 owner's App token (:func:`github.target_org`).
@@ -76,7 +75,6 @@ from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.queue_view import (
     PLANNING_MARKER,
     parse_epic_markers,
-    parse_planning_markers,
 )
 from vergil_tooling.lib.shell_ref import quoted_slug
 
@@ -188,7 +186,7 @@ def _route(ref: IssueRef, action: RouteAction, today: date) -> RouteResult:
     kind = _check_eligible(ref, action, parent)
     if isinstance(action, Drop):
         if kind == epics.PLANNING.key:
-            _guard_planning_epic(ref, _view(ref, "labels,comments"), "dropping")
+            _guard_open_planning_epics(ref, _view(ref, "labels,comments"), "dropping")
         _close(ref, DROP_COMMENT.format(queue=kind, reason=action.reason), reason="not planned")
         return RouteResult(final=ref, moved_by="none")
     if isinstance(action, Defer):
@@ -274,16 +272,6 @@ def _label_names(view: dict[str, Any]) -> set[str]:
     return {str(label.get("name", "")) for label in view.get("labels") or []}
 
 
-def _guard_planning_epic(ref: IssueRef, view: dict[str, Any], doing: str) -> None:
-    """Refuse a planning item whose ``epic-create`` session already made an epic."""
-    comments = [str(c.get("body") or "") for c in view.get("comments") or []]
-    epic = parse_planning_markers(comments).epic
-    if epic is not None:
-        raise RouteRefusedError(
-            f"{ref.slug} has a development epic ({epic.slug}); {doing} it would orphan that epic"
-        )
-
-
 def _planning_epic_states(ref: IssueRef, view: dict[str, Any]) -> dict[IssueRef, str]:
     """Each development epic of the planning item *ref* and its state, OPEN or CLOSED.
 
@@ -332,14 +320,17 @@ def _planning_epic_states(ref: IssueRef, view: dict[str, Any]) -> dict[IssueRef,
     return states
 
 
-def _guard_open_planning_epics(ref: IssueRef, view: dict[str, Any]) -> None:
-    """Refuse deferring a planning item while any of its development epics is open."""
+def _guard_open_planning_epics(ref: IssueRef, view: dict[str, Any], doing: str) -> None:
+    """Refuse *doing* (dropping or deferring) a planning item while an epic of it is open.
+
+    Once every development epic is closed nothing is left to orphan (#4170).
+    """
     open_epics = [
         epic.slug for epic, state in _planning_epic_states(ref, view).items() if state == "OPEN"
     ]
     if open_epics:
         raise RouteRefusedError(
-            f"{ref.slug} has an open development epic ({', '.join(open_epics)}); deferring "
+            f"{ref.slug} has an open development epic ({', '.join(open_epics)}); {doing} "
             "it would orphan that epic. Close every development epic first"
         )
 
@@ -369,7 +360,7 @@ def _defer(ref: IssueRef, action: Defer, kind: str | None, parent: IssueRef, day
         return
     view = _view(ref, "labels,comments")
     if kind == epics.PLANNING.key:
-        _guard_open_planning_epics(ref, view)
+        _guard_open_planning_epics(ref, view, "deferring")
     if kind == epics.ADHOC.key:
         _guard_open_closing_pr(ref)
     deferred = epics.ensure_deferred_epic(_repo_of(ref))
