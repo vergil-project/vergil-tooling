@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.296] - 2026-11-10
+
+### Bug fixes
+
+- raise the package-index timeout to one hour (#4148)
+
+### Features
+
+- manage images / evidence as a required CI gate behind [ci].images (#4147)
+
 ## [2.1.295] - 2026-11-10
 
 ### Bug fixes
