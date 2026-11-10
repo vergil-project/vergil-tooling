@@ -56,8 +56,8 @@ APT_FAIL_FAST: tuple[str, ...] = (
 """Options on every apt invocation here and in :mod:`vergil_tooling.lib.vm_packages`.
 
 The single definition of the fail-fast apt options, mirroring the
-``80-vergil-fast-fail`` apt.conf that vergil-actions'
-``actions/package/setup/os-prereqs.sh`` writes for CI:
+``80-vergil-fast-fail`` apt.conf that vergil-containers bakes into the
+``pkg-ubuntu`` package toolchain image CI's package jobs run in:
 
 * ``Acquire::Retries=3`` with 20 s http/https timeouts: a dead mirror
   connection fails or retries in seconds rather than hanging.
