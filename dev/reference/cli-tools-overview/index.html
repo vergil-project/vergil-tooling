@@ -14029,17 +14029,6 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#vrg-xdist-sync" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        vrg-xdist-sync
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#vrg-container-run" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18659,17 +18648,6 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#vrg-xdist-sync" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        vrg-xdist-sync
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#vrg-container-run" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -21797,46 +21775,6 @@ report.</p>
 <tr>
 <td>Preconditions</td>
 <td>Local clones of the target repos; GitHub App credentials</td>
-</tr>
-<tr>
-<td>Failure mode</td>
-<td>Per-repo errors are reported in the summary</td>
-</tr>
-<tr>
-<td>Exit codes</td>
-<td>0 success, 1 any repo errored</td>
-</tr>
-<tr>
-<td>Status</td>
-<td>Active</td>
-</tr>
-</tbody>
-</table>
-<h3 id="vrg-xdist-sync">vrg-xdist-sync<a class="headerlink" href="#vrg-xdist-sync" title="Permanent link">&para;</a></h3>
-<p>Fleet sweep that adds <code>pytest-xdist</code> to each Python repo's dev dependencies,
-opening one PR per repo that needs it. It stops at <code>report-ready</code> and never
-submits or merges. A repo it cannot safely change is reported and gets a
-follow-up issue; a non-Python repo is skipped. <code>--dry-run</code> reports each
-repo's verdict without opening anything.</p>
-<table>
-<thead>
-<tr>
-<th>Attribute</th>
-<th>Value</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Source</td>
-<td><code>vergil_tooling.bin.vrg_xdist_sync</code></td>
-</tr>
-<tr>
-<td>Args</td>
-<td><code>--repos PATH...</code> (required, local clones), <code>--dry-run</code></td>
-</tr>
-<tr>
-<td>Preconditions</td>
-<td>Local clones of the target repos; <code>uv</code> on PATH; GitHub App credentials</td>
 </tr>
 <tr>
 <td>Failure mode</td>
