@@ -1392,6 +1392,8 @@
       
         
       
+        
+      
     
     
     
@@ -1444,6 +1446,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.298/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.298
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18078,8 +18108,11 @@ package, or any release from before multi-package repos) matches as it always
 did. A manifest that names some artifacts but not others is rejected.</p>
 <p>Because a shared cell builds on Ubuntu 24.04 for every target, the python
 builder applies a <strong>glibc floor guard</strong>: any ELF object in the venv that needs
-a <code>GLIBC_x.y</code> symbol newer than the lowest glibc among the cell's targets is a
-hard error. Trip it, and the fix is to mark the affected targets <code>native</code>.</p>
+a <code>GLIBC_x.y</code> symbol version from one of glibc's own libraries (<code>libc.so.6</code>,
+<code>libm.so.6</code>, the dynamic loader and the rest) newer than the lowest glibc among
+the cell's targets is a hard error. A <code>GLIBC_x.y</code> version named by another
+library, such as aarch64's <code>libgcc_s.so.1</code>, does not count. Trip it, and the
+fix is to mark the affected targets <code>native</code>.</p>
 <p>The package revision is <code>1</code> for shared builds, and <code>1~&lt;suite&gt;</code> (deb) or
 <code>1.&lt;suite&gt;</code> (rpm) for <code>native</code> builds.</p>
 <h2 id="builders">Builders<a class="headerlink" href="#builders" title="Permanent link">&para;</a></h2>
