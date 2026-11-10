@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Build the site docs with a strict mkdocs build.
 
-scripts/bin/validate-custom runs this, through `uv run` in the project venv, as
-part of vrg-validate's `custom` stage, so `mkdocs` and mkdocs-material come from
-the dev dependency group.
+scripts/bin/validate-custom runs this, through `uv run --isolated --group
+site-check`, as part of vrg-validate's `custom` stage, so `mkdocs` and
+mkdocs-material come from the non-default site-check dependency group.
 
 It builds the site docs with `mkdocs build --strict`, so a page that is deleted
 or renamed while still linked (or listed in the nav) fails validation locally
@@ -49,8 +49,8 @@ def check_site_docs() -> int:
     mkdocs = shutil.which("mkdocs")
     if mkdocs is None:
         print(
-            "ERROR: mkdocs not found on PATH; it comes from the dev dependency "
-            "group (mkdocs-material), so run this through vrg-validate",
+            "ERROR: mkdocs not found on PATH; it comes from the site-check "
+            "dependency group (mkdocs-material), so run this through vrg-validate",
             file=sys.stderr,
         )
         return 1

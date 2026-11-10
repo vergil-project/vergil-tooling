@@ -77,7 +77,9 @@ Its `custom` stage runs `scripts/bin/validate-custom`, which runs
 `scripts/dev/check-site-docs.py`: it builds the site docs with
 `mkdocs build --strict` on a staged temporary copy of `docs/site`, so
 a broken internal link or nav entry fails validation. mkdocs-material comes
-from the dev dependency group.
+from the non-default `site-check` dependency group, which only that script
+uses (`uv run --isolated --group site-check`), so every other docs build and
+the docs deploy keep the docs image's mkdocs.
 
 ## Identity
 

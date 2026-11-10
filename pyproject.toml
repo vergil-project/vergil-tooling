@@ -89,7 +89,12 @@ vrg-whoami = "vergil_tooling.bin.vrg_whoami:main"
 vrg-worktree-status = "vergil_tooling.bin.vrg_worktree_status:main"
 
 [dependency-groups]
-dev = ["ruff", "mypy", "ty", "pytest", "pytest-cov", "pytest-xdist", "pip-audit", "pip-licenses", "types-pyyaml", "defusedxml", "types-defusedxml", "mkdocs-material"]
+dev = ["ruff", "mypy", "ty", "pytest", "pytest-cov", "pytest-xdist", "pip-audit", "pip-licenses", "types-pyyaml", "defusedxml", "types-defusedxml"]
+# Only scripts/bin/validate-custom uses this group (uv run --isolated --group site-check),
+# so mkdocs never enters the default dev sync and every other docs build and the
+# docs deploy keep the docs image's mkdocs (vergil-tooling#4115). Not named `docs`,
+# which vrg-container-docs syncs.
+site-check = ["mkdocs-material"]
 
 [tool.uv]
 # Security floors for TRANSITIVE dependencies. These are not direct dependencies —
