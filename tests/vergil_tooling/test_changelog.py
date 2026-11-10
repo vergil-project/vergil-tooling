@@ -388,6 +388,8 @@ def test_pr_merged_while_release_in_flight_ships_in_the_next_release(repo: Path)
 
 # A line pymdownx.snippets would read as an inline or block snippet marker:
 # optional indent and escapes, then dashes, `8<` and dashes, at the line start.
+# read_text() turns a lone carriage return into a newline, as Python-Markdown
+# does before any preprocessor runs, so a marker after one is caught too.
 _SNIPPET_MARKER = re.compile(r"^[ \t]*;*-+8<-+", re.MULTILINE)
 
 
@@ -404,10 +406,12 @@ def test_pasted_subjects_and_bodies_carry_no_line_start_snippet_marker(repo: Pat
             "docs/other.md",
             "--8<--",
             'inline text --8<-- "docs/other.md" stays as written',
+            'after a carriage return\r--8<-- "docs/other.md"',
         )
     )
     _commit(repo, f"fix: render pasted text\n\n{body}")
     _commit(repo, 'fix: --8<-- "docs/other.md"')
+    _commit(repo, 'fix: subject\r--8<-- "docs/other.md"')
     _cut_release(repo, "1.0.0")
 
     changelog, notes = _prepare(repo, "1.0.0")
@@ -420,6 +424,9 @@ def test_pasted_subjects_and_bodies_carry_no_line_start_snippet_marker(repo: Pat
     assert '\t&#45;--8<--- "docs/other.md"' in notes
     assert 'inline text --8<-- "docs/other.md" stays as written' in notes
     assert '- &#45;-8<-- "docs/other.md"' in changelog
+    assert 'after a carriage return\n&#45;-8<-- "docs/other.md"' in notes
+    assert '- subject\n&#45;-8<-- "docs/other.md"' in changelog
+    assert '- **subject\n&#45;-8<-- "docs/other.md"**' in notes
 
 
 def test_regenerating_the_changelog_is_idempotent(repo: Path) -> None:
