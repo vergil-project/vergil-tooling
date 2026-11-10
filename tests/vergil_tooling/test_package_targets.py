@@ -25,7 +25,20 @@ def test_format_suite_and_rpm_arch() -> None:
     t = targets.REGISTRY["rhel/9/arm64"]
     assert (t.fmt, t.suite, t.rpm_arch, t.glibc) == ("rpm", "el9", "aarch64", (2, 34))
     u = targets.REGISTRY["ubuntu/24.04/amd64"]
-    assert (u.fmt, u.suite, u.image, u.rpm_arch) == ("deb", "noble", "ubuntu:24.04", "x86_64")
+    assert (u.fmt, u.suite, u.image, u.rpm_arch) == (
+        "deb",
+        "noble",
+        "ghcr.io/vergil-project/prod-pkg-ubuntu:24.04",
+        "x86_64",
+    )
+
+
+def test_every_target_image_is_its_toolchain_image() -> None:
+    # Epic vergil-project/.github#607, Review Focus 5: no target keeps or
+    # invents a raw image; each runs in its release's prod toolchain image.
+    assert targets.REGISTRY
+    for t in targets.REGISTRY.values():
+        assert t.image == f"ghcr.io/vergil-project/prod-pkg-{t.distro}:{t.version}", t.key
 
 
 def test_suites_per_release() -> None:

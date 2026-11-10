@@ -192,13 +192,20 @@ Supported targets live in a registry in vergil-tooling
 
 | Target | Format | Suite | glibc | Install-test image |
 |---|---|---|---|---|
-| `ubuntu/24.04/{amd64,arm64}` | `.deb` | `noble` | 2.39 | `ubuntu:24.04` |
-| `ubuntu/26.04/{amd64,arm64}` | `.deb` | `resolute` | 2.43 | `ubuntu:26.04` |
-| `rhel/9/{amd64,arm64}` | `.rpm` | `el9` | 2.34 | `registry.access.redhat.com/ubi9/ubi` |
-| `rhel/10/{amd64,arm64}` | `.rpm` | `el10` | 2.39 | `registry.access.redhat.com/ubi10/ubi` |
+| `ubuntu/24.04/{amd64,arm64}` | `.deb` | `noble` | 2.39 | `ghcr.io/vergil-project/prod-pkg-ubuntu:24.04` |
+| `ubuntu/26.04/{amd64,arm64}` | `.deb` | `resolute` | 2.43 | `ghcr.io/vergil-project/prod-pkg-ubuntu:26.04` |
+| `rhel/9/{amd64,arm64}` | `.rpm` | `el9` | 2.34 | `ghcr.io/vergil-project/prod-pkg-rhel:9` |
+| `rhel/10/{amd64,arm64}` | `.rpm` | `el10` | 2.39 | `ghcr.io/vergil-project/prod-pkg-rhel:10` |
 
-Adding a target, such as Ubuntu 28.04, is a registry change and a
-vergil-tooling release. No workflow changes.
+Every image is a managed package toolchain image from vergil-containers:
+the upstream `ubuntu:<version>` or `registry.access.redhat.com/ubi<version>/ubi`
+with uv and nFPM preinstalled, so no package job installs its toolchain at
+run time. The registry derives each image from the target's distro and
+version (`prod-pkg-<distro>:<version>`); it is never listed per target.
+
+Adding a target, such as Ubuntu 28.04, needs its toolchain image published by
+vergil-containers, then a registry change and a vergil-tooling release. No
+workflow changes.
 
 ### Matrix resolution and the 2×2 default
 
@@ -206,8 +213,9 @@ vergil-tooling release. No workflow changes.
 and test cells. The workflows consume only that JSON.
 
 - Every non-`native` selected target on an architecture shares **one build
-  cell** (`shared-amd64`, `shared-arm64`). It builds in `ubuntu:24.04` and
-  emits every format its targets need.
+  cell** (`shared-amd64`, `shared-arm64`). It builds in
+  `ghcr.io/vergil-project/prod-pkg-ubuntu:24.04` and emits every format its
+  targets need.
 - Each `native` target gets its own build cell (`native-<distro>-<version>-<arch>`)
   inside a container of that OS.
 - A `noarch` package has exactly one build cell, `shared-noarch`, on amd64.
