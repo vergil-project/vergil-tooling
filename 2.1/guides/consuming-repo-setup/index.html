@@ -1388,6 +1388,8 @@
       
         
       
+        
+      
     
     
     
@@ -1440,6 +1442,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.296/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.296
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17772,7 +17802,10 @@ version window.</p>
 </tbody>
 </table>
 <p><code>[publish]</code> (<code>release</code>, default <code>false</code>; <code>docs</code>, default <code>true</code>) and
-<code>[ci].integration-tests</code> (default <code>false</code>) are optional. Optional
+<code>[ci].integration-tests</code> (default <code>false</code>) are optional, as is
+<code>[ci].images</code> (a boolean, default <code>false</code>), which only a repo whose <code>ci.yml</code>
+calls a repo-local <code>ci-images.yml</code> as job <code>images</code> sets; it makes
+<code>images / evidence</code> a required check. Optional
 tables have their own references:
 <a href="../../reference/container-config/"><code>[container]</code></a>,
 <a href="../../reference/test-config/"><code>[test]</code></a>,

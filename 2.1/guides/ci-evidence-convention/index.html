@@ -1388,6 +1388,8 @@
       
         
       
+        
+      
     
     
     
@@ -1440,6 +1442,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.296/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.296
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17524,6 +17554,11 @@ prefix:</p>
 <td>Yes</td>
 </tr>
 <tr>
+<td><code>images / …</code> (only with <code>[ci].images</code>)</td>
+<td><code>images</code></td>
+<td>Yes</td>
+</tr>
+<tr>
 <td><code>version / …</code></td>
 <td>—</td>
 <td>No (non-blocking)</td>
@@ -17543,6 +17578,10 @@ A repo whose <code>vergil.toml</code> has a <code>[package]</code> section also 
 <code>package / evidence</code> gate (the <code>ci-package.yml</code> aggregate over its whole
 target matrix), so the harvest pulls <code>ci-evidence-package</code> for it; a repo
 without <code>[package]</code> never calls <code>ci-package.yml</code> and is never asked for it.
+A repo with <code>[ci].images = true</code> requires <code>images / evidence</code> (the <code>evidence</code>
+job of its repo-local <code>ci-images.yml</code>, called as job <code>images</code>), so the harvest
+pulls <code>ci-evidence-images</code>; that job must upload it with an <code>evidence.json</code>
+and at least one report file, or the release fails completeness.
 <code>version/</code> is a sanity check on version state, not substantive evidence, and
 <code>docs</code> is low-signal; the absence of either does not fail the release.</p>
 <h3 id="per-repo-correctness-for-free">Per-repo correctness for free<a class="headerlink" href="#per-repo-correctness-for-free" title="Permanent link">&para;</a></h3>
