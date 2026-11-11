@@ -52,6 +52,8 @@ APT_FAIL_FAST: tuple[str, ...] = (
     "Acquire::https::Timeout=20",
     "-o",
     "DPkg::Lock::Timeout=60",
+    "-o",
+    "APT::Update::Error-Mode=any",
 )
 """Options on every apt invocation here and in :mod:`vergil_tooling.lib.vm_packages`.
 
@@ -68,9 +70,17 @@ The single definition of the fail-fast apt options, mirroring the
 * ``DPkg::Lock::Timeout=60``: wait up to 60 s for the dpkg lock instead of
   failing at once. On a freshly booted VM, ``unattended-upgrades`` or
   ``apt-daily`` commonly holds the lock while ``vrg-vm`` provisions.
+* ``APT::Update::Error-Mode=any`` (``apt-get update --error-on=any``, apt
+  >= 2.1): ``apt-get update`` fails when an index cannot be fetched from any
+  mirror, where apt's default only warns, exits 0 and lets the failure surface
+  later as a misleading "Unable to locate package". Failing over to the next
+  host of a ``mirror+file:`` list is not such an error. Only ``apt-get
+  update`` reads the key (apt-pkg's ``AcquireUpdate``); ``install`` and
+  ``purge`` never do, so on them it is inert.
 
-Both later options are accepted by apt 2.8 (noble) and apt 3.x (resolute);
-apt ignores ``-o`` keys it does not recognise, so an older apt is unharmed.
+The options after ``Acquire::Retries=3`` are accepted by apt 2.8 (noble) and
+apt 3.x (resolute); apt ignores ``-o`` keys it does not recognise, so an older
+apt is unharmed.
 """
 
 DEB_PREREQ_PROBE = (
