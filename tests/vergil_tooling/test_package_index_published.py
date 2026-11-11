@@ -70,7 +70,7 @@ def _staged_series(name: str, upstream: str) -> PackageConfig:
 
 
 class _FakeGh:
-    """``gh release list`` / ``gh release view`` over ``releases`` (listed newest first)."""
+    """The paginated ``gh api`` release listing over ``releases`` (listed newest first)."""
 
     def __init__(
         self,
@@ -91,17 +91,23 @@ class _FakeGh:
         self.calls.append(cmd)
         if self.fail and cmd.startswith(self.fail):
             raise subprocess.CalledProcessError(1, list(argv), "", "HTTP 404: Not Found")
-        a = list(argv)
-        assert a[a.index("--repo") + 1] == _REPO
-        if a[:3] == ["gh", "release", "list"]:
-            rows = [
-                {"tagName": t, "isDraft": t in self.drafts, "isPrerelease": t in self.prereleases}
-                for t, _ in self.releases
-            ]
-            return subprocess.CompletedProcess(argv, 0, json.dumps(rows), "")
-        assert a[:3] == ["gh", "release", "view"]
-        assets = [{"name": n} for n in dict(self.releases)[a[3]]]
-        return subprocess.CompletedProcess(argv, 0, json.dumps({"assets": assets}), "")
+        assert list(argv) == [
+            "gh",
+            "api",
+            "--paginate",
+            "--slurp",
+            f"repos/{_REPO}/releases?per_page=100",
+        ]
+        rows = [
+            {
+                "tag_name": t,
+                "draft": t in self.drafts,
+                "prerelease": t in self.prereleases,
+                "assets": [{"name": n} for n in assets],
+            }
+            for t, assets in self.releases
+        ]
+        return subprocess.CompletedProcess(argv, 0, json.dumps([rows]), "")
 
 
 def _parsed(names: list[str]) -> list[Identity]:
@@ -268,7 +274,6 @@ def test_partial_overlap_lists_only_the_clashes(tmp_path: Path) -> None:
 def test_the_release_being_checked_is_never_an_earlier_release(tmp_path: Path) -> None:
     gh = _FakeGh([("v1.0.1", _V100)])
     published.check_release(tmp_path, _cfg(_vergil_python()), _REPO, "1.0.1", gh)
-    assert not any("release view" in c for c in gh.calls)
 
 
 def test_release_without_manifest_is_not_published(tmp_path: Path) -> None:
@@ -285,12 +290,12 @@ def test_drafts_prereleases_and_unstable_tags_are_not_published(tmp_path: Path) 
         prereleases=("v0.9.0",),
     )
     published.check_release(tmp_path, _cfg(_vergil_python()), _REPO, "1.0.1", gh)
-    assert not any("release view" in c for c in gh.calls)
 
 
-def test_the_earliest_publishing_release_is_named(tmp_path: Path) -> None:
+def test_the_earliest_publishing_release_is_named_from_one_listing(tmp_path: Path) -> None:
     gh = _FakeGh([("v1.0.10", _V100), ("v1.0.9", _V100), ("v1.0.2", [MANIFEST])])
     assert published.published(_REPO, "v2.0.0", gh) == dict.fromkeys(_parsed(_V100), "v1.0.9")
+    assert len(gh.calls) == 1
 
 
 def test_unreadable_published_file_name_refuses(tmp_path: Path) -> None:
@@ -299,9 +304,8 @@ def test_unreadable_published_file_name_refuses(tmp_path: Path) -> None:
         published.check_release(tmp_path, _cfg(_vergil_python()), _REPO, "1.0.1", gh)
 
 
-@pytest.mark.parametrize("fail", ["gh release list", "gh release view"])
-def test_unreadable_published_state_refuses_never_skips(tmp_path: Path, fail: str) -> None:
-    gh = _FakeGh([("v1.0.0", _V100)], fail=fail)
+def test_unreadable_published_state_refuses_never_skips(tmp_path: Path) -> None:
+    gh = _FakeGh([("v1.0.0", _V100)], fail="gh api")
     with pytest.raises(PackageError, match="failed: HTTP 404"):
         published.check_release(tmp_path, _cfg(_vergil_python()), _REPO, "1.0.1", gh)
 
