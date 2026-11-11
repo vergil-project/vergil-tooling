@@ -278,7 +278,7 @@ def test_required_check_outstanding_past_deadline_aborts() -> None:
         required=_EVIDENCE,
         outstanding=[{"test / evidence": "not registered"}] * 5,
     )
-    clock = iter([0.0, 2000.0])
+    clock = iter([0.0, 5000.0])
     with (
         patch(_MOD + ".github", gh),
         patch(_MOD + ".time.sleep"),
@@ -319,12 +319,12 @@ def test_policy_block_past_deadline_names_outstanding_checks() -> None:
         outstanding=[{}, {"quality / evidence": "pending"}, {}, {"quality / evidence": "pending"}],
     )
     gh.merge.side_effect = _policy_error()
-    clock = iter([0.0, 1800.0])
+    clock = iter([0.0, 4500.0])
     with (
         patch(_MOD + ".github", gh),
         patch(_MOD + ".time.sleep"),
         patch(_MOD + ".time.monotonic", side_effect=lambda: next(clock)),
-        pytest.raises(MergeAbortError, match=r"after 1800s: .*quality / evidence \(pending\)"),
+        pytest.raises(MergeAbortError, match=r"after 4500s: .*quality / evidence \(pending\)"),
     ):
         wait_and_merge("99", strategy="squash")
     assert gh.merge.call_count == 2

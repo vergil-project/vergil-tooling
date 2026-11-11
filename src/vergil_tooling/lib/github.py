@@ -737,23 +737,29 @@ _POLL_INTERVAL_SECS = 5
 # How often a waiter re-reports still-pending checks when nothing has changed.
 _PROGRESS_INTERVAL_SECS = 60
 # Ceiling for how long the check-poll waiters block on still-PENDING checks
-# before giving up. Real CI here runs 3-8 min, so 180s guaranteed a spurious
-# finalize-merge failure on normal PRs (#2809); 1800s (30 min) comfortably
-# clears real CI (the post-merge CD watch has its own, longer deadline,
-# vrg_finalize_pr.cd_timeout_secs / $VRG_CD_TIMEOUT — CD is slower, #3316). A
-# merely-pending check is recoverable and is waited out to this deadline; a
-# *failed* check (pr_merge.failed_check_names) or an *orphaned* check
-# (OrphanedCheckError) still aborts earlier, so this ceiling never lets a
-# genuinely stuck merge hang. Single source of truth: every check waiter —
-# finalize, release, update-deps — reads it via checks_timeout_secs(), so the
-# waiters can never drift apart again (#2809). The release waiter used to stream
-# ``gh pr checks --watch``, which had no deadline at all and hung a release for
-# 12+ hours on one stale check-run (#3170); it now shares this bounded poller.
-# 30 min is ~4x the longest legitimate release-PR CI (5-8 min, package matrix
-# included) and a timeout is cheap to recover from (re-run the job, then
-# ``vrg-release --resume``), so slow-runner days override it via the env var
-# instead of every hang costing hours.
-_POLL_TIMEOUT_SECS = 1800
+# before giving up. Default 75 min. Most PR CI is short (fleet medians 1-3 min,
+# vergil-tooling release PRs p95 ~12 min), so 180s once failed normal PRs
+# (#2809), but the longest is vergil-containers' full image-tree build: a PR
+# that touches a shared image input rebuilds pkg-ubuntu:24.04 and all its
+# descendants per architecture. Run 42932275640 (2026-11-11) took 29.5 min
+# (amd64 28.6, arm64 27.6), and run 43034784731 (PR vergil-containers#834,
+# same day) built amd64 in 35.7 min, the run 36.5 min, which timed out the
+# old 1800s deadline about 6 min before it passed (#4200). 75 min is roughly
+# 2x that run, as the CD watch is sized (vrg_finalize_pr.cd_timeout_secs /
+# $VRG_CD_TIMEOUT, #3316), with room for a growing image tree and a
+# slow-runner day. A merely-pending check is waited out to this deadline; a
+# *failed* check (pr_merge.failed_check_names) or an *orphaned* one
+# (OrphanedCheckError, caught while waiting) still aborts earlier, so a long
+# ceiling only costs time when a check sits queued or a job hangs mid-run. At
+# the deadline, ChecksTimeoutError.running names the checks whose run is still
+# going, so the abort can say "wait, then resume" rather than "re-run". Single
+# source of truth: every check waiter — finalize, release, update-deps — reads
+# it via checks_timeout_secs(), so the waiters can never drift apart again
+# (#2809). The release waiter used to stream ``gh pr checks --watch``, which
+# had no deadline at all and hung a release for 12+ hours on one stale
+# check-run (#3170); it now shares this bounded poller. Override per
+# invocation with $VRG_CHECKS_TIMEOUT.
+_POLL_TIMEOUT_SECS = 4500
 CHECKS_TIMEOUT_ENV = "VRG_CHECKS_TIMEOUT"
 # While waiting, how often a pending check's backing Actions run is re-probed
 # for completion (once per run, not per check or per poll), and how long a
@@ -793,7 +799,7 @@ def _positive_secs_env(name: str, default: int) -> int:
 
 
 def checks_timeout_secs() -> int:
-    """The pending-checks deadline in seconds: ``$VRG_CHECKS_TIMEOUT`` or 1800.
+    """The pending-checks deadline in seconds: ``$VRG_CHECKS_TIMEOUT`` or 4500.
 
     A malformed or non-positive override is a configuration error and raises
     rather than silently falling back — the deadline is what keeps a stale check
@@ -1853,7 +1859,7 @@ def wait_for_checks(
     by ``pr_merge.failed_check_names``.
 
     *poll_timeout* defaults to :func:`checks_timeout_secs`
-    (``$VRG_CHECKS_TIMEOUT``, else 1800s) and remains the backstop for
+    (``$VRG_CHECKS_TIMEOUT``, else 4500s) and remains the backstop for
     genuinely long-running checks. When it elapses with checks still
     pending, each is cross-checked against its backing workflow run: a
     non-terminal check over a *completed* run is a GitHub orphan and raises
