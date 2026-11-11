@@ -582,6 +582,28 @@ def test_blockers_of_parses_reflink_body() -> None:
     assert refs == [IssueRef("o", "r", 5), IssueRef("o", "r", 8)]
 
 
+def test_issue_state_reads_the_rest_state_upper_cased() -> None:
+    with patch("vergil_tooling.lib.github.read_output", return_value="open") as mock:
+        assert epics.issue_state(IssueRef("o", "r", 42)) == "OPEN"
+    mock.assert_called_once_with("api", "repos/o/r/issues/42", "--jq", ".state")
+
+
+def test_issue_author_reads_the_login_gh_reports() -> None:
+    with patch("vergil_tooling.lib.github.read_output", return_value="app/bot") as mock:
+        assert epics.issue_author(IssueRef("o", "r", 42)) == "app/bot"
+    mock.assert_called_once_with(
+        "issue", "view", "42", "--repo", "o/r", "--json", "author", "--jq", '.author.login // ""'
+    )
+
+
+def test_issue_author_refuses_an_empty_login() -> None:
+    with (
+        patch("vergil_tooling.lib.github.read_output", return_value=""),
+        pytest.raises(ValueError, match="o/r#42 has no author login"),
+    ):
+        epics.issue_author(IssueRef("o", "r", 42))
+
+
 def test_blockers_of_empty_when_no_reflinks() -> None:
     with patch("vergil_tooling.lib.github.read_output", return_value="no dependencies here"):
         assert epics.blockers_of(IssueRef("o", "r", 42)) == []
