@@ -37,7 +37,8 @@ Reword a branch-local commit's message through a scripted, non-interactive
 rebase, re-stamping the new message through the same standards path as
 `vrg-commit`. It is the agent-safe way to correct a commit message on the
 current branch: `vrg-git commit` is denied, `vrg-commit` only creates new
-commits, and raw interactive rebase is blocked repo-wide. It is bounded:
+commits, and interactive rebase is allowed only as `rebase -i --autosquash`,
+which cannot reword. It is bounded:
 
 - **Branch-local only**: it refuses a commit already reachable from the
   base branch (`origin/develop`, or `origin/main` for a `release/*` branch)
@@ -71,11 +72,14 @@ frozen; `vrg-pr-workflow unfreeze` is the way back (see the freeze in
 
 A safe git wrapper for agent sessions. It forwards to `git` only after
 enforcing policy: a subcommand allowlist, read-only forms of `reflog` and
-`symbolic-ref`, denied subcommands (`commit`, `config`, `reset`, `clean` and
-others; use `vrg-commit` for commits), a flag deny-list (`push --force`,
-`branch -D`, `rebase -i`), the worktree convention, the
+`symbolic-ref`, denied subcommands (`commit`, `config` and others; use
+`vrg-commit` for commits), a flag deny-list (`push --force`, `branch -D`,
+`rebase -i` without `--autosquash`), the worktree convention, the
 `<type>/<N>-<slug>` branch form for an open, non-epic issue, and the
-report-ready freeze. Remote operations run with the GitHub App installation
+report-ready freeze. It protects origin, not the local checkout: `reset`,
+`clean`, a pathspec `checkout` and `rebase -i --autosquash` run only on a
+branch that is neither protected nor frozen, and fail closed when the
+PR-workflow state cannot be read. Remote operations run with the GitHub App installation
 token for the resolved identity (see [`vrg-whoami`](#vrg-whoami)). It is not
 a drop-in replacement for `git`; `vrg-git --help` lists the full policy.
 
