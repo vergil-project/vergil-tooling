@@ -1396,6 +1396,8 @@
       
         
       
+        
+      
     
     
     
@@ -1448,6 +1450,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.300/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.300
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -14029,17 +14059,6 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#vrg-xdist-sync" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        vrg-xdist-sync
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#vrg-container-run" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18659,17 +18678,6 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#vrg-xdist-sync" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        vrg-xdist-sync
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#vrg-container-run" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19545,7 +19553,7 @@ and the <a href="../../guides/releasing/">Releasing guide</a>.</p>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>Human identity; on <code>develop</code>, clean working tree, local develop matches <code>origin/develop</code>; <code>gh</code> authenticated and <code>git-cliff</code> on PATH</td>
+<td>Human identity; on <code>develop</code>, clean working tree, local develop matches <code>origin/develop</code>; <code>gh</code> authenticated and a reachable container runtime (docker or nerdctl) for <code>vrg-container-run</code>, which runs <code>git-cliff</code></td>
 </tr>
 <tr>
 <td>Failure mode</td>
@@ -19564,7 +19572,8 @@ and the <a href="../../guides/releasing/">Releasing guide</a>.</p>
 <h3 id="vrg-promote">vrg-promote<a class="headerlink" href="#vrg-promote" title="Permanent link">&para;</a></h3>
 <p>Move the rolling <code>vX.Y</code> tag to release <code>vX.Y.Z</code>. It is human-only: it
 refuses any agent identity, failing closed on any agent signal
-(<code>is_agent() or any_agent_signal()</code>), before any output or git call.
+(<code>is_agent() or any_agent_signal()</code>), once its arguments are parsed and
+before any other output or git call, so <code>--help</code> still prints the usage.
 <code>vrg-release</code>'s promote stage uses the same library and the same refusal.
 The refusal stops an agent from running it by mistake; it is not a security
 boundary, because the identity signals come from the caller's environment.
@@ -20323,7 +20332,7 @@ deferral — so no review skill hand-rolls them. Routes:</p>
 </tr>
 <tr>
 <td>planning</td>
-<td><code>defer</code>, <code>drop</code> — both refused once an <code>Epic:</code> marker is recorded</td>
+<td><code>defer</code>, <code>drop</code> — both refused while any development epic of the item is open</td>
 </tr>
 <tr>
 <td>ad hoc</td>
@@ -21812,46 +21821,6 @@ report.</p>
 </tr>
 </tbody>
 </table>
-<h3 id="vrg-xdist-sync">vrg-xdist-sync<a class="headerlink" href="#vrg-xdist-sync" title="Permanent link">&para;</a></h3>
-<p>Fleet sweep that adds <code>pytest-xdist</code> to each Python repo's dev dependencies,
-opening one PR per repo that needs it. It stops at <code>report-ready</code> and never
-submits or merges. A repo it cannot safely change is reported and gets a
-follow-up issue; a non-Python repo is skipped. <code>--dry-run</code> reports each
-repo's verdict without opening anything.</p>
-<table>
-<thead>
-<tr>
-<th>Attribute</th>
-<th>Value</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Source</td>
-<td><code>vergil_tooling.bin.vrg_xdist_sync</code></td>
-</tr>
-<tr>
-<td>Args</td>
-<td><code>--repos PATH...</code> (required, local clones), <code>--dry-run</code></td>
-</tr>
-<tr>
-<td>Preconditions</td>
-<td>Local clones of the target repos; <code>uv</code> on PATH; GitHub App credentials</td>
-</tr>
-<tr>
-<td>Failure mode</td>
-<td>Per-repo errors are reported in the summary</td>
-</tr>
-<tr>
-<td>Exit codes</td>
-<td>0 success, 1 any repo errored</td>
-</tr>
-<tr>
-<td>Status</td>
-<td>Active</td>
-</tr>
-</tbody>
-</table>
 <h3 id="vrg-container-run">vrg-container-run<a class="headerlink" href="#vrg-container-run" title="Permanent link">&para;</a></h3>
 <p>Run arbitrary commands inside a dev container. Auto-detects the
 project language to select the Docker image; falls back to
@@ -22268,7 +22237,7 @@ hand.</p>
 </table>
 <h3 id="vrg-host">vrg-host<a class="headerlink" href="#vrg-host" title="Permanent link">&para;</a></h3>
 <p>Observe and manage the Vergil-critical macOS host dependencies (<code>uv</code>,
-<code>gh</code>, <code>git</code>, <code>bash</code>, <code>gcloud</code>, Lima, Docker Desktop, OpenTofu, <code>git-cliff</code>,
+<code>gh</code>, <code>git</code>, <code>bash</code>, <code>gcloud</code>, Lima, Docker Desktop, OpenTofu,
 vergil-tooling, Claude Code, macOS, the Xcode Command Line Tools) declared in
 the packaged, tooling-owned manifest
 <code>src/vergil_tooling/data/host_dependencies.toml</code> (never

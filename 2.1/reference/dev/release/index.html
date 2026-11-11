@@ -1396,6 +1396,8 @@
       
         
       
+        
+      
     
     
     
@@ -1448,6 +1450,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.300/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.300
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17245,6 +17275,12 @@ they leave behind are described in the
 <a href="../../../guides/releasing/#the-vrg-release-pipeline">Releasing guide</a>.</p>
 <p>Releasing is a human maintainer action. <code>vrg-release</code> refuses to run
 under an agent identity.</p>
+<p><code>vrg-release</code> only releases a repo that declares itself released with
+<code>[publish] release = true</code> in <code>vergil.toml</code>. When the key is <code>false</code> or
+absent it refuses up front, before the resume lookup or any stage, and
+changes nothing. <code>vrg-finalize-pr</code> and <code>vrg-submit-pr</code> refuse
+<code>--release</code> and <code>--install</code> on such a repo the same way, before any
+push, PR or merge.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>vrg-release<span class="w"> </span><span class="o">[</span>minor<span class="p">|</span>major<span class="o">]</span><span class="w"> </span><span class="o">[</span>options<span class="o">]</span>
 </code></pre></div>
@@ -17309,7 +17345,9 @@ under an agent identity.</p>
 <ul>
 <li>Run from the root checkout, on <code>develop</code>, with a clean working tree
   that matches <code>origin/develop</code>.</li>
-<li><code>git-cliff</code> on <code>PATH</code> and an authenticated <code>gh</code>.</li>
+<li>A reachable container runtime (docker or nerdctl) and an authenticated
+  <code>gh</code>. <code>git-cliff</code> runs in the dev container through <code>vrg-container-run</code>,
+  so it is not needed on the host.</li>
 </ul>
 <h2 id="the-dependency-update-gate">The dependency-update gate<a class="headerlink" href="#the-dependency-update-gate" title="Permanent link">&para;</a></h2>
 <p>On a fresh start (not on <code>--resume</code>), preflight refuses while an open

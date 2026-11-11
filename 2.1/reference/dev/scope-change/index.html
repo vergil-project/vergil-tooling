@@ -1396,6 +1396,8 @@
       
         
       
+        
+      
     
     
     
@@ -1448,6 +1450,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.300/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.300
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17285,9 +17315,8 @@ start with the header itself.</p>
 <h2 id="what-it-does">What it does<a class="headerlink" href="#what-it-does" title="Permanent link">&para;</a></h2>
 <p>In order, it:</p>
 <ol>
-<li>refuses in an agent identity mode, before parsing arguments (with <code>-h</code> or
-   <code>--help</code> it prints a short note saying the command is human-only, and
-   exits 0);</li>
+<li>refuses in an agent identity mode, after parsing arguments (so <code>-h</code> or
+   <code>--help</code> prints the full usage to any identity, and exits 0);</li>
 <li>refuses unless stdin and stdout are both interactive terminals;</li>
 <li>refuses unless the trusted-authors configuration lists exactly one human
    login and the login its credentials post as (<code>gh api user</code>) is that login;</li>

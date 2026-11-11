@@ -1396,6 +1396,8 @@
       
         
       
+        
+      
     
     
     
@@ -1448,6 +1450,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.300/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.300
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13708,6 +13738,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#which-mechanism-do-i-use" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Which mechanism do I use?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#upstream-refresh" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17193,6 +17234,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#which-mechanism-do-i-use" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Which mechanism do I use?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#upstream-refresh" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17334,6 +17386,38 @@ are separate pipelines with separate hooks:</p>
 </table>
 <p>Neither command runs the other's hook. <code>vrg-upstream-refresh</code> never runs
 dependency updaters, validation or a release.</p>
+<h2 id="which-mechanism-do-i-use">Which mechanism do I use?<a class="headerlink" href="#which-mechanism-do-i-use" title="Permanent link">&para;</a></h2>
+<p>Ask one question of the input: does the repo's code depend on it, or
+does the repo deliver it?</p>
+<ul>
+<li><strong>The code depends on it: a dependency update.</strong> Libraries, lockfiles
+  and the vergil line are what the repo is built on. They move after
+  each release, at the start of the next development cycle, so a whole
+  cycle runs against them before the next release ships them.</li>
+<li><strong>The repo delivers it: an upstream refresh.</strong> Upstream content that
+  the repo packages and publishes is refreshed before a release, and the
+  release publishes it.</li>
+</ul>
+<p>The current users of an upstream refresh, each from a scheduled
+<code>upstream-refresh</code> job in its <code>ops.yml</code>:</p>
+<ul>
+<li><strong>vergil-python</strong> refreshes each series listed in <code>runtime.toml</code> to
+  its newest CPython patch and python-build-standalone build
+  (<code>scripts/dev/upstream-refresh.sh</code>).</li>
+<li><strong>vergil-containers</strong> moves its binary-download tools to their newest
+  releases and its language toolchain pins (<code>docker/pins/toolchains.yml</code>:
+  Python builds from python-build-standalone, Go, Node, Rust and
+  rustup-init) to the newest patch of each series
+  (<code>docker/pins/upstream-refresh.sh</code>).</li>
+</ul>
+<p>The current users of a dependency update are listed on the
+<a href="../dependency-update-config/#which-mechanism-do-i-use">dependency update page</a>.</p>
+<p>Neither PR merges unattended today. A human merges every upstream
+refresh PR, and a dependency update merges its own PR once it is green,
+but only from a <code>vrg-release</code> or <code>vrg-update-deps</code> that a human runs.
+How the merge policy is expected to change for these automation PRs is
+tracked in
+<a href="https://github.com/vergil-project/.github/issues/470">vergil-project/.github#470</a>.</p>
 <h2 id="upstream-refresh"><code>[upstream-refresh]</code><a class="headerlink" href="#upstream-refresh" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">[upstream-refresh]</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">hook</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"scripts/dev/upstream-refresh.sh"</span>

@@ -1394,6 +1394,8 @@
       
         
       
+        
+      
     
     
     
@@ -1446,6 +1448,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.300/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.300
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17796,8 +17826,10 @@ adding new public surface. Versions: <code>v1.3.0</code> → <code>v1.3.1</code>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>vrg-release
 </code></pre></div>
 <p><code>vrg-release</code> is a human-only command: it refuses to run under an
-   agent identity. It needs <code>git-cliff</code> on <code>PATH</code> and an authenticated
-   <code>gh</code>. It drives the whole release through the stages listed in
+   agent identity. It needs a running container runtime (docker or
+   nerdctl) and an authenticated <code>gh</code>; it generates the changelog with
+   <code>git-cliff</code> in the dev container, through <code>vrg-container-run</code>. It
+   drives the whole release through the stages listed in
    <a href="#the-vrg-release-pipeline">The <code>vrg-release</code> pipeline</a> below, in a
    managed worktree, so the root checkout is never switched off
    <code>develop</code>. See the <a href="../../reference/dev/release/"><code>vrg-release</code> reference</a>
@@ -17832,7 +17864,12 @@ adding new public surface. Versions: <code>v1.3.0</code> → <code>v1.3.1</code>
      version, and succeeds only once all of them are listed. While it
      waits, it streams the <code>Publish package index</code> run in <code>&lt;org&gt;/packages</code>
      that covers the release and prints a heartbeat line on each poll
-     otherwise; the index poll alone decides success. If the run it
+     otherwise; the index poll alone decides success. The hour bounds
+     idle polling only: the stage waits for a followed run however long
+     it takes (up to three hours, then it fails naming the run), and the
+     hour restarts when that run completes, so the index has a full hour
+     to show the release after it. A timeout error says which wait ran
+     out. If the run it
      follows fails (<code>failure</code>, <code>timed_out</code> or <code>startup_failure</code>), the
      index still lacks the release and no newer index run is listed, the
      stage fails at once rather than waiting out the hour: its error
