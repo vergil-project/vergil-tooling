@@ -15,7 +15,7 @@ This module refuses one in a release *before* it publishes:
   :class:`collect.ManifestEntry` — the same rule the index checks a release's
   files against.
 - **What is already published** is every packaged stable release of the repo
-  (:func:`collect.stable_tags`, :func:`collect.release_packages`),
+  (:func:`collect.packaged_tags`, one paginated release listing),
   identified from its attached package file names. nFPM names each file from
   the very name/version/release/arch the index later reads from the package
   metadata, and the index pairs files with manifest entries by that same name
@@ -92,10 +92,11 @@ def published(product: str, exclude_tag: str, gh: Run = local_run) -> dict[Ident
     select; ``exclude_tag`` (the release being checked) never does.
     """
     out: dict[Identity, str] = {}
-    tags = [t for t in collect.stable_tags(product, gh) if t != exclude_tag]
+    rels = collect.packaged_tags(product, gh)
+    tags = [t for t in rels if t != exclude_tag]
     # Oldest first, so each identity maps to the release that first published it.
     for tag in sorted(tags, key=lambda t: tuple(int(x) for x in t[1:].split("."))):
-        for filename in collect.release_packages(product, tag, gh) or []:
+        for filename in collect.package_names(rels[tag]):
             try:
                 ident = parse_filename(filename)
             except PackageError as exc:

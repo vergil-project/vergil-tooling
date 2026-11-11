@@ -31,6 +31,8 @@ DEFAULT_EXCLUDED_RULES: tuple[str, ...] = (
 class ScanResult:
     returncode: int
     sarif_produced: bool
+    stdout: str = ""
+    stderr: str = ""
 
 
 def resolve_rulesets(
@@ -69,7 +71,8 @@ def run_scan(
     """Execute semgrep scan with the given rulesets.
 
     Semgrep exit codes: 0 = clean, 1 = findings, >1 = error.
-    All three can produce valid SARIF output.
+    All three can produce valid SARIF output. Semgrep's captured stdout and
+    stderr are returned so a caller can show why a scan failed.
 
     The fleet defaults in ``DEFAULT_EXCLUDED_RULES`` are always excluded via
     ``--exclude-rule``; any ``exclude_rules`` the caller supplies are added on
@@ -87,7 +90,18 @@ def run_scan(
         cmd.extend(["--exclude-rule", rule])
     cmd.append(str(target_dir))
 
-    result = subprocess.run(cmd, capture_output=True)  # noqa: S603
+    result = subprocess.run(  # noqa: S603
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
     sarif_produced = output_path.is_file() and output_path.stat().st_size > 0
 
-    return ScanResult(returncode=result.returncode, sarif_produced=sarif_produced)
+    return ScanResult(
+        returncode=result.returncode,
+        sarif_produced=sarif_produced,
+        stdout=result.stdout,
+        stderr=result.stderr,
+    )

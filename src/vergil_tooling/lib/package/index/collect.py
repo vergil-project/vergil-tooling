@@ -40,7 +40,6 @@ if TYPE_CHECKING:
 MANIFEST = "packages-manifest.json"
 SIGNER_WORKFLOW = "vergil-project/vergil-actions/.github/workflows/cd-release.yml"
 SOURCE_REF = "refs/heads/main"
-RELEASE_LIST_LIMIT = 1000
 
 _STABLE_TAG = re.compile(r"v\d+\.\d+\.\d+")
 _FMTS = ("deb", "rpm")
@@ -146,7 +145,7 @@ def _invoke(run: Run, *argv: str) -> subprocess.CompletedProcess[str]:
     blip, a transport drop) is retried with bounded backoff and, once the budget
     is spent, re-raised. The read-only classifier is safe here because every
     ``gh`` call the index makes is a read (the ``api`` release listing,
-    ``release list``/``view``/``download``, ``attestation verify``); it adds
+    ``release download``, ``attestation verify``); it adds
     the HTTP 500 the release-asset API returns intermittently (#4119). Any
     other failure — a missing release, a failed attestation — is raised at
     once, never retried. Local tools
@@ -174,54 +173,8 @@ def _json(run: Run, what: str, *argv: str) -> Any:
         raise PackageError(msg) from exc
 
 
-def stable_tags(product: str, gh: Run = local_run) -> list[str]:
-    """Published, non-prerelease ``vX.Y.Z`` release tags of ``product``."""
-    what = f"listing releases of {product}"
-    rows = _json(
-        gh,
-        what,
-        "gh",
-        "release",
-        "list",
-        "--repo",
-        product,
-        "--limit",
-        str(RELEASE_LIST_LIMIT),
-        "--json",
-        "tagName,isDraft,isPrerelease",
-    )
-    if not isinstance(rows, list):
-        msg = f"{what}: expected a JSON list"
-        raise PackageError(msg)
-    if len(rows) >= RELEASE_LIST_LIMIT:
-        msg = f"{what}: {len(rows)} releases reached the listing limit; the list may be truncated"
-        raise PackageError(msg)
-    return [
-        r["tagName"]
-        for r in rows
-        if not r["isDraft"] and not r["isPrerelease"] and _STABLE_TAG.fullmatch(r["tagName"])
-    ]
-
-
-def _asset_names(gh: Run, where: str, product: str, tag: str) -> list[str]:
-    what = f"reading assets of {where}"
-    data = _json(gh, what, "gh", "release", "view", tag, "--repo", product, "--json", "assets")
-    return [a["name"] for a in data["assets"]]
-
-
-def release_packages(product: str, tag: str, gh: Run = local_run) -> list[str] | None:
-    """The ``.deb``/``.rpm`` asset names of ``product@tag``; ``None`` without a manifest.
-
-    A release without ``packages-manifest.json`` is pre-packaging history the
-    index never collects; ``None`` says so, distinct from an empty list.
-    """
-    names = _asset_names(gh, f"{product}@{tag}", product, tag)
-    if MANIFEST not in names:
-        return None
-    return _package_names(names)
-
-
-def _package_names(assets: list[str]) -> list[str]:
+def package_names(assets: list[str]) -> list[str]:
+    """The ``.deb``/``.rpm`` names among a release's ``assets``, in order."""
     return [n for n in assets if n.endswith((".deb", ".rpm"))]
 
 
@@ -412,7 +365,7 @@ def _release_artifacts(
 ) -> list[Artifact]:
     """The artifacts of one packaged release, whose asset names are ``assets``."""
     where = f"{product}@{tag}"
-    packages = _package_names(assets)
+    packages = package_names(assets)
     dest = workdir / product / tag
     dest.mkdir(parents=True, exist_ok=True)
     entries = _manifest_entries(_download(gh, where, product, tag, MANIFEST, dest), where)

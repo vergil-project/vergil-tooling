@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
@@ -19,6 +20,8 @@ _MUTABLE_ACTION_TAG_RULE = (
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    import pytest
 
 _MOD = "vergil_tooling.lib.semgrep"
 
@@ -65,6 +68,8 @@ class TestRunScan:
 
         with patch(f"{_MOD}.subprocess.run") as mock_run:
             mock_run.return_value.returncode = 0
+            mock_run.return_value.stdout = ""
+            mock_run.return_value.stderr = ""
             result = run_scan(["p/python"], tmp_path, output)
 
         assert result == ScanResult(returncode=0, sarif_produced=True)
@@ -83,6 +88,28 @@ class TestRunScan:
 
         assert result.returncode == 1
         assert result.sarif_produced
+
+    def test_error_output_is_captured(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake_bin = tmp_path / "bin"
+        fake_bin.mkdir()
+        fake = fake_bin / "semgrep"
+        fake.write_text(
+            "#!/bin/sh\nprintf 'progress line\\n'\n"
+            "printf 'semgrep-core exited with -11!\\n' >&2\nexit 2\n"
+        )
+        fake.chmod(0o755)
+        monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+
+        result = run_scan(["p/python"], tmp_path, tmp_path / "results.sarif")
+
+        assert result == ScanResult(
+            returncode=2,
+            sarif_produced=False,
+            stdout="progress line\n",
+            stderr="semgrep-core exited with -11!\n",
+        )
 
     def test_no_sarif_produced(self, tmp_path: Path) -> None:
         output = tmp_path / "results.sarif"

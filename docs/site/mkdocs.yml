@@ -50,7 +50,12 @@ markdown_extensions:
   - pymdownx.superfences
   - pymdownx.tabbed:
       alternate_style: true
-  - pymdownx.snippets
+  # Snippets resolve only from inside docs_dir, and a missing one fails the build.
+  - pymdownx.snippets:
+      base_path: !relative $docs_dir
+      restrict_base_path: true
+      check_paths: true
+      url_download: false
   - tables
   - toc:
       permalink: true

@@ -8,6 +8,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
@@ -27,7 +28,7 @@ from vergil_tooling.lib.package import orgs, repo_setup
 from vergil_tooling.lib.versions.extensions import container_env
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
 
 _SELF_PROJECT_NAME = "vergil-tooling"
 
@@ -45,6 +46,90 @@ _UV_FROM_GIT = "vergil-tooling: uv tool install from git (image without the verg
 _FIRST_CANDIDATE = '!c && $1 == "Candidate:" {c = $2} END {print c}'
 
 _PULL_TIMEOUT_SECONDS = 120
+
+# A transient pull failure is retried: _PULL_ATTEMPTS pulls in all, waiting
+# _PULL_RETRY_DELAYS_SECONDS[i] after attempt i + 1 fails, so an outage that
+# fails fast still fails within seconds (#4210). A pull that hangs is bounded
+# by _PULL_ATTEMPTS times _PULL_TIMEOUT_SECONDS.
+_PULL_ATTEMPTS = 3
+_PULL_RETRY_DELAYS_SECONDS = (2.0, 5.0)
+
+# Error text a failed pull prints when the registry gave a definite answer.
+# Checked before the transient patterns, so a definite answer wrapped in a
+# transient-looking prefix (containerd's "failed to fetch anonymous token:
+# unexpected status from GET request to ...: 401 Unauthorized") still fails at
+# once. Where each comes from:
+# - "manifest unknown", "denied", "unauthorized": the OCI distribution spec's
+#   error codes (MANIFEST_UNKNOWN, DENIED, UNAUTHORIZED), as distribution's
+#   registry/api/errcode/register.go defines them; "unauthorized" is also
+#   Go's status text for a 401 ("401 Unauthorized").
+# - "not found": containerd's errdefs.ErrNotFound, which its resolver
+#   (core/remotes/docker/resolver.go) wraps for a missing reference, and
+#   moby's "manifest for %s not found" / "repository %s not found"
+#   (daemon/internal/distribution/errors.go).
+# - "authentication required": distribution's UNAUTHORIZED message.
+# - "authorization failed": containerd's ErrInvalidAuthorization
+#   (core/remotes/docker/resolver.go); "pull access denied" (moby's and
+#   containerd's wording for a missing or private repository) is matched by
+#   "denied".
+_DEFINITE_PULL_ERROR_PATTERNS = (
+    "manifest unknown",
+    "not found",
+    "denied",
+    "unauthorized",
+    "authentication required",
+    "authorization failed",
+)
+
+# Error text a failed pull prints when it never got an answer from the
+# registry, or got a server-side failure. Docker and nerdctl both reach the
+# registry through Go's net/http (and docker's containerd image store, like
+# nerdctl, through containerd's resolver), so the text is Go's:
+# - "timeout awaiting response headers", "tls handshake timeout",
+#   "request canceled while waiting for connection": net/http's transport
+#   errors (src/net/http/transport.go). The first is the cause in #4209's
+#   "failed to fetch anonymous token: ... net/http: timeout awaiting response
+#   headers": a failed token fetch is retried by its cause, never by the
+#   "failed to fetch ... token" prefix alone (containerd's authorizer.go wraps
+#   every token error, a 401 included, in that prefix).
+# - "i/o timeout": Go's net and internal/poll deadline error text.
+# - "context deadline exceeded": Go's context.DeadlineExceeded.
+# - "no such host": Go's net DNS errNoSuchHost (src/net/net.go).
+# - "server misbehaving": Go's DNS errServerMisbehaving, a SERVFAIL reply
+#   (src/net/dnsclient_unix.go).
+# - "temporary failure in name resolution": glibc's EAI_AGAIN text
+#   (gai_strerror), printed when the runtime resolves through cgo.
+# - "connection refused", "connection reset by peer", "network is
+#   unreachable", "no route to host": the Linux errno texts Go's syscall
+#   package prints for ECONNREFUSED, ECONNRESET, ENETUNREACH, EHOSTUNREACH.
+# - "unexpected eof": Go's io.ErrUnexpectedEOF, a connection dropped mid-body.
+# - A 5xx status, as containerd's ErrUnexpectedStatus prints it ("unexpected
+#   status from %s request to %s: %s", core/remotes/errors/errors.go) or as
+#   distribution's client does ("received unexpected HTTP status: %s",
+#   internal/client/errors.go); and "service unavailable", distribution's
+#   UNAVAILABLE error message and Go's 503 status text.
+# Anything matching neither list is NOT transient: an unrecognised failure
+# fails at once, as every failure did before retries existed, rather than
+# being retried on a guess.
+_TRANSIENT_PULL_ERROR_PATTERNS = (
+    "timeout awaiting response headers",
+    "tls handshake timeout",
+    "request canceled while waiting for connection",
+    "i/o timeout",
+    "context deadline exceeded",
+    "no such host",
+    "server misbehaving",
+    "temporary failure in name resolution",
+    "connection refused",
+    "connection reset by peer",
+    "network is unreachable",
+    "no route to host",
+    "unexpected eof",
+    "service unavailable",
+)
+_TRANSIENT_PULL_STATUS = re.compile(
+    r"(?:unexpected status from \S+ request to \S+|received unexpected http status): 5\d\d\b"
+)
 
 # Opt-in escape hatch: when set to a truthy value, a failed base-image pull
 # during the staleness check degrades to using the local base instead of
@@ -169,14 +254,82 @@ def _summarize_pull_error(stderr: str) -> str:
     return lines[-1] if lines else "unknown error"
 
 
+def _is_transient_pull_error(stderr: str) -> bool:
+    """Return True when a failed pull's *stderr* names a transient cause.
+
+    A definite registry answer (see ``_DEFINITE_PULL_ERROR_PATTERNS``) is never
+    transient, even inside a transient-looking message. Text matching no known
+    transient pattern is not transient either, so an unrecognised failure
+    fails at once rather than being retried.
+    """
+    text = stderr.lower()
+    if any(pattern in text for pattern in _DEFINITE_PULL_ERROR_PATTERNS):
+        return False
+    if any(pattern in text for pattern in _TRANSIENT_PULL_ERROR_PATTERNS):
+        return True
+    return _TRANSIENT_PULL_STATUS.search(text) is not None
+
+
+def _pull_with_retry(
+    base_image: str, *, runtime: str, sleep: Callable[[float], None]
+) -> tuple[bool, str]:
+    """Pull *base_image*, retrying transient failures; return ``(ok, error)``.
+
+    Makes up to ``_PULL_ATTEMPTS`` pulls, sleeping the next of
+    ``_PULL_RETRY_DELAYS_SECONDS`` before each retry. A timed-out pull is
+    transient; a failed one is retried only when ``_is_transient_pull_error``
+    says so. On failure, *error* names the number of attempts made and each
+    attempt's summarized error.
+    """
+    errors: list[str] = []
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            pull = subprocess.run(  # noqa: S603
+                [runtime, "pull", base_image],  # noqa: S607
+                capture_output=True,
+                text=True,
+                timeout=_PULL_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired:
+            errors.append(f"timed out after {_PULL_TIMEOUT_SECONDS}s")
+            transient = True
+        else:
+            if pull.returncode == 0:
+                return True, ""
+            errors.append(_summarize_pull_error(pull.stderr))
+            transient = _is_transient_pull_error(pull.stderr)
+        if not transient or attempt == _PULL_ATTEMPTS:
+            break
+        delay = _PULL_RETRY_DELAYS_SECONDS[attempt - 1]
+        print(
+            f"warning: base pull of '{base_image}' failed on attempt "
+            f"{attempt}/{_PULL_ATTEMPTS} ({errors[-1]}); retrying in {delay:g}s",
+            file=sys.stderr,
+        )
+        sleep(delay)
+    if len(errors) == 1:
+        return False, f"1 attempt: {errors[0]}"
+    detail = "; ".join(f"attempt {i}: {error}" for i, error in enumerate(errors, 1))
+    return False, f"{len(errors)} attempts: {detail}"
+
+
 def resolve_base_digest(
-    base_image: str, *, runtime: str = "", allow_stale: bool | None = None
+    base_image: str,
+    *,
+    runtime: str = "",
+    allow_stale: bool | None = None,
+    sleep: Callable[[float], None] | None = None,
 ) -> tuple[str, bool]:
     """Resolve *base_image*'s content digest, refreshing it from the registry.
 
     Pulls the base (so a moved tag is both detected and available to build from),
     then inspects the local image id. The pull *is* the staleness check: if it
-    fails, we genuinely cannot tell whether the local base is current.
+    fails, we genuinely cannot tell whether the local base is current. A
+    transient pull failure (a timeout, a network error, a registry 5xx) is
+    retried first; see ``_pull_with_retry``. *sleep* (default ``time.sleep``)
+    is the wait between attempts, injectable for tests.
 
     By default a failed pull is a hard error — running against a possibly-stale
     local base silently is the worst available outcome (a host can validate
@@ -192,21 +345,7 @@ def resolve_base_digest(
     if allow_stale is None:
         allow_stale = _allow_stale_base()
 
-    pull_ok = True
-    pull_error = ""
-    try:
-        pull = subprocess.run(  # noqa: S603
-            [rt, "pull", base_image],  # noqa: S607
-            capture_output=True,
-            text=True,
-            timeout=_PULL_TIMEOUT_SECONDS,
-        )
-        pull_ok = pull.returncode == 0
-        if not pull_ok:
-            pull_error = _summarize_pull_error(pull.stderr)
-    except subprocess.TimeoutExpired:
-        pull_ok = False
-        pull_error = f"timed out after {_PULL_TIMEOUT_SECONDS}s"
+    pull_ok, pull_error = _pull_with_retry(base_image, runtime=rt, sleep=sleep or time.sleep)
 
     digest = _inspect_image_id(base_image, runtime=rt)
     if digest is None:
