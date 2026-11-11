@@ -173,7 +173,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ("--message", args.message),
     )
     if args.fixup is not None:
-        given = [flag for flag, value in (*message_flags, ("--body", args.body)) if value is not None]
+        given = [
+            flag for flag, value in (*message_flags, ("--body", args.body)) if value is not None
+        ]
         if given:
             parser.error(f"--fixup cannot be used with {', '.join(given)}")
     else:

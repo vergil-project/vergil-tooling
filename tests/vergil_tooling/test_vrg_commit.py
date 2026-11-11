@@ -691,6 +691,14 @@ def test_fixup_refuses_with_no_staged_changes(fixup_repo: _FixupRepo) -> None:
     assert _git(fixup_repo.repo, "rev-parse", "HEAD") == fixup_repo.branch_sha
 
 
+def test_fixup_allow_empty_commits_with_nothing_staged(fixup_repo: _FixupRepo) -> None:
+    _git(fixup_repo.repo, "restore", "--staged", "a.txt")
+    assert main(["--fixup", fixup_repo.branch_sha, "--allow-empty"]) == 0
+    subject = _git(fixup_repo.repo, "log", "-1", "--format=%s")
+    assert subject == "fixup! feat(core): add the a file (#42)"
+    assert _git(fixup_repo.repo, "diff", "--name-only", "HEAD~1", "HEAD") == ""
+
+
 @pytest.mark.parametrize(
     ("extra", "named"),
     [
