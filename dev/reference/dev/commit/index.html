@@ -17346,6 +17346,7 @@ turned off in each repo's checked-in <code>.claude/settings.json</code>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>vrg-commit<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span>--type<span class="w"> </span>TYPE<span class="w"> </span>--scope<span class="w"> </span>SCOPE<span class="w"> </span>--message<span class="w"> </span>MESSAGE<span class="w"> </span><span class="o">[</span>options<span class="o">]</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>vrg-commit<span class="w"> </span>--fixup<span class="w"> </span>COMMIT<span class="w"> </span><span class="o">[</span>--allow-empty<span class="o">]</span>
 </code></pre></div>
 <h2 id="arguments">Arguments<a class="headerlink" href="#arguments" title="Permanent link">&para;</a></h2>
 <table>
@@ -17359,23 +17360,28 @@ turned off in each repo's checked-in <code>.claude/settings.json</code>
 <tbody>
 <tr>
 <td><code>--type</code></td>
-<td>Yes</td>
+<td>Yes, unless <code>--fixup</code></td>
 <td>Conventional commit type</td>
 </tr>
 <tr>
 <td><code>--scope</code></td>
-<td>Yes</td>
+<td>Yes, unless <code>--fixup</code></td>
 <td>Conventional commit scope</td>
 </tr>
 <tr>
 <td><code>--message</code></td>
-<td>Yes</td>
+<td>Yes, unless <code>--fixup</code></td>
 <td>Commit description</td>
 </tr>
 <tr>
 <td><code>--body</code></td>
 <td>No</td>
 <td>Detailed commit body</td>
+</tr>
+<tr>
+<td><code>--fixup</code></td>
+<td>No</td>
+<td>Make a <code>fixup! &lt;subject&gt;</code> commit of COMMIT, an earlier commit on this branch. Refused with <code>--type</code>, <code>--scope</code>, <code>--message</code> or <code>--body</code></td>
 </tr>
 <tr>
 <td><code>--allow-empty</code></td>
@@ -17397,6 +17403,9 @@ turned off in each repo's checked-in <code>.claude/settings.json</code>
 <a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>vrg-commit<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">  </span>--type<span class="w"> </span>docs<span class="w"> </span>--scope<span class="w"> </span>readme<span class="w"> </span>--message<span class="w"> </span><span class="s2">"update README"</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">  </span>--body<span class="w"> </span><span class="s2">"Expanded usage section"</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="c1"># Fixup of an earlier commit on this branch, staged changes only</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>vrg-commit<span class="w"> </span>--fixup<span class="w"> </span>1a2b3c4
 </code></pre></div>
 <h2 id="behavior">Behavior<a class="headerlink" href="#behavior" title="Permanent link">&para;</a></h2>
 <ol>
@@ -17407,10 +17416,15 @@ turned off in each repo's checked-in <code>.claude/settings.json</code>
    present.</li>
 <li>Refuses the commit when the branch has been reported ready
    (<code>vrg-pr-workflow report-ready</code>) and is frozen.</li>
+<li>With <code>--fixup</code>, refuses a target that does not resolve to a commit,
+   is not reachable from <code>HEAD</code>, or is already reachable from
+   <code>origin/develop</code> (or when <code>origin/develop</code> cannot be resolved).</li>
 <li>Rejects a body containing a GitHub auto-close keyword.</li>
 <li>Verifies staged changes exist (unless <code>--allow-empty</code>).</li>
 <li>Constructs the commit message in a temporary file and runs
-   <code>git commit --file</code>.</li>
+   <code>git commit --file</code>; with <code>--fixup</code> it runs
+   <code>git commit --fixup=COMMIT</code> instead, which writes the
+   <code>fixup! &lt;subject&gt;</code> message.</li>
 </ol>
 <h2 id="exit-codes">Exit Codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>
 <table>

@@ -19131,7 +19131,7 @@ Freeze gate: refuses to add a commit on a branch that has been reported ready
 </tr>
 <tr>
 <td>Args</td>
-<td><code>--type</code> (required), <code>--scope</code> (required), <code>--message</code> (required), <code>--body</code>, <code>--allow-empty</code></td>
+<td><code>--type</code>, <code>--scope</code>, <code>--message</code> (all three required unless <code>--fixup</code>), <code>--body</code>, <code>--fixup COMMIT</code> (a <code>fixup!</code> commit of a branch-local commit; refused with the message flags), <code>--allow-empty</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
