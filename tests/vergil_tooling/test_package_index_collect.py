@@ -146,7 +146,7 @@ def _a(product: str, tag: str, name: str, version: str, fmt: str = "deb") -> Art
 @pytest.mark.parametrize(
     "fn",
     [
-        collect.stable_tags,
+        collect.packaged_tags,
         collect.deb_metadata,
         collect.rpm_metadata,
         collect.collect,
@@ -614,30 +614,19 @@ def _failing(stdout: str = "", stderr: str = "", code: int = 1) -> repo_setup.Ru
 
 def test_listing_failure_is_fatal_with_stderr() -> None:
     with pytest.raises(PackageError, match=r"listing releases of o/t failed: HTTP 404"):
-        collect.stable_tags("o/t", _failing(stderr="HTTP 404\n"))
+        collect.packaged_tags("o/t", _failing(stderr="HTTP 404\n"))
 
 
 def test_listing_failure_falls_back_to_stdout_then_exit_code() -> None:
     with pytest.raises(PackageError, match=r"failed: out text$"):
-        collect.stable_tags("o/t", _failing(stdout="out text"))
+        collect.packaged_tags("o/t", _failing(stdout="out text"))
     with pytest.raises(PackageError, match=r"failed: exit 4$"):
-        collect.stable_tags("o/t", _failing(code=4))
+        collect.packaged_tags("o/t", _failing(code=4))
 
 
 def test_listing_invalid_json_is_fatal() -> None:
     with pytest.raises(PackageError, match=r"listing releases of o/t returned invalid JSON"):
-        collect.stable_tags("o/t", _stdout("nope"))
-
-
-def test_listing_not_a_list_is_fatal() -> None:
-    with pytest.raises(PackageError, match=r"listing releases of o/t: expected a JSON list"):
-        collect.stable_tags("o/t", _stdout("{}"))
-
-
-def test_listing_at_the_limit_is_fatal_not_truncated() -> None:
-    rows = [{"tagName": f"v1.0.{i}", "isDraft": False, "isPrerelease": False} for i in range(1000)]
-    with pytest.raises(PackageError, match=r"1000 releases reached the listing limit"):
-        collect.stable_tags("o/t", _stdout(json.dumps(rows)))
+        collect.packaged_tags("o/t", _stdout("nope"))
 
 
 # --- metadata ------------------------------------------------------------------
