@@ -260,14 +260,17 @@ def _run(argv: list[str]) -> int:
         print(f"vrg-git: {flag_err}", file=sys.stderr)
         return 1
 
-    rewrite_err = _check_local_rewrite(subcmd, argv[1:])
-    if rewrite_err:
-        print(rewrite_err, file=sys.stderr)
-        return 1
-
+    # The worktree convention only refuses, so checking it first never allows
+    # more; it gives the clearer message for a branch switch in the main
+    # worktree, whatever HEAD the checkout is on (CI runs on a detached HEAD).
     worktree_err = _check_worktree_convention(subcmd, argv[1:])
     if worktree_err:
         print(f"vrg-git: {worktree_err}", file=sys.stderr)
+        return 1
+
+    rewrite_err = _check_local_rewrite(subcmd, argv[1:])
+    if rewrite_err:
+        print(rewrite_err, file=sys.stderr)
         return 1
 
     branch_name_err = _check_new_branch_name(subcmd, argv[1:])

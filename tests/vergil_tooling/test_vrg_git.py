@@ -1673,6 +1673,25 @@ class TestWorktreeConvention:
         assert rc != 0
         assert "worktree" in capsys.readouterr().err.lower()
 
+    def test_checkout_feature_denied_in_main_worktree_on_detached_head(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # CI checks out a detached HEAD; the convention refusal still wins.
+        with (
+            patch("vergil_tooling.bin.vrg_git._is_main_worktree", return_value=True),
+            patch(
+                "vergil_tooling.bin.vrg_git._worktree_convention_active",
+                return_value=True,
+            ),
+            patch(
+                "vergil_tooling.bin.vrg_git._rewrite_target_branch",
+                return_value=None,
+            ),
+        ):
+            rc = main(["checkout", "feature/123-foo"])
+        assert rc != 0
+        assert "worktree" in capsys.readouterr().err.lower()
+
     def test_checkout_develop_allowed_in_main_worktree(self) -> None:
         with (
             patch("vergil_tooling.bin.vrg_git._is_main_worktree", return_value=True),
