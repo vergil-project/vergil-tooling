@@ -1232,6 +1232,7 @@ def test_rebase_interactive_without_autosquash_refused(
         (["-Si", "develop"], False, False),
         (["-r", "develop"], False, False),
         (["--root"], False, False),
+        (["-i", "--autosquash", "--", "develop"], True, True),
     ],
 )
 def test_rebase_flag_parsing(args: list[str], interactive: bool, autosquash: bool) -> None:
@@ -1251,6 +1252,26 @@ def test_rebase_autosquash_refused_on_frozen_branch(
     assert "vrg: refusing to rewrite this branch" in err
     assert "FROZEN" in err
     assert _git(rewrite_repo, "rev-parse", "HEAD") == before
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["rebase", "-i", "--autosquash", "origin/develop", "develop"],
+        ["rebase", "-i", "--autosquash", "--onto", "develop", "origin/develop", "develop"],
+    ],
+)
+def test_rebase_autosquash_of_another_branch_refused(
+    rewrite_repo: Path, capsys: pytest.CaptureFixture[str], argv: list[str]
+) -> None:
+    # Naming a <branch> would rewrite it (here protected develop) while the
+    # checks look only at the current, unprotected feature branch.
+    _git(rewrite_repo, "checkout", "-q", "--", "README.md")
+    develop_before = _git(rewrite_repo, "rev-parse", "develop")
+    assert main(argv) == 1
+    assert "takes only <base>" in capsys.readouterr().err
+    assert _git(rewrite_repo, "rev-parse", "develop") == develop_before
+    assert _git(rewrite_repo, "rev-parse", "--abbrev-ref", "HEAD") == "feature/1-x"
 
 
 def test_plain_rebase_is_not_a_local_rewrite(rewrite_repo: Path) -> None:

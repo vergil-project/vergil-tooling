@@ -495,13 +495,27 @@ def _rebase_flags(args: list[str]) -> list[str]:
     Each short cluster is split into one ``-<c>`` per flag, so ``-ri`` reads
     as ``-r`` and ``-i``. Positionals and option values are dropped.
     """
+    return _split_rebase_args(args)[0]
+
+
+def _rebase_positionals(args: list[str]) -> list[str]:
+    """Return the positionals of ``rebase *args*``: ``[<upstream> [<branch>]]``."""
+    return _split_rebase_args(args)[1]
+
+
+def _split_rebase_args(args: list[str]) -> tuple[list[str], list[str]]:
+    """Split ``rebase *args*`` into its flags and its positionals, values dropped."""
     flags: list[str] = []
+    positionals: list[str] = []
     skip_next = False
     for arg in args:
         if skip_next:
             skip_next = False
             continue
-        if arg in ("-", "--") or not arg.startswith("-"):
+        if arg == "--":
+            continue
+        if arg == "-" or not arg.startswith("-"):
+            positionals.append(arg)
             continue
         if arg.startswith("--"):
             flags.append(arg)
@@ -515,7 +529,7 @@ def _rebase_flags(args: list[str]) -> list[str]:
             if char in _REBASE_SHORT_WITH_VALUE:
                 skip_next = index == len(cluster) - 1
                 break
-    return flags
+    return flags, positionals
 
 
 def _rebase_is_interactive(args: list[str]) -> bool:
@@ -684,6 +698,13 @@ def _check_local_rewrite(subcmd: str, args: list[str]) -> str | None:
     """
     if not _is_local_rewrite(subcmd, args):
         return None
+    if subcmd == "rebase" and len(_rebase_positionals(args)) > 1:
+        # `rebase <upstream> <branch>` checks out and rewrites <branch>, which
+        # the checks below (made on the current branch) would never see.
+        return (
+            "vrg-git: rebase -i --autosquash takes only <base>; check out the "
+            "branch to rebase in its own worktree and run it there."
+        )
     branch = _rewrite_target_branch()
     if branch is None:
         return (
