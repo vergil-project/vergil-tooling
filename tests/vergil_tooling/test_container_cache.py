@@ -21,6 +21,7 @@ from vergil_tooling.lib.container_cache import (
     _compose_setup,
     _image_is_launchable,
     _is_self_repo,
+    _is_transient_pull_error,
     _sanitize_branch,
     _warmup_command,
     apt_install_command,
@@ -1407,13 +1408,15 @@ def test_resolve_base_digest_allow_stale_uses_local(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """The opt-in degrades to the local base, warning with the real cause."""
-    pull = _completed(1, stderr="connection refused")
+    pull = _completed(1, stderr="dial tcp 140.82.112.33:443: connect: connection refused")
     inspect = _completed(0, "sha256:local9\n")
     with patch(
         "vergil_tooling.lib.container_cache.subprocess.run",
-        side_effect=[pull, inspect],
+        side_effect=[pull, pull, pull, inspect],
     ):
-        digest, verified = resolve_base_digest("img:1", runtime="docker", allow_stale=True)
+        digest, verified = resolve_base_digest(
+            "img:1", runtime="docker", allow_stale=True, sleep=lambda _s: None
+        )
     assert digest == "sha256:local9"
     assert verified is False
     err = capsys.readouterr().err
@@ -1457,30 +1460,209 @@ def test_resolve_base_digest_pull_failure_reports_real_error() -> None:
 
 
 def test_resolve_base_digest_pull_timeout_is_hard_error() -> None:
-    import subprocess as _sp
-
+    """A pull timing out is transient: retried, then refused once every attempt timed out."""
+    timeout = subprocess.TimeoutExpired(cmd="pull", timeout=1)
     inspect = _completed(0, "sha256:local9\n")
+    waits: list[float] = []
     with (
         patch(
             "vergil_tooling.lib.container_cache.subprocess.run",
-            side_effect=[_sp.TimeoutExpired(cmd="pull", timeout=1), inspect],
-        ),
-        pytest.raises(RuntimeError, match="timed out after"),
+            side_effect=[timeout, timeout, timeout, inspect],
+        ) as run,
+        pytest.raises(RuntimeError, match="timed out after") as exc,
     ):
-        resolve_base_digest("img:1", runtime="docker")
+        resolve_base_digest("img:1", runtime="docker", sleep=waits.append)
+    assert run.call_count == 4  # three pulls, then the inspect
+    assert waits == [2.0, 5.0]
+    assert "3 attempts" in str(exc.value)
+
+
+def test_resolve_base_digest_pull_timeout_then_success() -> None:
+    timeout = subprocess.TimeoutExpired(cmd="pull", timeout=1)
+    inspect = _completed(0, "sha256:fresh1\n")
+    waits: list[float] = []
+    with patch(
+        "vergil_tooling.lib.container_cache.subprocess.run",
+        side_effect=[timeout, _completed(0), inspect],
+    ):
+        digest, verified = resolve_base_digest("img:1", runtime="docker", sleep=waits.append)
+    assert (digest, verified) == ("sha256:fresh1", True)
+    assert waits == [2.0]
 
 
 def test_resolve_base_digest_pull_timeout_allow_stale_uses_local() -> None:
-    import subprocess as _sp
-
+    timeout = subprocess.TimeoutExpired(cmd="pull", timeout=1)
     inspect = _completed(0, "sha256:local9\n")
     with patch(
         "vergil_tooling.lib.container_cache.subprocess.run",
-        side_effect=[_sp.TimeoutExpired(cmd="pull", timeout=1), inspect],
+        side_effect=[timeout, timeout, timeout, inspect],
     ):
-        digest, verified = resolve_base_digest("img:1", runtime="docker", allow_stale=True)
+        digest, verified = resolve_base_digest(
+            "img:1", runtime="docker", allow_stale=True, sleep=lambda _s: None
+        )
     assert digest == "sha256:local9"
     assert verified is False
+
+
+# The failure #4209 hit: docker's containerd resolver could not fetch ghcr.io's
+# anonymous token because the token endpoint did not answer in time.
+_TOKEN_TIMEOUT_STDERR = (
+    'Error response from daemon: failed to resolve reference "ghcr.io/vergil-project/'
+    'prod-python:3.15": failed to fetch anonymous token: Get "https://ghcr.io/token?'
+    'scope=repository%3Avergil-project%2Fprod-python%3Apull&service=ghcr.io": '
+    "net/http: timeout awaiting response headers\n"
+)
+
+
+def test_resolve_base_digest_transient_retried_then_succeeds(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    inspect = _completed(0, "sha256:fresh1\n")
+    waits: list[float] = []
+    with patch(
+        "vergil_tooling.lib.container_cache.subprocess.run",
+        side_effect=[
+            _completed(1, stderr=_TOKEN_TIMEOUT_STDERR),
+            _completed(1, stderr=_TOKEN_TIMEOUT_STDERR),
+            _completed(0),
+            inspect,
+        ],
+    ) as run:
+        digest, verified = resolve_base_digest("img:1", runtime="docker", sleep=waits.append)
+    assert (digest, verified) == ("sha256:fresh1", True)
+    assert waits == [2.0, 5.0]
+    pulls = [c.args[0] for c in run.call_args_list[:3]]
+    assert pulls == [["docker", "pull", "img:1"]] * 3
+    err = capsys.readouterr().err
+    assert "attempt 1/3" in err
+    assert "attempt 2/3" in err
+    assert "retrying in 2s" in err
+    assert "retrying in 5s" in err
+
+
+def test_resolve_base_digest_transient_exhausted_names_every_attempt() -> None:
+    inspect = _completed(0, "sha256:local9\n")
+    waits: list[float] = []
+    with (
+        patch(
+            "vergil_tooling.lib.container_cache.subprocess.run",
+            side_effect=[
+                _completed(1, stderr=_TOKEN_TIMEOUT_STDERR),
+                _completed(1, stderr="dial tcp: lookup ghcr.io: no such host\n"),
+                _completed(
+                    1,
+                    stderr="unexpected status from HEAD request to https://ghcr.io/v2/x/"
+                    "manifests/1: 503 Service Unavailable\n",
+                ),
+                inspect,
+            ],
+        ) as run,
+        pytest.raises(RuntimeError) as exc,
+    ):
+        resolve_base_digest("img:1", runtime="docker", sleep=waits.append)
+    assert run.call_count == 4
+    assert waits == [2.0, 5.0]
+    message = str(exc.value)
+    assert "base pull failed (3 attempts:" in message
+    assert "attempt 1: " in message
+    assert "timeout awaiting response headers" in message
+    assert "attempt 2: dial tcp: lookup ghcr.io: no such host" in message
+    assert "attempt 3: " in message
+    assert "503 Service Unavailable" in message
+    assert "possibly-stale local cache" in message
+    assert "VRG_ALLOW_STALE_BASE" in message
+
+
+@pytest.mark.parametrize(
+    "stderr",
+    [
+        "Error response from daemon: manifest for ghcr.io/x/y:1 not found: "
+        "manifest unknown: manifest unknown",
+        "Error response from daemon: pull access denied for x/y, repository does not "
+        "exist or may require 'docker login': denied: requested access to the resource "
+        "is denied",
+        'Error response from daemon: Head "https://ghcr.io/v2/x/y/manifests/1": '
+        "unauthorized: authentication required",
+        'failed to resolve reference "ghcr.io/x/y:1": ghcr.io/x/y:1: not found',
+        # A definite answer inside a token fetch: a 401 is not transient.
+        "failed to fetch anonymous token: unexpected status from GET request to "
+        "https://ghcr.io/token?scope=x: 401 Unauthorized",
+        # Unrecognised text is not transient either.
+        "something nobody has seen before",
+        "unexpected status from GET request to https://ghcr.io/v2/: 429 Too Many Requests",
+    ],
+)
+def test_resolve_base_digest_definite_failure_fails_at_once(stderr: str) -> None:
+    inspect = _completed(0, "sha256:local9\n")
+    waits: list[float] = []
+    with (
+        patch(
+            "vergil_tooling.lib.container_cache.subprocess.run",
+            side_effect=[_completed(1, stderr=stderr), inspect],
+        ) as run,
+        pytest.raises(RuntimeError, match=r"base pull failed \(1 attempt: "),
+    ):
+        resolve_base_digest("img:1", runtime="docker", sleep=waits.append)
+    assert run.call_count == 2  # one pull, then the inspect
+    assert waits == []
+
+
+def test_resolve_base_digest_default_sleep_is_time_sleep() -> None:
+    timeout = subprocess.TimeoutExpired(cmd="pull", timeout=1)
+    with (
+        patch(
+            "vergil_tooling.lib.container_cache.subprocess.run",
+            side_effect=[timeout, _completed(0), _completed(0, "sha256:fresh1\n")],
+        ),
+        patch("vergil_tooling.lib.container_cache.time.sleep") as sleep,
+    ):
+        resolve_base_digest("img:1", runtime="docker")
+    sleep.assert_called_once_with(2.0)
+
+
+# -- _is_transient_pull_error -------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("stderr", "transient"),
+    [
+        (_TOKEN_TIMEOUT_STDERR, True),
+        ('Get "https://ghcr.io/v2/": net/http: TLS handshake timeout', True),
+        ("net/http: request canceled while waiting for connection", True),
+        ("dial tcp 140.82.112.33:443: i/o timeout", True),
+        ("failed to do request: context deadline exceeded", True),
+        ("dial tcp: lookup ghcr.io on 127.0.0.53:53: no such host", True),
+        ("dial tcp 140.82.112.33:443: connect: connection refused", True),
+        ("read tcp 10.0.0.2:5000->140.82.112.33:443: read: connection reset by peer", True),
+        ("dial tcp 140.82.112.33:443: connect: network is unreachable", True),
+        ("dial tcp 140.82.112.33:443: connect: no route to host", True),
+        ("httpReadSeeker: failed open: unexpected EOF", True),
+        ("unexpected status from HEAD request to https://ghcr.io/v2/x: 500 Server Error", True),
+        ("unexpected status from GET request to https://ghcr.io/token: 502 Bad Gateway", True),
+        ("received unexpected HTTP status: 504 Gateway Timeout", True),
+        ("unavailable: service unavailable", True),
+        ("manifest unknown", False),
+        ("denied: requested access to the resource is denied", False),
+        ("unauthorized: authentication required", False),
+        ("ghcr.io/x/y:1: not found", False),
+        (
+            "pull access denied, repository does not exist or may require authorization: "
+            "authorization failed",
+            False,
+        ),
+        # A definite answer wins over a transient-looking wrapper.
+        (
+            "failed to fetch oauth token: unexpected status from POST request to "
+            "https://ghcr.io/token: 401 Unauthorized",
+            False,
+        ),
+        ("received unexpected HTTP status: 429 Too Many Requests", False),
+        ("x509: certificate signed by unknown authority", False),
+        ("", False),
+    ],
+)
+def test_is_transient_pull_error(stderr: str, transient: bool) -> None:
+    assert _is_transient_pull_error(stderr) is transient
 
 
 def test_resolve_base_digest_no_image_raises_names_cause() -> None:
