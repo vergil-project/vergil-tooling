@@ -19,12 +19,12 @@ import re
 ALLOWED_LINKAGES = ("Ref", "Closes")
 
 # Primary linkage in a PR body: ``Ref`` or the close family (canonical
-# ``Closes``; ``Close``/``Closed`` accepted as equivalents). The keyword is
-# non-capturing, so the two capture groups stay (repo, number) and the
-# extract_* helpers recognize a task linked by either keyword.
+# ``Closes``; ``Close``/``Closed`` accepted as equivalents). The groups are
+# named (keyword, repo, number), so the extract_* helpers recognize a task
+# linked by either keyword and extract_tracking_refs can tell them apart.
 LINKAGE_RE = re.compile(
-    r"^\s*[-*]?\s*(?:Ref|Close[sd]?):?\s+"
-    r"([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#([0-9]+)",
+    r"^\s*[-*]?\s*(?P<keyword>Ref|Close[sd]?):?\s+"
+    r"(?P<repo>[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#(?P<number>[0-9]+)",
     re.MULTILINE | re.IGNORECASE,
 )
 
@@ -164,13 +164,13 @@ def extract_tracking_issue(text: str) -> int | None:
     Recognizes a task linked by either sanctioned keyword. Raises ``ValueError``
     if multiple linkage lines are found.
     """
-    matches = LINKAGE_RE.findall(text)
+    matches = list(LINKAGE_RE.finditer(text))
     if not matches:
         return None
     if len(matches) > 1:
         msg = f"multiple tracking issue references found ({len(matches)})"
         raise ValueError(msg)
-    return int(matches[0][1])
+    return int(matches[0]["number"])
 
 
 def extract_tracking_ref(text: str) -> str | None:
@@ -181,11 +181,28 @@ def extract_tracking_ref(text: str) -> str | None:
     in ``.github``). Matches ``Ref`` or ``Closes``. Raises ``ValueError`` if
     multiple linkage lines are found.
     """
-    matches = LINKAGE_RE.findall(text)
-    if not matches:
+    refs = extract_tracking_refs(text)
+    if not refs:
         return None
-    if len(matches) > 1:
-        msg = f"multiple tracking issue references found ({len(matches)})"
+    if len(refs) > 1:
+        msg = f"multiple tracking issue references found ({len(refs)})"
         raise ValueError(msg)
-    repo_part, number = matches[0]
-    return f"{repo_part}#{number}" if repo_part else f"#{number}"
+    return refs[0][1]
+
+
+def extract_tracking_refs(text: str) -> list[tuple[str, str]]:
+    """Return every linkage in *text* as ``(keyword, ref)``, in body order.
+
+    ``keyword`` is ``"Ref"`` or ``"Closes"`` (the close family, ``Close`` and
+    ``Closed`` included, any case, reads as ``"Closes"``); ``ref`` is ``"#N"``
+    or ``"owner/repo#N"``. A batch PR body carries one ``Closes`` line per
+    issue, so a caller that must see every issue reads this instead of
+    :func:`extract_tracking_ref`, which keeps its single-linkage contract.
+    """
+    refs: list[tuple[str, str]] = []
+    for match in LINKAGE_RE.finditer(text):
+        keyword = "Ref" if match["keyword"].lower() == "ref" else "Closes"
+        repo_part = match["repo"]
+        number = match["number"]
+        refs.append((keyword, f"{repo_part}#{number}" if repo_part else f"#{number}"))
+    return refs
