@@ -6,6 +6,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 """
+# Pasted subjects and bodies go through replace_regex: a line that starts with a
+# MkDocs snippets marker (dashes, `8<`, dashes) has its first dash written as
+# the HTML entity &#45;, so it renders as the same text and is never expanded.
+# The R flag makes a lone carriage return start a line too, as Markdown reads it.
 body = """
 
 {% if version -%}
@@ -16,7 +20,7 @@ body = """
 {% for group, commits in commits | group_by(attribute="group") %}
     ### {{ group | striptags | trim | upper_first }}
     {% for commit in commits %}
-        - {{ commit.message | split(pat="\n") | first | trim }}\
+        - {{ commit.message | split(pat="\n") | first | trim | replace_regex(from="(?mR)^([ \t]*;*)-(-*8<)", to="${1}&#45;${2}") }}\
     {% endfor %}
 {% endfor %}
 """
