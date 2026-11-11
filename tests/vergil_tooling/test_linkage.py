@@ -7,6 +7,7 @@ import pytest
 from vergil_tooling.lib.linkage import (
     extract_tracking_issue,
     extract_tracking_ref,
+    extract_tracking_refs,
     normalize_linkage,
 )
 
@@ -140,6 +141,29 @@ def test_extract_tracking_ref_cross_repo() -> None:
 
 def test_extract_tracking_ref_none() -> None:
     assert extract_tracking_ref("no linkage here") is None
+
+
+def test_extract_tracking_refs_returns_all_in_order() -> None:
+    body = (
+        "## Issue Linkage\n\n"
+        "Closes #12\n"
+        "- Ref org/.github#40\n"
+        "closed: other/repo#7\n"
+        "Close #3\n"
+        "Fixes #99\n"
+        "free text mentioning Closes #500 mid-line\n"
+    )
+    assert extract_tracking_refs(body) == [
+        ("Closes", "#12"),
+        ("Ref", "org/.github#40"),
+        ("Closes", "other/repo#7"),
+        ("Closes", "#3"),
+    ]
+
+
+def test_extract_tracking_refs_single_and_none() -> None:
+    assert extract_tracking_refs("ref #42") == [("Ref", "#42")]
+    assert extract_tracking_refs("no linkage here") == []
 
 
 def test_extract_tracking_ref_multiple_raises() -> None:

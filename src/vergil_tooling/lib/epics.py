@@ -189,6 +189,36 @@ def _issue_state(ref: IssueRef) -> str:
     return github.read_output("api", _issue_endpoint(ref), "--jq", ".state").upper()
 
 
+def issue_state(ref: IssueRef) -> str:
+    """Return ``"OPEN"`` or ``"CLOSED"`` for an issue; a failed read raises."""
+    return _issue_state(ref)
+
+
+def issue_author(ref: IssueRef) -> str:
+    """Return the login that opened an issue, as ``gh issue view`` reports it.
+
+    An issue opened by a GitHub App reads as ``app/<login>``; the caller strips
+    that prefix before comparing with the trusted authors. A failed read
+    raises, and an empty login raises ``ValueError``: it is never read as
+    some author.
+    """
+    login = github.read_output(
+        "issue",
+        "view",
+        str(ref.number),
+        "--repo",
+        f"{ref.owner}/{ref.repo}",
+        "--json",
+        "author",
+        "--jq",
+        '.author.login // ""',
+    )
+    if not login:
+        msg = f"{ref.slug} has no author login"
+        raise ValueError(msg)
+    return login
+
+
 def _issue_title(ref: IssueRef) -> str:
     """Return an issue's title (used to tell a live ad-hoc epic from an archive)."""
     return github.read_output("api", _issue_endpoint(ref), "--jq", ".title")

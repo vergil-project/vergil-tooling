@@ -113,13 +113,48 @@ which worktree it will operate in.
 
    Everything under `build/tmp/` is scratch: a file there can be
    deleted once nothing is using it.
-4. **One worktree per issue.** Do not stack multiple in-flight issues
-   in one worktree. When a worktree branch lands, remove the worktree
-   before starting the next.
+4. **One worktree per issue, or per batch.** Do not stack multiple
+   in-flight issues in one worktree. When a worktree branch lands,
+   remove the worktree before starting the next. The one exception is
+   a **batch**: 2 to 8 small issues of one epic in one repo,
+   implemented in order on a single branch, one commit per issue, and
+   handed off as one PR. A batch gets exactly one worktree and one
+   branch for all of its issues (see [Batches](#batches) below).
 5. **Worktree naming: `issue-<N>-<short-slug>`.** `<N>` is the GitHub
    issue number; `<short-slug>` is 2–4 kebab-case tokens describing
    the work. Shared format lets both humans and scripts match worktree
-   to issue.
+   to issue. A batch is named for its first issue, with `batch-` at
+   the start of its slug: `.worktrees/issue-<N>-batch-<slug>/` on
+   `feature/<N>-batch-<slug>`.
+
+### Batches
+
+A batch is one worktree and one branch, named for its first issue:
+`.worktrees/issue-<N>-batch-<slug>/` on `feature/<N>-batch-<slug>`,
+where `<N>` is the first issue in the batch's order. The other issues
+get no worktree and no branch of their own while they are in the
+batch.
+
+The batch's issues and their order live in the batch marker, never in
+the branch name. `vrg-pr-workflow batch-start --issue <N> --issue <M>
+…` checks the batch's hard rules and writes the marker to
+`build/.vergil-state/issue-implement/<issue>/batch` in the main clone
+for every member, holding the ordered issue list and the batch's fixed
+base, `base_sha` (the `origin/develop` commit when the batch starts).
+It refuses, writing nothing, when a rule fails. Running it again with
+exactly the same list is a resume and changes nothing; a different
+list over an existing marker is refused.
+`vrg-pr-workflow batch-show --issue <N>` prints the list and
+`base_sha`.
+
+The batch worktree starts at `base_sha`, not at a moving
+`origin/develop` (see
+[Onboarding a new worktree](#onboarding-a-new-worktree)), and the
+branch is not rebased onto `develop` before handoff, so finished
+issues are never rewritten. A batch branch keeps its name when the
+issue it is named for is later taken out of the batch: the tooling
+reads the batch's issues from the marker and the workflow state, never
+from the branch name.
 
 ### Agent prompt contract
 
@@ -167,6 +202,37 @@ in the placeholders for each one. A future `vrg-worktree-prompt` helper
 could emit this text given `<issue-number>` and `<slug>` — see
 [Enforcement and follow-up work](#enforcement-and-follow-up-work).
 
+**Batch form.** An agent given a [batch](#batches) gets the same
+template with every issue named in the batch's order, and the batch
+marker named. The first issue names the worktree, the branch and the
+scratch directory:
+
+```text
+You are working on a batch of issues, in this order:
+  1. #<N>: <issue title>
+  2. #<M>: <issue title>
+  …
+Work them in this order, one commit per issue.
+
+The batch marker: vrg-pr-workflow batch-start --issue <N> --issue <M> …
+(build/.vergil-state/issue-implement/<issue>/batch in the main clone,
+for every issue; vrg-pr-workflow batch-show --issue <N> prints it)
+
+Your worktree is: <absolute-path-to-project-root>/.worktrees/issue-<N>-batch-<slug>/
+Your branch is:   feature/<N>-batch-<slug>
+Your scratch is:  <absolute-path-to-this-agent's-scratch-directory>/
+
+Rules for this session:
+<the rules of the canonical template above, unchanged>
+```
+
+All fields are required, as in the single-issue form. The list and its
+order must match the marker exactly: `batch-start` accepts a second
+run only with the identical list, so a prompt whose list differs from
+an existing marker is refused, never merged. A batch has one agent and
+so one scratch directory, named for its first issue, for example
+`<absolute-path-to-project-root>/build/tmp/agents/<N>/`.
+
 ### Onboarding a new worktree
 
 When starting work on issue `N`:
@@ -189,6 +255,18 @@ The author owns rebasing as the parent evolves. Stacking is
 discouraged as a habit — prefer to defer dependent work or integrate
 it into the parent issue; the mechanism exists only for the rare case
 where neither is viable.
+
+**Batch worktrees.** A [batch](#batches)'s worktree is created once
+the marker exists, at the marker's `base_sha`, and is named for the
+first issue:
+
+```bash
+cd ~/dev/github/<project>                      # always from root
+git fetch origin
+vrg-pr-workflow batch-start --issue N --issue M
+vrg-pr-workflow batch-show --issue N           # prints the list and base_sha
+git worktree add .worktrees/issue-N-batch-<slug> -b feature/N-batch-<slug> <base_sha>
+```
 
 ### Cleanup
 

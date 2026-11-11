@@ -38,7 +38,7 @@ def test_task_drift_flags_open_task_behind_merged_pr() -> None:
             "body": "no linkage",
         },
         {"number": 102, "repository": {}, "url": "u102", "body": "Ref #5"},  # no repo -> skipped
-        {  # multiple refs -> skipped
+        {  # several linkage lines, none of them Closes -> nothing to check
             "number": 103,
             "repository": {"nameWithOwner": "o/r"},
             "url": "u103",
@@ -59,6 +59,83 @@ def test_task_drift_flags_open_task_behind_merged_pr() -> None:
     ):
         result = epic_audit.task_drift("2026-06-01", today=_TODAY, org="vergil-project")
     assert result == [TaskDrift("vergil-project/vergil-tooling", 1947, 1948, "u1948")]
+
+
+def _drift_with(
+    prs: list[dict[str, Any]], open_tasks: set[str]
+) -> tuple[list[TaskDrift], list[str]]:
+    """Run task_drift over *prs*; *open_tasks* are the ``repo#N`` refs still open."""
+    viewed: list[str] = []
+
+    def fake_read_json(*args: str) -> object:
+        if args[0] == "search":
+            return prs
+        ref = f"{args[args.index('--repo') + 1]}#{args[2]}"
+        viewed.append(ref)
+        state = "open" if ref in open_tasks else "closed"
+        return {"state": state, "title": f"feat: task {args[2]}", "body": "task body"}
+
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json),
+        patch("vergil_tooling.lib.epics.parent_of", return_value=None),
+    ):
+        result = epic_audit.task_drift("2026-06-01", today=_TODAY, org="vergil-project")
+    return result, viewed
+
+
+def test_task_drift_checks_every_issue_of_a_batch_pr() -> None:
+    # A batch PR closes several tasks, one Closes line each: every one is
+    # checked, and each one still open is drift (epic .github#1019).
+    repo = "vergil-project/vergil-tooling"
+    prs = [
+        {
+            "number": 50,
+            "repository": {"nameWithOwner": repo},
+            "url": "u50",
+            "body": "## Issue Linkage\n\nCloses #10\nCloses #11\nCloses #12\n",
+        },
+    ]
+    result, viewed = _drift_with(prs, {f"{repo}#10", f"{repo}#12"})
+    assert viewed == [f"{repo}#10", f"{repo}#11", f"{repo}#12"]
+    assert result == [TaskDrift(repo, 10, 50, "u50"), TaskDrift(repo, 12, 50, "u50")]
+
+
+def test_task_drift_ignores_ref_lines_in_a_multi_linkage_body() -> None:
+    # In a body with more than one linkage line, only the Closes lines name
+    # tasks the PR closes; a Ref line is never acted on.
+    repo = "vergil-project/vergil-tooling"
+    prs = [
+        {
+            "number": 51,
+            "repository": {"nameWithOwner": repo},
+            "url": "u51",
+            "body": "Closes #20\nRef #21\nCloses vergil-project/.github#22\n",
+        },
+    ]
+    result, viewed = _drift_with(prs, {f"{repo}#20", f"{repo}#21", "vergil-project/.github#22"})
+    assert viewed == [f"{repo}#20", "vergil-project/.github#22"]
+    assert result == [
+        TaskDrift(repo, 20, 51, "u51"),
+        TaskDrift("vergil-project/.github", 22, 51, "u51"),
+    ]
+
+
+@pytest.mark.parametrize("keyword", ["Ref", "Closes"])
+def test_task_drift_single_issue_unchanged(keyword: str) -> None:
+    # Review focus 5: a body with one linkage line is handled as today, Ref
+    # or Closes alike.
+    repo = "vergil-project/vergil-tooling"
+    prs = [
+        {
+            "number": 60,
+            "repository": {"nameWithOwner": repo},
+            "url": "u60",
+            "body": f"## Issue Linkage\n\n{keyword} #59\n",
+        },
+    ]
+    result, viewed = _drift_with(prs, {f"{repo}#59"})
+    assert viewed == [f"{repo}#59"]
+    assert result == [TaskDrift(repo, 59, 60, "u60")]
 
 
 def test_task_drift_skips_release_tracking_issue() -> None:

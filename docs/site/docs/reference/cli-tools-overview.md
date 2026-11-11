@@ -25,7 +25,7 @@ Freeze gate: refuses to add a commit on a branch that has been reported ready
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_commit` |
-| Args | `--type` (required), `--scope` (required), `--message` (required), `--body`, `--allow-empty` |
+| Args | `--type`, `--scope`, `--message` (all three required unless `--fixup`), `--body`, `--fixup COMMIT` (a `fixup!` commit of a branch-local commit; refused with the message flags), `--allow-empty` |
 | Preconditions | Git repo, staged changes, not detached HEAD, not on protected branch, branch prefix matches branching model, issue number in branch name, not main worktree when `.worktrees/` present, branch not frozen (or unfrozen) |
 | Failure mode | `SystemExit` with diagnostic on stderr for each check |
 | Exit codes | 0 success, 1 rejection or error |
