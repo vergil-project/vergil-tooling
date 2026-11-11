@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.301/">
       
       
         <link rel="next" href="../v2.1.299/">
@@ -1405,6 +1405,8 @@
       
         
       
+        
+      
     
     
     
@@ -1460,6 +1462,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.301/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.301
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17382,6 +17412,7 @@ Add a 'Which mechanism do I use?' section to both reference pages, built on one 
 <li><strong>add APT::Update::Error-Mode=any to APT_FAIL_FAST (#4201)</strong>
 apt-get update now fails when no mirror can serve an index, instead of warning and leaving the next install to fail on a misleading 'Unable to locate package'. This matches the 80-vergil-fast-fail apt.conf that pkg-ubuntu bakes in (vergil-containers#837). Only apt-get update reads the key, so it is inert on install and purge. Every caller runs noble (apt 2.8.4) or resolute (apt 3.x), both well past the apt 2.1 that introduced it.</li>
 </ul>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.300/v2.1.300-ci-evidence.tar.gz">Download →</a></p>
 
 
 
