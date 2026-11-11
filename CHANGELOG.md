@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.300] - 2026-11-11
+
+### Bug fixes
+
+- allow dropping a planning item once its development epics are closed (#4184)
+- stop counting a followed publish-index run against the package-index timeout (#4190)
+- refuse to release a repo that does not declare [publish].release = true (#4194)
+- mark human-identity deploy steps as human-run in the deployment scaffold (#4195)
+- print the full --help to any identity; run identity gates after parsing (#4196)
+- retry transient errors when minting App tokens and record GitHub's request ID (#4187)
+- size the checks deadline from measured CI and tell a slow check from a stuck one (#4204)
+
+### Build
+
+- run a strict mkdocs build of the site docs in vrg-validate (#4189)
+
+### CI
+
+- run package CI on the dev- package images until the Ubuntu 24.04 cutover (#4203)
+
+### Chores
+
+- remove vrg-xdist-sync now that the pytest-xdist rollout is done (#4185)
+
+### Documentation
+
+- point the nFPM hint and the fast-fail apt docstring at the package toolchain image (#4183)
+- give each parallel agent its own scratch directory in the prompt contract (#4192)
+- say when to use an upstream refresh and when a dependency update (#4193)
+
+### Features
+
+- run git-cliff in the dev container through vrg-container-run (#4191)
+- add APT::Update::Error-Mode=any to APT_FAIL_FAST (#4201)
+
 ## [2.1.299] - 2026-11-10
 
 ### Bug fixes
