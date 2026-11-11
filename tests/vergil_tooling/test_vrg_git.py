@@ -22,6 +22,7 @@ from vergil_tooling.bin.vrg_git import (
     _parse_worktree_add_path,
     _rebase_has_autosquash,
     _rebase_is_interactive,
+    _rebase_names_branch,
     _rewrite_target_branch,
     _worktree_convention_active,
     main,
@@ -1259,6 +1260,9 @@ def test_rebase_autosquash_refused_on_frozen_branch(
     [
         ["rebase", "-i", "--autosquash", "origin/develop", "develop"],
         ["rebase", "-i", "--autosquash", "--onto", "develop", "origin/develop", "develop"],
+        ["rebase", "-i", "--autosquash", "--root", "develop"],
+        ["rebase", "-i", "--autosquash", "--onto", "feature/1-x", "--root", "develop"],
+        ["rebase", "-i", "--autosquash", "--ro", "develop"],
     ],
 )
 def test_rebase_autosquash_of_another_branch_refused(
@@ -1272,6 +1276,22 @@ def test_rebase_autosquash_of_another_branch_refused(
     assert "takes only <base>" in capsys.readouterr().err
     assert _git(rewrite_repo, "rev-parse", "develop") == develop_before
     assert _git(rewrite_repo, "rev-parse", "--abbrev-ref", "HEAD") == "feature/1-x"
+
+
+@pytest.mark.parametrize(
+    ("args", "names_branch"),
+    [
+        (["-i", "--autosquash", "origin/develop"], False),
+        (["-i", "--autosquash", "--root"], False),
+        (["-i", "--autosquash", "--onto", "x", "origin/develop"], False),
+        (["-i", "--autosquash", "origin/develop", "develop"], True),
+        (["-i", "--autosquash", "--root", "develop"], True),
+        (["-i", "--autosquash", "--roo", "develop"], True),
+        (["-i", "--autosquash", "--reapply-cherry-picks", "origin/develop"], False),
+    ],
+)
+def test_rebase_names_branch(args: list[str], names_branch: bool) -> None:
+    assert _rebase_names_branch(args) is names_branch
 
 
 def test_plain_rebase_is_not_a_local_rewrite(rewrite_repo: Path) -> None:

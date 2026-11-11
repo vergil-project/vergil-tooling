@@ -503,6 +503,20 @@ def _rebase_positionals(args: list[str]) -> list[str]:
     return _split_rebase_args(args)[1]
 
 
+def _rebase_names_branch(args: list[str]) -> bool:
+    """Return True when ``rebase *args*`` names a ``<branch>`` to check out and rewrite.
+
+    git reads ``rebase [<upstream> [<branch>]]``, or ``rebase --root
+    [<branch>]``, where the one positional is the branch. ``--root`` and any
+    abbreviation git would accept for it count.
+    """
+    root = any(
+        len(flag) >= len("--ro") and "--root".startswith(flag.split("=", 1)[0])
+        for flag in _rebase_flags(args)
+    )
+    return len(_rebase_positionals(args)) > (0 if root else 1)
+
+
 def _split_rebase_args(args: list[str]) -> tuple[list[str], list[str]]:
     """Split ``rebase *args*`` into its flags and its positionals, values dropped."""
     flags: list[str] = []
@@ -698,9 +712,10 @@ def _check_local_rewrite(subcmd: str, args: list[str]) -> str | None:
     """
     if not _is_local_rewrite(subcmd, args):
         return None
-    if subcmd == "rebase" and len(_rebase_positionals(args)) > 1:
-        # `rebase <upstream> <branch>` checks out and rewrites <branch>, which
-        # the checks below (made on the current branch) would never see.
+    if subcmd == "rebase" and _rebase_names_branch(args):
+        # `rebase <upstream> <branch>` and `rebase --root <branch>` check out
+        # and rewrite <branch>, which the checks below (made on the current
+        # branch) would never see.
         return (
             "vrg-git: rebase -i --autosquash takes only <base>; check out the "
             "branch to rebase in its own worktree and run it there."
