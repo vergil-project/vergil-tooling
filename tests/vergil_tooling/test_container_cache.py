@@ -1632,6 +1632,8 @@ def test_resolve_base_digest_default_sleep_is_time_sleep() -> None:
         ("dial tcp 140.82.112.33:443: i/o timeout", True),
         ("failed to do request: context deadline exceeded", True),
         ("dial tcp: lookup ghcr.io on 127.0.0.53:53: no such host", True),
+        ("dial tcp: lookup ghcr.io on 127.0.0.11:53: server misbehaving", True),
+        ("dial tcp: lookup ghcr.io: Temporary failure in name resolution", True),
         ("dial tcp 140.82.112.33:443: connect: connection refused", True),
         ("read tcp 10.0.0.2:5000->140.82.112.33:443: read: connection reset by peer", True),
         ("dial tcp 140.82.112.33:443: connect: network is unreachable", True),

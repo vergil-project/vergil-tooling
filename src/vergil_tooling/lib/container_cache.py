@@ -48,8 +48,9 @@ _FIRST_CANDIDATE = '!c && $1 == "Candidate:" {c = $2} END {print c}'
 _PULL_TIMEOUT_SECONDS = 120
 
 # A transient pull failure is retried: _PULL_ATTEMPTS pulls in all, waiting
-# _PULL_RETRY_DELAYS_SECONDS[i] after attempt i + 1 fails, so a real outage
-# still fails within seconds rather than minutes (#4210).
+# _PULL_RETRY_DELAYS_SECONDS[i] after attempt i + 1 fails, so an outage that
+# fails fast still fails within seconds (#4210). A pull that hangs is bounded
+# by _PULL_ATTEMPTS times _PULL_TIMEOUT_SECONDS.
 _PULL_ATTEMPTS = 3
 _PULL_RETRY_DELAYS_SECONDS = (2.0, 5.0)
 
@@ -94,6 +95,10 @@ _DEFINITE_PULL_ERROR_PATTERNS = (
 # - "i/o timeout": Go's net and internal/poll deadline error text.
 # - "context deadline exceeded": Go's context.DeadlineExceeded.
 # - "no such host": Go's net DNS errNoSuchHost (src/net/net.go).
+# - "server misbehaving": Go's DNS errServerMisbehaving, a SERVFAIL reply
+#   (src/net/dnsclient_unix.go).
+# - "temporary failure in name resolution": glibc's EAI_AGAIN text
+#   (gai_strerror), printed when the runtime resolves through cgo.
 # - "connection refused", "connection reset by peer", "network is
 #   unreachable", "no route to host": the Linux errno texts Go's syscall
 #   package prints for ECONNREFUSED, ECONNRESET, ENETUNREACH, EHOSTUNREACH.
@@ -113,6 +118,8 @@ _TRANSIENT_PULL_ERROR_PATTERNS = (
     "i/o timeout",
     "context deadline exceeded",
     "no such host",
+    "server misbehaving",
+    "temporary failure in name resolution",
     "connection refused",
     "connection reset by peer",
     "network is unreachable",
