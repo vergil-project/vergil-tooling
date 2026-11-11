@@ -137,6 +137,7 @@ You are working on issue #<N>: <issue title>.
 
 Your worktree is: <absolute-path-to-project-root>/.worktrees/issue-<N>-<slug>/
 Your branch is:   feature/<N>-<slug>
+Your scratch is:  <absolute-path-to-this-agent's-scratch-directory>/
 
 Rules for this session:
 - Do all git operations from inside your worktree:
@@ -150,9 +151,17 @@ Rules for this session:
   is allowed (rule 3 of the worktree convention).
 - When you need to run validation, run it from inside your worktree
   (vrg-container-run mounts the current directory).
+- Use only your scratch directory for temporary files; other agents
+  run in parallel.
 ```
 
-All fields are required. The template is intended as a copy-paste
+All fields are required. The scratch directory belongs to one agent:
+no two agents running at the same time are given the same one, so
+one agent cannot overwrite another's helper scripts or intermediate
+files. A per-issue subdirectory of a location the convention already
+allows for scratch keeps them apart, for example
+`<absolute-path-to-project-root>/build/tmp/agents/<N>/` under rule 3's
+`build/tmp/`. The template is intended as a copy-paste
 starting point; an operator launching multiple parallel agents fills
 in the placeholders for each one. A future `vrg-worktree-prompt` helper
 could emit this text given `<issue-number>` and `<slug>` — see

@@ -180,7 +180,7 @@ def test_check_host_prerequisites_fails() -> None:
 
     with (
         patch("shutil.which", return_value=None),
-        pytest.raises(ReleaseError, match="git-cliff"),
+        pytest.raises(ReleaseError, match=r"No container runtime \(docker or nerdctl\)"),
     ):
         _check_host_prerequisites()
 
@@ -321,10 +321,41 @@ def test_check_no_existing_tracking_issue_fails() -> None:
         _check_no_existing_tracking_issue("owner/repo", "2.0.34")
 
 
-def test_check_host_prerequisites_success() -> None:
+@pytest.mark.parametrize(
+    ("on_path", "runtime"),
+    [({"nerdctl", "docker"}, "nerdctl"), ({"docker"}, "docker")],
+)
+def test_check_host_prerequisites_success(on_path: set[str], runtime: str) -> None:
     from vergil_tooling.lib.release.preflight import _check_host_prerequisites
 
-    with patch("shutil.which", return_value="/usr/bin/git-cliff"):
+    ok = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+    with (
+        patch(
+            "shutil.which", side_effect=lambda name: f"/usr/bin/{name}" if name in on_path else None
+        ),
+        patch(_MOD + ".subprocess.run", return_value=ok) as mock_run,
+    ):
+        _check_host_prerequisites()
+    assert mock_run.call_args[0][0] == (runtime, "version")
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        subprocess.CalledProcessError(1, "docker version", stderr="Cannot connect"),
+        subprocess.TimeoutExpired("docker version", 15),
+    ],
+)
+def test_check_host_prerequisites_runtime_unreachable(failure: Exception) -> None:
+    from vergil_tooling.lib.release.preflight import _check_host_prerequisites
+
+    with (
+        patch(
+            "shutil.which", side_effect=lambda name: "/usr/bin/docker" if name == "docker" else None
+        ),
+        patch(_MOD + ".subprocess.run", side_effect=failure),
+        pytest.raises(ReleaseError, match="docker container runtime is not reachable"),
+    ):
         _check_host_prerequisites()
 
 

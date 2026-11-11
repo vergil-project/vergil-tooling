@@ -85,22 +85,11 @@ from vergil_tooling.lib.pr_workflow.errors import AlreadySubmittedError, Workflo
 from vergil_tooling.lib.pr_workflow.github_transport import GitHubTransport
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
 from vergil_tooling.lib.process_errors import error_text
+from vergil_tooling.lib.release import gate
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.pr_workflow.state import WorkflowState
 
-
-_AGENT_HELP = """\
-vrg-submit-pr is a human-only command: PR submission is a Chief Steward
-operation, and agent identities cannot run it.
-
-Agents hand the PR off instead of submitting it. Push the validated branch,
-then record the PR metadata with:
-
-  vrg-pr-workflow report-ready --issue <N> --title <title> \\
-      --summary <summary> --notes <notes>
-
-Then stop: the human runs vrg-submit-pr to open the PR."""
 
 _AGENT_REFUSAL = (
     "vrg-submit-pr: PR submission requires a human maintainer. Agents cannot submit PRs; "
@@ -110,18 +99,14 @@ _AGENT_REFUSAL = (
 
 @cli_main
 def main(argv: list[str] | None = None) -> int:
-    # The identity gate runs before parsing so an agent's --help reaches it:
-    # agents run --help before invoking a command, so the help itself redirects
-    # them to the handoff instead of showing usage they cannot use (issue #3545).
+    args = parse_args(argv)
+
+    # The identity gate runs after parsing, so --help prints the full usage to
+    # any identity (issue #4178): an agent reads it to give the human a correct
+    # command line, and the help itself says the command is human-only.
     if identity_mode.is_agent():
-        raw_args = sys.argv[1:] if argv is None else argv
-        if {"-h", "--help"} & set(raw_args):
-            print(_AGENT_HELP)
-            return 0
         print(_AGENT_REFUSAL, file=sys.stderr)
         return 1
-
-    args = parse_args(argv)
 
     # Capture the cascade intent before normalization mutates the flags — the
     # relay path guard below needs to know what the caller actually passed.
@@ -135,6 +120,16 @@ def main(argv: list[str] | None = None) -> int:
         args.release = True
     if args.release:
         args.finalize = True
+
+    # A release cascade on a repo that is not released is refused before any
+    # push, PR or merge, so nothing changes (issue #4175). The check reads the
+    # main worktree's vergil.toml, the checkout vrg-release would run from.
+    if args.release:
+        refusal = gate.unreleased_refusal()
+        if refusal is not None:
+            flag = "--install" if args.install else "--release"
+            print(f"vrg-submit-pr {flag}: {refusal}", file=sys.stderr)
+            return 1
 
     if args.branches:
         # Relay path: branches identify the submit. It opens PRs worktree-free
@@ -187,7 +182,15 @@ def main(argv: list[str] | None = None) -> int:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(description="Create a standards-compliant pull request.")
+    parser = argparse.ArgumentParser(
+        description=(
+            "Create a standards-compliant pull request. A human-only command: PR "
+            "submission is a Chief Steward operation, and agent identities are refused. "
+            "Agents hand the PR off instead: record the PR metadata with "
+            "'vrg-pr-workflow report-ready --issue <N> --title <title> --summary "
+            "<summary> --notes <notes>', then stop; the human runs vrg-submit-pr."
+        ),
+    )
     parser.add_argument(
         "branches",
         nargs="*",

@@ -19,6 +19,9 @@ from vergil_tooling.lib.update_deps.orchestrator import UpdateDepsState, build_s
 
 @cli_main
 def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    # The identity gate runs after parsing, so --help prints the full usage to
+    # any identity (issue #4178).
     if not identity_mode.is_human():
         print(
             "vrg-update-deps is a human-only command (PR submission, merge, and "
@@ -26,7 +29,6 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
-    args = parse_args(argv)
     repo_root = git.repo_root()
     # --vergil is the special case: a deliberate ecosystem upgrade that runs only
     # the vergil updater, in bump mode. It is mutually exclusive with --only/--skip.
@@ -49,7 +51,10 @@ def main(argv: list[str] | None = None) -> int:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run the mechanized dependency-update workflow on develop.",
+        description=(
+            "Run the mechanized dependency-update workflow on develop. A human-only "
+            "command: agent identities are refused."
+        ),
     )
     selection = parser.add_mutually_exclusive_group()
     selection.add_argument(

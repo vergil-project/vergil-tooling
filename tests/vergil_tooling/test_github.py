@@ -5,6 +5,7 @@ from __future__ import annotations
 import http.client
 import io
 import json
+import logging
 import subprocess
 import urllib.error
 from pathlib import Path
@@ -376,6 +377,69 @@ def test_orphaned_check_names_probes_the_run_in_the_links_repo(
     ]
 
 
+def test_running_check_runs_names_only_checks_whose_job_is_in_progress(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Slow, not stuck (#4200): only a check whose own job is in progress is listed.
+
+    The run is not consulted: run 1 is uncompleted for all three of its jobs,
+    but a queued job, and a completed one, are not running checks.
+    """
+    reads: list[tuple[str, str]] = []
+    statuses = {"10": "in_progress", "11": "queued", "12": "completed", "20": "waiting"}
+
+    def fake_job_status(repo: str, job_id: str) -> str:
+        reads.append((repo, job_id))
+        return statuses[job_id]
+
+    monkeypatch.setattr(github, "job_status", fake_job_status)
+    monkeypatch.setattr(github, "run_completed", lambda r, i: pytest.fail("the run is not read"))
+    pending = [
+        ("images / build (amd64)", "https://github.com/o/r/actions/runs/1/job/10"),
+        ("images / build (arm64)", "https://github.com/o/r/actions/runs/1/job/11"),
+        ("quality / matrix", "https://github.com/o/r/actions/runs/1/job/12"),
+        ("deploy", "https://github.com/o/r/actions/runs/2/job/20"),
+        ("bad job id", "https://github.com/o/r/actions/runs/3/job/not-a-number"),
+        ("CodeQL", "https://github.com/o/r/runs/5"),
+        ("no link", ""),
+    ]
+    assert github.running_check_runs(pending) == [
+        ("images / build (amd64)", "https://github.com/o/r/actions/runs/1"),
+    ]
+    # Every Actions job is read; app-posted, link-less and unparseable ones never.
+    assert reads == [("o/r", "10"), ("o/r", "11"), ("o/r", "12"), ("o/r", "20")]
+
+
+def test_running_check_runs_propagates_a_read_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    def broken(repo: str, job_id: str) -> str:
+        raise github.GitHubAPIError(1, ("gh", "api", job_id), stderr="HTTP 500")
+
+    monkeypatch.setattr(github, "job_status", broken)
+    with pytest.raises(github.GitHubAPIError, match="HTTP 500"):
+        github.running_check_runs([("test / unit", "https://github.com/o/r/actions/runs/1/job/2")])
+
+
+def test_job_status_reads_the_jobs_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, ...]] = []
+
+    def fake_read_json(*args: str) -> dict[str, object]:
+        calls.append(args)
+        return {"status": "in_progress", "conclusion": None}
+
+    monkeypatch.setattr(github, "read_json", fake_read_json)
+    assert github.job_status("o/r", "77") == "in_progress"
+    assert calls == [("api", "repos/o/r/actions/jobs/77")]
+
+
+@pytest.mark.parametrize("payload", [{}, {"status": ""}, {"status": 3}, ["not", "an", "object"]])
+def test_job_status_rejects_a_response_without_a_status(
+    monkeypatch: pytest.MonkeyPatch, payload: object
+) -> None:
+    monkeypatch.setattr(github, "read_json", lambda *a: payload)
+    with pytest.raises(github.GitHubAPIError):
+        github.job_status("o/r", "77")
+
+
 def test_orphaned_check_names_flags_completed_run(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         github,
@@ -533,30 +597,31 @@ def test_wait_for_checks_polls_until_terminal(monkeypatch: pytest.MonkeyPatch) -
     assert sleeps == [7, 7]
 
 
-def test_wait_for_checks_default_ceiling_is_1800_and_polls_past_180(
+def test_wait_for_checks_default_ceiling_is_4500_and_polls_past_1800(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Regression (#2809): the default pending-checks ceiling was 180s — shorter
-    # than real CI (3-8 min) — so a normal PR whose checks were merely still
-    # running spuriously hard-failed the finalize merge. With the ceiling now
-    # 1800s, the waiter must keep polling well past 180s and raise the *plain*
-    # timeout only at the 1800s deadline (checks never terminal, nothing
-    # orphaned — e.g. an app-posted status still running).
-    assert github._POLL_TIMEOUT_SECS == 1800
+    # Regressions: the default pending-checks ceiling was 180s — shorter than
+    # normal CI — so merely-running checks hard-failed the finalize merge
+    # (#2809); then 1800s, shorter than a vergil-containers full image-tree
+    # build (36.5 min, #4200). With the ceiling now 4500s, the waiter must keep
+    # polling past both old ceilings and raise the *plain* timeout only at the
+    # 4500s deadline (checks never terminal, nothing orphaned — e.g. an
+    # app-posted status still running).
+    assert github._POLL_TIMEOUT_SECS == 4500
     _stub_checks(monkeypatch, lambda: False)
     monkeypatch.setattr(github, "orphaned_check_names", lambda pr: [])
-    # Fake monotonic clock, no real sleeping: deadline = 0 + 1800. The poll at
-    # t=200 is *past the old 180s ceiling* yet must NOT raise (proves 180s is
-    # gone); the deadline is only reached at t=1800.
-    clock = iter([0.0, 200.0, 1800.0])
+    # Fake monotonic clock, no real sleeping: deadline = 0 + 4500. The polls at
+    # t=200 and t=2200 are *past the old 180s and 1800s ceilings* yet must NOT
+    # raise; the deadline is only reached at t=4500.
+    clock = iter([0.0, 200.0, 2200.0, 4500.0])
     monkeypatch.setattr(github.time, "monotonic", lambda: next(clock))
     sleeps: list[int] = []
     monkeypatch.setattr(github.time, "sleep", lambda s: sleeps.append(s))
-    with pytest.raises(github.GitHubAPIError, match="still pending after 1800s"):
+    with pytest.raises(github.GitHubAPIError, match="still pending after 4500s"):
         github.wait_for_checks("934", required=())
-    # Exactly one poll happened after crossing 180s and before the 1800s
-    # deadline — the old ceiling would have raised at that first check instead.
-    assert sleeps == [github._POLL_INTERVAL_SECS]
+    # Exactly two polls happened before the 4500s deadline — either old ceiling
+    # would have raised at one of them instead.
+    assert sleeps == [github._POLL_INTERVAL_SECS, github._POLL_INTERVAL_SECS]
 
 
 def _rollup_node(name: str, run_id: int | None, workflow: str = "CI") -> dict[str, str]:
@@ -2407,6 +2472,75 @@ class TestJwtApiRequest:
             result = github._jwt_api_request("/endpoint", "jwt")
         assert result == {"token": "ghs_abc"}
 
+    @pytest.mark.parametrize("status", [401, 429, 500, 502, 503, 504])
+    def test_retries_transient_status_then_succeeds(
+        self, status: int, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        err = _jwt_http_error(status, request_id="ABCD:1234")
+        resp = _mock_http_response(b'{"token": "ghs_abc"}')
+        with (
+            patch(_URLOPEN, side_effect=[err, resp]) as mock_open,
+            patch("vergil_tooling.lib.github.time.sleep") as mock_sleep,
+            caplog.at_level(logging.WARNING, logger="vergil_tooling.lib.github"),
+        ):
+            result = github._jwt_api_request("/app/installations/1/access_tokens", "secret-jwt")
+        assert result == {"token": "ghs_abc"}
+        assert mock_open.call_count == 2
+        mock_sleep.assert_called_once()
+        assert "(request ID ABCD:1234)" in caplog.text
+        assert "attempt 1/5" in caplog.text
+        assert "secret-jwt" not in caplog.text
+
+    def test_persistent_401_fails_after_retries_run_out(self) -> None:
+        errors = [_jwt_http_error(401) for _ in range(github.retry.MAX_RETRIES + 1)]
+        with (
+            patch(_URLOPEN, side_effect=errors) as mock_open,
+            patch("vergil_tooling.lib.github.time.sleep") as mock_sleep,
+            pytest.raises(urllib.error.HTTPError) as excinfo,
+        ):
+            github._jwt_api_request("/app/installations", "jwt")
+        assert excinfo.value is errors[-1]
+        assert mock_open.call_count == github.retry.MAX_RETRIES + 1
+        assert mock_sleep.call_count == github.retry.MAX_RETRIES
+
+    @pytest.mark.parametrize("status", [400, 403, 404, 422])
+    def test_non_transient_status_fails_at_once(self, status: int) -> None:
+        err = _jwt_http_error(status)
+        with (
+            patch(_URLOPEN, side_effect=err) as mock_open,
+            patch("vergil_tooling.lib.github.time.sleep") as mock_sleep,
+            pytest.raises(urllib.error.HTTPError) as excinfo,
+        ):
+            github._jwt_api_request("/app/installations", "jwt")
+        assert excinfo.value is err
+        mock_open.assert_called_once()
+        mock_sleep.assert_not_called()
+
+    def test_non_http_error_is_not_retried(self) -> None:
+        with (
+            patch(_URLOPEN, side_effect=urllib.error.URLError("no route")) as mock_open,
+            patch("vergil_tooling.lib.github.time.sleep") as mock_sleep,
+            pytest.raises(urllib.error.URLError),
+        ):
+            github._jwt_api_request("/app/installations", "jwt")
+        mock_open.assert_called_once()
+        mock_sleep.assert_not_called()
+
+
+def _jwt_http_error(
+    status: int, *, request_id: str | None = None, body: bytes = b""
+) -> urllib.error.HTTPError:
+    headers = http.client.HTTPMessage()
+    if request_id is not None:
+        headers["X-GitHub-Request-Id"] = request_id
+    return urllib.error.HTTPError(
+        "https://api.github.com/app/installations",
+        status,
+        http.client.responses.get(status, "Error"),
+        headers,
+        io.BytesIO(body),
+    )
+
 
 class TestResolveInstallations:
     def test_returns_org_to_id_mapping(self) -> None:
@@ -2858,6 +2992,44 @@ class TestGetInstallationToken:
         )
         detail = github._jwt_http_error_detail(err)
         assert detail.endswith("GitHub said: " + "x" * 300)
+
+    def test_jwt_http_error_detail_records_request_id(self) -> None:
+        err = _jwt_http_error(
+            401,
+            request_id="C0DE:5EED:1:2:3",
+            body=b'{"message": "A JSON web token could not be decoded"}',
+        )
+        detail = github._jwt_http_error_detail(err)
+        assert detail == (
+            "HTTP Error 401: Unauthorized on /app/installations (request ID C0DE:5EED:1:2:3): "
+            "GitHub said: A JSON web token could not be decoded"
+        )
+
+    def test_persistent_401_raises_app_auth_error_with_request_id(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The real request path end to end: every attempt is rejected, so the
+        # mint fails loudly after the retries with the last response's detail.
+        _configure_app(tmp_path, monkeypatch)
+        attempts = github.retry.MAX_RETRIES + 1
+        errors = [
+            _jwt_http_error(401, request_id=f"ID-{i}", body=b'{"message": "Bad credentials"}')
+            for i in range(attempts)
+        ]
+        with (
+            patch("vergil_tooling.lib.github._generate_jwt", return_value="fake-jwt"),
+            patch(_URLOPEN, side_effect=errors) as mock_open,
+            patch("vergil_tooling.lib.github.time.sleep"),
+            pytest.raises(github.AppAuthError) as excinfo,
+        ):
+            github.get_installation_token(org="test-org")
+        assert mock_open.call_count == attempts
+        assert excinfo.value.detail == (
+            f"HTTP Error 401: Unauthorized on /app/installations (request ID ID-{attempts - 1}): "
+            "GitHub said: Bad credentials"
+        )
 
     def test_raises_app_auth_error_when_openssl_not_found(
         self,
@@ -3521,6 +3693,7 @@ def test_wait_for_checks_deadline_names_pending_checks_and_links(
         ],
     )
     monkeypatch.setattr(github, "orphaned_check_names", lambda pr: [])
+    monkeypatch.setattr(github, "job_status", lambda repo, job_id: "in_progress")
     clock = iter([0.0, 5000.0])
     monkeypatch.setattr(github.time, "monotonic", lambda: next(clock))
     with pytest.raises(github.ChecksTimeoutError) as excinfo:
@@ -3531,6 +3704,10 @@ def test_wait_for_checks_deadline_names_pending_checks_and_links(
     assert "CodeQL (no link)" in message
     assert "lint" not in message
     assert excinfo.value.pending == [("test / unit", _STALE_LINK), ("CodeQL", "")]
+    # The check whose job is in progress is slow, not stuck (#4200); CodeQL has no job.
+    assert excinfo.value.running == [
+        ("test / unit", "https://github.com/o/r/actions/runs/37969487090")
+    ]
     assert isinstance(excinfo.value, github.GitHubAPIError)  # existing handlers still catch it
 
 
@@ -3542,6 +3719,7 @@ def test_wait_for_checks_deadline_with_no_checks_registered(
     with pytest.raises(github.ChecksTimeoutError, match="no checks registered") as excinfo:
         github.wait_for_checks("934", poll_timeout=0, required=())
     assert excinfo.value.pending == []
+    assert excinfo.value.running == []
 
 
 def test_wait_for_checks_deadline_comes_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -3584,11 +3762,11 @@ def test_wait_for_checks_reports_pending_durations(
 
 
 def test_checks_timeout_secs_default_and_override(monkeypatch: pytest.MonkeyPatch) -> None:
-    assert github.checks_timeout_secs() == 1800
+    assert github.checks_timeout_secs() == 4500
     monkeypatch.setenv(github.CHECKS_TIMEOUT_ENV, " 5400 ")
     assert github.checks_timeout_secs() == 5400
     monkeypatch.setenv(github.CHECKS_TIMEOUT_ENV, "")
-    assert github.checks_timeout_secs() == 1800
+    assert github.checks_timeout_secs() == 4500
 
 
 @pytest.mark.parametrize("raw", ["soon", "0", "-5", "1.5"])

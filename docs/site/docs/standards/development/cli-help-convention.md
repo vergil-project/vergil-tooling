@@ -31,12 +31,25 @@ Tools that take no flags still get a parser so their `--help` describes them.
 Wrappers that forward to another CLI intercept `--help` themselves to explain
 their wrapper-specific behavior before forwarding.
 
+### Help is for every identity
+
+`--help` prints the same full help to anyone, whatever the identity or
+authentication. Identity, permission and authentication checks are runtime
+checks: they run after argument parsing has handled `-h` / `--help`, and only
+when the command is about to act. A human-only command says so in its help
+(and names the agent's handoff, where it has one) rather than hiding its
+options from agents: an agent that cannot read a command's help guesses its
+command line, and a guessed command line handed to the human is worse than a
+correct one.
+
 ## Enforcement
 
 `tests/vergil_tooling/test_help_coverage.py` is the gate. It enumerates every
 console script from `[project.scripts]`, runs each covered tool with `--help`
-in a subprocess, and asserts exit `0` with non-empty output. `--help`
-short-circuits before a tool's real work, so the check is hermetic.
+in a subprocess, and asserts exit `0` with non-empty output. It also runs each
+covered tool with `--help` and `-h` under an agent identity and asserts exit
+`0` with a usage line. `--help` short-circuits before a tool's real work, so
+the check is hermetic.
 
 Two lists steer the gate:
 
