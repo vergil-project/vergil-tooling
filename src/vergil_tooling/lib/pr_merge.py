@@ -35,7 +35,10 @@ required check is outstanding, and treats that policy rejection with no failed
 checks as *not ready* — poll and re-attempt — rather than fatal, bounded by the
 shared pending-checks deadline (``github.checks_timeout_secs``). A review requirement
 is surfaced at once. When the check wait itself expires with checks still pending,
-the engine aborts naming each pending check and its link (issue #3170).
+the engine aborts naming each pending check and its link (issue #3170). A check
+whose backing run is still in progress is reported as slow, not stuck, with the
+run's URL and the advice to wait for it and then resume; any other pending check
+keeps the re-run / close-and-reopen advice (issue #4200).
 """
 
 from __future__ import annotations
@@ -66,11 +69,41 @@ _UPDATE_SETTLE_SECS = 5
 # The ceiling is the shared pending-checks deadline (checks_timeout_secs(), read
 # per call so $VRG_CHECKS_TIMEOUT applies) so the waits never drift.
 _NOT_READY_POLL_SECS = _POLL_INTERVAL_SECS
-# How to get a merge moving again once a wait gives up on a check (#3170).
+# The command to run again once the checks can finish.
+_RESUME = "vrg-release --resume for a release, vrg-finalize-pr otherwise"
+# How to get a merge moving again once a wait gives up on a check that is not
+# making progress: pending with no backing run, or an app-posted status (#3170).
 _RECOVERY_HINT = (
     "Re-run the stuck job (or close and reopen the PR to re-run the gate), then re-run "
-    "the waiting command: vrg-release --resume for a release, vrg-finalize-pr otherwise."
+    f"the waiting command: {_RESUME}."
 )
+
+
+def _timeout_hint(exc: ChecksTimeoutError) -> str:
+    """What to do about a check wait that ran out, told apart by whether each run is going.
+
+    A check whose backing Actions run is still in progress is slow, not stuck:
+    re-running it would throw away its progress, so the hint is to wait for the
+    run and then resume (#4200). Any other pending check, or a timeout with none
+    pending, keeps the re-run / close-and-reopen advice.
+    """
+    running = exc.running
+    running_names = {name for name, _ in running}
+    stuck = [name for name, _ in exc.pending if name not in running_names]
+    parts: list[str] = []
+    if running:
+        runs = ", ".join(f"{name} (run {url})" for name, url in running)
+        parts.append(
+            f"Still running, not stuck: {runs}. Wait for the run to finish, then re-run "
+            f"the waiting command: {_RESUME}. Set $VRG_CHECKS_TIMEOUT to wait longer."
+        )
+    if not running:
+        parts.append(_RECOVERY_HINT)
+    elif stuck:
+        parts.append(f"Not running: {', '.join(stuck)}. {_RECOVERY_HINT}")
+    return " ".join(parts)
+
+
 # reviewDecision values that mean branch policy wants a human review — a block
 # no amount of waiting on CI clears, so it is surfaced immediately.
 _REVIEW_BLOCKS = frozenset({"REVIEW_REQUIRED", "CHANGES_REQUESTED"})
@@ -264,7 +297,8 @@ def wait_and_merge(
             raise MergeAbortError(msg) from exc
         except ChecksTimeoutError as exc:
             # exc.stderr already names every pending check and its link.
-            msg = f"PR {pr} cannot be merged yet: {(exc.stderr or '').strip()}. {_RECOVERY_HINT}"
+            detail = (exc.stderr or "").strip()
+            msg = f"PR {pr} cannot be merged yet: {detail}. {_timeout_hint(exc)}"
             raise MergeAbortError(msg) from exc
 
         failed = github.failed_check_names(pr)

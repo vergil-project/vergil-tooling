@@ -1180,11 +1180,21 @@ class ChecksTimeoutError(GitHubAPIError):
     A :class:`GitHubAPIError` subclass so existing handlers keep working;
     ``pending`` carries ``(name, link)`` for every still-pending check so a
     caller can name each one — and where to re-run it — in its own error.
+    ``running`` carries ``(name, run_url)`` for each of those whose backing
+    Actions run was still in progress at the deadline (#4200): such a check is
+    slow, not stuck, and the recovery is to wait for the run, not re-run it.
     """
 
-    def __init__(self, pr: str, detail: str, pending: list[tuple[str, str]]) -> None:
+    def __init__(
+        self,
+        pr: str,
+        detail: str,
+        pending: list[tuple[str, str]],
+        running: list[tuple[str, str]] | None = None,
+    ) -> None:
         super().__init__(1, ("gh", "pr", "checks", pr), stderr=detail)
         self.pending = pending
+        self.running = [] if running is None else running
 
 
 # A check-run conclusion mapped to gh's bucket, mirroring ``gh pr checks``' own
@@ -1794,6 +1804,29 @@ def orphaned_check_names(pr: str) -> list[str]:
     return orphans
 
 
+def running_check_runs(pending: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """``(name, run_url)`` of each *pending* check whose backing Actions run is still in progress.
+
+    *pending* is ``(name, link)`` pairs as :func:`_pending_checks` gives them.
+    Each distinct run is probed once; a check with no Actions job link (an
+    app-posted status) has no run and is left out, as is one whose run has
+    completed. A check listed here is slow, not stuck (#4200). A gh/API
+    failure propagates, as in :func:`orphaned_check_names`.
+    """
+    done: dict[tuple[str, str], bool] = {}
+    running: list[tuple[str, str]] = []
+    for name, link in pending:
+        run = actions_run_of(link)
+        if run is None:
+            continue
+        if run not in done:
+            done[run] = run_completed(*run)
+        if not done[run]:
+            repo, run_id = run
+            running.append((name, f"https://github.com/{repo}/actions/runs/{run_id}"))
+    return running
+
+
 def format_wait(secs: float) -> str:
     """Render a wait duration as ``1h02m`` / ``3m05s`` / ``42s``."""
     whole = int(secs)
@@ -1864,7 +1897,9 @@ def wait_for_checks(
     pending, each is cross-checked against its backing workflow run: a
     non-terminal check over a *completed* run is a GitHub orphan and raises
     :class:`OrphanedCheckError`; otherwise :class:`ChecksTimeoutError` names every
-    still-pending check and its link.
+    still-pending check and its link, and its ``running`` lists those whose
+    backing run is still in progress (:func:`running_check_runs`), so the
+    caller can tell a slow job from a stuck one (#4200).
 
     Transient GitHub API errors (401/502/503/504/429) are retried
     automatically via the library-level retry wrapper.
@@ -1922,7 +1957,7 @@ def wait_for_checks(
                 detail += "; no checks registered on the PR head"
             if outstanding:
                 detail += f"; outstanding required checks: {describe_outstanding(outstanding)}"
-            raise ChecksTimeoutError(pr, detail, pending)
+            raise ChecksTimeoutError(pr, detail, pending, running_check_runs(pending))
         time.sleep(poll_interval)
 
 

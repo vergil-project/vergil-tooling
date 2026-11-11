@@ -408,6 +408,51 @@ def test_check_wait_deadline_aborts_naming_pending_checks_and_recovery() -> None
     assert "after 1800s" in message
     assert "vrg-release --resume" in message
     assert "Re-run the stuck job" in message
+    assert "Still running" not in message  # no backing run is known to be going
+    gh.merge.assert_not_called()
+
+
+# --- #4200: a check over a run still in progress is slow, not stuck -----------
+
+_RUN = "https://github.com/o/r/actions/runs/1"
+_BUILD = "images / build: pkg-ubuntu:24.04 + 14 descendants (amd64)"
+
+
+def test_check_wait_deadline_on_a_running_job_says_wait_not_rerun() -> None:
+    gh = _gh()
+    gh.wait_for_checks.side_effect = ChecksTimeoutError(
+        "99",
+        f"checks still pending after 4500s: {_BUILD} ({_JOB})",
+        [(_BUILD, _JOB)],
+        [(_BUILD, _RUN)],
+    )
+    with patch(_MOD + ".github", gh), pytest.raises(MergeAbortError) as excinfo:
+        wait_and_merge("99", strategy="merge")
+    message = str(excinfo.value)
+    assert f"{_BUILD} ({_JOB})" in message
+    assert f"Still running, not stuck: {_BUILD} (run {_RUN})." in message
+    assert "Wait for the run to finish, then re-run the waiting command" in message
+    assert "vrg-release --resume for a release, vrg-finalize-pr otherwise" in message
+    assert "$VRG_CHECKS_TIMEOUT" in message
+    assert "Re-run the stuck job" not in message
+    assert "close and reopen" not in message
+    gh.merge.assert_not_called()
+
+
+def test_check_wait_deadline_with_running_and_stuck_checks_advises_each() -> None:
+    gh = _gh()
+    gh.wait_for_checks.side_effect = ChecksTimeoutError(
+        "99",
+        f"checks still pending after 4500s: {_BUILD} ({_JOB}), CodeQL (no link)",
+        [(_BUILD, _JOB), ("CodeQL", "")],
+        [(_BUILD, _RUN)],
+    )
+    with patch(_MOD + ".github", gh), pytest.raises(MergeAbortError) as excinfo:
+        wait_and_merge("99", strategy="merge")
+    message = str(excinfo.value)
+    assert f"Still running, not stuck: {_BUILD} (run {_RUN})." in message
+    assert "Not running: CodeQL. Re-run the stuck job (or close and reopen" in message
+    assert message.index("Still running") < message.index("Not running")
     gh.merge.assert_not_called()
 
 

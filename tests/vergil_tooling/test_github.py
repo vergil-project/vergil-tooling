@@ -377,6 +377,41 @@ def test_orphaned_check_names_probes_the_run_in_the_links_repo(
     ]
 
 
+def test_running_check_runs_names_checks_whose_run_is_in_progress(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Slow, not stuck (#4200): a check over an in-progress run is listed with its run URL."""
+    probes: list[tuple[str, str]] = []
+
+    def fake_run_completed(repo: str, run_id: str) -> bool:
+        probes.append((repo, run_id))
+        return run_id == "2"
+
+    monkeypatch.setattr(github, "run_completed", fake_run_completed)
+    pending = [
+        ("images / build (amd64)", "https://github.com/o/r/actions/runs/1/job/10"),
+        ("images / build (arm64)", "https://github.com/o/r/actions/runs/1/job/11"),
+        ("docs / docs", "https://github.com/o/r/actions/runs/2/job/20"),
+        ("CodeQL", "https://github.com/o/r/runs/5"),
+        ("queued", ""),
+    ]
+    assert github.running_check_runs(pending) == [
+        ("images / build (amd64)", "https://github.com/o/r/actions/runs/1"),
+        ("images / build (arm64)", "https://github.com/o/r/actions/runs/1"),
+    ]
+    # Each distinct run is probed once; app-posted and link-less checks never.
+    assert probes == [("o/r", "1"), ("o/r", "2")]
+
+
+def test_running_check_runs_propagates_a_probe_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    def broken(repo: str, run_id: str) -> bool:
+        raise github.GitHubAPIError(1, ("gh", "run", "view", run_id), stderr="HTTP 500")
+
+    monkeypatch.setattr(github, "run_completed", broken)
+    with pytest.raises(github.GitHubAPIError, match="HTTP 500"):
+        github.running_check_runs([("test / unit", "https://github.com/o/r/actions/runs/1/job/2")])
+
+
 def test_orphaned_check_names_flags_completed_run(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         github,
@@ -3630,6 +3665,7 @@ def test_wait_for_checks_deadline_names_pending_checks_and_links(
         ],
     )
     monkeypatch.setattr(github, "orphaned_check_names", lambda pr: [])
+    monkeypatch.setattr(github, "run_completed", lambda repo, run_id: False)
     clock = iter([0.0, 5000.0])
     monkeypatch.setattr(github.time, "monotonic", lambda: next(clock))
     with pytest.raises(github.ChecksTimeoutError) as excinfo:
@@ -3640,6 +3676,10 @@ def test_wait_for_checks_deadline_names_pending_checks_and_links(
     assert "CodeQL (no link)" in message
     assert "lint" not in message
     assert excinfo.value.pending == [("test / unit", _STALE_LINK), ("CodeQL", "")]
+    # The check over an in-progress run is slow, not stuck (#4200); CodeQL has no run.
+    assert excinfo.value.running == [
+        ("test / unit", "https://github.com/o/r/actions/runs/37969487090")
+    ]
     assert isinstance(excinfo.value, github.GitHubAPIError)  # existing handlers still catch it
 
 
@@ -3651,6 +3691,7 @@ def test_wait_for_checks_deadline_with_no_checks_registered(
     with pytest.raises(github.ChecksTimeoutError, match="no checks registered") as excinfo:
         github.wait_for_checks("934", poll_timeout=0, required=())
     assert excinfo.value.pending == []
+    assert excinfo.value.running == []
 
 
 def test_wait_for_checks_deadline_comes_from_env(monkeypatch: pytest.MonkeyPatch) -> None:

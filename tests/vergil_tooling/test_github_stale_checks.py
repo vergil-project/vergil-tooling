@@ -433,13 +433,19 @@ def test_running_check_waits_until_deadline_with_throttled_probes(
         job_conclusion=lambda r, j: pytest.fail("a running job is never read"),
     )
     monkeypatch.setattr(github, "orphaned_check_names", lambda pr: [])
-    with pytest.raises(github.ChecksTimeoutError, match="still pending after 600s"):
+    with pytest.raises(github.ChecksTimeoutError, match="still pending after 600s") as excinfo:
         github.wait_for_checks("1", poll_interval=5, poll_timeout=600, required=())
     assert clock.now == 600
-    # Probed once per probe interval, not on every 5s poll.
-    assert len(probes) == 600 // github._RUN_PROBE_INTERVAL_SECS
-    gaps = {b - a for a, b in zip(probes, probes[1:], strict=False)}
+    # Probed once per probe interval, not on every 5s poll, then once more at
+    # the deadline to tell a slow run from a stuck check (#4200).
+    *waiting, at_deadline = probes
+    assert len(waiting) == 600 // github._RUN_PROBE_INTERVAL_SECS
+    gaps = {b - a for a, b in zip(waiting, waiting[1:], strict=False)}
     assert gaps == {float(github._RUN_PROBE_INTERVAL_SECS)}
+    assert at_deadline == 600
+    assert excinfo.value.running == [
+        (_MATRIX, "https://github.com/vergil-project/vergil-tooling/actions/runs/39619708036")
+    ]
 
 
 def test_app_posted_pending_check_is_never_probed(
@@ -452,8 +458,9 @@ def test_app_posted_pending_check_is_never_probed(
         pending=(("CodeQL", "https://github.com/o/r/runs/5"),),
     )
     monkeypatch.setattr(github, "orphaned_check_names", lambda pr: [])
-    with pytest.raises(github.ChecksTimeoutError):
+    with pytest.raises(github.ChecksTimeoutError) as excinfo:
         github.wait_for_checks("1", poll_interval=5, poll_timeout=60, required=())
+    assert excinfo.value.running == []  # no run, so not "still running"
 
 
 def test_failed_check_still_gates_after_stale_pass(
