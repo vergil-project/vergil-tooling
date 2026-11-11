@@ -19156,7 +19156,8 @@ Freeze gate: refuses to add a commit on a branch that has been reported ready
 rebase, re-stamping the new message through the same standards path as
 <code>vrg-commit</code>. It is the agent-safe way to correct a commit message on the
 current branch: <code>vrg-git commit</code> is denied, <code>vrg-commit</code> only creates new
-commits, and raw interactive rebase is blocked repo-wide. It is bounded:</p>
+commits, and interactive rebase is allowed only as <code>rebase -i --autosquash</code>,
+which cannot reword. It is bounded:</p>
 <ul>
 <li><strong>Branch-local only</strong>: it refuses a commit already reachable from the
   base branch (<code>origin/develop</code>, or <code>origin/main</code> for a <code>release/*</code> branch)
@@ -19212,11 +19213,14 @@ frozen; <code>vrg-pr-workflow unfreeze</code> is the way back (see the freeze in
 <h3 id="vrg-git">vrg-git<a class="headerlink" href="#vrg-git" title="Permanent link">&para;</a></h3>
 <p>A safe git wrapper for agent sessions. It forwards to <code>git</code> only after
 enforcing policy: a subcommand allowlist, read-only forms of <code>reflog</code> and
-<code>symbolic-ref</code>, denied subcommands (<code>commit</code>, <code>config</code>, <code>reset</code>, <code>clean</code> and
-others; use <code>vrg-commit</code> for commits), a flag deny-list (<code>push --force</code>,
-<code>branch -D</code>, <code>rebase -i</code>), the worktree convention, the
+<code>symbolic-ref</code>, denied subcommands (<code>commit</code>, <code>config</code> and others; use
+<code>vrg-commit</code> for commits), a flag deny-list (<code>push --force</code>, <code>branch -D</code>,
+<code>rebase -i</code> without <code>--autosquash</code>), the worktree convention, the
 <code>&lt;type&gt;/&lt;N&gt;-&lt;slug&gt;</code> branch form for an open, non-epic issue, and the
-report-ready freeze. Remote operations run with the GitHub App installation
+report-ready freeze. It protects origin, not the local checkout: <code>reset</code>,
+<code>clean</code>, a pathspec <code>checkout</code> and <code>rebase -i --autosquash</code> run only on a
+branch that is neither protected nor frozen, and fail closed when the
+PR-workflow state cannot be read. Remote operations run with the GitHub App installation
 token for the resolved identity (see <a href="#vrg-whoami"><code>vrg-whoami</code></a>). It is not
 a drop-in replacement for <code>git</code>; <code>vrg-git --help</code> lists the full policy.</p>
 <p>The global <code>-C &lt;path&gt;</code> option (repeatable, as in git) changes directory

@@ -16703,6 +16703,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#local-rewrites" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Local Rewrites
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#denied-subcommands" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17545,6 +17556,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#local-rewrites" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Local Rewrites
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#denied-subcommands" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18075,8 +18097,8 @@ shell expansion, no pipes, no redirection.</p>
 </tr>
 <tr>
 <td><code>checkout</code></td>
-<td><code>-- .</code>, <code>-- *</code></td>
-<td>Specific-file restore allowed</td>
+<td>—</td>
+<td>A pathspec checkout (<code>checkout .</code>, <code>checkout -- &lt;path&gt;</code>) is a local rewrite</td>
 </tr>
 <tr>
 <td><code>switch</code></td>
@@ -18100,17 +18122,35 @@ shell expansion, no pipes, no redirection.</p>
 </tr>
 <tr>
 <td><code>rebase</code></td>
-<td><code>-i</code>, <code>--interactive</code></td>
-<td>Non-interactive only</td>
+<td><code>-i</code>, <code>--interactive</code> without <code>--autosquash</code></td>
+<td><code>rebase -i --autosquash &lt;base&gt;</code> is a local rewrite</td>
+</tr>
+<tr>
+<td><code>reset</code></td>
+<td>—</td>
+<td>A local rewrite, every mode</td>
+</tr>
+<tr>
+<td><code>clean</code></td>
+<td>—</td>
+<td>A local rewrite</td>
 </tr>
 </tbody>
 </table>
+<h3 id="local-rewrites">Local Rewrites<a class="headerlink" href="#local-rewrites" title="Permanent link">&para;</a></h3>
+<p><code>vrg-git</code> protects origin, not the local checkout. <code>reset</code>, <code>clean</code>, a
+pathspec <code>checkout</code> and <code>rebase -i --autosquash</code> rewrite or discard local
+work, so they run only on a branch that is neither protected (<code>develop</code>,
+<code>main</code>, <code>release/*</code>) nor frozen (reported ready). A detached HEAD is
+refused, except mid-rebase, where the branch being rebased is checked.
+Unlike commit and push, which warn and proceed, they fail closed when
+<code>.vergil/pr-workflow.json</code> exists but cannot be read. The no-op editors
+vrg-git sets for every rebase (<code>GIT_SEQUENCE_EDITOR=true</code>,
+<code>GIT_EDITOR=true</code>) keep <code>rebase -i --autosquash</code> non-interactive.</p>
 <h3 id="denied-subcommands">Denied Subcommands<a class="headerlink" href="#denied-subcommands" title="Permanent link">&para;</a></h3>
 <p>Anything not on the allowlist is rejected. Notable denials:</p>
 <ul>
 <li><strong><code>commit</code></strong> — all commits flow through <code>vrg-commit</code></li>
-<li><strong><code>reset</code></strong> — too dangerous in all forms</li>
-<li><strong><code>clean</code></strong> — file deletion</li>
 <li><strong><code>config</code></strong> — modifying git configuration</li>
 <li><strong><code>remote</code></strong> — modifying remote configuration</li>
 <li><strong><code>filter-branch</code></strong>, <strong><code>replace</code></strong> — history rewriting</li>
@@ -18662,9 +18702,9 @@ always line up. Known gaps of that kind are recorded in
 with four client-side layers?</p>
 <ul>
 <li><strong>Mistake prevention.</strong> Most failures are not adversarial. An
-  agent that accidentally runs <code>git reset --hard</code> is not trying
-  to subvert the tooling — it made a mistake. The wrappers catch
-  this.</li>
+  agent that accidentally runs <code>git reset --hard</code> on <code>develop</code> or
+  on a reported-ready branch is not trying to subvert the tooling —
+  it made a mistake. The wrappers catch this.</li>
 <li><strong>Consistency.</strong> Routing all operations through <code>vrg-*</code> tools
   ensures commits have the right format, PRs have the right
   metadata, and branches follow the naming convention.</li>
@@ -18688,7 +18728,7 @@ allowlist/deny configuration. Denied commands are blocked without
 prompt. Unknown commands prompt the human.</p>
 <p><strong>Layer 2 — VRG Wrappers.</strong> <code>vrg-git</code> and <code>vrg-gh</code> validate
 subcommands and flags before executing the underlying tool. Even
-if <code>vrg-git reset --hard</code> passes the permission layer (it is
+if <code>vrg-git push --force</code> passes the permission layer (it is
 allowlisted as <code>vrg-*</code>), the wrapper rejects it.</p>
 <p><strong>Layer 3 — Vergil Plugin Hooks.</strong> The existing hook system
 remains as a backstop. Hooks exit code 2 (hard block) overrides
@@ -18773,7 +18813,7 @@ through normal operation.</p>
 <tr>
 <td><code>vrg-git reset --hard</code></td>
 <td>allowed</td>
-<td>rejected</td>
+<td>rejected on a protected or frozen branch</td>
 <td>n/a</td>
 <td>n/a</td>
 <td>n/a</td>
