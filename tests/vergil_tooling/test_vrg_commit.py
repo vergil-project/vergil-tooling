@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import contextlib
 import os
+import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
@@ -563,3 +565,187 @@ def test_vrg_commit_warns_for_human(
     assert result == 0
     mock_run.assert_called_once()
     assert WARNING_TEMPLATE.format(path=path) in capsys.readouterr().err.splitlines()
+
+
+# --------------------------------------------------------------------------
+# --fixup <commit> (epic vergil-project/.github#1019)
+# --------------------------------------------------------------------------
+
+
+def _git(repo: Path, *args: str) -> str:
+    result = subprocess.run(
+        ("git", *args),
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout.strip()
+
+
+@dataclass(frozen=True)
+class _FixupRepo:
+    repo: Path
+    base_sha: str
+    branch_sha: str
+
+
+@pytest.fixture
+def fixup_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _FixupRepo:
+    """A repo whose `origin/develop` holds a base commit, on a feature branch with one commit.
+
+    The working directory is the repo, with one change staged for a fixup.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "develop")
+    _git(repo, "config", "user.name", "Me")
+    _git(repo, "config", "user.email", "me@here.com")
+    _git(repo, "config", "commit.gpgsign", "false")
+    (repo / "base.txt").write_text("base\n")
+    _git(repo, "add", "base.txt")
+    _git(repo, "commit", "-q", "-m", "chore(core): base on develop")
+    base_sha = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "update-ref", "refs/remotes/origin/develop", base_sha)
+
+    _git(repo, "switch", "-q", "-c", "feature/42-x")
+    (repo / "a.txt").write_text("a\n")
+    _git(repo, "add", "a.txt")
+    _git(repo, "commit", "-q", "-m", "feat(core): add the a file (#42)")
+    branch_sha = _git(repo, "rev-parse", "HEAD")
+
+    (repo / "a.txt").write_text("a, fixed\n")
+    _git(repo, "add", "a.txt")
+    monkeypatch.chdir(repo)
+    return _FixupRepo(repo=repo, base_sha=base_sha, branch_sha=branch_sha)
+
+
+def test_fixup_creates_fixup_commit(fixup_repo: _FixupRepo) -> None:
+    assert main(["--fixup", fixup_repo.branch_sha]) == 0
+    subject = _git(fixup_repo.repo, "log", "-1", "--format=%s")
+    assert subject == "fixup! feat(core): add the a file (#42)"
+    assert _git(fixup_repo.repo, "rev-parse", "HEAD~1") == fixup_repo.branch_sha
+    assert _git(fixup_repo.repo, "status", "--porcelain") == ""
+
+
+def test_fixup_accepts_a_ref_to_the_target(fixup_repo: _FixupRepo) -> None:
+    assert main(["--fixup", "HEAD"]) == 0
+    subject = _git(fixup_repo.repo, "log", "-1", "--format=%s")
+    assert subject == "fixup! feat(core): add the a file (#42)"
+
+
+def _assert_fixup_refused(
+    fixup_repo: _FixupRepo, target: str, capsys: pytest.CaptureFixture[str]
+) -> str:
+    head_before = _git(fixup_repo.repo, "rev-parse", "HEAD")
+    assert main(["--fixup", target]) == 1
+    assert _git(fixup_repo.repo, "rev-parse", "HEAD") == head_before
+    err = capsys.readouterr().err
+    assert f"'{target}'" in err
+    return err
+
+
+def test_fixup_refuses_commit_not_on_branch(
+    fixup_repo: _FixupRepo, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A commit on another branch: not reachable from HEAD.
+    repo = fixup_repo.repo
+    _git(repo, "stash", "-q")
+    _git(repo, "switch", "-q", "-c", "feature/43-other", fixup_repo.base_sha)
+    (repo / "other.txt").write_text("other\n")
+    _git(repo, "add", "other.txt")
+    _git(repo, "commit", "-q", "-m", "feat(core): other branch (#43)")
+    other_sha = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "switch", "-q", "feature/42-x")
+    _git(repo, "stash", "pop", "-q")
+
+    err = _assert_fixup_refused(fixup_repo, other_sha, capsys)
+    assert "not on the current branch" in err
+
+
+def test_fixup_refuses_commit_already_on_base(
+    fixup_repo: _FixupRepo, capsys: pytest.CaptureFixture[str]
+) -> None:
+    err = _assert_fixup_refused(fixup_repo, fixup_repo.base_sha, capsys)
+    assert "already part of 'origin/develop'" in err
+
+
+def test_fixup_refuses_unknown_commit(
+    fixup_repo: _FixupRepo, capsys: pytest.CaptureFixture[str]
+) -> None:
+    err = _assert_fixup_refused(fixup_repo, "no-such-commit", capsys)
+    assert "does not resolve to a commit" in err
+
+
+def test_fixup_refuses_without_base_ref(
+    fixup_repo: _FixupRepo, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _git(fixup_repo.repo, "update-ref", "-d", "refs/remotes/origin/develop")
+    err = _assert_fixup_refused(fixup_repo, fixup_repo.branch_sha, capsys)
+    assert "cannot resolve 'origin/develop'" in err
+
+
+def test_fixup_refuses_with_no_staged_changes(fixup_repo: _FixupRepo) -> None:
+    _git(fixup_repo.repo, "restore", "--staged", "a.txt")
+    assert main(["--fixup", fixup_repo.branch_sha]) == 1
+    assert _git(fixup_repo.repo, "rev-parse", "HEAD") == fixup_repo.branch_sha
+
+
+@pytest.mark.parametrize(
+    ("extra", "named"),
+    [
+        (["--type", "feat"], "--type"),
+        (["--scope", "core"], "--scope"),
+        (["--message", "x"], "--message"),
+        (["--body", "more"], "--body"),
+        (["--type", "feat", "--scope", "core", "--message", "x"], "--type, --scope, --message"),
+    ],
+)
+def test_fixup_refuses_with_type_or_message(
+    extra: list[str], named: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit) as exc:
+        parse_args(["--fixup", "abc123", *extra])
+    assert exc.value.code == 2
+    assert f"--fixup cannot be used with {named}" in capsys.readouterr().err
+
+
+def test_parse_args_fixup_alone() -> None:
+    args = parse_args(["--fixup", "abc123"])
+    assert args.fixup == "abc123"
+    assert args.commit_type is None
+    assert args.body is None
+
+
+@pytest.mark.parametrize(
+    ("argv", "named"),
+    [
+        (["--scope", "core", "--message", "x"], "--type"),
+        (["--type", "feat", "--message", "x"], "--scope"),
+        (["--type", "feat", "--scope", "core"], "--message"),
+        ([], "--type, --scope, --message"),
+    ],
+)
+def test_parse_args_requires_message_flags_without_fixup(
+    argv: list[str], named: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit) as exc:
+        parse_args(argv)
+    assert exc.value.code == 2
+    assert f"the following arguments are required: {named}" in capsys.readouterr().err
+
+
+def test_fixup_refused_on_frozen_branch(
+    fixup_repo: _FixupRepo, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from vergil_tooling.lib.pr_workflow.freeze import FreezeCheck
+
+    with patch(
+        "vergil_tooling.bin.vrg_commit.freeze.check_worktree",
+        return_value=FreezeCheck(frozen=True, message="branch is FROZEN; use unfreeze"),
+    ) as check:
+        result = main(["--fixup", fixup_repo.branch_sha])
+    assert result == 1
+    check.assert_called_once_with(fixup_repo.repo.resolve(), action="add a commit")
+    assert "FROZEN" in capsys.readouterr().err
+    assert _git(fixup_repo.repo, "rev-parse", "HEAD") == fixup_repo.branch_sha
