@@ -66,6 +66,10 @@ def layout(tmp_path: Path) -> Layout:
     # A branch tracking origin/develop: `branch -D` may delete it (#1426).
     _git(repo, "branch", "--track", "feature/2-z", "origin/develop")
     other = _init_repo(tmp_path / "other", "https://github.com/orgb/other.git")
+    # `checkout feature/1-x` must read as a branch switch in `other` too (not
+    # a pathspec, which is a local rewrite on develop, #4217), so that only the
+    # worktree convention tells the two repos apart.
+    _git(other, "branch", "feature/1-x")
     return Layout(repo=repo, worktree=worktree.resolve(), other=other)
 
 
@@ -210,6 +214,11 @@ _CASES = [
     pytest.param("repo", "other", ["reflog", "expire"], 1, id="reflog-expire"),
     pytest.param("repo", "other", ["symbolic-ref", "HEAD", "x"], 1, id="symbolic-ref-write"),
     pytest.param("repo", "other", ["status"], 0, id="read-only"),
+    # Local rewrites (#4217): allowed on the worktree's feature branch, even
+    # when started on develop...
+    pytest.param("worktree", "repo", ["reset", "--hard"], 0, id="reset-feature"),
+    # ...and refused on develop, even when started on a feature branch.
+    pytest.param("repo", "worktree", ["reset", "--hard"], 1, id="reset-protected"),
 ]
 
 
@@ -240,6 +249,8 @@ _CWD_DEPENDENT = {
     "force-with-lease-protected",
     "force-with-lease-feature",
     "branch-delete",
+    "reset-feature",
+    "reset-protected",
 }
 
 

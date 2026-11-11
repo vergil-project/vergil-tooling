@@ -4,23 +4,32 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from vergil_tooling.bin.vrg_git import (
     _check_issue_is_open_task,
+    _check_local_rewrite,
     _check_new_branch_name,
+    _checkout_has_pathspec,
     _noninteractive_rebase_env,
     _org_from_clone_url,
     _parse_branch_create,
     _parse_branch_target,
     _parse_new_branch,
     _parse_worktree_add_path,
+    _rebase_has_autosquash,
+    _rebase_is_interactive,
+    _rebase_names_branch,
+    _rewrite_target_branch,
     _worktree_convention_active,
     main,
 )
 from vergil_tooling.lib import epics, github, retry
+from vergil_tooling.lib.pr_workflow import engine
+from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
 
 # `gh issue view --json state,labels` for an open, ordinary task: what the
 # branch-creation guard (#3592) must see before it lets an issue branch through.
@@ -141,6 +150,16 @@ def test_worktree_denied_flag(capsys: pytest.CaptureFixture[str]) -> None:
     assert "denied" in capsys.readouterr().err.lower()
 
 
+def test_worktree_flag_not_on_deny_list_passes() -> None:
+    with (
+        patch("vergil_tooling.bin.vrg_git._FLAG_DENY", {"worktree": {"--force"}}),
+        patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
+    ):
+        mock_run.return_value.returncode = 0
+        assert main(["worktree", "list", "--porcelain"]) == 0
+    assert mock_run.call_args[0][0] == ["git", "worktree", "list", "--porcelain"]
+
+
 # -- unrecognized subcommands -------------------------------------------------
 
 
@@ -154,8 +173,6 @@ def test_unrecognized_subcommand(capsys: pytest.CaptureFixture[str]) -> None:
 
 _DENIED = [
     "commit",
-    "reset",
-    "clean",
     "config",
     "remote",
     "gc",
@@ -774,34 +791,521 @@ def test_frozen_push_at_reported_commit_refuses_other_refspecs(
     mock_run.assert_not_called()
 
 
-def test_checkout_dot_denied(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["checkout", "--", "."]) != 0
-
-
-def test_checkout_star_denied(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["checkout", "--", "*"]) != 0
-
-
-def test_checkout_specific_file_allowed() -> None:
-    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
-        mock_run.return_value.returncode = 0
-        rc = main(["checkout", "--", "src/specific/file.py"])
-    assert rc == 0
-
-
-def test_rebase_interactive_denied(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["rebase", "-i"]) != 0
-
-
-def test_rebase_interactive_long_denied(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["rebase", "--interactive"]) != 0
-
-
 def test_rebase_normal_allowed() -> None:
     with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
         mock_run.return_value.returncode = 0
         rc = main(["rebase", "main"])
     assert rc == 0
+
+
+# -- local rewrites on unfrozen feature branches (#4217) ----------------------
+#
+# vrg-git protects origin, not the local checkout: reset, clean, a pathspec
+# checkout and rebase -i --autosquash run on a feature branch that is neither
+# protected nor frozen, and are refused (failing closed) everywhere else. These
+# tests run real git in a throwaway repo, so each allowed case proves git really
+# ran and each refused case proves the work is still there.
+
+_REAL_RUN = subprocess.run
+
+
+def _git(repo: Path, *args: str) -> str:
+    return _REAL_RUN(
+        ("git", *args), cwd=repo, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+@pytest.fixture
+def rewrite_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A repo on ``feature/1-x``: ``develop`` plus two feature commits.
+
+    ``develop`` has two commits too, so a reset on it would visibly move it.
+    The working tree carries a modified ``README.md`` and an untracked file.
+    """
+    (tmp_path / "gitconfig").write_text("")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "gitconfig"))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "develop")
+    _git(repo, "config", "user.email", "t@example.com")
+    _git(repo, "config", "user.name", "Test")
+    for name in ("README.md", "second.txt"):
+        (repo / name).write_text(f"{name}\n")
+        _git(repo, "add", name)
+        _git(repo, "commit", "-q", "-m", f"develop: {name}")
+    _git(repo, "update-ref", "refs/remotes/origin/develop", "HEAD")
+    _git(repo, "checkout", "-q", "-b", "feature/1-x")
+    for name in ("a.txt", "b.txt"):
+        (repo / name).write_text(f"{name}\n")
+        _git(repo, "add", name)
+        _git(repo, "commit", "-q", "-m", f"feat: {name}")
+    (repo / "README.md").write_text("local edit\n")
+    (repo / "untracked.txt").write_text("untracked\n")
+    # The state file is local bookkeeping, never part of the tree.
+    (repo / ".git" / "info" / "exclude").write_text(".vergil/\n")
+    monkeypatch.chdir(repo)
+    return repo
+
+
+def _record_ready(repo: Path) -> None:
+    """Write a reported-ready (frozen) PR-workflow state for ``feature/1-x``."""
+    head = _git(repo, "rev-parse", "HEAD")
+    state = engine.init_state(
+        issue="1",
+        branch="feature/1-x",
+        base="origin/develop",
+        head_sha=head,
+        base_sha=_git(repo, "rev-parse", "develop"),
+        now="2026-11-11T00:00:00Z",
+    )
+    state = engine.apply_report_ready(
+        state,
+        title="t",
+        summary="s",
+        notes="n",
+        linkage="Ref",
+        head_sha=head,
+        now="2026-11-11T01:00:00Z",
+    )
+    LocalFileTransport(repo).write(state)
+
+
+def _snapshot(repo: Path) -> tuple[str, str, str, bool]:
+    """HEAD, its branch, README.md's content and whether the untracked file exists."""
+    return (
+        _git(repo, "rev-parse", "HEAD"),
+        _git(repo, "rev-parse", "--abbrev-ref", "HEAD"),
+        (repo / "README.md").read_text(),
+        (repo / "untracked.txt").exists(),
+    )
+
+
+# Each local rewrite, with a check that it really ran.
+_REWRITES = [
+    pytest.param(
+        ["reset", "--hard", "develop"],
+        lambda repo: _git(repo, "rev-parse", "HEAD") == _git(repo, "rev-parse", "develop"),
+        id="reset",
+    ),
+    pytest.param(
+        ["clean", "-fd"],
+        lambda repo: not (repo / "untracked.txt").exists(),
+        id="clean",
+    ),
+    pytest.param(
+        ["checkout", "--", "."],
+        lambda repo: (repo / "README.md").read_text() == "README.md\n",
+        id="checkout-dashdash-dot",
+    ),
+    pytest.param(
+        ["checkout", "."],
+        lambda repo: (repo / "README.md").read_text() == "README.md\n",
+        id="checkout-dot",
+    ),
+]
+
+
+_REWRITE_ARGVS = [pytest.param(p.values[0], id=p.id) for p in _REWRITES]
+
+
+# Plan Task 1a: test_reset_allowed_on_feature_branch and its clean / checkout
+# siblings.
+@pytest.mark.parametrize(("argv", "ran"), _REWRITES)
+def test_rewrite_allowed_on_feature_branch(rewrite_repo: Path, argv: list[str], ran: Any) -> None:
+    assert main(argv) == 0
+    assert ran(rewrite_repo)
+
+
+# Plan Task 1a: test_reset_refused_on_protected_branch and its siblings.
+@pytest.mark.parametrize("argv", _REWRITE_ARGVS)
+@pytest.mark.parametrize("branch", ["develop", "main", "release/1.2"])
+def test_rewrite_refused_on_protected_branch(
+    rewrite_repo: Path, capsys: pytest.CaptureFixture[str], branch: str, argv: list[str]
+) -> None:
+    if branch != "develop":
+        _git(rewrite_repo, "branch", branch, "feature/1-x")
+    _git(rewrite_repo, "checkout", "-q", branch)
+    before = _snapshot(rewrite_repo)
+    assert main(argv) == 1
+    err = capsys.readouterr().err
+    assert f"refused on protected branch {branch}" in err
+    assert _snapshot(rewrite_repo) == before
+
+
+# Plan Task 1a: test_reset_refused_on_frozen_branch and its siblings.
+@pytest.mark.parametrize("argv", _REWRITE_ARGVS)
+def test_rewrite_refused_on_frozen_branch(
+    rewrite_repo: Path, capsys: pytest.CaptureFixture[str], argv: list[str]
+) -> None:
+    _record_ready(rewrite_repo)
+    before = _snapshot(rewrite_repo)
+    assert main(argv) == 1
+    err = capsys.readouterr().err
+    # freeze.check_worktree's own message, as vrg-commit and the push path give it.
+    assert "vrg: refusing to rewrite this branch" in err
+    assert "FROZEN" in err
+    assert "vrg-pr-workflow unfreeze" in err
+    assert _snapshot(rewrite_repo) == before
+
+
+def test_rewrite_allowed_after_unfreeze(rewrite_repo: Path) -> None:
+    # A state that is not ready (implementing) does not freeze the branch.
+    _record_ready(rewrite_repo)
+    transport = LocalFileTransport(rewrite_repo)
+    state = transport.read()
+    assert state is not None
+    transport.write(engine.apply_unfreeze(state, now="2026-11-11T02:00:00Z"))
+    assert main(["reset", "--hard", "develop"]) == 0
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["reset", "--hard", "develop"],
+        ["clean", "-fd"],
+        ["checkout", "--", "."],
+        ["rebase", "-i", "--autosquash", "develop"],
+    ],
+)
+def test_reset_refused_on_unreadable_state(
+    rewrite_repo: Path, capsys: pytest.CaptureFixture[str], argv: list[str]
+) -> None:
+    state_file = rewrite_repo / ".vergil" / "pr-workflow.json"
+    state_file.parent.mkdir()
+    state_file.write_text("{not json")
+    before = _snapshot(rewrite_repo)
+    assert main(argv) == 1
+    err = capsys.readouterr().err
+    assert "could not read PR-workflow state (" in err
+    assert "fails closed" in err
+    assert str(state_file) in err
+    assert "vrg-pr-workflow report-ready" in err
+    assert _snapshot(rewrite_repo) == before
+
+
+def test_rewrite_refused_on_detached_head(
+    rewrite_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _git(rewrite_repo, "checkout", "-q", "--detach")
+    before = _snapshot(rewrite_repo)
+    assert main(["reset", "--hard", "develop"]) == 1
+    assert "HEAD is not on a branch" in capsys.readouterr().err
+    assert _snapshot(rewrite_repo) == before
+
+
+def _start_conflicting_rebase(repo: Path, branch: str) -> None:
+    """Leave *branch* mid-rebase onto a branch that conflicts with it on README.md."""
+    _git(repo, "checkout", "-q", "--", "README.md")
+    _git(repo, "checkout", "-q", "-b", "conflict/0-c", "develop")
+    (repo / "README.md").write_text("theirs\n")
+    _git(repo, "commit", "-q", "-am", "theirs")
+    _git(repo, "checkout", "-q", *branch.split())
+    (repo / "README.md").write_text("ours\n")
+    _git(repo, "commit", "-q", "-am", "ours")
+    rebase = _REAL_RUN(
+        ("git", "rebase", "conflict/0-c"), cwd=repo, capture_output=True, text=True, check=False
+    )
+    assert rebase.returncode != 0  # stopped on the conflict, HEAD detached
+    assert _git(repo, "rev-parse", "--abbrev-ref", "HEAD") == "HEAD"
+
+
+def test_rewrite_mid_rebase_of_detached_head_refused(
+    rewrite_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A rebase started on a detached HEAD updates no branch: still refused.
+    _start_conflicting_rebase(rewrite_repo, "--detach develop")
+    assert main(["checkout", "--", "README.md"]) == 1
+    assert "HEAD is not on a branch" in capsys.readouterr().err
+
+
+def _fake_git(results: dict[tuple[str, ...], subprocess.CompletedProcess[str]]) -> Any:
+    """A ``subprocess.run`` stand-in answering by the git argv prefix."""
+
+    def _run(cmd: Any, *_args: Any, **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        for prefix, result in results.items():
+            if tuple(cmd[: len(prefix)]) == prefix:
+                return result
+        raise AssertionError(f"unexpected command {cmd}")
+
+    return _run
+
+
+def _done(returncode: int, stdout: str = "") -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr="")
+
+
+def test_rewrite_target_branch_unresolvable_git_path_is_none() -> None:
+    fake = _fake_git(
+        {
+            ("git", "symbolic-ref"): _done(1),
+            ("git", "rev-parse", "--git-path"): _done(128),
+        }
+    )
+    with patch("vergil_tooling.bin.vrg_git.subprocess.run", fake):
+        assert _rewrite_target_branch() is None
+
+
+def test_rewrite_target_branch_unreadable_head_name_is_none(tmp_path: Path) -> None:
+    # A head-name that exists but cannot be read is an unknown, never a pass.
+    unreadable = tmp_path / "head-name"
+    unreadable.mkdir()
+    fake = _fake_git(
+        {
+            ("git", "symbolic-ref"): _done(1),
+            ("git", "rev-parse", "--git-path"): _done(0, f"{unreadable}\n"),
+        }
+    )
+    with patch("vergil_tooling.bin.vrg_git.subprocess.run", fake):
+        assert _rewrite_target_branch() is None
+
+
+def test_rewrite_refused_when_worktree_root_unresolvable(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with (
+        patch("vergil_tooling.bin.vrg_git._rewrite_target_branch", return_value="feature/1-x"),
+        patch("vergil_tooling.bin.vrg_git._current_worktree_root", return_value=None),
+        patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
+    ):
+        assert main(["reset", "--hard"]) == 1
+    assert "freeze cannot be checked" in capsys.readouterr().err
+    mock_run.assert_not_called()
+
+
+def test_single_checkout_argument_without_remote_refs_is_a_path() -> None:
+    # When the remote-tracking refs cannot be listed, a name that is not a
+    # commit is read as a path: the local-rewrite check then applies.
+    fake = _fake_git(
+        {
+            ("git", "rev-parse", "--verify"): _done(1),
+            ("git", "for-each-ref"): _done(128),
+        }
+    )
+    with patch("vergil_tooling.bin.vrg_git.subprocess.run", fake):
+        assert _checkout_has_pathspec(["feature/9-x"]) is True
+
+
+def test_rewrite_mid_rebase_of_protected_branch_refused(
+    rewrite_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # HEAD is detached while develop is rebased; the rebase updates develop when
+    # it finishes, so a rewrite here is a rewrite of develop.
+    _start_conflicting_rebase(rewrite_repo, "develop")
+    assert main(["checkout", "--", "README.md"]) == 1
+    assert "refused on protected branch develop" in capsys.readouterr().err
+
+
+def test_rewrite_mid_rebase_of_feature_branch_allowed(rewrite_repo: Path) -> None:
+    _start_conflicting_rebase(rewrite_repo, "feature/1-x")
+    assert main(["checkout", "--theirs", "--", "README.md"]) == 0
+    assert (rewrite_repo / "README.md").read_text() == "ours\n"
+
+
+def test_branch_switch_is_not_a_rewrite_on_frozen_branch(rewrite_repo: Path) -> None:
+    # Switching branches carries local changes over and discards nothing.
+    _record_ready(rewrite_repo)
+    _git(rewrite_repo, "checkout", "-q", "--", "README.md")
+    assert main(["checkout", "develop"]) == 0
+    assert _git(rewrite_repo, "rev-parse", "--abbrev-ref", "HEAD") == "develop"
+
+
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        (["."], True),
+        (["*"], True),
+        (["src/"], True),
+        (["README.md"], True),
+        (["--", "README.md"], True),
+        (["--"], True),
+        (["develop", "README.md"], True),
+        (["develop", "--", "README.md"], True),
+        (["-p"], True),
+        (["--patch"], True),
+        (["-fp"], True),
+        (["--pathspec-from-file=list.txt"], True),
+        (["--pathspec-from-file", "list.txt"], True),
+        (["develop"], False),
+        (["HEAD~1"], False),
+        (["feature/9-remote-only"], False),
+        (["-"], False),
+        (["-f", "develop"], False),
+        ([], False),
+        (["-b", "feature/2-y"], False),
+        (["-b", "feature/2-y", "develop"], False),
+        (["-qb", "feature/2-y", "develop"], False),
+        (["-bfeature/2-y", "develop"], False),
+        (["--orphan", "feature/2-y"], False),
+        (["--conflict", "merge", "develop"], False),
+    ],
+)
+def test_checkout_has_pathspec(rewrite_repo: Path, args: list[str], expected: bool) -> None:
+    # A branch that exists only on the remote: `checkout <name>` creates it.
+    _git(rewrite_repo, "update-ref", "refs/remotes/origin/feature/9-remote-only", "develop")
+    assert _checkout_has_pathspec(args) is expected
+
+
+# -- rebase -i only with --autosquash (#4217) ---------------------------------
+
+
+def _fixup_branch(repo: Path) -> str:
+    """Add a ``fixup!`` commit for a.txt's commit; return that commit's subject."""
+    (repo / "a.txt").write_text("a.txt fixed\n")
+    _git(repo, "add", "a.txt")
+    _git(repo, "commit", "-q", "--fixup", "HEAD~1")
+    _git(repo, "checkout", "-q", "--", "README.md")
+    return "feat: a.txt"
+
+
+class _ForwardSpy:
+    """Record the env git is run with for the forwarded command; run everything."""
+
+    def __init__(self, forwarded: list[str]) -> None:
+        self.forwarded = forwarded
+        self.env: dict[str, str] | None = None
+
+    def __call__(self, cmd: Any, *args: Any, **kwargs: Any) -> subprocess.CompletedProcess[Any]:
+        if list(cmd) == self.forwarded:
+            self.env = kwargs.get("env")
+        return _REAL_RUN(cmd, *args, **kwargs)
+
+
+def test_rebase_interactive_allowed_only_with_autosquash(
+    rewrite_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _fixup_branch(rewrite_repo)
+    before = _git(rewrite_repo, "rev-parse", "HEAD")
+
+    # Without --autosquash: refused before git runs.
+    assert main(["rebase", "-i", "origin/develop"]) == 1
+    assert "--autosquash" in capsys.readouterr().err
+    assert _git(rewrite_repo, "rev-parse", "HEAD") == before
+
+    argv = ["rebase", "-i", "--autosquash", "origin/develop"]
+    spy = _ForwardSpy(["git", *argv])
+    with patch("vergil_tooling.bin.vrg_git.subprocess.run", spy):
+        assert main(argv) == 0
+    assert spy.env is not None
+    assert spy.env["GIT_SEQUENCE_EDITOR"] == "true"
+    assert spy.env["GIT_EDITOR"] == "true"
+    # The fixup folded into its target: two commits on develop, no fixup!.
+    subjects = _git(rewrite_repo, "log", "--format=%s", "develop..HEAD").splitlines()
+    assert subjects == ["feat: b.txt", "feat: a.txt"]
+    assert (rewrite_repo / "a.txt").read_text() == "a.txt fixed\n"
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["-i"],
+        ["--interactive"],
+        ["--interact"],
+        ["--inter=x"],
+        ["-ri"],
+        ["-ir", "develop"],
+        ["-i", "--autosquash", "--no-autosquash"],
+        ["-i", "--autosquash", "--no-autosq"],
+        ["-i", "--autosq"],
+        ["-i", "--onto", "--autosquash", "develop"],
+    ],
+)
+def test_rebase_interactive_without_autosquash_refused(
+    args: list[str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
+        assert main(["rebase", *args]) == 1
+    assert "denied without --autosquash" in capsys.readouterr().err
+    mock_run.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("args", "interactive", "autosquash"),
+    [
+        (["develop"], False, False),
+        (["--autosquash", "develop"], False, True),
+        (["-i", "--autosquash", "develop"], True, True),
+        (["--interactive", "--autosquash", "develop"], True, True),
+        (["--no-autosquash", "--autosquash", "-i"], True, True),
+        (["-x", "-i", "develop"], False, False),
+        (["--exec", "-i", "develop"], False, False),
+        (["-xmake", "develop"], False, False),
+        (["-Si", "develop"], False, False),
+        (["-r", "develop"], False, False),
+        (["--root"], False, False),
+        (["-i", "--autosquash", "--", "develop"], True, True),
+    ],
+)
+def test_rebase_flag_parsing(args: list[str], interactive: bool, autosquash: bool) -> None:
+    # An option's value is never read as a flag, and short clusters split.
+    assert _rebase_is_interactive(args) is interactive
+    assert _rebase_has_autosquash(args) is autosquash
+
+
+def test_rebase_autosquash_refused_on_frozen_branch(
+    rewrite_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _fixup_branch(rewrite_repo)
+    _record_ready(rewrite_repo)
+    before = _git(rewrite_repo, "rev-parse", "HEAD")
+    assert main(["rebase", "-i", "--autosquash", "origin/develop"]) == 1
+    err = capsys.readouterr().err
+    assert "vrg: refusing to rewrite this branch" in err
+    assert "FROZEN" in err
+    assert _git(rewrite_repo, "rev-parse", "HEAD") == before
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["rebase", "-i", "--autosquash", "origin/develop", "develop"],
+        ["rebase", "-i", "--autosquash", "--onto", "develop", "origin/develop", "develop"],
+        ["rebase", "-i", "--autosquash", "--root", "develop"],
+        ["rebase", "-i", "--autosquash", "--onto", "feature/1-x", "--root", "develop"],
+        ["rebase", "-i", "--autosquash", "--ro", "develop"],
+    ],
+)
+def test_rebase_autosquash_of_another_branch_refused(
+    rewrite_repo: Path, capsys: pytest.CaptureFixture[str], argv: list[str]
+) -> None:
+    # Naming a <branch> would rewrite it (here protected develop) while the
+    # checks look only at the current, unprotected feature branch.
+    _git(rewrite_repo, "checkout", "-q", "--", "README.md")
+    develop_before = _git(rewrite_repo, "rev-parse", "develop")
+    assert main(argv) == 1
+    assert "takes only <base>" in capsys.readouterr().err
+    assert _git(rewrite_repo, "rev-parse", "develop") == develop_before
+    assert _git(rewrite_repo, "rev-parse", "--abbrev-ref", "HEAD") == "feature/1-x"
+
+
+@pytest.mark.parametrize(
+    ("args", "names_branch"),
+    [
+        (["-i", "--autosquash", "origin/develop"], False),
+        (["-i", "--autosquash", "--root"], False),
+        (["-i", "--autosquash", "--onto", "x", "origin/develop"], False),
+        (["-i", "--autosquash", "origin/develop", "develop"], True),
+        (["-i", "--autosquash", "--root", "develop"], True),
+        (["-i", "--autosquash", "--roo", "develop"], True),
+        (["-i", "--autosquash", "--reapply-cherry-picks", "origin/develop"], False),
+    ],
+)
+def test_rebase_names_branch(args: list[str], names_branch: bool) -> None:
+    assert _rebase_names_branch(args) is names_branch
+
+
+def test_plain_rebase_is_not_a_local_rewrite(rewrite_repo: Path) -> None:
+    # A non-interactive rebase keeps its existing policy (no freeze check here).
+    with patch("vergil_tooling.bin.vrg_git.freeze.check_worktree") as check:
+        assert _check_local_rewrite("rebase", ["origin/develop"]) is None
+    check.assert_not_called()
+
+
+def test_help_says_vrg_git_protects_origin(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["--help"]) == 0
+    out = capsys.readouterr().out
+    assert "protects origin, not the local checkout" in out
+    assert "rebase -i\n    only with --autosquash" in out
 
 
 # -- subprocess passthrough ----------------------------------------------------
@@ -1169,6 +1673,25 @@ class TestWorktreeConvention:
         assert rc != 0
         assert "worktree" in capsys.readouterr().err.lower()
 
+    def test_checkout_feature_denied_in_main_worktree_on_detached_head(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # CI checks out a detached HEAD; the convention refusal still wins.
+        with (
+            patch("vergil_tooling.bin.vrg_git._is_main_worktree", return_value=True),
+            patch(
+                "vergil_tooling.bin.vrg_git._worktree_convention_active",
+                return_value=True,
+            ),
+            patch(
+                "vergil_tooling.bin.vrg_git._rewrite_target_branch",
+                return_value=None,
+            ),
+        ):
+            rc = main(["checkout", "feature/123-foo"])
+        assert rc != 0
+        assert "worktree" in capsys.readouterr().err.lower()
+
     def test_checkout_develop_allowed_in_main_worktree(self) -> None:
         with (
             patch("vergil_tooling.bin.vrg_git._is_main_worktree", return_value=True),
@@ -1196,12 +1719,15 @@ class TestWorktreeConvention:
         assert rc == 0
 
     def test_checkout_file_allowed_in_main_worktree(self) -> None:
+        # Only the worktree convention is under test; a pathspec checkout's
+        # local-rewrite check is covered by the real-repo tests above.
         with (
             patch("vergil_tooling.bin.vrg_git._is_main_worktree", return_value=True),
             patch(
                 "vergil_tooling.bin.vrg_git._worktree_convention_active",
                 return_value=True,
             ),
+            patch("vergil_tooling.bin.vrg_git._check_local_rewrite", return_value=None),
             patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
         ):
             mock_run.return_value.returncode = 0
