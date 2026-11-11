@@ -377,6 +377,69 @@ def test_orphaned_check_names_probes_the_run_in_the_links_repo(
     ]
 
 
+def test_running_check_runs_names_only_checks_whose_job_is_in_progress(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Slow, not stuck (#4200): only a check whose own job is in progress is listed.
+
+    The run is not consulted: run 1 is uncompleted for all three of its jobs,
+    but a queued job, and a completed one, are not running checks.
+    """
+    reads: list[tuple[str, str]] = []
+    statuses = {"10": "in_progress", "11": "queued", "12": "completed", "20": "waiting"}
+
+    def fake_job_status(repo: str, job_id: str) -> str:
+        reads.append((repo, job_id))
+        return statuses[job_id]
+
+    monkeypatch.setattr(github, "job_status", fake_job_status)
+    monkeypatch.setattr(github, "run_completed", lambda r, i: pytest.fail("the run is not read"))
+    pending = [
+        ("images / build (amd64)", "https://github.com/o/r/actions/runs/1/job/10"),
+        ("images / build (arm64)", "https://github.com/o/r/actions/runs/1/job/11"),
+        ("quality / matrix", "https://github.com/o/r/actions/runs/1/job/12"),
+        ("deploy", "https://github.com/o/r/actions/runs/2/job/20"),
+        ("bad job id", "https://github.com/o/r/actions/runs/3/job/not-a-number"),
+        ("CodeQL", "https://github.com/o/r/runs/5"),
+        ("no link", ""),
+    ]
+    assert github.running_check_runs(pending) == [
+        ("images / build (amd64)", "https://github.com/o/r/actions/runs/1"),
+    ]
+    # Every Actions job is read; app-posted, link-less and unparseable ones never.
+    assert reads == [("o/r", "10"), ("o/r", "11"), ("o/r", "12"), ("o/r", "20")]
+
+
+def test_running_check_runs_propagates_a_read_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    def broken(repo: str, job_id: str) -> str:
+        raise github.GitHubAPIError(1, ("gh", "api", job_id), stderr="HTTP 500")
+
+    monkeypatch.setattr(github, "job_status", broken)
+    with pytest.raises(github.GitHubAPIError, match="HTTP 500"):
+        github.running_check_runs([("test / unit", "https://github.com/o/r/actions/runs/1/job/2")])
+
+
+def test_job_status_reads_the_jobs_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, ...]] = []
+
+    def fake_read_json(*args: str) -> dict[str, object]:
+        calls.append(args)
+        return {"status": "in_progress", "conclusion": None}
+
+    monkeypatch.setattr(github, "read_json", fake_read_json)
+    assert github.job_status("o/r", "77") == "in_progress"
+    assert calls == [("api", "repos/o/r/actions/jobs/77")]
+
+
+@pytest.mark.parametrize("payload", [{}, {"status": ""}, {"status": 3}, ["not", "an", "object"]])
+def test_job_status_rejects_a_response_without_a_status(
+    monkeypatch: pytest.MonkeyPatch, payload: object
+) -> None:
+    monkeypatch.setattr(github, "read_json", lambda *a: payload)
+    with pytest.raises(github.GitHubAPIError):
+        github.job_status("o/r", "77")
+
+
 def test_orphaned_check_names_flags_completed_run(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         github,
@@ -534,30 +597,31 @@ def test_wait_for_checks_polls_until_terminal(monkeypatch: pytest.MonkeyPatch) -
     assert sleeps == [7, 7]
 
 
-def test_wait_for_checks_default_ceiling_is_1800_and_polls_past_180(
+def test_wait_for_checks_default_ceiling_is_4500_and_polls_past_1800(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Regression (#2809): the default pending-checks ceiling was 180s — shorter
-    # than real CI (3-8 min) — so a normal PR whose checks were merely still
-    # running spuriously hard-failed the finalize merge. With the ceiling now
-    # 1800s, the waiter must keep polling well past 180s and raise the *plain*
-    # timeout only at the 1800s deadline (checks never terminal, nothing
-    # orphaned — e.g. an app-posted status still running).
-    assert github._POLL_TIMEOUT_SECS == 1800
+    # Regressions: the default pending-checks ceiling was 180s — shorter than
+    # normal CI — so merely-running checks hard-failed the finalize merge
+    # (#2809); then 1800s, shorter than a vergil-containers full image-tree
+    # build (36.5 min, #4200). With the ceiling now 4500s, the waiter must keep
+    # polling past both old ceilings and raise the *plain* timeout only at the
+    # 4500s deadline (checks never terminal, nothing orphaned — e.g. an
+    # app-posted status still running).
+    assert github._POLL_TIMEOUT_SECS == 4500
     _stub_checks(monkeypatch, lambda: False)
     monkeypatch.setattr(github, "orphaned_check_names", lambda pr: [])
-    # Fake monotonic clock, no real sleeping: deadline = 0 + 1800. The poll at
-    # t=200 is *past the old 180s ceiling* yet must NOT raise (proves 180s is
-    # gone); the deadline is only reached at t=1800.
-    clock = iter([0.0, 200.0, 1800.0])
+    # Fake monotonic clock, no real sleeping: deadline = 0 + 4500. The polls at
+    # t=200 and t=2200 are *past the old 180s and 1800s ceilings* yet must NOT
+    # raise; the deadline is only reached at t=4500.
+    clock = iter([0.0, 200.0, 2200.0, 4500.0])
     monkeypatch.setattr(github.time, "monotonic", lambda: next(clock))
     sleeps: list[int] = []
     monkeypatch.setattr(github.time, "sleep", lambda s: sleeps.append(s))
-    with pytest.raises(github.GitHubAPIError, match="still pending after 1800s"):
+    with pytest.raises(github.GitHubAPIError, match="still pending after 4500s"):
         github.wait_for_checks("934", required=())
-    # Exactly one poll happened after crossing 180s and before the 1800s
-    # deadline — the old ceiling would have raised at that first check instead.
-    assert sleeps == [github._POLL_INTERVAL_SECS]
+    # Exactly two polls happened before the 4500s deadline — either old ceiling
+    # would have raised at one of them instead.
+    assert sleeps == [github._POLL_INTERVAL_SECS, github._POLL_INTERVAL_SECS]
 
 
 def _rollup_node(name: str, run_id: int | None, workflow: str = "CI") -> dict[str, str]:
@@ -3629,6 +3693,7 @@ def test_wait_for_checks_deadline_names_pending_checks_and_links(
         ],
     )
     monkeypatch.setattr(github, "orphaned_check_names", lambda pr: [])
+    monkeypatch.setattr(github, "job_status", lambda repo, job_id: "in_progress")
     clock = iter([0.0, 5000.0])
     monkeypatch.setattr(github.time, "monotonic", lambda: next(clock))
     with pytest.raises(github.ChecksTimeoutError) as excinfo:
@@ -3639,6 +3704,10 @@ def test_wait_for_checks_deadline_names_pending_checks_and_links(
     assert "CodeQL (no link)" in message
     assert "lint" not in message
     assert excinfo.value.pending == [("test / unit", _STALE_LINK), ("CodeQL", "")]
+    # The check whose job is in progress is slow, not stuck (#4200); CodeQL has no job.
+    assert excinfo.value.running == [
+        ("test / unit", "https://github.com/o/r/actions/runs/37969487090")
+    ]
     assert isinstance(excinfo.value, github.GitHubAPIError)  # existing handlers still catch it
 
 
@@ -3650,6 +3719,7 @@ def test_wait_for_checks_deadline_with_no_checks_registered(
     with pytest.raises(github.ChecksTimeoutError, match="no checks registered") as excinfo:
         github.wait_for_checks("934", poll_timeout=0, required=())
     assert excinfo.value.pending == []
+    assert excinfo.value.running == []
 
 
 def test_wait_for_checks_deadline_comes_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -3692,11 +3762,11 @@ def test_wait_for_checks_reports_pending_durations(
 
 
 def test_checks_timeout_secs_default_and_override(monkeypatch: pytest.MonkeyPatch) -> None:
-    assert github.checks_timeout_secs() == 1800
+    assert github.checks_timeout_secs() == 4500
     monkeypatch.setenv(github.CHECKS_TIMEOUT_ENV, " 5400 ")
     assert github.checks_timeout_secs() == 5400
     monkeypatch.setenv(github.CHECKS_TIMEOUT_ENV, "")
-    assert github.checks_timeout_secs() == 1800
+    assert github.checks_timeout_secs() == 4500
 
 
 @pytest.mark.parametrize("raw", ["soon", "0", "-5", "1.5"])

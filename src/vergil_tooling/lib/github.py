@@ -737,23 +737,29 @@ _POLL_INTERVAL_SECS = 5
 # How often a waiter re-reports still-pending checks when nothing has changed.
 _PROGRESS_INTERVAL_SECS = 60
 # Ceiling for how long the check-poll waiters block on still-PENDING checks
-# before giving up. Real CI here runs 3-8 min, so 180s guaranteed a spurious
-# finalize-merge failure on normal PRs (#2809); 1800s (30 min) comfortably
-# clears real CI (the post-merge CD watch has its own, longer deadline,
-# vrg_finalize_pr.cd_timeout_secs / $VRG_CD_TIMEOUT — CD is slower, #3316). A
-# merely-pending check is recoverable and is waited out to this deadline; a
-# *failed* check (pr_merge.failed_check_names) or an *orphaned* check
-# (OrphanedCheckError) still aborts earlier, so this ceiling never lets a
-# genuinely stuck merge hang. Single source of truth: every check waiter —
-# finalize, release, update-deps — reads it via checks_timeout_secs(), so the
-# waiters can never drift apart again (#2809). The release waiter used to stream
-# ``gh pr checks --watch``, which had no deadline at all and hung a release for
-# 12+ hours on one stale check-run (#3170); it now shares this bounded poller.
-# 30 min is ~4x the longest legitimate release-PR CI (5-8 min, package matrix
-# included) and a timeout is cheap to recover from (re-run the job, then
-# ``vrg-release --resume``), so slow-runner days override it via the env var
-# instead of every hang costing hours.
-_POLL_TIMEOUT_SECS = 1800
+# before giving up. Default 75 min. Most PR CI is short (fleet medians 1-3 min,
+# vergil-tooling release PRs p95 ~12 min), so 180s once failed normal PRs
+# (#2809), but the longest is vergil-containers' full image-tree build: a PR
+# that touches a shared image input rebuilds pkg-ubuntu:24.04 and all its
+# descendants per architecture. Run 42932275640 (2026-11-11) took 29.5 min
+# (amd64 28.6, arm64 27.6), and run 43034784731 (PR vergil-containers#834,
+# same day) built amd64 in 35.7 min, the run 36.5 min, which timed out the
+# old 1800s deadline about 6 min before it passed (#4200). 75 min is roughly
+# 2x that run, as the CD watch is sized (vrg_finalize_pr.cd_timeout_secs /
+# $VRG_CD_TIMEOUT, #3316), with room for a growing image tree and a
+# slow-runner day. A merely-pending check is waited out to this deadline; a
+# *failed* check (pr_merge.failed_check_names) or an *orphaned* one
+# (OrphanedCheckError, caught while waiting) still aborts earlier, so a long
+# ceiling only costs time when a check sits queued or a job hangs mid-run. At
+# the deadline, ChecksTimeoutError.running names the checks whose own job is still
+# in progress, so the abort can say "wait, then resume" rather than "re-run". Single
+# source of truth: every check waiter — finalize, release, update-deps — reads
+# it via checks_timeout_secs(), so the waiters can never drift apart again
+# (#2809). The release waiter used to stream ``gh pr checks --watch``, which
+# had no deadline at all and hung a release for 12+ hours on one stale
+# check-run (#3170); it now shares this bounded poller. Override per
+# invocation with $VRG_CHECKS_TIMEOUT.
+_POLL_TIMEOUT_SECS = 4500
 CHECKS_TIMEOUT_ENV = "VRG_CHECKS_TIMEOUT"
 # While waiting, how often a pending check's backing Actions run is re-probed
 # for completion (once per run, not per check or per poll), and how long a
@@ -793,7 +799,7 @@ def _positive_secs_env(name: str, default: int) -> int:
 
 
 def checks_timeout_secs() -> int:
-    """The pending-checks deadline in seconds: ``$VRG_CHECKS_TIMEOUT`` or 1800.
+    """The pending-checks deadline in seconds: ``$VRG_CHECKS_TIMEOUT`` or 4500.
 
     A malformed or non-positive override is a configuration error and raises
     rather than silently falling back — the deadline is what keeps a stale check
@@ -1174,11 +1180,22 @@ class ChecksTimeoutError(GitHubAPIError):
     A :class:`GitHubAPIError` subclass so existing handlers keep working;
     ``pending`` carries ``(name, link)`` for every still-pending check so a
     caller can name each one — and where to re-run it — in its own error.
+    ``running`` carries ``(name, run_url)`` for each of those whose own Actions
+    job was in progress at the deadline (#4200): such a check is most likely
+    slow rather than stuck, and the recovery is to wait for the run rather
+    than re-run it.
     """
 
-    def __init__(self, pr: str, detail: str, pending: list[tuple[str, str]]) -> None:
+    def __init__(
+        self,
+        pr: str,
+        detail: str,
+        pending: list[tuple[str, str]],
+        running: list[tuple[str, str]] | None = None,
+    ) -> None:
         super().__init__(1, ("gh", "pr", "checks", pr), stderr=detail)
         self.pending = pending
+        self.running = [] if running is None else running
 
 
 # A check-run conclusion mapped to gh's bucket, mirroring ``gh pr checks``' own
@@ -1349,12 +1366,31 @@ def job_conclusion(repo: str, job_id: str) -> str | None:
     is still stuck ``pending`` (#3358). A gh/API failure propagates, and so
     does a response that is not a JSON object (#4058).
     """
+    conclusion = _read_job(repo, job_id).get("conclusion")
+    return str(conclusion) if conclusion else None
+
+
+def job_status(repo: str, job_id: str) -> str:
+    """The Actions job's own ``status`` (``queued``, ``in_progress``, ``completed``, ...).
+
+    Read from the jobs API, like :func:`job_conclusion`. A gh/API failure
+    propagates, as does a response with no string ``status`` (#4058).
+    """
+    data = _read_job(repo, job_id)
+    status = data.get("status")
+    if not isinstance(status, str) or not status:
+        endpoint = f"repos/{repo}/actions/jobs/{job_id}"
+        raise _shape_error(("gh", "api", endpoint), f"no job status in {data!r}")
+    return status
+
+
+def _read_job(repo: str, job_id: str) -> dict[str, Any]:
+    """The jobs API's object for *repo*'s job *job_id*; a non-object answer raises (#4058)."""
     endpoint = f"repos/{repo}/actions/jobs/{job_id}"
     data = read_json("api", endpoint)
     if not isinstance(data, dict):
         raise _shape_error(("gh", "api", endpoint), f"the job is {type(data).__name__}")
-    conclusion = data.get("conclusion")
-    return str(conclusion) if conclusion else None
+    return data
 
 
 _ORPHAN_RECOVERY = (
@@ -1788,6 +1824,30 @@ def orphaned_check_names(pr: str) -> list[str]:
     return orphans
 
 
+def running_check_runs(pending: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """``(name, run_url)`` of each *pending* check whose own Actions job is in progress.
+
+    *pending* is ``(name, link)`` pairs as :func:`_pending_checks` gives them.
+    The job itself is read (:func:`job_status`), not its workflow run: a run
+    stays uncompleted while one of its jobs sits queued for a runner or while
+    another job is still going, and neither makes *this* check's job a running
+    one. Only a job reported ``in_progress`` counts (#4200); a queued, waiting
+    or completed job, a check with no Actions job link (an app-posted status)
+    and a link with no readable job id are all left out. A gh/API failure
+    propagates, as in :func:`orphaned_check_names`.
+    """
+    running: list[tuple[str, str]] = []
+    for name, link in pending:
+        run = actions_run_of(link)
+        job = _ACTIONS_JOB_LINK_RE.search(link)
+        if run is None or job is None:
+            continue
+        if job_status(job.group(1), job.group(2)) == "in_progress":
+            repo, run_id = run
+            running.append((name, f"https://github.com/{repo}/actions/runs/{run_id}"))
+    return running
+
+
 def format_wait(secs: float) -> str:
     """Render a wait duration as ``1h02m`` / ``3m05s`` / ``42s``."""
     whole = int(secs)
@@ -1853,12 +1913,14 @@ def wait_for_checks(
     by ``pr_merge.failed_check_names``.
 
     *poll_timeout* defaults to :func:`checks_timeout_secs`
-    (``$VRG_CHECKS_TIMEOUT``, else 1800s) and remains the backstop for
+    (``$VRG_CHECKS_TIMEOUT``, else 4500s) and remains the backstop for
     genuinely long-running checks. When it elapses with checks still
     pending, each is cross-checked against its backing workflow run: a
     non-terminal check over a *completed* run is a GitHub orphan and raises
     :class:`OrphanedCheckError`; otherwise :class:`ChecksTimeoutError` names every
-    still-pending check and its link.
+    still-pending check and its link, and its ``running`` lists those whose
+    own job is in progress (:func:`running_check_runs`), so the
+    caller can tell a slow job from a stuck one (#4200).
 
     Transient GitHub API errors (401/502/503/504/429) are retried
     automatically via the library-level retry wrapper.
@@ -1916,7 +1978,7 @@ def wait_for_checks(
                 detail += "; no checks registered on the PR head"
             if outstanding:
                 detail += f"; outstanding required checks: {describe_outstanding(outstanding)}"
-            raise ChecksTimeoutError(pr, detail, pending)
+            raise ChecksTimeoutError(pr, detail, pending, running_check_runs(pending))
         time.sleep(poll_interval)
 
 
