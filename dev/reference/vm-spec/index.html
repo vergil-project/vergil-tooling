@@ -17804,7 +17804,11 @@ remembered.</p>
   (<a href="https://bugs.launchpad.net/ubuntu/+source/apt/+bug/2003851">Launchpad #2003851</a>),
   and <code>DPkg::Lock::Timeout=60</code>, so a dpkg lock held by
   <code>unattended-upgrades</code> or <code>apt-daily</code> on a freshly booted VM is waited
-  out for up to 60 seconds instead of failing provisioning at once.</li>
+  out for up to 60 seconds instead of failing provisioning at once.
+  Finally it sets <code>APT::Update::Error-Mode=any</code>, so <code>apt-get update</code>
+  fails when no mirror can serve an index, instead of warning and
+  leaving the install to fail later on a misleading "Unable to locate
+  package". Failing over to another mirror is not an error.</li>
 <li>The VM's Ubuntu codename must be a published suite (<code>noble</code> or
   <code>resolute</code>). Any other codename fails provisioning.</li>
 <li>If the repository has no package matching the version, for example
