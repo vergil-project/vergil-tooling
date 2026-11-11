@@ -22,10 +22,12 @@ from __future__ import annotations
 
 import re
 import subprocess
+from functools import partial
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import epics, git, github
 from vergil_tooling.lib.pr_workflow.errors import WorkflowError
+from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.trusted_authors import (
     TrustedAuthors,
     TrustedAuthorsNotConfiguredError,
@@ -93,7 +95,7 @@ def _read[T](what: str, rule: str, read: Callable[[], T]) -> T:
     except github.MissingGitHubTokenError:
         raise
     except _READ_ERRORS as exc:
-        raise BatchRuleError(rule, f"could not read {what}: {exc}") from exc
+        raise BatchRuleError(rule, f"could not read {what}: {error_text(exc)}") from exc
 
 
 def _parse_refs(issues: list[str], repo: str) -> list[epics.IssueRef]:
@@ -170,14 +172,14 @@ def _check_task(ref: str, issue: epics.IssueRef, repo: str, authors: TrustedAuth
         blocker_kind = _read(
             f"the labels of {ref}'s blocker {blocker.slug}",
             "no open deployment blocker",
-            lambda b=blocker: epics.operational_kind(b),
+            partial(epics.operational_kind, blocker),
         )
         if blocker_kind != "deployment":
             continue
         state = _read(
             f"the state of {ref}'s blocker {blocker.slug}",
             "no open deployment blocker",
-            lambda b=blocker: epics.issue_state(b),
+            partial(epics.issue_state, blocker),
         )
         if state != "CLOSED":
             raise BatchRuleError(
@@ -191,7 +193,7 @@ def _check_shared_parent(issues: list[str], parsed: list[epics.IssueRef]) -> Non
     """One parent for every issue: a live epic that is not a queue epic."""
     parents: list[epics.IssueRef] = []
     for ref, issue in zip(issues, parsed, strict=True):
-        parent = _read(f"the parent of {ref}", "same epic", lambda i=issue: epics.parent_of(i))
+        parent = _read(f"the parent of {ref}", "same epic", partial(epics.parent_of, issue))
         if parent is None:
             raise BatchRuleError(
                 "same epic", f"{ref} has no parent epic; every batch issue is a task under one"
@@ -264,7 +266,8 @@ def _commits(base: str, head: str) -> list[tuple[str, list[str], str]]:
         )
     except (subprocess.CalledProcessError, OSError) as exc:
         raise BatchRuleError(
-            "one commit per issue", f"could not read the commits {base}..{head}: {exc}"
+            "one commit per issue",
+            f"could not read the commits {base}..{head}: {error_text(exc)}",
         ) from exc
     commits: list[tuple[str, list[str], str]] = []
     for line in raw.splitlines():

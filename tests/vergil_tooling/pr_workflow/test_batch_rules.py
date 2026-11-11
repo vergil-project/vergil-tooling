@@ -7,6 +7,7 @@ a temporary repository.
 
 from __future__ import annotations
 
+import itertools
 import subprocess
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -340,10 +341,13 @@ def _git(repo: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
+_FILE_NUMBERS = itertools.count()
+
+
 def _commit(repo: Path, subject: str) -> str:
-    path = repo / "log.txt"
-    with path.open("a") as handle:
-        handle.write(f"{subject}\n")
+    # One new file per commit, so branches that each add commits merge cleanly.
+    path = repo / f"change-{next(_FILE_NUMBERS)}.txt"
+    path.write_text(f"{subject}\n")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", subject)
     return _git(repo, "rev-parse", "HEAD")
@@ -453,3 +457,15 @@ def _commit_refused_at(issues: list[str], *, base: str) -> str:
     with pytest.raises(BatchRuleError) as info:
         check_commit_per_issue(issues, base=base, head="HEAD")
     return str(info.value)
+
+
+def test_commits_refuse_a_malformed_issue_ref(repo: Path) -> None:
+    _commit(repo, "fix(a): first (#10)")
+    with pytest.raises(BatchRuleError, match="not an issue ref"):
+        check_commit_per_issue(["#10", "11"], base="develop", head="HEAD")
+
+
+def test_commits_refuse_an_unparseable_rev_list_line(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(batch_rules.git, "read_output", lambda *args: "deadbeef no separators")
+    with pytest.raises(BatchRuleError, match="could not parse the git rev-list line"):
+        check_commit_per_issue(["#10", "#11"], base="develop", head="HEAD")
