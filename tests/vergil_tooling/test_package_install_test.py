@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 _FAST = (
     "-o Acquire::Retries=3 -o Acquire::Retries::Delay=false"
     " -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20"
-    " -o DPkg::Lock::Timeout=60"
+    " -o DPkg::Lock::Timeout=60 -o APT::Update::Error-Mode=any"
 )
 
 _BASE_TOML = """\

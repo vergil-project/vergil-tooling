@@ -339,6 +339,10 @@ remembered.
   and `DPkg::Lock::Timeout=60`, so a dpkg lock held by
   `unattended-upgrades` or `apt-daily` on a freshly booted VM is waited
   out for up to 60 seconds instead of failing provisioning at once.
+  Finally it sets `APT::Update::Error-Mode=any`, so `apt-get update`
+  fails when no mirror can serve an index, instead of warning and
+  leaving the install to fail later on a misleading "Unable to locate
+  package". Failing over to another mirror is not an error.
 - The VM's Ubuntu codename must be a published suite (`noble` or
   `resolute`). Any other codename fails provisioning.
 - If the repository has no package matching the version, for example
