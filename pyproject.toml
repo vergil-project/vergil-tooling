@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vergil-tooling"
-version = "2.1.299"
+version = "2.1.300"
 description = "VERGIL — Validation Engine for Repository Governance, Integration & Lifecycle"
 requires-python = ">=3.12"
 license = "MIT"
@@ -87,10 +87,14 @@ vrg-version = "vergil_tooling.bin.vrg_version:main"
 vrg-version-divergence = "vergil_tooling.bin.vrg_version_divergence:main"
 vrg-whoami = "vergil_tooling.bin.vrg_whoami:main"
 vrg-worktree-status = "vergil_tooling.bin.vrg_worktree_status:main"
-vrg-xdist-sync = "vergil_tooling.bin.vrg_xdist_sync:main"
 
 [dependency-groups]
 dev = ["ruff", "mypy", "ty", "pytest", "pytest-cov", "pytest-xdist", "pip-audit", "pip-licenses", "types-pyyaml", "defusedxml", "types-defusedxml"]
+# Only scripts/bin/validate-custom uses this group (uv run --isolated --group site-check),
+# so mkdocs never enters the default dev sync and every other docs build and the
+# docs deploy keep the docs image's mkdocs (vergil-tooling#4115). Not named `docs`,
+# which vrg-container-docs syncs.
+site-check = ["mkdocs-material"]
 
 [tool.uv]
 # Security floors for TRANSITIVE dependencies. These are not direct dependencies —

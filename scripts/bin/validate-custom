@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# scripts/bin/validate-custom: vergil-tooling's own validation, auto-discovered by
+# vrg-validate (vergil_tooling.bin.vrg_validate._find_custom_validator) and run as
+# the `custom` stage, inside the dev container, after the dev group is synced.
+#
+# Runs the strict mkdocs build of the site docs (scripts/dev/check-site-docs.py,
+# vergil-tooling#4115). It runs through `uv run` in an isolated environment that
+# holds vergil_tooling and the non-default `site-check` group (mkdocs-material):
+# PR CI's `quality / custom` job runs the released vrg-validate, so the venv is
+# not otherwise on PATH there. `--isolated` keeps mkdocs out of the project venv,
+# so every other `uv run mkdocs` (vrg-container-docs, CI's docs build, the docs
+# deploy) still uses the docs image's mkdocs.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+exec uv run --project "${ROOT}" --frozen --isolated --group site-check \
+  python "${ROOT}/scripts/dev/check-site-docs.py"

@@ -207,7 +207,8 @@ Required keys and accepted values:
 | `[ci].versions` | non-empty list of strings | Optional pin. Omit it to follow the version window. Every pinned version must be in the window, and an app may pin only one version; either violation is an error. C++ and TypeScript repos must pin. |
 | `[dependencies].vergil` | `vX.Y` | Required. The vergil release line; new repos get the line of the vergil-tooling that created them. |
 
-`[publish]` (`release`, default `false`; `docs`, default `true`) and
+`[publish]` (`release`, default `false`; `docs`, default `true`; `vrg-release`
+refuses a repo whose `release` is not `true`) and
 `[ci].integration-tests` (default `false`) are optional, as is
 `[ci].images` (a boolean, default `false`), which only a repo whose `ci.yml`
 calls a repo-local `ci-images.yml` as job `images` sets; it makes

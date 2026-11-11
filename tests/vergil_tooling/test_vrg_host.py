@@ -756,7 +756,6 @@ def test_upgrade_honors_pin_from_pins_file(
         "gcloud",
         "lima",
         "opentofu",
-        "git-cliff",
         "vergil-tooling",
         "claude-code",
     ]
@@ -1090,9 +1089,9 @@ _HOST_TOOLS: dict[str, dict[str, str]] = {
     "softwareupdate": {"--list": "softwareupdate-list-minor-and-major-available.txt"},
 }
 
-# lima, opentofu and git-cliff have no captured probe output (only their rows
+# lima and opentofu have no captured probe output (only their rows
 # in vrg-host-status-before-3261.txt), so they are left out of this harness.
-_UNCAPTURED = frozenset({"lima", "opentofu", "git-cliff"})
+_UNCAPTURED = frozenset({"lima", "opentofu"})
 
 
 def _install_captured_host(bin_dir: Path) -> None:

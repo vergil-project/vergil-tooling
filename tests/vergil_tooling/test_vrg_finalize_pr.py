@@ -46,6 +46,7 @@ from vergil_tooling.lib.github import ClosingIssue, GitHubAPIError, PRClosingRef
 from vergil_tooling.lib.live_branches import RepoSetError
 from vergil_tooling.lib.pr_merge import MergeAbortError, MergeConflictError
 from vergil_tooling.lib.pr_provenance import Action, ProvenanceResult, Role
+from vergil_tooling.lib.release.gate import unreleased_refusal as _real_unreleased_refusal
 from vergil_tooling.lib.versions import VersionsError
 from vergil_tooling.lib.worktrees import Worktree, WorktreeState, WorktreeStatus
 
@@ -54,6 +55,16 @@ _PROJECTS = Path("/vergil/projects")
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
+
+
+@pytest.fixture(autouse=True)
+def _released_repo() -> Iterator[None]:
+    """Default every test to a repo that declares [publish].release = true.
+
+    The refusal tests override it — the innermost patch wins.
+    """
+    with patch(_MOD + ".gate.unreleased_refusal", return_value=None):
+        yield
 
 
 @pytest.fixture(autouse=True)
@@ -3069,6 +3080,50 @@ def test_no_release_flag_does_not_invoke_release(tmp_path: Path) -> None:
         result = main([])
     assert result == 0
     mock_run.assert_not_called()
+
+
+# -- refuse a release cascade on a repo that is not released (issue #4175) --
+
+
+@pytest.mark.parametrize("flag", ["--release", "--install"])
+def test_release_cascade_refused_when_repo_not_released(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], flag: str
+) -> None:
+    """No [publish].release: refuse before any merge, cleanup or chain."""
+    _make_profile(tmp_path, "library-release")
+    with (
+        patch(_MOD + ".gate.unreleased_refusal", side_effect=_real_unreleased_refusal),
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".git.run") as m_git_run,
+        patch(_MOD + ".progress.run_pipeline") as m_pipeline,
+        patch(_MOD + "._run_finalize_batch") as m_batch,
+        patch(_MOD + ".subprocess.run") as mock_run,
+    ):
+        result = main([flag, "--all"])
+    assert result == 1
+    m_git_run.assert_not_called()
+    m_pipeline.assert_not_called()
+    m_batch.assert_not_called()
+    mock_run.assert_not_called()
+    err = capsys.readouterr().err
+    assert f"vrg-finalize-pr {flag}: this repo is not released" in err
+
+
+def test_finalize_without_release_ignores_unreleased_repo(tmp_path: Path) -> None:
+    """A plain finalize on a repo that is not released is unaffected."""
+    _make_profile(tmp_path, "library-release")
+    with (
+        patch(_MOD + ".gate.unreleased_refusal", side_effect=_real_unreleased_refusal) as m_gate,
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".git.current_branch", return_value="develop"),
+        patch(_MOD + ".git.run"),
+        patch(_MOD + ".git.merged_branches", return_value=[]),
+        patch(_MOD + ".git.read_output", return_value="deadbeef"),
+        patch(_MOD + "._wait_for_cd_run", return_value=None),
+        patch(_MOD + ".subprocess.run"),
+    ):
+        assert main([]) == 0
+    m_gate.assert_not_called()
 
 
 # -- --install: extend the cascade through vrg-release --install (issue #1643) --

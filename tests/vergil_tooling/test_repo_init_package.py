@@ -85,7 +85,13 @@ class TestPackagedCiWorkflow:
 
     def test_package_job_matches_hand_written_ci(self) -> None:
         generated = yaml.safe_load(render_ci_workflow(_packaged_python_ctx()))
-        assert generated["jobs"]["package"] == _hand_written("ci.yml")["jobs"]["package"]
+        hand_written = _hand_written("ci.yml")["jobs"]["package"]
+        # This repo's ci.yml temporarily runs package CI on the dev- images
+        # (issue #4202), an override the generated template must not carry.
+        # Drop this once the Ubuntu 24.04 cutover release
+        # (vergil-project/vergil-containers#789) lets ci.yml remove it.
+        assert hand_written.pop("with") == {"container-prefix": "dev"}
+        assert generated["jobs"]["package"] == hand_written
 
     def test_package_job_is_last(self) -> None:
         generated = yaml.safe_load(render_ci_workflow(_packaged_python_ctx()))

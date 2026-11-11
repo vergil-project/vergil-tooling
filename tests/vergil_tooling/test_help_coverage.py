@@ -4,8 +4,11 @@ Part of epic vergil-project/.github#72 ("Every vrg-* tool answers --help,
 enforced"). See docs/site/docs/standards/development/cli-help-convention.md.
 
 The gate runs each *covered* console script with ``--help`` in a subprocess and
-asserts it exits 0 with non-empty output. ``--help`` short-circuits before any
-of a tool's real work, so the check is hermetic. Tools that do not yet answer
+asserts it exits 0 with non-empty output, and runs it again under an agent
+identity to assert the full usage prints there too (vergil-tooling#4178), since
+identity checks must run only after ``--help`` is handled. ``--help``
+short-circuits before any of a tool's real work, so the check is hermetic.
+Tools that do not yet answer
 ``--help`` are listed in ``KNOWN_GAPS`` and are never executed; each is fixed by
 a later task of the epic, and ``test_gap_set_matches_reality`` forces that list
 to stay in sync with the source.
@@ -14,6 +17,7 @@ to stay in sync with the source.
 from __future__ import annotations
 
 import importlib.util
+import os
 import subprocess
 import sys
 import tomllib
@@ -97,3 +101,35 @@ def test_tool_answers_help(name: str) -> None:
         f"{name} (--help) exited {result.returncode}; stderr:\n{result.stderr}"
     )
     assert result.stdout.strip(), f"{name} (--help) produced no stdout"
+
+
+# Every agent signal the identity resolver reads from the environment: the mode
+# variable and the App ID, so both ``is_agent()`` and the fail-closed
+# ``any_agent_signal()`` see an agent.
+_AGENT_ENV = {"VRG_IDENTITY_MODE": "user", "VRG_APP_ID": "1"}
+
+
+@pytest.mark.parametrize("flag", ["--help", "-h"])
+@pytest.mark.parametrize("name", _COVERED)
+def test_tool_prints_usage_to_an_agent(name: str, flag: str) -> None:
+    """``--help`` prints the full usage under an agent identity (issue #4178).
+
+    Help is documentation: identity, permission and authentication checks run
+    after argument parsing has handled ``--help``, so an agent can read how a
+    human-only command works and give the human a correct command line.
+    """
+    module = _module_of(_SCRIPTS[name])
+    result = subprocess.run(
+        [sys.executable, "-m", module, flag],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+        env={**os.environ, **_AGENT_ENV},
+    )
+    assert result.returncode == 0, (
+        f"{name} ({flag}) exited {result.returncode} as an agent; stderr:\n{result.stderr}"
+    )
+    assert "usage:" in result.stdout.lower(), (
+        f"{name} ({flag}) printed no usage as an agent; stdout:\n{result.stdout}"
+    )

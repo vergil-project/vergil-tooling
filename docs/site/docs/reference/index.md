@@ -50,7 +50,6 @@ the dev-tree override venv.
 | [vrg-hook-guard-shim-sync](cli-tools-overview.md#vrg-hook-guard-shim-sync) | Check or write a repo's managed `.claude/hooks/guard.sh` |
 | [vrg-fleet-sync](cli-tools-overview.md#vrg-fleet-sync) | Propagate a managed file across the fleet, one PR per drifted repo |
 | [vrg-ci-sync](cli-tools-overview.md#vrg-ci-sync) | Fleet sweep that strips retired inputs from each repo's `ci.yml` |
-| [vrg-xdist-sync](cli-tools-overview.md#vrg-xdist-sync) | Fleet sweep that adds `pytest-xdist` to each Python repo |
 | [vrg-upstream-refresh](cli-tools-overview.md#vrg-upstream-refresh) | Run the repo's upstream-refresh hook and open, refresh or close its PR |
 | [vrg-branch-sweep](dev/branch-sweep.md) | Report, or with `--apply` delete, a repo's finished remote branches |
 | [vrg-worktree-status](cli-tools-overview.md#vrg-worktree-status) | Show every worktree in the current repo, grouped by kind |

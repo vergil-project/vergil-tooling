@@ -1,8 +1,8 @@
 """Tests for the dev-dependency-shape classifier (fleet survey).
 
 ``classify_dev_deps`` reports *where* a repo declares its development
-dependencies, so the Task-9 xdist fleet sweep can add ``pytest-xdist`` in the
-correct shape (or report loudly for an ``UNKNOWN`` shape rather than guessing).
+dependencies, so the fleet survey can report each repo's shape (and report
+loudly for an ``UNKNOWN`` shape rather than guessing).
 Epic vergil-project/.github#333, Task 3.
 """
 

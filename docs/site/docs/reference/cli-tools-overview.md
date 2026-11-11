@@ -269,7 +269,7 @@ and the [Releasing guide](../guides/releasing.md).
 |---|---|
 | Source | `vergil_tooling.bin.vrg_release` |
 | Args | `minor`/`major` (optional positional), `--no-promote`, `--without-deps`, `--allow-pending-deps`, `--install`, `--resume [X.Y.Z]`, `--skip-audit`, `--output-window`, `--output-format` |
-| Preconditions | Human identity; on `develop`, clean working tree, local develop matches `origin/develop`; `gh` authenticated and `git-cliff` on PATH |
+| Preconditions | Human identity; on `develop`, clean working tree, local develop matches `origin/develop`; `gh` authenticated and a reachable container runtime (docker or nerdctl) for `vrg-container-run`, which runs `git-cliff` |
 | Failure mode | Fail-fast stages stop the run; deferred stages (including `update-deps`) record the failure, let later stages run, and are summarized at the end |
 | Exit codes | 0 success, 1 any failure or refusal, 130 interrupted |
 | Status | Active |
@@ -278,7 +278,8 @@ and the [Releasing guide](../guides/releasing.md).
 
 Move the rolling `vX.Y` tag to release `vX.Y.Z`. It is human-only: it
 refuses any agent identity, failing closed on any agent signal
-(`is_agent() or any_agent_signal()`), before any output or git call.
+(`is_agent() or any_agent_signal()`), once its arguments are parsed and
+before any other output or git call, so `--help` still prints the usage.
 `vrg-release`'s promote stage uses the same library and the same refusal.
 The refusal stops an agent from running it by mistake; it is not a security
 boundary, because the identity signals come from the caller's environment.
@@ -695,7 +696,7 @@ Which routes an item allows depends on the container epic it is in:
 | Item is in | Allowed routes |
 |---|---|
 | intake | `drop`, `defer`, `one-off`, `planning`, `split` |
-| planning | `defer`, `drop` — both refused once an `Epic:` marker is recorded |
+| planning | `defer`, `drop` — both refused while any development epic of the item is open |
 | ad hoc | `defer` — refused while an open PR would close the item |
 | deferred | `defer` (refresh), `intake`, `planning`, `one-off`, `drop`, `split` |
 | no parent | `planning` (the `epic-create` free-text path) |
@@ -1571,23 +1572,6 @@ report.
 | Exit codes | 0 success, 1 any repo errored |
 | Status | Active |
 
-### vrg-xdist-sync
-
-Fleet sweep that adds `pytest-xdist` to each Python repo's dev dependencies,
-opening one PR per repo that needs it. It stops at `report-ready` and never
-submits or merges. A repo it cannot safely change is reported and gets a
-follow-up issue; a non-Python repo is skipped. `--dry-run` reports each
-repo's verdict without opening anything.
-
-| Attribute | Value |
-|---|---|
-| Source | `vergil_tooling.bin.vrg_xdist_sync` |
-| Args | `--repos PATH...` (required, local clones), `--dry-run` |
-| Preconditions | Local clones of the target repos; `uv` on PATH; GitHub App credentials |
-| Failure mode | Per-repo errors are reported in the summary |
-| Exit codes | 0 success, 1 any repo errored |
-| Status | Active |
-
 ### vrg-container-run
 
 Run arbitrary commands inside a dev container. Auto-detects the
@@ -1829,7 +1813,7 @@ hand.
 ### vrg-host
 
 Observe and manage the Vergil-critical macOS host dependencies (`uv`,
-`gh`, `git`, `bash`, `gcloud`, Lima, Docker Desktop, OpenTofu, `git-cliff`,
+`gh`, `git`, `bash`, `gcloud`, Lima, Docker Desktop, OpenTofu,
 vergil-tooling, Claude Code, macOS, the Xcode Command Line Tools) declared in
 the packaged, tooling-owned manifest
 `src/vergil_tooling/data/host_dependencies.toml` (never
