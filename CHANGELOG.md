@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.301] - 2026-11-11
+
+### Bug fixes
+
+- print semgrep's error output when the scan fails (#4211)
+- harden pasted commit text rendering and snippets config (#4212)
+- retry the base-image pull on transient registry failures before refusing (#4214)
+
+### Refactoring
+
+- read published packages from one paginated release listing (#4213)
+
 ## [2.1.300] - 2026-11-11
 
 ### Bug fixes
