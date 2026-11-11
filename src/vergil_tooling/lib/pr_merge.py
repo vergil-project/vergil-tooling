@@ -36,7 +36,7 @@ checks as *not ready* — poll and re-attempt — rather than fatal, bounded by 
 shared pending-checks deadline (``github.checks_timeout_secs``). A review requirement
 is surfaced at once. When the check wait itself expires with checks still pending,
 the engine aborts naming each pending check and its link (issue #3170). A check
-whose backing run is still in progress is reported as slow, not stuck, with the
+whose own Actions job is in progress is reported as likely slow, not stuck, with the
 run's URL and the advice to wait for it and then resume; any other pending check
 keeps the re-run / close-and-reopen advice (issue #4200).
 """
@@ -82,10 +82,11 @@ _RECOVERY_HINT = (
 def _timeout_hint(exc: ChecksTimeoutError) -> str:
     """What to do about a check wait that ran out, told apart by whether each run is going.
 
-    A check whose backing Actions run is still in progress is slow, not stuck:
+    A check whose own Actions job is in progress is most likely slow, not stuck:
     re-running it would throw away its progress, so the hint is to wait for the
-    run and then resume (#4200). Any other pending check, or a timeout with none
-    pending, keeps the re-run / close-and-reopen advice.
+    run and then resume (#4200), re-running only a job whose log has stopped
+    moving. Any other pending check (a queued job, an app-posted status), or a
+    timeout with none pending, keeps the re-run / close-and-reopen advice.
     """
     running = exc.running
     running_names = {name for name, _ in running}
@@ -94,13 +95,15 @@ def _timeout_hint(exc: ChecksTimeoutError) -> str:
     if running:
         runs = ", ".join(f"{name} (run {url})" for name, url in running)
         parts.append(
-            f"Still running, not stuck: {runs}. Wait for the run to finish, then re-run "
-            f"the waiting command: {_RESUME}. Set $VRG_CHECKS_TIMEOUT to wait longer."
+            f"Still running, not stuck: {runs}; the job is in progress. Wait for the run "
+            f"to finish, then re-run the waiting command: {_RESUME}. Re-run the job "
+            "instead only if its log has stopped making progress. Set "
+            "$VRG_CHECKS_TIMEOUT to wait longer."
         )
     if not running:
         parts.append(_RECOVERY_HINT)
     elif stuck:
-        parts.append(f"Not running: {', '.join(stuck)}. {_RECOVERY_HINT}")
+        parts.append(f"Not in progress: {', '.join(stuck)}. {_RECOVERY_HINT}")
     return " ".join(parts)
 
 

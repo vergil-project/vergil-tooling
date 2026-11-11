@@ -751,8 +751,8 @@ _PROGRESS_INTERVAL_SECS = 60
 # *failed* check (pr_merge.failed_check_names) or an *orphaned* one
 # (OrphanedCheckError, caught while waiting) still aborts earlier, so a long
 # ceiling only costs time when a check sits queued or a job hangs mid-run. At
-# the deadline, ChecksTimeoutError.running names the checks whose run is still
-# going, so the abort can say "wait, then resume" rather than "re-run". Single
+# the deadline, ChecksTimeoutError.running names the checks whose own job is still
+# in progress, so the abort can say "wait, then resume" rather than "re-run". Single
 # source of truth: every check waiter — finalize, release, update-deps — reads
 # it via checks_timeout_secs(), so the waiters can never drift apart again
 # (#2809). The release waiter used to stream ``gh pr checks --watch``, which
@@ -1180,9 +1180,10 @@ class ChecksTimeoutError(GitHubAPIError):
     A :class:`GitHubAPIError` subclass so existing handlers keep working;
     ``pending`` carries ``(name, link)`` for every still-pending check so a
     caller can name each one — and where to re-run it — in its own error.
-    ``running`` carries ``(name, run_url)`` for each of those whose backing
-    Actions run was still in progress at the deadline (#4200): such a check is
-    slow, not stuck, and the recovery is to wait for the run, not re-run it.
+    ``running`` carries ``(name, run_url)`` for each of those whose own Actions
+    job was in progress at the deadline (#4200): such a check is most likely
+    slow rather than stuck, and the recovery is to wait for the run rather
+    than re-run it.
     """
 
     def __init__(
@@ -1365,12 +1366,31 @@ def job_conclusion(repo: str, job_id: str) -> str | None:
     is still stuck ``pending`` (#3358). A gh/API failure propagates, and so
     does a response that is not a JSON object (#4058).
     """
+    conclusion = _read_job(repo, job_id).get("conclusion")
+    return str(conclusion) if conclusion else None
+
+
+def job_status(repo: str, job_id: str) -> str:
+    """The Actions job's own ``status`` (``queued``, ``in_progress``, ``completed``, ...).
+
+    Read from the jobs API, like :func:`job_conclusion`. A gh/API failure
+    propagates, as does a response with no string ``status`` (#4058).
+    """
+    data = _read_job(repo, job_id)
+    status = data.get("status")
+    if not isinstance(status, str) or not status:
+        endpoint = f"repos/{repo}/actions/jobs/{job_id}"
+        raise _shape_error(("gh", "api", endpoint), f"no job status in {data!r}")
+    return status
+
+
+def _read_job(repo: str, job_id: str) -> dict[str, Any]:
+    """The jobs API's object for *repo*'s job *job_id*; a non-object answer raises (#4058)."""
     endpoint = f"repos/{repo}/actions/jobs/{job_id}"
     data = read_json("api", endpoint)
     if not isinstance(data, dict):
         raise _shape_error(("gh", "api", endpoint), f"the job is {type(data).__name__}")
-    conclusion = data.get("conclusion")
-    return str(conclusion) if conclusion else None
+    return data
 
 
 _ORPHAN_RECOVERY = (
@@ -1805,23 +1825,24 @@ def orphaned_check_names(pr: str) -> list[str]:
 
 
 def running_check_runs(pending: list[tuple[str, str]]) -> list[tuple[str, str]]:
-    """``(name, run_url)`` of each *pending* check whose backing Actions run is still in progress.
+    """``(name, run_url)`` of each *pending* check whose own Actions job is in progress.
 
     *pending* is ``(name, link)`` pairs as :func:`_pending_checks` gives them.
-    Each distinct run is probed once; a check with no Actions job link (an
-    app-posted status) has no run and is left out, as is one whose run has
-    completed. A check listed here is slow, not stuck (#4200). A gh/API
-    failure propagates, as in :func:`orphaned_check_names`.
+    The job itself is read (:func:`job_status`), not its workflow run: a run
+    stays uncompleted while one of its jobs sits queued for a runner or while
+    another job is still going, and neither makes *this* check's job a running
+    one. Only a job reported ``in_progress`` counts (#4200); a queued, waiting
+    or completed job, a check with no Actions job link (an app-posted status)
+    and a link with no readable job id are all left out. A gh/API failure
+    propagates, as in :func:`orphaned_check_names`.
     """
-    done: dict[tuple[str, str], bool] = {}
     running: list[tuple[str, str]] = []
     for name, link in pending:
         run = actions_run_of(link)
-        if run is None:
+        job = _ACTIONS_JOB_LINK_RE.search(link)
+        if run is None or job is None:
             continue
-        if run not in done:
-            done[run] = run_completed(*run)
-        if not done[run]:
+        if job_status(job.group(1), job.group(2)) == "in_progress":
             repo, run_id = run
             running.append((name, f"https://github.com/{repo}/actions/runs/{run_id}"))
     return running
@@ -1898,7 +1919,7 @@ def wait_for_checks(
     non-terminal check over a *completed* run is a GitHub orphan and raises
     :class:`OrphanedCheckError`; otherwise :class:`ChecksTimeoutError` names every
     still-pending check and its link, and its ``running`` lists those whose
-    backing run is still in progress (:func:`running_check_runs`), so the
+    own job is in progress (:func:`running_check_runs`), so the
     caller can tell a slow job from a stuck one (#4200).
 
     Transient GitHub API errors (401/502/503/504/429) are retried
