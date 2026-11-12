@@ -1199,10 +1199,11 @@ which sets `VRG_EPIC_SWEEP=1`. Other invariant violations stay report-only.
 ### vrg-repo-status
 
 Show every worktree git knows about in the current repo, grouped by
-kind, so nothing with code on disk goes unseen (issue #3386). Read-only
-— cleanup stays `vrg-finalize-pr`'s job, and finalize and sweep still
-act only on development worktrees. Local branches with no worktree are
-not shown. The sections, in order:
+kind, so nothing with code on disk goes unseen (issue #3386), then what
+the integration branch holds that `main` does not. Read-only — it never
+fetches or writes a ref, cleanup stays `vrg-finalize-pr`'s job, and
+finalize and sweep still act only on development worktrees. Local
+branches with no worktree are not shown. The sections, in order:
 
 1. **Main checkout** — always shown. Its STATUS is `ok`, or `PROBLEM:`
    followed by each issue found: not on the integration branch, dirty,
@@ -1222,9 +1223,12 @@ not shown. The sections, in order:
    each row shows age, PR state and dirty state and a leftover stands out.
 4. **Other / unknown** — any other branch, a detached HEAD, or a
    worktree outside `.worktrees/` (shown by its full path).
+5. **Pending release** — every change on the integration branch that is
+   not yet on `main`, described below. Shown only in a repo that
+   publishes.
 
-Empty sections are omitted; the summary line counts every section,
-including the empty ones. A branch that was deleted on its remote is
+Empty worktree sections are omitted; the summary line counts every
+worktree section, including the empty ones. A branch that was deleted on its remote is
 still listed, with `(branch gone)` after its name. That check queries
 each remote once; if it fails, a note gives the reason.
 
@@ -1266,13 +1270,62 @@ tmp-wheel-build  (detached)  -   detached  -         0      -      82d ago      
 Development: 0 active, 0 needs-attention, 1 stalled (no-pr), 0 cruft (removable). 1 PR prepared.
 ```
 
+**Pending release.** The section follows the worktree sections and comes
+before the summary lines. It is shown only when `vergil.toml` sets
+`[publish].release = true`; with the flag false or absent, nothing is
+printed for it, and without a `vergil.toml` a note says it was skipped.
+In a publishing repo it is always shown, even when nothing is pending.
+It lists every change on the integration branch that is not on `main`,
+read from the remote without fetching: the current refs and tags, the
+first-parent commits from the GitHub compare API, and each commit's
+merged PR into the integration branch, by commit SHA (so a batch PR
+rebase-merged as several commits is one row).
+
+```text
+Pending release (develop → main)
+  latest release: v2.1.303, main moved 4h ago; rolling tag v2.1 → v2.1.303
+PR     BRANCH                      TYPE     MERGED  TITLE
+#4251  release/post-2.1.303        release  4h ago  chore(release): back-merge 2.1.303 and bump to 2.1.304
+#4258  deps/update-2.1.304         deps     4h ago  chore(deps): dependency update for 2.1.304
+#4252  feature/4249-refuse-ubuntu  feat     1h ago  feat(validate): refuse ubuntu-latest runner labels
+3 changes pending release: 1 dependency update, 1 release back-merge, 1 other PR.
+```
+
+- **Release line.** The latest release is the highest `vX.Y.Z` tag on
+  the remote (`no release yet` without one), with how long ago `main`
+  last moved. The rolling tag is the highest `vX.Y` tag, shown with the
+  `vX.Y.Z` tag on the same commit, or its short SHA when that commit has
+  none, or `no rolling tag`. A rolling tag behind the latest release is
+  shown as `(lags vX.Y.Z)`: information, not a problem, since it can be
+  held back deliberately. Rolling major `vX` tags and `develop-v*` tags
+  are ignored.
+- **Rows** come in merge order, oldest first. TYPE is the PR title's
+  conventional-commit type (`-` when it has none), except that a
+  dependency update (a `deps/update-*` head branch or a
+  `dependency-update` label) shows `deps` and a release back-merge (a
+  `release/post-*` head branch) shows `release`. MERGED is the PR's
+  merge time. A TITLE over 72 characters is cut, ending in `…`.
+- **A commit with no PR** shows `PROBLEM` in the PR column and `-` for
+  BRANCH and TYPE, with its commit date and subject, and a
+  `PROBLEM: <sha> reached develop without a PR` note after the table.
+- **Nothing pending** prints `Nothing pending release: develop and main
+  are level.` in place of the table.
+- **The summary line** counts the changes: dependency updates, release
+  back-merges and other PRs, every bucket listed, plus
+  `<n> PROBLEM: commits with no PR` only when there are some.
+- **A lookup that fails or is incomplete** (an API error, a missing
+  branch, a truncated answer) is an error, never a partial list: the
+  section prints its heading and `ERROR: pending release: <reason>`
+  alone. The rest of the output still prints, then the command exits 1.
+  The reason never carries URL credentials.
+
 | Attribute | Value |
 |---|---|
-| Source | `vergil_tooling.bin.vrg_repo_status` |
+| Source | `vergil_tooling.bin.vrg_repo_status` (pending release: `lib/pending_release.py`) |
 | Args | `--target-branch` (default: develop) — the branch AHEAD is measured against |
-| Preconditions | Git repo; `gh` CLI on PATH for PR state |
-| Failure mode | None for classification — a failed PR lookup is reported as an `unknown` row and a failed branch-gone check as a note, never a crash. A malformed `vergil.toml` exits 1 with the reason |
-| Exit codes | 0 success, 1 malformed `vergil.toml` |
+| Preconditions | Git repo; `gh` CLI on PATH for PR state; for the Pending release section, a github.com `origin` and GitHub credentials |
+| Failure mode | None for classification — a failed PR lookup is reported as an `unknown` row and a failed branch-gone check as a note, never a crash. A malformed `vergil.toml` exits 1 with the reason. A failed or incomplete pending-release lookup prints `ERROR:` in its section and exits 1 after the rest of the output |
+| Exit codes | 0 success, 1 malformed `vergil.toml` or a pending-release lookup error |
 | Status | Active |
 
 ### vrg-whoami
