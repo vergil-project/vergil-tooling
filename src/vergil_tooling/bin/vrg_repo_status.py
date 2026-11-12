@@ -1,7 +1,9 @@
-"""Show every worktree in the repo, grouped by kind, with its lifecycle state.
+"""Show the state of the repository clone: its worktrees, grouped by kind,
+and what is pending release.
 
 Read-only observability for worktree hygiene. Everything with code on disk in
-this repo is shown, in four sections (issue #3386):
+this repo is shown, in four worktree sections (issue #3386), then the Pending
+release section:
 
 1. **Main checkout** — always shown; flagged when it is not on the repo's
    integration branch, is dirty, or is mid-rebase.
@@ -13,6 +15,12 @@ this repo is shown, in four sections (issue #3386):
    worktrees, which are meant to be single-run, so a leftover stands out.
 4. **Other / unknown** — any other branch, a detached HEAD, or a worktree
    outside ``.worktrees/``.
+5. **Pending release** — every change the integration branch holds that
+   ``main`` does not, mapped to its PR by commit SHA, in merge order, with
+   the latest release and rolling tags (epic vergil-project/.github#1049).
+   Shown only when ``vergil.toml`` sets ``[publish].release``. Read from the
+   remote without fetching; a failed lookup prints ``ERROR:`` and the
+   command exits non-zero after the rest of the output.
 
 Cleanup stays ``vrg-finalize-pr``'s job — this command only observes
 (issue #1552). PR state is queried from GitHub (one call per worktree)
@@ -24,12 +32,21 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import re
 import subprocess
 import sys
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import config, worktrees
 from vergil_tooling.lib.cli import cli_main
+from vergil_tooling.lib.pending_release import (
+    RELEASE_BRANCH,
+    ChangeKind,
+    PendingChange,
+    PendingReleaseError,
+    ReleaseTags,
+    gather_pending_release,
+)
 from vergil_tooling.lib.process_errors import failure_message
 from vergil_tooling.lib.worktrees import (
     MainCheckoutStatus,
@@ -40,6 +57,7 @@ from vergil_tooling.lib.worktrees import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
 # Live work first, cruft last, so the removable rows group at the bottom.
@@ -80,21 +98,41 @@ _SECTION_TITLES = {
 # The branch gather_detached_status reports when it cannot recover one.
 _DETACHED = "(detached)"
 
+_PENDING_COLUMNS = ("PR", "BRANCH", "TYPE", "MERGED", "TITLE")
+
+# A longer TITLE is cut to this width, its last character an ellipsis, to
+# keep each pending-release row on one line.
+_TITLE_WIDTH = 72
+
+# A rolling tag's target is a release tag (vX.Y.Z) or a short SHA; only a
+# release tag can lag the latest release.
+_RELEASE_TAG_RE = re.compile(r"^v\d+\.\d+\.\d+$")
+
+_SHORT_SHA = 7
+
 
 @cli_main
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     repo = worktrees.discover_repo_worktrees()
     root = repo.main.path
+    # One config read gives both the integration branch and the publish gate.
+    integration_notes: list[str] = []
     try:
-        integration = config.integration_branch(root)
+        cfg = config.read_config(root)
+    except FileNotFoundError:
+        integration = "develop"
+        show_pending = False
+        integration_notes = [
+            f"no {config.CONFIG_FILE}; integration branch defaults to {integration}",
+            f"no {config.CONFIG_FILE}; pending-release section skipped",
+        ]
     except config.ConfigError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
-    integration_note = None
-    if integration is None:
-        integration = "develop"
-        integration_note = f"no {config.CONFIG_FILE}; integration branch defaults to {integration}"
+    else:
+        integration = config.INTEGRATION_BRANCH_BY_MODEL[cfg.project.branching_model]
+        show_pending = cfg.publish.release
     main_status = worktrees.gather_main_checkout_status(repo.main, integration=integration)
 
     sections: dict[WorktreeKind, list[WorktreeStatus]] = {kind: [] for kind in WorktreeKind}
@@ -125,8 +163,8 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"Main checkout (integration branch: {integration})")
     print(_render_table(_MAIN_COLUMNS, [_main_row(main_status, now, gone=gone)]))
-    if integration_note is not None:
-        print(f"  note: {integration_note}")
+    for note in integration_notes:
+        print(f"  note: {note}")
     for note in main_status.notes:
         print(f"  note: main checkout: {note}")
 
@@ -144,18 +182,25 @@ def main(argv: list[str] | None = None) -> int:
         print(_render_table(_COLUMNS, rows))
         _print_notes(statuses, labels)
 
+    # A failed pending-release lookup still lets the rest print, then the
+    # command exits non-zero: it could not say what is pending (spec §5.4).
+    pending_ok = _print_pending(integration, now) if show_pending else True
+
     print()
     print(_summary(main_status, sections))
     print(_development_summary(sections[WorktreeKind.DEVELOPMENT]))
     if gone_error is not None:
         print(f"  note: branch-gone check failed: {gone_error}")
     _print_vanished(vanished)
-    return 0
+    return 0 if pending_ok else 1
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Show every worktree in the repo, grouped by kind, with its state.",
+        description=(
+            "Show the state of the repository clone: its worktrees, grouped by kind, "
+            "and what is pending release."
+        ),
     )
     parser.add_argument(
         "--target-branch",
@@ -303,6 +348,87 @@ def _development_summary(statuses: list[WorktreeStatus]) -> str:
     if cruft:
         line += " Run vrg-finalize-pr to clean cruft."
     return line
+
+
+def _count(n: int, noun: str) -> str:
+    """``'1 change'`` / ``'2 changes'``: *n* with the noun agreeing with it."""
+    return f"{n} {noun if n == 1 else noun + 's'}"
+
+
+def _release_line(tags: ReleaseTags, main_moved_ts: float, now: float) -> str:
+    """The latest release, how long ago main moved, and the rolling tag."""
+    latest = tags.latest if tags.latest is not None else "no release yet"
+    line = f"  latest release: {latest}, main moved {_format_age(main_moved_ts, now)}; "
+    if tags.rolling is None or tags.rolling_target is None:
+        return line + "no rolling tag"
+    line += f"rolling tag {tags.rolling} → {tags.rolling_target}"
+    target = tags.rolling_target
+    # A lag is information, not a problem: the rolling tag can be held back
+    # deliberately. A short-SHA target is no release, so it cannot lag one.
+    if _RELEASE_TAG_RE.match(target) and tags.latest is not None and target != tags.latest:
+        line += f" (lags {tags.latest})"
+    return line
+
+
+def _title_cell(title: str) -> str:
+    if len(title) <= _TITLE_WIDTH:
+        return title
+    return title[: _TITLE_WIDTH - 1] + "…"
+
+
+def _pending_rows(changes: Sequence[PendingChange], now: float) -> list[tuple[str, ...]]:
+    return [
+        (
+            f"#{c.pr_number}" if c.pr_number is not None else "PROBLEM",
+            c.branch if c.branch is not None else "-",
+            c.type_label,
+            _format_age(c.merged_ts, now),
+            _title_cell(c.title),
+        )
+        for c in changes
+    ]
+
+
+def _pending_summary(changes: Sequence[PendingChange]) -> str:
+    """The section's count of changes, every bucket listed; commits with no
+    PR are named only when there are some."""
+    kinds = [c.kind for c in changes]
+    line = (
+        f"{_count(len(changes), 'change')} pending release: "
+        f"{_count(kinds.count(ChangeKind.DEPS), 'dependency update')}, "
+        f"{_count(kinds.count(ChangeKind.RELEASE), 'release back-merge')}, "
+        f"{_count(kinds.count(ChangeKind.OTHER), 'other PR')}"
+    )
+    problems = kinds.count(ChangeKind.NO_PR)
+    if problems:
+        line += f", {problems} PROBLEM: commits with no PR"
+    return line + "."
+
+
+def _print_pending(integration: str, now: float) -> bool:
+    """Print the Pending release section; return False only on an error.
+
+    A failed or incomplete lookup prints the heading and the ``ERROR:`` line
+    alone, never a partial table (spec §5.4).
+    """
+    print()
+    print(f"Pending release ({integration} → {RELEASE_BRANCH})")
+    try:
+        pending = gather_pending_release(integration=integration)
+    except PendingReleaseError as exc:
+        print(f"ERROR: pending release: {exc}")
+        return False
+    print(_release_line(pending.tags, pending.main_moved_ts, now))
+    if not pending.changes:
+        print(f"Nothing pending release: {integration} and {RELEASE_BRANCH} are level.")
+        return True
+    print(_render_table(_PENDING_COLUMNS, _pending_rows(pending.changes, now)))
+    for change in pending.changes:
+        if change.kind is ChangeKind.NO_PR:
+            sha7 = change.shas[0][:_SHORT_SHA]
+            print(f"  PROBLEM: {sha7} reached {integration} without a PR")
+    print(_pending_summary(pending.changes))
+    return True
 
 
 def _gather(raw: RawWorktree, *, target: str) -> WorktreeStatus:

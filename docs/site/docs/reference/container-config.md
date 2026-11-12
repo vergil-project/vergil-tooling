@@ -6,7 +6,7 @@ that omits `[container]` behaves exactly as it would with an empty table.
 
 The keys describe the *same* container from a few angles: `env-prefixes` controls
 which host environment variables `vrg-container-run` forwards **into** the
-container, `system-packages` declares Debian packages installed **inside** it, and
+container, `system-packages` declares Ubuntu packages installed **inside** it, and
 `build-command` runs a repo-declared provisioning step when the cached dev image
 is built (with `build-cache-files` naming the inputs that invalidate the cache).
 
@@ -15,7 +15,7 @@ is built (with `build-cache-files` naming the inputs that invalidate the cache).
 ```toml
 [container]
 env-prefixes = ["MQ_"]                          # forward matching host env vars
-system-packages = ["lilypond"]                  # install Debian packages
+system-packages = ["lilypond"]                  # install Ubuntu packages
 build-command = "npm install -g @coderline/alphatab"  # provision non-apt deps
 build-cache-files = ["package-lock.json"]       # inputs that invalidate the cache
 ```
@@ -25,7 +25,7 @@ build-cache-files = ["package-lock.json"]       # inputs that invalidate the cac
 | Key | Type | Default | Semantics |
 |---|---|---|---|
 | `env-prefixes` | list of strings | `[]` | Host env-var name **prefixes** `vrg-container-run` forwards into the container (accumulates) |
-| `system-packages` | list of strings | `[]` | Debian `apt` package **names** baked into the local cached dev image and installed on CI test jobs (see below) |
+| `system-packages` | list of strings | `[]` | Ubuntu `apt` package **names** baked into the local cached dev image and installed on CI test jobs (see below) |
 | `build-command` | string | *(unset)* | A shell command run while the cached dev image is built, to provision a non-apt dependency **outside `/workspace`** (see below) |
 | `build-cache-files` | list of strings | `[]` | Repo-relative files the `build-command` reads; folded into the image cache hash so a bump forces a rebuild |
 
@@ -123,7 +123,7 @@ VRG_VERSION_WINDOW=/abs/path/window.json vrg-container-run -- vrg-ci-resolve
 
 ## `system-packages`
 
-A list of Debian package **names** — nothing more. Vergil's container model
+A list of Ubuntu package **names** — nothing more. Vergil's container model
 otherwise treats a system dependency as a property of the **language**
 (`dev-python:3.14` means the same thing everywhere), which is what makes the
 per-branch image cache sound. `system-packages` is the sanctioned escape hatch
@@ -139,8 +139,8 @@ The packages are installed with:
 apt-get install -y --no-install-recommends <names>
 ```
 
-from the base image's **existing** apt sources (Debian main). The surface is
-deliberately narrow — **names only**:
+from the base image's **existing** apt sources (the Ubuntu 24.04 archive the
+image's sources name). The surface is deliberately narrow — **names only**:
 
 - **No** third-party apt sources, signing keys, `add-apt-repository`, or install
   scripts.
@@ -192,7 +192,7 @@ repo that declares no packages at all.
 
 ### Trust model
 
-A repo can express Debian package *names* only, installed from the base image's
+A repo can express Ubuntu package *names* only, installed from the base image's
 existing sources, as root — exactly what the base image already grants. It cannot
 fetch arbitrary URLs or run arbitrary code. Adding to `system-packages` is a
 `vergil.toml` change **reviewed like any config change, via the PR diff**: the
@@ -284,7 +284,7 @@ invalidates the cache.
 ### Trust model
 
 `build-command` is a deliberate **broadening** of the surface `system-packages`
-grants. Where `system-packages` is names-only — Debian packages installed from
+grants. Where `system-packages` is names-only — Ubuntu packages installed from
 the base image's existing sources, with no allowlist because the surface is
 already constrained — `build-command` is **arbitrary shell, run as root, at
 image-build time**. It can fetch URLs, run installers, and write anywhere in the

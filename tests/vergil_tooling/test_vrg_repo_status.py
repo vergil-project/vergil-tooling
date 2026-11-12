@@ -1,18 +1,35 @@
-"""Tests for vergil_tooling.bin.vrg_worktree_status."""
+"""Tests for vergil_tooling.bin.vrg_repo_status."""
 
 from __future__ import annotations
 
 import contextlib
 import subprocess
+import time
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vergil_tooling.bin.vrg_worktree_status import _format_age, _row, main
+from vergil_tooling.bin.vrg_repo_status import (
+    _TITLE_WIDTH,
+    _format_age,
+    _pending_rows,
+    _pending_summary,
+    _release_line,
+    _row,
+    main,
+)
 from vergil_tooling.lib.config import ConfigError
+from vergil_tooling.lib.pending_release import (
+    ChangeKind,
+    PendingChange,
+    PendingRelease,
+    PendingReleaseError,
+    ReleaseTags,
+)
 from vergil_tooling.lib.worktrees import (
     MainCheckoutStatus,
     RawWorktree,
@@ -22,7 +39,7 @@ from vergil_tooling.lib.worktrees import (
     WorktreeStatus,
 )
 
-_MOD = "vergil_tooling.bin.vrg_worktree_status"
+_MOD = "vergil_tooling.bin.vrg_repo_status"
 _ROOT = Path("/repo")
 
 
@@ -80,6 +97,10 @@ _LAST_COMMIT_COL = 7
 _LAST_MODIFIED_COL = 8
 
 _NOW = 1_700_000_000.0
+_HOUR = 3600.0
+
+# A branching model no real config uses; _run maps it to any branch.
+_STUB_MODEL = "stub-model"
 
 
 def _raws(statuses: list[WorktreeStatus]) -> list[RawWorktree]:
@@ -95,6 +116,8 @@ def _run(
     detached: Any = (),
     main_status: MainCheckoutStatus | None = None,
     integration: str | Exception | None = "develop",
+    publish: bool = False,
+    pending: PendingRelease | Exception | None = None,
     gone: set[str] | Exception | None = None,
     still_present: bool | None = None,
     argv: list[str] | None = None,
@@ -102,8 +125,10 @@ def _run(
     """Run main() against a mocked repo: main checkout at /repo plus *linked*.
 
     ``gather`` / ``detached`` are ``side_effect`` values (a list of results or
-    an exception); ``integration`` / ``gone`` are raised when they are
-    exceptions and returned otherwise.
+    an exception); ``integration`` / ``gone`` / ``pending`` are raised when
+    they are exceptions and returned otherwise. ``integration=None`` means no
+    ``vergil.toml``; a string is the integration branch of a stub branching
+    model, whose ``[publish].release`` is ``publish``.
     """
     mocks: dict[str, MagicMock] = {}
     repo = RepoWorktrees(main=RawWorktree(path=_ROOT, branch="develop"), linked=tuple(linked))
@@ -114,9 +139,20 @@ def _run(
 
         _patch("worktrees.discover_repo_worktrees", return_value=repo)
         if isinstance(integration, Exception):
-            _patch("config.integration_branch", side_effect=integration)
+            _patch("config.read_config", side_effect=integration)
+        elif integration is None:
+            _patch("config.read_config", side_effect=FileNotFoundError("vergil.toml not found"))
         else:
-            _patch("config.integration_branch", return_value=integration)
+            cfg = SimpleNamespace(
+                project=SimpleNamespace(branching_model=_STUB_MODEL),
+                publish=SimpleNamespace(release=publish),
+            )
+            _patch("config.read_config", return_value=cfg)
+            _patch("config.INTEGRATION_BRANCH_BY_MODEL", new={_STUB_MODEL: integration})
+        if isinstance(pending, Exception):
+            _patch("gather_pending_release", side_effect=pending)
+        else:
+            _patch("gather_pending_release", return_value=pending)
         _patch(
             "worktrees.gather_main_checkout_status",
             return_value=main_status or _main_status(),
@@ -550,7 +586,7 @@ def test_main_uses_configured_integration_branch(capsys: pytest.CaptureFixture[s
     mocks["worktrees.gather_main_checkout_status"].assert_called_once_with(
         RawWorktree(path=_ROOT, branch="develop"), integration="main"
     )
-    mocks["config.integration_branch"].assert_called_once_with(_ROOT)
+    mocks["config.read_config"].assert_called_once_with(_ROOT)
     assert "integration branch: main" in capsys.readouterr().out
 
 
@@ -648,3 +684,260 @@ def test_main_reraises_git_failure_on_present_worktree() -> None:
     raw = RawWorktree(path=_ROOT / ".worktrees" / "issue-5-x", branch="feature/5-x")
     with pytest.raises(subprocess.CalledProcessError):
         _run([raw], gather=_RACE_ERR, still_present=True)
+
+
+# -- pending release (epic vergil-project/.github#1049) ---------------------------
+
+
+def _ago(hours: float) -> float:
+    """A timestamp *hours* (plus half an hour) before the real clock, so the
+    rendered age is ``<hours>h ago`` however long the test takes."""
+    return time.time() - (hours + 0.5) * _HOUR
+
+
+def _sha(n: int) -> str:
+    return f"{n:040x}"
+
+
+def _change(
+    pr: int | None,
+    branch: str | None,
+    title: str,
+    kind: ChangeKind,
+    type_label: str,
+    merged_ts: float,
+    *,
+    sha: int = 1,
+) -> PendingChange:
+    return PendingChange(
+        pr_number=pr,
+        branch=branch,
+        title=title,
+        kind=kind,
+        type_label=type_label,
+        merged_ts=merged_ts,
+        shas=(_sha(sha),),
+    )
+
+
+_TAGS = ReleaseTags(latest="v2.1.303", rolling="v2.1", rolling_target="v2.1.303")
+
+
+def _pending(*changes: PendingChange, tags: ReleaseTags = _TAGS) -> PendingRelease:
+    return PendingRelease(tags=tags, main_moved_ts=_ago(4), changes=tuple(changes))
+
+
+def _mockup() -> PendingRelease:
+    """The spec's §5.3 mock-up data."""
+    return _pending(
+        _change(
+            4251,
+            "release/post-2.1.303",
+            "chore(release): back-merge 2.1.303 and bump to 2.1.304",
+            ChangeKind.RELEASE,
+            "release",
+            _ago(4),
+            sha=1,
+        ),
+        _change(
+            4258,
+            "deps/update-2.1.304",
+            "chore(deps): dependency update for 2.1.304",
+            ChangeKind.DEPS,
+            "deps",
+            _ago(4),
+            sha=2,
+        ),
+        _change(
+            4252,
+            "feature/4249-refuse-ubuntu",
+            "feat(validate): refuse ubuntu-latest runner labels",
+            ChangeKind.OTHER,
+            "feat",
+            _ago(1),
+            sha=3,
+        ),
+        _change(
+            4255,
+            "feature/4253-batch-docs",
+            "docs(batch): document batched same-repo PRs",
+            ChangeKind.OTHER,
+            "docs",
+            _ago(0),
+            sha=4,
+        ),
+    )
+
+
+def _section(out: str) -> list[str]:
+    """The Pending release section's lines, heading first, up to the blank line."""
+    lines = out.splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith("Pending release ("))
+    end = lines.index("", start)
+    return lines[start:end]
+
+
+def test_pending_section_renders_rows_in_order(capsys: pytest.CaptureFixture[str]) -> None:
+    rc, mocks = _run([], publish=True, pending=_mockup())
+    out = capsys.readouterr().out
+    assert rc == 0
+    mocks["gather_pending_release"].assert_called_once_with(integration="develop")
+    section = _section(out)
+    assert section[0] == "Pending release (develop → main)"
+    assert section[1] == (
+        "  latest release: v2.1.303, main moved 4h ago; rolling tag v2.1 → v2.1.303"
+    )
+    assert section[2].split() == ["PR", "BRANCH", "TYPE", "MERGED", "TITLE"]
+    rows = [line.split()[:4] for line in section[3:7]]
+    assert rows == [
+        ["#4251", "release/post-2.1.303", "release", "4h"],
+        ["#4258", "deps/update-2.1.304", "deps", "4h"],
+        ["#4252", "feature/4249-refuse-ubuntu", "feat", "1h"],
+        ["#4255", "feature/4253-batch-docs", "docs", "0h"],
+    ]
+    assert section[6].endswith("docs(batch): document batched same-repo PRs")
+    assert section[7] == (
+        "4 changes pending release: 1 dependency update, 1 release back-merge, 2 other PRs."
+    )
+    assert len(section) == 8
+    # The section sits after the worktree sections, before the summary lines.
+    assert out.index("Main checkout") < out.index("Pending release (") < out.index("1 worktrees")
+
+
+def test_pending_section_uses_configured_integration_branch(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    rc, mocks = _run(
+        [],
+        integration="trunk",
+        main_status=_main_status(integration="trunk"),
+        publish=True,
+        pending=_pending(),
+    )
+    out = capsys.readouterr().out
+    assert rc == 0
+    mocks["gather_pending_release"].assert_called_once_with(integration="trunk")
+    assert "Pending release (trunk → main)" in out
+    assert "Nothing pending release: trunk and main are level." in out
+
+
+def test_release_line_lag() -> None:
+    tags = ReleaseTags(latest="v2.1.303", rolling="v2.1", rolling_target="v2.1.302")
+    line = _release_line(tags, _NOW - 2 * _HOUR, _NOW)
+    assert line.endswith("rolling tag v2.1 → v2.1.302 (lags v2.1.303)")
+
+
+def test_release_line_no_tags() -> None:
+    line = _release_line(ReleaseTags(None, None, None), _NOW - 30 * _HOUR, _NOW)
+    assert line == "  latest release: no release yet, main moved 1d ago; no rolling tag"
+
+
+def test_release_line_rolling_on_untagged_commit() -> None:
+    line = _release_line(ReleaseTags("v2.1.303", "v2.1", "abc1234"), _NOW, _NOW)
+    assert line.endswith("rolling tag v2.1 → abc1234")
+    assert "lags" not in line
+
+
+def test_release_line_rolling_without_release() -> None:
+    line = _release_line(ReleaseTags(None, "v2.1", "abc1234"), _NOW, _NOW)
+    assert line == "  latest release: no release yet, main moved 0h ago; rolling tag v2.1 → abc1234"
+    assert "lags" not in line
+    assert "None" not in line
+
+
+def test_release_line_rolling_tag_without_latest_has_no_lag() -> None:
+    line = _release_line(ReleaseTags(None, "v2.1", "v2.1.302"), _NOW, _NOW)
+    assert line.endswith("rolling tag v2.1 → v2.1.302")
+    assert "lags" not in line
+
+
+def test_nothing_pending(capsys: pytest.CaptureFixture[str]) -> None:
+    rc, _ = _run([], publish=True, pending=_pending())
+    out = capsys.readouterr().out
+    assert rc == 0
+    section = _section(out)
+    assert section == [
+        "Pending release (develop → main)",
+        "  latest release: v2.1.303, main moved 4h ago; rolling tag v2.1 → v2.1.303",
+        "Nothing pending release: develop and main are level.",
+    ]
+    assert "TITLE" not in out
+
+
+def test_no_pr_change_is_problem(capsys: pytest.CaptureFixture[str]) -> None:
+    change = _change(None, None, "Fix a typo", ChangeKind.NO_PR, "-", _ago(3), sha=0xABC1234)
+    rc, _ = _run([], publish=True, pending=_pending(change))
+    out = capsys.readouterr().out
+    assert rc == 0
+    section = _section(out)
+    assert section[3].split() == ["PROBLEM", "-", "-", "3h", "ago", "Fix", "a", "typo"]
+    sha7 = change.shas[0][:7]
+    assert section[4] == f"  PROBLEM: {sha7} reached develop without a PR"
+    assert section[5] == (
+        "1 change pending release: 0 dependency updates, 0 release back-merges, "
+        "0 other PRs, 1 PROBLEM: commits with no PR."
+    )
+
+
+def test_pending_summary_counts_buckets() -> None:
+    changes = [
+        _change(1, "deps/update-1", "chore(deps): a", ChangeKind.DEPS, "deps", _NOW),
+        _change(2, "deps/update-2", "chore(deps): b", ChangeKind.DEPS, "deps", _NOW),
+        _change(3, "release/post-1", "chore(release): c", ChangeKind.RELEASE, "release", _NOW),
+        _change(4, "feature/4-d", "feat: d", ChangeKind.OTHER, "feat", _NOW),
+        _change(None, None, "e", ChangeKind.NO_PR, "-", _NOW),
+        _change(None, None, "f", ChangeKind.NO_PR, "-", _NOW),
+    ]
+    assert _pending_summary(changes) == (
+        "6 changes pending release: 2 dependency updates, 1 release back-merge, "
+        "1 other PR, 2 PROBLEM: commits with no PR."
+    )
+
+
+def test_pending_error_exits_nonzero(capsys: pytest.CaptureFixture[str]) -> None:
+    statuses = [_status("feature/1-a", WorktreeState.OPEN_PR, pr=5, ahead=1)]
+    rc, _ = _run(
+        _raws(statuses), gather=statuses, publish=True, pending=PendingReleaseError("boom")
+    )
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert _section(out) == [
+        "Pending release (develop → main)",
+        "ERROR: pending release: boom",
+    ]
+    assert "2 worktrees: main checkout (ok), 1 development" in out
+    assert "Development: 1 active" in out
+
+
+def test_section_skipped_when_not_published(capsys: pytest.CaptureFixture[str]) -> None:
+    rc, mocks = _run([], publish=False)
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "Pending release" not in out
+    assert "pending-release" not in out
+    mocks["gather_pending_release"].assert_not_called()
+
+
+def test_section_skipped_without_config(capsys: pytest.CaptureFixture[str]) -> None:
+    rc, mocks = _run([], integration=None)
+    lines = capsys.readouterr().out.splitlines()
+    assert rc == 0
+    note = lines.index("  note: no vergil.toml; integration branch defaults to develop")
+    assert lines[note + 1] == "  note: no vergil.toml; pending-release section skipped"
+    assert not any(line.startswith("Pending release") for line in lines)
+    mocks["gather_pending_release"].assert_not_called()
+
+
+def test_long_title_truncated() -> None:
+    title = "x" * 100
+    change = _change(7, "feature/7-x", title, ChangeKind.OTHER, "-", _NOW)
+    rows = _pending_rows([change], _NOW)
+    cell = rows[0][-1]
+    assert len(cell) == _TITLE_WIDTH == 72
+    assert cell == "x" * 71 + "…"
+
+
+def test_title_at_width_is_kept() -> None:
+    title = "y" * 72
+    change = _change(7, "feature/7-y", title, ChangeKind.OTHER, "-", _NOW)
+    assert _pending_rows([change], _NOW)[0][-1] == title

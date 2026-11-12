@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vergil-tooling"
-version = "2.1.304"
+version = "2.1.305"
 description = "VERGIL — Validation Engine for Repository Governance, Integration & Lifecycle"
 requires-python = ">=3.12"
 license = "MIT"
@@ -65,6 +65,7 @@ vrg-promote = "vergil_tooling.bin.vrg_promote:main"
 vrg-queue = "vergil_tooling.bin.vrg_queue:main"
 vrg-release = "vergil_tooling.bin.vrg_release:main"
 vrg-release-validate-inputs = "vergil_tooling.bin.vrg_release_validate_inputs:main"
+vrg-repo-status = "vergil_tooling.bin.vrg_repo_status:main"
 vrg-resolve-tracking-issue = "vergil_tooling.bin.vrg_resolve_tracking_issue:main"
 vrg-reword = "vergil_tooling.bin.vrg_reword:main"
 vrg-roadmap = "vergil_tooling.bin.vrg_roadmap:main"
@@ -86,7 +87,6 @@ vrg-validate = "vergil_tooling.bin.vrg_validate:main"
 vrg-version = "vergil_tooling.bin.vrg_version:main"
 vrg-version-divergence = "vergil_tooling.bin.vrg_version_divergence:main"
 vrg-whoami = "vergil_tooling.bin.vrg_whoami:main"
-vrg-worktree-status = "vergil_tooling.bin.vrg_worktree_status:main"
 
 [dependency-groups]
 dev = ["ruff", "mypy", "ty", "pytest", "pytest-cov", "pytest-xdist", "pip-audit", "pip-licenses", "types-pyyaml", "defusedxml", "types-defusedxml"]

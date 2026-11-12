@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.305] - 2026-11-12
+
+### Chores
+
+- uv lock --upgrade
+
+### Documentation
+
+- describe the Ubuntu 24.04 images and link the OS-usage table (#4265)
+
+### Features
+
+- add the pending-release data layer (#4274)
+- show what develop holds that main does not, with the release tags (#4275)
+
+### Refactoring
+
+- rename vrg-worktree-status to vrg-repo-status (#4269) (#4273)
+
 ## [2.1.304] - 2026-11-12
 
 ### Bug fixes
