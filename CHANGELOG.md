@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.306] - 2026-11-12
+
+### Bug fixes
+
+- name every batch issue in the freeze refusal (#4284)
+- pluralise the worktree summary counts (#4279)
+
+### Documentation
+
+- point the release steps at vrg-repo-status's Pending release section (#4281)
+- say the Pending release section lists every change, not every PR (#4283)
+
+### Features
+
+- put the Pending release heading and release line on one line (#4282)
+
+### Testing
+
+- check the re-raised error in test_raises_after_max_retries (#4266)
+
 ## [2.1.305] - 2026-11-12
 
 ### Chores
