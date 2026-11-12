@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.303] - 2026-11-12
+
+### Bug fixes
+
+- retry transient network errors when minting App tokens (#4186)
+
+### Chores
+
+- uv lock --upgrade
+
+### Refactoring
+
+- drop markdownlint MD013 and lint markdown in one pass (#4103)
+
 ## [2.1.302] - 2026-11-12
 
 ### Bug fixes
