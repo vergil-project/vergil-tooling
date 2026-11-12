@@ -1179,14 +1179,15 @@ def _enter_worktree(head: str, root: Path) -> str:
     )
 
 
-def _batch_rebase_steps(pr: str, head: str, base: str, root: Path) -> str:
-    """The commands that rebase a batch PR's branch onto *base* and update the PR.
+def _rebase_steps(pr: str, head: str, base: str, root: Path) -> str:
+    """The commands that rebase *pr*'s branch onto *base* and update the PR.
 
-    A batch PR's history is one commit per issue and is rebase-merged, so it
-    is kept linear: rebased, never merged into. The ``--ff-only`` step first
-    picks up the branch as origin has it, and the rebase drops any merge
-    commit GitHub's update-branch button added. The push names the branch and
-    uses a lease, so it replaces only the head the human last fetched.
+    They are ``pr-watch``'s steps in raw git: rebase onto *base*, validate,
+    force-push with a lease. The ``--ff-only`` step first picks up the branch
+    as origin has it, and the rebase drops any merge commit GitHub's
+    update-branch button added. The push names the branch, because a worktree
+    created with ``-b … origin/<base>`` tracks the base, not itself, and uses
+    a lease, so it replaces only the head last fetched.
     """
     return (
         f"{_enter_worktree(head, root)}\n"
@@ -1200,48 +1201,58 @@ def _batch_rebase_steps(pr: str, head: str, base: str, root: Path) -> str:
 
 
 def _conflict_resolution_msg(pr: str, head: str, base: str, root: Path, *, batch: bool) -> str:
-    """The exact commands for the human to resolve *pr*'s conflict with *base*.
+    """The exact commands that resolve *pr*'s conflict with *base*.
 
-    A submitted branch is frozen to agents — ``unfreeze`` refuses it and
-    ``vrg-commit``/``vrg-git`` refuse the commit and push — so the human, who
-    is not bound by the wrappers, resolves it with raw git (issue #3555). For
-    a single-issue PR it is a merge, not a rebase: the PR is already public,
-    so its history must not be rewritten. The ``--ff-only`` step first picks
-    up any commits GitHub added to the branch (update-branch) so the push
-    fast-forwards, and the commands carry no inline ``#`` comments because
-    interactive zsh does not treat them as comments. ``--no-commit`` stops the
-    merge for validation before the human commits, and the push names the
-    branch explicitly because a worktree created with ``-b … origin/<base>``
-    tracks the base, not itself.
+    Submitting lifts the freeze (``freeze.is_frozen``; spec §5.10), so the
+    agent's ``pr-watch`` can resolve the conflict, or the human can, with the
+    raw-git form of ``pr-watch``'s steps: rebase onto *base*, validate and
+    force-push with a lease. The commands carry no inline ``#`` comments
+    because interactive zsh does not treat them as comments.
 
-    A batch PR is the exception: it must keep one commit per issue and no
-    merge commit, so the human rebases it onto *base* and force-pushes with a
-    lease (epic vergil-project/.github#1019).
+    A batch PR must also keep one commit per issue and no merge commit, so
+    its message warns against merging *base* in (epic
+    vergil-project/.github#1019).
+
+    A ``release/*`` branch (a release PR or a back-merge) is the exception:
+    it merges with a merge commit to keep the develop<->main ancestry
+    (issue #1620), which a rebase would break, and it is no PR-workflow
+    branch, so ``pr-watch`` never resolves it. The human merges *base* in
+    with raw git instead. The ``--ff-only`` step first picks up any commits
+    GitHub added to the branch (update-branch) so the push fast-forwards,
+    and ``--no-commit`` stops the merge for validation before the commit.
     """
+    if not batch and head.startswith(_RELEASE_BRANCH_PREFIX):
+        return (
+            f"PR {pr} has merge conflicts with {base}. It is a release branch, which "
+            f"merges with a merge commit, so merge {base} in — do not rebase it — then "
+            f"validate, commit and push with raw git. After the --no-commit merge stops, "
+            f"resolve each conflicted file and git add it:\n"
+            f"{_enter_worktree(head, root)}\n"
+            f"  git fetch origin\n"
+            f"  git merge --ff-only origin/{head}\n"
+            f"  git merge --no-commit origin/{base}\n"
+            f"  vrg-container-run -- vrg-validate\n"
+            f"  git commit --no-edit\n"
+            f"  git push origin {head}\n"
+            f"  cd {root} && vrg-finalize-pr {pr}"
+        )
+    intro = (
+        f"PR {pr} has merge conflicts with {base}. Submitting lifted the branch's "
+        f"freeze, so the agent's pr-watch can resolve it (it rebases onto {base} and "
+        f"pushes with a lease), or you can, with the commands below."
+    )
     if batch:
         return (
-            f"PR {pr} has merge conflicts with {base}. The branch is already submitted, "
-            f"so only you can resolve it (agents are frozen out of it). It is a batch PR, "
-            f"one commit per issue, so rebase it onto {base} — do not merge {base} in, "
-            f"which adds a merge commit the batch check refuses. When the rebase stops "
-            f"on a conflict, resolve each conflicted file, git add it and run "
-            f"git rebase --continue:\n"
-            f"{_batch_rebase_steps(pr, head, base, root)}"
+            f"{intro} It is a batch PR, one commit per issue, so rebase it onto {base} — "
+            f"do not merge {base} in, which adds a merge commit the batch check refuses. "
+            f"When the rebase stops on a conflict, resolve each conflicted file, git add "
+            f"it and run git rebase --continue:\n"
+            f"{_rebase_steps(pr, head, base, root)}"
         )
-    enter = _enter_worktree(head, root)
     return (
-        f"PR {pr} has merge conflicts with {base}. The branch is already submitted, "
-        f"so only you can resolve it (agents are frozen out of it). Merge {base} in — "
-        f"do not rebase a public PR — then validate, commit and push with raw git. "
-        f"After the --no-commit merge stops, resolve each conflicted file and git add it:\n"
-        f"{enter}\n"
-        f"  git fetch origin\n"
-        f"  git merge --ff-only origin/{head}\n"
-        f"  git merge --no-commit origin/{base}\n"
-        f"  vrg-container-run -- vrg-validate\n"
-        f"  git commit --no-edit\n"
-        f"  git push origin {head}\n"
-        f"  cd {root} && vrg-finalize-pr {pr}"
+        f"{intro} Rebase it onto {base}; when the rebase stops on a conflict, resolve "
+        f"each conflicted file, git add it and run git rebase --continue:\n"
+        f"{_rebase_steps(pr, head, base, root)}"
     )
 
 
@@ -1345,7 +1356,7 @@ def _make_batch_check(
                 msg += (
                     f". The branch is already submitted, so only you can fix it: rebase "
                     f"it onto {base} and force-push with a lease:\n"
-                    f"{_batch_rebase_steps(pr, head, base, root)}"
+                    f"{_rebase_steps(pr, head, base, root)}"
                 )
             raise FinalizeError(msg) from exc
         print(f"Batch check passed at {sha}: one commit per issue ({', '.join(issues)}).")
