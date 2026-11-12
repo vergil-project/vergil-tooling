@@ -12,7 +12,9 @@ Runs inside the dev container via ``vrg-container-run``:
      must carry ``open-pull-requests-limit: 0`` (epic .github#420)
   6. hadolint on Dockerfile* files at the repo root
   7. actionlint on ``.github/workflows/``
-  8. ansible-lint when the repo carries Ansible content, using the
+  8. runner-labels: no workflow value may be ``ubuntu-latest``; runners are
+     pinned to ``ubuntu-24.04`` (epic .github#649)
+  9. ansible-lint when the repo carries Ansible content, using the
      bundled canonical config as the rule baseline while honoring the
      repo's local ``skip_list`` / ``exclude_paths`` (issues #1667, #1952)
 
@@ -25,16 +27,13 @@ from __future__ import annotations
 import subprocess
 import sys
 from importlib.resources import files
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import yaml
 
 from vergil_tooling.bin import repo_profile
 from vergil_tooling.lib import dependabot, git
 from vergil_tooling.lib.config import read_config
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
@@ -114,6 +113,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
         if result.returncode != 0:
             return result.returncode
 
+    rc = _check_runner_labels(repo_root)
+    if rc != 0:
+        return rc
+
     if _has_ansible_content(repo_root):
         print("Running: ansible-lint")
         ansible_config = files("vergil_tooling.configs") / "ansible-lint.yaml"
@@ -169,6 +172,104 @@ def _check_dependabot_limit(repo_root: Path) -> int:
     for reason in violations:
         print(f"dependabot.yml: {reason}", file=sys.stderr)
     return 1 if violations else 0
+
+
+_FLOATING_RUNNER_LABEL = "ubuntu-latest"
+_PINNED_RUNNER_LABEL = "ubuntu-24.04"
+
+
+def _check_runner_labels(repo_root: Path) -> int:
+    """Refuse the floating ``ubuntu-latest`` runner label (epic .github#649).
+
+    Every GitHub-hosted runner is pinned to Ubuntu 24.04, so a workflow value
+    that is exactly ``ubuntu-latest`` (a ``runs-on`` value or list item, a
+    ``strategy.matrix`` value, a ``with:`` input, or any other scalar) is
+    named by path and line. Each workflow is composed, not grepped, so
+    comments and longer strings that merely contain the label are ignored,
+    and an aliased value is named once, at its anchor. A workflow that is not
+    YAML fails the check rather than passing unread. No workflows returns 0.
+    """
+    workflow_files = _find_workflow_files(repo_root)
+    if not workflow_files:
+        return 0
+    print(f"Running: runner-labels ({len(workflow_files)} files in .github/workflows/)")
+    failed = False
+    for workflow in workflow_files:
+        path = Path(workflow)
+        rel = path.relative_to(repo_root).as_posix()
+        text = path.read_text(encoding="utf-8")
+        try:
+            documents = list(yaml.compose_all(text, Loader=yaml.SafeLoader))
+        except yaml.YAMLError as exc:
+            print(f"{rel}: unparseable: {exc}", file=sys.stderr)
+            failed = True
+            continue
+        for line in _floating_label_lines(documents):
+            print(
+                f"{rel}:{line}: {_FLOATING_RUNNER_LABEL} is not allowed; "
+                f"use {_PINNED_RUNNER_LABEL}",
+                file=sys.stderr,
+            )
+            failed = True
+    return 1 if failed else 0
+
+
+def _floating_label_lines(documents: list[yaml.Node]) -> list[int]:
+    """Return the 1-based line of every scalar value that is exactly
+    ``ubuntu-latest`` in the composed *documents*, in document order.
+
+    Mapping keys are not values and are skipped. A node reached twice through
+    an alias is visited once.
+    """
+    lines: list[int] = []
+    seen: set[int] = set()
+    stack: list[yaml.Node] = list(reversed(documents))
+    while stack:
+        node = stack.pop()
+        if id(node) in seen:
+            continue
+        seen.add(id(node))
+        if isinstance(node, yaml.ScalarNode):
+            if node.value == _FLOATING_RUNNER_LABEL:
+                lines.append(node.start_mark.line + 1)
+        elif isinstance(node, yaml.SequenceNode):
+            stack.extend(reversed(node.value))
+        else:
+            # A composed node is a scalar, a sequence or a mapping.
+            stack.extend(value for _key, value in reversed(node.value))
+    return lines
+
+
+def _find_workflow_files(repo_root: Path) -> list[str]:
+    """Return the workflows GitHub reads, ``.github/workflows/*.yml`` and
+    ``*.yaml`` at the top level, tracked or untracked, leaving out what
+    ``.gitignore`` excludes.
+
+    ``git ls-files`` lists them the way :func:`_find_repo_sh_files` lists shell
+    files; a tracked file deleted from the working tree is dropped. A git
+    failure raises rather than checking less.
+    """
+    output = git.read_output(
+        "-C",
+        str(repo_root),
+        "ls-files",
+        "-z",
+        "--cached",
+        "--others",
+        "--exclude-standard",
+        "--",
+        ".github/workflows/*.yml",
+        ".github/workflows/*.yaml",
+    )
+    workflows_dir = repo_root / ".github" / "workflows"
+    found: set[str] = set()
+    for rel in output.split("\0"):
+        if not rel:
+            continue
+        path = repo_root / rel
+        if path.parent == workflows_dir and path.is_file():
+            found.add(str(path))
+    return sorted(found)
 
 
 def _find_shell_files(repo_root: Path) -> list[str]:

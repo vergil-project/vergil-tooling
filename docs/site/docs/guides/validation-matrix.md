@@ -128,7 +128,11 @@ dev images come from
    config.
 5. hadolint on `Dockerfile*` at the repository root.
 6. actionlint on `.github/workflows/`.
-7. ansible-lint, when the repository has Ansible content.
+7. runner-labels: no value in a `.github/workflows/*.yml` or `*.yaml`
+   file (a `runs-on`, a matrix value, a `with:` input) may be
+   `ubuntu-latest`. Pin GitHub-hosted runners to `ubuntu-24.04`; the
+   check names each hit by path and line.
+8. ansible-lint, when the repository has Ansible content.
 
 The first failing check stops the run. In CI the common checks run once,
 as `quality / common`.
