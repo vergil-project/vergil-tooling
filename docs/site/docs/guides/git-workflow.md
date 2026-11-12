@@ -203,8 +203,29 @@ See the [vrg-submit-pr reference](../reference/dev/submit-pr.md).
     allowed — its push is a no-op while the branch is on origin at the
     reported commit, and it refuses a HEAD that has drifted past that
     commit; deliberately reopening the branch needs
-    `vrg-pr-workflow unfreeze`. See the tool's entry in the
+    `vrg-pr-workflow unfreeze`. `vrg-git`'s local rewrites (`reset`,
+    `clean`, a pathspec `checkout`, `rebase -i --autosquash`) are refused
+    on a frozen branch too. The freeze lifts when the human's
+    `vrg-submit-pr` opens the PR, so the agent's `pr-watch` can then push
+    fixes and rebase the open PR. See the tool's entry in the
     [CLI Tools Overview](../reference/cli-tools-overview.md#vrg-pr-workflow).
+
+!!! note "Batch PRs: several small issues, one PR"
+    An agent may implement 2 to 8 small issues of one epic on one branch
+    and hand them off as one PR (epic vergil-project/.github#1019).
+    `vrg-pr-workflow batch-start` checks the batch's hard rules and records
+    the ordered list and a fixed base. Each issue gets one commit, its
+    subject ending in `(#N)`; later changes to it are made with
+    `vrg-commit --fixup` and folded in with `vrg-git rebase -i --autosquash`.
+    `report-ready` names every issue in order (`--issue` repeated),
+    `vrg-submit-pr` writes one `Closes` line per issue, and
+    `vrg-finalize-pr` rebase-merges the PR, so `develop` gets one commit and
+    one changelog entry per issue. Each stage re-checks one commit per
+    issue. The
+    [worktree convention](https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/worktree-convention.md#batches)
+    names the batch's worktree and branch, and the
+    [`vrg-pr-workflow` entry](../reference/cli-tools-overview.md#vrg-pr-workflow)
+    lists the rules.
 
 !!! note "Cloud (off-platform) agents: same handoff, over GitHub"
     A cloud x86 VM shares no disk with the Mac, so `report-ready`
@@ -220,7 +241,8 @@ See the [vrg-submit-pr reference](../reference/dev/submit-pr.md).
 ### 4. Wait for review, merge manually
 
 Once CI is green and a reviewer approves, merge through the GitHub
-UI (squash merge for feature PRs). No automated merge will happen.
+UI (squash merge for feature PRs; rebase merge for a batch PR, which
+must keep one commit per issue). No automated merge will happen.
 
 ### 5. Finalize with `vrg-finalize-pr`
 

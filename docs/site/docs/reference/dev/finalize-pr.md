@@ -52,7 +52,8 @@ it never merges past a non-terminal check. Doomed outcomes abort
 immediately rather than after the wait: a draft PR, merge conflicts, a
 failed check (named in the error), or a branch still behind after five
 update attempts. A branch that is merely behind the target is updated
-automatically and the wait restarts.
+automatically and the wait restarts (a batch PR is updated by rebase: see
+[Batch PRs](#batch-prs-one-pr-closing-several-issues)).
 
 **Orphaned check-runs.** GitHub occasionally leaves a check-run
 non-terminal (`queued`/`in_progress`) even though the workflow run that
@@ -167,7 +168,7 @@ vrg-finalize-pr [PR | --cleanup-only] [--target-branch BRANCH]
 | `PR` | PR number or URL to merge and finalize. Omit to infer interactively. |
 | `--cleanup-only` | Skip PR inference and merge; run cleanup without prompting or reading stdin (non-interactive release path). Mutually exclusive with `PR`. |
 | `--target-branch` | Branch to switch to (default: `develop`) |
-| `--strategy` | Merge strategy when a PR is given (default: `squash`) |
+| `--strategy` | Merge strategy when a PR is given (default: `squash`; `rebase` for a batch PR, `merge` for a `release/*` branch). `squash` is refused on a batch PR |
 | `--allow-provenance-violation` | Proceed despite provenance violations (conscious human override) |
 | `--clean-dirty` | Opt-in: clear a merged/closed worktree whose only dirt is untracked build/validation output, after showing what will be deleted and confirming. Never touches modified tracked files or a reused-branch straggler with unmerged commits (issue #2348). |
 | `--dry-run` | Show what would be done without making changes |
@@ -358,7 +359,42 @@ cancellation (by a human, a timeout, or a run with no job to carry the
 annotation) still fails the stage, as does a cancelled run whose jobs or
 annotations cannot be read; that failure says why (issue #3834).
 
+## Batch PRs (one PR closing several issues)
+
+A PR whose body has more than one `Closes` line is a **batch PR** (epic
+vergil-project/.github#1019). It is how `vrg-submit-pr` opens a batch that
+`vrg-pr-workflow report-ready` handed off: 2 to 8 issues of one epic on one
+branch, exactly one commit per issue, each subject ending in its issue's
+`(#N)`, and one `Closes` line per issue. A link added by hand in GitHub's Development sidebar never makes a PR
+a batch. For a batch PR, finalize:
+
+- cross-checks the body's `Closes` issues against GitHub's closing
+  references, and refuses to merge if any is missing, is in another repo,
+  or is listed twice;
+- checks the one-commit-per-issue invariant on the PR's head before it
+  waits, and refuses with the reason when it fails, never falling back to a
+  squash;
+- updates a PR that is behind the target by rebase (GitHub's update-branch
+  with the rebase method, pinned to the head it read), never by merging the
+  target in, which would add a merge commit;
+- re-checks the invariant after every update and right before the merge;
+- merges with `rebase`, pinned to the head it last checked
+  (`--match-head-commit`), so a head pushed after the check is re-checked,
+  never merged unchecked. `develop` receives one commit per issue, and the
+  changelog one entry per issue under its own type.
+
+`--strategy squash` is refused on a batch PR, since it would collapse the
+issues into one commit and one changelog entry; another explicit
+`--strategy` still overrides. A merge conflict with the target aborts with
+the commands to resolve it: for a batch PR they rebase the branch onto the
+target, validate and push with a lease, because merging the target in adds
+a merge commit the batch check refuses. A single-issue PR merges exactly as
+before.
+
 ## Batch mode (comma-list / `--all`)
+
+This batch finalizes several separate PRs in turn. It is unrelated to a
+[batch PR](#batch-prs-one-pr-closing-several-issues), which is one PR.
 
 A comma-separated PR argument (`vrg-finalize-pr 123,124,125`) or `--all`
 (every open PR in `.worktrees/`) finalizes several PRs as a single

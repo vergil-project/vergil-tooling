@@ -62,7 +62,10 @@ rejected**: the daily sweep attaches every orphan to its home's intake epic
 - Every pull request must have a primary GitHub issue. No exceptions.
 - Work must not begin until the issue exists.
 - One primary issue per pull request. If a PR must close multiple issues,
-  document why in the PR description.
+  document why in the PR description. A batch PR (2 to 8 small issues of
+  one epic, one commit per issue; see
+  [Git Workflow](../guides/git-workflow.md)) is the tooled form of this: it
+  closes each of its issues with its own `Closes` line.
 
 ## Acceptance criteria
 
