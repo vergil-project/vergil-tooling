@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 def _fresh() -> WorkflowState:
     return engine.init_state(
-        issue="42",
+        issues=["42"],
         branch="feature/42-x",
         base="origin/develop",
         head_sha="bbb",

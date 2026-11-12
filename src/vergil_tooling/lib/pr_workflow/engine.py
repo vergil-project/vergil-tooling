@@ -41,23 +41,34 @@ def _reject_autoclose(verb: str, **fields: str | None) -> None:
 
 def init_state(
     *,
-    issue: str,
+    issues: list[str],
     branch: str,
     base: str,
     head_sha: str,
     base_sha: str,
     now: str,
 ) -> WorkflowState:
-    """Create a fresh run-and-done workflow with no PR metadata yet."""
-    return WorkflowState(
-        issue=str(issue),
+    """Create a fresh run-and-done workflow with no PR metadata yet.
+
+    *issues* is every issue the workflow hands off, in order. One issue makes a
+    single-issue record, with no ``issues`` field; two or more make a batch
+    (epic vergil-project/.github#1019), whose ``issue`` is the first of them.
+    """
+    if not issues:
+        raise WorkflowError("init_state: a workflow needs at least one issue")
+    listed = [str(issue) for issue in issues]
+    state = WorkflowState(
+        issue=listed[0],
         branch=branch,
         base=base,
         status="implementing",
         created_at=now,
         updated_at=now,
         git={"base_sha": base_sha, "head_sha": head_sha},
+        issues=listed if len(listed) > 1 else None,
     )
+    state.validate()
+    return state
 
 
 def apply_report_ready(
