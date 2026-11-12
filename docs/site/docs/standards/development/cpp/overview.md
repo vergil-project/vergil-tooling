@@ -51,7 +51,7 @@ pin prebuilt stable releases instead.
 
 Which versions are available is set by the version window that vergil-containers
 publishes, limited to what is cleanly available prebuilt for the image base
-(Debian trixie). Today the window holds **Clang 20 and Clang 19** and **GCC 14**
+(Ubuntu 24.04). Today the window holds **Clang 20 and Clang 19** and **GCC 14**
 only: the GCC policy covers the maintained series the image base packages, and
 newer GCC majors are not installable there. The window bends to availability;
 it never drops a compiler family.

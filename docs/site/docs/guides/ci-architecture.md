@@ -513,25 +513,41 @@ generated version table in the `vergil-containers`
 [README](https://github.com/vergil-project/vergil-containers/blob/develop/README.md#available-images)
 is the single source of truth.
 
+Every language image is built on the vergil-containers `base` image, which
+is Ubuntu 24.04. The
+[OS-usage table](https://vergil-project.github.io/vergil-containers/latest/operations/os-usage/)
+in the vergil-containers docs lists every place an operating system is
+chosen, and why.
+
 **`dev-python`**
-:   Base: `python:<v>-slim`. Includes git, curl, uv.
+:   Base: `base` (Ubuntu 24.04), with the series' pinned
+    python-build-standalone build at `/opt/python/<version>` as `python3`.
+    Includes git, curl, uv.
 
 **`dev-go`**
-:   Base: `golang:<v>`. Includes golangci-lint,
+:   Base: `base` (Ubuntu 24.04), with the series' pinned go.dev release
+    at `/usr/local/go`. Includes golangci-lint,
     govulncheck, go-licenses, gocyclo.
 
+**`dev-rust`**
+:   Base: `base` (Ubuntu 24.04), with the series' pinned Rust release
+    installed by a pinned `rustup-init`, and `gcc`/`libc6-dev` from Ubuntu
+    as the C linker.
+
 **`dev-cpp-clang`**
-:   Base: `debian:trixie-slim` + `apt.llvm.org`. Includes clang,
+:   Base: `base` (Ubuntu 24.04), with Clang from apt.llvm.org's noble
+    packages (`llvm-toolchain-noble-<major>`). Includes clang,
     clang-tidy, clang-format, lld, llvm (`llvm-cov`), the sanitizer
     runtime, CMake, Conan 2, cppcheck, and gcovr.
 
 **`dev-cpp-gcc`**
-:   Base: `debian:trixie-slim`. Includes g++, gcov, CMake, Conan 2,
-    cppcheck, and gcovr.
+:   Base: `base` (Ubuntu 24.04), with `g++-<major>` from Ubuntu 24.04.
+    Includes g++, gcov, CMake, Conan 2, cppcheck, and gcovr.
 
 **`dev-ts-node`**
-:   Base: `debian:trixie-slim` + prebuilt Node from NodeSource (never
-    built from source). Includes Node.js, npm, TypeScript (`tsc`),
+:   Base: `base` (Ubuntu 24.04), with the major's pinned nodejs.org
+    prebuilt tarball at `/opt/node/<major>` (never built from
+    source). Includes Node.js, npm, TypeScript (`tsc`),
     ESLint + typescript-eslint, Prettier, Vitest, `@vitest/coverage-v8`,
     and license-checker. The runtime family rides the `ts-node` image
     suffix and the Node major is the tag (`node-24` → `prod-ts-node:24`);
@@ -552,12 +568,13 @@ cd ../vergil-containers
 docker/build.sh
 ```
 
-This builds all images. Individual images can be built with:
+This builds all images. A language image needs its parent image and the
+pinned toolchain build args from `docker/versions/matrix.json`, so build an
+individual image family through the same entry point:
 
 ```bash
-docker/generate.sh python
-docker build --build-arg PYTHON_VERSION=3.14 \
-  -t dev-python:3.14 docker/python/
+docker/build.sh python                 # builds base and its parents first
+docker/build.sh --pull-parents python  # pulls the parents from GHCR instead
 ```
 
 ### Publishing
@@ -578,7 +595,7 @@ calls the reusable `.github/workflows/cd-docker-publish.yml` workflow.
 
 The shared base images stay language-generic on purpose — a system dependency is
 treated as a property of the **language**, not the repo, which is what keeps the
-image cache sound. A repo that genuinely needs a Debian binary its language image
+image cache sound. A repo that genuinely needs an Ubuntu package its language image
 does not carry (for example a repo whose render/e2e tests shell out to LilyPond)
 declares it once in `vergil.toml`, **without** touching the shared base image:
 
@@ -596,7 +613,7 @@ Two things matter for the CI/container model here:
   per-branch cached dev image, so they are present for every check in that one
   image. In CI they are **installed per run** by a composite setup step
   (vergil-actions#807) on the base-image container, before the tests. The two
-  paths agree on *what* is installed (the same names, from the same Debian
+  paths agree on *what* is installed (the same names, from the same Ubuntu
   sources) even though they differ on *when* — baked once locally vs installed
   per run in CI.
 - **Test-runtime contract.** In CI the install runs **only on the jobs that
