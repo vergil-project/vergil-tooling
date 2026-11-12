@@ -1404,6 +1404,8 @@
       
         
       
+        
+      
     
     
     
@@ -1456,6 +1458,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.304/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.304
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -14457,6 +14487,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#batch-prs-one-pr-closing-several-issues" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Batch PRs (one PR closing several issues)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#batch-mode-comma-list-all" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17647,6 +17688,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#batch-prs-one-pr-closing-several-issues" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Batch PRs (one PR closing several issues)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#batch-mode-comma-list-all" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17734,7 +17786,8 @@ it never merges past a non-terminal check. Doomed outcomes abort
 immediately rather than after the wait: a draft PR, merge conflicts, a
 failed check (named in the error), or a branch still behind after five
 update attempts. A branch that is merely behind the target is updated
-automatically and the wait restarts.</p>
+automatically and the wait restarts (a batch PR is updated by rebase: see
+<a href="#batch-prs-one-pr-closing-several-issues">Batch PRs</a>).</p>
 <p><strong>Orphaned check-runs.</strong> GitHub occasionally leaves a check-run
 non-terminal (<code>queued</code>/<code>in_progress</code>) even though the workflow run that
 owns it has already completed — an <em>orphan</em> that would never go green on
@@ -17855,7 +17908,7 @@ followed by the usual sweep, pull, and prune.</p>
 </tr>
 <tr>
 <td><code>--strategy</code></td>
-<td>Merge strategy when a PR is given (default: <code>squash</code>)</td>
+<td>Merge strategy when a PR is given (default: <code>squash</code>; <code>rebase</code> for a batch PR, <code>merge</code> for a <code>release/*</code> branch). <code>squash</code> is refused on a batch PR</td>
 </tr>
 <tr>
 <td><code>--allow-provenance-violation</code></td>
@@ -18046,7 +18099,47 @@ scheduled rebuild), so finalize does not follow it. Any other
 cancellation (by a human, a timeout, or a run with no job to carry the
 annotation) still fails the stage, as does a cancelled run whose jobs or
 annotations cannot be read; that failure says why (issue #3834).</p>
+<h2 id="batch-prs-one-pr-closing-several-issues">Batch PRs (one PR closing several issues)<a class="headerlink" href="#batch-prs-one-pr-closing-several-issues" title="Permanent link">&para;</a></h2>
+<p>A PR whose body has more than one <code>Closes</code> line is a <strong>batch PR</strong> (epic
+vergil-project/.github#1019). It is how <code>vrg-submit-pr</code> opens a batch that
+<code>vrg-pr-workflow report-ready</code> handed off: 2 to 8 issues of one epic on one
+branch, exactly one commit per issue, each subject ending in its issue's
+<code>(#N)</code>, and one <code>Closes</code> line per issue. A link added by hand in GitHub's Development sidebar never makes a PR
+a batch. For a batch PR, finalize:</p>
+<ul>
+<li>cross-checks the body's <code>Closes</code> issues against GitHub's closing
+  references, and refuses to merge if any is missing, is in another repo,
+  or is listed twice;</li>
+<li>checks the one-commit-per-issue invariant on the PR's head before it
+  waits, and refuses with the reason when it fails, never falling back to a
+  squash;</li>
+<li>updates a PR that is behind the target by rebase (GitHub's update-branch
+  with the rebase method, pinned to the head it read), never by merging the
+  target in, which would add a merge commit;</li>
+<li>re-checks the invariant after every update and right before the merge;</li>
+<li>merges with <code>rebase</code>, pinned to the head it last checked
+  (<code>--match-head-commit</code>), so a head pushed after the check is re-checked,
+  never merged unchecked. <code>develop</code> receives one commit per issue, and the
+  changelog one entry per issue under its own type.</li>
+</ul>
+<p><code>--strategy squash</code> is refused on a batch PR, since it would collapse the
+issues into one commit and one changelog entry; another explicit
+<code>--strategy</code> still overrides. A single-issue PR still merges with <code>squash</code> by default.</p>
+<p>A merge conflict with the target aborts with the commands to resolve it.
+Submitting lifted the branch's freeze, so the agent's <code>pr-watch</code> can
+resolve it, or the human can with those commands. For a single-issue PR
+and a batch PR alike they rebase the branch onto the target, validate and
+push with a lease; a batch PR's message also warns against merging the
+target in, which adds a merge commit the batch check refuses. A batch PR
+refused for such a merge commit (GitHub's update-branch button) gets the
+same rebase steps, and the same note that <code>pr-watch</code> or the human can fix
+it. Only a <code>release/*</code> branch keeps merge-based steps: it merges with a
+merge commit to keep the <code>develop</code>/<code>main</code> ancestry (issue #1620), so its
+message merges the target in and never rebases, and <code>pr-watch</code> never
+handles it.</p>
 <h2 id="batch-mode-comma-list-all">Batch mode (comma-list / <code>--all</code>)<a class="headerlink" href="#batch-mode-comma-list-all" title="Permanent link">&para;</a></h2>
+<p>This batch finalizes several separate PRs in turn. It is unrelated to a
+<a href="#batch-prs-one-pr-closing-several-issues">batch PR</a>, which is one PR.</p>
 <p>A comma-separated PR argument (<code>vrg-finalize-pr 123,124,125</code>) or <code>--all</code>
 (every open PR in <code>.worktrees/</code>) finalizes several PRs as a single
 serialized batch (issue #1673). Each item runs

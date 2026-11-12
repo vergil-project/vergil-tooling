@@ -1404,6 +1404,8 @@
       
         
       
+        
+      
     
     
     
@@ -1456,6 +1458,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.304/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.304
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17911,8 +17941,30 @@ advancing it. Correcting the PR prose (re-running <code>report-ready</code>) is 
 allowed — its push is a no-op while the branch is on origin at the
 reported commit, and it refuses a HEAD that has drifted past that
 commit; deliberately reopening the branch needs
-<code>vrg-pr-workflow unfreeze</code>. See the tool's entry in the
+<code>vrg-pr-workflow unfreeze</code>. <code>vrg-git</code>'s local rewrites (<code>reset</code>,
+<code>clean</code>, a pathspec <code>checkout</code>, <code>rebase -i --autosquash</code>) are refused
+on a frozen branch too. The freeze lifts when the human's
+<code>vrg-submit-pr</code> opens the PR, so the agent's <code>pr-watch</code> can then push
+fixes and rebase the open PR. See the tool's entry in the
 <a href="../../reference/cli-tools-overview/#vrg-pr-workflow">CLI Tools Overview</a>.</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Batch PRs: several small issues, one PR</p>
+<p>An agent may implement 2 to 8 small issues of one epic on one branch
+and hand them off as one PR (epic vergil-project/.github#1019).
+<code>vrg-pr-workflow batch-start</code> checks the batch's hard rules and records
+the ordered list and a fixed base. Each issue gets one commit, its
+subject ending in <code>(#N)</code>; later changes to it are made with
+<code>vrg-commit --fixup</code> and folded in with <code>vrg-git rebase -i --autosquash</code>.
+<code>report-ready</code> names every issue in order (<code>--issue</code> repeated),
+<code>vrg-submit-pr</code> writes one <code>Closes</code> line per issue, and
+<code>vrg-finalize-pr</code> rebase-merges the PR, so <code>develop</code> gets one commit and
+one changelog entry per issue. Each stage re-checks one commit per
+issue. The
+<a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/worktree-convention.md#batches">worktree convention</a>
+names the batch's worktree and branch, and the
+<a href="../../reference/cli-tools-overview/#vrg-pr-workflow"><code>vrg-pr-workflow</code> entry</a>
+lists the rules.</p>
 </div>
 <div class="admonition note">
 <p class="admonition-title">Cloud (off-platform) agents: same handoff, over GitHub</p>
@@ -17928,7 +17980,8 @@ of the <code>report-ready</code> title/summary/notes.</p>
 </div>
 <h3 id="4-wait-for-review-merge-manually">4. Wait for review, merge manually<a class="headerlink" href="#4-wait-for-review-merge-manually" title="Permanent link">&para;</a></h3>
 <p>Once CI is green and a reviewer approves, merge through the GitHub
-UI (squash merge for feature PRs). No automated merge will happen.</p>
+UI (squash merge for feature PRs; rebase merge for a batch PR, which
+must keep one commit per issue). No automated merge will happen.</p>
 <h3 id="5-finalize-with-vrg-finalize-pr">5. Finalize with <code>vrg-finalize-pr</code><a class="headerlink" href="#5-finalize-with-vrg-finalize-pr" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>vrg-finalize-pr<span class="w">            </span><span class="c1"># cleanup only, after merging in the UI</span>
 <a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>vrg-finalize-pr<span class="w"> </span>&lt;PR&gt;<span class="w">       </span><span class="c1"># provenance check, merge, then cleanup</span>

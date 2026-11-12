@@ -1404,6 +1404,8 @@
       
         
       
+        
+      
     
     
     
@@ -1456,6 +1458,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.304/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.304
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -14285,6 +14315,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#batch-prs-one-pr-closing-several-issues" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Batch PRs (one PR closing several issues)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#chaining-into-finalize-finalize" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17482,6 +17523,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#batch-prs-one-pr-closing-several-issues" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Batch PRs (one PR closing several issues)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#chaining-into-finalize-finalize" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17725,6 +17777,26 @@ skipped, as before.</p>
 <li>Prints the PR URL — which can be passed straight to
    <a href="../finalize-pr/"><code>vrg-finalize-pr</code></a>.</li>
 </ol>
+<h2 id="batch-prs-one-pr-closing-several-issues">Batch PRs (one PR closing several issues)<a class="headerlink" href="#batch-prs-one-pr-closing-several-issues" title="Permanent link">&para;</a></h2>
+<p>A <code>report-ready</code> state can hand off a <strong>batch</strong>: 2 to 8 issues of one epic,
+implemented on one branch with exactly one commit per issue, in order (epic
+vergil-project/.github#1019). Every mode driven by a ready-state (template,
+relay branch and the serial <code>--all</code>/<code>--select</code> batch) submits it as one PR:</p>
+<ul>
+<li>the per-issue refusals (cross-repo, non-task, operational, queue item) run
+  on every issue, and the first refusal stops the submit;</li>
+<li>the PR body carries one <code>Closes</code> line per issue, in the batch's order;</li>
+<li>after the confirmation and before any push or <code>gh pr create</code>, it fetches
+  the target and re-checks the batch hard rules and the
+  one-commit-per-issue invariant at the head the PR opens at (the rebased
+  head in the serial batch). A failure opens nothing.</li>
+</ul>
+<p>The checks are the ones <code>vrg-pr-workflow report-ready</code> ran (see the
+<a href="../../cli-tools-overview/#vrg-pr-workflow">CLI Tools Overview</a>).
+<a href="../finalize-pr/#batch-prs-one-pr-closing-several-issues"><code>vrg-finalize-pr</code></a>
+reads the <code>Closes</code> lines back and rebase-merges the PR, one commit per
+issue. CLI mode stays single-issue: a batch is handed off only through
+<code>report-ready</code>.</p>
 <h2 id="chaining-into-finalize-finalize">Chaining into finalize (<code>--finalize</code>)<a class="headerlink" href="#chaining-into-finalize-finalize" title="Permanent link">&para;</a></h2>
 <p><code>--finalize</code> folds the manual two-command sequence
 (<code>vrg-submit-pr</code>, then <code>vrg-finalize-pr &lt;pr&gt;</code>) into one step: after
@@ -17745,7 +17817,8 @@ failure modes split cleanly:</p>
 identity gate runs before either mode.</p>
 <h2 id="batch-mode-all-select">Batch mode (<code>--all</code> / <code>--select</code>)<a class="headerlink" href="#batch-mode-all-select" title="Permanent link">&para;</a></h2>
 <p>Selecting two or more ready worktrees submits them as a single
-serialized batch (issue #1673). Use <code>--all</code> for every ready worktree,
+serialized batch of separate PRs (issue #1673), unrelated to a
+<a href="#batch-prs-one-pr-closing-several-issues">batch PR</a>. Use <code>--all</code> for every ready worktree,
 or <code>--select &lt;tokens&gt;</code> for a comma-separated subset matched by issue
 number or worktree directory name (e.g. <code>--select 1673,1681</code>); an
 unmatched or ambiguous token is a hard error that names it. A single

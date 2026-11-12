@@ -1406,6 +1406,8 @@
       
         
       
+        
+      
     
     
     
@@ -1458,6 +1460,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.304/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.304
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18161,7 +18191,10 @@ rejected</strong>: the daily sweep attaches every orphan to its home's intake ep
 <li>Every pull request must have a primary GitHub issue. No exceptions.</li>
 <li>Work must not begin until the issue exists.</li>
 <li>One primary issue per pull request. If a PR must close multiple issues,
-  document why in the PR description.</li>
+  document why in the PR description. A batch PR (2 to 8 small issues of
+  one epic, one commit per issue; see
+  <a href="../../guides/git-workflow/">Git Workflow</a>) is the tooled form of this: it
+  closes each of its issues with its own <code>Closes</code> line.</li>
 </ul>
 <h2 id="acceptance-criteria">Acceptance criteria<a class="headerlink" href="#acceptance-criteria" title="Permanent link">&para;</a></h2>
 <p>Every issue must specify acceptance criteria if they are not intuitively
