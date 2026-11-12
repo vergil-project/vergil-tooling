@@ -17046,6 +17046,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#in-a-batch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        In a batch
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#what-a-reviewer-can-raise" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17350,6 +17361,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#in-a-batch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        In a batch
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#what-a-reviewer-can-raise" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17520,6 +17542,19 @@ removed.</p>
 </ol>
 <p>The loop has exactly one iteration before the human: one review, then at
 most one fix and check.</p>
+<h3 id="in-a-batch">In a batch<a class="headerlink" href="#in-a-batch" title="Permanent link">&para;</a></h3>
+<p>When a task is one issue of a batch (several small issues on one branch,
+handed off as one PR, epic
+<a href="https://github.com/vergil-project/.github/issues/1019">vergil-project/.github#1019</a>),
+each issue still gets its own merge review, with <code>--issue</code> that issue: its
+rulings, step comments and eligibility line stay on it. The skill reads the
+batch with <code>vrg-pr-workflow batch-show</code>, and the review and every check
+take <code>--base</code> the previous issue's commit (the batch's <code>base_sha</code> for the
+first issue), never <code>origin/develop</code>. A fix is committed as
+<code>vrg-commit --fixup</code> of the issue's first commit; the review never folds,
+and <code>issue-implement</code> folds the issue to one commit once its review has
+closed. <code>report-ready</code>'s notes carry each issue's eligibility line, prefixed
+with its ref.</p>
 <h3 id="what-a-reviewer-can-raise">What a reviewer can raise<a class="headerlink" href="#what-a-reviewer-can-raise" title="Permanent link">&para;</a></h3>
 <p>Each finding answers one of two questions: <strong>production-safety</strong> (can this
 break production, including input that crosses a trust boundary) or
@@ -17677,7 +17712,9 @@ an absent level with that mode and refuses otherwise. The skill runs
 makes there.</p>
 <p>The directory is working storage and the record a stopped run resumes from.
 Do not edit or delete it while a run is open. <code>issue-implement</code> deletes it
-once <code>report-ready</code> has succeeded.</p>
+once <code>report-ready</code> has succeeded. Extracting an issue from a batch
+(<code>vrg-pr-workflow batch-extract</code>) removes the issue's whole
+<code>issue-implement/&lt;N&gt;/</code> directory, this one included.</p>
 <h2 id="security-findings">Security findings<a class="headerlink" href="#security-findings" title="Permanent link">&para;</a></h2>
 <p>A finding a reviewer marks as security carries no description in the result
 block: its details are only in the reviewer's prose, which the skill copies

@@ -19373,11 +19373,17 @@ worktree's <code>pr-workflow.json</code> when present, else the relay ref
 recorded <code>head_sha</code> and the PR opens with <code>--head</code> <strong>without pushing</strong>.
 Every mode driven by a ready-state opens the PR only at the <code>head_sha</code> the
 latest <code>report-ready</code> recorded and refuses rather than pick another head
-(#3815): a local worktree's HEAD must be that commit (a batch checks it
-before its rebase), a named branch reopened by <code>unfreeze</code> and not
+(#3815): a local worktree's HEAD must be that commit (the serial
+<code>--all</code>/<code>--select</code> batch checks it before its rebase), a named branch reopened by <code>unfreeze</code> and not
 re-reported is refused, a local ready-state and relay ref that disagree are
 refused, and origin's tip is checked against the recorded head right before
 <code>gh pr create</code>.
+A ready-state that hands off a batch (several issues, epic
+vergil-project/.github#1019) runs the per-issue refusals on every issue and
+writes one <code>Closes</code> line per issue. It re-checks the batch hard rules and the
+one-commit-per-issue invariant against a freshly fetched target, at the head
+the PR opens at, before any push or <code>gh pr create</code>. CLI mode stays
+single-issue.
 It refuses an issue whose native parent is an intake, planning or deferred
 epic (see <a href="#vrg-pr-workflow"><code>vrg-pr-workflow</code></a>). Human-run: agent
 identities are refused, and agents hand off with
@@ -19432,8 +19438,11 @@ loud on stderr but never rolls back the durable local file. Because the
 ref is world-readable on a public repo, keep secrets out of
 <code>--title/--summary/--notes</code>. Reaching <strong>ready</strong> <em>freezes</em> the branch:
 <code>vrg-commit</code>, <code>vrg-reword</code> and the <code>vrg-git</code> push path then refuse further
-commits, commit rewrites and pushes, because a task is exactly one PR and more work is a new
-follow-up issue (epic #146). <code>report-ready</code> pushes the branch itself, to
+commits, commit rewrites and pushes, and <code>vrg-git</code> refuses its local rewrites
+(<code>reset</code>, <code>clean</code>, a pathspec <code>checkout</code>, <code>rebase -i --autosquash</code>), because a task is exactly one PR and more work is a new
+follow-up issue (epic #146). The freeze lasts until <code>vrg-submit-pr</code> marks the
+state submitted; from then on the open PR's branch takes fixes, rebases and
+lease pushes again (the <code>pr-watch</code> skill). <code>report-ready</code> pushes the branch itself, to
 <code>origin/&lt;branch&gt;</code> with upstream set, <strong>before</strong> recording anything (#3602),
 so no separate push is needed; a branch already on origin at that commit is a
 no-op push. When the delta touches <code>.github/workflows/**</code> GitHub refuses the
@@ -19475,6 +19484,33 @@ nothing. The state records the list as <code>issues</code> (its first entry is a
 same list in the same order. Once the state is recorded, the members' batch
 markers are removed. A single <code>--issue</code> records no <code>issues</code> key and behaves
 exactly as before.</p>
+<p>The batch hard rules are: 2 to 8 issues, none listed twice, every one in
+this repo, a task (not an epic, archive or queue item), not operational, not
+directly Blocked-by an open deployment task and opened by a trusted author,
+and all with the same parent epic (a finite epic or the repo's ad-hoc epic).
+The one-commit-per-issue check holds the branch, from its base, to exactly
+one commit per issue in the listed order, each subject ending in a space and
+its issue's <code>(#N)</code>, with no merge commit and no unfolded <code>fixup!</code> commit.
+Both fail closed: a read that fails refuses.</p>
+<p>The batch marker (<code>build/.vergil-state/issue-implement/&lt;N&gt;/batch</code> in the main
+clone, one per member, holding the ordered list and the batch's fixed base,
+<code>base_sha</code>) is managed by three subcommands, run from the main clone. Each
+takes <code>--issue</code> as <code>N</code>, <code>#N</code> or <code>owner/repo#N</code> for this clone's repo:</p>
+<ul>
+<li><code>batch-start --issue &lt;N&gt; --issue &lt;M&gt; …</code> runs the hard rules, then writes
+  every member's marker with the <code>--base</code> commit as <code>base_sha</code>, printing
+  <code>{"ok": true, "resumed": &lt;bool&gt;, "issues": […], "base_sha": "&lt;sha&gt;"}</code>. A
+  refusal writes nothing. The same list over existing markers is a resume
+  that changes nothing; any other existing marker is refused.</li>
+<li><code>batch-show --issue &lt;N&gt;</code> prints the issue's batch as one JSON object and
+  exits 0, exits 1 with nothing on stdout when the issue is in no batch, and
+  exits 2 on any other failure.</li>
+<li><code>batch-extract --issue &lt;N&gt;</code> rewrites every other member's marker without
+  the issue (removing the last one's when fewer than two remain) and removes
+  the issue's whole <code>issue-implement/&lt;N&gt;/</code> directory, its <code>merge-review/</code>
+  state included. It refuses while a <code>security-*.md</code> details file is under
+  that directory.</li>
+</ul>
 <table>
 <thead>
 <tr>
@@ -19949,7 +19985,15 @@ reused branch name with unmerged commits (issue #1719) — is surfaced
 <strong>prominently after the pipeline</strong> rather than buried in the stage log;
 <code>--clean-dirty</code> opt-in clears one whose only dirt is untracked
 build/validation output, after showing the paths and confirming
-(issue #2348).</p>
+(issue #2348).
+A PR whose body has more than one <code>Closes</code> line is a <strong>batch PR</strong>, one commit
+per issue (epic vergil-project/.github#1019). Finalize cross-checks its
+<code>Closes</code> issues against GitHub's closing references, updates it by rebase
+(never by merging the target in) when it is behind, re-checks the
+one-commit-per-issue invariant after every update and right before the merge,
+and rebase-merges it pinned to the head it checked, so <code>develop</code> gets one
+commit and one changelog entry per issue. <code>--strategy squash</code> is refused on a
+batch PR. See <a href="../dev/finalize-pr/#batch-prs-one-pr-closing-several-issues">vrg-finalize-pr</a>.</p>
 <table>
 <thead>
 <tr>
@@ -19964,7 +20008,7 @@ build/validation output, after showing the paths and confirming
 </tr>
 <tr>
 <td>Args</td>
-<td><code>PR</code> (optional), <code>--target-branch</code> (default: develop), <code>--strategy</code> (default: squash), <code>--allow-provenance-violation</code>, <code>--clean-dirty</code>, <code>--dry-run</code></td>
+<td><code>PR</code> (optional), <code>--target-branch</code> (default: develop), <code>--strategy</code> (default: squash; rebase for a batch PR, merge for a <code>release/*</code> branch), <code>--allow-provenance-violation</code>, <code>--clean-dirty</code>, <code>--dry-run</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
@@ -21078,7 +21122,9 @@ makes there, and writes only to the path it prints.</p>
 <h3 id="vrg-epic-audit">vrg-epic-audit<a class="headerlink" href="#vrg-epic-audit" title="Permanent link">&para;</a></h3>
 <p>Report epic/task drift and invariant violations for an org, as Markdown on
 stdout. It is read-only by default. <strong>Drift</strong> is a task still open although
-the merged PR that <code>Ref</code>s it landed within the last <code>--window-days</code> days, and
+a merged PR that links it landed within the last <code>--window-days</code> days (a
+body's one linkage line, or every <code>Closes</code> line of a body with several, so
+each issue of a batch PR is checked), and
 an open finite epic whose children are all closed. The <strong>invariant</strong> checks
 are the <a href="../../standards/github-issues/#compliance-invariants">compliance invariants</a>:
 epics outside <code>.github</code>, stray <code>.github</code> issues, a closed epic with an open
