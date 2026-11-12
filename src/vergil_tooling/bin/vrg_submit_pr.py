@@ -549,22 +549,30 @@ def _describe_issues(issue_refs: list[str]) -> str:
     return f"issues {', '.join(issue_refs)}"
 
 
-def _recheck_batch(issue_refs: list[str], *, branch: str, target: str, head: str) -> None:
+def _recheck_batch(
+    issue_refs: list[str], *, branch: str, target: str, head: str, push: bool
+) -> None:
     """Re-check a batch's hard rules and commits on the head the PR opens at.
 
     Runs only for a batch, after the confirm and before any push or ``gh pr
-    create``. It fetches the target (and the branch, when origin has it, so
-    the head is present on a relay submit from a clone that never had the
-    branch), then holds ``origin/<target>..<head>`` to one commit per issue
-    and re-reads every issue against the hard rules (spec §5.1, §5.6). *head*
-    is the commit the PR must open at; :func:`_require_origin_head` later
-    holds origin's tip to that same commit, so the head checked here is the
-    head the PR opens at. Any failure refuses with nothing opened.
+    create``. It fetches the target, then holds ``origin/<target>..<head>`` to
+    one commit per issue and re-reads every issue against the hard rules
+    (spec §5.1, §5.6). *head* is the commit the PR must open at;
+    :func:`_require_origin_head` later holds origin's tip to that same commit,
+    so the head checked here is the head the PR opens at. Any failure refuses
+    with nothing opened.
+
+    Only a relay submit (*push* false) also fetches the branch, so the head is
+    present in a clone that never had it. A submit that pushes never does:
+    fetching the branch would move ``refs/remotes/origin/<branch>``, the lease
+    :func:`_push_branch`'s ``--force-with-lease`` holds, so the push could then
+    overwrite commits pushed elsewhere. Its head is the local commit, already
+    present.
     """
     if not batch_rules.is_batch(issue_refs):
         return
     print(f"Re-checking the batch rules for {', '.join(issue_refs)} at {head[:12]}...")
-    refs = (branch, target) if _origin_has_branch(branch) else (target,)
+    refs = (target,) if push else (branch, target)
     try:
         git.run("fetch", "origin", *refs)
     except subprocess.CalledProcessError as exc:
@@ -832,7 +840,7 @@ def _push_create_record(
     then refuses to open the PR unless origin's tip is the recorded head
     (issue #3815).
     """
-    _recheck_batch(issue_refs, branch=branch, target=target, head=expected_head)
+    _recheck_batch(issue_refs, branch=branch, target=target, head=expected_head, push=True)
     print(f"Ensuring branch '{branch}' is pushed to origin...")
     _push_branch(branch)
     _require_origin_head(branch, expected_head)
@@ -898,7 +906,7 @@ def _open_pr(
         return None
     if not confirm("\nSubmit this PR?", assume_yes=assume_yes):
         raise SystemExit("vrg-submit-pr: submission declined at the per-PR confirm")
-    _recheck_batch(issue_refs, branch=branch, target=base, head=expected_head)
+    _recheck_batch(issue_refs, branch=branch, target=base, head=expected_head, push=push)
     if push:
         print(f"Ensuring branch '{branch}' is pushed to origin...")
         _push_branch(branch)

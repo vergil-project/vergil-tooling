@@ -3380,7 +3380,7 @@ class TestBatchSubmit:
         assert [c.args[0] for c in cross.call_args_list] == ["#10", "#11"]
         assert [c.args[0] for c in queue.call_args_list] == ["#10", "#11"]
         recheck.assert_called_once_with(
-            ["#10", "#11"], branch="feature/10-x", target="develop", head="h0"
+            ["#10", "#11"], branch="feature/10-x", target="develop", head="h0", push=True
         )
         assert _state_submitted(tmp_path)
 
@@ -3392,7 +3392,6 @@ class TestBatchSubmit:
             patch(_MOD + ".git.repo_root", return_value=tmp_path),
             patch(_MOD + ".git.current_branch", return_value="feature/10-x"),
             patch(_MOD + "._task_linkage", side_effect=_all_closes),
-            patch(_MOD + "._origin_has_branch", return_value=True),
             patch(_MOD + ".git.run") as git_run,
             patch(_MOD + ".github.current_repo", return_value="acme/tools"),
             patch(_MOD + ".batch_rules.check_hard_rules") as rules,
@@ -3402,7 +3401,9 @@ class TestBatchSubmit:
             pytest.raises(SystemExit, match="carries no issue ref"),
         ):
             main(["--yes"])
-        git_run.assert_called_once_with("fetch", "origin", "feature/10-x", "develop")
+        # A submit that pushes fetches only the target: fetching the branch would
+        # move the lease ref that --force-with-lease holds (merge review R1).
+        git_run.assert_called_once_with("fetch", "origin", "develop")
         rules.assert_called_once_with(["#10", "#11"], repo="acme/tools")
         commits.assert_called_once_with(["#10", "#11"], base="origin/develop", head="h0")
         push.assert_not_called()
@@ -3416,7 +3417,6 @@ class TestBatchSubmit:
             patch(_MOD + ".git.repo_root", return_value=tmp_path),
             patch(_MOD + ".git.current_branch", return_value="feature/10-x"),
             patch(_MOD + "._task_linkage", side_effect=_all_closes),
-            patch(_MOD + "._origin_has_branch", return_value=False),
             patch(_MOD + ".git.run") as git_run,
             patch(_MOD + ".github.current_repo", return_value="acme/tools"),
             patch(_MOD + ".batch_rules.check_hard_rules", side_effect=broken),
@@ -3426,7 +3426,7 @@ class TestBatchSubmit:
             pytest.raises(SystemExit, match=r"batch refused \(same epic\).*No PR was opened"),
         ):
             main(["--yes"])
-        # A branch origin lacks is not fetched; only the target is.
+        # Template mode pushes, so only the target is fetched.
         git_run.assert_called_once_with("fetch", "origin", "develop")
         commits.assert_not_called()
         push.assert_not_called()
@@ -3605,7 +3605,7 @@ def test_open_pr_batch_rechecks_before_push() -> None:
     assert url == "https://github.com/o/r/pull/3"
     assert [c[0] for c in order.mock_calls] == ["recheck", "push", "create"]
     order.recheck.assert_called_once_with(
-        ["#10", "#11"], branch="feature/10-x", target="develop", head="rebased1"
+        ["#10", "#11"], branch="feature/10-x", target="develop", head="rebased1", push=True
     )
 
 
@@ -3633,14 +3633,13 @@ def test_recheck_batch_is_a_no_op_for_one_issue() -> None:
         patch(_MOD + ".git.run") as git_run,
         patch(_MOD + ".batch_rules.check_hard_rules") as rules,
     ):
-        _recheck_batch(["#42"], branch="feature/x", target="develop", head="abc")
+        _recheck_batch(["#42"], branch="feature/x", target="develop", head="abc", push=False)
     git_run.assert_not_called()
     rules.assert_not_called()
 
 
 def test_recheck_batch_refuses_when_the_fetch_fails() -> None:
     with (
-        patch(_MOD + "._origin_has_branch", return_value=True),
         patch(
             _MOD + ".git.run",
             side_effect=subprocess.CalledProcessError(1, "git", stderr="no network"),
@@ -3648,7 +3647,9 @@ def test_recheck_batch_refuses_when_the_fetch_fails() -> None:
         patch(_MOD + ".batch_rules.check_hard_rules") as rules,
         pytest.raises(SystemExit, match="could not fetch feature/10-x, develop"),
     ):
-        _recheck_batch(["#10", "#11"], branch="feature/10-x", target="develop", head="abc")
+        _recheck_batch(
+            ["#10", "#11"], branch="feature/10-x", target="develop", head="abc", push=False
+        )
     rules.assert_not_called()
 
 
