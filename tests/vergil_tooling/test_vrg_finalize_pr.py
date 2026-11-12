@@ -24,6 +24,7 @@ from vergil_tooling.bin.vrg_finalize_pr import (
     _parse_pr_list,
     _prune_orphan_branch_images,
     _prune_orphan_relay_refs,
+    _read_pr_body,
     _resolve_open_prs,
     _resolve_strategy,
     _run_finalize_batch,
@@ -173,6 +174,21 @@ def _merge_commit_sha_stub() -> Iterator[None]:
     the recorded SHA re-patch it directly — the innermost patch wins.
     """
     with patch(_MOD + ".github.merge_commit_sha", return_value="mergecommitsha"):
+        yield
+
+
+_SINGLE_ISSUE_BODY = "## Summary\n\nDone.\n\n## Issue Linkage\n\nCloses #42\n"
+
+
+@pytest.fixture(autouse=True)
+def _single_issue_body() -> Iterator[None]:
+    """Default: the PR's body has one Closes line, read without gh.
+
+    _stage_merge reads the body to tell a batch PR from a single-issue one
+    (epic vergil-project/.github#1019). Batch tests re-patch it directly —
+    the innermost patch wins.
+    """
+    with patch(_MOD + "._read_pr_body", return_value=_SINGLE_ISSUE_BODY):
         yield
 
 
@@ -1937,24 +1953,24 @@ def test_stage_merge_conflict_without_worktree_says_how_to_get_one() -> None:
 
 def test_conflict_msg_non_issue_branch_falls_back_to_flattened_dirname() -> None:
     with patch(_MOD + ".worktrees.worktree_for_branch", return_value=None):
-        msg = _conflict_resolution_msg("7", "release/2.1.30", "main", Path("/repo"))
+        msg = _conflict_resolution_msg("7", "release/2.1.30", "main", Path("/repo"), batch=False)
     assert "git worktree add .worktrees/release-2.1.30 release/2.1.30" in msg
     assert "git merge --no-commit origin/main" in msg
 
 
 def test_resolve_strategy_release_branch_merges() -> None:
-    assert _resolve_strategy("release/2.1.30", None) == "merge"
-    assert _resolve_strategy("release/post-2.1.30", None) == "merge"
+    assert _resolve_strategy("release/2.1.30", None, batch=False) == "merge"
+    assert _resolve_strategy("release/post-2.1.30", None, batch=False) == "merge"
 
 
 def test_resolve_strategy_feature_branch_squashes() -> None:
-    assert _resolve_strategy("feature/42-x", None) == "squash"
-    assert _resolve_strategy("develop", None) == "squash"
+    assert _resolve_strategy("feature/42-x", None, batch=False) == "squash"
+    assert _resolve_strategy("develop", None, batch=False) == "squash"
 
 
 def test_resolve_strategy_explicit_override_wins() -> None:
-    assert _resolve_strategy("release/2.1.30", "squash") == "squash"
-    assert _resolve_strategy("feature/42-x", "merge") == "merge"
+    assert _resolve_strategy("release/2.1.30", "squash", batch=False) == "squash"
+    assert _resolve_strategy("feature/42-x", "merge", batch=False) == "merge"
 
 
 def test_stage_merge_release_branch_uses_merge_commit() -> None:
@@ -2006,6 +2022,338 @@ def test_stage_merge_dry_run_skips_engine() -> None:
         _stage_merge(ctx)
     engine.assert_not_called()
     assert ctx.merged_branch == "feature/42-x"
+
+
+# -- batch PRs: detect, cross-check, re-check, rebase-merge (epic .github#1019) --
+
+_BATCH_HEAD = "feature/10-batch-small-fixes"
+_BATCH_BODY = "## Summary\n\nTwo fixes.\n\n## Issue Linkage\n\nCloses #10\nCloses #11\n"
+_SEP = "\x1f"
+
+
+def _commit(sha: str, subject: str, *, parents: str = "p0") -> str:
+    return f"{sha}{_SEP}{parents}{_SEP}{subject}"
+
+
+_GOOD_COMMITS = (
+    _commit("a" * 40, "fix(x): first (#10)"),
+    _commit("b" * 40, "fix(y): second (#11)", parents="a" * 40),
+)
+
+
+def _open_refs(*numbers: int, repo: str = "o/r") -> PRClosingReferences:
+    return PRClosingReferences(
+        repo="o/r",
+        number=123,
+        state="OPEN",
+        merged_at=None,
+        issues=tuple(ClosingIssue(repo, n, "OPEN") for n in numbers),
+    )
+
+
+@contextmanager
+def _batch_pr(
+    *,
+    body: str = _BATCH_BODY,
+    refs: PRClosingReferences | None = None,
+    commits: tuple[str, ...] = _GOOD_COMMITS,
+    state: str = "OPEN",
+    worktree: Path | None = None,
+) -> Generator[dict[str, MagicMock]]:
+    """Patch GitHub and git for a batch PR #123 on o/r; yield the interesting mocks.
+
+    The git reads are faked at ``lib.git`` itself, so the real
+    ``batch_rules.check_commit_per_issue`` runs against *commits*.
+    """
+
+    def fake_git_read(*args: str) -> str:
+        if args[0] == "rev-parse":
+            return "c" * 40
+        if args[0] == "rev-list":
+            return "\n".join(commits)
+        raise AssertionError(f"unexpected git read: {args}")
+
+    with (
+        patch(_MOD + "._read_pr_body", return_value=body),
+        patch(
+            _MOD + ".github.pr_closing_references",
+            return_value=refs if refs is not None else _open_refs(10, 11),
+        ) as closing,
+        patch(_MOD + ".github.pr_state", return_value=state),
+        patch(_MOD + ".github.head_ref", return_value=_BATCH_HEAD),
+        patch(_MOD + ".github.base_ref", return_value="develop"),
+        patch(_MOD + ".github.merge_commit_sha", return_value="developtip"),
+        patch(_MOD + ".github.merge") as merge,
+        patch(_MOD + ".git.run") as git_run,
+        patch(_MOD + ".git.read_output", side_effect=fake_git_read),
+        patch(_MOD + ".worktrees.worktree_for_branch", return_value=worktree),
+        patch(_MOD + ".pr_merge.wait_and_merge") as engine,
+    ):
+        yield {"engine": engine, "git_run": git_run, "closing": closing, "merge": merge}
+
+
+def test_single_issue_pr_still_squashes() -> None:
+    """Review focus 5: one Closes line merges exactly as before — squash, no
+    batch check, no fetch, no closing-reference read before the merge."""
+    ctx = _stage_ctx(["123"])
+    with (
+        patch(_MOD + ".github.pr_state", return_value="OPEN"),
+        patch(_MOD + ".github.head_ref", return_value="feature/42-x"),
+        patch(_MOD + ".github.base_ref") as base_ref,
+        patch(_MOD + ".github.pr_closing_references") as closing,
+        patch(_MOD + ".git.run") as git_run,
+        patch(_MOD + ".pr_merge.wait_and_merge") as engine,
+    ):
+        _stage_merge(ctx)
+    engine.assert_called_once_with("123", strategy="squash")
+    git_run.assert_not_called()
+    closing.assert_not_called()
+    base_ref.assert_not_called()
+
+
+def test_batch_pr_rebase_merges() -> None:
+    ctx = _stage_ctx(["123"])
+    with _batch_pr() as mocks:
+        _stage_merge(ctx)
+    engine = mocks["engine"]
+    engine.assert_called_once()
+    assert engine.call_args.args == ("123",)
+    assert engine.call_args.kwargs["strategy"] == "rebase"
+    batch_check = engine.call_args.kwargs["batch_check"]
+    # The check fetched once before the engine ran; running it again fetches
+    # again and returns the head it checked.
+    assert mocks["git_run"].call_count == 1
+    with _batch_pr() as again:
+        assert batch_check() == "c" * 40
+        again["git_run"].assert_called_once_with(
+            "fetch",
+            "origin",
+            "+refs/heads/develop:refs/remotes/origin/develop",
+            f"+refs/heads/{_BATCH_HEAD}:refs/remotes/origin/{_BATCH_HEAD}",
+        )
+    assert ctx.merged_branch == _BATCH_HEAD
+
+
+def test_pr_with_one_close_and_one_ref_is_not_a_batch() -> None:
+    ctx = _stage_ctx(["123"])
+    with _batch_pr(body="## Issue Linkage\n\nCloses #10\nRef #11\n") as mocks:
+        _stage_merge(ctx)
+    mocks["engine"].assert_called_once_with("123", strategy="squash")
+    mocks["git_run"].assert_not_called()
+
+
+def test_single_close_pr_with_manual_development_link_still_squashes() -> None:
+    """GitHub lists two closing references (one a manual Development link),
+    but the body has one Closes line, so it is not a batch."""
+    ctx = _stage_ctx(["123"])
+    with _batch_pr(body="## Issue Linkage\n\nCloses #10\n", refs=_open_refs(10, 11)) as mocks:
+        _stage_merge(ctx)
+    mocks["engine"].assert_called_once_with("123", strategy="squash")
+    mocks["closing"].assert_not_called()
+
+
+def test_batch_pr_refuses_squash_override() -> None:
+    ctx = _stage_ctx(["123", "--strategy", "squash"])
+    with _batch_pr() as mocks, pytest.raises(FinalizeError, match="squash is refused on a batch"):
+        _stage_merge(ctx)
+    mocks["engine"].assert_not_called()
+
+
+def test_resolve_strategy_batch_rebases_and_keeps_other_overrides() -> None:
+    assert _resolve_strategy("feature/10-x", None, batch=True) == "rebase"
+    assert _resolve_strategy("feature/10-x", "merge", batch=True) == "merge"
+    assert _resolve_strategy("feature/10-x", "rebase", batch=True) == "rebase"
+    with pytest.raises(FinalizeError, match="one commit per issue into a single commit"):
+        _resolve_strategy("feature/10-x", "squash", batch=True)
+
+
+def test_rebase_merged_batch_records_the_tip_for_the_cd_check() -> None:
+    """A rebase merge's mergeCommit is the new tip of develop, the commit the
+    CD run is keyed on, so that is the SHA the cd-check stage waits on."""
+    ctx = _stage_ctx(["123"])
+    with _batch_pr():
+        _stage_merge(ctx)
+    assert ctx.merge_commit_sha == "developtip"
+
+
+def test_batch_pr_refuses_commit_mismatch_before_merge() -> None:
+    ctx = _stage_ctx(["123"])
+    out_of_order = (
+        _commit("b" * 40, "fix(y): second (#11)"),
+        _commit("a" * 40, "fix(x): first (#10)", parents="b" * 40),
+    )
+    with (
+        _batch_pr(commits=out_of_order) as mocks,
+        pytest.raises(FinalizeError, match=r"bbbbbbbbbbbb .*should end in \(#10\)"),
+    ):
+        _stage_merge(ctx)
+    mocks["engine"].assert_not_called()
+    mocks["merge"].assert_not_called()
+
+
+def test_batch_pr_refuses_merge_commit_naming_rebase() -> None:
+    """Review focus 4: GitHub's update-branch button adds a merge commit; it
+    is refused, with the rebase onto develop and the leased push named."""
+    ctx = _stage_ctx(["123"])
+    wt = Path("/repo/.worktrees/issue-10-batch-small-fixes")
+    merged_in = (*_GOOD_COMMITS, _commit("d" * 40, "Merge branch 'develop'", parents="b d"))
+    with (
+        _batch_pr(commits=merged_in, worktree=wt) as mocks,
+        pytest.raises(FinalizeError) as excinfo,
+    ):
+        _stage_merge(ctx)
+    msg = str(excinfo.value)
+    assert "dddddddddddd" in msg
+    assert "is a merge commit" in msg
+    steps = [
+        f"cd {wt}",
+        "git fetch origin",
+        f"git merge --ff-only origin/{_BATCH_HEAD}",
+        "git rebase origin/develop",
+        "vrg-container-run -- vrg-validate",
+        f"git push --force-with-lease origin {_BATCH_HEAD}",
+        "cd /repo && vrg-finalize-pr 123",
+    ]
+    positions = [msg.index(step) for step in steps]
+    assert positions == sorted(positions)
+    mocks["engine"].assert_not_called()
+
+
+def test_batch_pr_count_refusal_names_no_rebase() -> None:
+    ctx = _stage_ctx(["123"])
+    with (
+        _batch_pr(commits=_GOOD_COMMITS[:1]),
+        pytest.raises(FinalizeError, match="need 2 commits") as excinfo,
+    ):
+        _stage_merge(ctx)
+    assert "git rebase" not in str(excinfo.value)
+
+
+def test_batch_conflict_message_says_rebase_not_merge() -> None:
+    ctx = _stage_ctx(["123"])
+    wt = Path("/repo/.worktrees/issue-10-batch-small-fixes")
+    with _batch_pr(worktree=wt) as mocks:
+        mocks["engine"].side_effect = MergeConflictError("PR 123 has merge conflicts.")
+        with pytest.raises(FinalizeError) as excinfo:
+            _stage_merge(ctx)
+    msg = str(excinfo.value)
+    assert "PR 123 has merge conflicts with develop" in msg
+    assert "git rebase --continue" in msg
+    assert "git rebase origin/develop" in msg
+    assert f"git push --force-with-lease origin {_BATCH_HEAD}" in msg
+    assert "git merge --no-commit" not in msg
+    assert "git commit --no-edit" not in msg
+    assert not [line for line in msg.splitlines() if line.startswith("  ") and "#" in line]
+
+
+def test_batch_pr_refuses_a_close_missing_from_closing_refs() -> None:
+    ctx = _stage_ctx(["123"])
+    with (
+        _batch_pr(refs=_open_refs(10)) as mocks,
+        pytest.raises(FinalizeError) as excinfo,
+    ):
+        _stage_merge(ctx)
+    msg = str(excinfo.value)
+    assert "its body closes o/r#10, o/r#11" in msg
+    assert "closing references are o/r#10" in msg
+    assert "missing o/r#11" in msg
+    mocks["engine"].assert_not_called()
+    mocks["git_run"].assert_not_called()
+
+
+def test_batch_pr_closing_refs_read_failure_refuses() -> None:
+    ctx = _stage_ctx(["123"])
+    with _batch_pr() as mocks:
+        mocks["closing"].side_effect = GitHubAPIError(1, "gh api graphql", stderr="boom")
+        with pytest.raises(FinalizeError, match="could not read the closing issue references"):
+            _stage_merge(ctx)
+    mocks["engine"].assert_not_called()
+
+
+def test_batch_pr_accepts_a_qualified_close_in_its_own_repo() -> None:
+    ctx = _stage_ctx(["123"])
+    body = "## Issue Linkage\n\nCloses O/R#10\nCloses #11\n"
+    with _batch_pr(body=body) as mocks:
+        _stage_merge(ctx)
+    assert mocks["engine"].call_args.kwargs["strategy"] == "rebase"
+
+
+def test_batch_pr_refuses_a_close_in_another_repo() -> None:
+    ctx = _stage_ctx(["123"])
+    body = "## Issue Linkage\n\nCloses #10\nCloses other/repo#11\n"
+    with (
+        _batch_pr(body=body) as mocks,
+        pytest.raises(FinalizeError, match="other/repo#11, an issue in another repo"),
+    ):
+        _stage_merge(ctx)
+    mocks["engine"].assert_not_called()
+
+
+def test_batch_pr_refuses_a_duplicate_close() -> None:
+    ctx = _stage_ctx(["123"])
+    body = "## Issue Linkage\n\nCloses #10\nCloses o/r#10\n"
+    with (
+        _batch_pr(body=body) as mocks,
+        pytest.raises(FinalizeError, match="Closes #10 more than once"),
+    ):
+        _stage_merge(ctx)
+    mocks["engine"].assert_not_called()
+
+
+def test_batch_check_fetch_failure_refuses() -> None:
+    ctx = _stage_ctx(["123"])
+    with _batch_pr() as mocks:
+        mocks["git_run"].side_effect = subprocess.CalledProcessError(128, "git fetch")
+        with pytest.raises(FinalizeError, match="could not fetch batch PR 123's head"):
+            _stage_merge(ctx)
+    mocks["engine"].assert_not_called()
+
+
+def test_batch_pr_already_merged_skips_the_checks() -> None:
+    ctx = _stage_ctx(["123"])
+    with _batch_pr(state="MERGED") as mocks:
+        _stage_merge(ctx)
+    mocks["engine"].assert_not_called()
+    mocks["git_run"].assert_not_called()
+    mocks["closing"].assert_not_called()
+    assert ctx.merged_branch == _BATCH_HEAD
+
+
+def test_batch_pr_dry_run_names_the_batch_and_checks_nothing(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    ctx = _stage_ctx(["123", "--dry-run"])
+    with _batch_pr() as mocks:
+        _stage_merge(ctx)
+    assert "merge batch PR (#10, #11) 123 (--rebase)" in capsys.readouterr().out
+    mocks["engine"].assert_not_called()
+    mocks["git_run"].assert_not_called()
+
+
+def test_read_pr_body_returns_the_body() -> None:
+    with patch(_MOD + ".github.read_json", return_value={"body": "Closes #1\n"}) as read:
+        assert _read_pr_body("123") == "Closes #1\n"
+    read.assert_called_once_with("pr", "view", "123", "--json", "body")
+
+
+@pytest.mark.parametrize("response", [{}, {"body": None}, []])
+def test_read_pr_body_refuses_a_response_with_no_body(response: object) -> None:
+    with (
+        patch(_MOD + ".github.read_json", return_value=response),
+        pytest.raises(FinalizeError, match="no body in the response"),
+    ):
+        _read_pr_body("123")
+
+
+def test_read_pr_body_refuses_a_failed_read() -> None:
+    with (
+        patch(
+            _MOD + ".github.read_json",
+            side_effect=GitHubAPIError(1, "gh pr view", stderr="not found"),
+        ),
+        pytest.raises(FinalizeError, match="could not read the body of PR 123"),
+    ):
+        _read_pr_body("123")
 
 
 # -- close-refs: close what GitHub failed to auto-close (issue #4002) ----------

@@ -148,12 +148,23 @@ def _is_policy_rejection(exc: GitHubAPIError) -> bool:
     return _POLICY_REJECTION_SIGNATURE in (exc.stderr or "").lower()
 
 
+# Substring of the merge endpoint's rejection when ``--match-head-commit`` no
+# longer names the PR's head: someone pushed after the batch check ran.
+_HEAD_MOVED_REJECTION_SIGNATURE = "head branch was modified"
+
+
+def _is_head_moved_rejection(exc: GitHubAPIError) -> bool:
+    """True when a pinned merge was refused because the PR's head moved."""
+    return _HEAD_MOVED_REJECTION_SIGNATURE in (exc.stderr or "").lower()
+
+
 def wait_and_merge(
     pr: str,
     *,
     strategy: str,
     wait_checks: Callable[[str], None] | None = None,
     on_branch_updated: Callable[[], None] | None = None,
+    batch_check: Callable[[], str] | None = None,
 ) -> None:
     """Block until *pr* is green and current, then merge it.
 
@@ -166,6 +177,18 @@ def wait_and_merge(
     (the release workflow) learns that GitHub moved it (#3175). The engine
     itself stays local-checkout agnostic; an exception from the hook
     propagates unchanged.
+
+    ``batch_check`` marks a batch PR (epic vergil-project/.github#1019). It
+    fetches the PR's head, checks the commit-per-issue invariant on it, and
+    returns the SHA it checked; a failed check raises, and the engine lets
+    that propagate unchanged. With it, a behind PR is updated by rebase
+    (``github.update_branch_rebase``), never by merging its base in, and
+    ``batch_check`` runs after every update and immediately before the merge
+    call. The merge is then pinned to the checked SHA
+    (``--match-head-commit``), so a head pushed after the check is refused by
+    GitHub and re-checked, never merged unchecked. A refused pin counts
+    against the same update cap as a branch update. Without it, the engine
+    behaves exactly as before.
 
     The base branch's required status checks are resolved once up front (a
     lookup failure warns and falls back to registered checks only; a PR whose
@@ -244,13 +267,8 @@ def wait_and_merge(
             f"(mergeStateStatus={state or 'unknown'})"
         )
 
-    def _update_or_abort() -> None:
-        """Update the behind branch, or abort once the merge-train cap is hit.
-
-        Shared by the mergeStateStatus precheck, the failed-checks gate (#2914)
-        and the merge endpoint's own stale-behind rejection so all are bounded
-        by one branch-update cap.
-        """
+    def _spend_update() -> None:
+        """Count one branch update or head re-check; abort past the cap."""
         nonlocal updates
         updates += 1
         if updates > _MAX_BRANCH_UPDATES:
@@ -258,16 +276,38 @@ def wait_and_merge(
                 f"PR {pr} still behind after {_MAX_BRANCH_UPDATES} branch updates "
                 "— the merge train is busy; re-run when it settles."
             )
+            if batch_check is not None:
+                msg = (
+                    f"PR {pr} still behind or moving after {_MAX_BRANCH_UPDATES} branch "
+                    "updates and head re-checks — the merge train is busy or the "
+                    "branch is still being pushed; re-run when it settles."
+                )
             raise MergeAbortError(msg)
-        print("Branch is behind base — updating and re-checking...")
+
+    def _update_or_abort() -> None:
+        """Update the behind branch, or abort once the merge-train cap is hit.
+
+        Shared by the mergeStateStatus precheck, the failed-checks gate (#2914)
+        and the merge endpoint's own stale-behind rejection so all are bounded
+        by one branch-update cap. A batch PR is rebased, not merged into, and
+        re-checked after the update.
+        """
+        _spend_update()
         try:
-            github.update_branch(pr)
+            if batch_check is None:
+                print("Branch is behind base — updating and re-checking...")
+                github.update_branch(pr)
+            else:
+                print("Branch is behind base — updating by rebase and re-checking...")
+                github.update_branch_rebase(pr, expected_head=github.head_sha(pr))
         except GitHubAPIError as exc:
             msg = f"update-branch failed for PR {pr}: {exc}"
             raise MergeAbortError(msg) from exc
         time.sleep(_UPDATE_SETTLE_SECS)
         if on_branch_updated is not None:
             on_branch_updated()
+        if batch_check is not None:
+            batch_check()
 
     while True:
         if github.pr_state(pr) == "MERGED":
@@ -330,9 +370,14 @@ def wait_and_merge(
         if github.merge_state_status(pr) == "BEHIND":
             continue  # something merged while we waited -> update at loop top
 
-        print(f"Checks passed. Merging {pr} (--{strategy})...")
         try:
-            github.merge(pr, strategy=strategy)
+            if batch_check is None:
+                print(f"Checks passed. Merging {pr} (--{strategy})...")
+                github.merge(pr, strategy=strategy)
+            else:
+                checked = batch_check()
+                print(f"Checks passed. Merging {pr} (--{strategy}) at checked head {checked}...")
+                github.merge(pr, strategy=strategy, match_head=checked)
         except GitHubAPIError as exc:
             # The merge endpoint enforces "require branches up to date" itself.
             # A stale-behind rejection here is the authoritative signal the lazy
@@ -340,6 +385,13 @@ def wait_and_merge(
             # the same update-and-retry path.
             if _is_behind_rejection(exc):
                 _update_or_abort()
+                continue
+            # A batch merge pinned to the checked head was refused because the
+            # head moved after the check: loop, so the new head is re-checked
+            # before any merge, within the update cap.
+            if batch_check is not None and _is_head_moved_rejection(exc):
+                print(f"PR {pr}'s head moved after the batch check — re-checking...")
+                _spend_update()
                 continue
             # A branch-policy rejection with no failed checks means "not ready
             # yet" (e.g. a required check still registering), not fatal: poll and
