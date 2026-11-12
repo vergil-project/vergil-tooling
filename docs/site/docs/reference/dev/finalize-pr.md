@@ -385,11 +385,20 @@ a batch. For a batch PR, finalize:
 
 `--strategy squash` is refused on a batch PR, since it would collapse the
 issues into one commit and one changelog entry; another explicit
-`--strategy` still overrides. A merge conflict with the target aborts with
-the commands to resolve it: for a batch PR they rebase the branch onto the
-target, validate and push with a lease, because merging the target in adds
-a merge commit the batch check refuses. A single-issue PR merges exactly as
-before.
+`--strategy` still overrides. A single-issue PR still merges with `squash` by default.
+
+A merge conflict with the target aborts with the commands to resolve it.
+Submitting lifted the branch's freeze, so the agent's `pr-watch` can
+resolve it, or the human can with those commands. For a single-issue PR
+and a batch PR alike they rebase the branch onto the target, validate and
+push with a lease; a batch PR's message also warns against merging the
+target in, which adds a merge commit the batch check refuses. A batch PR
+refused for such a merge commit (GitHub's update-branch button) gets the
+same rebase steps, and the same note that `pr-watch` or the human can fix
+it. Only a `release/*` branch keeps merge-based steps: it merges with a
+merge commit to keep the `develop`/`main` ancestry (issue #1620), so its
+message merges the target in and never rebases, and `pr-watch` never
+handles it.
 
 ## Batch mode (comma-list / `--all`)
 

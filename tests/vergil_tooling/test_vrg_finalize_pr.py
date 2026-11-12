@@ -2226,7 +2226,9 @@ def test_batch_pr_refuses_commit_mismatch_before_merge() -> None:
 
 def test_batch_pr_refuses_merge_commit_naming_rebase() -> None:
     """Review focus 4: GitHub's update-branch button adds a merge commit; it
-    is refused, with the rebase onto develop and the leased push named."""
+    is refused, with the rebase onto develop and the leased push named. The
+    freeze lifted at submit, so the message names pr-watch or the human and
+    never says only the human can fix it (#4257)."""
     ctx = _stage_ctx(["123"])
     wt = Path("/repo/.worktrees/issue-10-batch-small-fixes")
     merged_in = (*_GOOD_COMMITS, _commit("d" * 40, "Merge branch 'develop'", parents="b d"))
@@ -2238,6 +2240,10 @@ def test_batch_pr_refuses_merge_commit_naming_rebase() -> None:
     msg = str(excinfo.value)
     assert "dddddddddddd" in msg
     assert "is a merge commit" in msg
+    assert "pr-watch" in msg
+    assert "only you" not in msg
+    assert "already submitted" not in msg
+    assert "frozen" not in msg
     steps = [
         f"cd {wt}",
         "git fetch origin",
