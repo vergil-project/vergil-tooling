@@ -9,14 +9,17 @@ the configured products' release assets:
    lines, and download only those;
 3. drop every artifact whose package name is in ``[retention].retire``;
 4. verify the rest: provenance, and rpm signatures (rpm key in a private rpm DB);
-5. wipe the output directory;
-6. write apt metadata for the registry's Ubuntu suites;
-7. write dnf metadata for the registry's EL releases;
-8. sign: ``Release`` → ``InRelease`` + ``Release.gpg``, ``repomd.xml`` →
-   ``repomd.xml.asc``;
-9. publish the public key at ``keys/<vendor>.asc``;
-10. write a minimal ``index.html`` with setup instructions and the fingerprint;
-11. enforce the size guard.
+5. read the live site's index generations (see ``generations``);
+6. wipe the output directory;
+7. write apt metadata for the registry's Ubuntu suites;
+8. write dnf metadata for the registry's EL releases;
+9. republish the content-addressed files of the earlier generations kept
+   (``[retention].generations``) and write the new generations manifest;
+10. sign: ``Release`` → ``InRelease`` + ``Release.gpg``, ``repomd.xml`` →
+    ``repomd.xml.asc``;
+11. publish the public key at ``keys/<vendor>.asc``;
+12. write a minimal ``index.html`` with setup instructions and the fingerprint;
+13. enforce the size guard.
 """
 
 from __future__ import annotations
@@ -25,16 +28,18 @@ import html
 import os
 import shutil
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib.package import PackageError, repo_setup
-from vergil_tooling.lib.package.index import apt, collect, retention, rpm, sign
+from vergil_tooling.lib.package.index import apt, collect, generations, retention, rpm, sign
 from vergil_tooling.lib.package.index import config as index_config
 from vergil_tooling.lib.package.index.collect import _call
 from vergil_tooling.lib.package.targets import REGISTRY
 
 if TYPE_CHECKING:
+    from vergil_tooling.lib.package.index.generations import Fetch
     from vergil_tooling.lib.package.repo_setup import Run
 
 SIZE_WARN = 750_000_000
@@ -144,6 +149,7 @@ def build_site(
     run: Run = repo_setup.local_run,
     *,
     base_url: str,
+    fetch: Fetch = generations.http_fetch,
 ) -> None:
     """Build, sign and size-check the package-repository site in ``out``."""
     cfg = index_config.load(config)
@@ -161,12 +167,18 @@ def build_site(
     collect.verify(kept, keyfile, run, rpmdb=rpmdb)
     print(f"indexing {len(kept)} of {len(artifacts)} collected package(s)")
 
+    previous = generations.load_previous(base_url, fetch)
+
     _wipe(out, config, keys_dir, workdir)
+    now = datetime.now(UTC)
     deb_suites = suites("deb")
     releases = apt.write(
-        out, kept, deb_suites, lambda p: apt.deb_control(p, run), vendor=cfg.vendor
+        out, kept, deb_suites, lambda p: apt.deb_control(p, run), vendor=cfg.vendor, now=now
     )
     repomds = rpm.write(out, kept, base_url, suites("rpm"), run)
+    built = generations.current(out, now)
+    carried = generations.carry(out, base_url, previous, cfg.generations, fetch)
+    generations.write_manifest(out, built, carried)
 
     sign.import_key(run, sign.KEY_ENV, sign.PASS_ENV)
     for release in releases:

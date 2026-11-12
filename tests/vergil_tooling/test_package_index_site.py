@@ -8,13 +8,16 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from vergil_tooling.lib.package import PackageError, repo_setup
-from vergil_tooling.lib.package.index import apt, collect, retention, rpm, sign, site
+from vergil_tooling.lib.package.index import apt, collect, generations, retention, rpm, sign, site
 from vergil_tooling.lib.package.index.collect import Artifact
+from vergil_tooling.lib.package.index.generations import Generation
 
 if TYPE_CHECKING:
+    from datetime import datetime
     from pathlib import Path
 
     from vergil_tooling.lib.package.index.config import IndexConfig
+    from vergil_tooling.lib.package.index.generations import Fetch
 
 _FPR = "0123456789ABCDEF0123456789ABCDEF01234567"
 _COLONS = (
@@ -175,6 +178,7 @@ class _Patched:
 
     def __init__(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         self.events: list[tuple[Any, ...]] = []
+        self.now: datetime | None = None
         self.arts = [_art(tmp_path, "deb"), _art(tmp_path, "rpm")]
         ev = self.events
 
@@ -196,8 +200,15 @@ class _Patched:
             return arts[:1]
 
         def fake_apt(
-            out: Path, arts: list[Artifact], suites: list[str], control: Any, *, vendor: str
+            out: Path,
+            arts: list[Artifact],
+            suites: list[str],
+            control: Any,
+            *,
+            vendor: str,
+            now: datetime,
         ) -> list[Path]:
+            self.now = now
             ev.append(("apt", [a.fmt for a in arts], suites, vendor, sorted(_rel_paths(out))))
             rel = out / "deb/dists/noble/Release"
             rel.parent.mkdir(parents=True)
@@ -212,6 +223,30 @@ class _Patched:
             repomd.parent.mkdir(parents=True)
             repomd.write_text("M")
             return [repomd]
+
+        self.previous = [Generation("old", ("f",))]
+        self.built = Generation("new", ("g",))
+
+        def fake_load_previous(base: str, fetch: Fetch) -> list[Generation]:
+            ev.append(("load_previous", base, fetch is generations.http_fetch, out_exists()))
+            return self.previous
+
+        def fake_current(out: Path, now: datetime) -> Generation:
+            ev.append(("current", now is self.now))
+            return self.built
+
+        def fake_carry(
+            out: Path, base: str, previous: list[Generation], keep: int, fetch: Fetch
+        ) -> list[Generation]:
+            ev.append(("carry", base, previous is self.previous, keep))
+            return previous
+
+        def fake_write_manifest(out: Path, built: Generation, kept: list[Generation]) -> Path:
+            ev.append(("write_manifest", built is self.built, kept is self.previous))
+            return out / generations.MANIFEST
+
+        def out_exists() -> bool:
+            return (tmp_path / "_site" / "stale").exists()
 
         def fake_import(run: repo_setup.Run, key_env: str, pass_env: str) -> None:
             ev.append(("import_key", key_env, pass_env))
@@ -232,6 +267,10 @@ class _Patched:
         monkeypatch.setattr(retention, "drop_retired", fake_drop_retired)
         monkeypatch.setattr(apt, "write", fake_apt)
         monkeypatch.setattr(rpm, "write", fake_rpm)
+        monkeypatch.setattr(generations, "load_previous", fake_load_previous)
+        monkeypatch.setattr(generations, "current", fake_current)
+        monkeypatch.setattr(generations, "carry", fake_carry)
+        monkeypatch.setattr(generations, "write_manifest", fake_write_manifest)
         monkeypatch.setattr(sign, "import_key", fake_import)
         monkeypatch.setattr(sign, "clearsign", fake_clearsign)
         monkeypatch.setattr(sign, "detach", fake_detach)
@@ -257,8 +296,14 @@ def test_build_site_runs_every_step_in_order(
         ("collect", "v", ["o/t"], "work"),
         ("drop_retired", ["old-rt"]),
         ("verify", 1, "v.asc", "rpmdb", False),
+        # Read before the wipe: the stale output is still there.
+        ("load_previous", "https://v.github.io/p/", True, True),
         ("apt", ["deb"], ["noble", "resolute"], "v", []),
         ("rpm", "https://v.github.io/p/", ["el9", "el10"]),
+        ("current", True),
+        # [retention].generations defaults to 3.
+        ("carry", "https://v.github.io/p/", True, 3),
+        ("write_manifest", True, True),
         ("import_key", "PACKAGE_SIGNING_KEY", "PACKAGE_SIGNING_PASSPHRASE"),
         ("clearsign", "Release", "InRelease", _FPR),
         ("detach", "Release", "Release.gpg", _FPR),
@@ -296,7 +341,13 @@ def test_build_site_control_reads_through_the_given_run(
     seen: list[Any] = []
 
     def fake_apt(
-        out: Path, arts: list[Artifact], suites: list[str], control: Any, *, vendor: str
+        out: Path,
+        arts: list[Artifact],
+        suites: list[str],
+        control: Any,
+        *,
+        vendor: str,
+        now: datetime,
     ) -> list[Path]:
         seen.append(control(tmp_path / "t.deb"))
         return []
