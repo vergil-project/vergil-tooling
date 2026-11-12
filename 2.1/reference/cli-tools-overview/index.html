@@ -1406,6 +1406,8 @@
       
         
       
+        
+      
     
     
     
@@ -1458,6 +1460,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.305/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.305
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -14025,10 +14055,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#vrg-worktree-status" class="md-nav__link">
+  <a href="#vrg-repo-status" class="md-nav__link">
     <span class="md-ellipsis">
       
-        vrg-worktree-status
+        vrg-repo-status
       
     </span>
   </a>
@@ -18644,10 +18674,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#vrg-worktree-status" class="md-nav__link">
+  <a href="#vrg-repo-status" class="md-nav__link">
     <span class="md-ellipsis">
       
-        vrg-worktree-status
+        vrg-repo-status
       
     </span>
   </a>
@@ -21249,12 +21279,13 @@ which sets <code>VRG_EPIC_SWEEP=1</code>. Other invariant violations stay report
 </tr>
 </tbody>
 </table>
-<h3 id="vrg-worktree-status">vrg-worktree-status<a class="headerlink" href="#vrg-worktree-status" title="Permanent link">&para;</a></h3>
+<h3 id="vrg-repo-status">vrg-repo-status<a class="headerlink" href="#vrg-repo-status" title="Permanent link">&para;</a></h3>
 <p>Show every worktree git knows about in the current repo, grouped by
-kind, so nothing with code on disk goes unseen (issue #3386). Read-only
-— cleanup stays <code>vrg-finalize-pr</code>'s job, and finalize and sweep still
-act only on development worktrees. Local branches with no worktree are
-not shown. The sections, in order:</p>
+kind, so nothing with code on disk goes unseen (issue #3386), then what
+the integration branch holds that <code>main</code> does not. Read-only — it never
+fetches or writes a ref, cleanup stays <code>vrg-finalize-pr</code>'s job, and
+finalize and sweep still act only on development worktrees. Local
+branches with no worktree are not shown. The sections, in order:</p>
 <ol>
 <li><strong>Main checkout</strong> — always shown. Its STATUS is <code>ok</code>, or <code>PROBLEM:</code>
    followed by each issue found: not on the integration branch, dirty,
@@ -21274,9 +21305,12 @@ not shown. The sections, in order:</p>
    each row shows age, PR state and dirty state and a leftover stands out.</li>
 <li><strong>Other / unknown</strong> — any other branch, a detached HEAD, or a
    worktree outside <code>.worktrees/</code> (shown by its full path).</li>
+<li><strong>Pending release</strong> — every change on the integration branch that is
+   not yet on <code>main</code>, described below. Shown only in a repo that
+   publishes.</li>
 </ol>
-<p>Empty sections are omitted; the summary line counts every section,
-including the empty ones. A branch that was deleted on its remote is
+<p>Empty worktree sections are omitted; the summary line counts every
+worktree section, including the empty ones. A branch that was deleted on its remote is
 still listed, with <code>(branch gone)</code> after its name. That check queries
 each remote once; if it fails, a note gives the reason.</p>
 <p>The worktree sections share one table. PR state is queried from GitHub
@@ -21313,6 +21347,53 @@ keeps its LAST COMMIT.</p>
 <a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>3 worktrees: main checkout (ok), 1 development, 0 release and dependency machinery, 1 other / unknown.
 <a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a>Development: 0 active, 0 needs-attention, 1 stalled (no-pr), 0 cruft (removable). 1 PR prepared.
 </code></pre></div>
+<p><strong>Pending release.</strong> The section follows the worktree sections and comes
+before the summary lines. It is shown only when <code>vergil.toml</code> sets
+<code>[publish].release = true</code>; with the flag false or absent, nothing is
+printed for it, and without a <code>vergil.toml</code> a note says it was skipped.
+In a publishing repo it is always shown, even when nothing is pending.
+It lists every change on the integration branch that is not on <code>main</code>,
+read from the remote without fetching: the current refs and tags, the
+first-parent commits from the GitHub compare API, and each commit's
+merged PR into the integration branch, by commit SHA (so a batch PR
+rebase-merged as several commits is one row).</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>Pending release (develop → main)
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>  latest release: v2.1.303, main moved 4h ago; rolling tag v2.1 → v2.1.303
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>PR     BRANCH                      TYPE     MERGED  TITLE
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>#4251  release/post-2.1.303        release  4h ago  chore(release): back-merge 2.1.303 and bump to 2.1.304
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>#4258  deps/update-2.1.304         deps     4h ago  chore(deps): dependency update for 2.1.304
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>#4252  feature/4249-refuse-ubuntu  feat     1h ago  feat(validate): refuse ubuntu-latest runner labels
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>3 changes pending release: 1 dependency update, 1 release back-merge, 1 other PR.
+</code></pre></div>
+<ul>
+<li><strong>Release line.</strong> The latest release is the highest <code>vX.Y.Z</code> tag on
+  the remote (<code>no release yet</code> without one), with how long ago <code>main</code>
+  last moved. The rolling tag is the highest <code>vX.Y</code> tag, shown with the
+  <code>vX.Y.Z</code> tag on the same commit, or its short SHA when that commit has
+  none, or <code>no rolling tag</code>. A rolling tag behind the latest release is
+  shown as <code>(lags vX.Y.Z)</code>: information, not a problem, since it can be
+  held back deliberately. Rolling major <code>vX</code> tags and <code>develop-v*</code> tags
+  are ignored.</li>
+<li><strong>Rows</strong> come in merge order, oldest first. TYPE is the PR title's
+  conventional-commit type (<code>-</code> when it has none), except that a
+  dependency update (a <code>deps/update-*</code> head branch or a
+  <code>dependency-update</code> label) shows <code>deps</code> and a release back-merge (a
+  <code>release/post-*</code> head branch) shows <code>release</code>. MERGED is the PR's
+  merge time. A TITLE over 72 characters is cut, ending in <code>…</code>.</li>
+<li><strong>A commit with no PR</strong> shows <code>PROBLEM</code> in the PR column and <code>-</code> for
+  BRANCH and TYPE, with its commit date and subject, and a
+  <code>PROBLEM: &lt;sha&gt; reached develop without a PR</code> note after the table.</li>
+<li><strong>Nothing pending</strong> prints <code>Nothing pending release: develop and main
+  are level.</code> in place of the table.</li>
+<li><strong>The summary line</strong> counts the changes: dependency updates, release
+  back-merges and other PRs, every bucket listed, plus
+  <code>&lt;n&gt; PROBLEM: commits with no PR</code> only when there are some.</li>
+<li><strong>A lookup that fails or is incomplete</strong> (an API error, a missing
+  branch, a truncated answer) is an error, never a partial list: the
+  section prints its heading and <code>ERROR: pending release: &lt;reason&gt;</code>
+  alone. The rest of the output still prints, then the command exits 1.
+  The reason never carries URL credentials.</li>
+</ul>
 <table>
 <thead>
 <tr>
@@ -21323,7 +21404,7 @@ keeps its LAST COMMIT.</p>
 <tbody>
 <tr>
 <td>Source</td>
-<td><code>vergil_tooling.bin.vrg_worktree_status</code></td>
+<td><code>vergil_tooling.bin.vrg_repo_status</code> (pending release: <code>lib/pending_release.py</code>)</td>
 </tr>
 <tr>
 <td>Args</td>
@@ -21331,15 +21412,15 @@ keeps its LAST COMMIT.</p>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>Git repo; <code>gh</code> CLI on PATH for PR state</td>
+<td>Git repo; <code>gh</code> CLI on PATH for PR state; for the Pending release section, a github.com <code>origin</code> and GitHub credentials</td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>None for classification — a failed PR lookup is reported as an <code>unknown</code> row and a failed branch-gone check as a note, never a crash. A malformed <code>vergil.toml</code> exits 1 with the reason</td>
+<td>None for classification — a failed PR lookup is reported as an <code>unknown</code> row and a failed branch-gone check as a note, never a crash. A malformed <code>vergil.toml</code> exits 1 with the reason. A failed or incomplete pending-release lookup prints <code>ERROR:</code> in its section and exits 1 after the rest of the output</td>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 success, 1 malformed <code>vergil.toml</code></td>
+<td>0 success, 1 malformed <code>vergil.toml</code> or a pending-release lookup error</td>
 </tr>
 <tr>
 <td>Status</td>

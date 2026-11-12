@@ -1406,6 +1406,8 @@
       
         
       
+        
+      
     
     
     
@@ -1458,6 +1460,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.305/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.305
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17709,13 +17739,13 @@
 that omits <code>[container]</code> behaves exactly as it would with an empty table.</p>
 <p>The keys describe the <em>same</em> container from a few angles: <code>env-prefixes</code> controls
 which host environment variables <code>vrg-container-run</code> forwards <strong>into</strong> the
-container, <code>system-packages</code> declares Debian packages installed <strong>inside</strong> it, and
+container, <code>system-packages</code> declares Ubuntu packages installed <strong>inside</strong> it, and
 <code>build-command</code> runs a repo-declared provisioning step when the cached dev image
 is built (with <code>build-cache-files</code> naming the inputs that invalidate the cache).</p>
 <h2 id="structure">Structure<a class="headerlink" href="#structure" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">[container]</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">env-prefixes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"MQ_"</span><span class="p">]</span><span class="w">                          </span><span class="c1"># forward matching host env vars</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">system-packages</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"lilypond"</span><span class="p">]</span><span class="w">                  </span><span class="c1"># install Debian packages</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">system-packages</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"lilypond"</span><span class="p">]</span><span class="w">                  </span><span class="c1"># install Ubuntu packages</span>
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">build-command</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"npm install -g @coderline/alphatab"</span><span class="w">  </span><span class="c1"># provision non-apt deps</span>
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="n">build-cache-files</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"package-lock.json"</span><span class="p">]</span><span class="w">       </span><span class="c1"># inputs that invalidate the cache</span>
 </code></pre></div>
@@ -17740,7 +17770,7 @@ is built (with <code>build-cache-files</code> naming the inputs that invalidate 
 <td><code>system-packages</code></td>
 <td>list of strings</td>
 <td><code>[]</code></td>
-<td>Debian <code>apt</code> package <strong>names</strong> baked into the local cached dev image and installed on CI test jobs (see below)</td>
+<td>Ubuntu <code>apt</code> package <strong>names</strong> baked into the local cached dev image and installed on CI test jobs (see below)</td>
 </tr>
 <tr>
 <td><code>build-command</code></td>
@@ -17860,7 +17890,7 @@ fetches the published window.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nv">VRG_VERSION_WINDOW</span><span class="o">=</span>/abs/path/window.json<span class="w"> </span>vrg-container-run<span class="w"> </span>--<span class="w"> </span>vrg-ci-resolve
 </code></pre></div>
 <h2 id="system-packages"><code>system-packages</code><a class="headerlink" href="#system-packages" title="Permanent link">&para;</a></h2>
-<p>A list of Debian package <strong>names</strong> — nothing more. Vergil's container model
+<p>A list of Ubuntu package <strong>names</strong> — nothing more. Vergil's container model
 otherwise treats a system dependency as a property of the <strong>language</strong>
 (<code>dev-python:3.14</code> means the same thing everywhere), which is what makes the
 per-branch image cache sound. <code>system-packages</code> is the sanctioned escape hatch
@@ -17872,8 +17902,8 @@ shared base images (epic
 <p>The packages are installed with:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>apt-get install -y --no-install-recommends &lt;names&gt;
 </code></pre></div>
-<p>from the base image's <strong>existing</strong> apt sources (Debian main). The surface is
-deliberately narrow — <strong>names only</strong>:</p>
+<p>from the base image's <strong>existing</strong> apt sources (the Ubuntu 24.04 archive the
+image's sources name). The surface is deliberately narrow — <strong>names only</strong>:</p>
 <ul>
 <li><strong>No</strong> third-party apt sources, signing keys, <code>add-apt-repository</code>, or install
   scripts.</li>
@@ -17915,7 +17945,7 @@ build rather than producing a container that fails mysteriously inside a test.</
 No special-casing is needed, and an empty or absent list is byte-identical to a
 repo that declares no packages at all.</p>
 <h3 id="trust-model">Trust model<a class="headerlink" href="#trust-model" title="Permanent link">&para;</a></h3>
-<p>A repo can express Debian package <em>names</em> only, installed from the base image's
+<p>A repo can express Ubuntu package <em>names</em> only, installed from the base image's
 existing sources, as root — exactly what the base image already grants. It cannot
 fetch arbitrary URLs or run arbitrary code. Adding to <code>system-packages</code> is a
 <code>vergil.toml</code> change <strong>reviewed like any config change, via the PR diff</strong>: the
@@ -17991,7 +18021,7 @@ installed, list that lockfile in <code>build-cache-files</code> so a dependency 
 invalidates the cache.</p>
 <h3 id="trust-model_1">Trust model<a class="headerlink" href="#trust-model_1" title="Permanent link">&para;</a></h3>
 <p><code>build-command</code> is a deliberate <strong>broadening</strong> of the surface <code>system-packages</code>
-grants. Where <code>system-packages</code> is names-only — Debian packages installed from
+grants. Where <code>system-packages</code> is names-only — Ubuntu packages installed from
 the base image's existing sources, with no allowlist because the surface is
 already constrained — <code>build-command</code> is <strong>arbitrary shell, run as root, at
 image-build time</strong>. It can fetch URLs, run installers, and write anywhere in the
