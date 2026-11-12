@@ -8,6 +8,7 @@ products = ["vergil-project/packages", "vergil-project/vergil-tooling"]
 keep = 3             # releases kept per major.minor line
 lines = 2            # newest major.minor lines kept per product
 retire = []          # exact package names dropped from the index (every fmt and arch)
+generations = 3      # index generations whose content-addressed files are published (>= 2)
 ```
 """
 
@@ -25,9 +26,12 @@ if TYPE_CHECKING:
 
 DEFAULT_KEEP = 3
 DEFAULT_LINES = 2
+# The current index and two earlier ones: Debian's repository format asks that
+# "two or more previous versions" of a by-hash file stay available (#4230).
+DEFAULT_GENERATIONS = 3
 
 _TOP_KEYS = frozenset({"vendor", "products", "retention"})
-_RETENTION_KEYS = frozenset({"keep", "lines", "retire"})
+_RETENTION_KEYS = frozenset({"keep", "lines", "retire", "generations"})
 _PRODUCT_RE = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 
 
@@ -38,13 +42,16 @@ class IndexConfig:
     keep: int
     lines: int
     retire: tuple[str, ...] = ()
+    generations: int = DEFAULT_GENERATIONS
 
 
-def _positive_int(table: dict[str, Any], key: str, default: int, name: str) -> int:
+def _positive_int(
+    table: dict[str, Any], key: str, default: int, name: str, minimum: int = 1
+) -> int:
     value = table.get(key, default)
     # bool is an int subclass; ``keep = true`` is a mistake, not 1.
-    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        msg = f"{name}: retention.{key} must be an integer >= 1, got {value!r}"
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        msg = f"{name}: retention.{key} must be an integer >= {minimum}, got {value!r}"
         raise PackageError(msg)
     return value
 
@@ -117,4 +124,5 @@ def load(path: Path) -> IndexConfig:
         keep=_positive_int(retention, "keep", DEFAULT_KEEP, name),
         lines=_positive_int(retention, "lines", DEFAULT_LINES, name),
         retire=_retire(retention, name),
+        generations=_positive_int(retention, "generations", DEFAULT_GENERATIONS, name, 2),
     )

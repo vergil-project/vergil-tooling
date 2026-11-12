@@ -560,6 +560,7 @@ products = ["vergil-project/packages", "vergil-project/vergil-tooling"]
 keep = 3                          # releases kept per major.minor line (default 3)
 lines = 2                         # newest major.minor lines kept per product (default 2)
 retire = ["vergil-python3.14.8"]  # exact package names to drop (default: none)
+generations = 3                   # index generations kept published (default 3, at least 2)
 ```
 
 The index is rebuilt from scratch on every run. For each product it lists
@@ -577,6 +578,35 @@ Every package left after `retire` is verified before it is indexed: its
 build attestation must come from the release workflow on `main`, and every
 `.rpm` must carry a valid org signature. A failure fails the index build.
 
+### Index generations and by-hash files
+
+GitHub Pages' CDN caches each file of the site on its own for up to ten
+minutes, so just after a publish a client can be served the new `InRelease`
+with an old `Packages.gz`, or the reverse. The index is published so that
+neither breaks a client:
+
+- Every apt `Packages` and `Packages.gz` is also published as
+  `dists/<suite>/main/binary-<arch>/by-hash/SHA256/<sha256>`, and `Release`
+  declares `Acquire-By-Hash: yes`. apt then fetches each index by the digest
+  its `InRelease` names, a path whose content never changes. The plain names
+  stay for clients that do not use by-hash.
+- dnf's metadata files are already named by their digest
+  (`repodata/<sha256>-primary.xml.gz`, createrepo_c's default).
+- A client still holding an earlier `InRelease` or `repomd.xml` must find
+  the files it names, so each build also republishes the by-hash and
+  `repodata` files of the newest `generations - 1` earlier builds. It reads
+  their list from `index-generations.json` on the live site, downloads each
+  one, checks it against the digest in its name, and writes a new
+  `index-generations.json` with its own generation first. Older generations
+  are dropped, and disappear when the new site is deployed.
+
+The default, `3`, keeps the current index and the two before it, as
+[Debian's repository format](https://wiki.debian.org/DebianRepository/Format)
+asks of a by-hash repository. A site with no `index-generations.json` yet
+starts with no earlier generation. Any other failure to read the live site, a
+malformed `index-generations.json`, or a listed file that is missing or does
+not match its digest, fails the index build.
+
 ### Checking `packages.toml` without building
 
 ```bash
@@ -586,7 +616,8 @@ vrg-package index --check-config --config packages.toml
 validates `packages.toml` and exits without building anything. It applies
 every check the index build makes on the file itself: known keys only, a
 non-empty `vendor`, well-formed and unique `products`, positive integer
-`keep` and `lines`, and well-formed and unique `retire` entries. It uses no
+`keep` and `lines`, an integer `generations` of at least 2, and
+well-formed and unique `retire` entries. It uses no
 network, signing keys or output directory, so `--keys` and `--out` are not
 needed. On success it prints `vrg-package: packages.toml: ok`. On any
 invalid value it prints the error and exits non-zero, so a repo's
