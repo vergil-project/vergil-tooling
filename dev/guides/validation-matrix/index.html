@@ -17711,9 +17711,8 @@ dev images come from
 <li>repo-profile: <code>vergil.toml</code> is present and valid, and
    <code>README.md</code> follows the structural conventions. See the
    <a href="../../reference/lint/repo-profile/">repo-profile reference</a>.</li>
-<li>markdownlint on <code>docs/site/**/*.md</code> and <code>README.md</code>, with the
-   canonical config bundled in vergil-tooling, then on <code>epics/</code> with a
-   config that relaxes line length. See the
+<li>markdownlint on <code>docs/site/**/*.md</code>, <code>README.md</code> and <code>epics/</code>, in one
+   pass with the canonical config bundled in vergil-tooling. See the
    <a href="../../reference/lint/markdown-standards/">Markdown Validation</a>
    reference.</li>
 <li>shellcheck on shell scripts under <code>scripts/</code> and on every <code>*.sh</code>

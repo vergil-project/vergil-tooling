@@ -14023,6 +14023,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#line-length" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Line length
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#how-it-runs" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17263,6 +17274,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#line-length" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Line length
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#how-it-runs" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17304,10 +17326,10 @@
 <h1 id="markdown-validation">Markdown Validation<a class="headerlink" href="#markdown-validation" title="Permanent link">&para;</a></h1>
 <p>Markdown validation is handled by <code>vrg-validate</code> (common checks) as
 part of the standard validation pipeline. It runs <code>markdownlint</code>
-against published documentation using a canonical config bundled in
-vergil-tooling.</p>
+against published documentation and epic documents using a canonical
+config bundled in vergil-tooling.</p>
 <h2 id="scope">Scope<a class="headerlink" href="#scope" title="Permanent link">&para;</a></h2>
-<p>Validation targets published markdown only:</p>
+<p>Validation targets these files:</p>
 <table>
 <thead>
 <tr>
@@ -17324,10 +17346,15 @@ vergil-tooling.</p>
 <td>Project README</td>
 <td><code>README.md</code></td>
 </tr>
+<tr>
+<td>Epic specs, plans and retrospectives</td>
+<td><code>epics/**/*.md</code></td>
+</tr>
 </tbody>
 </table>
 <p>Other markdown files (changelogs, release notes, internal docs) are
-not validated by this check.</p>
+not validated by this check. The <code>[markdownlint].ignore</code> paths in
+<code>vergil.toml</code> drop files under <code>docs/site/</code> and <code>epics/</code>.</p>
 <h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
 <p>The canonical config is bundled at
 <code>src/vergil_tooling/configs/markdownlint.yaml</code> and resolved at
@@ -17336,11 +17363,8 @@ local <code>.markdownlint.yaml</code> -- the bundled config applies everywhere.<
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nt">no-duplicate-heading</span><span class="p">:</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span><span class="nt">siblings_only</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="nt">MD013</span><span class="p">:</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">  </span><span class="nt">line_length</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">100</span>
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">  </span><span class="nt">tables</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">  </span><span class="nt">code_blocks</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
-<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="nt">MD060</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="nt">MD013</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="nt">MD060</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
 </code></pre></div>
 <p>Key rules:</p>
 <table>
@@ -17354,18 +17378,8 @@ local <code>.markdownlint.yaml</code> -- the bundled config applies everywhere.<
 <tbody>
 <tr>
 <td>Line length (MD013)</td>
-<td>100 chars</td>
-<td>Matches ruff <code>line-length</code> setting</td>
-</tr>
-<tr>
-<td>Tables</td>
-<td>Exempt from line length</td>
-<td>Wide reference tables are legitimate</td>
-</tr>
-<tr>
-<td>Code blocks</td>
-<td>Exempt from line length</td>
-<td>Pasted commands and snippets exceed it</td>
+<td>Disabled</td>
+<td>Files are read rendered, not raw; see <a href="#line-length">Line length</a></td>
 </tr>
 <tr>
 <td>Duplicate headings</td>
@@ -17379,12 +17393,25 @@ local <code>.markdownlint.yaml</code> -- the bundled config applies everywhere.<
 </tr>
 </tbody>
 </table>
+<h2 id="line-length">Line length<a class="headerlink" href="#line-length" title="Permanent link">&para;</a></h2>
+<p>MD013 is off. The rule exists to keep raw Markdown comfortable to read
+in a terminal or a plain editor, but nobody reads these files raw: they
+are read rendered, on GitHub and on the docs sites, and every editor
+soft-wraps. Dropping it is a deliberate step in the fleet's move toward
+machine-generated, machine-checked content. An audit of the 1,778
+tracked Markdown files in the three active orgs found 10,326 prose
+lines over 100 columns and a 99th percentile of 272 columns, so no
+workable limit avoids a mass rewrap that no reader would see.</p>
+<p>This reverses the earlier 100-column limit on <code>docs/site/</code> and
+<code>README.md</code>. <code>epics/</code> was already exempt, through a separate relaxed
+config that is now gone.</p>
 <h2 id="how-it-runs">How it runs<a class="headerlink" href="#how-it-runs" title="Permanent link">&para;</a></h2>
 <p><code>vrg-validate</code> runs common checks, which:</p>
 <ol>
 <li>Discovers markdown files matching the scope above.</li>
 <li>Resolves the bundled <code>markdownlint.yaml</code> config.</li>
-<li>Invokes <code>markdownlint --config &lt;bundled-config&gt; &lt;files...&gt;</code>.</li>
+<li>Invokes <code>markdownlint --config &lt;bundled-config&gt; &lt;files...&gt;</code> once,
+   over every discovered file.</li>
 </ol>
 <p>This runs inside the dev container where <code>markdownlint</code> is on PATH.</p>
 <h2 id="exit-codes">Exit Codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>
