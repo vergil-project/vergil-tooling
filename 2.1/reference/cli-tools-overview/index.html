@@ -1408,6 +1408,8 @@
       
         
       
+        
+      
     
     
     
@@ -1460,6 +1462,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.306/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.306
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -21357,16 +21387,16 @@ read from the remote without fetching: the current refs and tags, the
 first-parent commits from the GitHub compare API, and each commit's
 merged PR into the integration branch, by commit SHA (so a batch PR
 rebase-merged as several commits is one row).</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>Pending release (develop → main)
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>  latest release: v2.1.303, main moved 4h ago; rolling tag v2.1 → v2.1.303
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>PR     BRANCH                      TYPE     MERGED  TITLE
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>#4251  release/post-2.1.303        release  4h ago  chore(release): back-merge 2.1.303 and bump to 2.1.304
-<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>#4258  deps/update-2.1.304         deps     4h ago  chore(deps): dependency update for 2.1.304
-<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>#4252  feature/4249-refuse-ubuntu  feat     1h ago  feat(validate): refuse ubuntu-latest runner labels
-<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>3 changes pending release: 1 dependency update, 1 release back-merge, 1 other PR.
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>Pending release (develop → main): latest release v2.1.303, main moved 4h ago; rolling tag v2.1 → v2.1.303
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>PR     BRANCH                      TYPE     MERGED  TITLE
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>#4251  release/post-2.1.303        release  4h ago  chore(release): back-merge 2.1.303 and bump to 2.1.304
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>#4258  deps/update-2.1.304         deps     4h ago  chore(deps): dependency update for 2.1.304
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>#4252  feature/4249-refuse-ubuntu  feat     1h ago  feat(validate): refuse ubuntu-latest runner labels
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>3 changes pending release: 1 dependency update, 1 release back-merge, 1 other PR.
 </code></pre></div>
 <ul>
-<li><strong>Release line.</strong> The latest release is the highest <code>vX.Y.Z</code> tag on
+<li><strong>Release line.</strong> It follows the section heading on the same line,
+  after a colon. The latest release is the highest <code>vX.Y.Z</code> tag on
   the remote (<code>no release yet</code> without one), with how long ago <code>main</code>
   last moved. The rolling tag is the highest <code>vX.Y</code> tag, shown with the
   <code>vX.Y.Z</code> tag on the same commit, or its short SHA when that commit has
@@ -21390,7 +21420,8 @@ rebase-merged as several commits is one row).</p>
   <code>&lt;n&gt; PROBLEM: commits with no PR</code> only when there are some.</li>
 <li><strong>A lookup that fails or is incomplete</strong> (an API error, a missing
   branch, a truncated answer) is an error, never a partial list: the
-  section prints its heading and <code>ERROR: pending release: &lt;reason&gt;</code>
+  section prints its heading, with no release line, and
+  <code>ERROR: pending release: &lt;reason&gt;</code>
   alone. The rest of the output still prints, then the command exits 1.
   The reason never carries URL credentials.</li>
 </ul>

@@ -1406,6 +1406,8 @@
       
         
       
+        
+      
     
     
     
@@ -1458,6 +1460,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.306/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.306
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17969,7 +17999,11 @@ earlier releases are kept as they were published.</p>
 adding new public surface. Versions: <code>v1.3.0</code> → <code>v1.3.1</code>.</p>
 <h3 id="producer-steps">Producer steps<a class="headerlink" href="#producer-steps" title="Permanent link">&para;</a></h3>
 <ol>
-<li>Land all the patch's changes via normal feature PRs to <code>develop</code>.</li>
+<li>Land all the patch's changes via normal feature PRs to <code>develop</code>.
+   To see what the release will carry, run <code>vrg-repo-status</code>: its
+   Pending release section lists every change on <code>develop</code> that <code>main</code>
+   does not have yet, with the latest release and the rolling tag
+   (see the <a href="../../reference/cli-tools-overview/#vrg-repo-status"><code>vrg-repo-status</code> reference</a>).</li>
 <li>From the root checkout, on a clean <code>develop</code> that matches
    <code>origin/develop</code>, run the release:</li>
 </ol>
