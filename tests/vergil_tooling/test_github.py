@@ -1139,6 +1139,79 @@ def test_update_branch_bare_number_takes_the_repo_gh_resolved() -> None:
     ]
 
 
+def _gh_update_rebase(
+    node_id: str, response: object
+) -> tuple[list[tuple[str, ...]], Callable[..., str]]:
+    """A fake ``read_output`` for update_branch_rebase: the node ID, then the mutation."""
+    calls: list[tuple[str, ...]] = []
+
+    def fake(*args: str) -> str:
+        calls.append(args)
+        if args[:2] == ("pr", "view"):
+            return node_id
+        return json.dumps(response)
+
+    return calls, fake
+
+
+def test_update_branch_rebase_calls_the_rebase_mutation_with_the_expected_head() -> None:
+    response = {"data": {"updatePullRequestBranch": {"pullRequest": {"headRefOid": "new"}}}}
+    calls, fake = _gh_update_rebase("PR_node1", response)
+    pr = "https://github.com/acme/repo/pull/42"
+    with patch("vergil_tooling.lib.github.read_output", side_effect=fake):
+        github.update_branch_rebase(pr, expected_head="abc123")
+    assert calls[0] == ("pr", "view", pr, "--json", "id", "--jq", ".id")
+    mutation = calls[1]
+    assert mutation[:2] == ("api", "graphql")
+    assert "updateMethod: REBASE" in mutation[3]
+    assert "expectedHeadOid: $head" in mutation[3]
+    assert mutation[4:] == ("-f", "id=PR_node1", "-f", "head=abc123")
+
+
+def test_update_branch_rebase_refuses_without_a_node_id() -> None:
+    calls, fake = _gh_update_rebase("", {})
+    with (
+        patch("vergil_tooling.lib.github.read_output", side_effect=fake),
+        pytest.raises(github.GitHubAPIError, match="node ID"),
+    ):
+        github.update_branch_rebase("42", expected_head="abc123")
+    assert len(calls) == 1
+
+
+def test_update_branch_rebase_graphql_errors_raise_api_error() -> None:
+    _calls, fake = _gh_update_rebase("PR_node1", {"data": None, "errors": [{"message": "boom"}]})
+    with (
+        patch("vergil_tooling.lib.github.read_output", side_effect=fake),
+        pytest.raises(github.GitHubAPIError, match="update-branch by rebase failed.*boom"),
+    ):
+        github.update_branch_rebase("42", expected_head="abc123")
+
+
+@pytest.mark.parametrize(
+    "data",
+    [{}, {"updatePullRequestBranch": None}, {"updatePullRequestBranch": {"pullRequest": {}}}],
+)
+def test_update_branch_rebase_refuses_a_response_with_no_updated_pr(data: object) -> None:
+    _calls, fake = _gh_update_rebase("PR_node1", {"data": data})
+    with (
+        patch("vergil_tooling.lib.github.read_output", side_effect=fake),
+        pytest.raises(github.GitHubAPIError, match="no updated pull request"),
+    ):
+        github.update_branch_rebase("42", expected_head="abc123")
+
+
+def test_merge_without_match_head_is_unchanged() -> None:
+    with patch("vergil_tooling.lib.github.run") as run:
+        github.merge("42", strategy="squash")
+    run.assert_called_once_with("pr", "merge", "--squash", "42")
+
+
+def test_merge_with_match_head_pins_the_head_commit() -> None:
+    with patch("vergil_tooling.lib.github.run") as run:
+        github.merge("42", strategy="rebase", match_head="abc123")
+    run.assert_called_once_with("pr", "merge", "--rebase", "--match-head-commit", "abc123", "42")
+
+
 @pytest.mark.parametrize(
     "pr_view",
     [

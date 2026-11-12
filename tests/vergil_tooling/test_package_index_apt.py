@@ -98,6 +98,26 @@ def test_release_hashes_every_packages_file(tmp_path: Path) -> None:
         assert int(size) == len(data)
 
 
+def test_every_index_is_also_published_by_hash(tmp_path: Path) -> None:
+    site = tmp_path / "site"
+    (release,) = apt.write(site, [_deb(tmp_path)], ["noble"], _control, vendor="v", now=_NOW)
+    text = release.read_text()
+    assert "Components: main\nAcquire-By-Hash: yes\nSHA256:\n" in text
+    dist = site / "deb/dists/noble"
+    for arch in ("amd64", "arm64"):
+        out = dist / f"main/binary-{arch}"
+        indexes = [(out / n).read_bytes() for n in ("Packages", "Packages.gz")]
+        by_hash = sorted(p.name for p in (out / "by-hash/SHA256").iterdir())
+        assert by_hash == sorted(hashlib.sha256(d).hexdigest() for d in indexes)
+        for data in indexes:
+            assert (out / "by-hash/SHA256" / hashlib.sha256(data).hexdigest()).read_bytes() == data
+    # Each by-hash path is the digest Release names for its plain-name index.
+    for ln in text.split("SHA256:\n")[1].splitlines():
+        digest, _, rel = ln.split()
+        index = dist / rel
+        assert (index.parent / "by-hash/SHA256" / digest).read_bytes() == index.read_bytes()
+
+
 def test_packages_gz_is_deterministic_and_matches(tmp_path: Path) -> None:
     art = _deb(tmp_path)
     one, two = tmp_path / "one", tmp_path / "two"

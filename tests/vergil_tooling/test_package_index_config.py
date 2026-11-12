@@ -51,6 +51,16 @@ def test_load_retire(tmp_path: Path) -> None:
     )
 
 
+def test_load_generations_defaults_to_three(tmp_path: Path) -> None:
+    p = _write(tmp_path, 'vendor = "v"\nproducts = ["a/b"]\n')
+    assert index_config.load(p).generations == 3
+
+
+def test_load_generations(tmp_path: Path) -> None:
+    p = _write(tmp_path, 'vendor = "v"\nproducts = ["a/b"]\n[retention]\ngenerations = 2\n')
+    assert index_config.load(p) == IndexConfig("v", ["a/b"], keep=3, lines=2, generations=2)
+
+
 def test_load_empty_retire_retires_nothing(tmp_path: Path) -> None:
     p = _write(tmp_path, 'vendor = "v"\nproducts = ["a/b"]\n[retention]\nretire = []\n')
     assert index_config.load(p).retire == ()
@@ -88,6 +98,14 @@ def test_load_empty_retire_retires_nothing(tmp_path: Path) -> None:
         (
             'vendor = "v"\nproducts = ["a/b"]\n[retention]\nlines = "2"\n',
             r"retention\.lines must be an integer >= 1",
+        ),
+        (
+            'vendor = "v"\nproducts = ["a/b"]\n[retention]\ngenerations = 1\n',
+            r"retention\.generations must be an integer >= 2, got 1",
+        ),
+        (
+            'vendor = "v"\nproducts = ["a/b"]\n[retention]\ngenerations = true\n',
+            r"retention\.generations must be an integer >= 2, got True",
         ),
         (
             'vendor = "v"\nproducts = ["a/b"]\n[retention]\nretire = "p"\n',

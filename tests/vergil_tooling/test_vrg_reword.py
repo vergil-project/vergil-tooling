@@ -537,7 +537,7 @@ def _record_workflow(repo: Path, *, ready: bool) -> None:
     """Write the worktree's PR-workflow state, reported ready or implementing."""
     head = _git(repo, "rev-parse", "HEAD")
     state = engine.init_state(
-        issue="1",
+        issues=["1"],
         branch="feature/1-x",
         base="origin/develop",
         head_sha=head,

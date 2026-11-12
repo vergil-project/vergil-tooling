@@ -95,20 +95,32 @@ shell expansion, no pipes, no redirection.
 | `push` | `--force`, `-f`; `--force-with-lease` conditional | `--force-with-lease` allowed on non-protected branches |
 | `fetch` | — | Read-only |
 | `pull` | — | Fast-forward updates |
-| `checkout` | `-- .`, `-- *` | Specific-file restore allowed |
+| `checkout` | — | A pathspec checkout (`checkout .`, `checkout -- <path>`) is a local rewrite |
 | `switch` | — | Branch switching |
 | `stash` | — | All stash subcommands allowed |
 | `merge` | — | Branch updates |
 | `cherry-pick` | — | Selective commit application |
-| `rebase` | `-i`, `--interactive` | Non-interactive only |
+| `rebase` | `-i`, `--interactive` without `--autosquash` | `rebase -i --autosquash <base>` is a local rewrite |
+| `reset` | — | A local rewrite, every mode |
+| `clean` | — | A local rewrite |
+
+### Local Rewrites
+
+`vrg-git` protects origin, not the local checkout. `reset`, `clean`, a
+pathspec `checkout` and `rebase -i --autosquash` rewrite or discard local
+work, so they run only on a branch that is neither protected (`develop`,
+`main`, `release/*`) nor frozen (reported ready). A detached HEAD is
+refused, except mid-rebase, where the branch being rebased is checked.
+Unlike commit and push, which warn and proceed, they fail closed when
+`.vergil/pr-workflow.json` exists but cannot be read. The no-op editors
+vrg-git sets for every rebase (`GIT_SEQUENCE_EDITOR=true`,
+`GIT_EDITOR=true`) keep `rebase -i --autosquash` non-interactive.
 
 ### Denied Subcommands
 
 Anything not on the allowlist is rejected. Notable denials:
 
 - **`commit`** — all commits flow through `vrg-commit`
-- **`reset`** — too dangerous in all forms
-- **`clean`** — file deletion
 - **`config`** — modifying git configuration
 - **`remote`** — modifying remote configuration
 - **`filter-branch`**, **`replace`** — history rewriting
@@ -421,9 +433,9 @@ If server-side enforcement is the only real boundary, why bother
 with four client-side layers?
 
 - **Mistake prevention.** Most failures are not adversarial. An
-  agent that accidentally runs `git reset --hard` is not trying
-  to subvert the tooling — it made a mistake. The wrappers catch
-  this.
+  agent that accidentally runs `git reset --hard` on `develop` or
+  on a reported-ready branch is not trying to subvert the tooling —
+  it made a mistake. The wrappers catch this.
 - **Consistency.** Routing all operations through `vrg-*` tools
   ensures commits have the right format, PRs have the right
   metadata, and branches follow the naming convention.
@@ -451,7 +463,7 @@ prompt. Unknown commands prompt the human.
 
 **Layer 2 — VRG Wrappers.** `vrg-git` and `vrg-gh` validate
 subcommands and flags before executing the underlying tool. Even
-if `vrg-git reset --hard` passes the permission layer (it is
+if `vrg-git push --force` passes the permission layer (it is
 allowlisted as `vrg-*`), the wrapper rejects it.
 
 **Layer 3 — Vergil Plugin Hooks.** The existing hook system
@@ -478,7 +490,7 @@ through normal operation.
 | `gh pr create` | denied | n/a | blocked | n/a | PR created (if layers bypassed) |
 | `gh pr merge` (raw) | denied | n/a | blocked | n/a | **API rejected** (no merge permission) |
 | `rm -rf .` | prompts human | n/a | n/a | n/a | n/a |
-| `vrg-git reset --hard` | allowed | rejected | n/a | n/a | n/a |
+| `vrg-git reset --hard` | allowed | rejected on a protected or frozen branch | n/a | n/a | n/a |
 
 The rightmost column is the only one that holds against Mimir.
 

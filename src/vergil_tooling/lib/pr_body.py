@@ -43,16 +43,28 @@ def resolve_issue_ref(issue: str) -> str:
         raise SystemExit(str(exc)) from exc
 
 
-def build_pr_body(*, summary: str, linkage: str, issue_ref: str, notes: str) -> str:
-    """Render the canonical PR body from validated fields."""
+def build_pr_body(*, summary: str, links: list[tuple[str, str]], notes: str) -> str:
+    """Render the canonical PR body from validated fields.
+
+    *links* is ``[(linkage, issue_ref), ...]`` in order, one ``- <linkage>
+    <ref>`` line each under ``## Issue Linkage``. A batch PR carries one
+    ``Closes`` line per issue (epic vergil-project/.github#1019), which is what
+    ``vrg-finalize-pr`` reads back with ``linkage.extract_tracking_refs``; a
+    single-element list renders exactly the single-issue body. An empty
+    *links* is refused: a PR body always links at least one issue.
+    """
+    if not links:
+        msg = "vrg-submit-pr: internal error: a PR body needs at least one issue linkage"
+        raise SystemExit(msg)
     for value in (summary, notes):
         found = find_linkage_keyword(value)
         if found:
-            raise SystemExit(freetext_linkage_error(found, issue_ref.lstrip("#")))
+            raise SystemExit(freetext_linkage_error(found, links[0][1].lstrip("#")))
     notes_section = notes or "-"
+    linkage_lines = "\n".join(f"- {linkage} {issue_ref}" for linkage, issue_ref in links)
     return (
         f"# Pull Request\n\n"
         f"## Summary\n\n- {summary}\n\n"
-        f"## Issue Linkage\n\n- {linkage} {issue_ref}\n\n"
+        f"## Issue Linkage\n\n{linkage_lines}\n\n"
         f"## Notes\n\n- {notes_section}"
     )
