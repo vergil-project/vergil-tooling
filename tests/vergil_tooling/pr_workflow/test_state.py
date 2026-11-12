@@ -53,3 +53,69 @@ def test_missing_required_field_rejected() -> None:
 def test_invalid_status_rejected() -> None:
     with pytest.raises(WorkflowError, match="invalid status"):
         WorkflowState.from_json(_state(status="reviewing").to_json())
+
+
+# --- The ordered issue list of a batch (epic vergil-project/.github#1019) ---
+
+
+def test_state_round_trips_issue_list() -> None:
+    state = _state(issue="10", issues=["10", "11", "12"])
+    restored = WorkflowState.from_json(state.to_json())
+    assert restored == state
+    assert restored.issue == "10"
+    assert restored.issues == ["10", "11", "12"]
+    assert restored.all_issues == ["10", "11", "12"]
+    assert json.loads(state.to_json())["issues"] == ["10", "11", "12"]
+
+
+def test_state_issue_list_follows_issue_in_key_order() -> None:
+    keys = list(json.loads(_state(issue="10", issues=["10", "11"]).to_json()))
+    assert keys[keys.index("issue") + 1] == "issues"
+
+
+def test_state_single_issue_json_unchanged() -> None:
+    state = _state(pr_metadata={"title": "t", "summary": "s", "notes": "n", "linkage": "Ref"})
+    payload = json.loads(state.to_json())
+    assert "issues" not in payload
+    assert list(payload) == [
+        "schema_version",
+        "issue",
+        "branch",
+        "base",
+        "status",
+        "created_at",
+        "updated_at",
+        "git",
+        "pr_metadata",
+        "submitted",
+    ]
+
+
+def test_state_without_issues_reads_as_single() -> None:
+    restored = WorkflowState.from_json(_state().to_json())
+    assert restored.issues is None
+    assert restored.all_issues == ["42"]
+
+
+def test_state_null_issue_list_reads_as_single() -> None:
+    payload = json.loads(_state().to_json())
+    payload["issues"] = None
+    assert WorkflowState.from_json(json.dumps(payload)).all_issues == ["42"]
+
+
+@pytest.mark.parametrize(
+    ("issues", "message"),
+    [
+        (["10"], "at least 2"),
+        ([], "at least 2"),
+        (["11", "10"], "first entry"),
+        (["10", ""], "non-empty string"),
+        (["10", 11], "non-empty string"),
+        ("10,11", "must be a list"),
+    ],
+)
+def test_state_rejects_a_malformed_issue_list(issues: object, message: str) -> None:
+    payload = json.loads(_state(issue="10").to_json())
+    payload["issues"] = issues
+    with pytest.raises(WorkflowError, match=message):
+        WorkflowState.from_json(json.dumps(payload))

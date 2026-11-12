@@ -25,6 +25,14 @@ replaces the reported commit but an unexpectedly moved origin is refused (#3783)
 reopens the local one, and fails with nothing changed if it cannot, so no
 ``vrg-submit-pr`` can still read the branch as ready at its old head (#3815).
 
+A batch PR repeats ``--issue``, in commit order (epic vergil-project/.github#1019).
+Each issue runs the per-issue refusals; then the batch hard rules and the
+one-commit-per-issue check run before anything is pushed, and either failing
+records nothing. The ordered list is recorded as the state's ``issues`` (in the
+local file and the relay ref alike), and a re-run must name the same list in
+the same order. Once the state is recorded, the members' batch markers are
+removed. A single ``--issue`` behaves exactly as before.
+
 ``batch-start``, ``batch-extract`` and ``batch-show`` manage the batch marker
 (:mod:`vergil_tooling.lib.pr_workflow.batch_marker`, epic
 vergil-project/.github#1019) in the main clone. ``batch-start`` runs the batch
@@ -107,7 +115,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "and that and any other push failure record nothing."
         ),
     )
-    p_ready.add_argument("--issue", required=True)
+    p_ready.add_argument(
+        "--issue",
+        action="append",
+        required=True,
+        help=(
+            "The task the PR hands off (N or owner/repo#N). Repeat it, in commit "
+            "order, for a batch PR of 2 to 8 same-epic issues: report-ready then runs "
+            "the batch hard rules and the one-commit-per-issue check before anything "
+            "is pushed, and removes the batch markers once the state is recorded."
+        ),
+    )
     p_ready.add_argument("--title", required=True)
     p_ready.add_argument("--summary", required=True)
     p_ready.add_argument("--notes", required=True)
@@ -435,6 +453,69 @@ def _push_relay_ref(state: WorkflowState, base: str) -> None:
         )
 
 
+def _listed(issues: list[str]) -> str:
+    """*issues* as ``#10, #11`` for a message (an ``owner/repo#N`` ref as given)."""
+    return ", ".join(f"#{issue}" if issue.isdigit() else issue for issue in issues)
+
+
+def _stale_issues_message(state: WorkflowState, issues: list[str]) -> str:
+    """Refuse a re-run whose ordered ``--issue`` list is not the recorded one.
+
+    A single issue recorded and a single other issue passed keeps the message it
+    always had; any batch on either side names both whole lists.
+    """
+    if state.issues is None and len(issues) == 1:
+        return (
+            f"stale workflow file for issue #{state.issue}; you passed #{issues[0]}. "
+            "Delete .vergil/pr-workflow.json to start fresh."
+        )
+    return (
+        f"stale workflow file for issues {_listed(state.all_issues)}; you passed "
+        f"{_listed(issues)}. A re-run must name the recorded issues in the recorded "
+        "order; nothing was recorded. Delete .vergil/pr-workflow.json to start fresh."
+    )
+
+
+def _check_batch(issue_refs: list[str], *, base: str, head_sha: str) -> list[str]:
+    """Run the batch checks before anything is pushed; return the marker refs.
+
+    The hard rules (:func:`batch_rules.check_hard_rules`) run against this
+    clone's repo, read from its ``origin`` remote as ``batch-start`` reads it,
+    and the commit-per-issue invariant (:func:`batch_rules.check_commit_per_issue`)
+    runs over ``base..head_sha``. Either failing refuses with nothing pushed or
+    recorded. The returned refs are each issue's ``#N`` in this repo, the form
+    the batch markers are keyed by.
+    """
+    try:
+        repo = _clone_repo()
+    except WrongCloneError as exc:
+        raise WorkflowError(f"report-ready: {exc}; nothing was pushed or recorded") from exc
+    try:
+        batch_rules.check_hard_rules(issue_refs, repo=repo)
+        batch_rules.check_commit_per_issue(issue_refs, base=base, head=head_sha)
+    except batch_rules.BatchRuleError as exc:
+        raise WorkflowError(f"report-ready: {exc}; nothing was pushed or recorded") from exc
+    return [f"#{epics.parse_issue_ref(ref, default_repo=repo).number}" for ref in issue_refs]
+
+
+def _remove_batch_markers(marker_refs: list[str]) -> None:
+    """Remove the batch markers once the ready state is recorded.
+
+    Runs after the local state write, report-ready's point of no return, and
+    after the relay push, whatever that did (it only warns). A failure is
+    loud, never skipped: the state stays recorded, and a re-run of report-ready
+    (a frozen re-run, which pushes nothing new) removes them.
+    """
+    try:
+        batch_marker.remove_markers(git.main_worktree_root(), marker_refs)
+    except (WorkflowError, subprocess.CalledProcessError, OSError) as exc:
+        raise WorkflowError(
+            f"report-ready: the ready state is recorded, but the batch markers of "
+            f"{', '.join(marker_refs)} could not be removed ({error_text(exc)}); "
+            "re-run report-ready to remove them."
+        ) from exc
+
+
 def cmd_report_ready(args: argparse.Namespace, transport: LocalFileTransport) -> int:
     # Local-settings guard (epic vergil-project/.github#558), before anything is
     # pushed or recorded: refuse an agent, warn a human.
@@ -447,14 +528,24 @@ def cmd_report_ready(args: argparse.Namespace, transport: LocalFileTransport) ->
     # raw args.issue is still what gets *stored* (vrg-submit-pr's resolve_issue_ref
     # re-normalizes it and rejects a leading '#'), so only the guards see the
     # canonical form.
-    try:
-        issue_ref = normalize_issue_ref(str(args.issue))
-    except ValueError as exc:
-        raise WorkflowError(f"report-ready: {exc}") from exc
-    _reject_cross_repo_issue(issue_ref)
-    _reject_non_task_issue(issue_ref)
-    _reject_operational_issue(issue_ref)
-    _reject_queue_issue(issue_ref)
+    #
+    # --issue repeats for a batch (epic vergil-project/.github#1019): every issue
+    # runs the same per-issue guards, and the raw values are recorded in the order
+    # given (state.issues, first one also as state.issue), the commit order the
+    # batch checks hold the branch to.
+    issues = [str(raw) for raw in args.issue]
+    issue_refs: list[str] = []
+    for raw in issues:
+        try:
+            issue_refs.append(normalize_issue_ref(raw))
+        except ValueError as exc:
+            raise WorkflowError(f"report-ready: {exc}") from exc
+    for issue_ref in issue_refs:
+        _reject_cross_repo_issue(issue_ref)
+        _reject_non_task_issue(issue_ref)
+        _reject_operational_issue(issue_ref)
+        _reject_queue_issue(issue_ref)
+    batch = batch_rules.is_batch(issue_refs)
     try:
         linkage, linkage_warning = normalize_linkage(args.linkage)
     except ValueError as exc:
@@ -462,7 +553,7 @@ def cmd_report_ready(args: argparse.Namespace, transport: LocalFileTransport) ->
     for value in (args.notes, args.summary):
         found = find_linkage_keyword(value)
         if found:
-            raise WorkflowError(freetext_linkage_error(found, str(args.issue)))
+            raise WorkflowError(freetext_linkage_error(found, issues[0]))
     branch = git.current_branch()
     if branch == "HEAD":
         raise WorkflowError("report-ready: HEAD is detached; check out the feature branch first.")
@@ -472,18 +563,15 @@ def cmd_report_ready(args: argparse.Namespace, transport: LocalFileTransport) ->
     lease_sha: str | None = None
     if state is None:
         state = engine.init_state(
-            issue=args.issue,
+            issues=issues,
             branch=branch,
             base=transport.base,
             head_sha=head_sha,
             base_sha=transport.merge_base(),
             now=_now(),
         )
-    elif str(args.issue) != state.issue:
-        raise WorkflowError(
-            f"stale workflow file for issue #{state.issue}; you passed #{args.issue}. "
-            "Delete .vergil/pr-workflow.json to start fresh."
-        )
+    elif issues != state.all_issues:
+        raise WorkflowError(_stale_issues_message(state, issues))
     elif state.branch != branch:
         raise WorkflowError(
             f"workflow file records branch {state.branch}, but {branch} is checked out; "
@@ -493,6 +581,7 @@ def cmd_report_ready(args: argparse.Namespace, transport: LocalFileTransport) ->
         _refuse_drifted_rerun(state, head_sha)
         # Read before apply_report_ready overwrites the recorded head_sha.
         lease_sha = _lease_sha(state)
+    marker_refs = _check_batch(issue_refs, base=state.base, head_sha=head_sha) if batch else []
     engine.apply_report_ready(
         state,
         title=args.title,
@@ -506,6 +595,9 @@ def cmd_report_ready(args: argparse.Namespace, transport: LocalFileTransport) ->
     transport.write(state)
     _push_relay_ref(state, args.base)
     response: dict[str, object] = {"ok": True, "status": state.status}
+    if batch:
+        _remove_batch_markers(marker_refs)
+        response["issues"] = state.all_issues
     if linkage_warning:
         response["warning"] = linkage_warning
     _emit(response)

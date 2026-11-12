@@ -852,7 +852,7 @@ def _record_ready(repo: Path) -> None:
     """Write a reported-ready (frozen) PR-workflow state for ``feature/1-x``."""
     head = _git(repo, "rev-parse", "HEAD")
     state = engine.init_state(
-        issue="1",
+        issues=["1"],
         branch="feature/1-x",
         base="origin/develop",
         head_sha=head,

@@ -198,11 +198,19 @@ vergil-project/.github#176 and #508).
 Local-settings guard: `report-ready` refuses an agent (warns a human), before
 pushing or recording anything, while a loadable `.claude/settings.local.json`
 is not absent or `{}` (epic vergil-project/.github#558).
+A batch PR (epic vergil-project/.github#1019) repeats `--issue`, in commit
+order. Every issue runs the per-issue refusals, then the batch hard rules and
+the one-commit-per-issue check run before any push; either failing records
+nothing. The state records the list as `issues` (its first entry is also
+`issue`), in the local file and the relay ref alike, and a re-run must name the
+same list in the same order. Once the state is recorded, the members' batch
+markers are removed. A single `--issue` records no `issues` key and behaves
+exactly as before.
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_pr_workflow` |
-| Args | `report-ready` (`--issue`, `--title`, `--summary`, `--notes` required; `--linkage` default Ref), `unfreeze`, `status`; global `--base` (default: origin/develop) |
+| Args | `report-ready` (`--issue`, repeatable for a batch, `--title`, `--summary`, `--notes` required; `--linkage` default Ref), `unfreeze`, `status`, `batch-start`, `batch-extract`, `batch-show`; global `--base` (default: origin/develop) |
 | Preconditions | Git repo; run from the worktree whose branch is being staged |
 | Failure mode | `WorkflowError` on stderr (e.g. unfreeze after submit, nothing to unfreeze, or a relay ref unfreeze could not update) |
 | Exit codes | 0 success, 1 error |

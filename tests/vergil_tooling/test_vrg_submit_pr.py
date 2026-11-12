@@ -99,7 +99,7 @@ def _write_workflow_state(
 
     now = "2026-06-08T00:00:00Z"
     state = engine.init_state(
-        issue=issue,
+        issues=[issue],
         branch=branch,
         base=base,
         head_sha="h0",
@@ -570,7 +570,7 @@ class TestTemplateMode:
 
         now = "2026-06-08T00:00:00Z"
         state = engine.init_state(
-            issue="1534",
+            issues=["1534"],
             branch="feature/1534-x",
             base="develop",
             head_sha="h0",
@@ -609,7 +609,7 @@ class TestTemplateMode:
 
         now = "2026-06-08T00:00:00Z"
         state = engine.init_state(
-            issue="1606",
+            issues=["1606"],
             branch="release/post-2.1.27",
             base="origin/develop",
             head_sha="h0",
@@ -774,7 +774,7 @@ class TestTemplateMode:
         from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
 
         state = engine.init_state(
-            issue="42",
+            issues=["42"],
             branch="feature/x",
             base="develop",
             head_sha="h0",
@@ -2158,7 +2158,7 @@ def _ready_state(
     """Build a report-ready ``WorkflowState`` for the relay tests."""
     now = "2026-06-08T00:00:00Z"
     state = engine.init_state(
-        issue=issue, branch=branch, base=base, head_sha=head_sha, base_sha="b0", now=now
+        issues=[issue], branch=branch, base=base, head_sha=head_sha, base_sha="b0", now=now
     )
     engine.apply_report_ready(
         state,
@@ -2233,7 +2233,7 @@ def test_metadata_from_state_extracts_fields() -> None:
 def test_metadata_from_state_errors_without_pr_metadata() -> None:
     now = "2026-06-08T00:00:00Z"
     state = engine.init_state(
-        issue="7", branch="feature/x", base="develop", head_sha="h", base_sha="b", now=now
+        issues=["7"], branch="feature/x", base="develop", head_sha="h", base_sha="b", now=now
     )
     with pytest.raises(SystemExit, match="no PR metadata yet"):
         _metadata_from_state(state, "feature/x")
