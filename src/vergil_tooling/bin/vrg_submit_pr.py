@@ -35,6 +35,14 @@ origin's tip is held to the recorded head immediately before ``gh pr
 create``. The batch checks each worktree before its rebase onto the base,
 since the rebase rewrites the reported commits onto the new base.
 
+A ``report-ready`` state may hand off a batch: 2 to 8 issues on one branch,
+one commit per issue (epic vergil-project/.github#1019). Every mode driven by
+such a state runs the per-issue refusals on every issue, writes one
+``Closes`` line per issue, and re-checks the batch's hard rules and
+commit-per-issue invariant on the head the PR opens at (the rebased head in
+the serial batch), against a freshly fetched ``origin/<target>``, before any
+push or ``gh pr create``. The CLI emergency mode stays single-issue.
+
 The template and CLI modes push the branch using the human's host
 credentials before creating the PR. Because the human is the superset
 of any agent's rights, this carries workflow-touching pushes that the
@@ -80,7 +88,7 @@ from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.confirm import add_yes_argument, confirm
 from vergil_tooling.lib.linkage import ALLOWED_LINKAGES, normalize_linkage
 from vergil_tooling.lib.pr_body import build_pr_body, resolve_issue_ref
-from vergil_tooling.lib.pr_workflow import batch, freeze, submission
+from vergil_tooling.lib.pr_workflow import batch, batch_rules, freeze, submission
 from vergil_tooling.lib.pr_workflow.errors import AlreadySubmittedError, WorkflowError
 from vergil_tooling.lib.pr_workflow.github_transport import GitHubTransport
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
@@ -497,26 +505,102 @@ def _resolve_linkage(issue_ref: str, requested: str) -> str:
     return linkage
 
 
+def _checked_links(issue_refs: list[str], requested: str) -> list[tuple[str, str]]:
+    """Run the per-issue refusals on every issue and return the body's linkage lines.
+
+    Each ref goes through the same four checks a single-issue submit runs
+    (cross-repo, non-task, operational, queue) and its linkage is resolved on
+    its own, so a batch PR gets one ``(linkage, ref)`` per issue, in order
+    (epic vergil-project/.github#1019). Every batch issue is a task under the
+    batch's epic, so each resolves to ``Closes``. The first refusal aborts.
+    """
+    links: list[tuple[str, str]] = []
+    for issue_ref in issue_refs:
+        _reject_if_cross_repo(issue_ref)
+        _reject_if_non_task(issue_ref)
+        _reject_if_operational_task(issue_ref)
+        _reject_if_queue_item(issue_ref)
+        links.append((_resolve_linkage(issue_ref, requested), issue_ref))
+    return links
+
+
+def _ready_issue_refs(fields: dict[str, str]) -> list[str]:
+    """The canonical refs of every issue a ready-state hands off, in order.
+
+    Reads ``issues`` (the comma-joined ``WorkflowState.all_issues`` that
+    ``submission.read_pr_fields`` and :func:`_metadata_from_state` both
+    return), never ``issue`` alone: a batch record's ``issue`` is only its
+    first issue, and reading it would drop the rest. Fields with no
+    ``issues`` are refused rather than read as one issue.
+    """
+    raw = fields.get("issues")
+    if not raw:
+        raise SystemExit(
+            "vrg-submit-pr: internal error: the ready-state fields carry no 'issues' "
+            "list; nothing was pushed or opened."
+        )
+    return [resolve_issue_ref(item.strip()) for item in raw.split(",")]
+
+
+def _describe_issues(issue_refs: list[str]) -> str:
+    """``issue #N`` for one issue, ``issues #N, #M`` for a batch."""
+    if len(issue_refs) == 1:
+        return f"issue {issue_refs[0]}"
+    return f"issues {', '.join(issue_refs)}"
+
+
+def _recheck_batch(
+    issue_refs: list[str], *, branch: str, target: str, head: str, push: bool
+) -> None:
+    """Re-check a batch's hard rules and commits on the head the PR opens at.
+
+    Runs only for a batch, after the confirm and before any push or ``gh pr
+    create``. It fetches the target, then holds ``origin/<target>..<head>`` to
+    one commit per issue and re-reads every issue against the hard rules
+    (spec §5.1, §5.6). *head* is the commit the PR must open at;
+    :func:`_require_origin_head` later holds origin's tip to that same commit,
+    so the head checked here is the head the PR opens at. Any failure refuses
+    with nothing opened.
+
+    Only a relay submit (*push* false) also fetches the branch, so the head is
+    present in a clone that never had it. A submit that pushes never does:
+    fetching the branch would move ``refs/remotes/origin/<branch>``, the lease
+    :func:`_push_branch`'s ``--force-with-lease`` holds, so the push could then
+    overwrite commits pushed elsewhere. Its head is the local commit, already
+    present.
+    """
+    if not batch_rules.is_batch(issue_refs):
+        return
+    print(f"Re-checking the batch rules for {', '.join(issue_refs)} at {head[:12]}...")
+    refs = (target,) if push else (branch, target)
+    try:
+        git.run("fetch", "origin", *refs)
+    except subprocess.CalledProcessError as exc:
+        raise SystemExit(
+            f"vrg-submit-pr: could not fetch {', '.join(refs)} from origin to re-check "
+            f"the batch: {error_text(exc)}. No PR was opened."
+        ) from exc
+    repo = github.current_repo()
+    try:
+        batch_rules.check_hard_rules(issue_refs, repo=repo)
+        batch_rules.check_commit_per_issue(issue_refs, base=f"origin/{target}", head=head)
+    except batch_rules.BatchRuleError as exc:
+        raise SystemExit(f"vrg-submit-pr: {exc}. No PR was opened.") from exc
+
+
 def _run_cli_mode(args: argparse.Namespace) -> int:
     # main() only routes here when all three are present; narrow for the
     # type checker without relying on an assert (ruff S101).
     if args.issue is None or args.summary is None or args.title is None:  # pragma: no cover
         msg = "internal error: CLI mode requires --issue, --summary, and --title"
         raise SystemExit(msg)
+    # The CLI emergency mode stays single-issue: --issue is one ref, and a
+    # batch is handed off only through report-ready (epic .github#1019).
     issue_ref = resolve_issue_ref(args.issue)
-    _reject_if_cross_repo(issue_ref)
-    _reject_if_non_task(issue_ref)
-    _reject_if_operational_task(issue_ref)
-    _reject_if_queue_item(issue_ref)
-    linkage = _resolve_linkage(issue_ref, args.linkage)
+    links = _checked_links([issue_ref], args.linkage)
     branch = git.current_branch()
     target = _target_branch(args.base)
-    pr_body = build_pr_body(
-        summary=args.summary,
-        linkage=linkage,
-        issue_ref=issue_ref,
-        notes=args.notes,
-    )
+    pr_body = build_pr_body(summary=args.summary, links=links, notes=args.notes)
 
     if args.dry_run:
         print(f"=== PR Title ===\n{args.title}\n")
@@ -744,15 +828,19 @@ def _push_create_record(
     title: str,
     pr_body: str,
     expected_head: str,
+    issue_refs: list[str],
 ) -> str:
     """Push the branch, check origin holds *expected_head*, create the PR,
     record submission, return the URL.
 
-    The single-PR template mode's submit tail. Pushes with the human's host
-    credentials (the superset of any agent's rights) so a branch touching
-    ``.github/workflows/`` still pushes, then refuses to open the PR unless
-    origin's tip is the recorded head (issue #3815).
+    The single-PR template mode's submit tail. A batch (*issue_refs* of more
+    than one) is re-checked at *expected_head* first, before anything is
+    pushed. Pushes with the human's host credentials (the superset of any
+    agent's rights) so a branch touching ``.github/workflows/`` still pushes,
+    then refuses to open the PR unless origin's tip is the recorded head
+    (issue #3815).
     """
+    _recheck_batch(issue_refs, branch=branch, target=target, head=expected_head, push=True)
     print(f"Ensuring branch '{branch}' is pushed to origin...")
     _push_branch(branch)
     _require_origin_head(branch, expected_head)
@@ -791,34 +879,34 @@ def _open_pr(
     is held to it, since the PR opens at whatever origin holds: a mismatch is
     refused, never opened (issue #3815).
 
-    Raises ``SystemExit`` on a forbidden linkage, a declined confirm, or an
-    origin tip other than *expected_head*.
+    *metadata* must carry ``issues`` (every issue, comma-joined in order); the
+    guards run on each and the body gets one linkage line per issue. A batch
+    is re-checked (:func:`_recheck_batch`) at *expected_head* after the
+    confirm and before any push, so the head the PR opens at is the head
+    checked: in the serial batch mode that is the rebased head.
+
+    Raises ``SystemExit`` on a forbidden linkage, a declined confirm, a batch
+    that fails its re-check, or an origin tip other than *expected_head*.
     """
-    issue_ref = resolve_issue_ref(metadata["issue"])
-    _reject_if_cross_repo(issue_ref)
-    _reject_if_non_task(issue_ref)
-    _reject_if_operational_task(issue_ref)
-    _reject_if_queue_item(issue_ref)
+    issue_refs = _ready_issue_refs(metadata)
     try:
         linkage, linkage_warning = normalize_linkage(metadata.get("linkage", "Ref"))
     except ValueError as exc:
         raise SystemExit(f"vrg-submit-pr: {exc}") from exc
     if linkage_warning:
         print(f"vrg-submit-pr: {linkage_warning}", file=sys.stderr)
-    linkage = _resolve_linkage(issue_ref, linkage)
+    links = _checked_links(issue_refs, linkage)
     pr_body = build_pr_body(
-        summary=metadata["summary"],
-        linkage=linkage,
-        issue_ref=issue_ref,
-        notes=metadata.get("notes", ""),
+        summary=metadata["summary"], links=links, notes=metadata.get("notes", "")
     )
-    print(f"=== Submitting issue {issue_ref}: {metadata['title']} ===")
+    print(f"=== Submitting {_describe_issues(issue_refs)}: {metadata['title']} ===")
     print(f"    base {base}, branch {branch}")
     print(f"\n=== Body Preview ===\n{pr_body}")
     if dry_run:
         return None
     if not confirm("\nSubmit this PR?", assume_yes=assume_yes):
         raise SystemExit("vrg-submit-pr: submission declined at the per-PR confirm")
+    _recheck_batch(issue_refs, branch=branch, target=base, head=expected_head, push=push)
     if push:
         print(f"Ensuring branch '{branch}' is pushed to origin...")
         _push_branch(branch)
@@ -909,7 +997,9 @@ def _run_template_mode(args: argparse.Namespace) -> int:
         print(f"vrg-submit-pr: cannot read PR submission fields:\n  {exc}", file=sys.stderr)
         return 1
 
-    issue_ref = resolve_issue_ref(fields["issue"])
+    # Every issue the record hands off, in order: a batch record's 'issue' is
+    # only its first (epic vergil-project/.github#1019).
+    issue_refs = _ready_issue_refs(fields)
     branch = git.current_branch()
     # Hold the worktree to the head the latest report-ready recorded before
     # anything is previewed or pushed: the push publishes the checked-out
@@ -932,19 +1022,17 @@ def _run_template_mode(args: argparse.Namespace) -> int:
         return 1
     if linkage_warning:
         print(f"vrg-submit-pr: {linkage_warning}", file=sys.stderr)
-    linkage = _resolve_linkage(issue_ref, linkage)
-    pr_body = build_pr_body(
-        summary=fields["summary"],
-        linkage=linkage,
-        issue_ref=issue_ref,
-        notes=notes,
-    )
+    links = _checked_links(issue_refs, linkage)
+    pr_body = build_pr_body(summary=fields["summary"], links=links, notes=notes)
 
     print("=== PR from template ===")
     print(f"Title:  {title}")
     print(f"Base:   {target}")
     print(f"Branch: {branch}")
-    print(f"Issue:  {issue_ref}")
+    if len(issue_refs) == 1:
+        print(f"Issue:  {issue_refs[0]}")
+    else:
+        print(f"Issues: {', '.join(issue_refs)}")
     print()
     print(f"=== Body Preview ===\n{pr_body}")
 
@@ -964,6 +1052,7 @@ def _run_template_mode(args: argparse.Namespace) -> int:
         title=title,
         pr_body=pr_body,
         expected_head=expected_head,
+        issue_refs=issue_refs,
     )
     if args.finalize:
         rc = _chain_finalize(pr_url, release=args.release, install=args.install)
@@ -992,6 +1081,7 @@ def _metadata_from_state(state: WorkflowState, branch: str) -> dict[str, str]:
         )
     return {
         "issue": state.issue,
+        "issues": ",".join(state.all_issues),
         "title": meta["title"],
         "summary": meta["summary"],
         "notes": meta.get("notes", ""),

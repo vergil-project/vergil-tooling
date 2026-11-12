@@ -15,6 +15,7 @@ from vergil_tooling.bin.vrg_submit_pr import (
     _open_pr,
     _origin_has_branch,
     _push_branch,
+    _recheck_batch,
     _reject_if_cross_repo,
     _reject_if_non_task,
     _reject_if_operational_task,
@@ -36,7 +37,9 @@ from vergil_tooling.bin.vrg_submit_pr import (
     parse_args,
 )
 from vergil_tooling.lib import epics, worktrees
-from vergil_tooling.lib.pr_workflow import engine, freeze
+from vergil_tooling.lib.linkage import extract_tracking_refs
+from vergil_tooling.lib.pr_workflow import batch_rules, engine, freeze
+from vergil_tooling.lib.pr_workflow.batch_rules import BatchRuleError
 from vergil_tooling.lib.pr_workflow.errors import AlreadySubmittedError, WorkflowError
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
 from vergil_tooling.lib.release.gate import unreleased_refusal as _real_unreleased_refusal
@@ -726,7 +729,13 @@ class TestTemplateMode:
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Even if the fields carry a bad linkage, template mode rejects it."""
-        fields = {"issue": "42", "title": "fix", "summary": "Fix", "linkage": "Fixes"}
+        fields = {
+            "issue": "42",
+            "issues": "42",
+            "title": "fix",
+            "summary": "Fix",
+            "linkage": "Fixes",
+        }
         with (
             patch(_MOD + ".git.repo_root", return_value=tmp_path),
             patch(_MOD + ".git.current_branch", return_value="feature/x"),
@@ -894,7 +903,7 @@ class TestRootLaunch:
 
     def test_root_single_ready_worktree_chdirs_and_submits(self) -> None:
         wt = self._wt("issue-7-foo", "feature/7-foo")
-        fields = {"issue": "7", "title": "Foo title", "summary": "S"}
+        fields = {"issue": "7", "issues": "7", "title": "Foo title", "summary": "S"}
         with (
             patch(_MOD + ".git.is_main_worktree", return_value=True),
             patch(_MOD + ".git.repo_root", return_value="/repo"),
@@ -936,7 +945,7 @@ class TestRootLaunch:
 
     def test_root_multiple_ready_worktrees_prompts(self) -> None:
         wts = [self._wt("issue-7-foo", "feature/7-foo"), self._wt("issue-8-bar", "feature/8-bar")]
-        fields = {"issue": "8", "title": "Bar title", "summary": "S"}
+        fields = {"issue": "8", "issues": "8", "title": "Bar title", "summary": "S"}
         with (
             patch(_MOD + ".git.is_main_worktree", return_value=True),
             patch(_MOD + ".git.repo_root", return_value="/repo"),
@@ -1570,6 +1579,7 @@ class TestUnreleasedRepoRefusal:
 def test_submit_one_pushes_creates_records_and_returns_url() -> None:
     fields = {
         "issue": "1673",
+        "issues": "1673",
         "title": "Batch",
         "summary": "s",
         "notes": "",
@@ -1783,7 +1793,14 @@ def test_select_batch_interactive_uses_multi_select() -> None:
 
 
 def test_submit_one_bad_linkage_exits() -> None:
-    fields = {"issue": "1", "title": "T", "summary": "s", "notes": "", "linkage": "Fixes"}
+    fields = {
+        "issue": "1",
+        "issues": "1",
+        "title": "T",
+        "summary": "s",
+        "notes": "",
+        "linkage": "Fixes",
+    }
     with (
         patch(_MOD + ".submission.read_pr_fields", return_value=fields),
         patch(_MOD + ".resolve_issue_ref", return_value="#1"),
@@ -1798,7 +1815,14 @@ def test_submit_one_strips_issue_number_from_linkage_and_warns(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """A linkage carrying the issue number is unambiguous: strip it, warn, proceed."""
-    fields = {"issue": "1", "title": "T", "summary": "s", "notes": "", "linkage": "Ref #1761"}
+    fields = {
+        "issue": "1",
+        "issues": "1",
+        "title": "T",
+        "summary": "s",
+        "notes": "",
+        "linkage": "Ref #1761",
+    }
     with (
         patch(_MOD + ".submission.read_pr_fields", return_value=fields),
         patch(_MOD + ".resolve_issue_ref", return_value="#1"),
@@ -1812,12 +1836,19 @@ def test_submit_one_strips_issue_number_from_linkage_and_warns(
     ):
         url = _submit_one(Path("/r"), base_override=None, assume_yes=True)
     assert url == "https://example/pull/1"
-    assert build.call_args.kwargs["linkage"] == "Ref"
+    assert build.call_args.kwargs["links"] == [("Ref", "#1")]
     assert "Ref #1761" in capsys.readouterr().err
 
 
 def test_submit_one_declined_exits() -> None:
-    fields = {"issue": "1", "title": "T", "summary": "s", "notes": "", "linkage": "Ref"}
+    fields = {
+        "issue": "1",
+        "issues": "1",
+        "title": "T",
+        "summary": "s",
+        "notes": "",
+        "linkage": "Ref",
+    }
     with (
         patch(_MOD + ".submission.read_pr_fields", return_value=fields),
         patch(_MOD + ".resolve_issue_ref", return_value="#1"),
@@ -2066,7 +2097,14 @@ def test_main_cli_mode_refuses_queue_item(tmp_path: Path) -> None:
 
 
 def test_open_pr_refuses_queue_item() -> None:
-    metadata = {"issue": "42", "title": "fix: bug", "summary": "s", "notes": "", "linkage": "Ref"}
+    metadata = {
+        "issue": "42",
+        "issues": "42",
+        "title": "fix: bug",
+        "summary": "s",
+        "notes": "",
+        "linkage": "Ref",
+    }
     with (
         patch(_MOD + ".resolve_issue_ref", return_value="#42"),
         patch(_MOD + "._reject_if_queue_item", side_effect=SystemExit("queued")) as guard,
@@ -2176,7 +2214,14 @@ def _ready_state(
 
 def test_open_pr_relay_opens_without_pushing() -> None:
     """push=False opens the PR with --head and never pushes the branch."""
-    metadata = {"issue": "42", "title": "fix: bug", "summary": "s", "notes": "", "linkage": "Ref"}
+    metadata = {
+        "issue": "42",
+        "issues": "42",
+        "title": "fix: bug",
+        "summary": "s",
+        "notes": "",
+        "linkage": "Ref",
+    }
     with (
         patch(_MOD + ".resolve_issue_ref", return_value="#42"),
         patch(_MOD + ".build_pr_body", return_value="BODY"),
@@ -2194,7 +2239,14 @@ def test_open_pr_relay_opens_without_pushing() -> None:
 
 def test_open_pr_local_pushes_before_creating() -> None:
     """push=True pushes the branch first, then opens the PR."""
-    metadata = {"issue": "42", "title": "fix: bug", "summary": "s", "notes": "", "linkage": "Ref"}
+    metadata = {
+        "issue": "42",
+        "issues": "42",
+        "title": "fix: bug",
+        "summary": "s",
+        "notes": "",
+        "linkage": "Ref",
+    }
     with (
         patch(_MOD + ".resolve_issue_ref", return_value="#42"),
         patch(_MOD + ".build_pr_body", return_value="BODY"),
@@ -2209,7 +2261,14 @@ def test_open_pr_local_pushes_before_creating() -> None:
 
 
 def test_open_pr_dry_run_previews_without_opening() -> None:
-    metadata = {"issue": "42", "title": "fix: bug", "summary": "s", "notes": "", "linkage": "Ref"}
+    metadata = {
+        "issue": "42",
+        "issues": "42",
+        "title": "fix: bug",
+        "summary": "s",
+        "notes": "",
+        "linkage": "Ref",
+    }
     with (
         patch(_MOD + ".resolve_issue_ref", return_value="#42"),
         patch(_MOD + ".build_pr_body", return_value="BODY"),
@@ -2227,7 +2286,14 @@ def test_open_pr_dry_run_previews_without_opening() -> None:
 def test_metadata_from_state_extracts_fields() -> None:
     state = _ready_state(issue="7", title="T", summary="S", notes="N", linkage="Closes")
     meta = _metadata_from_state(state, "feature/x")
-    assert meta == {"issue": "7", "title": "T", "summary": "S", "notes": "N", "linkage": "Closes"}
+    assert meta == {
+        "issue": "7",
+        "issues": "7",
+        "title": "T",
+        "summary": "S",
+        "notes": "N",
+        "linkage": "Closes",
+    }
 
 
 def test_metadata_from_state_errors_without_pr_metadata() -> None:
@@ -3035,7 +3101,14 @@ def test_require_reported_head_holds_the_worktree_to_its_record(tmp_path: Path) 
 def test_open_pr_refuses_when_origin_is_not_the_expected_head() -> None:
     """The last check before `gh pr create`: a push that left origin at another
     commit (or an origin that moved during the prompt) opens nothing."""
-    metadata = {"issue": "42", "title": "fix: bug", "summary": "s", "notes": "", "linkage": "Ref"}
+    metadata = {
+        "issue": "42",
+        "issues": "42",
+        "title": "fix: bug",
+        "summary": "s",
+        "notes": "",
+        "linkage": "Ref",
+    }
     with (
         patch(_MOD + "._require_origin_head", _require_origin_head),
         patch(_MOD + ".resolve_issue_ref", return_value="#42"),
@@ -3109,7 +3182,14 @@ def test_submit_batch_refuses_a_worktree_off_its_recorded_head(
 
 
 def test_submit_one_holds_origin_to_the_pushed_head() -> None:
-    fields = {"issue": "1", "title": "T", "summary": "s", "notes": "", "linkage": "Ref"}
+    fields = {
+        "issue": "1",
+        "issues": "1",
+        "title": "T",
+        "summary": "s",
+        "notes": "",
+        "linkage": "Ref",
+    }
     with (
         patch(_MOD + ".submission.read_pr_fields", return_value=fields),
         patch(_MOD + ".resolve_issue_ref", return_value="#1"),
@@ -3219,3 +3299,447 @@ class TestRelayRecordedHead:
         ):
             assert main(["feature/x", "--yes"]) == 0
         origin_check.assert_called_once_with("feature/x", "abc123")
+
+
+# -- batch PRs: per-issue checks and one Closes line per issue (epic .github#1019)
+
+
+_BATCH_ISSUES = ["10", "11"]
+
+
+def _batch_state(
+    *,
+    issues: list[str] | None = None,
+    branch: str = "feature/10-x",
+    head_sha: str = "abc123def456",
+) -> WorkflowState:
+    """A report-ready batch ``WorkflowState`` (``issues`` set, ``issue`` the first)."""
+    now = "2026-06-08T00:00:00Z"
+    state = engine.init_state(
+        issues=list(issues or _BATCH_ISSUES),
+        branch=branch,
+        base="develop",
+        head_sha=head_sha,
+        base_sha="b0",
+        now=now,
+    )
+    engine.apply_report_ready(
+        state,
+        title="feat: batch",
+        summary="Two small changes",
+        notes="Merge review: done: eligible",
+        linkage="Ref",
+        head_sha=head_sha,
+        now=now,
+    )
+    return state
+
+
+def _all_closes(_ref: str, _requested: str) -> tuple[str, str | None]:
+    """Every batch issue is a task under the batch's epic, so each links Closes."""
+    return "Closes", None
+
+
+def _batch_metadata(issues: str = "10,11") -> dict[str, str]:
+    return {
+        "issue": issues.split(",")[0],
+        "issues": issues,
+        "title": "feat: batch",
+        "summary": "s",
+        "notes": "",
+        "linkage": "Ref",
+    }
+
+
+class TestBatchSubmit:
+    """vrg-submit-pr hands a batch record off as one PR closing every issue."""
+
+    @pytest.fixture(autouse=True)
+    def _human_mode(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("VRG_IDENTITY_MODE", raising=False)
+        monkeypatch.delenv("VRG_APP_ID", raising=False)
+
+    def test_submit_batch_closes_every_issue(self, tmp_path: Path) -> None:
+        """Template mode: the body has one Closes line per issue, in order, and
+        every issue runs the per-issue refusals."""
+        LocalFileTransport(tmp_path, base="develop").write(_batch_state(head_sha="h0"))
+        with (
+            patch(_MOD + ".git.repo_root", return_value=tmp_path),
+            patch(_MOD + ".git.current_branch", return_value="feature/10-x"),
+            patch(_MOD + "._task_linkage", side_effect=_all_closes),
+            patch(_MOD + "._reject_if_cross_repo") as cross,
+            patch(_MOD + "._reject_if_queue_item") as queue,
+            patch(_MOD + "._recheck_batch") as recheck,
+            patch(_MOD + "._push_branch"),
+            patch(_MOD + "._create_pr", return_value="https://github.com/o/r/pull/9") as create,
+        ):
+            assert main(["--yes"]) == 0
+        body = create.call_args.kwargs["pr_body"]
+        assert "## Issue Linkage\n\n- Closes #10\n- Closes #11\n\n## Notes" in body
+        assert extract_tracking_refs(body) == [("Closes", "#10"), ("Closes", "#11")]
+        assert [c.args[0] for c in cross.call_args_list] == ["#10", "#11"]
+        assert [c.args[0] for c in queue.call_args_list] == ["#10", "#11"]
+        recheck.assert_called_once_with(
+            ["#10", "#11"], branch="feature/10-x", target="develop", head="h0", push=True
+        )
+        assert _state_submitted(tmp_path)
+
+    def test_submit_batch_rechecks_rules_and_commits_before_create(self, tmp_path: Path) -> None:
+        """On a commit mismatch nothing is pushed and no PR is created."""
+        LocalFileTransport(tmp_path, base="develop").write(_batch_state(head_sha="h0"))
+        mismatch = BatchRuleError("one commit per issue", "commit abc carries no issue ref")
+        with (
+            patch(_MOD + ".git.repo_root", return_value=tmp_path),
+            patch(_MOD + ".git.current_branch", return_value="feature/10-x"),
+            patch(_MOD + "._task_linkage", side_effect=_all_closes),
+            patch(_MOD + ".git.run") as git_run,
+            patch(_MOD + ".github.current_repo", return_value="acme/tools"),
+            patch(_MOD + ".batch_rules.check_hard_rules") as rules,
+            patch(_MOD + ".batch_rules.check_commit_per_issue", side_effect=mismatch) as commits,
+            patch(_MOD + "._push_branch") as push,
+            patch(_MOD + "._create_pr") as create,
+            pytest.raises(SystemExit, match="carries no issue ref"),
+        ):
+            main(["--yes"])
+        # A submit that pushes fetches only the target: fetching the branch would
+        # move the lease ref that --force-with-lease holds (merge review R1).
+        git_run.assert_called_once_with("fetch", "origin", "develop")
+        rules.assert_called_once_with(["#10", "#11"], repo="acme/tools")
+        commits.assert_called_once_with(["#10", "#11"], base="origin/develop", head="h0")
+        push.assert_not_called()
+        create.assert_not_called()
+        assert not _state_submitted(tmp_path)
+
+    def test_submit_batch_hard_rule_break_opens_no_pr(self, tmp_path: Path) -> None:
+        LocalFileTransport(tmp_path, base="develop").write(_batch_state(head_sha="h0"))
+        broken = BatchRuleError("same epic", "#11 is under acme/.github#8")
+        with (
+            patch(_MOD + ".git.repo_root", return_value=tmp_path),
+            patch(_MOD + ".git.current_branch", return_value="feature/10-x"),
+            patch(_MOD + "._task_linkage", side_effect=_all_closes),
+            patch(_MOD + ".git.run") as git_run,
+            patch(_MOD + ".github.current_repo", return_value="acme/tools"),
+            patch(_MOD + ".batch_rules.check_hard_rules", side_effect=broken),
+            patch(_MOD + ".batch_rules.check_commit_per_issue") as commits,
+            patch(_MOD + "._push_branch") as push,
+            patch(_MOD + "._create_pr") as create,
+            pytest.raises(SystemExit, match=r"batch refused \(same epic\).*No PR was opened"),
+        ):
+            main(["--yes"])
+        # Template mode pushes, so only the target is fetched.
+        git_run.assert_called_once_with("fetch", "origin", "develop")
+        commits.assert_not_called()
+        push.assert_not_called()
+        create.assert_not_called()
+
+    def test_submit_batch_per_issue_refusal_on_a_later_issue(self, tmp_path: Path) -> None:
+        """The per-issue refusals run on every issue, not only the first."""
+        LocalFileTransport(tmp_path, base="develop").write(_batch_state(head_sha="h0"))
+
+        def refuse_eleven(ref: str) -> None:
+            if ref == "#11":
+                raise SystemExit("vrg-submit-pr: --issue (#11) is an epic")
+
+        with (
+            patch(_MOD + ".git.repo_root", return_value=tmp_path),
+            patch(_MOD + ".git.current_branch", return_value="feature/10-x"),
+            patch(_MOD + "._reject_if_non_task", side_effect=refuse_eleven),
+            patch(_MOD + "._create_pr") as create,
+            pytest.raises(SystemExit, match=r"#11\) is an epic"),
+        ):
+            main(["--yes"])
+        create.assert_not_called()
+
+    def test_submit_single_issue_template_body_and_no_batch_check(self, tmp_path: Path) -> None:
+        """Review focus 5: a one-issue record gets one linkage line and no batch check."""
+        _write_workflow_state(tmp_path, issue="42", linkage="Ref")
+        with (
+            patch(_MOD + ".git.repo_root", return_value=tmp_path),
+            patch(_MOD + ".git.current_branch", return_value="feature/x"),
+            patch(_MOD + "._task_linkage", side_effect=_all_closes),
+            patch(_MOD + ".git.run") as git_run,
+            patch(_MOD + ".batch_rules.check_hard_rules") as rules,
+            patch(_MOD + ".batch_rules.check_commit_per_issue") as commits,
+            patch(_MOD + "._create_pr", return_value="https://github.com/o/r/pull/9") as create,
+        ):
+            assert main(["--yes"]) == 0
+        body = create.call_args.kwargs["pr_body"]
+        assert body == (
+            "# Pull Request\n\n## Summary\n\n- Fix the bug\n\n"
+            "## Issue Linkage\n\n- Closes #42\n\n## Notes\n\n- Verified locally"
+        )
+        # Only the push runs: no fetch, no batch rule read.
+        git_run.assert_called_once_with("push", "--force-with-lease", "-u", "origin", "feature/x")
+        rules.assert_not_called()
+        commits.assert_not_called()
+
+    def test_submit_cli_mode_stays_single_issue(self) -> None:
+        """The CLI emergency mode keeps one --issue and runs no batch check."""
+        with (
+            patch(_MOD + ".git.current_branch", return_value="feature/x"),
+            patch(_MOD + "._task_linkage", side_effect=_all_closes),
+            patch(_MOD + "._push_branch"),
+            patch(_MOD + "._recheck_batch") as recheck,
+            patch(_MOD + "._create_pr", return_value="https://github.com/o/r/pull/9") as create,
+        ):
+            rc = main(["--issue", "42", "--summary", "Fix bug", "--title", "fix: bug"])
+        assert rc == 0
+        body = create.call_args.kwargs["pr_body"]
+        assert extract_tracking_refs(body) == [("Closes", "#42")]
+        recheck.assert_not_called()
+
+    def test_relay_submit_batch_closes_every_issue(self) -> None:
+        """The named-branch path reads the relay record's whole issue list."""
+        transport = MagicMock()
+        transport.read.return_value = _batch_state(head_sha="abc123")
+        with (
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
+            patch(_MOD + ".GitHubTransport", return_value=transport),
+            patch(_MOD + ".git.read_output", return_value="abc123\trefs/heads/feature/10-x"),
+            patch(_MOD + "._task_linkage", side_effect=_all_closes),
+            patch(_MOD + ".git.run"),
+            patch(_MOD + ".github.current_repo", return_value="acme/tools"),
+            patch(_MOD + ".batch_rules.check_hard_rules"),
+            patch(_MOD + ".batch_rules.check_commit_per_issue"),
+            patch(_MOD + "._push_branch") as push,
+            patch(_MOD + "._create_pr", return_value="https://github.com/o/r/pull/5") as create,
+        ):
+            assert main(["feature/10-x", "--yes"]) == 0
+        push.assert_not_called()
+        body = create.call_args.kwargs["pr_body"]
+        assert extract_tracking_refs(body) == [("Closes", "#10"), ("Closes", "#11")]
+        assert create.call_args.kwargs["head"] == "feature/10-x"
+
+    def test_relay_submit_batch_rechecks_after_fetch(self) -> None:
+        """The relay path fetches the branch and base before the commit check,
+        and a mismatch opens no PR."""
+        transport = MagicMock()
+        transport.read.return_value = _batch_state(head_sha="abc123")
+        order = MagicMock()
+        order.check_commit_per_issue.side_effect = BatchRuleError(
+            "one commit per issue", "2 issues (#10, #11) need 2 commits, found 1"
+        )
+        with (
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
+            patch(_MOD + ".GitHubTransport", return_value=transport),
+            patch(_MOD + ".git.read_output", return_value="abc123\trefs/heads/feature/10-x"),
+            patch(_MOD + "._task_linkage", side_effect=_all_closes),
+            patch(_MOD + ".git.run", order.run),
+            patch(_MOD + ".github.current_repo", return_value="acme/tools"),
+            patch(_MOD + ".batch_rules.check_hard_rules", order.check_hard_rules),
+            patch(_MOD + ".batch_rules.check_commit_per_issue", order.check_commit_per_issue),
+            patch(_MOD + "._create_pr") as create,
+            pytest.raises(SystemExit, match="found 1"),
+        ):
+            main(["feature/10-x", "--yes"])
+        names = [c[0] for c in order.mock_calls]
+        assert names == ["run", "check_hard_rules", "check_commit_per_issue"]
+        assert order.run.call_args.args == ("fetch", "origin", "feature/10-x", "develop")
+        assert order.check_commit_per_issue.call_args.kwargs == {
+            "base": "origin/develop",
+            "head": "abc123",
+        }
+        create.assert_not_called()
+
+    def test_relay_submit_single_issue_unchanged(self) -> None:
+        """Review focus 5: a one-issue relay record gets one linkage line, no batch check."""
+        transport = MagicMock()
+        transport.read.return_value = _ready_state(branch="feature/x", head_sha="abc123")
+        with (
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
+            patch(_MOD + ".GitHubTransport", return_value=transport),
+            patch(_MOD + ".git.read_output", return_value="abc123\trefs/heads/feature/x"),
+            patch(_MOD + "._task_linkage", side_effect=_all_closes),
+            patch(_MOD + ".git.run") as git_run,
+            patch(_MOD + ".batch_rules.check_hard_rules") as rules,
+            patch(_MOD + "._create_pr", return_value="https://github.com/o/r/pull/5") as create,
+        ):
+            assert main(["feature/x", "--yes"]) == 0
+        body = create.call_args.kwargs["pr_body"]
+        assert "## Issue Linkage\n\n- Closes #42\n\n## Notes" in body
+        git_run.assert_not_called()
+        rules.assert_not_called()
+
+    def test_metadata_from_state_carries_the_batch_list(self) -> None:
+        meta = _metadata_from_state(_batch_state(issues=["10", "11", "12"]), "feature/10-x")
+        assert meta["issue"] == "10"
+        assert meta["issues"] == "10,11,12"
+
+
+def test_open_pr_requires_issues() -> None:
+    """Metadata without 'issues' is refused, never read as its first issue."""
+    metadata = {"issue": "42", "title": "fix: bug", "summary": "s", "notes": "", "linkage": "Ref"}
+    with (
+        patch(_MOD + "._push_branch") as push,
+        patch(_MOD + "._create_pr") as create,
+        pytest.raises(SystemExit, match="no 'issues' list"),
+    ):
+        _open_pr(
+            "feature/x", "develop", metadata, push=True, expected_head="abc123", assume_yes=True
+        )
+    push.assert_not_called()
+    create.assert_not_called()
+
+
+def test_open_pr_batch_rechecks_before_push() -> None:
+    """A batch is re-checked at the expected head before the branch is pushed."""
+    order = MagicMock()
+    with (
+        patch(_MOD + "._task_linkage", side_effect=_all_closes),
+        patch(_MOD + "._recheck_batch", order.recheck),
+        patch(_MOD + "._push_branch", order.push),
+        patch(_MOD + "._create_pr", order.create),
+    ):
+        order.create.return_value = "https://github.com/o/r/pull/3"
+        url = _open_pr(
+            "feature/10-x",
+            "develop",
+            _batch_metadata(),
+            push=True,
+            expected_head="rebased1",
+            assume_yes=True,
+        )
+    assert url == "https://github.com/o/r/pull/3"
+    assert [c[0] for c in order.mock_calls] == ["recheck", "push", "create"]
+    order.recheck.assert_called_once_with(
+        ["#10", "#11"], branch="feature/10-x", target="develop", head="rebased1", push=True
+    )
+
+
+def test_open_pr_batch_dry_run_previews_without_checking() -> None:
+    with (
+        patch(_MOD + "._task_linkage", side_effect=_all_closes),
+        patch(_MOD + "._recheck_batch") as recheck,
+        patch(_MOD + "._create_pr") as create,
+    ):
+        url = _open_pr(
+            "feature/10-x",
+            "develop",
+            _batch_metadata(),
+            push=False,
+            expected_head="abc",
+            dry_run=True,
+        )
+    assert url is None
+    recheck.assert_not_called()
+    create.assert_not_called()
+
+
+def test_recheck_batch_is_a_no_op_for_one_issue() -> None:
+    with (
+        patch(_MOD + ".git.run") as git_run,
+        patch(_MOD + ".batch_rules.check_hard_rules") as rules,
+    ):
+        _recheck_batch(["#42"], branch="feature/x", target="develop", head="abc", push=False)
+    git_run.assert_not_called()
+    rules.assert_not_called()
+
+
+def test_recheck_batch_refuses_when_the_fetch_fails() -> None:
+    with (
+        patch(
+            _MOD + ".git.run",
+            side_effect=subprocess.CalledProcessError(1, "git", stderr="no network"),
+        ),
+        patch(_MOD + ".batch_rules.check_hard_rules") as rules,
+        pytest.raises(SystemExit, match="could not fetch feature/10-x, develop"),
+    ):
+        _recheck_batch(
+            ["#10", "#11"], branch="feature/10-x", target="develop", head="abc", push=False
+        )
+    rules.assert_not_called()
+
+
+# -- the serial batch (--select) re-checks the rebased head, on real git -------
+
+
+def _run_git(repo: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", "-c", "commit.gpgsign=false", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
+
+
+def _commit_file(repo: Path, name: str, text: str, subject: str) -> str:
+    (repo / name).write_text(text)
+    _run_git(repo, "add", name)
+    _run_git(repo, "commit", "-q", "-m", subject)
+    return _run_git(repo, "rev-parse", "HEAD")
+
+
+def test_serial_batch_checks_the_rebased_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """After the --select rebase, the batch is checked on the rebased head, and
+    a commit that went empty in the rebase (develop already carries its
+    change) is refused, with nothing pushed or opened."""
+    for key in ("GIT_AUTHOR", "GIT_COMMITTER"):
+        monkeypatch.setenv(f"{key}_NAME", "Test")
+        monkeypatch.setenv(f"{key}_EMAIL", "test@example.com")
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "commit.gpgsign")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "false")
+    monkeypatch.delenv("VRG_APP_ID", raising=False)
+
+    origin = tmp_path / "origin.git"
+    clone = tmp_path / "clone"
+    other = tmp_path / "other"
+    _run_git(tmp_path, "init", "-q", "--bare", "-b", "develop", str(origin))
+    _run_git(tmp_path, "clone", "-q", str(origin), str(clone))
+    _run_git(clone, "checkout", "-q", "-b", "develop")
+    _commit_file(clone, "base.txt", "base\n", "chore: base")
+    _run_git(clone, "push", "-q", "origin", "develop")
+
+    _run_git(clone, "checkout", "-q", "-b", "feature/10-x")
+    _commit_file(clone, "a.txt", "a\n", "feat: a (#10)")
+    reported = _commit_file(clone, "b.txt", "b\n", "feat: b (#11)")
+
+    # Meanwhile develop gains the same change as #11's commit.
+    _run_git(tmp_path, "clone", "-q", "-b", "develop", str(origin), str(other))
+    _commit_file(other, "b.txt", "b\n", "feat: b landed elsewhere")
+    _run_git(other, "push", "-q", "origin", "develop")
+
+    fields = {
+        **_batch_metadata(),
+        "base": "origin/develop",
+        "head_sha": reported,
+    }
+    monkeypatch.chdir(clone)
+    checked: list[str] = []
+    real_check = batch_rules.check_commit_per_issue
+
+    def spy(issues: list[str], *, base: str, head: str) -> None:
+        checked.append(head)
+        real_check(issues, base=base, head=head)
+
+    wt = Worktree(path=clone, branch="feature/10-x")
+    with (
+        patch(_MOD + ".git.main_worktree_root", return_value=clone),
+        patch(_MOD + ".submission.read_pr_fields", return_value=fields),
+        patch(_MOD + "._task_linkage", side_effect=_all_closes),
+        patch(_MOD + ".github.current_repo", return_value="acme/tools"),
+        patch(_MOD + ".batch_rules.check_hard_rules") as rules,
+        patch(_MOD + ".batch_rules.check_commit_per_issue", side_effect=spy),
+        patch(_MOD + "._push_branch") as push,
+        patch(_MOD + "._create_pr") as create,
+        patch(_MOD + ".submission.record_submission") as record,
+        pytest.raises(SystemExit, match=r"one commit per issue.*found 1"),
+    ):
+        _run_submit_batch(
+            [wt], base="develop", finalize=False, release=False, install=False, assume_yes=True
+        )
+    rebased = _run_git(clone, "rev-parse", "HEAD")
+    assert rebased != reported
+    # The check ran on the rebased head, the one the PR would open at.
+    assert checked == [rebased]
+    rules.assert_called_once_with(["#10", "#11"], repo="acme/tools")
+    push.assert_not_called()
+    create.assert_not_called()
+    record.assert_not_called()
