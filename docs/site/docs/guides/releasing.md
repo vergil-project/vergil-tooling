@@ -63,7 +63,7 @@ adding new public surface. Versions: `v1.3.0` → `v1.3.1`.
 
 1. Land all the patch's changes via normal feature PRs to `develop`.
    To see what the release will carry, run `vrg-repo-status`: its
-   Pending release section lists every PR on `develop` that `main`
+   Pending release section lists every change on `develop` that `main`
    does not have yet, with the latest release and the rolling tag
    (see the [`vrg-repo-status` reference](../reference/cli-tools-overview.md#vrg-repo-status)).
 2. From the root checkout, on a clean `develop` that matches
