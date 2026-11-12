@@ -1,6 +1,12 @@
 """Safe git wrapper for AI agent sessions.
 
 Enforces a subcommand allowlist and flag deny lists.
+
+vrg-git protects origin, not the local checkout. The guards that protect
+origin (the push deny-list, the frozen-push refusal) are strict. Rewriting
+or discarding local work (``reset``, ``clean``, a pathspec ``checkout`` and
+``rebase -i --autosquash``) is allowed on a branch that is neither protected
+nor frozen, and refused, failing closed, everywhere else (#4217).
 """
 
 from __future__ import annotations
@@ -77,6 +83,10 @@ _ALLOWED_SIMPLE: set[str] = {
     "merge",
     "cherry-pick",
     "rebase",
+    # Local rewrites: allowed only on a branch that is neither protected nor
+    # frozen, by _check_local_rewrite (#4217).
+    "reset",
+    "clean",
 }
 
 _ALLOWED_COMPOUND: dict[str, set[str]] = {
@@ -99,8 +109,6 @@ _SYMBOLIC_REF_READ_FLAGS: frozenset[str] = frozenset({"-q", "--quiet", "--short"
 
 _DENIED: dict[str, str] = {
     "commit": "Use vrg-commit instead of git commit.",
-    "reset": "git reset is denied by vrg-git.",
-    "clean": "git clean is denied by vrg-git.",
     # config has a broad mutating-flag surface (--add/--unset/--replace-all/
     # --rename-section/--remove-section/-e/bare set); its read-only forms
     # (--get/--list) need a careful flag allowlist and are deferred (#1602).
@@ -115,7 +123,7 @@ _DENIED: dict[str, str] = {
 _FLAG_DENY: dict[str, set[str]] = {
     "branch": {"-D", "--force"},
     "push": {"-f", "--force", "--force-with-lease"},
-    "checkout": {".", "*"},
+    # -i/--interactive is allowed only together with --autosquash (#4217).
     "rebase": {"-i", "--interactive"},
 }
 
@@ -252,9 +260,17 @@ def _run(argv: list[str]) -> int:
         print(f"vrg-git: {flag_err}", file=sys.stderr)
         return 1
 
+    # The worktree convention only refuses, so checking it first never allows
+    # more; it gives the clearer message for a branch switch in the main
+    # worktree, whatever HEAD the checkout is on (CI runs on a detached HEAD).
     worktree_err = _check_worktree_convention(subcmd, argv[1:])
     if worktree_err:
         print(f"vrg-git: {worktree_err}", file=sys.stderr)
+        return 1
+
+    rewrite_err = _check_local_rewrite(subcmd, argv[1:])
+    if rewrite_err:
+        print(rewrite_err, file=sys.stderr)
         return 1
 
     branch_name_err = _check_new_branch_name(subcmd, argv[1:])
@@ -404,8 +420,10 @@ def _upstream_is_integration_branch(branch_name: str) -> bool:
 def _noninteractive_rebase_env(base_env: dict[str, str] | None) -> dict[str, str]:
     """Force no-op editors so a rebase never blocks on an editor.
 
-    vrg-git denies ``-i``/``--interactive``, so every rebase it runs is
-    non-interactive by policy. git can still try to launch a sequence or
+    vrg-git allows ``-i``/``--interactive`` only with ``--autosquash``, and
+    with these editors that rebase runs its generated todo list unedited, so
+    every rebase it runs is non-interactive by policy. git can still try to
+    launch a sequence or
     commit editor for a plain ``rebase <upstream>`` (depending on git
     version and config) — which hangs in a headless agent session and
     leaves the worktree stranded mid-rebase with a stale ``index.lock``
@@ -423,14 +441,12 @@ def _check_denied_flags(subcmd: str, args: list[str]) -> str | None:
     if not denied_flags:
         return None
 
-    if subcmd == "checkout":
-        after_separator = False
-        for arg in args:
-            if arg == "--":
-                after_separator = True
-                continue
-            if after_separator and arg in denied_flags:
-                return f"checkout -- {arg} is denied by vrg-git."
+    if subcmd == "rebase":
+        if _rebase_is_interactive(args) and not _rebase_has_autosquash(args):
+            return (
+                "rebase -i/--interactive is denied without --autosquash; use "
+                "vrg-git rebase -i --autosquash <base>."
+            )
         return None
 
     if subcmd == "push":
@@ -464,6 +480,279 @@ def _check_denied_flags(subcmd: str, args: list[str]) -> str | None:
     for arg in args:
         if arg in denied_flags:
             return f"{subcmd} {arg} is denied by vrg-git."
+    return None
+
+
+# rebase short options whose value is the rest of the cluster, or the next
+# token when nothing follows in the cluster (-S takes only an attached
+# value); and long options that take the next token as their value. A value
+# is never read as a flag.
+_REBASE_SHORT_WITH_VALUE: set[str] = set("xsXC")
+_REBASE_SHORT_ATTACHED_VALUE: set[str] = set("S")
+_REBASE_LONG_WITH_VALUE: set[str] = {"--exec", "--strategy", "--strategy-option", "--onto"}
+
+
+def _rebase_flags(args: list[str]) -> list[str]:
+    """Return the option tokens of ``rebase *args*``, with option values removed.
+
+    Each short cluster is split into one ``-<c>`` per flag, so ``-ri`` reads
+    as ``-r`` and ``-i``. Positionals and option values are dropped.
+    """
+    return _split_rebase_args(args)[0]
+
+
+def _rebase_positionals(args: list[str]) -> list[str]:
+    """Return the positionals of ``rebase *args*``: ``[<upstream> [<branch>]]``."""
+    return _split_rebase_args(args)[1]
+
+
+def _rebase_names_branch(args: list[str]) -> bool:
+    """Return True when ``rebase *args*`` names a ``<branch>`` to check out and rewrite.
+
+    git reads ``rebase [<upstream> [<branch>]]``, or ``rebase --root
+    [<branch>]``, where the one positional is the branch. ``--root`` and any
+    abbreviation git would accept for it count.
+    """
+    root = any(
+        len(flag) >= len("--ro") and "--root".startswith(flag.split("=", 1)[0])
+        for flag in _rebase_flags(args)
+    )
+    return len(_rebase_positionals(args)) > (0 if root else 1)
+
+
+def _split_rebase_args(args: list[str]) -> tuple[list[str], list[str]]:
+    """Split ``rebase *args*`` into its flags and its positionals, values dropped."""
+    flags: list[str] = []
+    positionals: list[str] = []
+    skip_next = False
+    for arg in args:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg == "--":
+            continue
+        if arg == "-" or not arg.startswith("-"):
+            positionals.append(arg)
+            continue
+        if arg.startswith("--"):
+            flags.append(arg)
+            skip_next = arg in _REBASE_LONG_WITH_VALUE
+            continue
+        cluster = arg[1:]
+        for index, char in enumerate(cluster):
+            flags.append(f"-{char}")
+            if char in _REBASE_SHORT_ATTACHED_VALUE:
+                break
+            if char in _REBASE_SHORT_WITH_VALUE:
+                skip_next = index == len(cluster) - 1
+                break
+    return flags, positionals
+
+
+def _rebase_is_interactive(args: list[str]) -> bool:
+    """Return True when ``rebase *args*`` asks for an interactive rebase.
+
+    Over-approximates on purpose: ``-i`` anywhere in a short cluster and any
+    abbreviation git would accept for ``--interactive`` count, so an
+    interactive rebase cannot slip past the ``--autosquash`` rule.
+    """
+    for flag in _rebase_flags(args):
+        if flag == "-i":
+            return True
+        name = flag.split("=", 1)[0]
+        if len(name) > len("--") and "--interactive".startswith(name):
+            return True
+    return False
+
+
+def _rebase_has_autosquash(args: list[str]) -> bool:
+    """Return True when ``rebase *args*`` ends with ``--autosquash`` in effect.
+
+    Only the exact ``--autosquash`` turns it on; a later ``--no-autosquash``
+    (or an abbreviation of it) turns it off again, as in git.
+    """
+    enabled = False
+    for flag in _rebase_flags(args):
+        if flag == "--autosquash":
+            enabled = True
+        elif len(flag) >= len("--no-autosq") and "--no-autosquash".startswith(flag):
+            enabled = False
+    return enabled
+
+
+# checkout options that take the next token as their value.
+_CHECKOUT_LONG_WITH_VALUE: set[str] = {"--orphan", "--conflict"}
+_CHECKOUT_SHORT_WITH_VALUE: set[str] = set("bB")
+
+
+def _checkout_has_pathspec(args: list[str]) -> bool:
+    """Return True when ``checkout *args*`` restores paths instead of switching.
+
+    A pathspec checkout overwrites local changes, so it is a local rewrite.
+    It is one when it has ``--``, ``-p``/``--patch`` or
+    ``--pathspec-from-file``, more than one positional, or a single
+    positional that names neither a commit nor a remote-tracking branch
+    (``checkout .``, ``checkout src/``). A plain branch or commit switch, with
+    or without ``-b``, is not.
+    """
+    positionals: list[str] = []
+    skip_next = False
+    for arg in args:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg == "--":
+            return True
+        if arg == "-":
+            # `checkout -` switches to the previous branch.
+            continue
+        if arg.startswith("--"):
+            if arg.split("=", 1)[0] in ("--patch", "--pathspec-from-file"):
+                return True
+            skip_next = arg in _CHECKOUT_LONG_WITH_VALUE
+            continue
+        if arg.startswith("-"):
+            cluster = arg[1:]
+            for index, char in enumerate(cluster):
+                if char == "p":
+                    return True
+                if char in _CHECKOUT_SHORT_WITH_VALUE:
+                    skip_next = index == len(cluster) - 1
+                    break
+            continue
+        positionals.append(arg)
+    if len(positionals) > 1:
+        return True
+    if not positionals:
+        return False
+    return not _names_commit_or_remote_branch(positionals[0])
+
+
+def _names_commit_or_remote_branch(name: str) -> bool:
+    """Return True when *name* is a commit, or a branch git would make from a remote.
+
+    The two things a one-argument ``checkout <name>`` switches to: a
+    commit-ish, or (git's ``--guess``) a branch that exists only as
+    ``<remote>/<name>``. Anything else is read as a path.
+    """
+    commit = subprocess.run(  # noqa: S603
+        ["git", "rev-parse", "--verify", "--quiet", f"{name}^{{commit}}"],  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if commit.returncode == 0:
+        return True
+    remotes = subprocess.run(
+        ["git", "for-each-ref", "--format=%(refname:strip=3)", "refs/remotes/"],  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if remotes.returncode != 0:
+        return False
+    return name in remotes.stdout.splitlines()
+
+
+def _is_local_rewrite(subcmd: str, args: list[str]) -> bool:
+    """Return True when ``git *subcmd* *args*`` rewrites or discards local work."""
+    if subcmd in ("reset", "clean"):
+        return True
+    if subcmd == "checkout":
+        return _checkout_has_pathspec(args)
+    if subcmd == "rebase":
+        return _rebase_is_interactive(args)
+    return False
+
+
+def _rewrite_target_branch() -> str | None:
+    """Return the branch a local rewrite here would change, or None.
+
+    The checked-out branch; or, while a rebase is in progress (HEAD is
+    detached), the branch being rebased, which the rebase updates when it
+    finishes. None for any other detached HEAD or an unresolvable one, so an
+    unknown is refused rather than treated as a feature branch.
+    """
+    head = subprocess.run(
+        ["git", "symbolic-ref", "--quiet", "--short", "HEAD"],  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if head.returncode == 0 and head.stdout.strip():
+        return head.stdout.strip()
+    for state in ("rebase-merge/head-name", "rebase-apply/head-name"):
+        located = subprocess.run(  # noqa: S603
+            ["git", "rev-parse", "--git-path", state],  # noqa: S607
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if located.returncode != 0 or not located.stdout.strip():
+            return None
+        try:
+            head_name = Path(located.stdout.strip()).read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            continue
+        except OSError:
+            return None
+        if head_name.startswith("refs/heads/"):
+            return head_name.removeprefix("refs/heads/")
+        return None
+    return None
+
+
+def _check_local_rewrite(subcmd: str, args: list[str]) -> str | None:
+    """Refuse a local rewrite unless the branch is neither protected nor frozen.
+
+    ``reset``, ``clean``, a pathspec ``checkout`` and ``rebase -i
+    --autosquash`` rewrite or discard local work. vrg-git protects origin,
+    not the local checkout, so they are allowed on a feature branch, but
+    refused on ``develop``, ``main`` and ``release/*``, on a detached HEAD,
+    and on a branch reported ready (the freeze, #1719). Unlike commit and
+    push, which warn and proceed, they fail closed when the PR-workflow
+    state exists but cannot be read, because they throw work away (#4217).
+    """
+    if not _is_local_rewrite(subcmd, args):
+        return None
+    if subcmd == "rebase" and _rebase_names_branch(args):
+        # `rebase <upstream> <branch>` and `rebase --root <branch>` check out
+        # and rewrite <branch>, which the checks below (made on the current
+        # branch) would never see.
+        return (
+            "vrg-git: rebase -i --autosquash takes only <base>; check out the "
+            "branch to rebase in its own worktree and run it there."
+        )
+    branch = _rewrite_target_branch()
+    if branch is None:
+        return (
+            f"vrg-git: {subcmd} is refused here: HEAD is not on a branch, or the "
+            "branch cannot be resolved. vrg-git allows local rewrites only on a "
+            "checked-out feature branch."
+        )
+    if _is_protected_branch_name(branch):
+        return (
+            f"vrg-git: {subcmd} is refused on protected branch {branch} "
+            "(develop, main, release/*). vrg-git allows local rewrites only on a "
+            "feature branch."
+        )
+    root = _current_worktree_root()
+    if root is None:
+        return (
+            f"vrg-git: {subcmd} is refused here: the worktree root cannot be "
+            "resolved, so the report-ready freeze cannot be checked."
+        )
+    check = freeze.check_worktree(root, action="rewrite this branch")
+    if check.read_error is not None:
+        return (
+            f"vrg-git: {subcmd} is refused: could not read PR-workflow state "
+            f"({check.read_error}). A local rewrite discards work, so it fails "
+            "closed instead of skipping the freeze check. Fix or remove "
+            f"{root / '.vergil' / 'pr-workflow.json'}, then re-run "
+            "vrg-pr-workflow report-ready if the branch was reported ready."
+        )
+    if check.frozen:
+        return check.message
     return None
 
 
@@ -1050,14 +1339,19 @@ def _print_help() -> None:
         "What it enforces:\n"
         "  - Subcommand allowlist: read-only inspection commands plus a vetted\n"
         "    set of mutating ones (add, push, fetch, pull, clone, checkout,\n"
-        "    switch, stash, merge, cherry-pick, rebase, worktree add/list/remove).\n"
+        "    switch, stash, merge, cherry-pick, rebase, reset, clean,\n"
+        "    worktree add/list/remove).\n"
         "  - Read-only forms only: reflog (expire/delete denied) and\n"
         "    symbolic-ref [-q|--quiet] [--short] <name> (setting a ref,\n"
         "    -d/--delete and -m are denied).\n"
         f"  - Denied subcommands: {denied} (use vrg-commit for commits).\n"
-        "  - Flag deny-list: push -f/--force, branch -D/--force, rebase -i,\n"
-        "    checkout -- . ; --force-with-lease is blocked on protected branches\n"
-        "    (develop, main, release/*).\n"
+        "  - Flag deny-list: push -f/--force, branch -D/--force; rebase -i\n"
+        "    only with --autosquash; --force-with-lease is blocked on protected\n"
+        "    branches (develop, main, release/*).\n"
+        "  - Local rewrites: vrg-git protects origin, not the local checkout.\n"
+        "    reset, clean, a pathspec checkout (checkout ., checkout -- <path>)\n"
+        "    and rebase -i --autosquash run only on a branch that is neither\n"
+        "    protected nor frozen; an unreadable PR-workflow state refuses them.\n"
         "  - Worktree convention: branch switches in the main worktree and\n"
         "    'worktree add' targets outside .worktrees/ are refused.\n"
         "  - Work-unit identifier: creating an issue-family branch (via\n"
@@ -1066,7 +1360,8 @@ def _print_help() -> None:
         "    to be the matching issue-<N>-<slug> (dir/branch stay in lockstep).\n"
         "    Issue <N> must be open and not an epic or archive; a failed issue\n"
         "    read refuses the branch.\n"
-        "  - Freeze: a push is refused once the branch was reported ready\n"
+        "  - Freeze: a push or a local rewrite is refused once the branch was\n"
+        "    reported ready\n"
         "    (vrg-pr-workflow report-ready); unfreeze deliberately to reopen it.\n"
         "  - Identity: remote ops run with the GitHub App installation token for\n"
         "    the resolved identity mode (see vrg-whoami).\n"

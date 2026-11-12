@@ -16,9 +16,9 @@ if TYPE_CHECKING:
 _NOW = "2026-06-08T00:00:00Z"
 
 
-def _write_state(root: Path, *, with_metadata: bool) -> None:
+def _write_state(root: Path, *, with_metadata: bool, issues: list[str] | None = None) -> None:
     state = engine.init_state(
-        issue="1534",
+        issues=issues or ["1534"],
         branch="feature/1534-x",
         base="develop",
         head_sha="h0",
@@ -43,6 +43,7 @@ def test_read_pr_fields_prefers_the_state_file(tmp_path: Path) -> None:
     fields = submission.read_pr_fields(tmp_path)
     assert fields == {
         "issue": "1534",
+        "issues": "1534",
         "title": "feat: x",
         "summary": "did x",
         "notes": "n",
@@ -50,6 +51,13 @@ def test_read_pr_fields_prefers_the_state_file(tmp_path: Path) -> None:
         "base": "develop",
         "head_sha": "h0",
     }
+
+
+def test_read_pr_fields_joins_a_batch_issue_list_in_order(tmp_path: Path) -> None:
+    _write_state(tmp_path, with_metadata=True, issues=["1534", "1536", "1535"])
+    fields = submission.read_pr_fields(tmp_path)
+    assert fields["issue"] == "1534"
+    assert fields["issues"] == "1534,1536,1535"
 
 
 def test_read_pr_fields_refuses_a_state_with_no_reported_head(tmp_path: Path) -> None:

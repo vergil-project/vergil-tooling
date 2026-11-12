@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 def _ready() -> WorkflowState:
     state = engine.init_state(
-        issue="42",
+        issues=["42"],
         branch="feature/42-x",
         base="origin/develop",
         head_sha="aaaaaaaa1111",
@@ -44,7 +44,7 @@ def test_is_frozen_none() -> None:
 
 def test_is_frozen_implementing() -> None:
     state = engine.init_state(
-        issue="42",
+        issues=["42"],
         branch="feature/42-x",
         base="origin/develop",
         head_sha="aaaa",

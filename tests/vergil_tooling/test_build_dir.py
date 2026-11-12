@@ -9,7 +9,12 @@ from typing import TYPE_CHECKING
 import pytest
 
 from vergil_tooling.lib.build_dir import BuildDirError, ensure_build_dir
-from vergil_tooling.lib.merge_review.state import StateDirError, ensure_private_dir
+from vergil_tooling.lib.merge_review.state import (
+    StateDirError,
+    ensure_issue_dir,
+    ensure_private_dir,
+    existing_issue_dir,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -147,3 +152,53 @@ def test_private_dir_refuses_non_positive_issue(tmp_path: Path, issue: int) -> N
     with pytest.raises(StateDirError, match="issue number must be positive"):
         ensure_private_dir(tmp_path, issue)
     assert not (tmp_path / "build").exists()
+
+
+# -- the issue's own directory ----------------------------------------------------
+
+
+def test_issue_dir_created_mode_700_without_merge_review(tmp_path: Path) -> None:
+    path = ensure_issue_dir(tmp_path, 7)
+    assert path == _levels(tmp_path)[2]
+    assert [_mode(level) for level in _levels(tmp_path)[:3]] == [0o700] * 3
+    assert not _levels(tmp_path)[3].exists()
+
+
+def test_existing_issue_dir_creates_nothing(tmp_path: Path) -> None:
+    assert existing_issue_dir(tmp_path, 7) is None
+    assert not (tmp_path / "build").exists()
+    (tmp_path / "build").mkdir()
+    assert existing_issue_dir(tmp_path, 7) is None
+    ensure_issue_dir(tmp_path, 8)
+    assert existing_issue_dir(tmp_path, 7) is None
+    assert not _levels(tmp_path)[2].exists()
+
+
+def test_existing_issue_dir_returns_a_private_dir(tmp_path: Path) -> None:
+    ensure_issue_dir(tmp_path, 7)
+    assert existing_issue_dir(tmp_path, 7) == _levels(tmp_path)[2]
+
+
+def test_existing_issue_dir_refuses_a_public_level(tmp_path: Path) -> None:
+    ensure_issue_dir(tmp_path, 7)
+    _levels(tmp_path)[1].chmod(0o755)
+    with pytest.raises(StateDirError, match="issue-implement has mode 755, not 700"):
+        existing_issue_dir(tmp_path, 7)
+
+
+def test_existing_issue_dir_refuses_a_dangling_symlink_level(tmp_path: Path) -> None:
+    ensure_issue_dir(tmp_path, 8)
+    _levels(tmp_path)[2].symlink_to(tmp_path / "missing")
+    with pytest.raises(StateDirError, match="7 is a symlink, not a directory"):
+        existing_issue_dir(tmp_path, 7)
+
+
+def test_existing_issue_dir_refuses_a_symlinked_build(tmp_path: Path) -> None:
+    (tmp_path / "build").symlink_to(tmp_path)
+    with pytest.raises(StateDirError, match="not a real directory"):
+        existing_issue_dir(tmp_path, 7)
+
+
+def test_existing_issue_dir_refuses_non_positive_issue(tmp_path: Path) -> None:
+    with pytest.raises(StateDirError, match="issue number must be positive"):
+        existing_issue_dir(tmp_path, 0)

@@ -2,6 +2,10 @@
 
 Performs branch / context validation before invoking ``git commit``.
 Commits carry no AI co-author trailer (#3200).
+
+``--fixup <commit>`` instead makes a ``fixup! <subject>`` commit of an earlier
+commit on the current branch (``git commit --fixup``), through the same
+context and freeze checks (epic vergil-project/.github#1019).
 """
 
 from __future__ import annotations
@@ -39,6 +43,10 @@ _BRANCHING_MODELS: dict[str, tuple[str, str]] = {
 }
 
 _WORKTREES_DIRNAME = ".worktrees"
+
+# A fixup target must be branch-local: reachable from HEAD and not yet part of
+# this base, so folding it later never rewrites shared history.
+_FIXUP_BASE = "origin/develop"
 
 
 @cli_main
@@ -78,6 +86,11 @@ def main(argv: list[str] | None = None) -> int:
         print(freeze_check.message, file=sys.stderr)
         return 1
 
+    if args.fixup is not None:
+        rc = _validate_fixup_target(args.fixup)
+        if rc != 0:
+            return rc
+
     if args.body and contains_autoclose(args.body):
         return _reject(
             "ERROR: commit body contains a GitHub auto-close keyword "
@@ -95,6 +108,13 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
+
+    if args.fixup is not None:
+        fixup_args = ["commit", f"--fixup={args.fixup}"]
+        if args.allow_empty:
+            fixup_args.append("--allow-empty")
+        git.run(*fixup_args)
+        return 0
 
     message = build_commit_message(
         commit_type=args.commit_type,
@@ -125,21 +145,46 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--type",
-        required=True,
         choices=ALLOWED_TYPES,
         dest="commit_type",
-        help="Conventional commit type",
+        help="Conventional commit type (required unless --fixup)",
     )
-    parser.add_argument("--scope", required=True, help="Conventional commit scope")
-    parser.add_argument("--message", required=True, help="Commit description")
-    parser.add_argument("--body", default="", help="Detailed commit body")
+    parser.add_argument("--scope", help="Conventional commit scope (required unless --fixup)")
+    parser.add_argument("--message", help="Commit description (required unless --fixup)")
+    parser.add_argument("--body", help="Detailed commit body")
+    parser.add_argument(
+        "--fixup",
+        metavar="COMMIT",
+        help=(
+            "Make a 'fixup! <subject>' commit of COMMIT, an earlier commit on this "
+            "branch; not allowed with --type, --scope, --message or --body"
+        ),
+    )
     parser.add_argument(
         "--allow-empty",
         action="store_true",
         default=False,
         help="Allow a commit with no staged changes (e.g. to re-trigger CI)",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    message_flags = (
+        ("--type", args.commit_type),
+        ("--scope", args.scope),
+        ("--message", args.message),
+    )
+    if args.fixup is not None:
+        given = [
+            flag for flag, value in (*message_flags, ("--body", args.body)) if value is not None
+        ]
+        if given:
+            parser.error(f"--fixup cannot be used with {', '.join(given)}")
+    else:
+        missing = [flag for flag, value in message_flags if value is None]
+        if missing:
+            parser.error(f"the following arguments are required: {', '.join(missing)}")
+        if args.body is None:
+            args.body = ""
+    return args
 
 
 def _reject(reason: str, *hints: str) -> int:
@@ -148,6 +193,33 @@ def _reject(reason: str, *hints: str) -> int:
     for hint in hints:
         print(hint, file=sys.stderr)
     return 1
+
+
+def _validate_fixup_target(commit: str) -> int:
+    """Refuse a fixup target that is not a commit made on this branch.
+
+    The target must resolve to a commit, be reachable from HEAD and not be
+    reachable from ``origin/develop``. Returns 0 on success, 1 on rejection.
+    """
+    if not git.ref_exists(f"{commit}^{{commit}}"):
+        return _reject(f"ERROR: --fixup commit '{commit}' does not resolve to a commit.")
+    if not git.ref_exists(_FIXUP_BASE):
+        return _reject(
+            f"ERROR: cannot resolve '{_FIXUP_BASE}' to check that --fixup commit "
+            f"'{commit}' is on this branch.",
+            "Run 'vrg-git fetch origin' and retry.",
+        )
+    if not git.is_ancestor(commit, "HEAD"):
+        return _reject(
+            f"ERROR: --fixup commit '{commit}' is not on the current branch "
+            "(not reachable from HEAD).",
+        )
+    if git.is_ancestor(commit, _FIXUP_BASE):
+        return _reject(
+            f"ERROR: --fixup commit '{commit}' is already part of '{_FIXUP_BASE}'; "
+            "only a commit made on this branch can take a fixup.",
+        )
+    return 0
 
 
 def _validate_commit_context(root: Path, branching_model: str) -> int:

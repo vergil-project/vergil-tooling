@@ -25,7 +25,7 @@ Freeze gate: refuses to add a commit on a branch that has been reported ready
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_commit` |
-| Args | `--type` (required), `--scope` (required), `--message` (required), `--body`, `--allow-empty` |
+| Args | `--type`, `--scope`, `--message` (all three required unless `--fixup`), `--body`, `--fixup COMMIT` (a `fixup!` commit of a branch-local commit; refused with the message flags), `--allow-empty` |
 | Preconditions | Git repo, staged changes, not detached HEAD, not on protected branch, branch prefix matches branching model, issue number in branch name, not main worktree when `.worktrees/` present, branch not frozen (or unfrozen) |
 | Failure mode | `SystemExit` with diagnostic on stderr for each check |
 | Exit codes | 0 success, 1 rejection or error |
@@ -37,7 +37,8 @@ Reword a branch-local commit's message through a scripted, non-interactive
 rebase, re-stamping the new message through the same standards path as
 `vrg-commit`. It is the agent-safe way to correct a commit message on the
 current branch: `vrg-git commit` is denied, `vrg-commit` only creates new
-commits, and raw interactive rebase is blocked repo-wide. It is bounded:
+commits, and interactive rebase is allowed only as `rebase -i --autosquash`,
+which cannot reword. It is bounded:
 
 - **Branch-local only**: it refuses a commit already reachable from the
   base branch (`origin/develop`, or `origin/main` for a `release/*` branch)
@@ -71,11 +72,14 @@ frozen; `vrg-pr-workflow unfreeze` is the way back (see the freeze in
 
 A safe git wrapper for agent sessions. It forwards to `git` only after
 enforcing policy: a subcommand allowlist, read-only forms of `reflog` and
-`symbolic-ref`, denied subcommands (`commit`, `config`, `reset`, `clean` and
-others; use `vrg-commit` for commits), a flag deny-list (`push --force`,
-`branch -D`, `rebase -i`), the worktree convention, the
+`symbolic-ref`, denied subcommands (`commit`, `config` and others; use
+`vrg-commit` for commits), a flag deny-list (`push --force`, `branch -D`,
+`rebase -i` without `--autosquash`), the worktree convention, the
 `<type>/<N>-<slug>` branch form for an open, non-epic issue, and the
-report-ready freeze. Remote operations run with the GitHub App installation
+report-ready freeze. It protects origin, not the local checkout: `reset`,
+`clean`, a pathspec `checkout` and `rebase -i --autosquash` run only on a
+branch that is neither protected nor frozen, and fail closed when the
+PR-workflow state cannot be read. Remote operations run with the GitHub App installation
 token for the resolved identity (see [`vrg-whoami`](#vrg-whoami)). It is not
 a drop-in replacement for `git`; `vrg-git --help` lists the full policy.
 
@@ -194,11 +198,19 @@ vergil-project/.github#176 and #508).
 Local-settings guard: `report-ready` refuses an agent (warns a human), before
 pushing or recording anything, while a loadable `.claude/settings.local.json`
 is not absent or `{}` (epic vergil-project/.github#558).
+A batch PR (epic vergil-project/.github#1019) repeats `--issue`, in commit
+order. Every issue runs the per-issue refusals, then the batch hard rules and
+the one-commit-per-issue check run before any push; either failing records
+nothing. The state records the list as `issues` (its first entry is also
+`issue`), in the local file and the relay ref alike, and a re-run must name the
+same list in the same order. Once the state is recorded, the members' batch
+markers are removed. A single `--issue` records no `issues` key and behaves
+exactly as before.
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_pr_workflow` |
-| Args | `report-ready` (`--issue`, `--title`, `--summary`, `--notes` required; `--linkage` default Ref), `unfreeze`, `status`; global `--base` (default: origin/develop) |
+| Args | `report-ready` (`--issue`, repeatable for a batch, `--title`, `--summary`, `--notes` required; `--linkage` default Ref), `unfreeze`, `status`, `batch-start`, `batch-extract`, `batch-show`; global `--base` (default: origin/develop) |
 | Preconditions | Git repo; run from the worktree whose branch is being staged |
 | Failure mode | `WorkflowError` on stderr (e.g. unfreeze after submit, nothing to unfreeze, or a relay ref unfreeze could not update) |
 | Exit codes | 0 success, 1 error |

@@ -43,8 +43,13 @@ def _pr_number_from_url(pr_url: str) -> int | None:
 
 
 def read_pr_fields(worktree_root: Path) -> dict[str, str]:
-    """Return the PR submission fields (``issue``/``title``/``summary``/``notes``/
-    ``linkage``/``base``/``head_sha``) from the workflow state file.
+    """Return the PR submission fields (``issue``/``issues``/``title``/``summary``/
+    ``notes``/``linkage``/``base``/``head_sha``) from the workflow state file.
+
+    ``issues`` is every issue the PR hands off, comma-joined in order
+    (``WorkflowState.all_issues``), so it is always present: the one issue of a
+    single-issue record, or a batch's list (epic vergil-project/.github#1019).
+    ``issue`` stays the first of them.
 
     The ``base`` key carries the base ref the oracle recorded for this branch
     (e.g. ``origin/develop``) so submission targets the branch the agent
@@ -98,6 +103,7 @@ def read_pr_fields(worktree_root: Path) -> dict[str, str]:
         )
     return {
         "issue": state.issue,
+        "issues": ",".join(state.all_issues),
         "title": meta["title"],
         "summary": meta["summary"],
         "notes": meta.get("notes", ""),

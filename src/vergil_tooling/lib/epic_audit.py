@@ -1,6 +1,6 @@
 """Audit for epic/task drift — work that slipped through auto-close.
 
-``task_drift`` finds merged PRs whose ``Ref``'d task is still open;
+``task_drift`` finds merged PRs whose linked task is still open;
 ``epic_drift`` finds open, non-perpetual epics whose children are all closed
 (should have rolled up). ``render`` formats both sections for review;
 ``close_drift`` closes them with an explanatory comment — a human action, gated
@@ -85,11 +85,84 @@ def _merged_prs(since: str, *, org: str, today: date) -> list[Any]:
     return prs
 
 
-def task_drift(since: str, *, org: str, today: date | None = None) -> list[TaskDrift]:
-    """Merged PRs (since *since*) whose ``Ref``'d task is still open.
+def _refs_to_check(body: str) -> list[str]:
+    """The task refs a merged PR's *body* links, for :func:`task_drift` to check.
 
-    *today* (default: the current UTC date) only sets where the week-long
-    search slices end.
+    A body with one linkage line is handled as it always was: its one ref,
+    ``Ref`` or ``Closes``. A body with more than one (a batch PR, one
+    ``Closes`` line per issue, epic vergil-project/.github#1019) yields every
+    ``Closes`` ref and never a ``Ref`` one, which only associates the PR.
+    """
+    refs = linkage.extract_tracking_refs(body)
+    if len(refs) == 1:
+        return [refs[0][1]]
+    return [ref for keyword, ref in refs if keyword == "Closes"]
+
+
+def _open_task_drift(entry: Any, pr_repo: str, ref: str) -> TaskDrift | None:
+    """The drift record for *ref*, linked by merged PR *entry*, or None if it is not drift."""
+    # ``ref`` is ``"#N"`` (same-repo) or ``"owner/repo#N"`` (cross-repo).
+    # Resolve the repo the task actually lives in — honor a cross-repo ref
+    # instead of assuming the PR's own repo (issue #2111).
+    repo_part, _, num = ref.rpartition("#")
+    task = int(num)
+    task_repo = repo_part or pr_repo
+    try:
+        issue: Any = github.read_json(
+            "issue", "view", str(task), "--repo", task_repo, "--json", "state,title,body,labels"
+        )
+    except github.GitHubAPIError:
+        # The task is in a repo this run can't see (cross-org, private, or
+        # deleted). Not this org's drift to close — warn and skip rather than
+        # abort the whole sweep.
+        print(
+            f"vrg-epic-audit: skipping {task_repo}#{task} (referenced by "
+            f"{pr_repo} PR #{entry.get('number')}) — not found or not "
+            "accessible from this run.",
+            file=sys.stderr,
+        )
+        return None
+    if not isinstance(issue, dict):
+        return None
+    if str(issue.get("state") or "").upper() != "OPEN":
+        return None
+    labels = {str((label or {}).get("name", "")) for label in (issue.get("labels") or [])}
+    if "epic" in labels:
+        # A PR may legitimately ``Ref`` an epic (associating the PR with the
+        # epic). That is not a slipped task: epic closure is owned by
+        # epic_drift/rollup, which enforces all_children_closed. Closing an
+        # epic here would bypass that guard and orphan its open children
+        # (issue #2259, Fix A).
+        return None
+    if labels & epics.operational_labels():
+        # An operational task (validation/deployment) closes on a recorded
+        # ``Outcome:`` comment — a merged PR ``Ref``ing it is not the
+        # slipped-task drift this sweep closes.
+        return None
+    # A merged release PR Refs its release: X.Y.Z tracking issue, which stays
+    # open as vrg-release bookkeeping — not drift. Skip it so the audit does
+    # not flag release issues as slipped tasks. See issue #1984.
+    if release.is_release_tracking_issue(
+        title=str(issue.get("title") or ""), body=str(issue.get("body") or "")
+    ):
+        return None
+    # A queue (intake/planning/deferred) item is never a PR-tracked task: its parent
+    # (the queue epic), not a kind label, marks it (epic .github#176).
+    task_owner, task_bare = task_repo.split("/", 1)
+    parent = epics.parent_of(epics.IssueRef(task_owner, task_bare, task))
+    if parent is not None and epics.queue_kind(parent) is not None:
+        return None
+    return TaskDrift(
+        repo=task_repo, task=task, pr_number=int(entry["number"]), pr_url=str(entry["url"])
+    )
+
+
+def task_drift(since: str, *, org: str, today: date | None = None) -> list[TaskDrift]:
+    """Merged PRs (since *since*) whose linked task is still open.
+
+    Every task a PR links is checked, one per ``Closes`` line of a batch PR
+    (see :func:`_refs_to_check`). *today* (default: the current UTC date)
+    only sets where the week-long search slices end.
     """
     if today is None:
         today = datetime.now(UTC).date()
@@ -98,68 +171,10 @@ def task_drift(since: str, *, org: str, today: date | None = None) -> list[TaskD
         pr_repo = str((entry.get("repository") or {}).get("nameWithOwner", ""))
         if not pr_repo:
             continue
-        try:
-            ref = linkage.extract_tracking_ref(str(entry.get("body") or ""))
-        except ValueError:
-            continue
-        if ref is None:
-            continue
-        # ``ref`` is ``"#N"`` (same-repo) or ``"owner/repo#N"`` (cross-repo).
-        # Resolve the repo the task actually lives in — honor a cross-repo ref
-        # instead of assuming the PR's own repo (issue #2111).
-        repo_part, _, num = ref.rpartition("#")
-        task = int(num)
-        task_repo = repo_part or pr_repo
-        try:
-            issue: Any = github.read_json(
-                "issue", "view", str(task), "--repo", task_repo, "--json", "state,title,body,labels"
-            )
-        except github.GitHubAPIError:
-            # The task is in a repo this run can't see (cross-org, private, or
-            # deleted). Not this org's drift to close — warn and skip rather than
-            # abort the whole sweep.
-            print(
-                f"vrg-epic-audit: skipping {task_repo}#{task} (referenced by "
-                f"{pr_repo} PR #{entry.get('number')}) — not found or not "
-                "accessible from this run.",
-                file=sys.stderr,
-            )
-            continue
-        if not isinstance(issue, dict):
-            continue
-        if str(issue.get("state") or "").upper() != "OPEN":
-            continue
-        labels = {str((label or {}).get("name", "")) for label in (issue.get("labels") or [])}
-        if "epic" in labels:
-            # A PR may legitimately ``Ref`` an epic (associating the PR with the
-            # epic). That is not a slipped task: epic closure is owned by
-            # epic_drift/rollup, which enforces all_children_closed. Closing an
-            # epic here would bypass that guard and orphan its open children
-            # (issue #2259, Fix A).
-            continue
-        if labels & epics.operational_labels():
-            # An operational task (validation/deployment) closes on a recorded
-            # ``Outcome:`` comment — a merged PR ``Ref``ing it is not the
-            # slipped-task drift this sweep closes.
-            continue
-        # A merged release PR Refs its release: X.Y.Z tracking issue, which stays
-        # open as vrg-release bookkeeping — not drift. Skip it so the audit does
-        # not flag release issues as slipped tasks. See issue #1984.
-        if release.is_release_tracking_issue(
-            title=str(issue.get("title") or ""), body=str(issue.get("body") or "")
-        ):
-            continue
-        # A queue (intake/planning/deferred) item is never a PR-tracked task: its parent
-        # (the queue epic), not a kind label, marks it (epic .github#176).
-        task_owner, task_bare = task_repo.split("/", 1)
-        parent = epics.parent_of(epics.IssueRef(task_owner, task_bare, task))
-        if parent is not None and epics.queue_kind(parent) is not None:
-            continue
-        drift.append(
-            TaskDrift(
-                repo=task_repo, task=task, pr_number=int(entry["number"]), pr_url=str(entry["url"])
-            )
-        )
+        for ref in _refs_to_check(str(entry.get("body") or "")):
+            found = _open_task_drift(entry, pr_repo, ref)
+            if found is not None:
+                drift.append(found)
     return drift
 
 

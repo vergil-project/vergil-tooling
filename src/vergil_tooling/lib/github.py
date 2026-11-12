@@ -2248,6 +2248,50 @@ def update_branch(pr: str) -> None:
     read_output("api", f"repos/{repo}/pulls/{number}/update-branch", "-X", "PUT")
 
 
+_UPDATE_BRANCH_REBASE_MUTATION = """
+mutation($id: ID!, $head: GitObjectID!) {
+  updatePullRequestBranch(
+    input: {pullRequestId: $id, expectedHeadOid: $head, updateMethod: REBASE}
+  ) {
+    pullRequest { headRefOid }
+  }
+}
+"""
+
+
+def _update_branch_rebase_error(pr: str, detail: str) -> GitHubAPIError:
+    return GitHubAPIError(
+        1,
+        ("gh", "api", "graphql", "updatePullRequestBranch"),
+        stderr=f"update-branch by rebase failed for PR {pr}: {detail}",
+    )
+
+
+def update_branch_rebase(pr: str, *, expected_head: str) -> None:
+    """Rebase *pr*'s head branch onto its base, server-side.
+
+    A batch PR stays linear, one commit per issue, so it is never updated by
+    merging its base in (:func:`update_branch`), which adds a merge commit
+    (epic vergil-project/.github#1019). This calls GraphQL
+    ``updatePullRequestBranch`` with ``updateMethod: REBASE`` and
+    ``expectedHeadOid``, so GitHub refuses the update if the head has moved
+    off *expected_head*. The PR is resolved by ``gh pr view``, so a URL names
+    its own repo. A failed read or update, GraphQL errors included, raises
+    :class:`GitHubAPIError`, and so does a response with no updated pull
+    request, rather than read as done.
+    """
+    node_id = read_output("pr", "view", pr, "--json", "id", "--jq", ".id")
+    if not node_id:
+        raise _update_branch_rebase_error(pr, "the PR's node ID could not be read")
+    try:
+        data = graphql(_UPDATE_BRANCH_REBASE_MUTATION, id=node_id, head=expected_head)
+    except RuntimeError as exc:
+        raise _update_branch_rebase_error(pr, str(exc)) from exc
+    updated = _as_obj(_as_obj(data.get("updatePullRequestBranch")).get("pullRequest"))
+    if not isinstance(updated.get("headRefOid"), str):
+        raise _update_branch_rebase_error(pr, f"no updated pull request in the response: {data!r}")
+
+
 def pr_state(pr: str) -> str:
     """Return the PR state: ``OPEN``, ``CLOSED``, or ``MERGED``."""
     return read_output("pr", "view", pr, "--json", "state", "--jq", ".state")
@@ -2462,16 +2506,24 @@ def close_issue(repo: str, number: int, *, comment: str) -> None:
     )
 
 
-def merge(pr: str, *, strategy: str) -> None:
+def merge(pr: str, *, strategy: str, match_head: str | None = None) -> None:
     """Merge a PR synchronously (without ``--auto``).
 
     ``strategy`` is one of ``"merge"``, ``"squash"``, ``"rebase"`` — passed
     through as ``--merge``, ``--squash``, ``--rebase``.
 
+    ``match_head``, when given, is passed as ``--match-head-commit``: GitHub
+    merges only while the PR's head is still that commit, so a head pushed
+    after the caller checked it is refused, never merged unchecked (a batch
+    PR, epic vergil-project/.github#1019).
+
     Does not pass ``--delete-branch`` — branch cleanup is handled by
     ``vrg-finalize-pr`` after the merge completes.
     """
-    run("pr", "merge", f"--{strategy}", pr)
+    if match_head is None:
+        run("pr", "merge", f"--{strategy}", pr)
+        return
+    run("pr", "merge", f"--{strategy}", "--match-head-commit", match_head, pr)
 
 
 def list_org_repos(org: str) -> list[str]:

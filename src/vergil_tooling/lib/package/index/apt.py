@@ -5,7 +5,15 @@ Layout under ``<site>/deb``::
     pool/<name>/<file>.deb
     dists/<suite>/Release
     dists/<suite>/main/binary-{amd64,arm64}/Packages{,.gz}
+    dists/<suite>/main/binary-{amd64,arm64}/by-hash/SHA256/<sha256>
 
+- Every ``Packages`` and ``Packages.gz`` is also written to
+  ``by-hash/SHA256/<its sha256>`` beside it, and ``Release`` declares
+  ``Acquire-By-Hash: yes`` (#4230). apt then fetches each index by the digest
+  its ``InRelease`` names, so a client never pairs a new ``InRelease`` with an
+  old index while a publish is still reaching the CDN. The plain names stay
+  for clients that do not use by-hash. Keeping earlier generations' by-hash
+  files is ``generations``'s job.
 - A shared build (revision ``1``) is listed in every suite; a ``native`` build
   (revision ``1~<suite>``) only in its own suite.
 - ``Architecture: all`` packages are listed in every ``binary-*`` directory.
@@ -44,6 +52,7 @@ if TYPE_CHECKING:
     from vergil_tooling.lib.package.repo_setup import Run
 
 COMPONENT = "main"
+BY_HASH = "by-hash/SHA256"
 
 
 def deb_control(path: Path, run: Run = local_run) -> str:
@@ -100,6 +109,7 @@ def _release(vendor: str, suite: str, dist: Path, now: datetime) -> str:
         f"Date: {format_datetime(now.astimezone(UTC), usegmt=True)}",
         f"Architectures: {' '.join(ARCHES)}",
         f"Components: {COMPONENT}",
+        "Acquire-By-Hash: yes",
     ]
     return "\n".join([*head, "SHA256:", *sha256]) + "\n"
 
@@ -140,8 +150,11 @@ def write(
             body = "\n".join(stanzas).encode()
             out = dist / COMPONENT / f"binary-{arch}"
             out.mkdir(parents=True, exist_ok=True)
-            (out / "Packages").write_bytes(body)
-            (out / "Packages.gz").write_bytes(_gzip(body))
+            by_hash = out / BY_HASH
+            by_hash.mkdir(parents=True, exist_ok=True)
+            for name, data in (("Packages", body), ("Packages.gz", _gzip(body))):
+                (out / name).write_bytes(data)
+                (by_hash / hashlib.sha256(data).hexdigest()).write_bytes(data)
         release = dist / "Release"
         release.write_text(_release(vendor, suite, dist, when), encoding="utf-8")
         releases.append(release)

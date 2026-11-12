@@ -21,16 +21,18 @@ Conventional Commits format.
 ```bash
 vrg-commit \
   --type TYPE --scope SCOPE --message MESSAGE [options]
+vrg-commit --fixup COMMIT [--allow-empty]
 ```
 
 ## Arguments
 
 | Argument | Required | Description |
 | -------- | -------- | ----------- |
-| `--type` | Yes | Conventional commit type |
-| `--scope` | Yes | Conventional commit scope |
-| `--message` | Yes | Commit description |
+| `--type` | Yes, unless `--fixup` | Conventional commit type |
+| `--scope` | Yes, unless `--fixup` | Conventional commit scope |
+| `--message` | Yes, unless `--fixup` | Commit description |
 | `--body` | No | Detailed commit body |
+| `--fixup` | No | Make a `fixup! <subject>` commit of COMMIT, an earlier commit on this branch. Refused with `--type`, `--scope`, `--message` or `--body` |
 | `--allow-empty` | No | Allow a commit with no staged changes (e.g. to re-trigger CI) |
 
 ### Allowed Types
@@ -50,6 +52,9 @@ vrg-commit \
 vrg-commit \
   --type docs --scope readme --message "update README" \
   --body "Expanded usage section"
+
+# Fixup of an earlier commit on this branch, staged changes only
+vrg-commit --fixup 1a2b3c4
 ```
 
 ## Behavior
@@ -61,10 +66,15 @@ vrg-commit \
    present.
 3. Refuses the commit when the branch has been reported ready
    (`vrg-pr-workflow report-ready`) and is frozen.
-4. Rejects a body containing a GitHub auto-close keyword.
-5. Verifies staged changes exist (unless `--allow-empty`).
-6. Constructs the commit message in a temporary file and runs
-   `git commit --file`.
+4. With `--fixup`, refuses a target that does not resolve to a commit,
+   is not reachable from `HEAD`, or is already reachable from
+   `origin/develop` (or when `origin/develop` cannot be resolved).
+5. Rejects a body containing a GitHub auto-close keyword.
+6. Verifies staged changes exist (unless `--allow-empty`).
+7. Constructs the commit message in a temporary file and runs
+   `git commit --file`; with `--fixup` it runs
+   `git commit --fixup=COMMIT` instead, which writes the
+   `fixup! <subject>` message.
 
 ## Exit Codes
 
