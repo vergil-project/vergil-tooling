@@ -18004,7 +18004,7 @@ or unfinalized PR still dangling.</p>
 <p>A merged worktree the sweep cannot remove (a dirty tree, or a reused
 branch name with unmerged commits) is not deleted silently —
 <code>vrg-finalize-pr</code> surfaces it <strong>prominently after the pipeline</strong> so it
-is impossible to miss, and <code>vrg-worktree-status</code> counts it under
+is impossible to miss, and <code>vrg-repo-status</code> counts it under
 <strong>needs-attention</strong> rather than hiding it as active. When the only dirt
 is un-gitignored build/validation output, <code>--clean-dirty</code> clears it
 after confirmation; better still, gitignore that output so the worktree
