@@ -783,23 +783,23 @@ def test_pending_section_renders_rows_in_order(capsys: pytest.CaptureFixture[str
     assert rc == 0
     mocks["gather_pending_release"].assert_called_once_with(integration="develop")
     section = _section(out)
-    assert section[0] == "Pending release (develop → main)"
-    assert section[1] == (
-        "  latest release: v2.1.303, main moved 4h ago; rolling tag v2.1 → v2.1.303"
+    assert section[0] == (
+        "Pending release (develop → main): "
+        "latest release v2.1.303, main moved 4h ago; rolling tag v2.1 → v2.1.303"
     )
-    assert section[2].split() == ["PR", "BRANCH", "TYPE", "MERGED", "TITLE"]
-    rows = [line.split()[:4] for line in section[3:7]]
+    assert section[1].split() == ["PR", "BRANCH", "TYPE", "MERGED", "TITLE"]
+    rows = [line.split()[:4] for line in section[2:6]]
     assert rows == [
         ["#4251", "release/post-2.1.303", "release", "4h"],
         ["#4258", "deps/update-2.1.304", "deps", "4h"],
         ["#4252", "feature/4249-refuse-ubuntu", "feat", "1h"],
         ["#4255", "feature/4253-batch-docs", "docs", "0h"],
     ]
-    assert section[6].endswith("docs(batch): document batched same-repo PRs")
-    assert section[7] == (
+    assert section[5].endswith("docs(batch): document batched same-repo PRs")
+    assert section[6] == (
         "4 changes pending release: 1 dependency update, 1 release back-merge, 2 other PRs."
     )
-    assert len(section) == 8
+    assert len(section) == 7
     # The section sits after the worktree sections, before the summary lines.
     assert out.index("Main checkout") < out.index("Pending release (") < out.index("1 worktree:")
 
@@ -817,7 +817,7 @@ def test_pending_section_uses_configured_integration_branch(
     out = capsys.readouterr().out
     assert rc == 0
     mocks["gather_pending_release"].assert_called_once_with(integration="trunk")
-    assert "Pending release (trunk → main)" in out
+    assert "Pending release (trunk → main): latest release v2.1.303," in out
     assert "Nothing pending release: trunk and main are level." in out
 
 
@@ -829,7 +829,7 @@ def test_release_line_lag() -> None:
 
 def test_release_line_no_tags() -> None:
     line = _release_line(ReleaseTags(None, None, None), _NOW - 30 * _HOUR, _NOW)
-    assert line == "  latest release: no release yet, main moved 1d ago; no rolling tag"
+    assert line == "latest release no release yet, main moved 1d ago; no rolling tag"
 
 
 def test_release_line_rolling_on_untagged_commit() -> None:
@@ -840,7 +840,7 @@ def test_release_line_rolling_on_untagged_commit() -> None:
 
 def test_release_line_rolling_without_release() -> None:
     line = _release_line(ReleaseTags(None, "v2.1", "abc1234"), _NOW, _NOW)
-    assert line == "  latest release: no release yet, main moved 0h ago; rolling tag v2.1 → abc1234"
+    assert line == "latest release no release yet, main moved 0h ago; rolling tag v2.1 → abc1234"
     assert "lags" not in line
     assert "None" not in line
 
@@ -857,8 +857,8 @@ def test_nothing_pending(capsys: pytest.CaptureFixture[str]) -> None:
     assert rc == 0
     section = _section(out)
     assert section == [
-        "Pending release (develop → main)",
-        "  latest release: v2.1.303, main moved 4h ago; rolling tag v2.1 → v2.1.303",
+        "Pending release (develop → main): "
+        "latest release v2.1.303, main moved 4h ago; rolling tag v2.1 → v2.1.303",
         "Nothing pending release: develop and main are level.",
     ]
     assert "TITLE" not in out
@@ -870,10 +870,10 @@ def test_no_pr_change_is_problem(capsys: pytest.CaptureFixture[str]) -> None:
     out = capsys.readouterr().out
     assert rc == 0
     section = _section(out)
-    assert section[3].split() == ["PROBLEM", "-", "-", "3h", "ago", "Fix", "a", "typo"]
+    assert section[2].split() == ["PROBLEM", "-", "-", "3h", "ago", "Fix", "a", "typo"]
     sha7 = change.shas[0][:7]
-    assert section[4] == f"  PROBLEM: {sha7} reached develop without a PR"
-    assert section[5] == (
+    assert section[3] == f"  PROBLEM: {sha7} reached develop without a PR"
+    assert section[4] == (
         "1 change pending release: 0 dependency updates, 0 release back-merges, "
         "0 other PRs, 1 PROBLEM: commits with no PR."
     )
