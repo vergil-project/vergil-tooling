@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.302/">
       
       
         <link rel="next" href="../v2.1.300/">
@@ -1407,6 +1407,8 @@
       
         
       
+        
+      
     
     
     
@@ -1462,6 +1464,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.302/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.302
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17259,6 +17289,7 @@ run_scan now returns semgrep's captured stdout and stderr. When semgrep exits ab
 <li><strong>read published packages from one paginated release listing (#4213)</strong>
 The vrg-release preflight re-publish check now reads every packaged stable release and its asset names from collect.packaged_tags (one gh api --paginate --slurp listing) instead of one gh release list plus one gh release view per release. This drops the 1000-release listing limit. stable_tags, release_packages, _asset_names and RELEASE_LIST_LIMIT lost their last caller and are removed; the asset-name filter is now collect.package_names. Ref vergil-project/vergil-tooling#4205</li>
 </ul>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.301/v2.1.301-ci-evidence.tar.gz">Download →</a></p>
 
 
 

@@ -1400,6 +1400,8 @@
       
         
       
+        
+      
     
     
     
@@ -1452,6 +1454,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.302/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.302
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13980,6 +14010,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#index-generations-and-by-hash-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Index generations and by-hash files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#checking-packagestoml-without-building" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17750,6 +17791,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#index-generations-and-by-hash-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Index generations and by-hash files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#checking-packagestoml-without-building" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18442,6 +18494,7 @@ vergil-tooling 2.1.258: amd64 got <code>vergil-python3.15</code> and arm64 got
 <a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="n">keep</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">3</span><span class="w">                          </span><span class="c1"># releases kept per major.minor line (default 3)</span>
 <a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="n">lines</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">2</span><span class="w">                         </span><span class="c1"># newest major.minor lines kept per product (default 2)</span>
 <a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="n">retire</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"vergil-python3.14.8"</span><span class="p">]</span><span class="w">  </span><span class="c1"># exact package names to drop (default: none)</span>
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="n">generations</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">3</span><span class="w">                   </span><span class="c1"># index generations kept published (default 3, at least 2)</span>
 </code></pre></div>
 <p>The index is rebuilt from scratch on every run. For each product it lists
 the packaged stable releases (a <code>vX.Y.Z</code> tag, not a draft or prerelease,
@@ -18455,13 +18508,41 @@ nothing. An entry that matches no selected package drops nothing.</p>
 <p>Every package left after <code>retire</code> is verified before it is indexed: its
 build attestation must come from the release workflow on <code>main</code>, and every
 <code>.rpm</code> must carry a valid org signature. A failure fails the index build.</p>
+<h3 id="index-generations-and-by-hash-files">Index generations and by-hash files<a class="headerlink" href="#index-generations-and-by-hash-files" title="Permanent link">&para;</a></h3>
+<p>GitHub Pages' CDN caches each file of the site on its own for up to ten
+minutes, so just after a publish a client can be served the new <code>InRelease</code>
+with an old <code>Packages.gz</code>, or the reverse. The index is published so that
+neither breaks a client:</p>
+<ul>
+<li>Every apt <code>Packages</code> and <code>Packages.gz</code> is also published as
+  <code>dists/&lt;suite&gt;/main/binary-&lt;arch&gt;/by-hash/SHA256/&lt;sha256&gt;</code>, and <code>Release</code>
+  declares <code>Acquire-By-Hash: yes</code>. apt then fetches each index by the digest
+  its <code>InRelease</code> names, a path whose content never changes. The plain names
+  stay for clients that do not use by-hash.</li>
+<li>dnf's metadata files are already named by their digest
+  (<code>repodata/&lt;sha256&gt;-primary.xml.gz</code>, createrepo_c's default).</li>
+<li>A client still holding an earlier <code>InRelease</code> or <code>repomd.xml</code> must find
+  the files it names, so each build also republishes the by-hash and
+  <code>repodata</code> files of the newest <code>generations - 1</code> earlier builds. It reads
+  their list from <code>index-generations.json</code> on the live site, downloads each
+  one, checks it against the digest in its name, and writes a new
+  <code>index-generations.json</code> with its own generation first. Older generations
+  are dropped, and disappear when the new site is deployed.</li>
+</ul>
+<p>The default, <code>3</code>, keeps the current index and the two before it, as
+<a href="https://wiki.debian.org/DebianRepository/Format">Debian's repository format</a>
+asks of a by-hash repository. A site with no <code>index-generations.json</code> yet
+starts with no earlier generation. Any other failure to read the live site, a
+malformed <code>index-generations.json</code>, or a listed file that is missing or does
+not match its digest, fails the index build.</p>
 <h3 id="checking-packagestoml-without-building">Checking <code>packages.toml</code> without building<a class="headerlink" href="#checking-packagestoml-without-building" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>vrg-package<span class="w"> </span>index<span class="w"> </span>--check-config<span class="w"> </span>--config<span class="w"> </span>packages.toml
 </code></pre></div>
 <p>validates <code>packages.toml</code> and exits without building anything. It applies
 every check the index build makes on the file itself: known keys only, a
 non-empty <code>vendor</code>, well-formed and unique <code>products</code>, positive integer
-<code>keep</code> and <code>lines</code>, and well-formed and unique <code>retire</code> entries. It uses no
+<code>keep</code> and <code>lines</code>, an integer <code>generations</code> of at least 2, and
+well-formed and unique <code>retire</code> entries. It uses no
 network, signing keys or output directory, so <code>--keys</code> and <code>--out</code> are not
 needed. On success it prints <code>vrg-package: packages.toml: ok</code>. On any
 invalid value it prints the error and exits non-zero, so a repo's

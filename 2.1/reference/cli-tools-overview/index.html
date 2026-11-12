@@ -1400,6 +1400,8 @@
       
         
       
+        
+      
     
     
     
@@ -1452,6 +1454,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.302/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.302
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -19131,7 +19161,7 @@ Freeze gate: refuses to add a commit on a branch that has been reported ready
 </tr>
 <tr>
 <td>Args</td>
-<td><code>--type</code> (required), <code>--scope</code> (required), <code>--message</code> (required), <code>--body</code>, <code>--allow-empty</code></td>
+<td><code>--type</code>, <code>--scope</code>, <code>--message</code> (all three required unless <code>--fixup</code>), <code>--body</code>, <code>--fixup COMMIT</code> (a <code>fixup!</code> commit of a branch-local commit; refused with the message flags), <code>--allow-empty</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
@@ -19156,7 +19186,8 @@ Freeze gate: refuses to add a commit on a branch that has been reported ready
 rebase, re-stamping the new message through the same standards path as
 <code>vrg-commit</code>. It is the agent-safe way to correct a commit message on the
 current branch: <code>vrg-git commit</code> is denied, <code>vrg-commit</code> only creates new
-commits, and raw interactive rebase is blocked repo-wide. It is bounded:</p>
+commits, and interactive rebase is allowed only as <code>rebase -i --autosquash</code>,
+which cannot reword. It is bounded:</p>
 <ul>
 <li><strong>Branch-local only</strong>: it refuses a commit already reachable from the
   base branch (<code>origin/develop</code>, or <code>origin/main</code> for a <code>release/*</code> branch)
@@ -19212,11 +19243,14 @@ frozen; <code>vrg-pr-workflow unfreeze</code> is the way back (see the freeze in
 <h3 id="vrg-git">vrg-git<a class="headerlink" href="#vrg-git" title="Permanent link">&para;</a></h3>
 <p>A safe git wrapper for agent sessions. It forwards to <code>git</code> only after
 enforcing policy: a subcommand allowlist, read-only forms of <code>reflog</code> and
-<code>symbolic-ref</code>, denied subcommands (<code>commit</code>, <code>config</code>, <code>reset</code>, <code>clean</code> and
-others; use <code>vrg-commit</code> for commits), a flag deny-list (<code>push --force</code>,
-<code>branch -D</code>, <code>rebase -i</code>), the worktree convention, the
+<code>symbolic-ref</code>, denied subcommands (<code>commit</code>, <code>config</code> and others; use
+<code>vrg-commit</code> for commits), a flag deny-list (<code>push --force</code>, <code>branch -D</code>,
+<code>rebase -i</code> without <code>--autosquash</code>), the worktree convention, the
 <code>&lt;type&gt;/&lt;N&gt;-&lt;slug&gt;</code> branch form for an open, non-epic issue, and the
-report-ready freeze. Remote operations run with the GitHub App installation
+report-ready freeze. It protects origin, not the local checkout: <code>reset</code>,
+<code>clean</code>, a pathspec <code>checkout</code> and <code>rebase -i --autosquash</code> run only on a
+branch that is neither protected nor frozen, and fail closed when the
+PR-workflow state cannot be read. Remote operations run with the GitHub App installation
 token for the resolved identity (see <a href="#vrg-whoami"><code>vrg-whoami</code></a>). It is not
 a drop-in replacement for <code>git</code>; <code>vrg-git --help</code> lists the full policy.</p>
 <p>The global <code>-C &lt;path&gt;</code> option (repeatable, as in git) changes directory
@@ -19402,7 +19436,15 @@ or deferred epic: a queue item is not buildable until intake review routes it,
 vergil-project/.github#176 and #508).
 Local-settings guard: <code>report-ready</code> refuses an agent (warns a human), before
 pushing or recording anything, while a loadable <code>.claude/settings.local.json</code>
-is not absent or <code>{}</code> (epic vergil-project/.github#558).</p>
+is not absent or <code>{}</code> (epic vergil-project/.github#558).
+A batch PR (epic vergil-project/.github#1019) repeats <code>--issue</code>, in commit
+order. Every issue runs the per-issue refusals, then the batch hard rules and
+the one-commit-per-issue check run before any push; either failing records
+nothing. The state records the list as <code>issues</code> (its first entry is also
+<code>issue</code>), in the local file and the relay ref alike, and a re-run must name the
+same list in the same order. Once the state is recorded, the members' batch
+markers are removed. A single <code>--issue</code> records no <code>issues</code> key and behaves
+exactly as before.</p>
 <table>
 <thead>
 <tr>
@@ -19417,7 +19459,7 @@ is not absent or <code>{}</code> (epic vergil-project/.github#558).</p>
 </tr>
 <tr>
 <td>Args</td>
-<td><code>report-ready</code> (<code>--issue</code>, <code>--title</code>, <code>--summary</code>, <code>--notes</code> required; <code>--linkage</code> default Ref), <code>unfreeze</code>, <code>status</code>; global <code>--base</code> (default: origin/develop)</td>
+<td><code>report-ready</code> (<code>--issue</code>, repeatable for a batch, <code>--title</code>, <code>--summary</code>, <code>--notes</code> required; <code>--linkage</code> default Ref), <code>unfreeze</code>, <code>status</code>, <code>batch-start</code>, <code>batch-extract</code>, <code>batch-show</code>; global <code>--base</code> (default: origin/develop)</td>
 </tr>
 <tr>
 <td>Preconditions</td>
