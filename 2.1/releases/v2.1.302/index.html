@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.303/">
       
       
         <link rel="next" href="../v2.1.301/">
@@ -1409,6 +1409,8 @@
       
         
       
+        
+      
     
     
     
@@ -1464,6 +1466,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.303/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.303
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17405,6 +17435,7 @@ WorkflowState gains an optional ordered issues list, still at schema version 2, 
 <li>fix(submit-pr): fetch only the target before a batch push so the force-with-lease guard holds</li>
 </ul>
 <p>The batch re-check fetched the PR branch on every path. On the paths that push right after (template mode and the serial batch), that refreshed refs/remotes/origin/<branch>, the lease --force-with-lease holds, so the push could overwrite commits pushed elsewhere. Only the relay path, which never pushes, now fetches the branch.</p>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.302/v2.1.302-ci-evidence.tar.gz">Download →</a></p>
 
 
 
