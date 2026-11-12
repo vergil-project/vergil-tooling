@@ -1916,27 +1916,31 @@ def _conflict_error(root: Path, worktree: Path | None) -> str:
     return str(excinfo.value)
 
 
-def test_stage_merge_conflict_gives_human_the_exact_commands() -> None:
-    """A conflict on a submitted PR names the worktree and every command the
-    human runs, in order: merge (not rebase), validate, raw-git commit and
-    push, re-finalize (issue #3555)."""
+def test_stage_merge_conflict_gives_the_pr_watch_rebase_commands() -> None:
+    """A conflict on a submitted PR names the worktree and every command, in
+    order: the same rebase and leased push as pr-watch, validate, re-finalize
+    (issues #3555, #4253). The freeze lifted at submit, so the message names
+    pr-watch or the human and never says agents are frozen out."""
     wt = Path("/repo/.worktrees/issue-42-fix-thing")
     msg = _conflict_error(Path("/repo"), wt)
     assert "PR 123 has merge conflicts with develop" in msg
+    assert "pr-watch" in msg
+    assert "frozen" not in msg
+    assert "only you" not in msg
     steps = [
         f"cd {wt}",
         "git fetch origin",
         "git merge --ff-only origin/feature/42-fix-thing",
-        "git merge --no-commit origin/develop",
+        "git rebase origin/develop",
         "vrg-container-run -- vrg-validate",
-        "git commit --no-edit",
-        "git push origin feature/42-fix-thing",
+        "git push --force-with-lease origin feature/42-fix-thing",
         "cd /repo && vrg-finalize-pr 123",
     ]
     positions = [msg.index(step) for step in steps]
     assert positions == sorted(positions)
     assert "git worktree add" not in msg
-    assert "rebase" not in msg.replace("do not rebase", "")
+    assert "git merge --no-commit" not in msg
+    assert "git commit --no-edit" not in msg
     # Paste-safe in interactive zsh: no inline comments on command lines.
     assert not [line for line in msg.splitlines() if line.startswith("  ") and "#" in line]
 
@@ -1948,7 +1952,7 @@ def test_stage_merge_conflict_without_worktree_says_how_to_get_one() -> None:
         ".worktrees/issue-42-fix-thing feature/42-fix-thing"
     ) in msg
     assert "cd /repo/.worktrees/issue-42-fix-thing" in msg
-    assert msg.index("git worktree add") < msg.index("git merge --no-commit")
+    assert msg.index("git worktree add") < msg.index("git rebase origin/develop")
 
 
 def test_conflict_msg_non_issue_branch_falls_back_to_flattened_dirname() -> None:
@@ -1956,6 +1960,35 @@ def test_conflict_msg_non_issue_branch_falls_back_to_flattened_dirname() -> None
         msg = _conflict_resolution_msg("7", "release/2.1.30", "main", Path("/repo"), batch=False)
     assert "git worktree add .worktrees/release-2.1.30 release/2.1.30" in msg
     assert "git merge --no-commit origin/main" in msg
+
+
+def test_conflict_msg_release_branch_merges_and_never_rebases() -> None:
+    """A release/* branch merges with a merge commit (issue #1620), so its
+    conflict message keeps the merge steps: no rebase, no leased push and no
+    pr-watch, which never handles a release branch (#4253)."""
+    wt = Path("/repo/.worktrees/release-post-2.1.30")
+    with patch(_MOD + ".worktrees.worktree_for_branch", return_value=wt):
+        msg = _conflict_resolution_msg(
+            "7", "release/post-2.1.30", "develop", Path("/repo"), batch=False
+        )
+    assert "PR 7 has merge conflicts with develop" in msg
+    steps = [
+        f"cd {wt}",
+        "git fetch origin",
+        "git merge --ff-only origin/release/post-2.1.30",
+        "git merge --no-commit origin/develop",
+        "vrg-container-run -- vrg-validate",
+        "git commit --no-edit",
+        "git push origin release/post-2.1.30",
+        "cd /repo && vrg-finalize-pr 7",
+    ]
+    positions = [msg.index(step) for step in steps]
+    assert positions == sorted(positions)
+    assert "rebase" not in msg.replace("do not rebase", "")
+    assert "--force-with-lease" not in msg
+    assert "pr-watch" not in msg
+    assert "frozen" not in msg
+    assert not [line for line in msg.splitlines() if line.startswith("  ") and "#" in line]
 
 
 def test_resolve_strategy_release_branch_merges() -> None:
@@ -2193,7 +2226,9 @@ def test_batch_pr_refuses_commit_mismatch_before_merge() -> None:
 
 def test_batch_pr_refuses_merge_commit_naming_rebase() -> None:
     """Review focus 4: GitHub's update-branch button adds a merge commit; it
-    is refused, with the rebase onto develop and the leased push named."""
+    is refused, with the rebase onto develop and the leased push named. The
+    freeze lifted at submit, so the message names pr-watch or the human and
+    never says only the human can fix it (#4257)."""
     ctx = _stage_ctx(["123"])
     wt = Path("/repo/.worktrees/issue-10-batch-small-fixes")
     merged_in = (*_GOOD_COMMITS, _commit("d" * 40, "Merge branch 'develop'", parents="b d"))
@@ -2205,6 +2240,10 @@ def test_batch_pr_refuses_merge_commit_naming_rebase() -> None:
     msg = str(excinfo.value)
     assert "dddddddddddd" in msg
     assert "is a merge commit" in msg
+    assert "pr-watch" in msg
+    assert "only you" not in msg
+    assert "already submitted" not in msg
+    assert "frozen" not in msg
     steps = [
         f"cd {wt}",
         "git fetch origin",
@@ -2238,6 +2277,7 @@ def test_batch_conflict_message_says_rebase_not_merge() -> None:
             _stage_merge(ctx)
     msg = str(excinfo.value)
     assert "PR 123 has merge conflicts with develop" in msg
+    assert "frozen" not in msg
     assert "git rebase --continue" in msg
     assert "git rebase origin/develop" in msg
     assert f"git push --force-with-lease origin {_BATCH_HEAD}" in msg

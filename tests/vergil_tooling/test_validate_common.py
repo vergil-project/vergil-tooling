@@ -12,12 +12,14 @@ import yaml
 
 from vergil_tooling.bin.validate_common import (
     _ansible_lint_overrides,
+    _check_runner_labels,
     _drop_gitignored,
     _find_ansible_lint_config,
     _find_dockerfiles,
     _find_markdown_files,
     _find_repo_sh_files,
     _find_shell_files,
+    _find_workflow_files,
     _find_yaml_files,
     _has_ansible_content,
     main,
@@ -65,6 +67,30 @@ def _no_repo_sh_listing() -> Iterator[None]:
     with patch(
         "vergil_tooling.bin.validate_common._find_repo_sh_files",
         return_value=[],
+    ):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _no_workflow_listing() -> Iterator[None]:
+    """List workflow files from the directory, not ``git ls-files``, which
+    needs a real repository that most tests' ``tmp_path`` is not. The listing
+    itself is tested against a real repo below, through the name imported at
+    module load, which this patch does not replace (#4129)."""
+
+    def _listing(repo_root: Path) -> list[str]:
+        workflows = repo_root / ".github" / "workflows"
+        if not workflows.is_dir():
+            return []
+        return sorted(
+            str(path)
+            for path in workflows.iterdir()
+            if path.is_file() and path.suffix in {".yml", ".yaml"}
+        )
+
+    with patch(
+        "vergil_tooling.bin.validate_common._find_workflow_files",
+        side_effect=_listing,
     ):
         yield
 
@@ -1050,6 +1076,208 @@ def test_main_actionlint_fails(tmp_path: Path) -> None:
         ),
     ):
         assert main() == 1
+
+
+# -- _check_runner_labels (epic vergil-project/.github#649) -------------------
+
+
+def _workflow(repo_root: Path, text: str, name: str = "ci.yml") -> Path:
+    """Write *text* as ``.github/workflows/<name>`` under *repo_root*."""
+    workflows = repo_root / ".github" / "workflows"
+    workflows.mkdir(parents=True, exist_ok=True)
+    path = workflows / name
+    path.write_text(text)
+    return path
+
+
+_JOB_HEAD = "name: CI\non: push\njobs:\n  build:\n"
+_STEPS = "    steps:\n      - run: true\n"
+
+
+def test_runner_label_scalar_refused(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _workflow(tmp_path, _JOB_HEAD + "    runs-on: ubuntu-latest\n" + _STEPS)
+    assert _check_runner_labels(tmp_path) == 1
+    err = capsys.readouterr().err
+    assert ".github/workflows/ci.yml:5: ubuntu-latest is not allowed; use ubuntu-24.04" in err
+
+
+def test_runner_label_list_refused(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _workflow(tmp_path, _JOB_HEAD + "    runs-on: [self-hosted, ubuntu-latest]\n" + _STEPS)
+    assert _check_runner_labels(tmp_path) == 1
+    assert ".github/workflows/ci.yml:5: ubuntu-latest is not allowed" in capsys.readouterr().err
+
+
+def test_runner_label_pinned_passes(tmp_path: Path) -> None:
+    text = (
+        _JOB_HEAD
+        + "    runs-on: ubuntu-24.04\n"
+        + _STEPS
+        + "  arm:\n    runs-on: ubuntu-24.04-arm\n"
+        + _STEPS
+    )
+    _workflow(tmp_path, text)
+    assert _check_runner_labels(tmp_path) == 0
+
+
+def test_runner_label_comment_ignored(tmp_path: Path) -> None:
+    text = _JOB_HEAD + "    # runs-on: ubuntu-latest\n    runs-on: ubuntu-24.04\n" + _STEPS
+    _workflow(tmp_path, text)
+    assert _check_runner_labels(tmp_path) == 0
+
+
+def test_runner_label_expression_passes(tmp_path: Path) -> None:
+    text = (
+        _JOB_HEAD
+        + "    strategy:\n      matrix:\n        os: [ubuntu-24.04]\n"
+        + "    runs-on: ${{ matrix.os }}\n"
+        + _STEPS
+    )
+    _workflow(tmp_path, text)
+    assert _check_runner_labels(tmp_path) == 0
+
+
+def test_runner_label_matrix_value_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    text = (
+        _JOB_HEAD
+        + "    strategy:\n      matrix:\n        os: [ubuntu-latest]\n"
+        + "    runs-on: ${{ matrix.os }}\n"
+        + _STEPS
+    )
+    _workflow(tmp_path, text)
+    assert _check_runner_labels(tmp_path) == 1
+    assert ".github/workflows/ci.yml:7: ubuntu-latest is not allowed" in capsys.readouterr().err
+
+
+def test_runner_label_with_input_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    text = (
+        "name: CI\non: push\njobs:\n  call:\n"
+        "    uses: org/repo/.github/workflows/x.yml@v1\n"
+        "    with: {runner: ubuntu-latest}\n"
+    )
+    _workflow(tmp_path, text)
+    assert _check_runner_labels(tmp_path) == 1
+    assert ".github/workflows/ci.yml:6: ubuntu-latest is not allowed" in capsys.readouterr().err
+
+
+def test_runner_label_no_workflows(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    assert _check_runner_labels(tmp_path) == 0
+    assert "runner-labels" not in capsys.readouterr().out
+
+
+def test_runner_label_every_hit_reported(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Every hit in every workflow is named, ``*.yaml`` included."""
+    _workflow(tmp_path, _JOB_HEAD + "    runs-on: ubuntu-latest\n" + _STEPS)
+    _workflow(
+        tmp_path,
+        _JOB_HEAD + "    runs-on: ubuntu-latest\n" + _STEPS + "  b:\n    runs-on: ubuntu-latest\n",
+        name="release.yaml",
+    )
+    assert _check_runner_labels(tmp_path) == 1
+    err = capsys.readouterr().err
+    assert ".github/workflows/ci.yml:5:" in err
+    assert ".github/workflows/release.yaml:5:" in err
+    assert ".github/workflows/release.yaml:9:" in err
+
+
+def test_runner_label_quoted_refused(tmp_path: Path) -> None:
+    _workflow(tmp_path, _JOB_HEAD + '    runs-on: "ubuntu-latest"\n' + _STEPS)
+    assert _check_runner_labels(tmp_path) == 1
+
+
+def test_runner_label_substring_passes(tmp_path: Path) -> None:
+    """Only a value that is exactly ``ubuntu-latest`` is refused."""
+    text = _JOB_HEAD + "    runs-on: ubuntu-24.04\n    steps:\n      - run: echo ubuntu-latest\n"
+    _workflow(tmp_path, text)
+    assert _check_runner_labels(tmp_path) == 0
+
+
+def test_runner_label_alias_reported_once(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An aliased node is one value in the file, so it is named once, at its anchor."""
+    text = (
+        "name: CI\non: push\nenv:\n  RUNNER: &r ubuntu-latest\njobs:\n  build:\n"
+        "    runs-on: *r\n" + _STEPS
+    )
+    _workflow(tmp_path, text)
+    assert _check_runner_labels(tmp_path) == 1
+    err = capsys.readouterr().err
+    assert err.count("ubuntu-latest is not allowed") == 1
+    assert ".github/workflows/ci.yml:4:" in err
+
+
+def test_runner_label_unparseable_fails(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A workflow that is not YAML fails the check rather than passing unread."""
+    _workflow(tmp_path, "jobs: [\n")
+    assert _check_runner_labels(tmp_path) == 1
+    assert ".github/workflows/ci.yml: unparseable: " in capsys.readouterr().err
+
+
+def test_main_runner_labels_fails(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
+    _workflow(tmp_path, _JOB_HEAD + "    runs-on: ubuntu-latest\n" + _STEPS)
+    with (
+        patch(
+            "vergil_tooling.bin.validate_common.git.repo_root",
+            return_value=tmp_path,
+        ),
+        patch(
+            "vergil_tooling.bin.validate_common.repo_profile.main",
+            return_value=0,
+        ),
+        patch(
+            "vergil_tooling.bin.validate_common.subprocess.run",
+            return_value=subprocess.CompletedProcess(args=[], returncode=0),
+        ),
+    ):
+        assert main() == 1
+    captured = capsys.readouterr()
+    assert "Running: runner-labels" in captured.out
+    assert "ubuntu-latest is not allowed; use ubuntu-24.04" in captured.err
+
+
+# -- _find_workflow_files -----------------------------------------------------
+
+
+def test_find_workflow_files_lists_top_level_yaml(tmp_path: Path) -> None:
+    """Top-level ``*.yml``/``*.yaml`` workflows are found, committed or not,
+    while a gitignored one, a nested one, a non-YAML file and a tracked file
+    deleted from disk are not."""
+    repo = _git_repo(tmp_path / "repo", "local.yml\n")
+    workflows = repo / ".github" / "workflows"
+    (workflows / "sub").mkdir(parents=True)
+    for name in ("ci.yml", "release.yaml", "local.yml", "gone.yml", "README.md"):
+        (workflows / name).write_text("name: x\n")
+    (workflows / "sub" / "nested.yml").write_text("name: x\n")
+    subprocess.run(
+        ["git", "-C", str(repo), "add", ".github/workflows/ci.yml", ".github/workflows/gone.yml"],
+        check=True,
+        capture_output=True,
+    )
+    (workflows / "gone.yml").unlink()
+
+    assert _find_workflow_files(repo) == [
+        str(workflows / "ci.yml"),
+        str(workflows / "release.yaml"),
+    ]
+
+
+def test_find_workflow_files_none(tmp_path: Path) -> None:
+    repo = _git_repo(tmp_path / "repo", "")
+    assert _find_workflow_files(repo) == []
+
+
+def test_find_workflow_files_outside_repo_raises(tmp_path: Path) -> None:
+    """Outside a repository ls-files fails: an error, never 'check less'."""
+    _workflow(tmp_path, "name: x\n")
+    with pytest.raises(subprocess.CalledProcessError):
+        _find_workflow_files(tmp_path)
 
 
 # -- _has_ansible_content ----------------------------------------------------

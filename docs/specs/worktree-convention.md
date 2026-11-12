@@ -312,7 +312,7 @@ to need tooling in practice.
 | Memory silo from starting session in the wrong directory | Session started inside `.worktrees/<name>/` instead of the root | Documentation + muscle memory; a `claude` wrapper script could refuse to launch unless CWD is a project root |
 | Agent writes to a sibling worktree or the main tree (intentional or mis-prompted) | Prompt contract ignored or misread | Git hook (same backstop) catches any such write that actually gets committed; see [Trust model](#trust-model) for the limits of isolation |
 | Stale worktrees accumulate after branch land | Author forgets the cleanup step | `vrg-finalize-pr` removes the worktree as part of its post-merge flow |
-| Worktree branch gets into weird state on rebase of main | Shared history diverges during long-lived worktree | Normal git hygiene: rebase the worktree's branch onto updated `develop` periodically; no special convention needed |
+| Worktree branch falls behind or conflicts with `develop` | Shared history diverges during a long-lived worktree | A single-issue branch that conflicts with an updated `develop` is rebased onto it while it is still being implemented. A [batch](#batches) branch is never rebased before handoff; a conflict with a moved `develop` is resolved at submit or after the PR opens. A branch reported ready is frozen and is not rebased until it is submitted or deliberately unfrozen |
 
 ### Trust model
 
