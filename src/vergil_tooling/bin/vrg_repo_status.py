@@ -322,7 +322,7 @@ def _summary(
     counts = ", ".join(
         f"{len(sections[kind])} {title.lower()}" for kind, title in _SECTION_TITLES.items()
     )
-    return f"{total} worktrees: main checkout ({_main_state(main_status)}), {counts}."
+    return f"{_count(total, 'worktree')}: main checkout ({_main_state(main_status)}), {counts}."
 
 
 def _development_summary(statuses: list[WorktreeStatus]) -> str:
@@ -341,7 +341,7 @@ def _development_summary(statuses: list[WorktreeStatus]) -> str:
         f"Development: {active} active, "
         f"{attention} needs-attention, "
         f"{stalled} stalled (no-pr), {cruft} cruft (removable). "
-        f"{prepared} PR prepared."
+        f"{_count(prepared, 'PR')} prepared."
     )
     if attention:
         line += " Some worktrees need attention (see notes above)."
