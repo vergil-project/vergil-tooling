@@ -45,6 +45,21 @@ The work is split across two repositories:
 The loop has exactly one iteration before the human: one review, then at
 most one fix and check.
 
+### In a batch
+
+When a task is one issue of a batch (several small issues on one branch,
+handed off as one PR, epic
+[vergil-project/.github#1019](https://github.com/vergil-project/.github/issues/1019)),
+each issue still gets its own merge review, with `--issue` that issue: its
+rulings, step comments and eligibility line stay on it. The skill reads the
+batch with `vrg-pr-workflow batch-show`, and the review and every check
+take `--base` the previous issue's commit (the batch's `base_sha` for the
+first issue), never `origin/develop`. A fix is committed as
+`vrg-commit --fixup` of the issue's first commit; the review never folds,
+and `issue-implement` folds the issue to one commit once its review has
+closed. `report-ready`'s notes carry each issue's eligibility line, prefixed
+with its ref.
+
 ### What a reviewer can raise
 
 Each finding answers one of two questions: **production-safety** (can this
@@ -180,7 +195,9 @@ makes there.
 
 The directory is working storage and the record a stopped run resumes from.
 Do not edit or delete it while a run is open. `issue-implement` deletes it
-once `report-ready` has succeeded.
+once `report-ready` has succeeded. Extracting an issue from a batch
+(`vrg-pr-workflow batch-extract`) removes the issue's whole
+`issue-implement/<N>/` directory, this one included.
 
 ## Security findings
 

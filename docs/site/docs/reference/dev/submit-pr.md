@@ -174,6 +174,28 @@ vrg-submit-pr --finalize
 7. Prints the PR URL — which can be passed straight to
    [`vrg-finalize-pr`](finalize-pr.md).
 
+## Batch PRs (one PR closing several issues)
+
+A `report-ready` state can hand off a **batch**: 2 to 8 issues of one epic,
+implemented on one branch with exactly one commit per issue, in order (epic
+vergil-project/.github#1019). Every mode driven by a ready-state (template,
+relay branch and the serial `--all`/`--select` batch) submits it as one PR:
+
+- the per-issue refusals (cross-repo, non-task, operational, queue item) run
+  on every issue, and the first refusal stops the submit;
+- the PR body carries one `Closes` line per issue, in the batch's order;
+- after the confirmation and before any push or `gh pr create`, it fetches
+  the target and re-checks the batch hard rules and the
+  one-commit-per-issue invariant at the head the PR opens at (the rebased
+  head in the serial batch). A failure opens nothing.
+
+The checks are the ones `vrg-pr-workflow report-ready` ran (see the
+[CLI Tools Overview](../cli-tools-overview.md#vrg-pr-workflow)).
+[`vrg-finalize-pr`](finalize-pr.md#batch-prs-one-pr-closing-several-issues)
+reads the `Closes` lines back and rebase-merges the PR, one commit per
+issue. CLI mode stays single-issue: a batch is handed off only through
+`report-ready`.
+
 ## Chaining into finalize (`--finalize`)
 
 `--finalize` folds the manual two-command sequence
@@ -198,7 +220,8 @@ identity gate runs before either mode.
 ## Batch mode (`--all` / `--select`)
 
 Selecting two or more ready worktrees submits them as a single
-serialized batch (issue #1673). Use `--all` for every ready worktree,
+serialized batch of separate PRs (issue #1673), unrelated to a
+[batch PR](#batch-prs-one-pr-closing-several-issues). Use `--all` for every ready worktree,
 or `--select <tokens>` for a comma-separated subset matched by issue
 number or worktree directory name (e.g. `--select 1673,1681`); an
 unmatched or ambiguous token is a hard error that names it. A single
