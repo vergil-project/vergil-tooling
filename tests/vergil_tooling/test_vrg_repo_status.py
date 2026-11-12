@@ -269,7 +269,7 @@ def test_main_surfaces_workflow_read_error_note(capsys: pytest.CaptureFixture[st
     assert "unknown" in out
     assert "note: feature/3-c:" in out
     assert "not valid JSON" in out
-    assert "0 PR prepared." in out
+    assert "0 PRs prepared." in out
 
 
 def test_main_groups_cruft_last_and_summarizes(capsys: pytest.CaptureFixture[str]) -> None:
@@ -488,7 +488,7 @@ def test_main_omits_empty_sections_but_counts_them(capsys: pytest.CaptureFixture
     assert "Release and dependency machinery\n" not in out
     assert "Other / unknown\n" not in out
     assert (
-        "1 worktrees: main checkout (ok), 0 development, "
+        "1 worktree: main checkout (ok), 0 development, "
         "0 release and dependency machinery, 0 other / unknown." in out
     )
     assert "Development: 0 active" in out
@@ -675,7 +675,7 @@ def test_main_all_worktrees_removed_mid_scan(capsys: pytest.CaptureFixture[str])
     rc, _ = _run([gone], detached=_RACE_ERR, still_present=False)
     out = capsys.readouterr().out
     assert rc == 0
-    assert "1 worktrees" in out
+    assert "1 worktree:" in out
     assert "note: issue-9-gone ((detached)): removed by a concurrent operation" in out
 
 
@@ -801,7 +801,7 @@ def test_pending_section_renders_rows_in_order(capsys: pytest.CaptureFixture[str
     )
     assert len(section) == 8
     # The section sits after the worktree sections, before the summary lines.
-    assert out.index("Main checkout") < out.index("Pending release (") < out.index("1 worktrees")
+    assert out.index("Main checkout") < out.index("Pending release (") < out.index("1 worktree:")
 
 
 def test_pending_section_uses_configured_integration_branch(
