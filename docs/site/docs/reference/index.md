@@ -52,7 +52,7 @@ the dev-tree override venv.
 | [vrg-ci-sync](cli-tools-overview.md#vrg-ci-sync) | Fleet sweep that strips retired inputs from each repo's `ci.yml` |
 | [vrg-upstream-refresh](cli-tools-overview.md#vrg-upstream-refresh) | Run the repo's upstream-refresh hook and open, refresh or close its PR |
 | [vrg-branch-sweep](dev/branch-sweep.md) | Report, or with `--apply` delete, a repo's finished remote branches |
-| [vrg-worktree-status](cli-tools-overview.md#vrg-worktree-status) | Show every worktree in the current repo, grouped by kind |
+| [vrg-repo-status](cli-tools-overview.md#vrg-repo-status) | Show every worktree in the current repo, grouped by kind |
 | [vrg-container-run](cli-tools-overview.md#vrg-container-run) | Run commands inside a dev container |
 | [vrg-container-docs](cli-tools-overview.md#vrg-container-docs) | Preview/build MkDocs in a dev container |
 | [vrg-container-build-command](cli-tools-overview.md#vrg-container-build-command) | Print the declared `[container].build-command` (CI consumption) |

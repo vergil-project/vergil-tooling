@@ -252,10 +252,10 @@ token `gh` runs with:
 `vrg-finalize-pr`, `vrg-fleet-sync`, `vrg-github-repo-config`,
 `vrg-github-repo-init`, `vrg-intake-create`, `vrg-intake-route`,
 `vrg-issue-create`, `vrg-pr-await`, `vrg-pr-workflow`, `vrg-promote`,
-`vrg-queue`, `vrg-release`, `vrg-resolve-tracking-issue`,
-`vrg-roadmap`, `vrg-ruling`, `vrg-ruling-reply`, `vrg-scope-change`,
-`vrg-security-record`, `vrg-submit-pr`, `vrg-update-deps`,
-`vrg-upstream-refresh` and `vrg-worktree-status`.
+`vrg-queue`, `vrg-release`, `vrg-repo-status`,
+`vrg-resolve-tracking-issue`, `vrg-roadmap`, `vrg-ruling`,
+`vrg-ruling-reply`, `vrg-scope-change`, `vrg-security-record`,
+`vrg-submit-pr`, `vrg-update-deps` and `vrg-upstream-refresh`.
 
 `vrg-package` calls `gh` only: it lists and downloads releases, and
 verifies their attestations, when it builds the package index.

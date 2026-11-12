@@ -1534,7 +1534,7 @@ def _stage_cleanup(ctx: FinalizeContext) -> None:
     # the branch tip is never an ancestor, so `git branch --merged` (the
     # ancestry arm) cannot see squash-merged branches (issue #1552). The
     # worktree arm closes that gap by classifying every canonical worktree
-    # with the same logic that backs vrg-worktree-status, so "cruft" and
+    # with the same logic that backs vrg-repo-status, so "cruft" and
     # "removed" match by construction.
     print("Checking for merged local branches...")
     worktree_by_branch = {wt.branch: wt for wt in worktrees.list_worktrees(root)}

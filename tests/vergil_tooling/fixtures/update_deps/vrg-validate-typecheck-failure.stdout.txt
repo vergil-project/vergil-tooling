@@ -142,6 +142,7 @@ src/vergil_tooling/bin/vrg_promote.py                          26      0      2 
 src/vergil_tooling/bin/vrg_release.py                          51      0     12      0   100%
 src/vergil_tooling/bin/vrg_release_validate_inputs.py          35      0     14      0   100%
 src/vergil_tooling/bin/vrg_repo_profile.py                     57      0     22      0   100%
+src/vergil_tooling/bin/vrg_repo_status.py                      83      0     26      0   100%
 src/vergil_tooling/bin/vrg_resolve_tooling_version.py          19      0      0      0   100%
 src/vergil_tooling/bin/vrg_resolve_tracking_issue.py           77      0     22      0   100%
 src/vergil_tooling/bin/vrg_reword.py                          158      0     56      0   100%
@@ -161,7 +162,6 @@ src/vergil_tooling/bin/vrg_vm.py                             1301      0    362 
 src/vergil_tooling/bin/vrg_vm_resolve_session.py              380      0    120      0   100%
 src/vergil_tooling/bin/vrg_wait_until_green.py                 53      0     20      0   100%
 src/vergil_tooling/bin/vrg_whoami.py                           56      0     16      0   100%
-src/vergil_tooling/bin/vrg_worktree_status.py                  83      0     26      0   100%
 src/vergil_tooling/bin/vrg_xdist_sync.py                       44      0      8      0   100%
 src/vergil_tooling/configs/__init__.py                          0      0      0      0   100%
 src/vergil_tooling/configs/cpp/__init__.py                      0      0      0      0   100%

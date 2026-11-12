@@ -91,7 +91,7 @@ class WorktreeStatus:
     # withheld the merged verdict, issue #1719). These are neither live work
     # nor removable cruft: they need a human's attention. Set by
     # classify_worktree; defaulted so callers that build a WorktreeStatus by
-    # hand are unaffected. See _summary in vrg_worktree_status.
+    # hand are unaffected. See _summary in vrg_repo_status.
     needs_attention: bool = False
     # Local pr-workflow handoff signals (.vergil/pr-workflow.json). Defaulted so
     # classify_worktree and the finalize sweep, which do not gather them, are
@@ -100,7 +100,7 @@ class WorktreeStatus:
     workflow_error: str | None = None
     pr_prepared: bool = False
     # Freshness signals (epoch seconds), attached by gather_worktree_status
-    # only when called with with_freshness=True (vrg-worktree-status). Left
+    # only when called with with_freshness=True (vrg-repo-status). Left
     # None for the finalize sweep, which neither needs nor pays for them.
     last_commit_ts: float | None = None
     last_modified_ts: float | None = None
@@ -273,7 +273,7 @@ def gather_worktree_status(
 ) -> WorktreeStatus:
     """Gather local + remote signals for *worktree* and classify it.
 
-    The single source of truth shared by ``vrg-worktree-status`` and the
+    The single source of truth shared by ``vrg-repo-status`` and the
     ``vrg-finalize-pr`` straggler sweep. A failed ``gh`` PR lookup is
     surfaced as ``UNKNOWN`` with the captured reason — never a silent
     failure that would misclassify the worktree.
@@ -286,13 +286,13 @@ def gather_worktree_status(
 
     Freshness timestamps (last_commit_ts / last_modified_ts) are gathered
     only when ``with_freshness`` is set — the display-only concern of
-    ``vrg-worktree-status``; the finalize sweep leaves them unset.
+    ``vrg-repo-status``; the finalize sweep leaves them unset.
     """
     ahead = git.commits_ahead(target, worktree.branch)
     porcelain = git.read_output("-C", str(worktree.path), "status", "--porcelain")
     dirty = bool(porcelain)
     workflow_status, workflow_error, pr_prepared = _probe_pr_workflow(worktree)
-    # Freshness is opt-in: only vrg-worktree-status needs it. The finalize
+    # Freshness is opt-in: only vrg-repo-status needs it. The finalize
     # straggler sweep also drives this function and must not pay for (or be
     # broken by) the extra git log + filesystem walk. At AHEAD 0 the branch has
     # no commits of its own: HEAD is the base commit, whose age says nothing
@@ -574,7 +574,7 @@ def gather_detached_status(
     lifecycle it does not yet have.
 
     Freshness timestamps mirror ``gather_worktree_status`` — gathered only when
-    ``with_freshness`` is set (``vrg-worktree-status``).
+    ``with_freshness`` is set (``vrg-repo-status``).
     """
     git_dir = git.worktree_git_dir(raw.path)
     rebasing = _rebase_in_progress(git_dir)

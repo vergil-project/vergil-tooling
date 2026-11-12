@@ -440,7 +440,7 @@ files already carry both halves:
     your `.gitignore`. Keeping them ignored matters: un-gitignored output
     dirties a worktree, and a *merged* worktree left dirty is one
     `vrg-finalize-pr` cannot auto-remove — it surfaces as
-    **needs-attention** in `vrg-worktree-status` and requires the opt-in
+    **needs-attention** in `vrg-repo-status` and requires the opt-in
     `--clean-dirty` (or a manual clean) to clear. Carrying the managed
     block means merged worktrees sweep automatically.
 
