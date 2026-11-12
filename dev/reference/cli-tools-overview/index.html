@@ -19406,7 +19406,15 @@ or deferred epic: a queue item is not buildable until intake review routes it,
 vergil-project/.github#176 and #508).
 Local-settings guard: <code>report-ready</code> refuses an agent (warns a human), before
 pushing or recording anything, while a loadable <code>.claude/settings.local.json</code>
-is not absent or <code>{}</code> (epic vergil-project/.github#558).</p>
+is not absent or <code>{}</code> (epic vergil-project/.github#558).
+A batch PR (epic vergil-project/.github#1019) repeats <code>--issue</code>, in commit
+order. Every issue runs the per-issue refusals, then the batch hard rules and
+the one-commit-per-issue check run before any push; either failing records
+nothing. The state records the list as <code>issues</code> (its first entry is also
+<code>issue</code>), in the local file and the relay ref alike, and a re-run must name the
+same list in the same order. Once the state is recorded, the members' batch
+markers are removed. A single <code>--issue</code> records no <code>issues</code> key and behaves
+exactly as before.</p>
 <table>
 <thead>
 <tr>
@@ -19421,7 +19429,7 @@ is not absent or <code>{}</code> (epic vergil-project/.github#558).</p>
 </tr>
 <tr>
 <td>Args</td>
-<td><code>report-ready</code> (<code>--issue</code>, <code>--title</code>, <code>--summary</code>, <code>--notes</code> required; <code>--linkage</code> default Ref), <code>unfreeze</code>, <code>status</code>; global <code>--base</code> (default: origin/develop)</td>
+<td><code>report-ready</code> (<code>--issue</code>, repeatable for a batch, <code>--title</code>, <code>--summary</code>, <code>--notes</code> required; <code>--linkage</code> default Ref), <code>unfreeze</code>, <code>status</code>, <code>batch-start</code>, <code>batch-extract</code>, <code>batch-show</code>; global <code>--base</code> (default: origin/develop)</td>
 </tr>
 <tr>
 <td>Preconditions</td>
