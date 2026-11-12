@@ -1330,7 +1330,9 @@ def _make_batch_check(
     Each run fetches *base* and *head* from origin, so it checks the PR's head
     as it is now, then runs the commit-per-issue check from *base* to that
     head. A refusal names the rule and the commit; a merge commit (GitHub's
-    update-branch button) also names the rebase that fixes it.
+    update-branch button) also names the rebase that fixes it. Submitting
+    lifted the freeze (``freeze.is_frozen``; spec §5.10), so that message
+    names the agent's ``pr-watch`` or the human as the one to run it.
     """
 
     def check() -> str:
@@ -1354,8 +1356,9 @@ def _make_batch_check(
             msg = f"PR {pr} is not merged: {exc}"
             if exc.rule == _MERGE_COMMIT_RULE:
                 msg += (
-                    f". The branch is already submitted, so only you can fix it: rebase "
-                    f"it onto {base} and force-push with a lease:\n"
+                    f". Submitting lifted the branch's freeze, so the agent's pr-watch "
+                    f"can fix it (it rebases onto {base} and pushes with a lease), or you "
+                    f"can, with the commands below:\n"
                     f"{_rebase_steps(pr, head, base, root)}"
                 )
             raise FinalizeError(msg) from exc
