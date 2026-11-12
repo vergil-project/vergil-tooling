@@ -102,6 +102,17 @@ def at_reported_commit(state: WorkflowState, current_head: str | None) -> bool:
     return bool(recorded == current_head)
 
 
+def _issues_phrase(state: WorkflowState) -> str:
+    """Name every issue *state* hands off: ``issue #42`` or ``issues #10, #11``.
+
+    A batch record names its whole ordered list (``all_issues``), so the
+    refusal describes the batch, not only its first issue (issue #4280).
+    """
+    issues = state.all_issues
+    listed = ", ".join(f"#{issue}" if issue.isdigit() else issue for issue in issues)
+    return f"issue {listed}" if len(issues) == 1 else f"issues {listed}"
+
+
 def build_refusal(state: WorkflowState, *, action: str, current_head: str | None) -> str:
     """Build the actionable refusal message for a frozen-branch mutation.
 
@@ -109,8 +120,8 @@ def build_refusal(state: WorkflowState, *, action: str, current_head: str | None
     commit"``). Assumes the caller already confirmed :func:`is_frozen`.
     """
     lines = [
-        f"vrg: refusing to {action} — branch reported ready for issue "
-        f"#{state.issue} and is FROZEN.",
+        f"vrg: refusing to {action} — branch reported ready for "
+        f"{_issues_phrase(state)} and is FROZEN.",
         "",
         "A task is exactly one PR: once its work is reported ready the branch is",
         "done and must not change before the human submits it.",
