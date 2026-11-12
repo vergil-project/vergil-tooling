@@ -59,11 +59,3 @@ jobs:
   # (spec §8.1). Surfaces as the `package / evidence` gate.
   package:
     uses: vergil-project/vergil-actions/.github/workflows/ci-package.yml@v2.1
-    with:
-      # Temporary: the Canonical DNS outage of 2026-11-11 breaks install-test
-      # in prod-pkg-ubuntu, whose mirror list has only ubuntu.com hosts;
-      # dev-pkg-ubuntu carries fallback mirrors outside Canonical's domain.
-      # Remove once the Ubuntu 24.04 cutover release
-      # (vergil-project/vergil-containers#789) publishes the fallback mirrors
-      # in prod-pkg-ubuntu.
-      container-prefix: dev
