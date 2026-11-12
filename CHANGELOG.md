@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.302] - 2026-11-12
+
+### Bug fixes
+
+- check every Closes line of a multi-linkage PR body (#4235)
+
+### CI
+
+- revert package CI to the prod- package images after the Ubuntu 24.04 cutover (#4238)
+
+### Chores
+
+- uv lock --upgrade (#4229)
+
+### Documentation
+
+- add the batch form to the worktree convention (#4236)
+
+### Features
+
+- add --fixup to make a fixup commit of a branch-local commit (#4233)
+- add the batch rules module (hard rules and one commit per issue) (#4234)
+- allow local rewrites on unfrozen feature branches (#4232)
+- add batch-start, batch-extract and batch-show (the batch marker) (#4239)
+- detect a batch PR, update it by rebase, re-check and rebase-merge (#4240)
+- publish the apt indexes by hash and keep earlier index generations (#4241)
+- carry an ordered issue list in the workflow state and report-ready (#4223) (#4242)
+- per-issue checks and one Closes line per issue for a batch (#4243)
+
 ## [2.1.301] - 2026-11-11
 
 ### Bug fixes
