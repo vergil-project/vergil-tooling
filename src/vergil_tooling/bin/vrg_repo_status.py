@@ -1,4 +1,4 @@
-"""Show every worktree in the repo, grouped by kind, with its lifecycle state.
+"""Show the state of the repository clone: its worktrees, grouped by kind.
 
 Read-only observability for worktree hygiene. Everything with code on disk in
 this repo is shown, in four sections (issue #3386):
@@ -155,7 +155,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Show every worktree in the repo, grouped by kind, with its state.",
+        description="Show the state of the repository clone: its worktrees, grouped by kind.",
     )
     parser.add_argument(
         "--target-branch",

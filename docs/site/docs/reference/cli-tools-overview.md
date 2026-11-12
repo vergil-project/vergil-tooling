@@ -1196,7 +1196,7 @@ which sets `VRG_EPIC_SWEEP=1`. Other invariant violations stay report-only.
 | Exit codes | 0 success (the read-only report exits 0 even when it finds drift), 1 refused, incomplete coverage, a pass failed, or error, 2 bad arguments |
 | Status | Active |
 
-### vrg-worktree-status
+### vrg-repo-status
 
 Show every worktree git knows about in the current repo, grouped by
 kind, so nothing with code on disk goes unseen (issue #3386). Read-only
@@ -1268,7 +1268,7 @@ Development: 0 active, 0 needs-attention, 1 stalled (no-pr), 0 cruft (removable)
 
 | Attribute | Value |
 |---|---|
-| Source | `vergil_tooling.bin.vrg_worktree_status` |
+| Source | `vergil_tooling.bin.vrg_repo_status` |
 | Args | `--target-branch` (default: develop) — the branch AHEAD is measured against |
 | Preconditions | Git repo; `gh` CLI on PATH for PR state |
 | Failure mode | None for classification — a failed PR lookup is reported as an `unknown` row and a failed branch-gone check as a note, never a crash. A malformed `vergil.toml` exits 1 with the reason |

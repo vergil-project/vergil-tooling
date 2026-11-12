@@ -382,7 +382,7 @@ def ref_exists(ref: str) -> bool:
     Only the return code is consulted, so both streams are discarded: on
     success ``git rev-parse --verify`` prints the resolved SHA to stdout
     (``--quiet`` suppresses only the failure diagnostic), which would
-    otherwise leak to the terminal — e.g. above the ``vrg-worktree-status``
+    otherwise leak to the terminal — e.g. above the ``vrg-repo-status``
     table when the detached/rebase path probes a ref (issue #2658).
     """
     args = ("rev-parse", "--verify", "--quiet", ref)

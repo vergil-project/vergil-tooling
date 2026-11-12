@@ -43,6 +43,7 @@ vergil-tooling v2.1.241
 - vrg-release
 - vrg-release-validate-inputs
 - vrg-repo-profile
+- vrg-repo-status
 - vrg-resolve-tooling-version
 - vrg-resolve-tracking-issue
 - vrg-reword
@@ -62,5 +63,4 @@ vergil-tooling v2.1.241
 - vrg-vm-resolve-session
 - vrg-wait-until-green
 - vrg-whoami
-- vrg-worktree-status
 - vrg-xdist-sync

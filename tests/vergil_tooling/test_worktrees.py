@@ -1012,7 +1012,7 @@ def test_detached_worktree_present_without_branch_check() -> None:
     ref_exists.assert_not_called()
 
 
-# -- Repo-wide discovery for vrg-worktree-status (issue #3386) -----------------
+# -- Repo-wide discovery for vrg-repo-status (issue #3386) -----------------
 
 _PORCELAIN_REPO_WIDE = """\
 worktree /repo

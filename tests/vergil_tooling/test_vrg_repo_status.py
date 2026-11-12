@@ -1,4 +1,4 @@
-"""Tests for vergil_tooling.bin.vrg_worktree_status."""
+"""Tests for vergil_tooling.bin.vrg_repo_status."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vergil_tooling.bin.vrg_worktree_status import _format_age, _row, main
+from vergil_tooling.bin.vrg_repo_status import _format_age, _row, main
 from vergil_tooling.lib.config import ConfigError
 from vergil_tooling.lib.worktrees import (
     MainCheckoutStatus,
@@ -22,7 +22,7 @@ from vergil_tooling.lib.worktrees import (
     WorktreeStatus,
 )
 
-_MOD = "vergil_tooling.bin.vrg_worktree_status"
+_MOD = "vergil_tooling.bin.vrg_repo_status"
 _ROOT = Path("/repo")
 
 

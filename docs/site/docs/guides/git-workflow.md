@@ -270,7 +270,7 @@ or unfinalized PR still dangling.
 A merged worktree the sweep cannot remove (a dirty tree, or a reused
 branch name with unmerged commits) is not deleted silently —
 `vrg-finalize-pr` surfaces it **prominently after the pipeline** so it
-is impossible to miss, and `vrg-worktree-status` counts it under
+is impossible to miss, and `vrg-repo-status` counts it under
 **needs-attention** rather than hiding it as active. When the only dirt
 is un-gitignored build/validation output, `--clean-dirty` clears it
 after confirmation; better still, gitignore that output so the worktree
