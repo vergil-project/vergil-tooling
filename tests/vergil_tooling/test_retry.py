@@ -167,9 +167,11 @@ class TestRunWithRetry:
             patch("vergil_tooling.lib.retry.subprocess.run", side_effect=err),
             patch("vergil_tooling.lib.retry.time.sleep"),
             patch("vergil_tooling.lib.retry.random.random", return_value=0.5),
-            pytest.raises(subprocess.CalledProcessError, match=""),
+            pytest.raises(subprocess.CalledProcessError) as excinfo,
         ):
             retry.run_with_retry(("gh", "pr", "view"), check=True)
+        # The original error is re-raised, not a wrapped or rebuilt one.
+        assert excinfo.value is err
 
     def test_retries_graphql_blip_then_succeeds(self) -> None:
         err = _api_error(stderr="GraphQL: Something went wrong while executing your query.")

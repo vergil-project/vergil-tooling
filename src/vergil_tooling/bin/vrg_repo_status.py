@@ -322,7 +322,7 @@ def _summary(
     counts = ", ".join(
         f"{len(sections[kind])} {title.lower()}" for kind, title in _SECTION_TITLES.items()
     )
-    return f"{total} worktrees: main checkout ({_main_state(main_status)}), {counts}."
+    return f"{_count(total, 'worktree')}: main checkout ({_main_state(main_status)}), {counts}."
 
 
 def _development_summary(statuses: list[WorktreeStatus]) -> str:
@@ -341,7 +341,7 @@ def _development_summary(statuses: list[WorktreeStatus]) -> str:
         f"Development: {active} active, "
         f"{attention} needs-attention, "
         f"{stalled} stalled (no-pr), {cruft} cruft (removable). "
-        f"{prepared} PR prepared."
+        f"{_count(prepared, 'PR')} prepared."
     )
     if attention:
         line += " Some worktrees need attention (see notes above)."
@@ -356,9 +356,12 @@ def _count(n: int, noun: str) -> str:
 
 
 def _release_line(tags: ReleaseTags, main_moved_ts: float, now: float) -> str:
-    """The latest release, how long ago main moved, and the rolling tag."""
+    """The latest release, how long ago main moved, and the rolling tag.
+
+    It is printed after the section heading, on the heading's line.
+    """
     latest = tags.latest if tags.latest is not None else "no release yet"
-    line = f"  latest release: {latest}, main moved {_format_age(main_moved_ts, now)}; "
+    line = f"latest release {latest}, main moved {_format_age(main_moved_ts, now)}; "
     if tags.rolling is None or tags.rolling_target is None:
         return line + "no rolling tag"
     line += f"rolling tag {tags.rolling} → {tags.rolling_target}"
@@ -408,17 +411,19 @@ def _pending_summary(changes: Sequence[PendingChange]) -> str:
 def _print_pending(integration: str, now: float) -> bool:
     """Print the Pending release section; return False only on an error.
 
-    A failed or incomplete lookup prints the heading and the ``ERROR:`` line
-    alone, never a partial table (spec §5.4).
+    The heading and the release line share one line. A failed or incomplete
+    lookup prints the bare heading and the ``ERROR:`` line alone, never a
+    partial table (spec §5.4).
     """
     print()
-    print(f"Pending release ({integration} → {RELEASE_BRANCH})")
+    heading = f"Pending release ({integration} → {RELEASE_BRANCH})"
     try:
         pending = gather_pending_release(integration=integration)
     except PendingReleaseError as exc:
+        print(heading)
         print(f"ERROR: pending release: {exc}")
         return False
-    print(_release_line(pending.tags, pending.main_moved_ts, now))
+    print(f"{heading}: {_release_line(pending.tags, pending.main_moved_ts, now)}")
     if not pending.changes:
         print(f"Nothing pending release: {integration} and {RELEASE_BRANCH} are level.")
         return True

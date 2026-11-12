@@ -98,6 +98,31 @@ def test_build_refusal_points_at_followup_and_unfreeze() -> None:
     assert "DRIFT" not in msg
 
 
+def test_build_refusal_names_the_single_issue() -> None:
+    msg = freeze.build_refusal(_ready(), action="add a commit", current_head="aaaaaaaa1111")
+    first = msg.splitlines()[0]
+    assert first == (
+        "vrg: refusing to add a commit — branch reported ready for issue #42 and is FROZEN."
+    )
+
+
+def test_build_refusal_names_every_batch_issue() -> None:
+    state = engine.init_state(
+        issues=["10", "11", "12"],
+        branch="feature/10-batch-x",
+        base="origin/develop",
+        head_sha="aaaaaaaa1111",
+        base_sha="0000",
+        now="2026-06-25T00:00:00Z",
+    )
+    msg = freeze.build_refusal(state, action="add a commit", current_head="aaaaaaaa1111")
+    first = msg.splitlines()[0]
+    assert first == (
+        "vrg: refusing to add a commit — branch reported ready for "
+        "issues #10, #11, #12 and is FROZEN."
+    )
+
+
 def test_build_refusal_flags_drift_loudly() -> None:
     msg = freeze.build_refusal(
         _ready(), action="advance this branch with a push", current_head="bbbbbbbb2222"

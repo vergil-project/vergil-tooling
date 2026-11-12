@@ -1282,8 +1282,7 @@ merged PR into the integration branch, by commit SHA (so a batch PR
 rebase-merged as several commits is one row).
 
 ```text
-Pending release (develop → main)
-  latest release: v2.1.303, main moved 4h ago; rolling tag v2.1 → v2.1.303
+Pending release (develop → main): latest release v2.1.303, main moved 4h ago; rolling tag v2.1 → v2.1.303
 PR     BRANCH                      TYPE     MERGED  TITLE
 #4251  release/post-2.1.303        release  4h ago  chore(release): back-merge 2.1.303 and bump to 2.1.304
 #4258  deps/update-2.1.304         deps     4h ago  chore(deps): dependency update for 2.1.304
@@ -1291,7 +1290,8 @@ PR     BRANCH                      TYPE     MERGED  TITLE
 3 changes pending release: 1 dependency update, 1 release back-merge, 1 other PR.
 ```
 
-- **Release line.** The latest release is the highest `vX.Y.Z` tag on
+- **Release line.** It follows the section heading on the same line,
+  after a colon. The latest release is the highest `vX.Y.Z` tag on
   the remote (`no release yet` without one), with how long ago `main`
   last moved. The rolling tag is the highest `vX.Y` tag, shown with the
   `vX.Y.Z` tag on the same commit, or its short SHA when that commit has
@@ -1315,7 +1315,8 @@ PR     BRANCH                      TYPE     MERGED  TITLE
   `<n> PROBLEM: commits with no PR` only when there are some.
 - **A lookup that fails or is incomplete** (an API error, a missing
   branch, a truncated answer) is an error, never a partial list: the
-  section prints its heading and `ERROR: pending release: <reason>`
+  section prints its heading, with no release line, and
+  `ERROR: pending release: <reason>`
   alone. The rest of the output still prints, then the command exits 1.
   The reason never carries URL credentials.
 
