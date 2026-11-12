@@ -59,10 +59,15 @@ state otherwise.
 
 ## Line length
 
-Lines must not exceed 100 characters, matching the `ruff` `line-length`
-setting. Tables and code blocks are exempt. See
-[Markdown Validation](../reference/lint/markdown-standards.md) for the
-full markdownlint configuration.
+There is no line-length limit: markdownlint's MD013 is off. The rule
+exists to keep raw Markdown comfortable to read in a terminal or a
+plain editor, but these files are read rendered, on GitHub and on the
+docs sites, and every editor soft-wraps. Dropping it is a deliberate
+step in the fleet's move toward machine-generated, machine-checked
+content. This reverses the earlier 100-column limit on `docs/site/` and
+`README.md`. See
+[Markdown Validation](../reference/lint/markdown-standards.md#line-length)
+for the reasoning and the full markdownlint configuration.
 
 ## Validation
 
