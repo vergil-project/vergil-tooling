@@ -475,10 +475,9 @@ class TestRenderReadme:
         assert "See [LICENSE](LICENSE).\n" in content
         assert "GPL" not in content
 
-    def test_long_description_reflowed_under_md013(self) -> None:
-        # A long one-paragraph description must be wrapped to <=100-char lines so
-        # the generated README passes the bundled markdownlint MD013 limit — the
-        # first vrg-validate of every new repo lints it (issue #2393).
+    def test_long_description_emitted_unwrapped(self) -> None:
+        # The bundled markdownlint config has MD013 off, so a long description
+        # is emitted as given, on one line, not reflowed (issue #4103).
         ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
         ctx.description = (
             "A resilience and observability toolkit for message queues that "
@@ -489,14 +488,10 @@ class TestRenderReadme:
         ctx.license_type = "MIT"
         ctx.publish_docs = True
         content = render_readme(ctx)
-        assert all(len(line) <= 100 for line in content.splitlines())
-        # Content is preserved — every word from the description survives the wrap.
-        collapsed = " ".join(content.split())
-        for word in ctx.description.split():
-            assert word in collapsed
+        assert f"\n{ctx.description}\n" in content
 
     def test_description_paragraphs_preserved(self) -> None:
-        # Blank-line-separated paragraphs survive the reflow as separate blocks.
+        # Blank-line-separated paragraphs survive as separate blocks.
         ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
         ctx.description = "First paragraph.\n\nSecond paragraph."
         ctx.license_type = "MIT"

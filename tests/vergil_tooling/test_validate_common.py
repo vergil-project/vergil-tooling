@@ -15,10 +15,9 @@ from vergil_tooling.bin.validate_common import (
     _drop_gitignored,
     _find_ansible_lint_config,
     _find_dockerfiles,
-    _find_prose_markdown_files,
+    _find_markdown_files,
     _find_repo_sh_files,
     _find_shell_files,
-    _find_strict_markdown_files,
     _find_yaml_files,
     _has_ansible_content,
     main,
@@ -258,77 +257,96 @@ def test_find_repo_sh_files_outside_repo_raises(tmp_path: Path) -> None:
         _find_repo_sh_files(tmp_path)
 
 
-# -- _find_strict_markdown_files ---------------------------------------------
+# -- _find_markdown_files ----------------------------------------------------
 
 
-def test_find_strict_markdown_files_none(tmp_path: Path) -> None:
-    assert _find_strict_markdown_files(tmp_path) == []
+def test_find_markdown_files_none(tmp_path: Path) -> None:
+    assert _find_markdown_files(tmp_path) == []
 
 
-def test_find_strict_markdown_files_site(tmp_path: Path) -> None:
+def test_find_markdown_files_site(tmp_path: Path) -> None:
     site = tmp_path / "docs" / "site"
     site.mkdir(parents=True)
     (site / "index.md").write_text("# Hello\n")
-    result = _find_strict_markdown_files(tmp_path)
+    result = _find_markdown_files(tmp_path)
     assert len(result) == 1
     assert result[0].endswith("index.md")
 
 
-def test_find_strict_markdown_files_readme(tmp_path: Path) -> None:
+def test_find_markdown_files_readme(tmp_path: Path) -> None:
     (tmp_path / "README.md").write_text("# Hello\n")
-    result = _find_strict_markdown_files(tmp_path)
+    result = _find_markdown_files(tmp_path)
     assert len(result) == 1
     assert result[0].endswith("README.md")
 
 
-def test_find_strict_markdown_files_both(tmp_path: Path) -> None:
+def test_find_markdown_files_epics_nested(tmp_path: Path) -> None:
+    epics = tmp_path / "epics"
+    (epics / "epic-1").mkdir(parents=True)
+    (epics / "epic-2").mkdir(parents=True)
+    (epics / "epic-1" / "spec.md").write_text("# Spec\n")
+    (epics / "epic-1" / "plan.md").write_text("# Plan\n")
+    (epics / "epic-2" / "retrospective.md").write_text("# Retro\n")
+    result = _find_markdown_files(tmp_path)
+    assert len(result) == 3
+
+
+def test_find_markdown_files_all_scopes(tmp_path: Path) -> None:
     site = tmp_path / "docs" / "site"
     site.mkdir(parents=True)
     (site / "index.md").write_text("# Hello\n")
     (tmp_path / "README.md").write_text("# Project\n")
-    result = _find_strict_markdown_files(tmp_path)
-    assert len(result) == 2
-
-
-def test_find_strict_markdown_files_excludes_epics(tmp_path: Path) -> None:
     epic = tmp_path / "epics" / "epic-1"
     epic.mkdir(parents=True)
     (epic / "spec.md").write_text("# Spec\n")
-    assert _find_strict_markdown_files(tmp_path) == []
+    result = _find_markdown_files(tmp_path)
+    assert len(result) == 3
 
 
-def test_find_strict_markdown_files_sorted(tmp_path: Path) -> None:
+def test_find_markdown_files_outside_scope_skipped(tmp_path: Path) -> None:
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "notes.md").write_text("# Notes\n")
+    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n")
+    assert _find_markdown_files(tmp_path) == []
+
+
+def test_find_markdown_files_sorted(tmp_path: Path) -> None:
     site = tmp_path / "docs" / "site"
     site.mkdir(parents=True)
     (site / "b.md").write_text("# B\n")
     (site / "a.md").write_text("# A\n")
-    result = _find_strict_markdown_files(tmp_path)
+    epics = tmp_path / "epics"
+    epics.mkdir()
+    (epics / "b.md").write_text("# B\n")
+    (epics / "a.md").write_text("# A\n")
+    result = _find_markdown_files(tmp_path)
     assert result == sorted(result)
 
 
-def test_find_strict_markdown_files_ignore_directory(tmp_path: Path) -> None:
+def test_find_markdown_files_ignore_directory(tmp_path: Path) -> None:
     site = tmp_path / "docs" / "site"
     research = site / "docs" / "research"
     research.mkdir(parents=True)
     (site / "index.md").write_text("# Hello\n")
     (research / "report.md").write_text("# Report\n")
-    result = _find_strict_markdown_files(tmp_path, ignore=["docs/site/docs/research"])
+    result = _find_markdown_files(tmp_path, ignore=["docs/site/docs/research"])
     assert len(result) == 1
     assert result[0].endswith("index.md")
 
 
-def test_find_strict_markdown_files_ignore_nested(tmp_path: Path) -> None:
+def test_find_markdown_files_ignore_nested(tmp_path: Path) -> None:
     site = tmp_path / "docs" / "site"
     deep = site / "docs" / "research" / "2026" / "output"
     deep.mkdir(parents=True)
     (site / "index.md").write_text("# Hello\n")
     (deep / "report.md").write_text("# Report\n")
-    result = _find_strict_markdown_files(tmp_path, ignore=["docs/site/docs/research"])
+    result = _find_markdown_files(tmp_path, ignore=["docs/site/docs/research"])
     assert len(result) == 1
     assert result[0].endswith("index.md")
 
 
-def test_find_strict_markdown_files_ignore_multiple(tmp_path: Path) -> None:
+def test_find_markdown_files_ignore_multiple(tmp_path: Path) -> None:
     site = tmp_path / "docs" / "site"
     research = site / "docs" / "research"
     archive = site / "docs" / "archive"
@@ -337,7 +355,7 @@ def test_find_strict_markdown_files_ignore_multiple(tmp_path: Path) -> None:
     (site / "index.md").write_text("# Hello\n")
     (research / "report.md").write_text("# Report\n")
     (archive / "old.md").write_text("# Old\n")
-    result = _find_strict_markdown_files(
+    result = _find_markdown_files(
         tmp_path,
         ignore=["docs/site/docs/research", "docs/site/docs/archive"],
     )
@@ -345,74 +363,30 @@ def test_find_strict_markdown_files_ignore_multiple(tmp_path: Path) -> None:
     assert result[0].endswith("index.md")
 
 
-def test_find_strict_markdown_files_ignore_does_not_affect_readme(tmp_path: Path) -> None:
-    (tmp_path / "README.md").write_text("# Hello\n")
-    result = _find_strict_markdown_files(tmp_path, ignore=["docs/site/docs/research"])
-    assert len(result) == 1
-    assert result[0].endswith("README.md")
-
-
-def test_find_strict_markdown_files_ignore_empty_list(tmp_path: Path) -> None:
-    site = tmp_path / "docs" / "site"
-    site.mkdir(parents=True)
-    (site / "index.md").write_text("# Hello\n")
-    result = _find_strict_markdown_files(tmp_path, ignore=[])
-    assert len(result) == 1
-
-
-# -- _find_prose_markdown_files ----------------------------------------------
-
-
-def test_find_prose_markdown_files_none(tmp_path: Path) -> None:
-    assert _find_prose_markdown_files(tmp_path) == []
-
-
-def test_find_prose_markdown_files_epics(tmp_path: Path) -> None:
-    epic = tmp_path / "epics" / "epic-1"
-    epic.mkdir(parents=True)
-    (epic / "spec.md").write_text("# Spec\n")
-    result = _find_prose_markdown_files(tmp_path)
-    assert len(result) == 1
-    assert result[0].endswith("spec.md")
-
-
-def test_find_prose_markdown_files_epics_nested(tmp_path: Path) -> None:
-    epics = tmp_path / "epics"
-    (epics / "epic-1").mkdir(parents=True)
-    (epics / "epic-2").mkdir(parents=True)
-    (epics / "epic-1" / "spec.md").write_text("# Spec\n")
-    (epics / "epic-1" / "plan.md").write_text("# Plan\n")
-    (epics / "epic-2" / "retrospective.md").write_text("# Retro\n")
-    result = _find_prose_markdown_files(tmp_path)
-    assert len(result) == 3
-
-
-def test_find_prose_markdown_files_excludes_site_and_readme(tmp_path: Path) -> None:
-    site = tmp_path / "docs" / "site"
-    site.mkdir(parents=True)
-    (site / "index.md").write_text("# Hello\n")
-    (tmp_path / "README.md").write_text("# Project\n")
-    assert _find_prose_markdown_files(tmp_path) == []
-
-
-def test_find_prose_markdown_files_sorted(tmp_path: Path) -> None:
-    epics = tmp_path / "epics"
-    epics.mkdir()
-    (epics / "b.md").write_text("# B\n")
-    (epics / "a.md").write_text("# A\n")
-    result = _find_prose_markdown_files(tmp_path)
-    assert result == sorted(result)
-
-
-def test_find_prose_markdown_files_honors_ignore(tmp_path: Path) -> None:
+def test_find_markdown_files_ignore_epics(tmp_path: Path) -> None:
     epics = tmp_path / "epics"
     (epics / "epic-1").mkdir(parents=True)
     (epics / "archived").mkdir(parents=True)
     (epics / "epic-1" / "spec.md").write_text("# Spec\n")
     (epics / "archived" / "old.md").write_text("# Old\n")
-    result = _find_prose_markdown_files(tmp_path, ignore=["epics/archived"])
+    result = _find_markdown_files(tmp_path, ignore=["epics/archived"])
     assert len(result) == 1
     assert result[0].endswith("spec.md")
+
+
+def test_find_markdown_files_ignore_does_not_affect_readme(tmp_path: Path) -> None:
+    (tmp_path / "README.md").write_text("# Hello\n")
+    result = _find_markdown_files(tmp_path, ignore=["docs/site/docs/research"])
+    assert len(result) == 1
+    assert result[0].endswith("README.md")
+
+
+def test_find_markdown_files_ignore_empty_list(tmp_path: Path) -> None:
+    site = tmp_path / "docs" / "site"
+    site.mkdir(parents=True)
+    (site / "index.md").write_text("# Hello\n")
+    result = _find_markdown_files(tmp_path, ignore=[])
+    assert len(result) == 1
 
 
 # -- main --------------------------------------------------------------------
@@ -558,13 +532,14 @@ def test_main_markdownlint_honors_ignore(tmp_path: Path) -> None:
     assert not any("research" in a for a in md_args)
 
 
-def test_main_markdownlint_two_passes_use_scoped_configs(tmp_path: Path) -> None:
-    """docs/site + README lint against the strict config; epics/ lints against
-    the prose-relaxed config, in two distinct markdownlint invocations."""
+def test_main_markdownlint_one_pass_covers_every_scope(tmp_path: Path) -> None:
+    """docs/site, README and epics/ lint in one markdownlint invocation, against
+    the bundled config."""
     (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
     site = tmp_path / "docs" / "site"
     site.mkdir(parents=True)
     (site / "index.md").write_text("# Hello\n")
+    (tmp_path / "README.md").write_text("# Project\n")
     epic = tmp_path / "epics" / "epic-1"
     epic.mkdir(parents=True)
     (epic / "spec.md").write_text("# Spec\n")
@@ -586,24 +561,18 @@ def test_main_markdownlint_two_passes_use_scoped_configs(tmp_path: Path) -> None
         assert main() == 0
 
     md_calls = [c[0][0] for c in mock_run.call_args_list if c[0][0][0] == "markdownlint"]
-    assert len(md_calls) == 2
-
-    strict_call = md_calls[0]
-    assert strict_call[1] == "--config"
-    assert strict_call[2].endswith("markdownlint.yaml")
-    assert any(a.endswith("index.md") for a in strict_call[3:])
-    assert not any("spec.md" in a for a in strict_call[3:])
-
-    prose_call = md_calls[1]
-    assert prose_call[1] == "--config"
-    assert prose_call[2].endswith("markdownlint-prose.yaml")
-    assert any(a.endswith("spec.md") for a in prose_call[3:])
-    assert not any("index.md" in a for a in prose_call[3:])
+    assert len(md_calls) == 1
+    call = md_calls[0]
+    assert call[1] == "--config"
+    assert call[2].endswith("markdownlint.yaml")
+    md_args = call[3:]
+    assert any(a.endswith("index.md") for a in md_args)
+    assert any(a.endswith("README.md") for a in md_args)
+    assert any(a.endswith("spec.md") for a in md_args)
 
 
-def test_main_markdownlint_prose_pass_fails_step(tmp_path: Path) -> None:
-    """A violation in the epics/ (prose) pass fails the step even when the
-    strict pass has no files to lint."""
+def test_main_markdownlint_epics_violation_fails_step(tmp_path: Path) -> None:
+    """A violation in epics/ fails the step when it is the only scope with files."""
     (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
     epic = tmp_path / "epics" / "epic-1"
     epic.mkdir(parents=True)
@@ -626,12 +595,11 @@ def test_main_markdownlint_prose_pass_fails_step(tmp_path: Path) -> None:
         assert main() == 1
 
 
-# A prose line comfortably longer than MD013's 100-column limit. Kept
-# otherwise clean (leading heading, blank line, trailing newline) so MD013
-# is the ONLY rule it can trip.
+# A prose line well over 100 columns, otherwise clean (leading heading, blank
+# line, trailing newline) so line length is the only thing it could trip.
 _LONG_LINE = (
-    "This is a long line of epic prose that intentionally exceeds the one "
-    "hundred column line-length limit that MD013 enforces, for testing."
+    "This is a long line of prose that intentionally runs well past one "
+    "hundred columns, which the bundled config no longer limits, for testing."
 )
 _LONG_DOC = f"# Title\n\n{_LONG_LINE}\n"
 
@@ -640,14 +608,15 @@ _LONG_DOC = f"# Title\n\n{_LONG_LINE}\n"
     shutil.which("markdownlint") is None,
     reason="markdownlint binary not on PATH (only present in the dev container)",
 )
-def test_main_epics_long_line_passes_md013_relaxed(tmp_path: Path) -> None:
-    """A >100-char line in epics/ PASSES because the prose config disables
-    MD013 — proving the exemption end-to-end against the real binary."""
+@pytest.mark.parametrize("scope", ["epics/epic-1", "docs/site"])
+def test_main_long_line_passes_with_md013_off(tmp_path: Path, scope: str) -> None:
+    """A >100-char line passes in every scope because the bundled config turns
+    MD013 off (issue #4103), proven end to end against the real binary."""
     assert len(_LONG_LINE) > 100
     (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
-    epic = tmp_path / "epics" / "epic-1"
-    epic.mkdir(parents=True)
-    (epic / "spec.md").write_text(_LONG_DOC)
+    folder = tmp_path / scope
+    folder.mkdir(parents=True)
+    (folder / "long.md").write_text(_LONG_DOC)
 
     with (
         patch(
@@ -660,32 +629,6 @@ def test_main_epics_long_line_passes_md013_relaxed(tmp_path: Path) -> None:
         ),
     ):
         assert main() == 0
-
-
-@pytest.mark.skipif(
-    shutil.which("markdownlint") is None,
-    reason="markdownlint binary not on PATH (only present in the dev container)",
-)
-def test_main_docs_site_long_line_fails_md013(tmp_path: Path) -> None:
-    """The SAME >100-char line in docs/site/ FAILS MD013 — proving the strict
-    scope still enforces line-length."""
-    assert len(_LONG_LINE) > 100
-    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
-    site = tmp_path / "docs" / "site"
-    site.mkdir(parents=True)
-    (site / "long.md").write_text(_LONG_DOC)
-
-    with (
-        patch(
-            "vergil_tooling.bin.validate_common.git.repo_root",
-            return_value=tmp_path,
-        ),
-        patch(
-            "vergil_tooling.bin.validate_common.repo_profile.main",
-            return_value=0,
-        ),
-    ):
-        assert main() != 0
 
 
 def test_main_shellcheck_runs(tmp_path: Path) -> None:
