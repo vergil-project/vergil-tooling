@@ -8,7 +8,6 @@ import os
 import re
 import subprocess
 import sys
-import textwrap
 from dataclasses import dataclass, field
 from importlib import metadata, resources
 from pathlib import Path
@@ -439,36 +438,12 @@ def render_claude_md(ctx: RepoInitContext) -> str:
     )
 
 
-def _reflow_prose(text: str, width: int = 100) -> str:
-    """Reflow a free-text paragraph to lines no longer than ``width``.
-
-    The user-supplied description is one paragraph of arbitrary length; emitted
-    verbatim it routinely exceeds the bundled markdownlint MD013 limit (100),
-    so a freshly-created repo's first ``vrg-validate`` fails on generated
-    content (issue #2393). Wrap on word boundaries, paragraph by paragraph, so
-    blank-line-separated paragraphs survive. ``break_long_words``/
-    ``break_on_hyphens`` are off so a single long token (e.g. a URL) is never
-    mangled — it stays on its own line rather than being split.
-    """
-    paragraphs = re.split(r"\n\s*\n", text.strip())
-    wrapped = [
-        textwrap.fill(
-            para.strip(),
-            width=width,
-            break_long_words=False,
-            break_on_hyphens=False,
-        )
-        for para in paragraphs
-    ]
-    return "\n\n".join(wrapped)
-
-
 def render_readme(ctx: RepoInitContext) -> str:
     """Render README.md from wizard context."""
     lines = [
         f"# {ctx.name}\n",
         "\n",
-        f"{_reflow_prose(ctx.description)}\n",
+        f"{ctx.description}\n",
         "\n",
         "## Table of Contents\n",
         "\n",
