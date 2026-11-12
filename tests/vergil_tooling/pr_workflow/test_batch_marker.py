@@ -26,6 +26,8 @@ from vergil_tooling.lib.pr_workflow.batch_marker import (
 from vergil_tooling.lib.pr_workflow.errors import WorkflowError
 
 if TYPE_CHECKING:
+    import os
+    from collections.abc import Iterator
     from pathlib import Path
 
 SHA = "a" * 40
@@ -284,6 +286,28 @@ def test_extract_refuses_a_security_file_in_the_issue_dir_itself(tmp_path: Path)
         extract(tmp_path, "#10")
     assert details.exists()
     assert read_marker(tmp_path, "#11") == Marker(["#10", "#11"], SHA)
+
+
+def test_extract_refuses_when_a_subdirectory_cannot_be_listed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_markers(tmp_path, ["#10", "#11", "#12"], base_sha=SHA)
+    review = _issue_dir(tmp_path, 11) / "merge-review"
+    review.mkdir(mode=0o700)
+    real_scandir = batch_marker.os.scandir
+
+    def scandir(path: str) -> Iterator[os.DirEntry[str]]:
+        if path == str(review):
+            raise PermissionError(13, "Permission denied", path)
+        return real_scandir(path)
+
+    monkeypatch.setattr(batch_marker.os, "scandir", scandir)
+    with pytest.raises(BatchMarkerError, match="cannot look for security details"):
+        extract(tmp_path, "#11")
+    monkeypatch.undo()
+    assert review.is_dir()
+    for issue in ("#10", "#11", "#12"):
+        assert read_marker(tmp_path, issue) == Marker(["#10", "#11", "#12"], SHA)
 
 
 def test_extract_to_one_member_removes_last_marker(tmp_path: Path) -> None:

@@ -244,9 +244,18 @@ def existing_batch(root: Path, issues: list[str]) -> Marker | None:
 
 
 def _security_files(directory: Path) -> list[Path]:
-    """Every security details file under *directory*, symlinks not followed."""
+    """Every security details file under *directory*, symlinks not followed.
+
+    A directory that cannot be listed refuses: a details file in it could not
+    be ruled out.
+    """
+
+    def refuse(exc: OSError) -> None:
+        msg = f"cannot look for security details under {directory}: {exc}; nothing was changed"
+        raise BatchMarkerError(msg) from exc
+
     found: list[Path] = []
-    for current, dirs, files in os.walk(directory, followlinks=False):
+    for current, dirs, files in os.walk(directory, onerror=refuse, followlinks=False):
         dirs.sort()
         here = Path(current)
         found.extend(here / name for name in sorted(files) if Path(name).match(SECURITY_GLOB))
