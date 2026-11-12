@@ -17,6 +17,8 @@ import json
 import logging
 import os
 import re
+import socket
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -341,9 +343,11 @@ def _jwt_api_request(endpoint: str, jwt_token: str, *, method: str = "GET") -> A
 
     A transient HTTP error (see :func:`_is_retryable_jwt_status`) is retried
     with :func:`retry.compute_delay` backoff, each retry logged with its
-    request ID, up to :data:`retry.MAX_RETRIES` times (#4168); the last error,
-    or any other one, is raised unchanged. The whole backoff stays well
-    inside the JWT's lifetime, so a retry never sends an expired JWT.
+    request ID, up to :data:`retry.MAX_RETRIES` times (#4168). So is a
+    transient network error (see :func:`_is_retryable_jwt_network_error`),
+    with the same backoff and bound (#4186). The last error, or any other
+    one, is raised unchanged. The whole backoff stays well inside the JWT's
+    lifetime, so a retry never sends an expired JWT.
     """
     url = f"https://api.github.com{endpoint}"
     data = b"" if method == "POST" else None
@@ -371,7 +375,37 @@ def _jwt_api_request(endpoint: str, jwt_token: str, *, method: str = "GET") -> A
             )
             exc.close()
             time.sleep(delay)
+        except OSError as exc:
+            if attempt == retry.MAX_RETRIES or not _is_retryable_jwt_network_error(exc):
+                raise
+            delay = retry.compute_delay(attempt)
+            log.warning(
+                "GitHub App installation request failed with %s on %s (attempt %d/%d), "
+                "retrying in %.1fs",
+                exc,
+                endpoint,
+                attempt + 1,
+                retry.MAX_RETRIES + 1,
+                delay,
+            )
+            time.sleep(delay)
     raise AssertionError("unreachable")  # pragma: no cover
+
+
+def _is_retryable_jwt_network_error(exc: OSError) -> bool:
+    """True for a network-level failure that may be a blip on the App token path.
+
+    The ``urllib`` counterparts of the transport failures
+    :mod:`vergil_tooling.lib.retry` retries for ``gh`` (#4186): a timeout, a
+    reset, refused or dropped connection, a DNS lookup failure and a TLS
+    connection cut off mid-handshake (``EOF``). ``urlopen`` wraps a failure
+    while connecting in a :class:`urllib.error.URLError` whose ``reason`` is
+    the socket error, so that reason is what is judged; one raised while
+    reading the response arrives bare. Any other error (a certificate that
+    fails to verify, a malformed URL) fails at once.
+    """
+    reason = exc.reason if isinstance(exc, urllib.error.URLError) else exc
+    return isinstance(reason, TimeoutError | ConnectionError | socket.gaierror | ssl.SSLEOFError)
 
 
 def _is_retryable_jwt_status(status: int) -> bool:
