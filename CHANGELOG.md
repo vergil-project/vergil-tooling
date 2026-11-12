@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.304] - 2026-11-12
+
+### Bug fixes
+
+- stop saying a submitted PR is frozen to agents in the merge-conflict message (#4253)
+- drop the last frozen-to-agents claim and describe the conflict steps as #4253 makes them (#4259)
+
+### Documentation
+
+- document batched same-repo PRs across the site docs and the worktree convention (#4255)
+- name the batch worktree form and the freeze lifting at submit in the consumer template (#4254)
+
+### Features
+
+- refuse ubuntu-latest runner labels (#4252)
+
 ## [2.1.303] - 2026-11-12
 
 ### Bug fixes
