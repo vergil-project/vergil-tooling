@@ -6,6 +6,8 @@ import http.client
 import io
 import json
 import logging
+import socket
+import ssl
 import subprocess
 import urllib.error
 from pathlib import Path
@@ -2589,15 +2591,91 @@ class TestJwtApiRequest:
         mock_open.assert_called_once()
         mock_sleep.assert_not_called()
 
-    def test_non_http_error_is_not_retried(self) -> None:
+    @pytest.mark.parametrize(
+        "make_error",
+        [
+            lambda: urllib.error.URLError(TimeoutError("timed out")),
+            lambda: urllib.error.URLError(ConnectionRefusedError(111, "Connection refused")),
+            lambda: urllib.error.URLError(ConnectionResetError(104, "Connection reset by peer")),
+            lambda: urllib.error.URLError(socket.gaierror(-3, "Temporary name resolution failure")),
+            lambda: urllib.error.URLError(ssl.SSLEOFError(8, "EOF in violation of protocol")),
+            lambda: TimeoutError("The read operation timed out"),
+            lambda: ConnectionResetError(104, "Connection reset by peer"),
+            lambda: http.client.RemoteDisconnected("Remote end closed connection without response"),
+        ],
+    )
+    def test_retries_transient_network_error_then_succeeds(
+        self, make_error: Callable[[], OSError], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        resp = _mock_http_response(b'{"token": "ghs_abc"}')
         with (
-            patch(_URLOPEN, side_effect=urllib.error.URLError("no route")) as mock_open,
+            patch(_URLOPEN, side_effect=[make_error(), resp]) as mock_open,
             patch("vergil_tooling.lib.github.time.sleep") as mock_sleep,
-            pytest.raises(urllib.error.URLError),
+            caplog.at_level(logging.WARNING, logger="vergil_tooling.lib.github"),
+        ):
+            result = github._jwt_api_request("/app/installations/1/access_tokens", "secret-jwt")
+        assert result == {"token": "ghs_abc"}
+        assert mock_open.call_count == 2
+        mock_sleep.assert_called_once()
+        assert "on /app/installations/1/access_tokens" in caplog.text
+        assert "attempt 1/5" in caplog.text
+        assert "secret-jwt" not in caplog.text
+
+    def test_persistent_network_error_fails_after_retries_run_out(self) -> None:
+        errors = [
+            urllib.error.URLError(ConnectionRefusedError(111, "Connection refused"))
+            for _ in range(github.retry.MAX_RETRIES + 1)
+        ]
+        with (
+            patch(_URLOPEN, side_effect=errors) as mock_open,
+            patch("vergil_tooling.lib.github.time.sleep") as mock_sleep,
+            pytest.raises(urllib.error.URLError) as excinfo,
         ):
             github._jwt_api_request("/app/installations", "jwt")
+        assert excinfo.value is errors[-1]
+        assert mock_open.call_count == github.retry.MAX_RETRIES + 1
+        assert mock_sleep.call_count == github.retry.MAX_RETRIES
+
+    @pytest.mark.parametrize(
+        "make_error",
+        [
+            lambda: urllib.error.URLError("unknown url type: ftp"),
+            lambda: urllib.error.URLError(ssl.SSLCertVerificationError(1, "verify failed")),
+            lambda: PermissionError(13, "Permission denied"),
+        ],
+    )
+    def test_non_transient_network_error_is_not_retried(
+        self, make_error: Callable[[], OSError]
+    ) -> None:
+        err = make_error()
+        with (
+            patch(_URLOPEN, side_effect=err) as mock_open,
+            patch("vergil_tooling.lib.github.time.sleep") as mock_sleep,
+            pytest.raises(OSError) as excinfo,
+        ):
+            github._jwt_api_request("/app/installations", "jwt")
+        assert excinfo.value is err
         mock_open.assert_called_once()
         mock_sleep.assert_not_called()
+
+    def test_persistent_network_error_fails_minting_loudly(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Once the retries run out the mint raises AppAuthError, never None (#3214).
+        errors = [
+            urllib.error.URLError(TimeoutError("timed out"))
+            for _ in range(github.retry.MAX_RETRIES + 1)
+        ]
+        monkeypatch.setattr(github, "_generate_jwt", lambda _app, _key: "jwt")
+        monkeypatch.setattr(github, "_resolve_installations", lambda _jwt: {"org": "1"})
+        monkeypatch.setattr(github, "_load_app_config", lambda: ("123", Path("/k.pem")))
+        monkeypatch.setattr(github, "_token_cache", {})
+        with (
+            patch(_URLOPEN, side_effect=errors),
+            patch("vergil_tooling.lib.github.time.sleep"),
+            pytest.raises(github.AppAuthError, match="timed out"),
+        ):
+            github.get_installation_token("org")
 
 
 def _jwt_http_error(
