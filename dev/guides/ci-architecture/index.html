@@ -18301,21 +18301,35 @@ workflows use <code>prod-</code> by default.</p>
 generated version table in the <code>vergil-containers</code>
 <a href="https://github.com/vergil-project/vergil-containers/blob/develop/README.md#available-images">README</a>
 is the single source of truth.</p>
+<p>Every language image is built on the vergil-containers <code>base</code> image, which
+is Ubuntu 24.04. The
+<a href="https://vergil-project.github.io/vergil-containers/latest/operations/os-usage/">OS-usage table</a>
+in the vergil-containers docs lists every place an operating system is
+chosen, and why.</p>
 <p><strong><code>dev-python</code></strong>
-:   Base: <code>python:&lt;v&gt;-slim</code>. Includes git, curl, uv.</p>
+:   Base: <code>base</code> (Ubuntu 24.04), with the series' pinned
+    python-build-standalone build at <code>/opt/python/&lt;version&gt;</code> as <code>python3</code>.
+    Includes git, curl, uv.</p>
 <p><strong><code>dev-go</code></strong>
-:   Base: <code>golang:&lt;v&gt;</code>. Includes golangci-lint,
+:   Base: <code>base</code> (Ubuntu 24.04), with the series' pinned go.dev release
+    at <code>/usr/local/go</code>. Includes golangci-lint,
     govulncheck, go-licenses, gocyclo.</p>
+<p><strong><code>dev-rust</code></strong>
+:   Base: <code>base</code> (Ubuntu 24.04), with the series' pinned Rust release
+    installed by a pinned <code>rustup-init</code>, and <code>gcc</code>/<code>libc6-dev</code> from Ubuntu
+    as the C linker.</p>
 <p><strong><code>dev-cpp-clang</code></strong>
-:   Base: <code>debian:trixie-slim</code> + <code>apt.llvm.org</code>. Includes clang,
+:   Base: <code>base</code> (Ubuntu 24.04), with Clang from apt.llvm.org's noble
+    packages (<code>llvm-toolchain-noble-&lt;major&gt;</code>). Includes clang,
     clang-tidy, clang-format, lld, llvm (<code>llvm-cov</code>), the sanitizer
     runtime, CMake, Conan 2, cppcheck, and gcovr.</p>
 <p><strong><code>dev-cpp-gcc</code></strong>
-:   Base: <code>debian:trixie-slim</code>. Includes g++, gcov, CMake, Conan 2,
-    cppcheck, and gcovr.</p>
+:   Base: <code>base</code> (Ubuntu 24.04), with <code>g++-&lt;major&gt;</code> from Ubuntu 24.04.
+    Includes g++, gcov, CMake, Conan 2, cppcheck, and gcovr.</p>
 <p><strong><code>dev-ts-node</code></strong>
-:   Base: <code>debian:trixie-slim</code> + prebuilt Node from NodeSource (never
-    built from source). Includes Node.js, npm, TypeScript (<code>tsc</code>),
+:   Base: <code>base</code> (Ubuntu 24.04), with the major's pinned nodejs.org
+    prebuilt tarball at <code>/opt/node/&lt;major&gt;</code> (never built from
+    source). Includes Node.js, npm, TypeScript (<code>tsc</code>),
     ESLint + typescript-eslint, Prettier, Vitest, <code>@vitest/coverage-v8</code>,
     and license-checker. The runtime family rides the <code>ts-node</code> image
     suffix and the Node major is the tag (<code>node-24</code> → <code>prod-ts-node:24</code>);
@@ -18331,10 +18345,11 @@ entry; an app builds exactly one.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nb">cd</span><span class="w"> </span>../vergil-containers
 <a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>docker/build.sh
 </code></pre></div>
-<p>This builds all images. Individual images can be built with:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>docker/generate.sh<span class="w"> </span>python
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>docker<span class="w"> </span>build<span class="w"> </span>--build-arg<span class="w"> </span><span class="nv">PYTHON_VERSION</span><span class="o">=</span><span class="m">3</span>.14<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span>-t<span class="w"> </span>dev-python:3.14<span class="w"> </span>docker/python/
+<p>This builds all images. A language image needs its parent image and the
+pinned toolchain build args from <code>docker/versions/matrix.json</code>, so build an
+individual image family through the same entry point:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>docker/build.sh<span class="w"> </span>python<span class="w">                 </span><span class="c1"># builds base and its parents first</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>docker/build.sh<span class="w"> </span>--pull-parents<span class="w"> </span>python<span class="w">  </span><span class="c1"># pulls the parents from GHCR instead</span>
 </code></pre></div>
 <h3 id="publishing">Publishing<a class="headerlink" href="#publishing" title="Permanent link">&para;</a></h3>
 <p>Images are published automatically on push to <code>develop</code> (<code>dev-</code>) or
@@ -18351,7 +18366,7 @@ calls the reusable <code>.github/workflows/cd-docker-publish.yml</code> workflow
 <h3 id="repo-specific-system-packages">Repo-specific system packages<a class="headerlink" href="#repo-specific-system-packages" title="Permanent link">&para;</a></h3>
 <p>The shared base images stay language-generic on purpose — a system dependency is
 treated as a property of the <strong>language</strong>, not the repo, which is what keeps the
-image cache sound. A repo that genuinely needs a Debian binary its language image
+image cache sound. A repo that genuinely needs an Ubuntu package its language image
 does not carry (for example a repo whose render/e2e tests shell out to LilyPond)
 declares it once in <code>vergil.toml</code>, <strong>without</strong> touching the shared base image:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="k">[container]</span>
@@ -18366,7 +18381,7 @@ Two things matter for the CI/container model here:</p>
   per-branch cached dev image, so they are present for every check in that one
   image. In CI they are <strong>installed per run</strong> by a composite setup step
   (vergil-actions#807) on the base-image container, before the tests. The two
-  paths agree on <em>what</em> is installed (the same names, from the same Debian
+  paths agree on <em>what</em> is installed (the same names, from the same Ubuntu
   sources) even though they differ on <em>when</em> — baked once locally vs installed
   per run in CI.</li>
 <li><strong>Test-runtime contract.</strong> In CI the install runs <strong>only on the jobs that
