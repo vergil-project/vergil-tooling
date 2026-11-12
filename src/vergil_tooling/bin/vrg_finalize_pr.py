@@ -14,6 +14,14 @@ Three modes:
   merged local branches, and prune stale remote-tracking references.
   This is what ``vrg-release`` invokes (issue #1448).
 
+A PR whose body has more than one ``Closes`` line is a *batch PR*, one
+commit per issue (epic vergil-project/.github#1019). Finalize cross-checks
+its ``Closes`` issues against GitHub's closing references, checks the
+commit-per-issue invariant, updates it by rebase (never by merging the base
+in) when it is behind, re-checks it after every update and right before the
+merge, and rebase-merges it pinned to the head it checked. ``--strategy
+squash`` is refused on a batch PR. Every other PR merges as before.
+
 Output renders through the stage-aware progress framework
 (issue #1479): standalone TTY runs get the live display with collapsed
 per-stage status lines and a run log at
@@ -59,6 +67,7 @@ from vergil_tooling.lib import (
     config,
     git,
     github,
+    linkage,
     pr_merge,
     pr_provenance,
     progress,
@@ -70,7 +79,7 @@ from vergil_tooling.lib.confirm import add_yes_argument, confirm
 from vergil_tooling.lib.container import resolve_language
 from vergil_tooling.lib.container_cache import provision_dev_image
 from vergil_tooling.lib.live_branches import RepoSetError, default_repo_roots, discover_repos
-from vergil_tooling.lib.pr_workflow import batch, github_transport
+from vergil_tooling.lib.pr_workflow import batch, batch_rules, github_transport
 from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.progress import Stage
 from vergil_tooling.lib.release import gate
@@ -78,6 +87,7 @@ from vergil_tooling.lib.repo_init import prompt_choice
 from vergil_tooling.lib.versions import VersionsError
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 _CD_WORKFLOW_NAME = "CD"
@@ -1128,45 +1138,97 @@ def _stage_provenance(ctx: FinalizeContext) -> None:
 _RELEASE_BRANCH_PREFIX = "release/"
 
 
-def _resolve_strategy(branch: str, override: str | None) -> str:
+def _resolve_strategy(branch: str, override: str | None, *, batch: bool) -> str:
     """Merge strategy for *branch*.
 
-    An explicit ``--strategy`` always wins. Otherwise the default is driven by
+    An explicit ``--strategy`` wins, except that ``squash`` on a batch PR is
+    refused: it would collapse the batch's one commit per issue into one
+    commit and one changelog entry, the anti-goal of epic
+    vergil-project/.github#1019. Otherwise a batch PR rebase-merges, so the
+    base receives every issue's commit. A non-batch PR's default is driven by
     the branch prefix: ``release/*`` branches (release PRs and back-merges)
     merge with a merge commit to preserve the develop<->main ancestry the
     release model relies on; squashing them silently breaks that ancestry and
     makes later release branches conflict (issue #1620). Every other branch
     squashes, as before.
     """
+    if batch and override == "squash":
+        msg = (
+            "--strategy squash is refused on a batch PR (more than one Closes line): "
+            "a squash collapses its one commit per issue into a single commit and a "
+            "single changelog entry. Re-run without --strategy to rebase-merge it."
+        )
+        raise FinalizeError(msg)
     if override is not None:
         return override
+    if batch:
+        return "rebase"
     return "merge" if branch.startswith(_RELEASE_BRANCH_PREFIX) else "squash"
 
 
-def _conflict_resolution_msg(pr: str, head: str, base: str, root: Path) -> str:
+def _enter_worktree(head: str, root: Path) -> str:
+    """The command lines that put the human in *head*'s worktree, creating it if needed."""
+    wt = worktrees.worktree_for_branch(head, root)
+    if wt is not None:
+        return f"  cd {wt}"
+    dirname = branch_names.expected_worktree_dirname(head) or head.replace("/", "-")
+    wt = root / ".worktrees" / dirname
+    return (
+        f"  cd {root} && git fetch origin && git worktree add .worktrees/{dirname} {head}\n"
+        f"  cd {wt}"
+    )
+
+
+def _batch_rebase_steps(pr: str, head: str, base: str, root: Path) -> str:
+    """The commands that rebase a batch PR's branch onto *base* and update the PR.
+
+    A batch PR's history is one commit per issue and is rebase-merged, so it
+    is kept linear: rebased, never merged into. The ``--ff-only`` step first
+    picks up the branch as origin has it, and the rebase drops any merge
+    commit GitHub's update-branch button added. The push names the branch and
+    uses a lease, so it replaces only the head the human last fetched.
+    """
+    return (
+        f"{_enter_worktree(head, root)}\n"
+        f"  git fetch origin\n"
+        f"  git merge --ff-only origin/{head}\n"
+        f"  git rebase origin/{base}\n"
+        f"  vrg-container-run -- vrg-validate\n"
+        f"  git push --force-with-lease origin {head}\n"
+        f"  cd {root} && vrg-finalize-pr {pr}"
+    )
+
+
+def _conflict_resolution_msg(pr: str, head: str, base: str, root: Path, *, batch: bool) -> str:
     """The exact commands for the human to resolve *pr*'s conflict with *base*.
 
     A submitted branch is frozen to agents — ``unfreeze`` refuses it and
     ``vrg-commit``/``vrg-git`` refuse the commit and push — so the human, who
-    is not bound by the wrappers, resolves it with raw git (issue #3555). It
-    is a merge, not a rebase: the PR is already public, so its history must
-    not be rewritten. The ``--ff-only`` step first picks up any commits GitHub
-    added to the branch (update-branch) so the push fast-forwards, and the
-    commands carry no inline ``#`` comments because interactive zsh does not
-    treat them as comments. ``--no-commit`` stops the merge for validation before
-    the human commits, and the push names the branch explicitly because a
-    worktree created with ``-b … origin/<base>`` tracks the base, not itself.
+    is not bound by the wrappers, resolves it with raw git (issue #3555). For
+    a single-issue PR it is a merge, not a rebase: the PR is already public,
+    so its history must not be rewritten. The ``--ff-only`` step first picks
+    up any commits GitHub added to the branch (update-branch) so the push
+    fast-forwards, and the commands carry no inline ``#`` comments because
+    interactive zsh does not treat them as comments. ``--no-commit`` stops the
+    merge for validation before the human commits, and the push names the
+    branch explicitly because a worktree created with ``-b … origin/<base>``
+    tracks the base, not itself.
+
+    A batch PR is the exception: it must keep one commit per issue and no
+    merge commit, so the human rebases it onto *base* and force-pushes with a
+    lease (epic vergil-project/.github#1019).
     """
-    wt = worktrees.worktree_for_branch(head, root)
-    if wt is not None:
-        enter = f"  cd {wt}"
-    else:
-        dirname = branch_names.expected_worktree_dirname(head) or head.replace("/", "-")
-        wt = root / ".worktrees" / dirname
-        enter = (
-            f"  cd {root} && git fetch origin && git worktree add .worktrees/{dirname} {head}\n"
-            f"  cd {wt}"
+    if batch:
+        return (
+            f"PR {pr} has merge conflicts with {base}. The branch is already submitted, "
+            f"so only you can resolve it (agents are frozen out of it). It is a batch PR, "
+            f"one commit per issue, so rebase it onto {base} — do not merge {base} in, "
+            f"which adds a merge commit the batch check refuses. When the rebase stops "
+            f"on a conflict, resolve each conflicted file, git add it and run "
+            f"git rebase --continue:\n"
+            f"{_batch_rebase_steps(pr, head, base, root)}"
         )
+    enter = _enter_worktree(head, root)
     return (
         f"PR {pr} has merge conflicts with {base}. The branch is already submitted, "
         f"so only you can resolve it (agents are frozen out of it). Merge {base} in — "
@@ -1183,20 +1245,150 @@ def _conflict_resolution_msg(pr: str, head: str, base: str, root: Path) -> str:
     )
 
 
+def _read_pr_body(pr: str) -> str:
+    """Return *pr*'s body; a failed or malformed read refuses."""
+    try:
+        info = github.read_json("pr", "view", pr, "--json", "body")
+    except (subprocess.CalledProcessError, ValueError) as exc:
+        msg = f"could not read the body of PR {pr}: {error_text(exc)}"
+        raise FinalizeError(msg) from exc
+    body = info.get("body") if isinstance(info, dict) else None
+    if not isinstance(body, str):
+        msg = f"could not read the body of PR {pr}: no body in the response: {info!r}"
+        raise FinalizeError(msg)
+    return body
+
+
+def _batch_closes(body: str) -> list[str]:
+    """The body's ``Closes`` refs, in body order, when it has more than one; else ``[]``.
+
+    A PR whose body has more than one ``Closes`` line is a batch PR (epic
+    vergil-project/.github#1019). ``Ref`` lines never count, and nor do
+    manual links in GitHub's Development sidebar, which are not in the body.
+    """
+    closes = [ref for keyword, ref in linkage.extract_tracking_refs(body) if keyword == "Closes"]
+    return closes if len(closes) > 1 else []
+
+
+def _batch_issues(pr: str, closes: list[str]) -> list[str]:
+    """Cross-check a batch PR's ``Closes`` refs against GitHub; return them as ``#N``.
+
+    Each ref must be in the PR's own repo, listed once, and among GitHub's
+    closing references for the PR, so GitHub closes every issue the commits
+    are checked against. Anything else refuses, naming both lists.
+    """
+    refs = _read_closing_refs(pr)
+    repo = refs.repo
+    numbers: list[int] = []
+    for ref in closes:
+        ref_repo, _, number = ref.rpartition("#")
+        if ref_repo and ref_repo.lower() != repo.lower():
+            msg = (
+                f"batch PR {refs.ref} closes {ref}, an issue in another repo; every "
+                f"issue in a batch is in the PR's repo ({repo})"
+            )
+            raise FinalizeError(msg)
+        if int(number) in numbers:
+            msg = f"batch PR {refs.ref} lists Closes #{number} more than once"
+            raise FinalizeError(msg)
+        numbers.append(int(number))
+    listed = {issue.ref.lower() for issue in refs.issues}
+    missing = [f"{repo}#{n}" for n in numbers if f"{repo}#{n}".lower() not in listed]
+    if missing:
+        body_refs = ", ".join(f"{repo}#{n}" for n in numbers)
+        github_refs = ", ".join(issue.ref for issue in refs.issues) or "none"
+        msg = (
+            f"batch PR {refs.ref}: its body closes {body_refs}, but GitHub's closing "
+            f"references are {github_refs}; missing {', '.join(missing)}. GitHub would "
+            "not close every issue of the batch, so it is not merged. Fix the PR body's "
+            "Closes lines, then re-run."
+        )
+        raise FinalizeError(msg)
+    return [f"#{n}" for n in numbers]
+
+
+# The batch rule whose fix is a rebase onto the base (batch_rules.check_commit_per_issue).
+_MERGE_COMMIT_RULE = "no merge commits"
+
+
+def _make_batch_check(
+    pr: str, issues: list[str], *, head: str, base: str, root: Path
+) -> Callable[[], str]:
+    """The batch check ``wait_and_merge`` runs: fetch, check the invariant, return the SHA.
+
+    Each run fetches *base* and *head* from origin, so it checks the PR's head
+    as it is now, then runs the commit-per-issue check from *base* to that
+    head. A refusal names the rule and the commit; a merge commit (GitHub's
+    update-branch button) also names the rebase that fixes it.
+    """
+
+    def check() -> str:
+        try:
+            git.run(
+                "fetch",
+                "origin",
+                f"+refs/heads/{base}:refs/remotes/origin/{base}",
+                f"+refs/heads/{head}:refs/remotes/origin/{head}",
+            )
+            sha = git.read_output("rev-parse", "--verify", f"refs/remotes/origin/{head}^{{commit}}")
+        except (subprocess.CalledProcessError, OSError) as exc:
+            msg = (
+                f"could not fetch batch PR {pr}'s head {head} for its batch check: "
+                f"{error_text(exc)}"
+            )
+            raise FinalizeError(msg) from exc
+        try:
+            batch_rules.check_commit_per_issue(issues, base=f"origin/{base}", head=sha)
+        except batch_rules.BatchRuleError as exc:
+            msg = f"PR {pr} is not merged: {exc}"
+            if exc.rule == _MERGE_COMMIT_RULE:
+                msg += (
+                    f". The branch is already submitted, so only you can fix it: rebase "
+                    f"it onto {base} and force-push with a lease:\n"
+                    f"{_batch_rebase_steps(pr, head, base, root)}"
+                )
+            raise FinalizeError(msg) from exc
+        print(f"Batch check passed at {sha}: one commit per issue ({', '.join(issues)}).")
+        return sha
+
+    return check
+
+
 def _stage_merge(ctx: FinalizeContext) -> None:
-    """Merge the PR (or confirm it is already merged) and record its branch."""
+    """Merge the PR (or confirm it is already merged) and record its branch.
+
+    A batch PR (more than one ``Closes`` line in its body) is cross-checked
+    against GitHub's closing references, checked one commit per issue,
+    updated by rebase when behind, re-checked after every update and right
+    before the merge, and rebase-merged at the head it checked (epic
+    vergil-project/.github#1019). Every other PR merges as before.
+    """
     args = ctx.args
     branch = github.head_ref(args.pr)
-    strategy = _resolve_strategy(branch, args.strategy)
+    closes = _batch_closes(_read_pr_body(args.pr))
+    is_batch = bool(closes)
+    strategy = _resolve_strategy(branch, args.strategy, batch=is_batch)
     if github.pr_state(args.pr) == "MERGED":
         print(f"PR {args.pr} already merged.")
     elif args.dry_run:
-        print(f"  [dry-run] wait for green, then merge PR {args.pr} (--{strategy})")
+        kind = f"batch PR ({', '.join(closes)}) " if is_batch else "PR "
+        print(f"  [dry-run] wait for green, then merge {kind}{args.pr} (--{strategy})")
     else:
+        base: str | None = None
         try:
-            pr_merge.wait_and_merge(args.pr, strategy=strategy)
+            if is_batch:
+                base = github.base_ref(args.pr)
+                issues = _batch_issues(args.pr, closes)
+                batch_check = _make_batch_check(
+                    args.pr, issues, head=branch, base=base, root=ctx.root
+                )
+                batch_check()
+                pr_merge.wait_and_merge(args.pr, strategy=strategy, batch_check=batch_check)
+            else:
+                pr_merge.wait_and_merge(args.pr, strategy=strategy)
         except pr_merge.MergeConflictError as exc:
-            msg = _conflict_resolution_msg(args.pr, branch, github.base_ref(args.pr), ctx.root)
+            target = base if base is not None else github.base_ref(args.pr)
+            msg = _conflict_resolution_msg(args.pr, branch, target, ctx.root, batch=is_batch)
             raise FinalizeError(msg) from exc
         except pr_merge.MergeAbortError as exc:
             raise FinalizeError(str(exc)) from exc

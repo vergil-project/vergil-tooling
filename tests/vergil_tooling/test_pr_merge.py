@@ -577,3 +577,149 @@ def test_stale_failed_check_on_behind_branch_respects_update_cap() -> None:
         wait_and_merge("208", strategy="squash")
     assert gh.update_branch.call_count == 5
     gh.merge.assert_not_called()
+
+
+# --- batch PRs: rebase update, re-check, pinned merge (epic .github#1019) ----
+
+_HEAD_MOVED_STDERR = "GraphQL: Head branch was modified. Review and try the merge again."
+
+
+class _BatchCheck:
+    """A batch check that records each call in *events* and returns the next SHA."""
+
+    def __init__(self, events: list[str], shas: list[str]) -> None:
+        self.events = events
+        self.shas = iter(shas)
+        self.calls = 0
+
+    def __call__(self) -> str:
+        self.calls += 1
+        sha = next(self.shas)
+        self.events.append(f"check:{sha}")
+        return sha
+
+
+def _batch_gh(events: list[str], *, merge_states: list[str]) -> MagicMock:
+    """A mocked github module whose update, wait and merge calls land in *events*."""
+    gh = _gh(merge_states=merge_states)
+    gh.head_sha.return_value = "oldhead"
+    gh.update_branch_rebase.side_effect = lambda pr, expected_head: events.append(
+        f"rebase:{expected_head}"
+    )
+    gh.wait_for_checks.side_effect = lambda pr, required: events.append("wait")
+
+    def merge(pr: str, *, strategy: str, match_head: str | None = None) -> None:
+        events.append(f"merge:{strategy}:{match_head}")
+
+    gh.merge.side_effect = merge
+    return gh
+
+
+def test_behind_batch_pr_updates_by_rebase_not_merge() -> None:
+    events: list[str] = []
+    gh = _batch_gh(events, merge_states=["BEHIND", "CLEAN", "CLEAN"])
+    check = _BatchCheck(events, ["h1", "h1"])
+    with patch(_MOD + ".github", gh), patch(_MOD + ".time.sleep"):
+        wait_and_merge("99", strategy="rebase", batch_check=check)
+    gh.update_branch.assert_not_called()
+    gh.update_branch_rebase.assert_called_once_with("99", expected_head="oldhead")
+
+
+def test_batch_check_runs_after_each_update_and_before_merge() -> None:
+    events: list[str] = []
+    # BEHIND at entry, BEHIND again after the wait, then current.
+    gh = _batch_gh(events, merge_states=["BEHIND", "CLEAN", "BEHIND", "BEHIND", "CLEAN", "CLEAN"])
+    check = _BatchCheck(events, ["h1", "h2", "h2"])
+    with patch(_MOD + ".github", gh), patch(_MOD + ".time.sleep"):
+        wait_and_merge("99", strategy="rebase", batch_check=check)
+    assert events == [
+        "rebase:oldhead",
+        "check:h1",
+        "wait",
+        "rebase:oldhead",
+        "check:h2",
+        "wait",
+        "check:h2",
+        "merge:rebase:h2",
+    ]
+
+
+def test_batch_merge_pins_the_checked_head() -> None:
+    """The merge carries --match-head-commit <checked sha>; a head that moved
+    after the check is refused by GitHub, re-checked, and only then merged."""
+    events: list[str] = []
+    gh = _batch_gh(events, merge_states=["CLEAN"] * 6)
+    attempts = iter([GitHubAPIError(1, "gh pr merge", stderr=_HEAD_MOVED_STDERR), None])
+
+    def merge(pr: str, *, strategy: str, match_head: str | None = None) -> None:
+        events.append(f"merge:{strategy}:{match_head}")
+        error = next(attempts)
+        if error is not None:
+            raise error
+
+    gh.merge.side_effect = merge
+    check = _BatchCheck(events, ["h1", "h2"])
+    with patch(_MOD + ".github", gh), patch(_MOD + ".time.sleep"):
+        wait_and_merge("99", strategy="rebase", batch_check=check)
+    assert events == ["wait", "check:h1", "merge:rebase:h1", "wait", "check:h2", "merge:rebase:h2"]
+
+
+def test_batch_head_moved_rechecks_are_bounded_by_the_update_cap() -> None:
+    events: list[str] = []
+    gh = _batch_gh(events, merge_states=["CLEAN"] * 40)
+    gh.merge.side_effect = GitHubAPIError(1, "gh pr merge", stderr=_HEAD_MOVED_STDERR)
+    check = _BatchCheck(events, [f"h{i}" for i in range(10)])
+    with (
+        patch(_MOD + ".github", gh),
+        patch(_MOD + ".time.sleep"),
+        pytest.raises(MergeAbortError, match="still behind or moving after 5"),
+    ):
+        wait_and_merge("99", strategy="rebase", batch_check=check)
+    assert gh.merge.call_count == 6
+
+
+def test_head_moved_rejection_without_batch_check_reraises() -> None:
+    """A single-issue merge never pins its head, so the rejection is not retried."""
+    gh = _gh(merge_states=["CLEAN", "CLEAN"])
+    gh.merge.side_effect = GitHubAPIError(1, "gh pr merge", stderr=_HEAD_MOVED_STDERR)
+    with patch(_MOD + ".github", gh), pytest.raises(GitHubAPIError, match="Head branch"):
+        wait_and_merge("99", strategy="squash")
+
+
+def test_batch_check_failure_propagates_without_merge() -> None:
+    events: list[str] = []
+    gh = _batch_gh(events, merge_states=["CLEAN", "CLEAN"])
+
+    def refuse() -> str:
+        raise RuntimeError("one commit per issue")
+
+    with (
+        patch(_MOD + ".github", gh),
+        pytest.raises(RuntimeError, match="one commit per issue"),
+    ):
+        wait_and_merge("99", strategy="rebase", batch_check=refuse)
+    gh.merge.assert_not_called()
+
+
+def test_batch_rebase_update_failure_aborts() -> None:
+    gh = _gh(merge_states=["BEHIND"])
+    gh.head_sha.return_value = "oldhead"
+    gh.update_branch_rebase.side_effect = GitHubAPIError(1, "gh api graphql", stderr="conflict")
+    with (
+        patch(_MOD + ".github", gh),
+        pytest.raises(MergeAbortError, match="update-branch failed"),
+    ):
+        wait_and_merge("99", strategy="rebase", batch_check=lambda: "h1")
+    gh.update_branch.assert_not_called()
+    gh.merge.assert_not_called()
+
+
+def test_behind_single_issue_pr_still_uses_update_branch() -> None:
+    """Review focus 5: without a batch check, BEHIND still merges the base in."""
+    gh = _gh(merge_states=["BEHIND", "CLEAN", "CLEAN"])
+    with patch(_MOD + ".github", gh), patch(_MOD + ".time.sleep"):
+        wait_and_merge("99", strategy="squash")
+    gh.update_branch.assert_called_once_with("99")
+    gh.update_branch_rebase.assert_not_called()
+    gh.head_sha.assert_not_called()
+    gh.merge.assert_called_once_with("99", strategy="squash")
