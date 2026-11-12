@@ -24,12 +24,22 @@ replaces the reported commit but an unexpectedly moved origin is refused (#3783)
 ``unfreeze`` overwrites the relay ref with the reopened state before it
 reopens the local one, and fails with nothing changed if it cannot, so no
 ``vrg-submit-pr`` can still read the branch as ready at its old head (#3815).
+
+``batch-start``, ``batch-extract`` and ``batch-show`` manage the batch marker
+(:mod:`vergil_tooling.lib.pr_workflow.batch_marker`, epic
+vergil-project/.github#1019) in the main clone. ``batch-start`` runs the batch
+hard rules before it writes anything. Each takes ``--issue`` as ``N``, ``#N``
+or ``owner/repo#N``, and exits 2 when a qualified ref names another repo than
+this clone's (or this clone's repo cannot be told), so a wrong clone is never
+read as "no marker". ``batch-show`` exits 0 with the marker, 1 when there is
+none, and 2 on any other failure.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -44,7 +54,7 @@ from vergil_tooling.lib.linkage import (
     normalize_linkage,
 )
 from vergil_tooling.lib.pr_body import normalize_issue_ref
-from vergil_tooling.lib.pr_workflow import engine, freeze
+from vergil_tooling.lib.pr_workflow import batch_marker, batch_rules, engine, freeze
 from vergil_tooling.lib.pr_workflow.errors import WorkflowError
 from vergil_tooling.lib.pr_workflow.github_transport import GitHubTransport
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
@@ -57,12 +67,26 @@ if TYPE_CHECKING:
 @cli_main
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    transport = LocalFileTransport(git.repo_root(), base=args.base)
+    # batch-show keeps exit 1 for "no marker" alone: every failure exits 2.
+    failure_exit = int(getattr(args, "failure_exit", 1))
     try:
+        transport = LocalFileTransport(git.repo_root(), base=args.base)
         return int(args.func(args, transport))
+    except WrongCloneError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     except WorkflowError as exc:
         print(f"error: {exc}", file=sys.stderr)
-        return 1
+        return failure_exit
+    except (subprocess.CalledProcessError, OSError) as exc:
+        if failure_exit == 1:
+            raise
+        print(f"error: {error_text(exc)}", file=sys.stderr)
+        return failure_exit
+
+
+class WrongCloneError(WorkflowError):
+    """A qualified ``--issue`` names another repo than this clone's (exit 2)."""
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -98,6 +122,49 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     p_status = sub.add_parser("status", help="Print the current workflow state")
     p_status.set_defaults(func=cmd_status)
+
+    issue_help = "N, #N or owner/repo#N (this clone's repo)"
+    p_bstart = sub.add_parser(
+        "batch-start",
+        help="Check the batch hard rules and write the batch marker for every member",
+        description=(
+            "Run the batch hard rules on the issues, in order, then write the batch "
+            "marker (the list and the --base commit) for every member in the main "
+            "clone. Nothing is written when a rule fails. When the members already "
+            "hold a marker for exactly this list, it is a resume and nothing changes; "
+            "any other existing marker refuses."
+        ),
+    )
+    p_bstart.add_argument("--issue", action="append", required=True, help=issue_help)
+    p_bstart.set_defaults(func=cmd_batch_start)
+
+    p_bextract = sub.add_parser(
+        "batch-extract",
+        help="Take an issue out of its batch and remove its whole state directory",
+        description=(
+            "Rewrite every other member's batch marker without the issue (removing "
+            "the last one's when fewer than two remain) and remove the issue's "
+            "issue-implement/<N>/ state directory. Refused while any security-*.md "
+            "details file is under it."
+        ),
+    )
+    p_bextract.add_argument("--issue", required=True, help=issue_help)
+    p_bextract.set_defaults(func=cmd_batch_extract)
+
+    p_bshow = sub.add_parser(
+        "batch-show",
+        help="Print an issue's batch marker (exit 1 when it has none)",
+        description=(
+            "Print the issue's batch on stdout as one JSON object, "
+            '{"issues": ["#10", "#11"], "base_sha": "<full commit SHA>"}, the issues '
+            "as this repo's #N refs in batch order, and exit 0. Exits 1, printing "
+            "nothing on stdout, when the issue has no marker (it is not in a batch), "
+            "and 2 on any other failure: a qualified --issue for another repo's "
+            "clone, a clone whose repo cannot be told, or a marker that cannot be read."
+        ),
+    )
+    p_bshow.add_argument("--issue", required=True, help=issue_help)
+    p_bshow.set_defaults(func=cmd_batch_show, failure_exit=2)
 
     return parser.parse_args(argv)
 
@@ -497,6 +564,116 @@ def cmd_status(_args: argparse.Namespace, transport: LocalFileTransport) -> int:
         _emit({"exists": False})
         return 0
     print(state.to_json())
+    return 0
+
+
+_BATCH_PLAIN_RE = re.compile(r"#?([1-9][0-9]*)")
+_BATCH_QUALIFIED_RE = re.compile(r"([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)#([1-9][0-9]*)")
+
+
+def _clone_repo() -> str:
+    """This clone's ``owner/repo``, read locally from its ``origin`` remote.
+
+    Raises :class:`WrongCloneError` when it cannot be told, so a caller never
+    takes an unknown clone for the right one.
+    """
+    try:
+        url = git.remote_url("origin")
+    except (subprocess.CalledProcessError, OSError) as exc:
+        raise WrongCloneError(
+            f"cannot tell which repo this clone is: its origin remote cannot be read "
+            f"({error_text(exc)})"
+        ) from exc
+    repo = github.github_remote_repo(url)
+    if repo is None:
+        raise WrongCloneError(
+            "cannot tell which repo this clone is: its origin remote is not a github.com repo"
+        )
+    return repo
+
+
+def _batch_ref(raw: str) -> str:
+    """Normalize one ``--issue`` of a batch command to this clone's ``#N``.
+
+    ``N`` and ``#N`` are this clone's. A qualified ``owner/repo#N`` must name
+    this clone's repo (compared without case), or :class:`WrongCloneError`.
+    """
+    value = raw.strip()
+    plain = _BATCH_PLAIN_RE.fullmatch(value)
+    if plain is not None:
+        return f"#{plain.group(1)}"
+    qualified = _BATCH_QUALIFIED_RE.fullmatch(value)
+    if qualified is None:
+        raise WorkflowError(f"--issue must be N, #N or owner/repo#N, got {raw!r}")
+    repo = _clone_repo()
+    if qualified.group(1).lower() != repo.lower():
+        raise WrongCloneError(
+            f"--issue {value} is in {qualified.group(1)}, but this is a clone of {repo}; "
+            f"run the command from a clone of {qualified.group(1)}"
+        )
+    return f"#{qualified.group(2)}"
+
+
+def _base_commit(base: str) -> str:
+    """The full SHA of the commit *base* names now: the batch's fixed base."""
+    try:
+        return git.read_output("rev-parse", "--verify", "--end-of-options", f"{base}^{{commit}}")
+    except (subprocess.CalledProcessError, OSError) as exc:
+        raise WorkflowError(
+            f"batch-start: cannot resolve the base {base} to a commit ({error_text(exc)}); "
+            "nothing was written"
+        ) from exc
+
+
+def cmd_batch_start(args: argparse.Namespace, _transport: LocalFileTransport) -> int:
+    """Check the hard rules, then write every member's marker (or resume)."""
+    issues = [_batch_ref(str(raw)) for raw in args.issue]
+    repo = _clone_repo()
+    batch_rules.check_hard_rules(issues, repo=repo)
+    root = git.main_worktree_root()
+    existing = batch_marker.existing_batch(root, issues)
+    if existing is not None:
+        _emit(
+            {
+                "ok": True,
+                "resumed": True,
+                "issues": existing.issues,
+                "base_sha": existing.base_sha,
+            }
+        )
+        return 0
+    base_sha = _base_commit(args.base)
+    batch_marker.write_markers(root, issues, base_sha=base_sha)
+    _emit({"ok": True, "resumed": False, "issues": issues, "base_sha": base_sha})
+    return 0
+
+
+def cmd_batch_extract(args: argparse.Namespace, _transport: LocalFileTransport) -> int:
+    """Take one issue out of its batch."""
+    issue = _batch_ref(str(args.issue))
+    remaining = batch_marker.extract(git.main_worktree_root(), issue)
+    _emit(
+        {
+            "ok": True,
+            "extracted": issue,
+            "remaining": remaining,
+            "batch": batch_rules.is_batch(remaining),
+        }
+    )
+    return 0
+
+
+def cmd_batch_show(args: argparse.Namespace, _transport: LocalFileTransport) -> int:
+    """Print an issue's marker as JSON; exit 1 when it has none.
+
+    Every failure exits 2 (its ``failure_exit``, see :func:`main`).
+    """
+    issue = _batch_ref(str(args.issue))
+    marker = batch_marker.read_marker(git.main_worktree_root(), issue)
+    if marker is None:
+        print(f"{issue} has no batch marker", file=sys.stderr)
+        return 1
+    _emit({"issues": marker.issues, "base_sha": marker.base_sha})
     return 0
 
 
