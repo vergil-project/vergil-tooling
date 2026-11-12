@@ -1910,8 +1910,9 @@ and `docs/` YAML files, the
 dependabot-limit guard (when `.github/dependabot.yml` exists, every
 `updates` entry must carry `open-pull-requests-limit: 0`, so Dependabot
 can never open a PR), hadolint
-on `Dockerfile*`, actionlint on `.github/workflows/`, and
-ansible-lint (using the bundled canonical config) when the repo
+on `Dockerfile*`, actionlint on `.github/workflows/`, the runner-labels
+guard (no workflow value may be `ubuntu-latest`; pin runners to
+`ubuntu-24.04`), and ansible-lint (using the bundled canonical config) when the repo
 carries Ansible content.
 
 | Attribute | Value |
