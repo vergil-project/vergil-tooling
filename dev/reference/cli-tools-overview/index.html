@@ -22491,8 +22491,9 @@ and <code>docs/</code> YAML files, the
 dependabot-limit guard (when <code>.github/dependabot.yml</code> exists, every
 <code>updates</code> entry must carry <code>open-pull-requests-limit: 0</code>, so Dependabot
 can never open a PR), hadolint
-on <code>Dockerfile*</code>, actionlint on <code>.github/workflows/</code>, and
-ansible-lint (using the bundled canonical config) when the repo
+on <code>Dockerfile*</code>, actionlint on <code>.github/workflows/</code>, the runner-labels
+guard (no workflow value may be <code>ubuntu-latest</code>; pin runners to
+<code>ubuntu-24.04</code>), and ansible-lint (using the bundled canonical config) when the repo
 carries Ansible content.</p>
 <table>
 <thead>
