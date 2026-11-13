@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
 import pytest
 
-from vergil_tooling.lib import epics, github, queue_view, security_records
+from vergil_tooling.lib import epics, github, in_flight, queue_view, security_records
 from vergil_tooling.lib.epics import ChildState, IssueRef
 from vergil_tooling.lib.queue_view import Deferral, PlanningMarkers, QueueItem
 from vergil_tooling.lib.security_records import Advisory
@@ -686,6 +687,16 @@ _ADHOC_LISTING = [
 ]
 
 
+def _no_marks_clones(repos: Any, roots: Any) -> dict[str, Path]:
+    return {repo: Path(f"/roots/{repo}") for repo in repos}
+
+
+def _no_marks_signals(repo: str, clone: Path) -> in_flight.RepoSignals:
+    return in_flight.RepoSignals(
+        repo, clone, frozenset(), frozenset(), frozenset(), frozenset()
+    )
+
+
 def _adhoc(
     listing: list[dict[str, Any]],
     children: dict[int, list[ChildState]],
@@ -703,8 +714,10 @@ def _adhoc(
         patch(f"{_MOD}.epics.child_states", side_effect=lambda epic: children[epic.number]),
         patch(f"{_MOD}.epics.blockers_of", side_effect=lambda ref: blocked.get(ref.number, [])),
         patch(f"{_MOD}.epics.issue_state", side_effect=lambda ref: (states or {})[ref.number]),
+        patch(f"{_MOD}.in_flight.find_clones", side_effect=_no_marks_clones),
+        patch(f"{_MOD}.in_flight.repo_signals", side_effect=_no_marks_signals),
     ):
-        items = queue_view.adhoc_items("org/.github", repo=repo)
+        items = queue_view.adhoc_items("org/.github", repo=repo, roots=[Path("/roots")])
     return items, gh
 
 
@@ -737,6 +750,7 @@ def test_adhoc_items_lists_open_tasks_across_epics() -> None:
         blocked_by=(),
         state="ready",
         marks=(),
+        disposition=None,
     )
     # One label search, with the listing limit, and the closed child never fetched.
     [listing] = [c for c in gh.calls if c[:2] == ("issue", "list")]
@@ -924,7 +938,7 @@ def test_adhoc_items_never_mutate() -> None:
 
 _ADHOC_ITEMS = [
     queue_view.AdhocItem(
-        IssueRef("org", "tool", 1), "a", "2026-10-23T12:00:00Z", "task", (), "ready", ()
+        IssueRef("org", "tool", 1), "a", "2026-10-23T12:00:00Z", "task", (), "ready", (), None
     ),
     queue_view.AdhocItem(
         IssueRef("org", "tool", 2),
@@ -934,6 +948,7 @@ _ADHOC_ITEMS = [
         (IssueRef("org", "tool", 7), IssueRef("org", "docs", 8)),
         "blocked",
         (),
+        None,
     ),
 ]
 
@@ -962,5 +977,6 @@ def test_adhoc_to_json_dicts() -> None:
             ],
             "state": "blocked",
             "marks": [],
+            "disposition": None,
         }
     ]

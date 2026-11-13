@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from vergil_tooling.bin.vrg_queue import main, parse_args
-from vergil_tooling.lib import github, queue_view, security_records
+from vergil_tooling.lib import github, in_flight, live_branches, queue_view, security_records
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.queue_view import AdhocItem, QueueItem
 
@@ -415,6 +416,7 @@ _ADHOC_ITEM = AdhocItem(
     blocked_by=(IssueRef("org", "tool", 6),),
     state="blocked",
     marks=(),
+    disposition=None,
 )
 
 
@@ -434,7 +436,7 @@ def test_vrg_queue_adhoc_text_and_json(
         assert main(["adhoc", "--json"]) == 0
         data = json.loads(capsys.readouterr().out)
     # Org-wide: the org's .github, checked to exist, and no narrowing.
-    items.assert_called_with("org/.github", repo=None)
+    items.assert_called_with("org/.github", repo=None, roots=None)
     dotgithub_exists.assert_called_with("org", ".github")
     assert lines[0] == "adhoc queue for org in org/.github: 1 open task(s)"
     assert lines[1].startswith("org/tool#8  ")
@@ -449,6 +451,7 @@ def test_vrg_queue_adhoc_text_and_json(
             "blocked_by": [{"owner": "org", "repo": "tool", "number": 6}],
             "state": "blocked",
             "marks": [],
+            "disposition": None,
         }
     ]
 
@@ -479,7 +482,7 @@ def test_vrg_queue_adhoc_repo_narrows_a_public_repo(
 ) -> None:
     seen: list[str | None] = []
 
-    def _items(home: str, *, repo: str | None = None) -> list[AdhocItem]:
+    def _items(home: str, *, repo: str | None = None, roots: Any = None) -> list[AdhocItem]:
         seen.append(github._target_org.get())
         return []
 
@@ -494,7 +497,7 @@ def test_vrg_queue_adhoc_repo_narrows_a_public_repo(
     cur.assert_not_called()
     dotgithub_exists.assert_not_called()
     home.assert_called_once_with("org", "no-adhoc-yet")
-    items.assert_called_once_with("org/.github", repo="org/no-adhoc-yet")
+    items.assert_called_once_with("org/.github", repo="org/no-adhoc-yet", roots=None)
     assert seen == ["org"]
     assert capsys.readouterr().out == (
         "adhoc queue for no-adhoc-yet in org/.github: 0 open task(s)\n"
@@ -507,7 +510,7 @@ def test_vrg_queue_adhoc_repo_selects_a_private_home(capsys: pytest.CaptureFixtu
         patch(f"{_MOD}.queue_view.adhoc_items", return_value=[]) as items,
     ):
         assert main(["adhoc", "--repo", "other/secret"]) == 0
-    items.assert_called_once_with("other/secret", repo="other/secret")
+    items.assert_called_once_with("other/secret", repo="other/secret", roots=None)
     assert capsys.readouterr().out == "adhoc queue for secret in other/secret: 0 open task(s)\n"
 
 
@@ -546,3 +549,46 @@ def test_vrg_queue_adhoc_missing_token_keeps_the_guided_message(
         main(["adhoc"])
     assert excinfo.value.code == 1
     assert capsys.readouterr().err.startswith("vrg-queue: no GitHub token available.")
+
+
+def test_vrg_queue_adhoc_passes_roots() -> None:
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
+        patch(f"{_MOD}.queue_view.adhoc_items", return_value=[]) as items,
+    ):
+        assert main(["adhoc", "--root", "/a", "--root", "/b"]) == 0
+    items.assert_called_once_with("org/.github", repo=None, roots=[Path("/a"), Path("/b")])
+
+
+def test_vrg_queue_root_only_applies_to_adhoc(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch(f"{_MOD}.github.current_repo", return_value="org/tool"):
+        assert main(["intake", "--root", "/a"]) == 1
+    assert capsys.readouterr().err == "vrg-queue: --root applies only to adhoc\n"
+
+
+def test_vrg_queue_adhoc_no_repo_roots_fails(capsys: pytest.CaptureFixture[str]) -> None:
+    # No --root on a platform with no default: the RepoSetError message, exit 1.
+    msg = "no default repo set on the physical host. Pass --root DIR for each projects directory."
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
+        patch(
+            "vergil_tooling.lib.queue_view.adhoc_items",
+            side_effect=live_branches.RepoSetError(msg),
+        ),
+    ):
+        assert main(["adhoc"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == f"vrg-queue: adhoc queue for org in org/.github could not be read: {msg}\n"
+
+
+def test_vrg_queue_adhoc_repo_without_clone_exits_1(capsys: pytest.CaptureFixture[str]) -> None:
+    exc = in_flight.InFlightError("org/tool has open ad-hoc tasks but no main clone under /r")
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
+        patch(f"{_MOD}.queue_view.adhoc_items", side_effect=exc),
+    ):
+        assert main(["adhoc", "--root", "/r"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "no main clone under /r" in captured.err

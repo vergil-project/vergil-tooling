@@ -831,10 +831,32 @@ collect step of `epic-review` and by `epic-create`'s no-argument summary.
 (`Epic (ad hoc): <repo>`, labelled `epic` + `ad-hoc`) in the home, grouped by
 repo and oldest first within each. Each line is
 `<ref>  <age>  <state>  <kind>  <title>`, followed by an em dash and
+`<disposition>: <marks>` when the task is in flight, and by an em dash and
 `blocked by <refs>` when a blocker is open. The kind is `validation` or
-`deployment` from the task's label, else `task`. The state is **blocked** while
-any `Blocked-by:` dependency is open, else **ready**; only the open blockers
-are listed. The epics come from one label search; an archive carrying the same
+`deployment` from the task's label, else `task`. The state is **in-flight**
+when any in-flight mark holds (it outranks blocked), else **blocked** while any
+`Blocked-by:` dependency is open, else **ready**; only the open blockers are
+listed.
+
+A task's **marks**, in this order, are: `open-pr` (an open PR closes it, or has
+a `feature/<N>-` head branch); `report-ready` (a relay ref
+`refs/vergil/pr-workflow/<branch>` whose payload has status `ready` and names
+it; a batch's payload names every member); `branch` (a `feature/<N>-` branch on
+the remote); `worktree` (a `feature/<N>-` branch or worktree in the repo's main
+clone); `merge-review` (`build/.vergil-state/issue-implement/<N>/merge-review`
+in the main clone); and `batch` (the batch marker
+`build/.vergil-state/issue-implement/<N>/batch` in the main clone, which marks a
+batch member with no branch of its own). A branch matches only by the exact
+prefix `feature/<N>-`. The **disposition** is **handed-off** when there is an
+open PR or a ready record, whatever local marks remain; otherwise **resume**
+when there is a worktree, a merge-review directory or a batch marker; otherwise
+**handed-off** when only the remote branch remains. The relay payloads are read
+by SHA through the GitHub Git Data API, with no fetch. The local marks come from
+each repo's main clone, found under the repo roots by its `origin`: `--root
+DIR` (repeatable), or the platform default (`/vergil/projects` on a cloud VM,
+the projects mount on a Lima VM, none on a physical host). Every repo with open
+ad-hoc tasks must have exactly one clone there: a missing clone is fatal, never
+skipped or assumed clean. The epics come from one label search; an archive carrying the same
 labels (`Archive (ad hoc): …`, or the legacy `Epic (ad hoc): <repo> — <quarter>`
 form) is skipped. With `--repo`, a public repo narrows the list to its own
 ad-hoc epic in the org's `.github`, and a repo with none gives an empty list;
@@ -844,9 +866,9 @@ not a review queue, so a bare `vrg-queue` never shows it.
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_queue` (views: `lib/queue_view.py`) |
-| Args | `{intake,planning,deferred,adhoc}` (optional; default: intake, planning and deferred); `--repo OWNER/NAME` (that repo's queue home, and for `adhoc` on a public repo its own ad-hoc epic; default: the current org's `.github` queues); `--json` (a list of items; with no queue named, an object keyed by queue, `null` for a missing one) |
+| Args | `{intake,planning,deferred,adhoc}` (optional; default: intake, planning and deferred); `--repo OWNER/NAME` (that repo's queue home, and for `adhoc` on a public repo its own ad-hoc epic; default: the current org's `.github` queues); `--root DIR` (`adhoc` only, repeatable: where to find each repo's main clone; default: the platform's repo roots); `--json` (a list of items; with no queue named, an object keyed by queue, `null` for a missing one) |
 | Preconditions | GitHub App credentials for the target org. The planning view also reads the org's advisories when its `.github` is public, or when a planning item has an advisory line (then a `.github` that is not public is refused): the identity needs Repository security advisories access |
-| Failure mode | A named queue whose home has no live queue epic exits 1 naming the missing epic; with no queue named, a missing queue prints `<queue> queue for <name> in <home>: no queue yet` and the run exits 0. A queue that cannot be read (a failed GitHub call, including the advisory read; a `.github` that is not public; an advisory line naming another org; a malformed response) is named on stderr as `vrg-queue: <queue> queue for <name> in <home> could not be read: <reason>` and the run exits 1; with no queue named, a text run still lists the other queues and prints `<queue> queue for <name> in <home>: not shown (failed; see stderr)` in its place, and a `--json` run prints nothing on stdout. For `adhoc`, a failed read of the epics, a task's sub-issues, a task, its blockers or a blocker's state, an epic search that reaches its listing limit, or two live ad-hoc epics for one repo is reported the same way (`adhoc queue for <name> in <home> could not be read`) and exits 1; no ad-hoc epic is an empty list and exit 0. Nothing is created |
+| Failure mode | A named queue whose home has no live queue epic exits 1 naming the missing epic; with no queue named, a missing queue prints `<queue> queue for <name> in <home>: no queue yet` and the run exits 0. A queue that cannot be read (a failed GitHub call, including the advisory read; a `.github` that is not public; an advisory line naming another org; a malformed response) is named on stderr as `vrg-queue: <queue> queue for <name> in <home> could not be read: <reason>` and the run exits 1; with no queue named, a text run still lists the other queues and prints `<queue> queue for <name> in <home>: not shown (failed; see stderr)` in its place, and a `--json` run prints nothing on stdout. For `adhoc`, a failed read of the epics, a task's sub-issues, a task, its blockers or a blocker's state, an epic search that reaches its listing limit, two live ad-hoc epics for one repo, a failed read of any in-flight source (the open PRs, the remote refs, a relay payload, a clone's branches or remotes), a malformed relay payload, repo roots that cannot be determined (no `--root` on a physical host) or do not exist, or a repo with open ad-hoc tasks and no clone, or two, under the repo roots is reported the same way (`adhoc queue for <name> in <home> could not be read`) and exits 1; no ad-hoc epic is an empty list and exit 0. Nothing is created |
 | Exit codes | 0 success, 1 error, 2 bad arguments |
 | Status | Active |
 
