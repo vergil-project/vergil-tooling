@@ -21607,8 +21607,9 @@ defines are listed in
 </table>
 <h3 id="vrg-github-repo-config">vrg-github-repo-config<a class="headerlink" href="#vrg-github-repo-config" title="Permanent link">&para;</a></h3>
 <p>Audit a managed repo against the canonical Vergil configuration, and
-in <code>apply</code> mode reconcile the GitHub half. Combines local filesystem
-checks (<code>vergil.toml</code>, <code>CLAUDE.md</code>, <code>.claude/settings.json</code>, hook-guard
+in <code>apply</code> mode reconcile the GitHub half. Combines managed-file
+checks, run in a fresh shallow clone of the repo's <code>develop</code> (<code>vergil.toml</code>,
+<code>CLAUDE.md</code>, <code>.claude/settings.json</code>, hook-guard
 shim, workflow pins, <code>.gitignore</code> managed fence, canonical
 <code>dependabot.yml</code>, <code>ops.yml</code> wiring)
 with GitHub-API checks (repo settings, rulesets, required-check set).
@@ -21633,7 +21634,7 @@ Runs nightly from each repo's <code>ops.yml</code> via the reusable
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>Local checks require the repo's own checkout as CWD; GitHub checks require <code>gh</code> credentials</td>
+<td>Local checks clone the repo's <code>develop</code> over HTTPS (git's credential helper must reach it); GitHub checks require <code>gh</code> credentials</td>
 </tr>
 <tr>
 <td>Failure mode</td>
