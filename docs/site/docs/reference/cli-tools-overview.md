@@ -201,9 +201,9 @@ reopened state, so no `vrg-submit-pr` can still read the branch as ready at
 its old head, and fails with nothing changed if that push fails (#3815).
 `status` prints the current state. `report-ready` (like
 `vrg-submit-pr`) refuses an issue whose native parent is an intake, planning
-or deferred epic: a queue item is not buildable until intake review routes it,
-`epic-create` expands it, or deferred review revives it (epics
-vergil-project/.github#176 and #508).
+or deferred epic: a queue item is not buildable until it is routed with
+`epic-review intake`, expanded with `epic-create`, or revived with
+`epic-review deferred` (epics vergil-project/.github#176 and #508).
 Local-settings guard: `report-ready` refuses an agent (warns a human), before
 pushing or recording anything, while a loadable `.claude/settings.local.json`
 is not absent or `{}` (epic vergil-project/.github#558).
@@ -866,7 +866,8 @@ labels (`Archive (ad hoc): …`, or the legacy `Epic (ad hoc): <repo> — <quart
 form) is skipped. With `--repo`, a public repo narrows the list to its own
 ad-hoc epic in the org's `.github`, and a repo with none gives an empty list;
 a self-homed private repo selects its own home, as for the other queues. It is
-not a review queue, so a bare `vrg-queue` never shows it.
+not a review queue, so a bare `vrg-queue` never shows it. It is the collect
+step of `epic-implement adhoc`, as the other queues are of `epic-review`.
 
 | Attribute | Value |
 |---|---|
