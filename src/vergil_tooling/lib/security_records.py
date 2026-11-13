@@ -597,10 +597,7 @@ def records_pass(org: str, *, apply: bool, prog: str) -> int:
             return 0
         home = advisory_home(org)
         result = classify(list_advisories(home), issues)
-        if apply:
-            synced = sync_states(home, result, issues)
-        else:
-            synced = len(pending_syncs(result, issues))
+        synced = sync_states(home, result, issues) if apply else len(pending_syncs(result, issues))
     except github.MissingGitHubTokenError:
         raise
     except github.GitHubAPIError as exc:

@@ -736,7 +736,9 @@ def test_sync_output_names_only_ids_and_states(
 
 def test_sync_list_failure_fails_loud(env: MagicMock, capsys: pytest.CaptureFixture[str]) -> None:
     env.list_advisories.side_effect = _gh_error(stderr="HTTP 403: Resource not accessible")
-    rc = _sync(env, ["sync", "--dry-run"], issues=[_CLOSED_ISSUE], advisories=None, write=MagicMock())
+    rc = _sync(
+        env, ["sync", "--dry-run"], issues=[_CLOSED_ISSUE], advisories=None, write=MagicMock()
+    )
     assert rc == 1
     captured = capsys.readouterr()
     assert "vrg-security-record: security records pass failed" in captured.err

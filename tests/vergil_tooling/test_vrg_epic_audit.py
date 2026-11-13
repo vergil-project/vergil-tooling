@@ -1055,7 +1055,6 @@ def test_report_only_mode_fails_loud_when_the_read_fails(
     assert "Security records" not in captured.out
 
 
-
 def test_report_only_mode_refuses_private_home(capsys: pytest.CaptureFixture[str]) -> None:
     refusal = PrivateHomeError(
         "vrg-security-record: org/.github is not public; security records need a "
