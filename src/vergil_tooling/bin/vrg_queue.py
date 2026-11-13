@@ -24,10 +24,15 @@ queue. Nothing is created or changed.
 
 ``vrg-queue adhoc`` lists the open tasks under every live ad-hoc epic in the
 home, grouped by repo and oldest first, each with its kind, its open
-``Blocked-by:`` refs and its state (ready or blocked). It is not a review
-queue, so a bare ``vrg-queue`` never shows it. With ``--repo``, a public repo
-narrows the list to its own ad-hoc epic in the org's ``.github`` (none gives an
-empty list), and a self-homed private repo selects its own home.
+``Blocked-by:`` refs and its state (ready, blocked or in-flight). An in-flight
+task also shows its marks and its disposition, handed-off or resume (see
+:mod:`vergil_tooling.lib.in_flight`); the local marks are read from each repo's
+main clone under the repo roots (``--root DIR``, repeatable, or the platform
+default), and a repo with open ad-hoc tasks but no clone there is an error. It
+is not a review queue, so a bare ``vrg-queue`` never shows it. With
+``--repo``, a public repo narrows the list to its own ad-hoc epic in the org's
+``.github`` (none gives an empty list), and a self-homed private repo selects
+its own home.
 """
 
 from __future__ import annotations
@@ -36,12 +41,15 @@ import argparse
 import json
 import sys
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import epics, github, queue_view, security_records
+from vergil_tooling.lib import epics, github, in_flight, live_branches, queue_view, security_records
 from vergil_tooling.lib.cli import cli_main
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from vergil_tooling.lib.queue_view import QueueItem
 
 # The ad-hoc view: a choice of its own, never in _VIEWS, so a bare run never shows it.
@@ -61,6 +69,10 @@ _VIEWS = {
 # reported, never shown as an empty queue.
 _VIEW_ERRORS = (github.GitHubAPIError, security_records.PrivateHomeError, ValueError)
 
+# What the ad-hoc view can raise besides: an in-flight source it cannot read or
+# a repo with no main clone, and repo roots it cannot determine.
+_ADHOC_ERRORS = (*_VIEW_ERRORS, in_flight.InFlightError, live_branches.RepoSetError)
+
 
 @cli_main
 def main(argv: list[str] | None = None) -> int:
@@ -74,7 +86,10 @@ def main(argv: list[str] | None = None) -> int:
         target = f"{github.current_repo().split('/', 1)[0]}/.github"
     owner = target.split("/", 1)[0]
     if args.queue == _ADHOC:
-        return _adhoc(owner, repo=args.repo, as_json=args.json)
+        return _adhoc(owner, repo=args.repo, roots=args.root, as_json=args.json)
+    if args.root is not None:
+        print("vrg-queue: --root applies only to adhoc", file=sys.stderr)
+        return 1
     # Bare mode: None marks a queue whose epic does not exist yet.
     results: dict[str, list[QueueItem] | None] = {}
     # Bare mode: the queues that could not be read, and why.
@@ -134,12 +149,14 @@ def main(argv: list[str] | None = None) -> int:
     return 1 if failures else 0
 
 
-def _adhoc(owner: str, *, repo: str | None, as_json: bool) -> int:
+def _adhoc(owner: str, *, repo: str | None, roots: Sequence[Path] | None, as_json: bool) -> int:
     """Show the ad-hoc tasks: the org's, or one ``owner/name`` *repo*'s.
 
     Without *repo* the home is the org's ``.github``, which must exist. With
     it, the home is the repo's epic home: the org's ``.github`` for a public
     repo, narrowed to its own ad-hoc epic, or a self-homed private repo itself.
+    *roots* (``--root``) replace the platform's repo roots for the clones the
+    in-flight marks are read from.
     """
     with github.target_org(owner):
         if repo is None:
@@ -149,10 +166,10 @@ def _adhoc(owner: str, *, repo: str | None, as_json: bool) -> int:
             name = repo.split("/", 1)[1]
             home = epics.resolve_epic_home(owner, name)
         try:
-            items = queue_view.adhoc_items(home, repo=repo)
+            items = queue_view.adhoc_items(home, repo=repo, roots=roots)
         except github.MissingGitHubTokenError:
             raise
-        except _VIEW_ERRORS as exc:
+        except _ADHOC_ERRORS as exc:
             _report_failure(_ADHOC, home, name, exc)
             return 1
     if as_json:
@@ -186,7 +203,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "Show the intake queue (oldest first), the planning queue "
             "(waiting / in-progress / ready-to-close), or the deferred queue "
             "(least recently deferred first). With no queue named, show all "
-            "three. 'adhoc' shows the open ad-hoc tasks (ready / blocked), "
+            "three. 'adhoc' shows the open ad-hoc tasks (ready / blocked / in-flight), "
             "grouped by repo; it is shown only when named. Read-only."
         ),
     )
@@ -202,6 +219,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "Show this repo's queue home (owner/name); a self-homed private repo "
             "has its own queues. With adhoc, a public repo narrows the list to "
             "its own ad-hoc epic. Default: the current org's .github queues."
+        ),
+    )
+    parser.add_argument(
+        "--root",
+        action="append",
+        type=Path,
+        metavar="DIR",
+        help=(
+            "adhoc only: a projects directory (or repo) to find each repo's main "
+            "clone under, for the in-flight marks; repeatable. Replaces the "
+            "platform default (/vergil/projects on a cloud VM, the projects mount "
+            "on a Lima VM; none on a physical host)."
         ),
     )
     parser.add_argument(

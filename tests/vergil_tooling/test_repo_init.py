@@ -58,6 +58,8 @@ from vergil_tooling.lib.repo_init import (
 from vergil_tooling.lib.versions import ResolutionError
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from vergil_tooling.lib.versions.resolve import Resolution
 
 
@@ -70,6 +72,27 @@ def _pin_installed_series(monkeypatch: pytest.MonkeyPatch) -> None:
     ``@v2.1`` assertions below independent of the version under test.
     """
     monkeypatch.setattr(repo_init.metadata, "version", lambda _name: "2.1.0")
+
+
+_AUTOMATION_APP_ID = 9876543
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_automation_app() -> Iterator[None]:
+    """Resolve the org automation App's slug and ID without GitHub (epic
+    vergil-project/.github#1064): step 9 needs the ID for the automation-branch
+    ruleset's bypass actor."""
+    with (
+        patch(
+            "vergil_tooling.lib.automation_identity.automation_app_slug",
+            return_value="acme-automation",
+        ),
+        patch(
+            "vergil_tooling.lib.automation_identity.automation_app_id",
+            return_value=_AUTOMATION_APP_ID,
+        ),
+    ):
+        yield
 
 
 class TestDefaultVergilSeries:
@@ -1966,6 +1989,47 @@ class TestStepGithubConfig:
 
         assert config_applied
         assert ctx.repo in labels_synced
+
+    def test_new_repo_gets_automation_ruleset_with_both_bypass_actors(self, tmp_path: Path) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="new-repo")
+        ctx.work_dir = tmp_path
+        ctx.repository_type = "tooling"
+        ctx.primary_language = "python"
+        ctx.branching_model = "library-release"
+        ctx.versioning_scheme = "semver"
+        ctx.release_model = "tagged-release"
+        ctx.ci_versions = ["3.14"]
+        ctx.publish_docs = True
+        ctx.vergil_version = "v2.1"
+        cfg = _parse_raw_config(tomllib.loads(render_vergil_toml(ctx)))
+
+        with (
+            patch(
+                "vergil_tooling.lib.automation_identity.automation_app_slug",
+                return_value="acme-automation",
+            ) as mock_slug,
+            patch("vergil_tooling.lib.github_config.fetch_actual_state") as mock_fetch,
+            patch(
+                "vergil_tooling.lib.github_config.apply_desired_state", return_value=[]
+            ) as mock_apply,
+            patch("vergil_tooling.lib.repo_init.sync_labels"),
+            patch("vergil_tooling.lib.config.read_config", return_value=cfg),
+            patch("vergil_tooling.lib.repo_init._assert_ci_gates_producible"),
+        ):
+            mock_fetch.return_value.owner_type = "Organization"
+            mock_fetch.return_value.visibility = "public"
+            step_github_config(ctx)
+
+        mock_slug.assert_called_once_with("vergil-project")
+        desired = mock_apply.call_args.args[1]
+        ruleset = next(rs for rs in desired.rulesets if rs.name == "Automation branches")
+        assert ruleset.ref_include == ["refs/heads/automation/**"]
+        assert ruleset.bypass_actors == [
+            {"actor_id": _AUTOMATION_APP_ID, "actor_type": "Integration", "bypass_mode": "always"},
+            {"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"},
+        ]
+        assert all(rs.bypass_actors is not None for rs in desired.rulesets)
+        assert desired.repo_settings.allow_auto_merge is True
 
 
 class TestStepGithubPages:

@@ -30,7 +30,9 @@ from vergil_tooling.lib.github_config import (
     _PRODUCIBLE_GATE_CATALOG,
     MERGE_SETTINGS_READ,
     SETTING_RETURNED,
+    BypassUnreadable,
     DesiredRuleset,
+    DesiredState,
     EvidenceGate,
     FetchResult,
     NotChecked,
@@ -57,6 +59,7 @@ from vergil_tooling.lib.github_config import (
     compute_desired_state,
     compute_diff,
     desired_actions_permissions,
+    desired_automation_branch_ruleset,
     desired_branch_protection_ruleset,
     desired_ci_gates_ruleset,
     desired_repo_settings,
@@ -123,7 +126,7 @@ def _real_pagination(fake_read_output: Callable[..., str]) -> Generator[None]:
 def test_desired_repo_settings_are_fixed() -> None:
     s = desired_repo_settings(is_org=True, visibility="private")
     assert s.default_branch == "develop"
-    assert s.allow_auto_merge is False
+    assert s.allow_auto_merge is True
     assert s.delete_branch_on_merge is True
     assert s.allow_merge_commit is True
     assert s.allow_squash_merge is True
@@ -187,7 +190,6 @@ def test_desired_actions_permissions_base_only() -> None:
 def test_desired_actions_permissions_with_language_patterns() -> None:
     a = desired_actions_permissions("rust")
     assert a.patterns_allowed == [
-        "actions-rust-lang/*",
         "actions/*",
         "docker/*",
         "github/*",
@@ -236,7 +238,7 @@ def test_desired_actions_permissions_extra_patterns_unioned_not_duplicated() -> 
 def test_compute_desired_state_threads_extra_action_patterns() -> None:
     cfg = _vergil_config()
     cfg.actions.extra_allowed_patterns = ["dataaxiom/ghcr-cleanup-action@*"]
-    state = compute_desired_state(cfg, visibility="public", is_org=True)
+    state = _state(cfg, visibility="public", is_org=True)
     assert "dataaxiom/ghcr-cleanup-action@*" in state.actions_permissions.patterns_allowed
 
 
@@ -1003,8 +1005,8 @@ def test_audit_flags_stale_per_version_required_context() -> None:
     model dropped (e.g. ``audit / dependencies / 3.12``) is flagged as an
     unproducible required context — a check no workflow produces as a durable
     gate, deadlocking every merge with green checks (epic #338)."""
-    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
-    actual = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    desired = _state(_vergil_config(), visibility="public", is_org=True)
+    actual = _state(_vergil_config(), visibility="public", is_org=True)
     actual_gates = next(r for r in actual.rulesets if r.name == "CI gates")
     _checks(actual_gates).append(
         {"context": "audit / dependencies / 3.12", "integration_id": 15368}
@@ -1024,7 +1026,7 @@ def test_audit_flags_stale_per_version_required_context() -> None:
 def test_audit_compliant_when_required_are_evidence_gates() -> None:
     """When the live ruleset requires exactly the ``<kind> / evidence`` gates the
     reusable workflows produce, nothing is unproducible and the audit is clean."""
-    state = compute_desired_state(
+    state = _state(
         _vergil_config(versions=["3.12", "3.13", "3.14"]), visibility="public", is_org=True
     )
     diff = compute_diff(desired=state, actual=state)
@@ -1038,12 +1040,8 @@ def test_audit_does_not_mislabel_producible_gate_as_unproducible() -> None:
     """A gate the workflows genuinely emit (``version / version-bump``) that the
     repo simply does not desire is drift, not an *unproducible* context — the
     producibility check must not mislabel it (only the ruleset diff flags it)."""
-    desired = compute_desired_state(
-        _vergil_config(release_model="none"), visibility="public", is_org=True
-    )
-    actual = compute_desired_state(
-        _vergil_config(release_model="none"), visibility="public", is_org=True
-    )
+    desired = _state(_vergil_config(release_model="none"), visibility="public", is_org=True)
+    actual = _state(_vergil_config(release_model="none"), visibility="public", is_org=True)
     actual_gates = next(r for r in actual.rulesets if r.name == "CI gates")
     _checks(actual_gates).append({"context": "version / version-bump", "integration_id": 15368})
 
@@ -1120,6 +1118,21 @@ def test_ci_gates_existing_languages_snapshot(language: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+# The org automation App's numeric ID in these tests' desired states.
+_APP_ID = 1234567
+
+
+def _state(config: VergilConfig, *, visibility: str, is_org: bool) -> DesiredState:
+    """The desired state of a run that manages bypass_actors (a human run)."""
+    return compute_desired_state(
+        config,
+        visibility=visibility,
+        is_org=is_org,
+        skip_bypass=False,
+        automation_app_id=_APP_ID,
+    )
+
+
 def _vergil_config(
     *,
     language: str = "python",
@@ -1184,18 +1197,19 @@ def test_resolved_integration_versions_no_language_is_latest() -> None:
 
 def test_compute_desired_state_requires_resolved_integration_checks() -> None:
     cfg = _vergil_config(versions=["3.13"], integration_tests=True)
-    state = compute_desired_state(cfg, visibility="public", is_org=True)
+    state = _state(cfg, visibility="public", is_org=True)
     gates = next(r for r in state.rulesets if r.name == "CI gates")
     assert "test / integration / 3.13" in _check_names(gates)
 
 
-def test_compute_desired_state_has_four_rulesets() -> None:
-    state = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
-    assert len(state.rulesets) == 4
-    assert [r.name for r in state.rulesets][:3] == [
+def test_compute_desired_state_has_five_rulesets() -> None:
+    state = _state(_vergil_config(), visibility="public", is_org=True)
+    assert len(state.rulesets) == 5
+    assert [r.name for r in state.rulesets][:4] == [
         "Branch protection",
         "Tag protection",
         "Rolling tag branch names",
+        "Automation branches",
     ]
     assert "CI gates" in [r.name for r in state.rulesets]
 
@@ -1204,13 +1218,13 @@ def test_compute_desired_state_omits_docs_gate_when_publish_docs_false() -> None
     """`[publish].docs = false` must flow through to the CI-gates ruleset, so a
     non-docs repo's branch protection never requires the never-reported
     `docs / docs` check (vergil-project/vergil-tooling#2647)."""
-    state = compute_desired_state(_vergil_config(docs=False), visibility="public", is_org=True)
+    state = _state(_vergil_config(docs=False), visibility="public", is_org=True)
     gates = next(r for r in state.rulesets if r.name == "CI gates")
     assert "docs / docs" not in _check_names(gates)
 
 
 def test_compute_desired_state_keeps_docs_gate_when_publish_docs_true() -> None:
-    state = compute_desired_state(_vergil_config(docs=True), visibility="public", is_org=True)
+    state = _state(_vergil_config(docs=True), visibility="public", is_org=True)
     gates = next(r for r in state.rulesets if r.name == "CI gates")
     assert "docs / docs" in _check_names(gates)
 
@@ -1219,7 +1233,7 @@ def test_compute_desired_state_requires_package_gate_with_package_section() -> N
     """`[package]` in `vergil.toml` must flow through to the CI-gates ruleset so
     branch protection requires `package / evidence` (epic #356, spec 8.1)."""
     cfg = _vergil_config(package=_package_config())
-    state = compute_desired_state(cfg, visibility="public", is_org=True)
+    state = _state(cfg, visibility="public", is_org=True)
     gates = next(r for r in state.rulesets if r.name == "CI gates")
     assert "package / evidence" in _check_names(gates)
 
@@ -1229,7 +1243,7 @@ def test_compute_desired_state_requires_package_gate_with_several_packages() -> 
     (epic vergil-project/.github#472); presence reads `packages`, never `package`."""
     cfg = _vergil_config()
     cfg.packages = (_package_config(), _package_config())
-    state = compute_desired_state(cfg, visibility="public", is_org=True)
+    state = _state(cfg, visibility="public", is_org=True)
     gates = next(r for r in state.rulesets if r.name == "CI gates")
     assert "package / evidence" in _check_names(gates)
 
@@ -1237,14 +1251,14 @@ def test_compute_desired_state_requires_package_gate_with_several_packages() -> 
 def test_compute_desired_state_requires_images_gate_with_ci_images() -> None:
     """``[ci].images`` in ``vergil.toml`` flows through to the CI-gates ruleset,
     and the audit then finds a live ruleset requiring it compliant."""
-    state = compute_desired_state(_vergil_config(images=True), visibility="public", is_org=True)
+    state = _state(_vergil_config(images=True), visibility="public", is_org=True)
     gates = next(r for r in state.rulesets if r.name == "CI gates")
     assert "images / evidence" in _check_names(gates)
     assert compute_diff(desired=state, actual=state).is_compliant()
 
 
 def test_compute_desired_state_omits_images_gate_by_default() -> None:
-    state = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    state = _state(_vergil_config(), visibility="public", is_org=True)
     gates = next(r for r in state.rulesets if r.name == "CI gates")
     assert "images / evidence" not in _check_names(gates)
 
@@ -1252,19 +1266,19 @@ def test_compute_desired_state_omits_images_gate_by_default() -> None:
 def test_audit_reports_images_gate_drift_on_non_images_repo() -> None:
     """A repo without ``[ci].images`` whose live ruleset was hand-edited to
     require ``images / evidence`` is reported as drift, not silently accepted."""
-    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
-    actual = compute_desired_state(_vergil_config(images=True), visibility="public", is_org=True)
+    desired = _state(_vergil_config(), visibility="public", is_org=True)
+    actual = _state(_vergil_config(images=True), visibility="public", is_org=True)
     assert not compute_diff(desired=desired, actual=actual).is_compliant()
 
 
 def test_compute_desired_state_omits_package_gate_without_package_section() -> None:
-    state = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    state = _state(_vergil_config(), visibility="public", is_org=True)
     gates = next(r for r in state.rulesets if r.name == "CI gates")
     assert "package / evidence" not in _check_names(gates)
 
 
 def test_compute_desired_state_private_without_ghas_drops_alert_checks() -> None:
-    state = compute_desired_state(_vergil_config(), visibility="private", is_org=True)
+    state = _state(_vergil_config(), visibility="private", is_org=True)
     gates = next(r for r in state.rulesets if r.name == "CI gates")
     names = _check_names(gates)
     assert "Trivy" not in names
@@ -1274,7 +1288,7 @@ def test_compute_desired_state_private_without_ghas_drops_alert_checks() -> None
 def test_compute_desired_state_private_with_declared_ghas_keeps_full_posture() -> None:
     cfg = _vergil_config()
     cfg.project.ghas = True
-    state = compute_desired_state(cfg, visibility="private", is_org=True)
+    state = _state(cfg, visibility="private", is_org=True)
     assert state.security.secret_scanning == "enabled"  # noqa: S105
     gates = next(r for r in state.rulesets if r.name == "CI gates")
     names = _check_names(gates)
@@ -1284,17 +1298,17 @@ def test_compute_desired_state_private_with_declared_ghas_keeps_full_posture() -
 
 
 def test_compute_desired_state_includes_repo_settings() -> None:
-    state = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    state = _state(_vergil_config(), visibility="public", is_org=True)
     assert state.repo_settings.default_branch == "develop"
 
 
 def test_compute_desired_state_includes_security() -> None:
-    state = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    state = _state(_vergil_config(), visibility="public", is_org=True)
     assert state.security.secret_scanning == "enabled"  # noqa: S105
 
 
 def test_compute_desired_state_includes_actions() -> None:
-    state = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    state = _state(_vergil_config(), visibility="public", is_org=True)
     assert state.actions_permissions.allowed_actions == "selected"
     assert "pypa/*" in state.actions_permissions.patterns_allowed
 
@@ -1996,24 +2010,24 @@ def test_fetch_vulnerability_alerts_raises_on_unexpected_success_status() -> Non
 
 
 def test_diff_identical_states_is_empty() -> None:
-    state = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    state = _state(_vergil_config(), visibility="public", is_org=True)
     diff = compute_diff(desired=state, actual=state)
     assert diff.is_compliant()
     assert diff.items == []
 
 
 def test_diff_detects_repo_setting_mismatch() -> None:
-    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
-    actual = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
-    actual.repo_settings.allow_auto_merge = True
+    desired = _state(_vergil_config(), visibility="public", is_org=True)
+    actual = _state(_vergil_config(), visibility="public", is_org=True)
+    actual.repo_settings.allow_auto_merge = False
     diff = compute_diff(desired=desired, actual=actual)
     assert not diff.is_compliant()
     assert any(d.field == "repo_settings.allow_auto_merge" for d in diff.items)
 
 
 def test_diff_detects_missing_ruleset() -> None:
-    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
-    actual = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    desired = _state(_vergil_config(), visibility="public", is_org=True)
+    actual = _state(_vergil_config(), visibility="public", is_org=True)
     actual.rulesets = []
     diff = compute_diff(desired=desired, actual=actual)
     assert not diff.is_compliant()
@@ -2021,8 +2035,8 @@ def test_diff_detects_missing_ruleset() -> None:
 
 
 def test_diff_detects_extra_ruleset() -> None:
-    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
-    actual = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    desired = _state(_vergil_config(), visibility="public", is_org=True)
+    actual = _state(_vergil_config(), visibility="public", is_org=True)
     actual.rulesets.append(
         DesiredRuleset(
             name="Extra",
@@ -2039,8 +2053,8 @@ def test_diff_detects_extra_ruleset() -> None:
 
 
 def test_diff_detects_actions_permission_mismatch() -> None:
-    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
-    actual = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    desired = _state(_vergil_config(), visibility="public", is_org=True)
+    actual = _state(_vergil_config(), visibility="public", is_org=True)
     actual.actions_permissions.default_workflow_permissions = "write"
     diff = compute_diff(desired=desired, actual=actual)
     assert not diff.is_compliant()
@@ -2048,8 +2062,8 @@ def test_diff_detects_actions_permission_mismatch() -> None:
 
 
 def test_diff_detects_security_mismatch() -> None:
-    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
-    actual = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    desired = _state(_vergil_config(), visibility="public", is_org=True)
+    actual = _state(_vergil_config(), visibility="public", is_org=True)
     actual.security.vulnerability_alerts = False
     diff = compute_diff(desired=desired, actual=actual)
     assert not diff.is_compliant()
@@ -2057,8 +2071,8 @@ def test_diff_detects_security_mismatch() -> None:
 
 
 def test_diff_detects_new_repo_setting_drift() -> None:
-    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
-    actual = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    desired = _state(_vergil_config(), visibility="public", is_org=True)
+    actual = _state(_vergil_config(), visibility="public", is_org=True)
     actual.repo_settings.merge_commit_title = "PR_TITLE"
     actual.repo_settings.web_commit_signoff_required = False
     diff = compute_diff(desired=desired, actual=actual)
@@ -2068,8 +2082,8 @@ def test_diff_detects_new_repo_setting_drift() -> None:
 
 
 def test_diff_records_skipped_security_fields_for_private_repo() -> None:
-    desired = compute_desired_state(_vergil_config(), visibility="private", is_org=True)
-    actual = compute_desired_state(_vergil_config(), visibility="private", is_org=True)
+    desired = _state(_vergil_config(), visibility="private", is_org=True)
+    actual = _state(_vergil_config(), visibility="private", is_org=True)
     actual.security.secret_scanning = "enabled"  # noqa: S105
     actual.security.secret_scanning_push_protection = "enabled"  # noqa: S105
     diff = compute_diff(desired=desired, actual=actual)
@@ -2079,7 +2093,7 @@ def test_diff_records_skipped_security_fields_for_private_repo() -> None:
 
 
 def test_diff_public_repo_has_no_security_skipped() -> None:
-    state = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    state = _state(_vergil_config(), visibility="public", is_org=True)
     diff = compute_diff(desired=state, actual=state)
     assert diff.is_compliant()
     assert not any(s.startswith("security.") for s in diff.skipped)
@@ -2095,12 +2109,8 @@ def test_diff_detects_extra_required_check() -> None:
     ``version / version-bump`` from desired, but the live ruleset still
     requires it.  The audit must not report compliant.
     """
-    desired = compute_desired_state(
-        _vergil_config(release_model="none"), visibility="public", is_org=True
-    )
-    actual = compute_desired_state(
-        _vergil_config(release_model="none"), visibility="public", is_org=True
-    )
+    desired = _state(_vergil_config(release_model="none"), visibility="public", is_org=True)
+    actual = _state(_vergil_config(release_model="none"), visibility="public", is_org=True)
     actual_gates = next(r for r in actual.rulesets if r.name == "CI gates")
     _checks(actual_gates).append({"context": "version / version-bump", "integration_id": 15368})
 
@@ -2112,8 +2122,8 @@ def test_diff_detects_extra_required_check() -> None:
 
 def test_diff_detects_missing_required_check() -> None:
     """A required check desired but absent from the live ruleset is drift."""
-    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
-    actual = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    desired = _state(_vergil_config(), visibility="public", is_org=True)
+    actual = _state(_vergil_config(), visibility="public", is_org=True)
     actual_gates = next(r for r in actual.rulesets if r.name == "CI gates")
     _checks(actual_gates).pop()
 
@@ -2125,8 +2135,8 @@ def test_diff_detects_missing_required_check() -> None:
 
 def test_diff_ignores_required_check_ordering() -> None:
     """Reordered-but-identical check sets are not drift (no false positive)."""
-    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
-    actual = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    desired = _state(_vergil_config(), visibility="public", is_org=True)
+    actual = _state(_vergil_config(), visibility="public", is_org=True)
     actual_gates = next(r for r in actual.rulesets if r.name == "CI gates")
     _checks(actual_gates).reverse()
 
@@ -2137,8 +2147,8 @@ def test_diff_ignores_required_check_ordering() -> None:
 
 def test_diff_ignores_rule_ordering() -> None:
     """Reordered-but-identical rule lists are not drift (no false positive)."""
-    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
-    actual = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    desired = _state(_vergil_config(), visibility="public", is_org=True)
+    actual = _state(_vergil_config(), visibility="public", is_org=True)
     actual_bp = next(r for r in actual.rulesets if r.name == "Branch protection")
     actual_bp.rules.reverse()
 
@@ -2161,8 +2171,8 @@ def test_diff_reports_undeclared_rule_parameter_distinctly() -> None:
     parameter naming the rule, key and live value, not as an opaque
     ``.rules`` value mismatch (issue #3548).
     """
-    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
-    actual = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    desired = _state(_vergil_config(), visibility="public", is_org=True)
+    actual = _state(_vergil_config(), visibility="public", is_org=True)
     _pull_request_params(actual)["require_brand_new_knob"] = True
 
     diff = compute_diff(desired=desired, actual=actual)
@@ -2181,8 +2191,8 @@ def test_diff_reports_undeclared_rule_parameter_distinctly() -> None:
 
 def test_diff_undeclared_parameter_does_not_mask_value_mismatch() -> None:
     """A declared value drifting alongside an undeclared key reports both."""
-    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
-    actual = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    desired = _state(_vergil_config(), visibility="public", is_org=True)
+    actual = _state(_vergil_config(), visibility="public", is_org=True)
     params = _pull_request_params(actual)
     params["require_brand_new_knob"] = True
     params["required_approving_review_count"] = 2
@@ -2199,8 +2209,8 @@ def test_diff_undeclared_parameter_does_not_mask_value_mismatch() -> None:
 
 def test_diff_undeclared_parameters_on_parameterless_desired_rule() -> None:
     """Parameters on a rule the desired spec declares bare are all undeclared."""
-    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
-    actual = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    desired = _state(_vergil_config(), visibility="public", is_org=True)
+    actual = _state(_vergil_config(), visibility="public", is_org=True)
     bp = next(r for r in actual.rulesets if r.name == "Branch protection")
     deletion = next(r for r in bp.rules if r.get("type") == "deletion")
     deletion["parameters"] = {"new_knob": "x"}
@@ -2217,8 +2227,8 @@ def test_diff_undeclared_parameters_on_parameterless_desired_rule() -> None:
 
 def test_diff_strip_listed_parameter_is_not_undeclared() -> None:
     """A strip-listed GitHub default is ignored, never reported as undeclared."""
-    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
-    actual = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    desired = _state(_vergil_config(), visibility="public", is_org=True)
+    actual = _state(_vergil_config(), visibility="public", is_org=True)
     bp = next(r for r in actual.rulesets if r.name == "Branch protection")
     _pull_request_params(actual)["dismissal_restriction"] = {"enabled": False}
     bp.rules = _normalize_rules(bp.rules)
@@ -2231,8 +2241,8 @@ def test_diff_strip_listed_parameter_is_not_undeclared() -> None:
 
 def test_diff_extra_rule_type_is_value_drift_not_undeclared() -> None:
     """A whole live rule absent from desired is rule drift, not a parameter."""
-    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
-    actual = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    desired = _state(_vergil_config(), visibility="public", is_org=True)
+    actual = _state(_vergil_config(), visibility="public", is_org=True)
     bp = next(r for r in actual.rulesets if r.name == "Branch protection")
     bp.rules.append({"type": "required_linear_history", "parameters": {"k": 1}})
     bp.rules.append(cast("dict[str, object]", "not-a-dict"))
@@ -2473,7 +2483,7 @@ def test_ruleset_body_structure() -> None:
 
 
 def test_apply_desired_state_orchestrates_all() -> None:
-    state = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    state = _state(_vergil_config(), visibility="public", is_org=True)
     with (
         patch("vergil_tooling.lib.github_config._apply_repo_settings") as mock_repo,
         patch("vergil_tooling.lib.github_config._apply_security_settings") as mock_sec,
@@ -2580,7 +2590,7 @@ def test_fetch_actual_state_flags_stale_classic_ci_context_as_drift() -> None:
     assert stale[0].ref_include == ["refs/heads/develop"]
 
     # And it shows up as drift against the evidence-only desired ruleset.
-    desired = compute_desired_state(
+    desired = _state(
         _vergil_config(versions=["3.12", "3.13", "3.14"]),
         visibility="public",
         is_org=True,
@@ -3005,7 +3015,7 @@ def test_fetch_actual_state_records_unreadable_admin_settings() -> None:
     }
     assert {nc.permission for nc in result.not_checked} == {"administration=read"}
 
-    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    desired = _state(_vergil_config(), visibility="public", is_org=True)
     diff = compute_diff(desired=desired, actual=result.state, not_checked=result.not_checked)
     # The placeholders are never compared, so nothing unread reads as drift...
     assert not any(item.field.startswith(("security.", "actions_")) for item in diff.items)
@@ -3109,7 +3119,7 @@ def test_fetch_actual_state_missing_merge_setting_is_not_checked() -> None:
         NotChecked(field="repo_settings.merge_commit_title", permission=MERGE_SETTINGS_READ),
     ]
 
-    desired = compute_desired_state(_vergil_config(), visibility="private", is_org=True)
+    desired = _state(_vergil_config(), visibility="private", is_org=True)
     diff = compute_diff(desired=desired, actual=result.state, not_checked=result.not_checked)
     assert not any(item.field.startswith("repo_settings.") for item in diff.items)
     assert {nc.field for nc in diff.not_checked} == {
@@ -3160,7 +3170,7 @@ def test_fetch_actual_state_unmanaged_missing_setting_is_not_reported() -> None:
     repo_json = {**_REPO_SETTINGS_JSON, "security_and_analysis": {}}
     del repo_json["allow_forking"]
     result = _fetch_with_repo_json(repo_json)
-    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    desired = _state(_vergil_config(), visibility="public", is_org=True)
     diff = compute_diff(desired=desired, actual=result.state, not_checked=result.not_checked)
     assert diff.not_checked == []
 
@@ -3183,8 +3193,8 @@ def test_fetch_actual_state_non_object_repo_response_raises() -> None:
 def test_compute_diff_not_checked_drops_unmanaged_fields() -> None:
     # A private repo without GHAS leaves secret scanning unmanaged (skipped),
     # so its unreadability is not reported as "not checked".
-    desired = compute_desired_state(_vergil_config(), visibility="private", is_org=True)
-    actual = compute_desired_state(_vergil_config(), visibility="private", is_org=True)
+    desired = _state(_vergil_config(), visibility="private", is_org=True)
+    actual = _state(_vergil_config(), visibility="private", is_org=True)
     actual.security.vulnerability_alerts = False
     unread = [
         NotChecked(field="security.secret_scanning", permission="administration=read"),
@@ -3198,8 +3208,8 @@ def test_compute_diff_not_checked_drops_unmanaged_fields() -> None:
 
 
 def test_compute_diff_without_not_checked_is_compliant() -> None:
-    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
-    actual = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    desired = _state(_vergil_config(), visibility="public", is_org=True)
+    actual = _state(_vergil_config(), visibility="public", is_org=True)
     diff = compute_diff(desired=desired, actual=actual)
     assert diff.not_checked == []
     assert diff.is_compliant()
@@ -3290,7 +3300,7 @@ def test_normalize_rules_skips_non_dict_entries() -> None:
 
 def test_compute_desired_state_includes_publish() -> None:
     config = _vergil_config()
-    state = compute_desired_state(config, visibility="public", is_org=True)
+    state = _state(config, visibility="public", is_org=True)
     assert state.publish is not None
     assert state.publish.release is False
     assert state.publish.docs is True
@@ -3306,7 +3316,7 @@ def test_compute_desired_state_publish_release_true() -> None:
         container=ContainerConfig(env_prefixes=[], system_packages=[]),
         validation=ValidationConfig(container_command=DEFAULT_VALIDATION_COMMAND),
     )
-    state = compute_desired_state(config, visibility="public", is_org=True)
+    state = _state(config, visibility="public", is_org=True)
     assert state.publish.release is True
     assert state.publish.docs is True
 
@@ -3344,12 +3354,12 @@ def test_apply_repo_settings_includes_allow_forking_for_private_org() -> None:
 
 
 def test_public_org_repo_omits_allow_forking() -> None:
-    state = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    state = _state(_vergil_config(), visibility="public", is_org=True)
     assert state.repo_settings.allow_forking is None
 
 
 def test_private_org_repo_sets_allow_forking() -> None:
-    state = compute_desired_state(_vergil_config(), visibility="private", is_org=True)
+    state = _state(_vergil_config(), visibility="private", is_org=True)
     assert state.repo_settings.allow_forking is True
 
 
@@ -3401,8 +3411,8 @@ def test_apply_repo_settings_propagates_unrelated_api_error() -> None:
 
 
 def test_diff_skips_allow_forking_when_desired_is_none() -> None:
-    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=False)
-    actual = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    desired = _state(_vergil_config(), visibility="public", is_org=False)
+    actual = _state(_vergil_config(), visibility="public", is_org=True)
     actual.repo_settings.allow_forking = False
     diff = compute_diff(desired=desired, actual=actual)
     assert not any(d.field == "repo_settings.allow_forking" for d in diff.items)
@@ -3612,44 +3622,205 @@ def test_format_rules_delta_identical_checks() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Issue #1288: App mode bypass_actors skipping
+# Issue #1288: App mode bypass_actors skipping; epic vergil-project/.github#1064:
+# the automation-branch ruleset and fatal bypass reads
 # ---------------------------------------------------------------------------
 
 
-def test_compute_desired_state_app_mode_nulls_bypass_actors() -> None:
-    state = compute_desired_state(_vergil_config(), visibility="public", is_org=True, app_mode=True)
+def test_compute_desired_state_skip_bypass_nulls_bypass_actors() -> None:
+    state = compute_desired_state(
+        _vergil_config(),
+        visibility="public",
+        is_org=True,
+        skip_bypass=True,
+        automation_app_id=None,
+    )
     for rs in state.rulesets:
         assert rs.bypass_actors is None
 
 
-def test_compute_desired_state_no_app_mode_keeps_bypass_actors() -> None:
-    state = compute_desired_state(
-        _vergil_config(), visibility="public", is_org=True, app_mode=False
-    )
+def test_compute_desired_state_without_skip_keeps_bypass_actors() -> None:
+    state = _state(_vergil_config(), visibility="public", is_org=True)
     tag_rs = next(rs for rs in state.rulesets if rs.name == "Tag protection")
     assert tag_rs.bypass_actors is not None
     assert len(tag_rs.bypass_actors) == 1
 
 
+def test_compute_desired_state_requires_app_id_unless_skipping() -> None:
+    with pytest.raises(ValueError, match="automation App's ID is required"):
+        compute_desired_state(
+            _vergil_config(),
+            visibility="public",
+            is_org=True,
+            skip_bypass=False,
+            automation_app_id=None,
+        )
+
+
+def test_compute_desired_state_includes_automation_ruleset() -> None:
+    state = _state(_vergil_config(), visibility="public", is_org=True)
+    rs = next(r for r in state.rulesets if r.name == "Automation branches")
+    assert rs.bypass_actors is not None
+    assert {"actor_id": _APP_ID, "actor_type": "Integration", "bypass_mode": "always"} in (
+        rs.bypass_actors
+    )
+
+
+def test_desired_settings_allow_auto_merge() -> None:
+    for visibility in ("public", "private"):
+        s = desired_repo_settings(is_org=True, visibility=visibility)
+        assert s.allow_auto_merge is True
+
+
+def test_automation_ruleset_shape() -> None:
+    rs = desired_automation_branch_ruleset(4242)
+    assert rs == DesiredRuleset(
+        name="Automation branches",
+        target="branch",
+        enforcement="active",
+        ref_include=["refs/heads/automation/**"],
+        bypass_actors=[
+            {"actor_id": 4242, "actor_type": "Integration", "bypass_mode": "always"},
+            {"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"},
+        ],
+        rules=[{"type": "creation"}, {"type": "update"}, {"type": "non_fast_forward"}],
+    )
+    assert {"type": "deletion"} not in rs.rules
+
+
+def test_automation_ruleset_without_app_id_is_skipped() -> None:
+    assert desired_automation_branch_ruleset(None).bypass_actors is None
+
+
 def test_diff_skips_bypass_actors_when_desired_is_none() -> None:
     desired = compute_desired_state(
-        _vergil_config(), visibility="public", is_org=True, app_mode=True
+        _vergil_config(),
+        visibility="public",
+        is_org=True,
+        skip_bypass=True,
+        automation_app_id=None,
     )
-    actual = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    actual = _state(_vergil_config(), visibility="public", is_org=True)
     diff = compute_diff(desired=desired, actual=actual)
     assert not any(d.field.endswith(".bypass_actors") for d in diff.items)
     assert any(s.endswith(".bypass_actors") for s in diff.skipped)
 
 
 def test_diff_reports_bypass_actors_mismatch_without_app_mode() -> None:
-    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
-    actual = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    desired = _state(_vergil_config(), visibility="public", is_org=True)
+    actual = _state(_vergil_config(), visibility="public", is_org=True)
     actual.rulesets[1].bypass_actors = []
     diff = compute_diff(desired=desired, actual=actual)
     assert any(d.field == "rulesets.Tag protection.bypass_actors" for d in diff.items)
 
 
-def test_ruleset_body_none_bypass_actors_becomes_empty_list() -> None:
+def test_diff_ignores_bypass_actor_order() -> None:
+    desired = _state(_vergil_config(), visibility="public", is_org=True)
+    actual = _state(_vergil_config(), visibility="public", is_org=True)
+    live = next(r for r in actual.rulesets if r.name == "Automation branches")
+    assert live.bypass_actors is not None
+    live.bypass_actors = list(reversed(live.bypass_actors))
+    diff = compute_diff(desired=desired, actual=actual)
+    assert diff.is_compliant()
+
+
+def test_diff_reports_wrong_automation_app_id() -> None:
+    desired = _state(_vergil_config(), visibility="public", is_org=True)
+    actual = compute_desired_state(
+        _vergil_config(),
+        visibility="public",
+        is_org=True,
+        skip_bypass=False,
+        automation_app_id=_APP_ID + 1,
+    )
+    diff = compute_diff(desired=desired, actual=actual)
+    assert [d.field for d in diff.items] == ["rulesets.Automation branches.bypass_actors"]
+
+
+def _with_emptied_bypass(*names: str) -> tuple[Any, Any]:
+    desired = _state(_vergil_config(), visibility="public", is_org=True)
+    actual = _state(_vergil_config(), visibility="public", is_org=True)
+    for rs in actual.rulesets:
+        if rs.name in names:
+            rs.bypass_actors = []
+    return desired, actual
+
+
+def test_empty_bypass_read_is_unreadable_under_automation() -> None:
+    desired, actual = _with_emptied_bypass("Tag protection", "Automation branches")
+    diff = compute_diff(desired=desired, actual=actual, automation=True)
+    assert not any(d.field.endswith(".bypass_actors") for d in diff.items)
+    assert diff.not_checked == [
+        BypassUnreadable(field="rulesets.Tag protection.bypass_actors"),
+        BypassUnreadable(field="rulesets.Automation branches.bypass_actors"),
+    ]
+    assert all(isinstance(nc, NotChecked) for nc in diff.not_checked)
+    assert diff.not_checked[0].permission == "administration=write"
+    assert not diff.has_drift()
+    assert not diff.is_compliant()
+
+
+def test_empty_bypass_read_keeps_other_drift_under_automation() -> None:
+    desired, actual = _with_emptied_bypass("Tag protection")
+    actual.repo_settings.allow_auto_merge = False
+    diff = compute_diff(desired=desired, actual=actual, automation=True)
+    assert [d.field for d in diff.items] == ["repo_settings.allow_auto_merge"]
+    assert [nc.field for nc in diff.not_checked] == ["rulesets.Tag protection.bypass_actors"]
+
+
+def test_empty_bypass_where_desired_is_empty_is_not_unreadable() -> None:
+    # Branch protection desires no bypass actor, so an empty read is the truth.
+    desired, actual = _with_emptied_bypass("Branch protection")
+    diff = compute_diff(desired=desired, actual=actual, automation=True)
+    assert diff.is_compliant()
+
+
+def test_missing_ruleset_under_automation_is_drift_not_unreadable() -> None:
+    desired = _state(_vergil_config(), visibility="public", is_org=True)
+    actual = _state(_vergil_config(), visibility="public", is_org=True)
+    actual.rulesets = [r for r in actual.rulesets if r.name != "Automation branches"]
+    diff = compute_diff(desired=desired, actual=actual, automation=True)
+    assert diff.not_checked == []
+    assert [(d.field, d.actual) for d in diff.items] == [
+        ("rulesets.Automation branches", "missing")
+    ]
+
+
+def test_empty_bypass_read_skipped_for_non_automation_app() -> None:
+    desired = compute_desired_state(
+        _vergil_config(),
+        visibility="public",
+        is_org=True,
+        skip_bypass=True,
+        automation_app_id=None,
+    )
+    _, actual = _with_emptied_bypass("Tag protection", "Automation branches")
+    diff = compute_diff(desired=desired, actual=actual)
+    assert diff.not_checked == []
+    assert not any(d.field.endswith(".bypass_actors") for d in diff.items)
+    assert "rulesets.Tag protection.bypass_actors" in diff.skipped
+    assert "rulesets.Automation branches.bypass_actors" in diff.skipped
+
+
+def test_human_run_converges_emptied_bypass_list() -> None:
+    desired, actual = _with_emptied_bypass("Tag protection")
+    diff = compute_diff(desired=desired, actual=actual)
+    assert diff.not_checked == []
+    items = [d for d in diff.items if d.field == "rulesets.Tag protection.bypass_actors"]
+    assert len(items) == 1
+    assert items[0].actual == []
+    tag = next(r for r in desired.rulesets if r.name == "Tag protection")
+    assert items[0].expected == tag.bypass_actors
+    with patch("vergil_tooling.lib.github_config.github") as mock_gh:
+        mock_gh.read_json_paginated.return_value = [{"id": 7, "name": "Tag protection"}]
+        _apply_rulesets("o/r", [tag])
+    mock_gh.write_json.assert_called_once()
+    method, endpoint, body = mock_gh.write_json.call_args.args
+    assert (method, endpoint) == ("PUT", "repos/o/r/rulesets/7")
+    assert body["bypass_actors"] == tag.bypass_actors
+
+
+def test_ruleset_body_refuses_skipped_bypass_actors() -> None:
     ruleset = DesiredRuleset(
         name="Test",
         target="branch",
@@ -3658,8 +3829,8 @@ def test_ruleset_body_none_bypass_actors_becomes_empty_list() -> None:
         bypass_actors=None,
         rules=[],
     )
-    body = _ruleset_body(ruleset)
-    assert body["bypass_actors"] == []
+    with pytest.raises(ValueError, match="bypass_actors were skipped"):
+        _ruleset_body(ruleset)
 
 
 # ---------------------------------------------------------------------------

@@ -1555,6 +1555,7 @@ def _assert_ci_gates_producible(ctx: RepoInitContext, desired: DesiredState, *, 
 def step_github_config(ctx: RepoInitContext) -> None:
     """Step 9: Apply GitHub config and labels."""
     from vergil_tooling.lib import config as config_module
+    from vergil_tooling.lib.automation_identity import automation_app_id, automation_app_slug
     from vergil_tooling.lib.github_config import (
         apply_desired_state,
         compute_desired_state,
@@ -1568,12 +1569,22 @@ def step_github_config(ctx: RepoInitContext) -> None:
     if ctx.work_dir is None:  # pragma: no cover
         raise RuntimeError("work_dir not set")
     cfg = config_module.read_config(ctx.work_dir)
+    # Repo-init always runs as the human, so bypass_actors are managed and the
+    # automation-branch ruleset needs the org automation App's ID, read the way
+    # a human run reads it (epic vergil-project/.github#1064).
+    app_id = automation_app_id(automation_app_slug(ctx.repo.split("/", 1)[0]))
     result = fetch_actual_state(ctx.repo)
     is_org = result.owner_type == "Organization"
     # A resumed run skips step 3's version check, and the window may have moved
     # since; a pin outside it stops here as one line, like step 3 (#3670).
     try:
-        desired = compute_desired_state(cfg, visibility=result.visibility, is_org=is_org)
+        desired = compute_desired_state(
+            cfg,
+            visibility=result.visibility,
+            is_org=is_org,
+            skip_bypass=False,
+            automation_app_id=app_id,
+        )
     except VersionsError as exc:
         emit_error(str(exc))
         raise SystemExit(1) from exc

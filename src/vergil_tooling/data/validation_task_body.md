@@ -13,18 +13,18 @@ command, or a check that the dependency change is actually deployed) *or* a
 human-attested statement (e.g. "the target has been rebuilt to include the
 dependency below"). The framework prescribes no mechanism.
 
-- \<precondition — probe or human-attested\>
+{preconditions}
 
 If any precondition is unmet: comment "blocked: preconditions not met —
 \<which\>" and stop. Do not run the checklist. Never fabricate a result.
 
 {blocked_by}## Commands to run
 
-- \<concrete validation command(s)\>
+{procedure}
 
 ## Acceptance criteria
 
-- \<explicit pass/fail condition(s)\>
+{acceptance}
 
 ## Results
 

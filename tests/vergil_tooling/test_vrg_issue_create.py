@@ -3,17 +3,17 @@
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vergil_tooling.bin.vrg_issue_create import main, parse_args
+from vergil_tooling.bin.vrg_issue_create import _render_scaffold_body, main, parse_args
 from vergil_tooling.lib import epics, github
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from pathlib import Path
 
 _MOD = "vergil_tooling.bin.vrg_issue_create"
 
@@ -357,7 +357,7 @@ def test_kind_validation_without_blockers_has_no_dependency_reflink() -> None:
     assert "## Preconditions" in body
 
 
-def test_kind_validation_rejects_body_file(tmp_path: Path) -> None:
+def test_kind_validation_rejects_body_file_text_outside_a_section(tmp_path: Path) -> None:
     body_file = tmp_path / "b.md"
     body_file.write_text("x")
     with (
@@ -390,6 +390,225 @@ def test_kind_validation_rejects_invalid_blocked_by() -> None:
         )
     assert rc == 1
     mock_create.assert_not_called()
+
+
+# Operational body files (#4348): the kind's scaffold keeps its frame and a
+# sectioned --body-file fills its Intro, Preconditions, Procedure, Acceptance
+# and (deployment only) Human-run steps slots.
+_FIXTURES = Path(__file__).parent / "fixtures" / "issue_create"
+
+_SECTION_TEXT = {
+    "Intro": "Release the fixture and confirm it contains the change.",
+    "Preconditions": "- the change task org/repo#4 is closed (probe: `vrg-gh issue view 4`)",
+    "Procedure": "```bash\n## not a heading inside a fence\nvrg-gh release view v1.2.3\n```",
+    "Acceptance": "- release v1.2.3 exists and contains org/repo#4's merge",
+    "Human-run steps": "- `vrg-release` on the fixture — check: the command exits 0",
+}
+
+# The template placeholders a body file replaces, per kind.
+_SLOT_PLACEHOLDERS = {
+    "validation": [
+        "Post-merge validation task.",
+        r"\<precondition — probe or human-attested\>",
+        r"\<concrete validation command(s)\>",
+        r"\<explicit pass/fail condition(s)\>",
+    ],
+    "deployment": [
+        "Deployment task.",
+        r"\<precondition — e.g.",
+        r"\<install / sync / restart command(s) the agent identity can run\>",
+        r"\<how you know the change is deployed and usable\>",
+        r"\<command the human runs\>",
+    ],
+}
+
+_REQUIRED = ["Intro", "Preconditions", "Procedure", "Acceptance"]
+
+
+def _sectioned(tmp_path: Path, names: list[str], extra: str = "") -> Path:
+    body_file = tmp_path / "body.md"
+    parts = [f"## {name}\n\n{_SECTION_TEXT.get(name, 'text')}\n" for name in names]
+    body_file.write_text("\n".join(parts) + extra, encoding="utf-8")
+    return body_file
+
+
+def _run_kind(kind: str, extra: list[str]) -> tuple[int, MagicMock]:
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
+        patch(f"{_MOD}.github.create_issue", return_value=_URL) as mock_create,
+        patch(f"{_MOD}.epics.add_child"),
+    ):
+        rc = main(["--epic", "adhoc", "--kind", kind, "--title", "T", *extra])
+    return rc, mock_create
+
+
+@pytest.mark.parametrize(
+    ("kind", "names"),
+    [
+        ("validation", _REQUIRED),
+        ("deployment", _REQUIRED),
+        ("deployment", [*_REQUIRED, "Human-run steps"]),
+    ],
+)
+def test_operational_body_file_fills_slots(kind: str, names: list[str], tmp_path: Path) -> None:
+    body_file = _sectioned(tmp_path, names)
+    rc, mock_create = _run_kind(kind, ["--body-file", str(body_file)])
+    assert rc == 0
+    kwargs = mock_create.call_args.kwargs
+    assert kwargs["body_file"] is None
+    assert kind in kwargs["labels"]
+    body = kwargs["body"]
+    assert body.startswith(_SECTION_TEXT["Intro"] + "\n")
+    for name in names:
+        assert _SECTION_TEXT[name] in body
+    for placeholder in _SLOT_PLACEHOLDERS[kind]:
+        assert placeholder not in body
+    # The run-time placeholders the run skill fills stay in the frame.
+    assert r"\<which\>" in body
+    assert r"- Evidence: \<command output / observations\>" in body
+    procedure_heading = (
+        "## Commands to run" if kind == "validation" else "## Deploy steps (agent-safe; idempotent)"
+    )
+    assert f"{procedure_heading}\n\n{_SECTION_TEXT['Procedure']}\n" in body
+    assert f"## Acceptance criteria\n\n{_SECTION_TEXT['Acceptance']}\n" in body
+    if kind == "deployment":
+        if "Human-run steps" in names:
+            assert "## Human-run steps (need a human identity)" in body
+            assert "Never treat `diff`'s exit code as the verdict on an apply." in body
+            assert f"{_SECTION_TEXT['Human-run steps']}\n\n## Acceptance criteria" in body
+        else:
+            assert "## Human-run steps" not in body
+            assert "need a human identity" not in body
+            assert f"{_SECTION_TEXT['Procedure']}\n\n## Acceptance criteria" in body
+
+
+def test_operational_body_file_refuses_human_steps_on_validation(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    body_file = _sectioned(tmp_path, [*_REQUIRED, "Human-run steps"])
+    rc, mock_create = _run_kind("validation", ["--body-file", str(body_file)])
+    assert rc == 1
+    mock_create.assert_not_called()
+    assert "## Human-run steps" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("kind", ["validation", "deployment"])
+def test_operational_body_file_keeps_frame(kind: str, tmp_path: Path) -> None:
+    body_file = _sectioned(tmp_path, _REQUIRED)
+    rc, mock_create = _run_kind(
+        kind,
+        ["--body-file", str(body_file), "--blocked-by", "org/repo#5", "--blocked-by", "org/repo#6"],
+    )
+    assert rc == 0
+    body = mock_create.call_args.kwargs["body"]
+    assert "## Preconditions (self-check — run first, do not fabricate)" in body
+    assert "Never fabricate a result." in body
+    assert "## Dependencies (merge-first)" in body
+    assert "Blocked-by: org/repo#5" in body
+    assert "Blocked-by: org/repo#6" in body
+    assert "## Results" in body
+    assert "- Outcome: SUCCESS / FAILURE" in body
+
+
+def test_render_scaffold_body_refuses_sections_missing_a_required_slot() -> None:
+    with pytest.raises(ValueError, match="'acceptance'"):
+        _render_scaffold_body(
+            kind="validation",
+            intro="",
+            deps=[],
+            sections={"Intro": "i", "Preconditions": "p", "Procedure": "c"},
+        )
+
+
+def test_operational_body_file_heading_inside_fence_is_content(tmp_path: Path) -> None:
+    # A '## ' line inside a fence is content, and a fence closes only on its own
+    # marker: a ``` line inside a ~~~ fence leaves it open.
+    procedure = "~~~markdown\n```\n## Acceptance\n```\n~~~"
+    body_file = tmp_path / "body.md"
+    body_file.write_text(
+        "## Intro\n\ni\n\n## Preconditions\n\np\n\n"
+        f"## Procedure\n\n{procedure}\n\n## Acceptance\n\na\n",
+        encoding="utf-8",
+    )
+    rc, mock_create = _run_kind("validation", ["--body-file", str(body_file)])
+    assert rc == 0
+    body = mock_create.call_args.kwargs["body"]
+    assert f"## Commands to run\n\n{procedure}\n\n## Acceptance criteria\n\na\n" in body
+
+
+@pytest.mark.parametrize(
+    ("names", "extra", "named"),
+    [
+        (["Intro", "Procedure", "Acceptance"], "", "## Preconditions"),
+        ([*_REQUIRED, "Other"], "", "## Other"),
+        (_REQUIRED, "\n## Procedure\n\nagain\n", "## Procedure"),
+        (["Intro", "Preconditions", "Procedure"], "\n## Acceptance\n\n   \n", "## Acceptance"),
+    ],
+    ids=["missing", "unknown", "duplicate", "empty"],
+)
+@pytest.mark.parametrize("kind", ["validation", "deployment"])
+def test_operational_body_file_rejects_missing_or_extra_section(
+    kind: str,
+    names: list[str],
+    extra: str,
+    named: str,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    body_file = _sectioned(tmp_path, names, extra)
+    rc, mock_create = _run_kind(kind, ["--body-file", str(body_file)])
+    assert rc == 1
+    mock_create.assert_not_called()
+    assert named in capsys.readouterr().err
+
+
+def test_operational_body_file_rejects_text_before_first_section(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    body_file = _sectioned(tmp_path, _REQUIRED)
+    body_file.write_text("stray\n\n" + body_file.read_text(encoding="utf-8"), encoding="utf-8")
+    rc, mock_create = _run_kind("deployment", ["--body-file", str(body_file)])
+    assert rc == 1
+    mock_create.assert_not_called()
+    assert "before the first section" in capsys.readouterr().err
+
+
+def test_operational_body_file_reports_unreadable_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rc, mock_create = _run_kind("deployment", ["--body-file", str(tmp_path / "nope.md")])
+    assert rc == 1
+    mock_create.assert_not_called()
+    assert "cannot read --body-file" in capsys.readouterr().err
+
+
+def test_operational_body_file_refuses_body_too(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    body_file = _sectioned(tmp_path, _REQUIRED)
+    rc, mock_create = _run_kind("validation", ["--body-file", str(body_file), "--body", "intro"])
+    assert rc == 1
+    mock_create.assert_not_called()
+    assert "--body" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("kind", ["validation", "deployment"])
+def test_operational_without_body_file_unchanged(kind: str) -> None:
+    rc, mock_create = _run_kind(kind, ["--blocked-by", "org/repo#5"])
+    assert rc == 0
+    expected = (_FIXTURES / f"{kind}_scaffold.md").read_text(encoding="utf-8")
+    assert mock_create.call_args.kwargs["body"] == expected
+
+
+def test_retrospective_body_file_still_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    body_file = _sectioned(tmp_path, _REQUIRED)
+    rc, mock_create = _run_kind("retrospective", ["--body-file", str(body_file)])
+    assert rc == 1
+    mock_create.assert_not_called()
+    assert "not compatible with --kind retrospective" in capsys.readouterr().err
 
 
 def test_kind_defaults_to_task_without_validation_label() -> None:

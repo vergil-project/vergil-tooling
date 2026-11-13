@@ -99,6 +99,31 @@ class NotChecked:
     permission: str
 
 
+# What a ruleset's ``bypass_actors`` read needs. GitHub returns the field only
+# to an identity that can edit the ruleset, which for an App token is
+# Administration write; to any other token it returns an empty list, not an
+# error (epic vergil-project/.github#1064, spec §6.3).
+BYPASS_READ = "administration=write"
+
+
+@dataclass(frozen=True)
+class BypassUnreadable(NotChecked):
+    """A ruleset ``bypass_actors`` field the automation identity could not read.
+
+    GitHub answers a token that cannot see the field with an empty list, so
+    "unreadable" is detected, not assumed: under the automation identity, a
+    ruleset whose desired bypass list is non-empty and which reads back with
+    an empty one is recorded as this, never as drift (epic
+    vergil-project/.github#1064, spec §6.3). It is a :class:`NotChecked`, so
+    it is handled like every other unread setting: the audit is never clean,
+    and ``apply`` refuses before it writes anything.
+
+    *field* is ``rulesets.<name>.bypass_actors``.
+    """
+
+    permission: str = BYPASS_READ
+
+
 @dataclass
 class FetchResult:
     state: DesiredState
@@ -118,14 +143,19 @@ _BASE_ACTION_PATTERNS = [
 
 _LANGUAGE_ACTION_PATTERNS: dict[str, list[str]] = {
     "python": ["astral-sh/*", "pypa/*"],
-    "rust": ["actions-rust-lang/*", "swatinem/*"],
+    "rust": ["swatinem/*"],
 }
 
 
 def desired_repo_settings(*, is_org: bool, visibility: str) -> DesiredRepoSettings:
     return DesiredRepoSettings(
         default_branch="develop",
-        allow_auto_merge=False,
+        # Mechanized sync PRs on automation branches merge through GitHub
+        # auto-merge (epic vergil-project/.github#1064, spec §6.4). Agents
+        # still cannot turn it on for a PR, and the automation-branch ruleset
+        # keeps every identity but the automation App and the admin role off
+        # those branches.
+        allow_auto_merge=True,
         delete_branch_on_merge=True,
         allow_merge_commit=True,
         allow_squash_merge=True,
@@ -264,6 +294,43 @@ def desired_rolling_tag_branch_ruleset() -> DesiredRuleset:
         enforcement="active",
         ref_include=["refs/heads/v[0-9]*"],
         bypass_actors=[],
+        rules=[{"type": "creation"}, {"type": "update"}, {"type": "non_fast_forward"}],
+    )
+
+
+AUTOMATION_BRANCH_RULESET_NAME = "Automation branches"
+AUTOMATION_BRANCH_PREFIX = "refs/heads/automation/**"
+
+
+def desired_automation_branch_ruleset(app_id: int | None) -> DesiredRuleset:
+    """Only the org automation App, and the admin role, write automation branches.
+
+    Mechanized jobs push to ``automation/<job>/<run-id>`` and open a PR that
+    merges through GitHub auto-merge with no human in the loop. Without this
+    ruleset any identity with Contents write, every agent App included, could
+    push to such a branch and have its content auto-merged into ``develop``
+    (epic vergil-project/.github#1064, spec §6.2). So creation, update and
+    force-push are restricted to the bypass actors: the automation App (an
+    ``Integration``, by its numeric *app_id*) and the repository admin role
+    (``RepositoryRole`` 5), so the human can always repair things. Deletion
+    is not restricted: automation branches are temporary, removed by
+    delete-on-merge and by each run of their job.
+
+    *app_id* ``None`` leaves the bypass list unmanaged (skipped), which
+    :func:`compute_desired_state` allows only with ``skip_bypass``.
+    """
+    bypass: list[dict[str, object]] | None = None
+    if app_id is not None:
+        bypass = [
+            {"actor_id": app_id, "actor_type": "Integration", "bypass_mode": "always"},
+            {"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"},
+        ]
+    return DesiredRuleset(
+        name=AUTOMATION_BRANCH_RULESET_NAME,
+        target="branch",
+        enforcement="active",
+        ref_include=[AUTOMATION_BRANCH_PREFIX],
+        bypass_actors=bypass,
         rules=[{"type": "creation"}, {"type": "update"}, {"type": "non_fast_forward"}],
     )
 
@@ -797,15 +864,35 @@ def required_evidence_gates(
 
 
 def compute_desired_state(
-    config: VergilConfig, *, visibility: str, is_org: bool, app_mode: bool = False
+    config: VergilConfig,
+    *,
+    visibility: str,
+    is_org: bool,
+    skip_bypass: bool,
+    automation_app_id: int | None,
 ) -> DesiredState:
-    """Compute the full desired GitHub configuration from a repo's VergilConfig."""
+    """Compute the full desired GitHub configuration from a repo's VergilConfig.
+
+    *skip_bypass* leaves every ruleset's ``bypass_actors`` unmanaged. It is
+    true only for an App token that is not the automation identity (today's
+    ops ``audit``), which GitHub never shows the field to. Otherwise
+    *automation_app_id*, the org automation App's numeric ID, is required: it
+    is the automation-branch ruleset's bypass actor. A missing ID without
+    *skip_bypass* raises rather than leaving that ruleset unmanaged.
+    """
+    if not skip_bypass and automation_app_id is None:
+        msg = (
+            "the automation App's ID is required for the automation-branch "
+            "ruleset's bypass actors unless bypass_actors are skipped"
+        )
+        raise ValueError(msg)
     ghas = ghas_available(config, visibility=visibility)
     rulesets: list[DesiredRuleset] = []
 
     rulesets.append(desired_branch_protection_ruleset())
     rulesets.append(desired_tag_protection_ruleset())
     rulesets.append(desired_rolling_tag_branch_ruleset())
+    rulesets.append(desired_automation_branch_ruleset(automation_app_id))
     rulesets.append(
         desired_ci_gates_ruleset(
             config.project,
@@ -817,7 +904,7 @@ def compute_desired_state(
         )
     )
 
-    if app_mode:
+    if skip_bypass:
         for rs in rulesets:
             rs.bypass_actors = None
 
@@ -1584,6 +1671,11 @@ def _values_differ(prefix: str, desired: object, actual: object) -> bool:
     """Compare two leaf values, using set semantics for ruleset rules."""
     if prefix.endswith(".rules") and isinstance(desired, list) and isinstance(actual, list):
         return _canonicalize_rules(desired) != _canonicalize_rules(actual)
+    if prefix.endswith(".bypass_actors") and isinstance(desired, list) and isinstance(actual, list):
+        # GitHub gives a bypass list no order, so a reordering is not drift.
+        return sorted(cast("list[object]", desired), key=_canonical_key) != sorted(
+            cast("list[object]", actual), key=_canonical_key
+        )
     return desired != actual
 
 
@@ -1730,11 +1822,33 @@ def _diff_producibility(
         )
 
 
+def unreadable_bypass_lists(
+    desired: Sequence[DesiredRuleset], actual: Sequence[DesiredRuleset]
+) -> list[BypassUnreadable]:
+    """The rulesets whose non-empty desired bypass list reads back empty.
+
+    GitHub returns an empty list, not an error, to a token that cannot see
+    ``bypass_actors``, so under the automation identity such a read is
+    unreadable, never drift (epic vergil-project/.github#1064, spec §6.3). A
+    ruleset absent from *actual* is ordinary drift and is not listed.
+    """
+    actual_by_name = {r.name: r for r in actual}
+    found: list[BypassUnreadable] = []
+    for rs in desired:
+        live = actual_by_name.get(rs.name)
+        if live is None or not rs.bypass_actors:
+            continue
+        if not live.bypass_actors:
+            found.append(BypassUnreadable(field=f"rulesets.{rs.name}.bypass_actors"))
+    return found
+
+
 def compute_diff(
     *,
     desired: DesiredState,
     actual: DesiredState,
     not_checked: Sequence[NotChecked] = (),
+    automation: bool = False,
 ) -> ConfigDiff:
     """Compare desired vs actual state and return structured diff.
 
@@ -1743,7 +1857,15 @@ def compute_diff(
     never compared: they are carried into the diff's ``not_checked`` instead,
     except a setting the desired state leaves unmanaged (skipped), which was
     never going to be checked (#3816).
+
+    *automation* is true under the automation identity, whose token is meant
+    to read ``bypass_actors``. There an empty read of a non-empty desired list
+    is a :class:`BypassUnreadable`, added to the settings not checked, never
+    drift. For any other identity an empty read is ordinary drift, which
+    ``apply`` converges.
     """
+    if automation:
+        not_checked = [*not_checked, *unreadable_bypass_lists(desired.rulesets, actual.rulesets)]
     diff = _compute_checked_diff(desired=desired, actual=actual)
     unread = {nc.field for nc in not_checked}
     diff.items = [item for item in diff.items if item.field not in unread]
@@ -1869,6 +1991,18 @@ def _apply_actions_permissions(repo: str, perms: DesiredActionsPermissions) -> N
 
 
 def _ruleset_body(ruleset: DesiredRuleset) -> dict[str, object]:
+    """The ruleset's create or update body.
+
+    A skipped (``None``) bypass list is refused, never written as ``[]``:
+    that would erase the real bypass actors and, on the automation-branch
+    ruleset, lock the automation App out of its own branches.
+    """
+    if ruleset.bypass_actors is None:
+        msg = (
+            f"refusing to write ruleset {ruleset.name!r}: its bypass_actors were "
+            "skipped, so the desired list is unknown"
+        )
+        raise ValueError(msg)
     return {
         "name": ruleset.name,
         "target": ruleset.target,
@@ -1879,7 +2013,7 @@ def _ruleset_body(ruleset: DesiredRuleset) -> dict[str, object]:
                 "exclude": [],
             },
         },
-        "bypass_actors": ruleset.bypass_actors if ruleset.bypass_actors is not None else [],
+        "bypass_actors": ruleset.bypass_actors,
         "rules": ruleset.rules,
     }
 

@@ -15,15 +15,32 @@ maintainability, and long-term survivability across repositories.
 
 ## Tooling Expectations
 
-- Formatting: rustfmt (canonical, zero configuration via `rust-toolchain.toml`).
+- Formatting: rustfmt (canonical; any formatting configuration goes in
+  `rustfmt.toml`).
 - Linting: clippy (official Rust linter, 800+ lint rules).
 - Type checking: `cargo check` (inherent in the Rust compiler).
 - Dependency audit and license compliance: cargo-deny (advisories, licenses,
-  bans, and sources in a single tool).
+  bans, and sources in a single tool), run against the fleet policy that
+  vergil-tooling packages, so a repo's own `deny.toml` is not used.
 - Coverage: cargo-llvm-cov (LLVM instrumentation, cross-platform).
-- Toolchain pinning: `rust-toolchain.toml` (auto-installs the correct toolchain
-  via rustup).
 - If a repository uses different tools, document the reason and equivalents.
+
+## Toolchain Selection
+
+Vergil selects the Rust toolchain, never the repository. Each Vergil Rust
+image pins its own installed release, so every CI leg and dev container runs
+the `x.y` series that Vergil resolved from the version window (see the
+[Runtime Version Support Policy](../runtime-version-support-policy.md)).
+
+- A repository declares only an `x.y` floor, through `rust-version` in its
+  root `Cargo.toml` (`[package]`, or `[workspace.package]` for a workspace).
+  `vrg-validate` warns when the floor falls below the window's oldest
+  series.
+- A `rust-toolchain.toml` or legacy `rust-toolchain` file is an error in
+  `vrg-validate`. Delete it.
+- A component or target the image lacks is added to the image through a
+  vergil-containers change. A repository never selects it through a toolchain
+  file, and is never exempted from the check.
 
 ## CI Gates
 

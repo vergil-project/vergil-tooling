@@ -11,8 +11,10 @@ through," not "default to HUMAN").
 Modes:
 
 - ``vrg-whoami`` / ``vrg-whoami --mode`` — print the resolved role as a
-  single token (``human`` | ``user`` | ``audit``), suitable for
-  ``export VRG_IDENTITY_MODE="$(vrg-whoami --mode)"``.
+  single token (``human`` | ``user`` | ``audit`` | ``automation``), suitable
+  for ``export VRG_IDENTITY_MODE="$(vrg-whoami --mode)"`` in the three
+  signal-selectable modes (``automation`` comes only from a token verified
+  against ``$VRG_AUTOMATION_APP``, never from ``VRG_IDENTITY_MODE``).
 - ``vrg-whoami --platform`` — print the resolved platform as a single
   token (``physical-host`` | ``local-vm`` | ``cloud-vm``), from the
   empirical, fail-closed resolver in
@@ -29,11 +31,13 @@ from __future__ import annotations
 import argparse
 import sys
 
+from vergil_tooling.lib.automation_identity import AutomationIdentityError
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.identity_mode import Resolution, Signal, resolve
 from vergil_tooling.lib.platform_env import PlatformResolution, resolve_platform
 
 _SIGNAL_LABELS = {
+    Signal.AUTOMATION_APP: "automation app (verified token)",
     Signal.ENV_VAR: "environment variable",
     Signal.MODE_FILE: "mode file",
     Signal.APP_KEY: "app credential",
@@ -50,7 +54,11 @@ def main(argv: list[str] | None = None) -> int:
         print(resolve_platform().platform.value)
         return 0
 
-    resolution = resolve()
+    try:
+        resolution = resolve()
+    except AutomationIdentityError as exc:
+        print(f"vrg-whoami: {exc}", file=sys.stderr)
+        return 1
 
     if args.explain:
         rc = _explain(resolution)

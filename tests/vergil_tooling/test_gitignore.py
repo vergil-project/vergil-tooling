@@ -33,7 +33,9 @@ if TYPE_CHECKING:
 #: together with that fragment. #3666 added ``paad/security/`` to base so paad's
 #: never-committed security reports stay ignored in every managed repo, and epic
 #: vergil-project/.github#568 added ``paad/code-reviews/`` after it so the
-#: report files of any paad review run never show in a worktree. The
+#: report files of any paad review run never show in a worktree. Epic
+#: vergil-project/.github#1091 then filled the empty rust fragment with
+#: ``target/``, Cargo's build directory, a deliberate addition. The
 #: lossless-split invariant below proves ``base ∪ all-fragments`` still
 #: reconstitutes exactly this set, so a future fragment edit that silently drops
 #: or invents a pattern fails CI. This is the regression guard the monolith used
@@ -87,6 +89,7 @@ _LEGACY_GITIGNORE_PATTERNS: tuple[str, ...] = (
     "*.a",
     "*.so",
     "CMakeUserPresets.json",
+    "target/",
 )
 
 
@@ -238,8 +241,8 @@ def test_compose_unknown_language_is_base_only() -> None:
     assert gitignore.compose("shell") == gitignore.load_base()
 
 
-def test_empty_language_fragments_are_empty() -> None:
-    assert gitignore.load_fragment("rust") == []
+def test_rust_fragment_ignores_cargo_target() -> None:
+    assert gitignore.load_fragment("rust") == ["target/"]
 
 
 def test_load_fragment_unknown_is_empty() -> None:
@@ -309,10 +312,12 @@ def test_render_block_none_is_base_descriptor() -> None:
     assert "__pycache__/" not in lines  # no python fragment lines
 
 
-def test_render_block_empty_fragment_lang_is_base_descriptor() -> None:
-    """A known lang with an empty fragment (rust) renders a base-only block."""
-    block = gitignore.render_block("rust")
-    assert "+" not in block.splitlines()[0]
+def test_render_block_rust_includes_target() -> None:
+    """The rust block names its fragment and ignores Cargo's ``target/``."""
+    lines = gitignore.render_block("rust").splitlines()
+    assert "base + rust" in lines[0]
+    assert "target/" in lines
+    assert "build/" in lines  # a base line
 
 
 def test_parse_round_trips_repo_local_around_fence() -> None:
@@ -468,6 +473,26 @@ def test_sync_update_rewrites_stale_fence_body() -> None:
     repo_local, fence = gitignore.parse(result.text)
     assert fence == gitignore.render_block("python")
     assert "keep-me/" in repo_local
+
+
+def test_sync_rust_adds_target_keeps_repo_lines() -> None:
+    """A rust repo's old base-only fence gains ``target/``; its own lines stay.
+
+    Before epic vergil-project/.github#1091 the rust fragment was empty, so a
+    rust repo carries a base-only fence. Syncing it rewrites the fence to add
+    ``target/`` and leaves the repo-local ``scratch/`` line untouched.
+    """
+    text = gitignore.render_block(None) + "\nscratch/\n"
+
+    result = gitignore.sync(text, "rust")
+
+    assert result.changed is True
+    assert result.removed == []
+    repo_local, fence = gitignore.parse(result.text)
+    assert fence == gitignore.render_block("rust")
+    assert fence is not None
+    assert "target/" in fence.splitlines()
+    assert repo_local == ["", "scratch/"]
 
 
 def test_sync_update_preserves_repo_local_ordering() -> None:

@@ -140,7 +140,7 @@ def render_block(lang: str | None) -> str:
     The block is a begin marker, the ``compose(lang)`` pattern lines (one per
     line), and the end marker. The begin marker's descriptor is ``base + <lang>``
     when the language contributes a fragment, or ``base`` for a base-only block
-    (``None``, empty, unknown, or a known-but-empty language such as ``rust``).
+    (``None``, empty, unknown, or a known language whose fragment is empty).
     """
     descriptor = f"base + {lang}" if load_fragment(lang) else "base"
     begin = f"{MANAGED_BEGIN_PREFIX} {descriptor} (managed by vrg-gitignore-sync; do not edit) >>>"

@@ -1,8 +1,8 @@
 # GitHub Config Audit
 
 `vrg-github-repo-config` audits a managed repo against the canonical
-Vergil configuration and, in `apply` mode, reconciles it. It combines
-two independent halves:
+Vergil configuration and, in [`update`](#the-update-command) mode,
+reconciles it. It combines two independent halves:
 
 - **Managed-file checks** (`audit_local_config`) — file I/O on a fresh
   shallow clone of the repo's `develop` branch. They verify the files
@@ -22,10 +22,10 @@ vrg-github-repo-config audit [--repo OWNER/REPO] [--config PATH]
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_github_repo_config` |
-| Subcommands | `audit` (report), `diff` (report GitHub half only), `apply` (reconcile GitHub half) |
+| Subcommands | `audit` (report), `diff` (report GitHub half only), [`update`](#the-update-command) (reconcile both halves), [`apply`](#the-apply-command-deprecated) (reconcile GitHub half; deprecated) |
 | Args | `--repo OWNER/REPO` (defaults to the current git remote), `--config PATH` (local `vergil.toml`) |
 | Preconditions | Local checks clone the repo's `develop` over HTTPS, so git's credential helper must reach it (`gh auth setup-git`); GitHub checks require `gh` credentials |
-| Exit codes | `audit`: 0 compliant, 1 non-compliant (drift), 2 audit could not complete (including settings [not checked](#settings-the-identity-cannot-read)). `diff`: 0 whether or not it finds drift, 2 could not complete (including settings not checked). `apply`: 0 converged, 1 left non-compliant (a write failed, an undeclared ruleset parameter, or managed-file drift), 2 could not complete or refused |
+| Exit codes | `audit`: 0 compliant, 1 non-compliant (drift), 2 audit could not complete (including settings [not checked](#settings-the-identity-cannot-read)). `diff`: 0 whether or not it finds drift, 2 could not complete (including settings not checked). `update`: see [its exit codes](#update-exit-codes). `apply`: 0 converged, 1 left non-compliant (a write failed, an undeclared ruleset parameter, or managed-file drift), 2 could not complete or refused |
 | Status | Active |
 
 Every subcommand runs the managed-file checks against what is committed
@@ -37,6 +37,70 @@ A dirty or unrelated working tree cannot change the result, and
 clone is plain `git` over HTTPS and authenticates through git's
 credential helper (`gh auth setup-git`), so no token appears in argv or
 the logs. A clone that fails exits 2, naming the repo.
+
+## The `update` command
+
+```bash
+vrg-github-repo-config update [--repo OWNER/REPO] [--config PATH]
+```
+
+`update` brings a repo in line with the canonical configuration, both
+halves of it (epic vergil-project/.github#1064). It runs these steps in
+order:
+
+1. **The identity gate.** `update` runs as the human or as the org
+   automation App (identity mode `human` or `automation`). It refuses
+   the AI agent modes, `user` and `audit`, by name, and exits 2. It also
+   exits 2 when the identity cannot be resolved, for example when
+   `VRG_AUTOMATION_APP` is set but the token belongs to another App.
+2. **The GitHub side.** The same audit and convergence as `apply`. A
+   setting that is [not checked](#settings-the-identity-cannot-read),
+   such as an empty `bypass_actors` read under the automation identity,
+   stops the run with exit 2 before anything is written or cloned. So
+   does a `bypass_actors` field skipped as invisible to an App token,
+   since `update` converges only what it has audited. A write that
+   fails also exits 2.
+3. **The managed files.** A fresh shallow clone of `develop`, in which
+   every fixer runs: the hook-guard shim (mode 0755 included), the
+   CLAUDE.md template region, `.claude/settings.json`, the `.gitignore`
+   managed fence, `.github/dependabot.yml` and the `vergil-*` workflow
+   pins. Each fixer shares its definition of "correct" with its check.
+   A fixer that cannot compute a fix (a CLAUDE.md with no template
+   markers, for example) is reported and does not stop the others.
+4. **One sync PR.** Whatever the fixers changed is committed on a new
+   `automation/repo-config-sync/<run-id>` branch and opened as one PR
+   against `develop`, with squash auto-merge turned on and read back.
+   An earlier run's sync PR is closed and its branch deleted first,
+   whether or not there is new drift. With no change, no PR is opened.
+5. **The verdict.** The fixed clone is audited again. A check that has
+   no fixer (a missing or invalid `vergil.toml`, a CLAUDE.md over the
+   length limit, an `AGENTS.md`, a missing or unwired `ops.yml`) still
+   fails the run, and the PR body lists it for a human.
+
+`update` never reads or touches the caller's working checkout, so a
+human can run `update --repo OWNER/REPO` from anywhere. Once the sync
+PR has merged, `vrg-finalize-pr` brings a local `develop` up to date.
+
+### `update` exit codes
+
+| Exit | Meaning |
+|---|---|
+| 0 | The GitHub side converged and the managed files are in sync, or a sync PR was opened with auto-merge confirmed on |
+| 1 | Drift that could not be fixed: a check with no fixer, a fix that cannot be computed, or an undeclared ruleset parameter. The sync PR for the fixable drift is still opened |
+| 2 | Something could not be audited or converged: an agent identity, a setting not checked, a failed GitHub write, clone or PR. A setting not checked or a failed write opens nothing |
+
+## The `apply` command (deprecated)
+
+```bash
+vrg-github-repo-config apply [--repo OWNER/REPO] [--config PATH]
+```
+
+`apply` is deprecated in favour of [`update`](#the-update-command), and
+prints a notice on stderr naming it. Its behaviour is unchanged: it
+converges only the GitHub side and reports managed-file drift without
+fixing it, and it has no identity gate. Since it shares its code path
+with `update`, it also converges the auto-merge setting and the
+`Automation branches` ruleset.
 
 ### Where it runs — the nightly self-policing loop
 
@@ -101,6 +165,20 @@ audit does not guess the value. It reports the setting as not checked:
   checked.
 - A 403 that names no missing permission (a rate limit, for example) is
   still an error, as is any other unexpected status.
+- **An empty bypass list under the automation identity is not checked.**
+  GitHub answers a token that cannot see a ruleset's `bypass_actors`
+  with an empty list, not an error. The automation App's token is meant
+  to read the field (it holds Administration write), so under the
+  automation identity a ruleset whose desired bypass list is non-empty
+  and which reads back empty is reported as not checked, never as drift
+  (epic vergil-project/.github#1064):
+
+  ```text
+      rulesets.Tag protection.bypass_actors: not checked (read back empty under the automation identity, so unreadable; needs administration=write)
+  ```
+
+  `apply` then refuses and converges nothing. For a human run the same
+  empty list is ordinary drift, and `apply` writes the desired list.
 
 ## Local checks
 
@@ -303,8 +381,7 @@ build/validation/CI-evidence output including the mkdocs build path
 `docs/site/site/` and the paths `vrg-container-docs` stages:
 `docs/site/docs/changelog.md`, `docs/site/docs/releases/` and
 `mkdocs.staged.yml`) plus the fragment for its `[project].primary-language`
-(Python, TypeScript/Node, Go, C++; Rust is managed with an empty
-fragment). A repo that declares no fragment language gets the
+(Python, TypeScript/Node, Go, C++, Rust). A repo that declares no fragment language gets the
 base-only block.
 
 **The managed fence.** The composed block is written into `.gitignore`
@@ -419,6 +496,7 @@ order:
 | `Branch protection` | branch | `refs/heads/main`, `refs/heads/develop` | `deletion`, `non_fast_forward`, `pull_request` | none |
 | `Tag protection` | tag | `refs/tags/v*.*.*`, `refs/tags/v*.*` | `deletion`, `non_fast_forward`, `update` | repository Admin role (`RepositoryRole`, `actor_id` 5) |
 | `Rolling tag branch names` | branch | `refs/heads/v[0-9]*` | `creation`, `update`, `non_fast_forward` | none |
+| `Automation branches` | branch | `refs/heads/automation/**` | `creation`, `update`, `non_fast_forward` | the org automation App (`Integration`, its App ID) and the repository Admin role (`RepositoryRole`, `actor_id` 5) |
 | `CI gates` | branch | `refs/heads/main`, `refs/heads/develop` | `required_status_checks` (see below) | none |
 
 - **Tag protection** covers both the `vX.Y.Z` release tags and the rolling
@@ -435,11 +513,27 @@ order:
   ([Using `fnmatch` syntax](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/creating-rulesets-for-a-repository#using-fnmatch-syntax)).
   A pattern include names no single branch, so the classic branch-protection
   read skips it.
-- **Bypass actors are not compared under the App token.** The nightly audit
-  runs on a GitHub App token, which cannot read a ruleset's bypass list, so in
-  that mode it checks each ruleset's includes, enforcement and rules but not
-  its bypass actors, and lists the skipped `rulesets.<name>.bypass_actors`
-  fields instead. This holds for every ruleset above.
+- **Automation branches** keeps every identity but the org automation App
+  and the human admin off the `automation/` branches that mechanized jobs
+  push to. Their PRs merge through GitHub auto-merge, which the repo
+  settings allow (`allow_auto_merge` is `true`), so without the ruleset an
+  agent with Contents write could push to such a branch and have its
+  content merged with no human in the loop. Deletion is not restricted:
+  the branches are temporary. The App's numeric ID differs per org. The
+  tooling reads the App's slug from `$VRG_AUTOMATION_APP` or, for a human
+  run, from the org-level Actions variable `VRG_AUTOMATION_APP`, and looks
+  the ID up with `GET /apps/{slug}`. A missing variable or a failed lookup
+  fails the run (exit 2).
+- **Bypass actors are not compared under an App token that is not the
+  automation identity.** Today's nightly audit runs on such a token, which
+  cannot read a ruleset's bypass list, so in that mode it checks each
+  ruleset's includes, enforcement and rules but not its bypass actors, and
+  lists the skipped `rulesets.<name>.bypass_actors` fields instead. This
+  holds for every ruleset above. Under the automation identity they are
+  compared, and an empty read is
+  [not checked](#settings-the-identity-cannot-read). `apply` writes whole
+  rulesets, so it always manages the bypass lists. Bypass lists are
+  compared as sets: their order is not drift.
 - **A REST refs write refused by a ruleset gives no rule text.** When a
   ruleset blocks a create, update or delete made through the REST refs API
   (`POST`, `PATCH` or `DELETE` on `repos/{owner}/{repo}/git/refs…`), GitHub

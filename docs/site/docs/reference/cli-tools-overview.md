@@ -539,7 +539,12 @@ It is the sanctioned issue-creation path: `vrg-gh` denies raw
 `gh issue create`. `--epic` takes `adhoc`, `intake`, `planning`, `#N` (read
 against the target repo's epic home) or `owner/repo#N`. `--kind` stamps an
 operational (`validation`, `deployment`) or `retrospective` label and body
-scaffold, and `--blocked-by` stamps a `Blocked-by:` reference. If the link
+scaffold, and `--blocked-by` stamps a `Blocked-by:` reference. With
+`--kind validation` or `--kind deployment`, `--body-file` fills the scaffold
+from a file's `## Intro`, `## Preconditions`, `## Procedure` and
+`## Acceptance` sections (all required) and, for deployment only, an optional
+`## Human-run steps`; the scaffold keeps its frame. `--kind retrospective`
+refuses `--body-file`. If the link
 fails after creation, the created issue's URL is reported for recovery with
 `vrg-epic-move`.
 
@@ -831,10 +836,32 @@ collect step of `epic-review` and by `epic-create`'s no-argument summary.
 (`Epic (ad hoc): <repo>`, labelled `epic` + `ad-hoc`) in the home, grouped by
 repo and oldest first within each. Each line is
 `<ref>  <age>  <state>  <kind>  <title>`, followed by an em dash and
+`<disposition>: <marks>` when the task is in flight, and by an em dash and
 `blocked by <refs>` when a blocker is open. The kind is `validation` or
-`deployment` from the task's label, else `task`. The state is **blocked** while
-any `Blocked-by:` dependency is open, else **ready**; only the open blockers
-are listed. The epics come from one label search; an archive carrying the same
+`deployment` from the task's label, else `task`. The state is **in-flight**
+when any in-flight mark holds (it outranks blocked), else **blocked** while any
+`Blocked-by:` dependency is open, else **ready**; only the open blockers are
+listed.
+
+A task's **marks**, in this order, are: `open-pr` (an open PR closes it, or has
+a `feature/<N>-` head branch); `report-ready` (a relay ref
+`refs/vergil/pr-workflow/<branch>` whose payload has status `ready` and names
+it; a batch's payload names every member); `branch` (a `feature/<N>-` branch on
+the remote); `worktree` (a `feature/<N>-` branch or worktree in the repo's main
+clone); `merge-review` (`build/.vergil-state/issue-implement/<N>/merge-review`
+in the main clone); and `batch` (the batch marker
+`build/.vergil-state/issue-implement/<N>/batch` in the main clone, which marks a
+batch member with no branch of its own). A branch matches only by the exact
+prefix `feature/<N>-`. The **disposition** is **handed-off** when there is an
+open PR or a ready record, whatever local marks remain; otherwise **resume**
+when there is a worktree, a merge-review directory or a batch marker; otherwise
+**handed-off** when only the remote branch remains. The relay payloads are read
+by SHA through the GitHub Git Data API, with no fetch. The local marks come from
+each repo's main clone, found under the repo roots by its `origin`: `--root
+DIR` (repeatable), or the platform default (`/vergil/projects` on a cloud VM,
+the projects mount on a Lima VM, none on a physical host). Every repo with open
+ad-hoc tasks must have exactly one clone there: a missing clone is fatal, never
+skipped or assumed clean. The epics come from one label search; an archive carrying the same
 labels (`Archive (ad hoc): …`, or the legacy `Epic (ad hoc): <repo> — <quarter>`
 form) is skipped. With `--repo`, a public repo narrows the list to its own
 ad-hoc epic in the org's `.github`, and a repo with none gives an empty list;
@@ -844,9 +871,9 @@ not a review queue, so a bare `vrg-queue` never shows it.
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_queue` (views: `lib/queue_view.py`) |
-| Args | `{intake,planning,deferred,adhoc}` (optional; default: intake, planning and deferred); `--repo OWNER/NAME` (that repo's queue home, and for `adhoc` on a public repo its own ad-hoc epic; default: the current org's `.github` queues); `--json` (a list of items; with no queue named, an object keyed by queue, `null` for a missing one) |
+| Args | `{intake,planning,deferred,adhoc}` (optional; default: intake, planning and deferred); `--repo OWNER/NAME` (that repo's queue home, and for `adhoc` on a public repo its own ad-hoc epic; default: the current org's `.github` queues); `--root DIR` (`adhoc` only, repeatable: where to find each repo's main clone; default: the platform's repo roots); `--json` (a list of items; with no queue named, an object keyed by queue, `null` for a missing one) |
 | Preconditions | GitHub App credentials for the target org. The planning view also reads the org's advisories when its `.github` is public, or when a planning item has an advisory line (then a `.github` that is not public is refused): the identity needs Repository security advisories access |
-| Failure mode | A named queue whose home has no live queue epic exits 1 naming the missing epic; with no queue named, a missing queue prints `<queue> queue for <name> in <home>: no queue yet` and the run exits 0. A queue that cannot be read (a failed GitHub call, including the advisory read; a `.github` that is not public; an advisory line naming another org; a malformed response) is named on stderr as `vrg-queue: <queue> queue for <name> in <home> could not be read: <reason>` and the run exits 1; with no queue named, a text run still lists the other queues and prints `<queue> queue for <name> in <home>: not shown (failed; see stderr)` in its place, and a `--json` run prints nothing on stdout. For `adhoc`, a failed read of the epics, a task's sub-issues, a task, its blockers or a blocker's state, an epic search that reaches its listing limit, or two live ad-hoc epics for one repo is reported the same way (`adhoc queue for <name> in <home> could not be read`) and exits 1; no ad-hoc epic is an empty list and exit 0. Nothing is created |
+| Failure mode | A named queue whose home has no live queue epic exits 1 naming the missing epic; with no queue named, a missing queue prints `<queue> queue for <name> in <home>: no queue yet` and the run exits 0. A queue that cannot be read (a failed GitHub call, including the advisory read; a `.github` that is not public; an advisory line naming another org; a malformed response) is named on stderr as `vrg-queue: <queue> queue for <name> in <home> could not be read: <reason>` and the run exits 1; with no queue named, a text run still lists the other queues and prints `<queue> queue for <name> in <home>: not shown (failed; see stderr)` in its place, and a `--json` run prints nothing on stdout. For `adhoc`, a failed read of the epics, a task's sub-issues, a task, its blockers or a blocker's state, an epic search that reaches its listing limit, two live ad-hoc epics for one repo, a failed read of any in-flight source (the open PRs, the remote refs, a relay payload, a clone's branches or remotes), a malformed relay payload, repo roots that cannot be determined (no `--root` on a physical host) or do not exist, or a repo with open ad-hoc tasks and no clone, or two, under the repo roots is reported the same way (`adhoc queue for <name> in <home> could not be read`) and exits 1; no ad-hoc epic is an empty list and exit 0. Nothing is created |
 | Exit codes | 0 success, 1 error, 2 bad arguments |
 | Status | Active |
 
@@ -1357,8 +1384,16 @@ fallback signals (environment variable, mode file, App key, App ID, then
 the `human` default), and an unset value means "fall through", not
 "human". See [Account setup](../guides/account-setup.md).
 
-- `vrg-whoami` / `--mode`: the role as one token (`human`, `user` or
-  `audit`), for scripting, for example
+The `automation` role is checked before those signals, and only when
+`VRG_AUTOMATION_APP` is set. That variable names the org automation App,
+and the token must then verify as that App's installation token (GraphQL
+`viewer` login `<slug>[bot]`). A different login, a failed lookup, an empty
+variable, or an agent signal alongside it is an error. No
+`VRG_IDENTITY_MODE` value or mode file selects `automation`. Without the
+variable, resolution is unchanged and makes no network request.
+
+- `vrg-whoami` / `--mode`: the role as one token (`human`, `user`,
+  `audit` or `automation`), for scripting, for example
   `export VRG_IDENTITY_MODE="$(vrg-whoami --mode)"`.
 - `--platform`: the platform as one token (`physical-host`, `local-vm` or
   `cloud-vm`), a second axis independent of the role, resolved from
@@ -1373,9 +1408,9 @@ the `human` default), and an unset value means "fall through", not
 |---|---|
 | Source | `vergil_tooling.bin.vrg_whoami` |
 | Args | `--mode`, `--platform`, `--explain` (mutually exclusive) |
-| Preconditions | None |
-| Failure mode | Disagreement is a warning on stderr, never an error |
-| Exit codes | 0 |
+| Preconditions | None (with `VRG_AUTOMATION_APP` set, a GitHub token) |
+| Failure mode | Disagreement is a warning on stderr, never an error; a failed automation verification exits 1 with the reason |
+| Exit codes | 0 success, 1 automation verification failed |
 | Status | Active |
 
 ### vrg-hook-guard
@@ -1428,8 +1463,10 @@ defines are listed in
 
 ### vrg-github-repo-config
 
-Audit a managed repo against the canonical Vergil configuration, and
-in `apply` mode reconcile the GitHub half. Combines managed-file
+Audit a managed repo against the canonical Vergil configuration. In
+`update` mode it also reconciles the GitHub half and proposes the
+managed-file fixes as one auto-merging sync PR; `apply`, which
+reconciles only the GitHub half, is deprecated. Combines managed-file
 checks, run in a fresh shallow clone of the repo's `develop` (`vergil.toml`,
 `CLAUDE.md`, `.claude/settings.json`, hook-guard
 shim, workflow pins, `.gitignore` managed fence, canonical
@@ -1442,10 +1479,10 @@ Runs nightly from each repo's `ops.yml` via the reusable
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_github_repo_config` |
-| Args | `audit` \| `diff` \| `apply`; `--repo OWNER/REPO`, `--config PATH` |
+| Args | `audit` \| `diff` \| `update` \| `apply` (deprecated); `--repo OWNER/REPO`, `--config PATH` |
 | Preconditions | Local checks clone the repo's `develop` over HTTPS (git's credential helper must reach it); GitHub checks require `gh` credentials |
 | Failure mode | `DiffItem` list on drift; clean diagnostic on unreachable GitHub state |
-| Exit codes | 0 compliant, 1 non-compliant (drift), 2 audit could not complete |
+| Exit codes | 0 compliant (for `update`: converged and in sync, or a sync PR opened with auto-merge on), 1 non-compliant (drift; for `update`, drift it could not fix), 2 could not complete |
 | Status | Active |
 
 ### vrg-dependabot-audit

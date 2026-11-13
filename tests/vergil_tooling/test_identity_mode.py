@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import subprocess
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pytest
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+from vergil_tooling.lib import retry
+from vergil_tooling.lib.automation_identity import AutomationIdentityError
 from vergil_tooling.lib.identity_mode import (
+    ContradictoryIdentityError,
     IdentityMode,
     Resolution,
     Signal,
@@ -17,6 +22,7 @@ from vergil_tooling.lib.identity_mode import (
     any_agent_signal,
     current_mode,
     is_agent,
+    is_automation,
     is_human,
     resolve,
 )
@@ -28,6 +34,7 @@ def _isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("VRG_IDENTITY_MODE", raising=False)
     monkeypatch.delenv("VRG_APP_ID", raising=False)
+    monkeypatch.delenv("VRG_AUTOMATION_APP", raising=False)
 
 
 def _vergil_dir(tmp_path: Path) -> Path:
@@ -261,3 +268,200 @@ class TestAnyAgentSignal:
         monkeypatch.setenv("VRG_IDENTITY_MODE", "human")
         assert resolve().mode == IdentityMode.HUMAN  # resolve() itself is unchanged
         assert any_agent_signal() is True
+
+
+# --- The automation identity mode (epic vergil-project/.github#1064, Task 1) ---
+
+_SLUG = "vergil-project-automation"
+_GRAPHQL = "vergil_tooling.lib.github.graphql"
+
+
+def _viewer(login: str) -> dict[str, object]:
+    return {"viewer": {"login": login}}
+
+
+class TestAutomationMode:
+    def test_env_and_matching_token_resolves_automation(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("VRG_AUTOMATION_APP", _SLUG)
+        with patch(_GRAPHQL, return_value=_viewer(f"{_SLUG}[bot]")) as gql:
+            resolution = resolve()
+            assert is_automation() is True
+            assert is_agent() is False
+            assert is_human() is False
+        assert resolution.mode is IdentityMode.AUTOMATION
+        assert resolution.resolved_by is Signal.AUTOMATION_APP
+        assert resolution.readings[0].implied is IdentityMode.AUTOMATION
+        assert gql.call_args.args == ("query { viewer { login } }",)
+
+    @pytest.mark.parametrize(
+        ("setup", "mode", "signal"),
+        [
+            ("env:user", IdentityMode.USER, Signal.ENV_VAR),
+            ("env:audit", IdentityMode.AUDIT, Signal.ENV_VAR),
+            ("env:human", IdentityMode.HUMAN, Signal.ENV_VAR),
+            ("file:user", IdentityMode.USER, Signal.MODE_FILE),
+            ("file:audit", IdentityMode.AUDIT, Signal.MODE_FILE),
+            ("app-key", IdentityMode.USER, Signal.APP_KEY),
+            ("app-id", IdentityMode.USER, Signal.APP_ID),
+            ("none", IdentityMode.HUMAN, Signal.DEFAULT),
+        ],
+    )
+    def test_no_env_resolves_as_today(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        setup: str,
+        mode: IdentityMode,
+        signal: Signal,
+    ) -> None:
+        kind, _, value = setup.partition(":")
+        if kind == "env":
+            monkeypatch.setenv("VRG_IDENTITY_MODE", value)
+        elif kind == "file":
+            _write_mode_file(tmp_path, f"{value}\n")
+        elif kind == "app-key":
+            _write_app_key(tmp_path)
+        elif kind == "app-id":
+            monkeypatch.setenv("VRG_APP_ID", "12345")
+        resolution = resolve()
+        assert resolution.mode is mode
+        assert resolution.resolved_by is signal
+        assert [r.signal for r in resolution.readings] == [
+            Signal.ENV_VAR,
+            Signal.MODE_FILE,
+            Signal.APP_KEY,
+            Signal.APP_ID,
+        ]
+        assert is_automation() is False
+
+    def test_env_with_other_app_token_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("VRG_AUTOMATION_APP", _SLUG)
+        with (
+            patch(_GRAPHQL, return_value=_viewer("vergil-project-user[bot]")),
+            pytest.raises(AutomationIdentityError) as excinfo,
+        ):
+            resolve()
+        assert "'vergil-project-user[bot]'" in str(excinfo.value)
+        assert f"'{_SLUG}[bot]'" in str(excinfo.value)
+
+    def test_env_with_github_token_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("VRG_AUTOMATION_APP", _SLUG)
+        with (
+            patch(_GRAPHQL, return_value=_viewer("github-actions[bot]")),
+            pytest.raises(AutomationIdentityError, match=r"github-actions\[bot\]"),
+        ):
+            resolve()
+
+    @pytest.mark.parametrize("agent", ["env:user", "env:audit", "file:user", "app-key", "app-id"])
+    def test_env_with_agent_env_mode_raises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, agent: str
+    ) -> None:
+        kind, _, value = agent.partition(":")
+        if kind == "env":
+            monkeypatch.setenv("VRG_IDENTITY_MODE", value)
+        elif kind == "file":
+            _write_mode_file(tmp_path, f"{value}\n")
+        elif kind == "app-key":
+            _write_app_key(tmp_path)
+        else:
+            monkeypatch.setenv("VRG_APP_ID", "12345")
+        monkeypatch.setenv("VRG_AUTOMATION_APP", _SLUG)
+        with (
+            patch(_GRAPHQL, return_value=_viewer(f"{_SLUG}[bot]")),
+            pytest.raises(ContradictoryIdentityError, match="signals contradict"),
+        ):
+            resolve()
+
+    def test_env_with_human_mode_resolves_automation(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # A human mode signal is not an agent signal: the verified token decides.
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "human")
+        monkeypatch.setenv("VRG_AUTOMATION_APP", _SLUG)
+        with patch(_GRAPHQL, return_value=_viewer(f"{_SLUG}[bot]")):
+            assert current_mode() is IdentityMode.AUTOMATION
+
+    def test_lookup_failure_raises_after_retry(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("VRG_AUTOMATION_APP", _SLUG)
+        blip = subprocess.CalledProcessError(1, ["gh"], "", "HTTP 502 Bad Gateway")
+        with (
+            # Ambient auth: no App-token minting (which would run git) in the count.
+            patch("vergil_tooling.lib.github._gh_env", return_value=None),
+            patch("vergil_tooling.lib.retry.subprocess.run", side_effect=blip) as run,
+            patch("vergil_tooling.lib.retry.time.sleep") as sleep,
+            patch("vergil_tooling.lib.retry.random.random", return_value=0.5),
+            pytest.raises(AutomationIdentityError, match="could not be read") as excinfo,
+        ):
+            resolve()
+        assert run.call_count == retry.MAX_RETRIES + 1
+        assert sleep.call_count == retry.MAX_RETRIES
+        assert "502 Bad Gateway" in str(excinfo.value)
+        assert f"'{_SLUG}[bot]'" in str(excinfo.value)
+
+    def test_lookup_non_transient_failure_raises_at_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("VRG_AUTOMATION_APP", _SLUG)
+        refused = subprocess.CalledProcessError(1, ["gh"], "", "HTTP 403: Resource not accessible")
+        with (
+            patch("vergil_tooling.lib.github._gh_env", return_value=None),
+            patch("vergil_tooling.lib.retry.subprocess.run", side_effect=refused) as run,
+            pytest.raises(AutomationIdentityError, match="HTTP 403"),
+        ):
+            resolve()
+        assert run.call_count == 1
+
+    @pytest.mark.parametrize(
+        "setup", ["env:user", "env:human", "file:audit", "app-key", "app-id", "none"]
+    )
+    def test_no_env_makes_no_api_call(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, setup: str
+    ) -> None:
+        kind, _, value = setup.partition(":")
+        if kind == "env":
+            monkeypatch.setenv("VRG_IDENTITY_MODE", value)
+        elif kind == "file":
+            _write_mode_file(tmp_path, f"{value}\n")
+        elif kind == "app-key":
+            _write_app_key(tmp_path)
+        elif kind == "app-id":
+            monkeypatch.setenv("VRG_APP_ID", "12345")
+        with (
+            patch(_GRAPHQL) as gql,
+            patch("vergil_tooling.lib.retry.subprocess.run") as run,
+        ):
+            resolve()
+            current_mode()
+            is_agent()
+            is_human()
+            is_automation()
+            any_agent_signal()
+        gql.assert_not_called()
+        run.assert_not_called()
+
+    @pytest.mark.parametrize("value", ["", "   "])
+    def test_empty_env_raises_without_api_call(
+        self, monkeypatch: pytest.MonkeyPatch, value: str
+    ) -> None:
+        monkeypatch.setenv("VRG_AUTOMATION_APP", value)
+        with (
+            patch(_GRAPHQL) as gql,
+            pytest.raises(AutomationIdentityError, match="set but empty"),
+        ):
+            resolve()
+        gql.assert_not_called()
+
+    @pytest.mark.parametrize("where", ["env", "file"])
+    def test_mode_signal_cannot_select_automation(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, where: str
+    ) -> None:
+        # "automation" comes only from a verified credential, never a mode signal.
+        if where == "env":
+            monkeypatch.setenv("VRG_IDENTITY_MODE", "automation")
+        else:
+            _write_mode_file(tmp_path, "automation\n")
+        with patch(_GRAPHQL) as gql:
+            resolution = resolve()
+        assert resolution.mode is IdentityMode.HUMAN
+        assert resolution.resolved_by is Signal.DEFAULT
+        gql.assert_not_called()

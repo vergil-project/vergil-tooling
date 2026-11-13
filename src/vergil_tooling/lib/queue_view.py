@@ -37,11 +37,15 @@ The ad-hoc view is not a review queue: it is the open tasks under every live
 ``Epic (ad hoc): <repo>`` epic (``epic`` + ``ad-hoc``) in a home, grouped by
 repo and oldest first within each, each with its kind (``task``,
 ``validation`` or ``deployment``), its open ``Blocked-by:`` refs and its
-state: ``blocked`` while any blocker is open, else ``ready``. The epics come
-from one label search, refused when truncated; an issue carrying those labels
-whose title is not a live epic's (an archive, in its current or legacy form)
-is skipped. A home with no ad-hoc epic, or a ``repo`` with none, is an empty
-list, not an error.
+state: ``in-flight`` when any in-flight mark holds for it (see
+:mod:`vergil_tooling.lib.in_flight`; it outranks ``blocked``), else
+``blocked`` while any blocker is open, else ``ready``. An in-flight task
+carries its marks and its disposition (``handed-off`` or ``resume``). The
+epics come from one label search, refused when truncated; an issue carrying
+those labels whose title is not a live epic's (an archive, in its current or
+legacy form) is skipped. A home with no ad-hoc epic, or a ``repo`` with none,
+is an empty list, not an error. The marks are read only for repos with open
+ad-hoc tasks, each of which must have a main clone under the repo roots.
 
 Nothing here mutates GitHub: the queue epic is looked up with
 :func:`epics.find_standing_epic` (never created), and a missing queue epic is
@@ -55,12 +59,14 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
 
-from vergil_tooling.lib import epics, github, security_records
+from vergil_tooling.lib import epics, github, in_flight, live_branches, security_records
 from vergil_tooling.lib.epics import IssueRef
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from pathlib import Path
 
+    from vergil_tooling.lib.in_flight import Disposition
     from vergil_tooling.lib.security_records import Advisory
 
 # Progress-marker line prefixes. ``epic-create`` writes the first three as lines
@@ -114,7 +120,8 @@ class AdhocItem:
 
     ``kind`` is ``task``, ``validation`` or ``deployment``. ``blocked_by``
     holds only the blockers still open; ``marks`` names what shows the task in
-    flight (empty until in-flight detection fills it).
+    flight (:data:`in_flight.MARKS`, in that order), and ``disposition`` ranks
+    them (``None`` when there are none).
     """
 
     ref: IssueRef
@@ -124,6 +131,7 @@ class AdhocItem:
     blocked_by: tuple[IssueRef, ...]
     state: AdhocState
     marks: tuple[str, ...]
+    disposition: Disposition | None
 
 
 @dataclass(frozen=True)
@@ -450,43 +458,78 @@ def _adhoc_kind(labels: set[str]) -> str:
     return "task"
 
 
-def adhoc_items(home: str, *, repo: str | None = None) -> list[AdhocItem]:
+def _repo_of(ref: IssueRef) -> str:
+    return f"{ref.owner}/{ref.repo}"
+
+
+def _in_flight_signals(
+    refs: Sequence[IssueRef], roots: Sequence[Path] | None
+) -> dict[str, in_flight.RepoSignals]:
+    """The in-flight signals of each repo among *refs*, read from its main clone.
+
+    Nothing is read when *refs* is empty. *roots* default to
+    :func:`live_branches.default_repo_roots`, which raises
+    :class:`live_branches.RepoSetError` where the platform has none.
+    """
+    repos = sorted({_repo_of(ref) for ref in refs})
+    if not repos:
+        return {}
+    clones = in_flight.find_clones(
+        repos, roots if roots is not None else live_branches.default_repo_roots()
+    )
+    return {repo: in_flight.repo_signals(repo, clones[repo]) for repo in repos}
+
+
+def adhoc_items(
+    home: str, *, repo: str | None = None, roots: Sequence[Path] | None = None
+) -> list[AdhocItem]:
     """The open tasks under every live ad-hoc epic in *home*.
 
     Grouped by repo (repos in name order), oldest first within each. With
     *repo* (``owner/name``), only that repo's ad-hoc epic is read, and a repo
     with none gives an empty list. The caller resolves *home*: for *repo*, with
-    :func:`epics.resolve_epic_home`. A failed read of the epics, a sub-issue
-    list, a task, a blocker list or a blocker's state raises, as does a
-    truncated epic search; nothing is shown short or wrongly ready.
+    :func:`epics.resolve_epic_home`. A task with any in-flight mark is
+    ``in-flight``, whatever its blockers; the marks of each repo with open
+    tasks are read from its main clone under *roots* (default: the platform's
+    repo roots). A failed read of the epics, a sub-issue list, a task, a
+    blocker list, a blocker's state or any in-flight source raises, as does a
+    truncated epic search or a repo with no main clone; nothing is shown
+    short or wrongly ready.
     """
     bare: str | None = None
     if repo is not None:
         if "/" not in repo:
             raise ValueError(f"repo must be 'owner/name' (got {repo!r})")
         bare = repo.split("/", 1)[1]
-    items: list[AdhocItem] = []
+    found: list[tuple[IssueRef, dict[str, Any], tuple[IssueRef, ...]]] = []
     for epic in _adhoc_epics(home, bare):
         for child in epics.child_states(epic):
             if child.state != "OPEN":
                 continue
             view = _view(child.ref, "title,createdAt,labels")
-            labels = {str(lbl.get("name") or "") for lbl in view.get("labels") or []}
             open_blockers = tuple(
                 dep for dep in epics.blockers_of(child.ref) if epics.issue_state(dep) != "CLOSED"
             )
-            items.append(
-                AdhocItem(
-                    ref=child.ref,
-                    title=str(view.get("title") or ""),
-                    created_at=str(view.get("createdAt") or ""),
-                    kind=_adhoc_kind(labels),
-                    blocked_by=open_blockers,
-                    state="blocked" if open_blockers else "ready",
-                    marks=(),
-                )
+            found.append((child.ref, view, open_blockers))
+    signals = _in_flight_signals([ref for ref, _, _ in found], roots)
+    items: list[AdhocItem] = []
+    for ref, view, open_blockers in found:
+        labels = {str(lbl.get("name") or "") for lbl in view.get("labels") or []}
+        marks = in_flight.marks_for(ref.number, signals[_repo_of(ref)])
+        state: AdhocState = "in-flight" if marks else "blocked" if open_blockers else "ready"
+        items.append(
+            AdhocItem(
+                ref=ref,
+                title=str(view.get("title") or ""),
+                created_at=str(view.get("createdAt") or ""),
+                kind=_adhoc_kind(labels),
+                blocked_by=open_blockers,
+                state=state,
+                marks=marks,
+                disposition=in_flight.disposition(marks),
             )
-    return sorted(items, key=lambda i: (f"{i.ref.owner}/{i.ref.repo}", i.created_at, i.ref.number))
+        )
+    return sorted(items, key=lambda i: (_repo_of(i.ref), i.created_at, i.ref.number))
 
 
 def _age(created_at: str, now: datetime) -> str:
@@ -511,13 +554,19 @@ def to_json(items: Sequence[QueueItem]) -> list[dict[str, Any]]:
 
 
 def render_adhoc_text(items: Sequence[AdhocItem], *, now: datetime) -> str:
-    """One line per task: ``<slug>  <age>  <state>  <kind>  <title>[  — blocked by <refs>]``."""
+    """One line per task: ``<slug>  <age>  <state>  <kind>  <title>`` and its notes.
+
+    An in-flight task adds ``  — <disposition>: <marks>``; a task with an open
+    blocker adds ``  — blocked by <refs>``.
+    """
     lines = []
     for item in items:
         line = (
             f"{item.ref.slug}  {_age(item.created_at, now)}  {item.state}  "
             f"{item.kind}  {item.title}"
         )
+        if item.marks:
+            line += f"  — {item.disposition}: {', '.join(item.marks)}"
         if item.blocked_by:
             line += f"  — blocked by {', '.join(dep.slug for dep in item.blocked_by)}"
         lines.append(line)
