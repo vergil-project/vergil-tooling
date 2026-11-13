@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
-from vergil_tooling.lib import epics, queue_view, security_records
+from vergil_tooling.lib import epics, github, queue_view, security_records
 from vergil_tooling.lib.epics import ChildState, IssueRef
 from vergil_tooling.lib.queue_view import Deferral, PlanningMarkers, QueueItem
 from vergil_tooling.lib.security_records import Advisory
@@ -38,14 +38,21 @@ class _FakeGh:
     """A ``github.read_json`` stand-in keyed by issue number, recording its calls."""
 
     def __init__(
-        self, views: dict[int, dict[str, Any]], states: dict[int, str] | None = None
+        self,
+        views: dict[int, dict[str, Any]],
+        states: dict[int, str] | None = None,
+        *,
+        listing: list[dict[str, Any]] | None = None,
     ) -> None:
         self.views = views
         self.states = states or {}
+        self.listing = listing or []
         self.calls: list[tuple[str, ...]] = []
 
-    def __call__(self, *args: str) -> dict[str, Any]:
+    def __call__(self, *args: str) -> Any:
         self.calls.append(args)
+        if args[:2] == ("issue", "list"):
+            return self.listing
         number = int(args[2])
         if args[args.index("--json") + 1] == "state":
             return {"state": self.states[number]}
@@ -665,5 +672,285 @@ def test_to_json_dicts() -> None:
             "state": "ready-to-close",
             "note": "n",
             "epic": {"owner": "org", "repo": ".github", "number": 50},
+        }
+    ]
+
+
+# -- adhoc_items -----------------------------------------------------------------
+
+_TOOL_EPIC = IssueRef("org", ".github", 100)
+_PLUGIN_EPIC = IssueRef("org", ".github", 200)
+_ADHOC_LISTING = [
+    {"number": 100, "title": "Epic (ad hoc): vergil-tooling"},
+    {"number": 200, "title": "Epic (ad hoc): vergil-claude-plugin"},
+]
+
+
+def _adhoc(
+    listing: list[dict[str, Any]],
+    children: dict[int, list[ChildState]],
+    views: dict[int, dict[str, Any]],
+    *,
+    blockers: dict[int, list[IssueRef]] | None = None,
+    states: dict[int, str] | None = None,
+    repo: str | None = None,
+) -> tuple[list[queue_view.AdhocItem], _FakeGh]:
+    """Run :func:`queue_view.adhoc_items` on ``org/.github`` against fakes."""
+    gh = _FakeGh(views, listing=listing)
+    blocked = blockers or {}
+    with (
+        patch(f"{_MOD}.github.read_json", side_effect=gh),
+        patch(f"{_MOD}.epics.child_states", side_effect=lambda epic: children[epic.number]),
+        patch(
+            f"{_MOD}.epics.blockers_of", side_effect=lambda ref: blocked.get(ref.number, [])
+        ),
+        patch(f"{_MOD}.epics.issue_state", side_effect=lambda ref: (states or {})[ref.number]),
+    ):
+        items = queue_view.adhoc_items("org/.github", repo=repo)
+    return items, gh
+
+
+def test_adhoc_items_lists_open_tasks_across_epics() -> None:
+    children = {
+        100: [
+            ChildState(IssueRef("org", "vergil-tooling", 3), "OPEN", "newer"),
+            ChildState(IssueRef("org", "vergil-tooling", 4), "CLOSED", "done"),
+            ChildState(IssueRef("org", "vergil-tooling", 5), "OPEN", "older"),
+        ],
+        200: [ChildState(IssueRef("org", "vergil-claude-plugin", 9), "OPEN", "plugin")],
+    }
+    views = {
+        3: _view("newer", "2026-10-20T00:00:00Z"),
+        5: _view("older", "2026-09-01T00:00:00Z"),
+        9: _view("plugin", "2026-10-25T00:00:00Z"),
+    }
+    items, gh = _adhoc(_ADHOC_LISTING, children, views)
+    # Repos in name order, oldest first within each; the closed child is gone.
+    assert [i.ref.slug for i in items] == [
+        "org/vergil-claude-plugin#9",
+        "org/vergil-tooling#5",
+        "org/vergil-tooling#3",
+    ]
+    assert items[1] == queue_view.AdhocItem(
+        ref=IssueRef("org", "vergil-tooling", 5),
+        title="older",
+        created_at="2026-09-01T00:00:00Z",
+        kind="task",
+        blocked_by=(),
+        state="ready",
+        marks=(),
+    )
+    # One label search, with the listing limit, and the closed child never fetched.
+    [listing] = [c for c in gh.calls if c[:2] == ("issue", "list")]
+    assert listing == (
+        "issue",
+        "list",
+        "--repo",
+        "org/.github",
+        "--label",
+        "epic",
+        "--label",
+        "ad-hoc",
+        "--state",
+        "open",
+        "--limit",
+        str(epics.LISTING_LIMIT),
+        "--json",
+        "number,title",
+    )
+    assert {int(c[2]) for c in gh.calls if c[1] == "view"} == {3, 5, 9}
+
+
+def test_adhoc_items_skips_archives_and_legacy_titles() -> None:
+    listing = [
+        {"number": 100, "title": "Epic (ad hoc): vergil-tooling"},
+        {"number": 300, "title": "Epic (ad hoc): vergil-tooling — 2026-Q2"},
+        {"number": 301, "title": "Archive (ad hoc): vergil-tooling — 2026-Q3"},
+        {"number": 302, "title": "Something else"},
+    ]
+    children = {100: [ChildState(IssueRef("org", "vergil-tooling", 3), "OPEN", "t")]}
+    views = {3: _view("t", "2026-10-20T00:00:00Z")}
+    # child_states is keyed only for the live epic: reading an archive would KeyError.
+    items, _ = _adhoc(listing, children, views)
+    assert [i.ref.number for i in items] == [3]
+
+
+def test_adhoc_items_refuses_a_truncated_search() -> None:
+    listing = [
+        {"number": n, "title": f"Epic (ad hoc): repo-{n}"} for n in range(epics.LISTING_LIMIT)
+    ]
+    with pytest.raises(epics.EpicListTruncatedError, match="limit"):
+        _adhoc(listing, {}, {})
+
+
+def test_adhoc_items_refuses_two_live_epics_for_one_repo() -> None:
+    listing = [
+        {"number": 100, "title": "Epic (ad hoc): vergil-tooling"},
+        {"number": 101, "title": "Epic (ad hoc): vergil-tooling"},
+    ]
+    with pytest.raises(epics.EpicTitleAmbiguousError, match="#100, #101"):
+        _adhoc(listing, {}, {})
+
+
+def test_adhoc_items_blocked_state() -> None:
+    children = {
+        100: [
+            ChildState(IssueRef("org", "vergil-tooling", 3), "OPEN", "held"),
+            ChildState(IssueRef("org", "vergil-tooling", 5), "OPEN", "free"),
+        ]
+    }
+    views = {
+        3: _view("held", "2026-09-01T00:00:00Z"),
+        5: _view("free", "2026-10-01T00:00:00Z"),
+    }
+    blockers = {
+        3: [IssueRef("org", "vergil-tooling", 40), IssueRef("org", "docs", 41)],
+        5: [IssueRef("org", "vergil-tooling", 42)],
+    }
+    states = {40: "CLOSED", 41: "OPEN", 42: "CLOSED"}
+    items, _ = _adhoc(
+        _ADHOC_LISTING[:1], children, views, blockers=blockers, states=states
+    )
+    held, free = items
+    assert held.state == "blocked"
+    assert held.blocked_by == (IssueRef("org", "docs", 41),)
+    assert free.state == "ready"
+    assert free.blocked_by == ()
+
+
+def test_adhoc_items_kind_from_labels() -> None:
+    children = {
+        100: [
+            ChildState(IssueRef("org", "vergil-tooling", 3), "OPEN", ""),
+            ChildState(IssueRef("org", "vergil-tooling", 4), "OPEN", ""),
+            ChildState(IssueRef("org", "vergil-tooling", 5), "OPEN", ""),
+        ]
+    }
+    views = {
+        3: _view("v", "2026-09-01T00:00:00Z", labels=("validation",)),
+        4: _view("d", "2026-09-02T00:00:00Z", labels=("deployment", "bug")),
+        5: _view("t", "2026-09-03T00:00:00Z", labels=("bug",)),
+    }
+    items, _ = _adhoc(_ADHOC_LISTING[:1], children, views)
+    assert [i.kind for i in items] == ["validation", "deployment", "task"]
+
+
+def test_adhoc_repo_narrows_to_one_epic() -> None:
+    children = {100: [ChildState(IssueRef("org", "vergil-tooling", 3), "OPEN", "t")]}
+    views = {3: _view("t", "2026-10-20T00:00:00Z")}
+    # The plugin epic is never read: child_states has no entry for it.
+    items, _ = _adhoc(_ADHOC_LISTING, children, views, repo="org/vergil-tooling")
+    assert [i.ref.slug for i in items] == ["org/vergil-tooling#3"]
+
+
+def test_adhoc_repo_without_epic_is_empty() -> None:
+    items, _ = _adhoc(_ADHOC_LISTING, {}, {}, repo="org/no-adhoc-yet")
+    assert items == []
+
+
+def test_adhoc_items_no_epics_is_empty() -> None:
+    assert _adhoc([], {}, {})[0] == []
+
+
+def test_adhoc_items_rejects_a_bare_repo() -> None:
+    with pytest.raises(ValueError, match="owner/name"):
+        queue_view.adhoc_items("org/.github", repo="vergil-tooling")
+
+
+def test_adhoc_items_sub_issue_read_failure_raises() -> None:
+    gh = _FakeGh({}, listing=_ADHOC_LISTING[:1])
+    failure = github.GitHubAPIError(1, ["gh", "api", "graphql"], "", "HTTP 502")
+    with (
+        patch(f"{_MOD}.github.read_json", side_effect=gh),
+        patch(f"{_MOD}.epics.child_states", side_effect=failure),
+        pytest.raises(github.GitHubAPIError, match="502"),
+    ):
+        queue_view.adhoc_items("org/.github")
+
+
+@pytest.mark.parametrize("failing", ["blockers_of", "issue_state"])
+def test_adhoc_items_blocker_read_failure_raises(failing: str) -> None:
+    gh = _FakeGh({3: _view("t", "2026-10-20T00:00:00Z")}, listing=_ADHOC_LISTING[:1])
+    failure = github.GitHubAPIError(1, ["gh", "api"], "", "HTTP 403")
+    blockers: Any = (
+        failure if failing == "blockers_of" else [IssueRef("org", "vergil-tooling", 40)]
+    )
+    state: Any = failure if failing == "issue_state" else "OPEN"
+    with (
+        patch(f"{_MOD}.github.read_json", side_effect=gh),
+        patch(
+            f"{_MOD}.epics.child_states",
+            return_value=[ChildState(IssueRef("org", "vergil-tooling", 3), "OPEN", "t")],
+        ),
+        patch(f"{_MOD}.epics.blockers_of", **_effect(blockers)),
+        patch(f"{_MOD}.epics.issue_state", **_effect(state)),
+        pytest.raises(github.GitHubAPIError, match="403"),
+    ):
+        queue_view.adhoc_items("org/.github")
+
+
+def _effect(value: Any) -> dict[str, Any]:
+    """A ``patch`` keyword: raise *value* when it is an exception, else return it."""
+    if isinstance(value, BaseException):
+        return {"side_effect": value}
+    return {"return_value": value}
+
+
+def test_adhoc_items_never_mutate() -> None:
+    with (
+        patch(f"{_MOD}.github.read_json", side_effect=_FakeGh({}, listing=_ADHOC_LISTING)),
+        patch(f"{_MOD}.epics.child_states", return_value=[]),
+        patch(f"{_MOD}.epics.ensure_standing_epic") as ensure,
+        patch(f"{_MOD}.github.create_issue") as create,
+        patch(f"{_MOD}.github.run") as run,
+    ):
+        assert queue_view.adhoc_items("org/.github") == []
+    ensure.assert_not_called()
+    create.assert_not_called()
+    run.assert_not_called()
+
+
+# -- render_adhoc_text / adhoc_to_json --------------------------------------------
+
+_ADHOC_ITEMS = [
+    queue_view.AdhocItem(
+        IssueRef("org", "tool", 1), "a", "2026-10-23T12:00:00Z", "task", (), "ready", ()
+    ),
+    queue_view.AdhocItem(
+        IssueRef("org", "tool", 2),
+        "b",
+        "2025-10-23T12:00:00Z",
+        "validation",
+        (IssueRef("org", "tool", 7), IssueRef("org", "docs", 8)),
+        "blocked",
+        (),
+    ),
+]
+
+
+def test_render_adhoc_text() -> None:
+    assert queue_view.render_adhoc_text(_ADHOC_ITEMS, now=_NOW) == (
+        "org/tool#1  0d  ready  task  a\n"
+        "org/tool#2  365d  blocked  validation  b  — blocked by org/tool#7, org/docs#8"
+    )
+
+
+def test_render_adhoc_text_empty() -> None:
+    assert queue_view.render_adhoc_text([], now=_NOW) == ""
+
+
+def test_adhoc_to_json_dicts() -> None:
+    assert queue_view.adhoc_to_json(_ADHOC_ITEMS[1:]) == [
+        {
+            "ref": {"owner": "org", "repo": "tool", "number": 2},
+            "title": "b",
+            "created_at": "2025-10-23T12:00:00Z",
+            "kind": "validation",
+            "blocked_by": [
+                {"owner": "org", "repo": "tool", "number": 7},
+                {"owner": "org", "repo": "docs", "number": 8},
+            ],
+            "state": "blocked",
+            "marks": [],
         }
     ]
