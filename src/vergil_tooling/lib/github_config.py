@@ -1165,6 +1165,80 @@ def _classic_protection_drift(
     return synthetic
 
 
+# What a repo-settings field missing from ``GET repos/{repo}`` needs. GitHub
+# leaves some fields (the merge settings among them) out of the response for a
+# token without the access it wants. Which permission that is has not been
+# pinned down (vergil-actions#1164), so the audit names none it cannot vouch
+# for (#4322).
+SETTING_RETURNED = "a token GitHub returns the field to"
+
+class _RepoSettingsReader:
+    """Strict reads of the compared repo settings from ``GET repos/{repo}`` (#4322).
+
+    A field GitHub left out of the response (or returned as ``null``) is
+    recorded in *not_checked* as ``repo_settings.<field>``, and gets a
+    placeholder that :func:`compute_diff` never compares. It is never read as
+    ``False`` or ``''``, which would report drift on a setting nobody read. A
+    field of another type raises: the response is not one the audit knows.
+    """
+
+    def __init__(self, repo_data: dict[str, object], not_checked: list[NotChecked]) -> None:
+        self._data = repo_data
+        self._not_checked = not_checked
+
+    def _raw(self, name: str) -> object:
+        raw = self._data.get(name)
+        if raw is None:
+            self._not_checked.append(
+                NotChecked(field=f"repo_settings.{name}", permission=SETTING_RETURNED)
+            )
+        return raw
+
+    def flag(self, name: str) -> bool:
+        raw = self._raw(name)
+        if raw is None:
+            return False  # placeholder; recorded as not checked
+        if not isinstance(raw, bool):
+            msg = f"repository field {name!r} is {raw!r}, not a boolean"
+            raise RuntimeError(msg)
+        return raw
+
+    def text(self, name: str) -> str:
+        raw = self._raw(name)
+        if raw is None:
+            return ""  # placeholder; recorded as not checked
+        if not isinstance(raw, str):
+            msg = f"repository field {name!r} is {raw!r}, not a string"
+            raise RuntimeError(msg)
+        return raw
+
+
+def _read_repo_settings(
+    repo_data: dict[str, object], not_checked: list[NotChecked]
+) -> DesiredRepoSettings:
+    """Read every repo setting the audit compares; see :class:`_RepoSettingsReader`."""
+    r = _RepoSettingsReader(repo_data, not_checked)
+    return DesiredRepoSettings(
+        default_branch=r.text("default_branch"),
+        allow_auto_merge=r.flag("allow_auto_merge"),
+        delete_branch_on_merge=r.flag("delete_branch_on_merge"),
+        allow_merge_commit=r.flag("allow_merge_commit"),
+        allow_squash_merge=r.flag("allow_squash_merge"),
+        allow_rebase_merge=r.flag("allow_rebase_merge"),
+        has_issues=r.flag("has_issues"),
+        has_projects=r.flag("has_projects"),
+        has_wiki=r.flag("has_wiki"),
+        allow_forking=r.flag("allow_forking"),
+        allow_update_branch=r.flag("allow_update_branch"),
+        has_downloads=r.flag("has_downloads"),
+        merge_commit_title=r.text("merge_commit_title"),
+        merge_commit_message=r.text("merge_commit_message"),
+        squash_merge_commit_title=r.text("squash_merge_commit_title"),
+        squash_merge_commit_message=r.text("squash_merge_commit_message"),
+        web_commit_signoff_required=r.flag("web_commit_signoff_required"),
+    )
+
+
 def fetch_actual_state(repo: str) -> FetchResult:
     """Fetch the current GitHub configuration for a repo via gh api."""
     repo_data = github.read_json("api", f"repos/{repo}")
@@ -1195,57 +1269,10 @@ def fetch_actual_state(repo: str) -> FetchResult:
             )
         )
 
-    repo_settings = DesiredRepoSettings(
-        default_branch=str(repo_data.get("default_branch", ""))
-        if isinstance(repo_data, dict)
-        else "",
-        allow_auto_merge=bool(repo_data.get("allow_auto_merge", False))
-        if isinstance(repo_data, dict)
-        else False,
-        delete_branch_on_merge=bool(repo_data.get("delete_branch_on_merge", False))
-        if isinstance(repo_data, dict)
-        else False,
-        allow_merge_commit=bool(repo_data.get("allow_merge_commit", False))
-        if isinstance(repo_data, dict)
-        else False,
-        allow_squash_merge=bool(repo_data.get("allow_squash_merge", False))
-        if isinstance(repo_data, dict)
-        else False,
-        allow_rebase_merge=bool(repo_data.get("allow_rebase_merge", False))
-        if isinstance(repo_data, dict)
-        else False,
-        has_issues=bool(repo_data.get("has_issues", False))
-        if isinstance(repo_data, dict)
-        else False,
-        has_projects=bool(repo_data.get("has_projects", False))
-        if isinstance(repo_data, dict)
-        else False,
-        has_wiki=bool(repo_data.get("has_wiki", False)) if isinstance(repo_data, dict) else False,
-        allow_forking=bool(repo_data.get("allow_forking", False))
-        if isinstance(repo_data, dict)
-        else False,
-        allow_update_branch=bool(repo_data.get("allow_update_branch", False))
-        if isinstance(repo_data, dict)
-        else False,
-        has_downloads=bool(repo_data.get("has_downloads", False))
-        if isinstance(repo_data, dict)
-        else False,
-        merge_commit_title=str(repo_data.get("merge_commit_title", ""))
-        if isinstance(repo_data, dict)
-        else "",
-        merge_commit_message=str(repo_data.get("merge_commit_message", ""))
-        if isinstance(repo_data, dict)
-        else "",
-        squash_merge_commit_title=str(repo_data.get("squash_merge_commit_title", ""))
-        if isinstance(repo_data, dict)
-        else "",
-        squash_merge_commit_message=str(repo_data.get("squash_merge_commit_message", ""))
-        if isinstance(repo_data, dict)
-        else "",
-        web_commit_signoff_required=bool(repo_data.get("web_commit_signoff_required", False))
-        if isinstance(repo_data, dict)
-        else False,
-    )
+    if not isinstance(repo_data, dict):
+        msg = f"repos/{repo} returned {type(repo_data).__name__}, not a repository object"
+        raise RuntimeError(msg)
+    repo_settings = _read_repo_settings(cast("dict[str, object]", repo_data), not_checked)
 
     ss_raw = sa.get("secret_scanning")
     ss = cast("dict[str, object]", ss_raw) if isinstance(ss_raw, dict) else {}

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import json
 import re
 import subprocess
@@ -30,6 +31,7 @@ from vergil_tooling.lib.github_config import (
     DesiredRuleset,
     EvidenceGate,
     FetchResult,
+    SETTING_RETURNED,
     NotChecked,
     UndeclaredParam,
     _apply_actions_permissions,
@@ -2495,6 +2497,13 @@ def test_apply_desired_state_orchestrates_all() -> None:
 # ---------------------------------------------------------------------------
 
 
+# Every repo setting the audit compares, as GitHub returns it to a token that
+# can see them all: the desired values of a private org repo (#4322).
+_REPO_SETTINGS_JSON: dict[str, object] = dataclasses.asdict(
+    desired_repo_settings(is_org=True, visibility="private")
+)
+
+
 def _fetch_with_classic_protection(
     protection_by_branch: dict[str, object],
     *,
@@ -2509,6 +2518,7 @@ def _fetch_with_classic_protection(
     (no classic protection), the real-world default.
     """
     repo_json: dict[str, object] = {
+        **_REPO_SETTINGS_JSON,
         "default_branch": default_branch,
         "security_and_analysis": {},
     }
@@ -2969,7 +2979,7 @@ def _admin_gap_read_json(repo_json: dict[str, object]) -> Callable[..., object]:
 def test_fetch_actual_state_records_unreadable_admin_settings() -> None:
     # Under the agent App every admin-scoped read is a 403 and the repo object
     # carries no security_and_analysis block (#3816, #3869).
-    repo_json: dict[str, object] = {"default_branch": "develop", "visibility": "public"}
+    repo_json: dict[str, object] = {**_REPO_SETTINGS_JSON, "visibility": "public"}
     with (
         patch(
             "vergil_tooling.lib.github_config.github.read_json",
@@ -3007,7 +3017,7 @@ def test_fetch_actual_state_selected_actions_unreadable() -> None:
     def read_json(*args: str) -> dict[str, object] | list[object]:
         endpoint = args[1]
         if endpoint == "repos/o/r":
-            return {"default_branch": "", "security_and_analysis": {}}
+            return {**_REPO_SETTINGS_JSON, "default_branch": "", "security_and_analysis": {}}
         if endpoint == "repos/o/r/rulesets":
             return []
         if endpoint == "repos/o/r/actions/permissions":
@@ -3062,6 +3072,88 @@ def test_fetch_actual_state_classic_non_permission_403_propagates() -> None:
 def test_fetch_actual_state_readable_records_nothing_unread() -> None:
     result = _fetch_with_classic_protection({})
     assert result.not_checked == []
+
+
+def _fetch_with_repo_json(repo_json: object) -> FetchResult:
+    """Run ``fetch_actual_state`` with every read but ``repos/o/r`` readable."""
+
+    def read_json(*args: str) -> object:
+        endpoint = args[1]
+        if endpoint == "repos/o/r":
+            return repo_json
+        if endpoint == "repos/o/r/rulesets":
+            return []
+        if endpoint == "repos/o/r/actions/permissions":
+            return {"allowed_actions": "all"}
+        if endpoint == "repos/o/r/actions/permissions/workflow":
+            return {"default_workflow_permissions": "read"}
+        raise GitHubAPIError(1, ("gh", "api", endpoint), "", "gh: (HTTP 404)")
+
+    with (
+        patch("vergil_tooling.lib.github_config.github.read_json", side_effect=read_json),
+        patch("vergil_tooling.lib.github_config._fetch_vulnerability_alerts", return_value=True),
+    ):
+        return fetch_actual_state("o/r")
+
+
+def test_fetch_actual_state_missing_merge_setting_is_not_checked() -> None:
+    # The scoped token got no merge settings back (vergil-actions#1154): a
+    # missing field is not checked, never read as False or '' (#4322).
+    repo_json = {**_REPO_SETTINGS_JSON, "security_and_analysis": {}}
+    del repo_json["allow_merge_commit"]
+    del repo_json["merge_commit_title"]
+    result = _fetch_with_repo_json(repo_json)
+    assert result.not_checked == [
+        NotChecked(field="repo_settings.allow_merge_commit", permission=SETTING_RETURNED),
+        NotChecked(field="repo_settings.merge_commit_title", permission=SETTING_RETURNED),
+    ]
+
+    desired = compute_desired_state(_vergil_config(), visibility="private", is_org=True)
+    diff = compute_diff(desired=desired, actual=result.state, not_checked=result.not_checked)
+    assert not any(item.field.startswith("repo_settings.") for item in diff.items)
+    assert {nc.field for nc in diff.not_checked} == {
+        "repo_settings.allow_merge_commit",
+        "repo_settings.merge_commit_title",
+    }
+    assert not diff.is_compliant()
+
+
+def test_fetch_actual_state_null_repo_setting_is_not_checked() -> None:
+    repo_json = {**_REPO_SETTINGS_JSON, "security_and_analysis": {}, "has_wiki": None}
+    result = _fetch_with_repo_json(repo_json)
+    assert [nc.field for nc in result.not_checked] == ["repo_settings.has_wiki"]
+
+
+def test_fetch_actual_state_every_missing_repo_setting_is_not_checked() -> None:
+    result = _fetch_with_repo_json({"security_and_analysis": {}})
+    assert [nc.field for nc in result.not_checked] == [
+        f"repo_settings.{name}" for name in _REPO_SETTINGS_JSON
+    ]
+
+
+def test_fetch_actual_state_unmanaged_missing_setting_is_not_reported() -> None:
+    # allow_forking is unmanaged on a public repo, so its absence is moot.
+    repo_json = {**_REPO_SETTINGS_JSON, "security_and_analysis": {}}
+    del repo_json["allow_forking"]
+    result = _fetch_with_repo_json(repo_json)
+    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    diff = compute_diff(desired=desired, actual=result.state, not_checked=result.not_checked)
+    assert diff.not_checked == []
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [("allow_merge_commit", "true"), ("merge_commit_title", 1)],
+)
+def test_fetch_actual_state_mistyped_repo_setting_raises(name: str, value: object) -> None:
+    repo_json = {**_REPO_SETTINGS_JSON, "security_and_analysis": {}, name: value}
+    with pytest.raises(RuntimeError, match=f"repository field '{name}'"):
+        _fetch_with_repo_json(repo_json)
+
+
+def test_fetch_actual_state_non_object_repo_response_raises() -> None:
+    with pytest.raises(RuntimeError, match="not a repository object"):
+        _fetch_with_repo_json([])
 
 
 def test_compute_diff_not_checked_drops_unmanaged_fields() -> None:

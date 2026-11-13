@@ -74,9 +74,18 @@ audit does not guess the value. It reports the setting as not checked:
 - **It is not a pass.** `audit` exits 2 with a one-line error naming
   the permission, unless it also found drift in the settings it did
   read, in which case it exits 1. It never exits 0 while any setting
-  is not checked.
+  is not checked. `diff`, which otherwise always exits 0, exits 2 with
+  the same error.
 - **`apply` refuses.** It exits 2 and writes nothing, since it would
   converge settings it could not read.
+- A repo setting that `GET /repos/{owner}/{repo}` leaves out of its
+  response, or returns as `null`, is not checked either, as
+  `repo_settings.<field>`, never read as `false` or `''` (#4322).
+  GitHub leaves the merge settings out for some scoped tokens. Which
+  permission it wants for them is not yet pinned down
+  (vergil-project/vergil-actions#1164), so the line says
+  `needs a token GitHub returns the field to`. A repo setting of the
+  wrong type is an error.
 - A setting the desired state leaves unmanaged (secret scanning on a
   private repo without GHAS) is skipped as before, not listed as not
   checked.
