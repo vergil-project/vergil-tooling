@@ -547,10 +547,14 @@ org's existing backlog.
 
 #### The security-records pass
 
-After the orphan pass, `vrg-epic-audit --close` runs one pass over the draft
-advisories in the org's `.github` (see
+The scheduled sweep does not run the security-records pass:
+`vrg-epic-audit --close` makes no security-advisory call, so the sweep's org
+ops App needs no Repository security advisories access (see
+[Identity architecture](../guides/identity-architecture.md)). The pass is
+`vrg-security-record sync`, which the human or the user agent runs over the
+draft advisories in the org's `.github`, under an identity that holds
+Repository security advisories: Read and write (see
 [Security Records](../guides/security-records.md#managing-a-record-through-its-issue)).
-It runs even when the orphan pass failed, and the worse exit code wins.
 
 - **State sync.** Each paired advisory follows its `security` issues: closed
   once every issue it tracks is closed, a draft while any is open. The pass
@@ -559,13 +563,12 @@ It runs even when the orphan pass failed, and the worse exit code wins.
 - **Consistency check.** It reports broken pairs (a `security` issue with a
   missing or wrong advisory reference, or an advisory whose tracking lines are
   missing or do not point back) and does not repair them; any broken pair
-  makes the run exit 1.
+  makes `sync` exit 1, after it has synced the rest.
 
-Its output goes to `.github`'s public Actions logs, so it names only GHSA IDs,
-issue refs, labels and states, never advisory text. The read-only
-`vrg-epic-audit` previews the same pass without changing any state. The sweep's
-org ops App needs Repository security advisories: Read and write (see
-[Identity architecture](../guides/identity-architecture.md)).
+Its output names only GHSA IDs, issue refs, labels and states, never advisory
+text. `vrg-security-record sync --dry-run` and the read-only `vrg-epic-audit`
+preview the same pass without changing any state. Nothing runs it on a
+schedule, so advisory states lag their issues until someone runs it.
 
 ## Intake, planning and deferred queues
 
