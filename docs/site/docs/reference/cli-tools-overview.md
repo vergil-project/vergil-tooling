@@ -742,7 +742,8 @@ deferral — so no review skill hand-rolls them. Routes:
 - `one-off --repo OWNER/REPO [--epic REF]` — move the item into the target
   repo (transfer, or recreate with a link back when GitHub refuses the
   transfer) and link it under that repo's ad-hoc epic (default `adhoc`) or the
-  named epic.
+  named epic. A planning item's `in-progress` label is removed from the moved
+  issue once the move has settled; a recreated issue never carries it.
 - `planning` — reparent the item onto the planning epic of the same queue
   home.
 - `split --into REF [--into REF …] --reason TEXT` — comment links to the
@@ -753,7 +754,7 @@ Which routes an item allows depends on the container epic it is in:
 | Item is in | Allowed routes |
 |---|---|
 | intake | `drop`, `defer`, `one-off`, `planning`, `split` |
-| planning | `defer`, `drop` — both refused while any development epic of the item is open |
+| planning | `defer`, `drop`, `one-off` — each refused while any development epic of the item is open |
 | ad hoc | `defer` — refused while an open PR would close the item |
 | deferred | `defer` (refresh), `intake`, `planning`, `one-off`, `drop`, `split` |
 | no parent | `planning` (the `epic-create` free-text path) |
@@ -764,7 +765,7 @@ Which routes an item allows depends on the container epic it is in:
 | Source | `vergil_tooling.bin.vrg_intake_route` (mechanics and route table: `lib/intake_route.py`) |
 | Args | `<issue-ref>` (`owner/repo#N`, or `#N` in the current repo), then a route: `drop`, `defer`, `intake`, `one-off`, `planning`, `split` |
 | Preconditions | The item is a child of a container epic that allows the route (`planning` also accepts an unparented issue); GitHub App credentials for the item's org |
-| Failure mode | A refused route — not allowed from the item's container, a development-epic task, a planning item with an `Epic:` marker, an ad-hoc item with an open closing PR, a cross-org target, or a private item headed to a public repo or epic — exits 1 with the reason on stderr. A route half-applied by a failure raises with the state it left and how to fix it |
+| Failure mode | A refused route — not allowed from the item's container, a development-epic task, a planning item while any of its development epics is open, an ad-hoc item with an open closing PR, a cross-org target, or a private item headed to a public repo or epic — exits 1 with the reason on stderr. A route half-applied by a failure raises with the state it left and how to fix it |
 | Exit codes | 0 routed, 1 refused or error, 2 bad arguments (including a missing `--revisit-when` or a malformed `--date`) |
 | Status | Active |
 

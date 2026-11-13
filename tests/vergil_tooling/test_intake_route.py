@@ -522,6 +522,151 @@ def test_route_defer_planning_refuses_malformed_search(env: Env, results: Any, m
     _assert_untouched(env)
 
 
+def _assert_no_one_off(env: Env) -> None:
+    """A refused one-off: nothing moved, and no ad-hoc epic was resolved (or created)."""
+    _assert_untouched(env)
+    env.resolve_epic_ref.assert_not_called()
+    assert _transfer_calls(env) == []
+    env.create_issue.assert_not_called()
+
+
+def _label_removals(env: Env) -> list[Any]:
+    return [c for c in env.run.call_args_list if c.args[:2] == ("issue", "edit")]
+
+
+def test_route_one_off_from_planning_moves_under_adhoc(env: Env) -> None:
+    env.parent = PLANNING
+    env.native_parent[ITEM] = PLANNING
+    result = route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    new = IssueRef("org", "tool", 900)
+    assert result == RouteResult(final=new, moved_by="transfer")
+    env.resolve_epic_ref.assert_called_once_with("adhoc", repo="org/tool")
+    assert env.native_parent[new] == TOOL_ADHOC
+    assert new not in env.native_children(PLANNING)
+    assert _label_removals(env) == []
+
+
+def test_route_one_off_planning_refuses_open_marker_epic(env: Env) -> None:
+    _planning_item(env)
+    env.comments = ["Epic: org/.github#600\nDocs task: org/.github#601"]
+    with pytest.raises(
+        RouteRefusedError,
+        match=r"has an open development epic \(org/\.github#600\); routing one-off it",
+    ):
+        route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    _assert_no_one_off(env)
+
+
+def test_route_one_off_planning_refuses_open_epic_found_by_planning_line(env: Env) -> None:
+    _planning_item(env)
+    env.comments = ["Epic: org/.github#600"]
+    env.api_states = {"repos/org/.github/issues/600": "closed"}
+    env.search_results = [_epic_hit(600, "CLOSED"), _epic_hit(648, "OPEN")]
+    with pytest.raises(
+        RouteRefusedError,
+        match=r"has an open development epic \(org/\.github#648\); routing one-off",
+    ):
+        route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    _assert_no_one_off(env)
+
+
+def test_route_one_off_planning_refuses_a_truncated_search(env: Env) -> None:
+    _planning_item(env)
+    env.search_results = [_epic_hit(600, "CLOSED")] * epics.LISTING_LIMIT
+    with pytest.raises(epics.EpicListTruncatedError, match="possibly truncated"):
+        route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    _assert_no_one_off(env)
+
+
+def _closed_planning_item(env: Env) -> None:
+    """A planning item labelled in-progress whose one development epic is closed."""
+    _planning_item(env)
+    env.comments = ["Epic: org/.github#600"]
+    env.api_states = {"repos/org/.github/issues/600": "closed"}
+    env.search_results = [_epic_hit(600, "CLOSED")]
+    env.issue_view = {
+        **env.issue_view,
+        "labels": [{"name": "in-progress"}, {"name": "bug"}],
+    }
+
+
+def test_route_one_off_from_planning_removes_in_progress_after_transfer(env: Env) -> None:
+    _closed_planning_item(env)
+    order: list[str] = []
+    env.reparent_child.side_effect = lambda *a: order.append("link") or env.attach(*a)
+    env.run.side_effect = lambda *a: order.append(f"{a[0]}:{a[1]}")
+    result = route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    new = IssueRef("org", "tool", 900)
+    assert result == RouteResult(final=new, moved_by="transfer")
+    # Removed from the transferred issue, never the old ref, once the move settled.
+    env.run.assert_called_once_with(
+        "issue", "edit", "900", "--repo", "org/tool", "--remove-label", "in-progress"
+    )
+    assert order == ["link", "issue:edit"]
+
+
+def test_route_one_off_from_planning_transfer_that_dropped_the_label_removes_nothing(
+    env: Env,
+) -> None:
+    # A transfer drops a label the target repo lacks: nothing is left to remove.
+    _closed_planning_item(env)
+    env.issue_view = {**env.issue_view, "labels": [{"name": "bug"}]}
+    result = route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    assert result.moved_by == "transfer"
+    assert _label_removals(env) == []
+
+
+def test_route_one_off_from_planning_removes_in_progress_after_recreate(env: Env) -> None:
+    _closed_planning_item(env)
+    _transfer_fails(env)
+    result = route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    assert result == RouteResult(final=IssueRef("org", "tool", 901), moved_by="recreate")
+    # The recreated issue never gets the label, so there is nothing to remove.
+    assert env.create_issue.call_args.kwargs["labels"] == ["bug"]
+    env.ensure_labels.assert_called_once_with("org/tool", ["bug"])
+    assert _label_removals(env) == []
+
+
+def test_route_one_off_from_planning_removes_in_progress_same_repo(env: Env) -> None:
+    _closed_planning_item(env)
+    env.resolve_epic_ref.return_value = ADHOC_DOTGITHUB
+    result = route(ITEM, OneOff(repo="org/.github"), today=TODAY)
+    assert result == RouteResult(final=ITEM, moved_by="none")
+    env.reparent_child.assert_called_once_with(ADHOC_DOTGITHUB, ITEM)
+    env.run.assert_called_once_with(
+        "issue", "edit", "352", "--repo", "org/.github", "--remove-label", "in-progress"
+    )
+
+
+def test_route_one_off_from_planning_keeps_in_progress_when_move_fails(env: Env) -> None:
+    _closed_planning_item(env)
+    _transfer_fails(env)
+    env.create_issue.side_effect = github.GitHubAPIError(1, ["gh"], "", "HTTP 502")
+    with pytest.raises(github.GitHubAPIError):
+        route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    # The original is neither closed nor stripped of its label.
+    env.run.assert_not_called()
+
+
+def test_route_one_off_from_planning_label_failure_fails_loudly(env: Env) -> None:
+    _closed_planning_item(env)
+    env.run.side_effect = github.GitHubAPIError(1, ["gh"], "", "HTTP 502")
+    with pytest.raises(RuntimeError) as excinfo:
+        route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    message = str(excinfo.value)
+    assert "routing one-off left the 'in-progress' label on org/tool#900" in message
+    assert "HTTP 502" in message
+    assert "gh issue edit 900 --repo org/tool --remove-label in-progress" in message
+    assert env.native_parent[IssueRef("org", "tool", 900)] == TOOL_ADHOC
+
+
+def test_route_recreate_never_carries_in_progress(env: Env) -> None:
+    _transfer_fails(env)
+    env.issue_view = {**env.issue_view, "labels": [{"name": "in-progress"}, {"name": "bug"}]}
+    route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    assert env.create_issue.call_args.kwargs["labels"] == ["bug"]
+
+
 def test_route_drop_planning_without_marker_closes(env: Env) -> None:
     env.parent = PLANNING
     env.comments = ["Just a note."]
@@ -678,7 +823,7 @@ def test_route_drop_names_source_queue(env: Env, parent: IssueRef, queue: str) -
 def test_routes_table_matches_spec() -> None:
     expected: dict[str | None, frozenset[type]] = {
         "intake": frozenset({Drop, Defer, OneOff, ToPlanning, Split}),
-        "planning": frozenset({Defer, Drop}),
+        "planning": frozenset({Defer, Drop, OneOff}),
         "ad-hoc": frozenset({Defer}),
         "deferred": frozenset({Defer, ToIntake, ToPlanning, OneOff, Drop, Split}),
         None: frozenset({ToPlanning}),
@@ -708,7 +853,7 @@ def test_route_defer_adhoc_closing_pr_without_url_fails_loudly(env: Env) -> None
     ("parent", "action", "name"),
     [
         (PLANNING, ToPlanning(), "planning"),
-        (PLANNING, OneOff(repo="org/tool"), "one-off"),
+        (PLANNING, Split(into=(IssueRef("org", "tool", 10),), reason="r"), "split"),
         (ADHOC_DOTGITHUB, Drop(reason="x"), "drop"),
         (ADHOC_DOTGITHUB, ToIntake(), "intake"),
     ],
