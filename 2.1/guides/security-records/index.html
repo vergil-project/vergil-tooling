@@ -1410,6 +1410,8 @@
       
         
       
+        
+      
     
     
     
@@ -1462,6 +1464,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.307/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.307
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13315,7 +13345,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../releases/v1.2.0/" class="md-nav__link">
+      <a href="../../releases/v1.2.1/" class="md-nav__link">
         
   
   
@@ -13343,7 +13373,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../releases/v1.2.1/" class="md-nav__link">
+      <a href="../../releases/v1.2.0/" class="md-nav__link">
         
   
   
@@ -17757,8 +17787,8 @@ extended to several advisories per issue by epic
   decision.</li>
 </ul>
 <p>Advisories <strong>complement</strong> issues. They don't replace them: the issue is
-what intake review routes, what a task's PR closes, and what the sweep
-follows.</p>
+what intake review routes, what a task's PR closes, and what
+<code>vrg-security-record sync</code> follows.</p>
 <h3 id="what-counts-as-a-security-finding">What counts as a security finding<a class="headerlink" href="#what-counts-as-a-security-finding" title="Permanent link">&para;</a></h3>
 <p>The definition is paad's, used by every paad review skill:</p>
 <blockquote>
@@ -17791,7 +17821,7 @@ security record is the durable, private home for them.</p>
 <p>It is never created in a public code repo itself.</p>
 <p>The org's <code>.github</code> repo must be <strong>public</strong>. GitHub documents repository
 security advisories for public repos only. When <code>&lt;org&gt;/.github</code> is not
-public, every <code>vrg-security-record</code> command refuses, the sweep fails, and
+public, every <code>vrg-security-record</code> command refuses (<code>sync</code> included), and
 <code>vrg-intake-route</code> and <code>vrg-queue planning</code> fail when they meet a security
 item. None of them falls back to an issue-only record. Orgs with a private <code>.github</code>, and
 repos owned by a user account rather than an org, are not supported.</p>
@@ -17822,11 +17852,11 @@ hand; <code>vrg-security-record</code> writes and moves them.</p>
 <tbody>
 <tr>
 <td><code>security</code></td>
-<td>Has a private security record in the org's <code>.github</code> advisories. The sweep checks every issue with this label.</td>
+<td>Has a private security record in the org's <code>.github</code> advisories. <code>vrg-security-record sync</code> checks every issue with this label.</td>
 </tr>
 <tr>
 <td><code>security-disclosed</code></td>
-<td>Past issue that disclosed a security problem publicly; fixed, no private record. The sweep ignores it.</td>
+<td>Past issue that disclosed a security problem publicly; fixed, no private record. <code>vrg-security-record sync</code> ignores it.</td>
 </tr>
 </tbody>
 </table>
@@ -17885,8 +17915,13 @@ attach mode (<code>--issue</code>) and resume (<code>--resume</code>).</p>
 <p><strong>The issue drives the record.</strong> Work the issue like any other: route it,
 build the fix, close it with the PR. Never change an advisory's state by
 hand.</p>
-<p>The scheduled sweep (<code>vrg-epic-audit --close</code>, run by the org's automation
-App) keeps each advisory's state in step with the issues it tracks:</p>
+<p><code>vrg-security-record sync</code> keeps each advisory's state in step with the
+issues it tracks. The human runs it, or the user agent, under an identity
+that holds Repository security advisories: Read and write (see
+<a href="#permissions">Permissions</a>); <code>--dry-run</code> previews it and changes nothing.
+The scheduled sweep (<code>vrg-epic-audit --close</code>) does not run it: the sweep
+makes no security-advisory call, so its token needs no advisories access.
+On each run of <code>sync</code>:</p>
 <ul>
 <li>the advisory is <strong>closed</strong> when <strong>every</strong> issue it tracks is closed,
   whether fixed or dropped as not planned;</li>
@@ -17894,7 +17929,7 @@ App) keeps each advisory's state in step with the issues it tracks:</p>
   reopens its advisory.</li>
 </ul>
 <p>A manual state change to a draft or closed advisory is overwritten on the
-next run. The sweep only moves an advisory between <code>draft</code> and <code>closed</code>.
+next run. <code>sync</code> only moves an advisory between <code>draft</code> and <code>closed</code>.
 It never touches an advisory in any other state (published, withdrawn, or
 <code>triage</code>), and never touches an unpaired external report.</p>
 <p>Each run also checks every pair and reports the broken ones, by GHSA ID
@@ -17907,18 +17942,21 @@ and issue ref only. A pair is broken when:</p>
 <li>an advisory is not named by any <code>security</code> issue and is not an
   external report.</li>
 </ul>
-<p>The sweep reports a broken pair and does not repair it; a human decides
-what to do. Broken pairs make <code>vrg-epic-audit --close</code> exit 1, after it
-has synced the rest. An org whose <code>.github</code> is private also makes it exit
-1.</p>
+<p><code>sync</code> reports a broken pair and does not repair it; a human decides
+what to do. Broken pairs make <code>sync</code> exit 1, after it has synced the
+rest; <code>--dry-run</code> reports them and exits 0. An org whose <code>.github</code> is
+private makes both exit 1.</p>
+<p>Nothing runs <code>sync</code> on a schedule, so an advisory's state lags its issues
+until someone runs it, and no nightly job checks the pairs. Run it after
+closing or reopening a <code>security</code> issue, and regularly in any case.</p>
 <p><strong>External reports.</strong> <code>.github</code> accepts private vulnerability reports from
 outside (see its <code>SECURITY.md</code>). GitHub marks such a report with the
 <code>triage</code> state or a submission. When no <code>security</code> issue names one, the
-sweep lists it as an <em>unpaired external report</em>, never treats it as
+<code>sync</code> lists it as an <em>unpaired external report</em>, never treats it as
 broken, and never changes it. To work on one, attach it to an issue with
 <code>vrg-security-record create --issue</code>.</p>
-<p>The sweep's output goes to the public Actions logs of <code>.github</code>, so it
-names only GHSA IDs, issue refs, labels and states, never advisory text.</p>
+<p>The output of <code>sync</code> can end up in a shared log or a public comment, so
+it names only GHSA IDs, issue refs, labels and states, never advisory text.</p>
 <h3 id="when-the-issue-moves">When the issue moves<a class="headerlink" href="#when-the-issue-moves" title="Permanent link">&para;</a></h3>
 <p>A record's link moves only through <code>vrg-security-record retarget</code>, and
 <code>vrg-intake-route</code> calls it for you:</p>
@@ -18011,7 +18049,7 @@ depends on the decision:</p>
   names (see <a href="#security-items-in-planning">Security items in planning</a>);</li>
 <li>a <strong>rejected</strong> finding (the human decided it is not a problem) is
   recorded with plain <code>create</code>, and the intake issue it creates is then
-  closed as "not planned", so the sweep closes the advisory. The human's
+  closed as "not planned", so the next <code>sync</code> closes the advisory. The human's
   reason goes into the advisory's details, never into a public record;</li>
 <li>a <strong>dropped</strong> finding is recorded with plain <code>create</code>, and its intake
   issue stays open, so intake review decides what becomes of it.</li>
@@ -18066,10 +18104,11 @@ hand:</p>
 <ul>
 <li><code>vrg-security-record list</code> shows every advisory and the issues it
   tracks;</li>
-<li><code>vrg-epic-audit</code> (read-only) prints the sweep's pass as a preview,
-  including its broken-pair report.</li>
+<li><code>vrg-security-record sync --dry-run</code> (or the read-only
+  <code>vrg-epic-audit</code>, which prints the same preview) reports what would sync
+  and every broken pair.</li>
 </ul>
-<p>The sweep reports a broken pair and never repairs it, so a human repairs
+<p><code>sync</code> reports a broken pair and never repairs it, so a human repairs
 each one it reports, by hand.</p>
 <h2 id="before-a-private-repo-goes-public">Before a private repo goes public<a class="headerlink" href="#before-a-private-repo-goes-public" title="Permanent link">&para;</a></h2>
 <p>Because issues are neutral everywhere, a private repo's issues hold no
@@ -18090,6 +18129,11 @@ each of these by hand:</p>
 <a href="../epic-home-visibility-flip/">Epic Home Visibility Flips</a>.</p>
 <h2 id="accepted-trade-offs">Accepted trade-offs<a class="headerlink" href="#accepted-trade-offs" title="Permanent link">&para;</a></h2>
 <ul>
+<li><strong>Advisory states lag their issues.</strong> No scheduled job syncs them:
+  an advisory stays a draft after its issues close, or closed after one
+  reopens, until someone runs <code>vrg-security-record sync</code>, and no nightly
+  job checks the pairs. This keeps advisories access off the scheduled
+  sweep's token.</li>
 <li><strong>Advisories are not next to their code.</strong> Every record is in
   <code>&lt;org&gt;/.github</code>, so every admin and security manager of <code>.github</code> can
   see every draft, including one about a private (for example, client)
@@ -18103,21 +18147,22 @@ each of these by hand:</p>
   deliberate disclosure is accepted in exchange for a visible, queryable
   label.</li>
 <li><strong>Agents may manage advisories.</strong> Records are notes: the user agent
-  creates, edits and retargets them, and the sweep closes and reopens
-  them. There is no strong protection against an agent editing or closing
+  creates, edits and retargets them, and <code>vrg-security-record sync</code>,
+  which the user agent may run, closes and reopens them. There is no strong protection against an agent editing or closing
   one.</li>
 </ul>
 <h2 id="permissions">Permissions<a class="headerlink" href="#permissions" title="Permanent link">&para;</a></h2>
 <p><code>vrg-security-record</code> calls the advisories API directly, with the
 identity's App token or, in human mode, the human's own <code>gh</code> login. It
 does not go through <code>vrg-gh api</code>, which stays denied to the user agent.</p>
-<p>Two Apps need <strong>Repository security advisories: Read and write</strong>:</p>
-<ul>
-<li>every user App (<code>&lt;username&gt;-vergil-user</code>), for <code>vrg-security-record</code>
-  and the hooks in <code>vrg-intake-route</code> and <code>vrg-queue</code>;</li>
-<li>each org's automation App (<code>&lt;org&gt;-automation</code>), for the sweep.</li>
-</ul>
-<p>The audit App does not get it; see
+<p>Every user App (<code>&lt;username&gt;-vergil-user</code>) needs <strong>Repository security
+advisories: Read and write</strong>, for <code>vrg-security-record</code> (<code>sync</code>
+included) and the hooks in <code>vrg-intake-route</code> and <code>vrg-queue</code>. A human
+running <code>vrg-security-record</code> in human mode needs the same access through
+their own <code>gh</code> login. <code>sync --dry-run</code> needs only Read.</p>
+<p>The scheduled sweep (<code>vrg-epic-audit --close</code>, run by each org's
+automation App, <code>&lt;org&gt;-automation</code>) makes no security-advisory call, so
+it needs no advisories access. The audit App does not get it either; see
 <a href="../account-setup/#step-11-register-the-app">Account Setup</a>.</p>
 <h2 id="related">Related<a class="headerlink" href="#related" title="Permanent link">&para;</a></h2>
 <ul>

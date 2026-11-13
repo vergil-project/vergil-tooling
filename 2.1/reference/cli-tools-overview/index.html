@@ -1410,6 +1410,8 @@
       
         
       
+        
+      
     
     
     
@@ -1462,6 +1464,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.307/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.307
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13315,7 +13345,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../releases/v1.2.0/" class="md-nav__link">
+      <a href="../../releases/v1.2.1/" class="md-nav__link">
         
   
   
@@ -13343,7 +13373,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../releases/v1.2.1/" class="md-nav__link">
+      <a href="../../releases/v1.2.0/" class="md-nav__link">
         
   
   
@@ -20637,8 +20667,9 @@ can't be inferred:</p>
 paired with a neutral <code>security</code>-labelled intake issue (epic
 vergil-project/.github#517). <code>create</code> makes the pair (or attaches an
 advisory to an existing issue, or resumes an unfinished pair), <code>list</code> and
-<code>show</code> read records, and <code>retarget</code> moves an advisory's tracking to new
-issues. Advisory text is printed only by <code>show</code> and <code>list --details</code>. See
+<code>show</code> read records, <code>retarget</code> moves an advisory's tracking to new
+issues, and <code>sync</code> sets each paired advisory's state from its issues and
+reports broken pairs (<code>--dry-run</code> previews it). Advisory text is printed only by <code>show</code> and <code>list --details</code>. See
 <a href="../dev/security-record/">vrg-security-record</a> and
 <a href="../../guides/security-records/">Security Records</a>.</p>
 <table>
@@ -20655,7 +20686,7 @@ issues. Advisory text is printed only by <code>show</code> and <code>list --deta
 </tr>
 <tr>
 <td>Args</td>
-<td><code>create --repo --title --body-file --details-file --severity [--summary] [--issue] [--resume]</code>; <code>list [--repo] [--state draft\|closed\|all] [--details]</code>; <code>show GHSA-ID\|OWNER/REPO#N</code>; <code>retarget GHSA-ID --to REF [--to REF …]</code></td>
+<td><code>create --repo --title --body-file --details-file --severity [--summary] [--issue] [--resume]</code>; <code>list [--repo] [--state draft\|closed\|all] [--details]</code>; <code>show GHSA-ID\|OWNER/REPO#N</code>; <code>retarget GHSA-ID --to REF [--to REF …]</code>; <code>sync [--dry-run]</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
@@ -20663,7 +20694,7 @@ issues. Advisory text is printed only by <code>show</code> and <code>list --deta
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>A partial pair exits 1 naming what exists and the exact <code>--resume</code> command that finishes it; a private <code>.github</code>, a duplicate draft, or <code>--details</code> under <code>VRG_EPIC_SWEEP</code> is refused</td>
+<td>A partial pair exits 1 naming what exists and the exact <code>--resume</code> command that finishes it; a private <code>.github</code>, a duplicate draft, or <code>--details</code> under <code>VRG_EPIC_SWEEP</code> is refused; <code>sync</code> exits 1 on a broken pair after syncing the rest</td>
 </tr>
 <tr>
 <td>Exit codes</td>
@@ -21235,8 +21266,9 @@ status, and <code>vrg-epic-docs</code> settles them. The check runs only without
 home's epics once, under the home owner's App token, for this check and the
 closed-epic-with-open-child check.</p>
 <p>The report previews, without
-writing, the ad-hoc and queue-epic drains and the security-records pass that
-<code>--close</code> would run.</p>
+writing, the ad-hoc and queue-epic drains that <code>--close</code> would run, and the
+security-records pass of <code>vrg-security-record sync</code> (<code>--close</code> does not run
+it).</p>
 <p>The org comes from the current repo's <code>origin</code> remote (there is no <code>--org</code>
 flag). <code>--repo OWNER/NAME</code> audits that repo's resolved epic home instead of
 the org's <code>.github</code>, so a private repo that self-homes its epics can be
@@ -21266,13 +21298,11 @@ home.</p>
    nativize body-only <code>Parent:</code> links, strip the retired kind labels, move a
    now-public repo's queue items under <code>.github</code>, and attach every orphan to
    its home's intake epic.</li>
-<li>Run the security-records pass, even when the orphan pass failed: each
-   paired draft advisory in the org's <code>.github</code> is set to closed once every
-   issue it tracks is closed, and back to draft while any is open; broken
-   pairs are reported, not repaired. Its output names only GHSA IDs, issue
-   refs and states, never advisory text (see
-   <a href="../../guides/security-records/#managing-a-record-through-its-issue">Security Records</a>).</li>
 </ol>
+<p><code>--close</code> makes no security-advisory call: it neither syncs advisory states
+nor checks advisory/issue pairs. That is <code>vrg-security-record sync</code>, run by
+the human or the user agent (see
+<a href="../../guides/security-records/#managing-a-record-through-its-issue">Security Records</a>).</p>
 <p><code>--close</code> is a human action, or the scheduled <code>ops-epic-sweep</code> workflow,
 which sets <code>VRG_EPIC_SWEEP=1</code>. Other invariant violations stay report-only.</p>
 <table>
@@ -21293,11 +21323,11 @@ which sets <code>VRG_EPIC_SWEEP=1</code>. Other invariant violations stay report
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>Run inside a repo in the target org; GitHub App credentials for that org. <code>--close</code> needs a human identity or <code>VRG_EPIC_SWEEP=1</code>. The security-records pass needs Repository security advisories: Read and write</td>
+<td>Run inside a repo in the target org; GitHub App credentials for that org. <code>--close</code> needs a human identity or <code>VRG_EPIC_SWEEP=1</code>. The read-only report's security-records preview needs Repository security advisories: Read; <code>--close</code> needs no advisories access</td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td><code>--close</code> in an agent session is refused before any network call; a <code>--repo</code> without <code>/</code>, an org that cannot be detected, or an org with no <code>.github</code> home exits 1. A token that cannot see every repo in the org exits 1: the report is marked partial and <code>--close</code> is refused before any write. A full intake epic stops the orphan pass, listing what it did not attach; a broken security pair or a failed security pass exits 1 after the rest of the run. With <code>--epic</code>, a ref that is not an epic exits 1</td>
+<td><code>--close</code> in an agent session is refused before any network call; a <code>--repo</code> without <code>/</code>, an org that cannot be detected, or an org with no <code>.github</code> home exits 1. A token that cannot see every repo in the org exits 1: the report is marked partial and <code>--close</code> is refused before any write. A full intake epic stops the orphan pass, listing what it did not attach. A failed security-records preview exits 1 after the rest of the report. With <code>--epic</code>, a ref that is not an epic exits 1</td>
 </tr>
 <tr>
 <td>Exit codes</td>
@@ -21392,7 +21422,7 @@ rebase-merged as several commits is one row).</p>
 <a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>#4251  release/post-2.1.303        release  4h ago  chore(release): back-merge 2.1.303 and bump to 2.1.304
 <a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>#4258  deps/update-2.1.304         deps     4h ago  chore(deps): dependency update for 2.1.304
 <a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>#4252  feature/4249-refuse-ubuntu  feat     1h ago  feat(validate): refuse ubuntu-latest runner labels
-<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>3 changes pending release: 1 dependency update, 1 release back-merge, 1 other PR.
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>3 changes pending release: 1 dependency update, 1 release back-merge, 0 automation PRs, 1 other PR.
 </code></pre></div>
 <ul>
 <li><strong>Release line.</strong> It follows the section heading on the same line,
@@ -21406,9 +21436,13 @@ rebase-merged as several commits is one row).</p>
   are ignored.</li>
 <li><strong>Rows</strong> come in merge order, oldest first. TYPE is the PR title's
   conventional-commit type (<code>-</code> when it has none), except that a
+  release back-merge (a <code>release/post-*</code> head branch) shows <code>release</code>,
+  an automation PR (an <code>automation/*</code> head branch, such as
+  <code>automation/repo-config-sync/&lt;run-id&gt;</code>) shows <code>automation</code>, and a
   dependency update (a <code>deps/update-*</code> head branch or a
-  <code>dependency-update</code> label) shows <code>deps</code> and a release back-merge (a
-  <code>release/post-*</code> head branch) shows <code>release</code>. MERGED is the PR's
+  <code>dependency-update</code> label) shows <code>deps</code>. The head branch decides
+  before the label, so an automation PR is never counted as a
+  dependency update or a development PR. MERGED is the PR's
   merge time. A TITLE over 72 characters is cut, ending in <code>…</code>.</li>
 <li><strong>A commit with no PR</strong> shows <code>PROBLEM</code> in the PR column and <code>-</code> for
   BRANCH and TYPE, with its commit date and subject, and a
@@ -21416,7 +21450,7 @@ rebase-merged as several commits is one row).</p>
 <li><strong>Nothing pending</strong> prints <code>Nothing pending release: develop and main
   are level.</code> in place of the table.</li>
 <li><strong>The summary line</strong> counts the changes: dependency updates, release
-  back-merges and other PRs, every bucket listed, plus
+  back-merges, automation PRs and other PRs, every bucket listed, plus
   <code>&lt;n&gt; PROBLEM: commits with no PR</code> only when there are some.</li>
 <li><strong>A lookup that fails or is incomplete</strong> (an API error, a missing
   branch, a truncated answer) is an error, never a partial list: the
@@ -21607,8 +21641,9 @@ defines are listed in
 </table>
 <h3 id="vrg-github-repo-config">vrg-github-repo-config<a class="headerlink" href="#vrg-github-repo-config" title="Permanent link">&para;</a></h3>
 <p>Audit a managed repo against the canonical Vergil configuration, and
-in <code>apply</code> mode reconcile the GitHub half. Combines local filesystem
-checks (<code>vergil.toml</code>, <code>CLAUDE.md</code>, <code>.claude/settings.json</code>, hook-guard
+in <code>apply</code> mode reconcile the GitHub half. Combines managed-file
+checks, run in a fresh shallow clone of the repo's <code>develop</code> (<code>vergil.toml</code>,
+<code>CLAUDE.md</code>, <code>.claude/settings.json</code>, hook-guard
 shim, workflow pins, <code>.gitignore</code> managed fence, canonical
 <code>dependabot.yml</code>, <code>ops.yml</code> wiring)
 with GitHub-API checks (repo settings, rulesets, required-check set).
@@ -21633,7 +21668,7 @@ Runs nightly from each repo's <code>ops.yml</code> via the reusable
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>Local checks require the repo's own checkout as CWD; GitHub checks require <code>gh</code> credentials</td>
+<td>Local checks clone the repo's <code>develop</code> over HTTPS (git's credential helper must reach it); GitHub checks require <code>gh</code> credentials</td>
 </tr>
 <tr>
 <td>Failure mode</td>
